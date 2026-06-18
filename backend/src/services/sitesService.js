@@ -7,6 +7,7 @@ import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
+import { NO_TRACK_REASON, shouldSkipTracking } from '../utils/noTracking.js'
 import {
   mergeContactCustomFields,
   parseContactCustomFields,
@@ -9987,6 +9988,24 @@ function safePublicMediaUrl(value, kind = 'image') {
   return safeUrl(raw)
 }
 
+function appendNoTrackParam(value) {
+  const raw = cleanString(value)
+  if (!raw || /^data:/i.test(raw)) return raw
+
+  try {
+    const absolute = /^https?:\/\//i.test(raw)
+    const parsed = new URL(raw, 'https://rstk.local')
+    parsed.searchParams.set('no_track', '1')
+    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    const hashIndex = raw.indexOf('#')
+    const base = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw
+    const hash = hashIndex >= 0 ? raw.slice(hashIndex) : ''
+    if (/[?&]no_track(?:=|&|$)/.test(base)) return raw
+    return `${base}${base.includes('?') ? '&' : '?'}no_track=1${hash}`
+  }
+}
+
 function isDirectVideoUrl(value) {
   const url = safePublicMediaUrl(value, 'video')
   if (!url) return false
@@ -11180,6 +11199,27 @@ function buildNativeSiteTrackingScript(context) {
     (() => {
       const RSTK_CONTEXT = ${scriptJson(context)};
       const ENDPOINT = '/collect';
+      const valueMeansNoTrack = (value, trackingParam = false) => {
+        if (value === null || typeof value === 'undefined') return false;
+        const normalized = String(value).trim().toLowerCase();
+        if (['live', 'public', 'track', 'tracked'].includes(normalized)) return false;
+        if (trackingParam && ['0', 'false', 'no'].includes(normalized)) return true;
+        return ['', '1', 'true', 'yes', 'preview', 'editor', 'test', 'no_track', 'notrack', 'disabled', 'disable', 'off'].includes(normalized);
+      };
+      const isNoTrackMode = () => {
+        try {
+          const params = new URLSearchParams(window.location.search || '');
+          const keys = ['no_track', 'noTrack', 'notrack', 'rstk_no_track', 'rstkNoTrack', 'rstk_preview', 'rstkPreview', 'preview', 'editor', 'editor_preview', 'editorPreview'];
+          for (const key of keys) {
+            if (params.has(key) && valueMeansNoTrack(params.get(key))) return true;
+          }
+          if (params.has('tracking') && valueMeansNoTrack(params.get('tracking'), true)) return true;
+          if (window.ristakNoTrack === true || window.ristakPreviewMode === true) return true;
+        } catch (_) {}
+        return false;
+      };
+
+      if (isNoTrackMode()) return;
 
       const readJson = (storage, key) => {
         try {
@@ -11935,7 +11975,7 @@ function renderSubmitButtonContent(label, subtitle = '') {
   return `<span class="rstk-button-label">${safeLabel}</span>${safeSubtitle ? `<span class="rstk-button-subtitle">${safeSubtitle}</span>` : ''}`
 }
 
-function renderVideoPlayer(src, block, settings = {}) {
+function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const requestedControlsMode = cleanString(settings.videoControlsMode)
   const controlsMode = ['native', 'clean', 'none'].includes(requestedControlsMode)
     ? requestedControlsMode
@@ -12002,9 +12042,11 @@ function renderVideoPlayer(src, block, settings = {}) {
     `--rstk-video-sound-cycle:${escapeHtml(soundNoticeCycle)}`
   ].join(';')
 
+  const videoSrc = options.noTrack ? appendNoTrackParam(src) : src
+
   return `
     <div class="${classes}" style="${styleVars}">
-      <video src="${escapeHtml(src)}" title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
+      <video src="${escapeHtml(videoSrc)}" title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
       ${showOverlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
           <span class="rstk-video-play-dot">${getVideoPlayIconMarkup(playIconStyle)}</span>
@@ -12089,10 +12131,11 @@ function renderContentBlock(block, context = {}) {
     const rawVideoUrl = settings.mediaUrl || block.content
     const directVideoUrl = isDirectVideoUrl(rawVideoUrl) ? safePublicMediaUrl(rawVideoUrl, 'video') : ''
     const videoUrl = directVideoUrl ? '' : normalizeVideoEmbedUrl(rawVideoUrl)
+    const embedVideoUrl = context.noTrack ? appendNoTrackParam(videoUrl) : videoUrl
     return directVideoUrl
-      ? renderVideoPlayer(directVideoUrl, block, settings)
-      : videoUrl
-        ? `<div class="rstk-video"><iframe src="${escapeHtml(videoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+      ? renderVideoPlayer(directVideoUrl, block, settings, { noTrack: context.noTrack })
+      : embedVideoUrl
+        ? `<div class="rstk-video"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
       : `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
   }
 
@@ -12220,7 +12263,9 @@ function renderContentBlock(block, context = {}) {
     }
 
     const calendarName = cleanString(settings.calendarName || settings.calendar_name || block.label || 'Calendario')
-    return `<iframe class="rstk-embed rstk-calendar-embed" src="/calendar/${encodeURIComponent(calendarSlug)}?test=1" title="${escapeHtml(calendarName)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
+    const baseCalendarSrc = `/calendar/${encodeURIComponent(calendarSlug)}?test=1`
+    const calendarSrc = context.noTrack ? appendNoTrackParam(baseCalendarSrc) : baseCalendarSrc
+    return `<iframe class="rstk-embed rstk-calendar-embed" src="${escapeHtml(calendarSrc)}" title="${escapeHtml(calendarName)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
   }
 
   if (block.blockType === 'embed') {
@@ -12231,7 +12276,8 @@ function renderContentBlock(block, context = {}) {
 
     const heightStyle = embed.height ? ` style="min-height:${embed.height}px"` : ''
     if (embed.kind === 'url') {
-      return `<iframe class="rstk-embed" src="${escapeHtml(embed.src)}" title="${escapeHtml(embed.title)}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" sandbox="${EMBED_SANDBOX_URL}" allow="${escapeHtml(embed.allow || DEFAULT_EMBED_ALLOW)}" allowfullscreen${heightStyle}></iframe>`
+      const embedSrc = context.noTrack ? appendNoTrackParam(embed.src) : embed.src
+      return `<iframe class="rstk-embed" src="${escapeHtml(embedSrc)}" title="${escapeHtml(embed.title)}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" sandbox="${EMBED_SANDBOX_URL}" allow="${escapeHtml(embed.allow || DEFAULT_EMBED_ALLOW)}" allowfullscreen${heightStyle}></iframe>`
     }
 
     return `<iframe class="rstk-embed rstk-embed-code" srcdoc="${escapeHtml(embed.srcDoc)}" title="${escapeHtml(embed.title)}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" sandbox="${EMBED_SANDBOX_HTML}" allow="${escapeHtml(embed.allow || DEFAULT_EMBED_ALLOW)}"${heightStyle}></iframe>`
@@ -14220,7 +14266,7 @@ function getImportedRenderPageByAssetPath(site, assetPath = '') {
   )) || null
 }
 
-async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled = true } = {}) {
+async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled = true, preview = false } = {}) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
     return renderDomainErrorHtml({
@@ -14249,7 +14295,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     annotateImportedEditableHtml(html),
-    buildHeaderTrackingCode(site, activePage)
+    trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, injection)
 }
@@ -14291,7 +14337,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
       annotateImportedEditableHtml(html),
-      buildHeaderTrackingCode(site, page)
+      trackingEnabled ? buildHeaderTrackingCode(site, page) : ''
     )
 
     return {
@@ -14393,7 +14439,7 @@ function renderSiteNav(site, { activePageId, linkStyle } = {}) {
 
 export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEnabled = true, preview = false } = {}) {
   if (isImportedHtmlSite(site)) {
-    return renderImportedPublicSiteHtml(site, { pageId, trackingEnabled })
+    return renderImportedPublicSiteHtml(site, { pageId, trackingEnabled, preview })
   }
 
   const theme = { ...DEFAULT_THEME, ...(site.theme || {}) }
@@ -14500,7 +14546,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	  ].filter(Boolean).join(' ')
 
 	  const phoneLocale = await getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack: !trackingEnabled || preview }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
@@ -14535,7 +14581,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
   const paramPreservationScript = preview ? '' : buildParamPreservationScript()
   const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, activePage)
-  const headerTrackingCode = buildHeaderTrackingCode(site, activePage)
+  const headerTrackingCode = trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
   const popupHtml = renderSitePopup(site, {
     popupBlocks: getPopupBlocks(site),
     renderContext
@@ -16093,6 +16139,10 @@ async function logMetaEvent({ contactId, eventType, metaEventName, eventId, stat
 }
 
 async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, contactId, contact, requestMeta }) {
+  if (shouldSkipTracking({ meta: requestMeta?.meta })) {
+    return { sent: false, reason: NO_TRACK_REASON, eventId: `site_${site.id}_${submissionId}` }
+  }
+
   if (!site.metaCapiEnabled) {
     return { sent: false, reason: 'disabled' }
   }
@@ -16216,6 +16266,10 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
 }
 
 async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId, requestMeta }) {
+  if (shouldSkipTracking({ meta: requestMeta?.meta })) {
+    return { sent: false, reason: NO_TRACK_REASON, eventId, eventName }
+  }
+
   const metaConfig = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer configuración Meta para evento de página Site: ${error.message}`)
     return null
@@ -16324,6 +16378,8 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
 }
 
 async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, submissionId, contactId, contact, req, meta }) {
+  if (shouldSkipTracking({ req, meta })) return
+
   const visitorId = cleanString(meta?.visitorId || meta?.visitor_id) || `site_visitor_${submissionId}`
   const sessionId = cleanString(meta?.sessionId || meta?.session_id) || `site_session_${submissionId}`
   const tracking = meta?.tracking && typeof meta.tracking === 'object' ? meta.tracking : {}
@@ -16672,6 +16728,24 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
   const responseMessage = importedDisqualified
     ? cleanString(meta.importedDisqualifiedMessage || meta.imported_disqualified_message) || 'Gracias. Por ahora esta solicitud no califica.'
     : 'Listo. Recibimos tu información.'
+  if (shouldSkipTracking({ req, body, meta, previewContext })) {
+    return {
+      submissionId: `preview_${crypto.randomUUID()}`,
+      siteId: site.id,
+      contactId: null,
+      contactName: contact.fullName,
+      contactEmail: contact.email,
+      status: submissionStatus,
+      message: responseMessage,
+      rawFields: layers.rawFields,
+      mappedFields: layers.mappedFields,
+      derivedFields: layers.derivedFields,
+      preview: true,
+      skipped: true,
+      capi: { sent: false, reason: NO_TRACK_REASON }
+    }
+  }
+
   const contactResult = await upsertImportedContactFromSubmission({
     site,
     contact,
@@ -16851,6 +16925,27 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   }
   const nativeLayers = buildNativeSubmissionLayers({ site, blocks: submissionBlocks, responses })
   const inferredContact = inferContactFromResponses(collectFieldBlocks(submissionBlocks), responses)
+  if (shouldSkipTracking({ req, body, meta, previewContext })) {
+    return {
+      submissionId: `preview_${crypto.randomUUID()}`,
+      siteId: site.id,
+      contactId: null,
+      contactName: inferredContact.fullName || '',
+      contactEmail: inferredContact.email || '',
+      contactPhone: inferredContact.phone || '',
+      status: ruleEvaluation.status,
+      message: getSiteFinalMessage(site, ruleEvaluation),
+      redirectUrl: ruleRedirectUrl,
+      rules: ruleEvaluation,
+      rawFields: nativeLayers.rawFields,
+      mappedFields: nativeLayers.mappedFields,
+      derivedFields: nativeLayers.derivedFields,
+      preview: true,
+      skipped: true,
+      capi: { sent: false, reason: NO_TRACK_REASON }
+    }
+  }
+
   const contactResult = await upsertContactFromSubmissionWithResult({ site, contact: inferredContact, meta })
   const contactId = contactResult.contactId
   const preparedCustomFields = await upsertNativeContactCustomFields({
@@ -16986,6 +17081,10 @@ export async function createMetaPageEventFromRequest(req, body = {}, options = {
   }
 
   site.domain = domainResolution.domain || host
+
+  if (shouldSkipTracking({ req, body, previewContext })) {
+    return { sent: false, reason: NO_TRACK_REASON }
+  }
 
   if (!site.metaCapiEnabled) {
     return { sent: false, reason: 'site_disabled' }

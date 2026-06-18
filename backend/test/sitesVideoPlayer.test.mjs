@@ -61,7 +61,8 @@ test('video player clean mode renders Wistia-style overlay controls', async () =
 
   assert.match(html, /rstk-video-custom-controls/)
   assert.match(html, /<button type="button" class="rstk-video-overlay" data-rstk-video-overlay/)
-  assert.match(html, /<span class="rstk-video-sound">/)
+  assert.match(html, /src="https:\/\/cdn\.example\.com\/video\.mp4\?no_track=1"/)
+  assert.match(html, /<span class="rstk-video-sound\b/)
   assert.match(html, /--rstk-video-bg:#111827/)
   assert.match(html, /--rstk-video-radius:28px/)
   assert.match(html, /--rstk-video-border-color:#38bdf8/)
@@ -89,4 +90,28 @@ test('video player none mode removes overlay and audio prompt', async () => {
   assert.match(html, /rstk-video-no-controls/)
   assert.doesNotMatch(html, /<button type="button" class="rstk-video-overlay" data-rstk-video-overlay/)
   assert.doesNotMatch(html, /<span class="rstk-video-sound">/)
+})
+
+test('preview render suppresses custom tracking code without changing live tracking', async () => {
+  const site = baseSite({})
+  site.theme.headerTrackingCode = '<script>window.__previewTrackingLeak = true</script>'
+
+  const previewHtml = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.doesNotMatch(previewHtml, /__previewTrackingLeak/)
+  assert.match(previewHtml, /src="https:\/\/cdn\.example\.com\/video\.mp4\?no_track=1"/)
+
+  const liveHtml = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: true,
+    preview: false
+  })
+
+  assert.match(liveHtml, /__previewTrackingLeak/)
+  assert.match(liveHtml, /src="https:\/\/cdn\.example\.com\/video\.mp4"/)
+  assert.doesNotMatch(liveHtml, /video\.mp4\?no_track=1/)
 })

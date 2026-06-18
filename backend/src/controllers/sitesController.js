@@ -43,6 +43,7 @@ import {
   listMediaAssets
 } from '../services/mediaStorageService.js'
 import { logger } from '../utils/logger.js'
+import { requestHasNoTrack } from '../utils/noTracking.js'
 
 const SITE_PREVIEW_TTL_MS = 60 * 60 * 1000
 const sitePreviewSessions = new Map()
@@ -386,6 +387,7 @@ export async function createPreviewSessionHandler(req, res) {
 
     const params = new URLSearchParams()
     if (pageId) params.set('page', pageId)
+    params.set('no_track', '1')
     const origin = getRequestOrigin(req)
     const path = `/api/sites/${encodeURIComponent(site.id)}/preview-session/${encodeURIComponent(token)}`
     const url = `${origin}${path}${params.toString() ? `?${params.toString()}` : ''}`
@@ -654,6 +656,8 @@ function decodePathSegment(segment) {
 }
 
 function isTrackingBypassRequest(req) {
+  if (requestHasNoTrack(req)) return true
+
   const queryFlag = String(req.query?.test || req.query?.tracking || '').toLowerCase()
   if (queryFlag === '1' || queryFlag === 'true' || queryFlag === 'test' || queryFlag === 'preview') {
     return true

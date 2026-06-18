@@ -95,16 +95,21 @@ test('draft preview actions work on the service domain without a public domain',
 
     assert.equal(result.status, 'received')
     assert.equal(result.siteId, site.id)
+    assert.equal(result.contactId, null)
     assert.equal(result.contactEmail, email)
+    assert.equal(result.preview, true)
+    assert.equal(result.skipped, true)
+    assert.equal(result.capi.reason, 'preview_no_track')
+    assert.match(result.submissionId, /^preview_/)
 
     const submission = await db.get(
       'SELECT domain, meta_json FROM public_site_submissions WHERE id = ?',
       [result.submissionId]
     )
-    assert.equal(submission.domain, 'ristak-preview.onrender.com')
-    const meta = JSON.parse(submission.meta_json)
-    assert.equal(meta.previewSession, true)
-    assert.equal(meta.previewPageId, 'preview-page')
+    assert.equal(submission, null)
+
+    const contact = await db.get('SELECT id FROM contacts WHERE email = ?', [email])
+    assert.equal(contact, null)
 
     const metaEvent = await createMetaPageEventFromRequest(
       req,
@@ -121,7 +126,7 @@ test('draft preview actions work on the service domain without a public domain',
         }
       }
     )
-    assert.deepEqual(metaEvent, { sent: false, reason: 'site_disabled' })
+    assert.deepEqual(metaEvent, { sent: false, reason: 'preview_no_track' })
   } finally {
     if (site?.id) await deleteSite(site.id).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)

@@ -751,7 +751,7 @@ export const sitesService = {
   },
 
   getCalendarPreviewUrl(calendarSlug: string) {
-    return `${getApiBaseUrl()}/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?test=1`
+    return `${getApiBaseUrl()}/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?test=1&no_track=1`
   },
 
   updateSite(siteId: string, payload: Partial<PublicSite>) {

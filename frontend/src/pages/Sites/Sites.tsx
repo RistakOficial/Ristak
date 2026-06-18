@@ -3306,6 +3306,24 @@ const safePublicMediaUrl = (value: string, kind: 'image' | 'video') => {
   return safeEmbedUrl(raw)
 }
 
+const appendEditorNoTrackParam = (value: string) => {
+  const raw = String(value || '').trim()
+  if (!raw || /^data:/i.test(raw)) return raw
+
+  try {
+    const absolute = /^https?:\/\//i.test(raw)
+    const parsed = new URL(raw, window.location.origin)
+    parsed.searchParams.set('no_track', '1')
+    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    const hashIndex = raw.indexOf('#')
+    const base = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw
+    const hash = hashIndex >= 0 ? raw.slice(hashIndex) : ''
+    if (/[?&]no_track(?:=|&|$)/.test(base)) return raw
+    return `${base}${base.includes('?') ? '&' : '?'}no_track=1${hash}`
+  }
+}
+
 const isDirectVideoUrl = (value: string) => {
   const raw = safePublicMediaUrl(value, 'video')
   if (!raw) return false
@@ -22410,6 +22428,7 @@ const VideoPlayerPreview: React.FC<{
   settings: Record<string, unknown>
 }> = ({ src, label, settings }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const noTrackSrc = appendEditorNoTrackParam(src)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
   const [progress, setProgress] = useState(0)
@@ -22464,7 +22483,7 @@ const VideoPlayerPreview: React.FC<{
     setIsMuted(video.muted || video.volume === 0)
     setIsPlaying(!video.paused)
     setProgress(0)
-  }, [speed, muted, src])
+  }, [speed, muted, noTrackSrc])
 
   const syncVideoState = () => {
     const video = videoRef.current
@@ -22538,7 +22557,7 @@ const VideoPlayerPreview: React.FC<{
     >
       <video
         ref={videoRef}
-        src={src}
+        src={noTrackSrc}
         title={label || 'Video'}
         controls={showNativeControls}
         muted={muted}
@@ -22729,7 +22748,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     return directVideoUrl
       ? <VideoPlayerPreview src={directVideoUrl} label={block.label || 'Video'} settings={settings} />
       : videoUrl
-        ? <div className="rstk-video"><iframe src={videoUrl} title={block.label || 'Video'} loading="lazy" allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
+        ? <div className="rstk-video"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
       : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
 
@@ -22927,7 +22946,7 @@ const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
       ref={iframeRef}
       className={`rstk-embed ${embed.kind === 'html' ? 'rstk-embed-code' : ''}`}
       title={embed.title}
-      src={embed.kind === 'url' ? embed.src : undefined}
+      src={embed.kind === 'url' ? appendEditorNoTrackParam(embed.src) : undefined}
       srcDoc={embed.kind === 'html' ? embed.srcDoc : undefined}
       loading="lazy"
       referrerPolicy="no-referrer-when-downgrade"

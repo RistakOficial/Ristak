@@ -6,6 +6,7 @@ import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js'
 import { fetchAppointmentsForContacts, fetchPaymentsForContacts, getGroupExpression } from '../services/analyticsService.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
+import { getNoTrackReason } from '../utils/noTracking.js'
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
@@ -214,6 +215,34 @@ export async function servePixel(req, res) {
   var ENDPOINT = '${ENDPOINT}';
   var lastTrackedUrl = window.location.href;
   var pageViewTimer = null;
+
+  function valueMeansNoTrack(value, trackingParam) {
+    if (value === null || typeof value === 'undefined') return false;
+    var normalized = String(value).trim().toLowerCase();
+    if (normalized === 'live' || normalized === 'public' || normalized === 'track' || normalized === 'tracked') return false;
+    if (trackingParam && (normalized === '0' || normalized === 'false' || normalized === 'no')) return true;
+    return normalized === '' || normalized === '1' || normalized === 'true' || normalized === 'yes' ||
+      normalized === 'preview' || normalized === 'editor' || normalized === 'test' ||
+      normalized === 'no_track' || normalized === 'notrack' || normalized === 'disabled' ||
+      normalized === 'disable' || normalized === 'off';
+  }
+
+  function isNoTrackMode() {
+    try {
+      var params = new URLSearchParams(window.location.search || '');
+      var keys = ['no_track', 'noTrack', 'notrack', 'rstk_no_track', 'rstkNoTrack', 'rstk_preview', 'rstkPreview', 'preview', 'editor', 'editor_preview', 'editorPreview'];
+      for (var i = 0; i < keys.length; i++) {
+        if (params.has(keys[i]) && valueMeansNoTrack(params.get(keys[i]), false)) return true;
+      }
+      if (params.has('tracking') && valueMeansNoTrack(params.get('tracking'), true)) return true;
+      if (window.ristakNoTrack === true || window.ristakPreviewMode === true) return true;
+    } catch (e) {
+      // Ignore URL parsing errors
+    }
+    return false;
+  }
+
+  if (isNoTrackMode()) return;
 
   // Obtener datos de localStorage
   function getLocalData() {
@@ -734,6 +763,11 @@ export async function collectEvent(req, res) {
     // Validaciones básicas
     if (!visitor_id || !session_id || !event_name || !ts) {
       return res.status(400).json({ error: 'Missing required fields' })
+    }
+
+    const noTrackReason = getNoTrackReason({ req, body: req.body, data })
+    if (noTrackReason) {
+      return res.json({ ok: true, skipped: true, reason: noTrackReason })
     }
 
     // Extraer IP y User-Agent del request
