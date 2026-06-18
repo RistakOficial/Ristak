@@ -18911,7 +18911,7 @@ const SitesMediaPickerModal: React.FC<{
                         disabled={deleting || Boolean(syncingAssetId)}
                         aria-label={`Eliminar ${name}`}
                       >
-                        {(syncing || deleting) ? <RefreshCw size={13} className={styles.previewSpin} /> : <Trash2 size={13} />}
+                        {deleting ? <RefreshCw size={13} className={styles.previewSpin} /> : <Trash2 size={13} />}
                       </button>
                     </span>
                   </div>
