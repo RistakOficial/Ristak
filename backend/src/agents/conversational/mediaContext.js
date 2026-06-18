@@ -13,6 +13,7 @@ import {
 const MAX_MEDIA_ITEMS_TO_HYDRATE = 6
 const MAX_INLINE_MEDIA_BYTES = Number(process.env.CONVERSATIONAL_AGENT_INLINE_MEDIA_MAX_BYTES || 18 * 1024 * 1024)
 const MAX_AUDIO_TRANSCRIPTION_BYTES = Number(process.env.CONVERSATIONAL_AGENT_AUDIO_TRANSCRIPTION_MAX_BYTES || 24 * 1024 * 1024)
+const MAX_PREVIEW_ATTACHMENT_BYTES = Number(process.env.CONVERSATIONAL_AGENT_PREVIEW_MEDIA_MAX_BYTES || MAX_INLINE_MEDIA_BYTES)
 const FETCH_TIMEOUT_MS = Number(process.env.CONVERSATIONAL_AGENT_MEDIA_FETCH_TIMEOUT_MS || 12_000)
 const MAX_TEXT_FILE_CHARS = 18_000
 
@@ -130,6 +131,91 @@ function inferAttachmentKind(kind, mimeType = '', filename = '') {
   if (normalizeMimeType(mimeType) === 'application/pdf' || extensionFromFilename(filename) === 'pdf') return 'pdf'
   if (kind === 'text') return 'text'
   return 'file'
+}
+
+function isDataUrl(value = '') {
+  return /^data:[^,]*;base64,/i.test(cleanString(value))
+}
+
+function mimeTypeFromDataUrl(dataUrl = '') {
+  const match = cleanString(dataUrl).match(/^data:([^;,]+)(?:;[^,]*)*;base64,/i)
+  return normalizeMimeType(match?.[1] || '')
+}
+
+function dataUrlToBuffer(dataUrl = '', maxBytes = MAX_PREVIEW_ATTACHMENT_BYTES) {
+  const text = cleanString(dataUrl)
+  const match = text.match(/^data:([^;,]+)?(?:;[^,]*)*;base64,([\s\S]*)$/i)
+  if (!match) return null
+
+  const buffer = Buffer.from(match[2], 'base64')
+  if (buffer.length > maxBytes) {
+    throw new Error(`archivo demasiado grande (${buffer.length} bytes)`)
+  }
+
+  return {
+    buffer,
+    mimeType: normalizeMimeType(match[1] || '')
+  }
+}
+
+function inferPreviewAttachmentKind(attachment = {}) {
+  const explicit = cleanString(attachment.kind || attachment.type).toLowerCase()
+  const mimeType = normalizeMimeType(attachment.mimeType || attachment.type || mimeTypeFromDataUrl(attachment.dataUrl))
+  const filename = cleanString(attachment.name || attachment.filename || attachment.fileName)
+  const extension = extensionFromFilename(filename)
+
+  if (explicit === 'audio' || mimeType.startsWith('audio/')) return 'audio'
+  if (explicit === 'image' || mimeType.startsWith('image/')) return 'image'
+  if (explicit === 'video' || mimeType.startsWith('video/')) return 'video'
+  if (explicit === 'document' || explicit === 'pdf' || mimeType === 'application/pdf') return 'document'
+  if (explicit === 'text' || isTextFile(mimeType, filename)) return 'text'
+  if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'rtf', 'odt'].includes(extension)) return 'document'
+  return 'file'
+}
+
+function sanitizePreviewAttachment(attachment = {}) {
+  const dataUrl = isDataUrl(attachment.dataUrl) ? cleanString(attachment.dataUrl) : ''
+  const thumbnailDataUrl = isDataUrl(attachment.thumbnailDataUrl) ? cleanString(attachment.thumbnailDataUrl) : ''
+  const inferredMimeType = normalizeMimeType(attachment.mimeType || attachment.type || mimeTypeFromDataUrl(dataUrl) || mimeTypeFromDataUrl(thumbnailDataUrl))
+  const kind = inferPreviewAttachmentKind({ ...attachment, mimeType: inferredMimeType })
+  const name = cleanString(attachment.name || attachment.filename || attachment.fileName) ||
+    `demo-${mediaKindLabel(kind)}.${inferredMimeType.includes('/') ? inferredMimeType.split('/').pop().replace(/[^a-z0-9]+/g, '') : 'bin'}`
+  const durationMs = Number(attachment.durationMs || attachment.duration_ms || 0) || 0
+  const size = Number(attachment.size || 0) || 0
+
+  return {
+    kind,
+    name: name.slice(0, 180),
+    mimeType: inferredMimeType || 'application/octet-stream',
+    dataUrl,
+    thumbnailDataUrl,
+    text: cleanString(attachment.text).slice(0, MAX_TEXT_FILE_CHARS),
+    durationMs,
+    size
+  }
+}
+
+function previewAttachmentSummary(attachment = {}, extra = {}) {
+  const kind = attachment.kind || inferPreviewAttachmentKind(attachment)
+  const lines = [
+    `Adjunto recibido: ${mediaKindLabel(kind)}`,
+    `Nombre: ${attachment.name || 'archivo'}`,
+    attachment.mimeType ? `Tipo MIME: ${attachment.mimeType}` : '',
+    attachment.size ? `Tamaño: ${Math.round(Number(attachment.size) / 1024)} KB` : '',
+    attachment.durationMs ? `Duración: ${Math.round(Number(attachment.durationMs) / 1000)}s` : ''
+  ].filter(Boolean)
+
+  if (extra.transcript) {
+    lines.push(`Transcripción del audio: ${extra.transcript}`)
+  }
+  if (extra.readableText) {
+    lines.push(`Texto extraído del archivo: ${extra.readableText}`)
+  }
+  if (extra.limitation) {
+    lines.push(`Límite de lectura: ${extra.limitation}`)
+  }
+
+  return lines.join('\n')
 }
 
 async function fetchExternalMediaBuffer(url, { maxBytes = MAX_INLINE_MEDIA_BYTES, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
@@ -347,6 +433,152 @@ export async function hydrateConversationalMessagesMedia(messages = [], options 
         ...(Array.isArray(message.attachments) ? message.attachments : []),
         ...hydrated.attachments
       ]
+    })
+  }
+
+  return output
+}
+
+async function preparePreviewAttachment(attachment = {}, options = {}) {
+  const item = sanitizePreviewAttachment(attachment)
+  const includeBinary = options.includeBinary !== false
+
+  if (item.kind === 'audio') {
+    const apiKey = await resolveAudioTranscriptionApiKey(options)
+    if (!apiKey) {
+      return {
+        context: previewAttachmentSummary(item, {
+          limitation: 'No hay llave de OpenAI disponible para transcribir este audio. No digas que lo escuchaste; pide una descripción breve o manda a humano si es importante.'
+        }),
+        attachment: null
+      }
+    }
+
+    try {
+      const media = dataUrlToBuffer(item.dataUrl, MAX_AUDIO_TRANSCRIPTION_BYTES)
+      if (!media?.buffer?.length) throw new Error('audio no legible')
+      const result = await (options.transcribeAudio || transcribeVoiceAudio)({
+        apiKey,
+        audioBuffer: media.buffer,
+        mimeType: media.mimeType || item.mimeType || 'audio/webm'
+      })
+      return {
+        context: previewAttachmentSummary(item, { transcript: cleanString(result?.text).slice(0, 12_000) }),
+        attachment: null
+      }
+    } catch (error) {
+      logger.warn(`[Agente conversacional] No se pudo transcribir audio del demo: ${error.message}`)
+      return {
+        context: previewAttachmentSummary(item, {
+          limitation: 'No se pudo transcribir este audio automáticamente. No digas que lo escuchaste; pide que lo escriba o manda a humano si bloquea la conversación.'
+        }),
+        attachment: null
+      }
+    }
+  }
+
+  if (item.kind === 'video') {
+    return {
+      context: previewAttachmentSummary(item, {
+        limitation: 'El agente recibe la referencia del video, pero no analiza movimiento ni audio del video completo en esta ruta. No afirmes haberlo visto completo si no hay descripción o transcripción.'
+      }),
+      attachment: item.thumbnailDataUrl && includeBinary
+        ? {
+            kind: 'video',
+            name: item.name,
+            mimeType: item.mimeType,
+            thumbnailDataUrl: item.thumbnailDataUrl
+          }
+        : null
+    }
+  }
+
+  if (item.text || item.kind === 'text' || isTextFile(item.mimeType, item.name)) {
+    let readableText = item.text
+    if (!readableText && item.dataUrl) {
+      try {
+        const media = dataUrlToBuffer(item.dataUrl, MAX_PREVIEW_ATTACHMENT_BYTES)
+        readableText = media?.buffer?.toString('utf8').slice(0, MAX_TEXT_FILE_CHARS) || ''
+      } catch (error) {
+        logger.warn(`[Agente conversacional] No se pudo leer texto del demo: ${error.message}`)
+      }
+    }
+
+    return {
+      context: previewAttachmentSummary(item, readableText
+        ? { readableText }
+        : { limitation: 'El archivo de texto llegó sin contenido legible. Pide que lo reenvíen o que peguen el texto.' }),
+      attachment: readableText
+        ? { kind: 'text', name: item.name, mimeType: item.mimeType, text: readableText }
+        : null
+    }
+  }
+
+  if (!includeBinary) {
+    return {
+      context: previewAttachmentSummary(item, {
+        limitation: 'El proveedor de IA actual no tiene entrada multimedia binaria habilitada en Ristak. Usa sólo el texto y datos del adjunto.'
+      }),
+      attachment: null
+    }
+  }
+
+  try {
+    if (item.dataUrl) {
+      dataUrlToBuffer(item.dataUrl, MAX_PREVIEW_ATTACHMENT_BYTES)
+    }
+    if (item.kind === 'image' || isSupportedFileInput(item.mimeType, item.name)) {
+      return {
+        context: previewAttachmentSummary(item),
+        attachment: {
+          kind: inferAttachmentKind(item.kind, item.mimeType, item.name),
+          name: item.name,
+          mimeType: item.mimeType,
+          dataUrl: item.dataUrl
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn(`[Agente conversacional] No se pudo preparar adjunto del demo: ${error.message}`)
+    return {
+      context: previewAttachmentSummary(item, {
+        limitation: 'No se pudo preparar este adjunto. No afirmes haberlo visto; pide una descripción breve o manda a humano si hace falta.'
+      }),
+      attachment: null
+    }
+  }
+
+  return {
+    context: previewAttachmentSummary(item, {
+      limitation: 'Tipo de archivo no compatible para lectura directa por el modelo. Usa sólo nombre, tipo y cualquier texto escrito por el usuario.'
+    }),
+    attachment: null
+  }
+}
+
+export async function hydrateConversationalPreviewMessagesMedia(messages = [], options = {}) {
+  const input = Array.isArray(messages) ? messages : []
+  const output = []
+
+  for (const message of input) {
+    const attachments = Array.isArray(message?.attachments) ? message.attachments.slice(0, MAX_MEDIA_ITEMS_TO_HYDRATE) : []
+    if (message?.role !== 'user' || !attachments.length) {
+      output.push(message)
+      continue
+    }
+
+    const contexts = []
+    const preparedAttachments = []
+    for (const attachment of attachments) {
+      const prepared = await preparePreviewAttachment(attachment, options)
+      if (prepared.context) contexts.push(prepared.context)
+      if (prepared.attachment) preparedAttachments.push(prepared.attachment)
+    }
+
+    output.push({
+      ...message,
+      content: appendContextToContent(message.content, contexts.join('\n\n')),
+      attachments: preparedAttachments
     })
   }
 

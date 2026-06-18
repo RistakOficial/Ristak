@@ -31,6 +31,7 @@ import {
 import {
   buildConversationalMediaSummary,
   hydrateConversationalMessagesMedia,
+  hydrateConversationalPreviewMessagesMedia,
   inferConversationalMediaKind
 } from '../src/agents/conversational/mediaContext.js'
 import {
@@ -933,6 +934,55 @@ test('video entrante queda como referencia sin fingir análisis visual completo'
   assert.equal(hydrated[0].attachments.length, 0)
   assert.match(hydrated[0].content, /Adjunto recibido: video/)
   assert.match(hydrated[0].content, /no analiza movimiento/)
+})
+
+test('prepara adjuntos del demo conversacional aunque el mensaje no tenga texto', async () => {
+  const dataUrl = `data:application/pdf;base64,${Buffer.from('pdf bytes').toString('base64')}`
+  const hydrated = await hydrateConversationalPreviewMessagesMedia([{
+    role: 'user',
+    content: '',
+    attachments: [{
+      kind: 'document',
+      name: 'cotizacion.pdf',
+      mimeType: 'application/pdf',
+      dataUrl
+    }]
+  }], {
+    includeBinary: true
+  })
+
+  assert.match(hydrated[0].content, /Adjunto recibido: documento/)
+  assert.match(hydrated[0].content, /cotizacion\.pdf/)
+  assert.equal(hydrated[0].attachments.length, 1)
+  assert.equal(hydrated[0].attachments[0].kind, 'pdf')
+  assert.equal(hydrated[0].attachments[0].dataUrl, dataUrl)
+})
+
+test('transcribe notas de voz enviadas desde el demo conversacional', async () => {
+  const hydrated = await hydrateConversationalPreviewMessagesMedia([{
+    role: 'user',
+    content: '',
+    attachments: [{
+      kind: 'audio',
+      name: 'nota.webm',
+      mimeType: 'audio/webm',
+      dataUrl: `data:audio/webm;base64,${Buffer.from('audio bytes').toString('base64')}`,
+      durationMs: 2200
+    }]
+  }], {
+    aiProvider: 'openai',
+    apiKey: 'sk-test',
+    audioTranscriptionApiKey: 'sk-test',
+    includeBinary: true,
+    transcribeAudio: async ({ audioBuffer, mimeType }) => {
+      assert.equal(audioBuffer.toString(), 'audio bytes')
+      assert.equal(mimeType, 'audio/webm')
+      return { text: 'busco una cita con el doctor el viernes' }
+    }
+  })
+
+  assert.equal(hydrated[0].attachments.length, 0)
+  assert.match(hydrated[0].content, /Transcripción del audio: busco una cita con el doctor el viernes/)
 })
 
 test('rellena parametros de la estrategia de cierre de fabrica', () => {

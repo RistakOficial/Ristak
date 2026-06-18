@@ -5,6 +5,9 @@ import { Badge, Button, Card, CustomSelect, Modal, NumberInput, TagPicker } from
 import {
   PhoneChatPreview,
   PhoneChatPreviewComposer,
+  PhoneChatPreviewDraftAttachments,
+  PhoneChatPreviewVoiceComposer,
+  type PhoneChatPreviewAttachment,
   type PhoneChatPreviewMessage
 } from '@/components/phone/PhoneChatPreview'
 import {
@@ -35,6 +38,8 @@ import {
   type ConversationalAgentDef,
   type ConversationalAgentDefInput,
   type ConversationalAgentMetrics,
+  type ConversationalAgentTestAttachment,
+  type ConversationalAgentTestMessage,
   type ConversationalAgentTestResult,
   type ConversationalObjective,
   type ConversationalSuccessAction,
@@ -249,9 +254,159 @@ const systemReplyDeliveryDefaults: Pick<
   delayBetweenBubblesEnabled: true
 }
 
-type TestMessage = { role: 'user' | 'assistant'; content: string; internal?: boolean }
-
 const MAX_TEST_REPLY_DELAY_MS = 60_000
+const MAX_TEST_ATTACHMENT_BYTES = 18 * 1024 * 1024
+const MAX_TEST_TEXT_ATTACHMENT_BYTES = 750 * 1024
+const MAX_TEST_ATTACHMENTS = 6
+const MIN_TEST_VOICE_RECORDING_MS = 600
+const MAX_TEST_VOICE_RECORDING_MS = 3 * 60 * 1000
+const TEST_VOICE_WAVE_BAR_COUNT = 38
+const TEST_VOICE_WAVE_MIN_HEIGHT = 4
+const TEST_VOICE_WAVE_MAX_HEIGHT = 30
+const TEST_ATTACHMENT_ACCEPT = [
+  'image/*',
+  'audio/*',
+  'video/*',
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.txt',
+  '.csv',
+  '.json',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/csv',
+  'application/json'
+].join(',')
+const TEST_VOICE_MIME_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4'
+]
+const TEST_TEXT_EXTENSIONS = new Set(['txt', 'csv', 'json', 'md', 'html', 'xml'])
+
+type TestAttachment = ConversationalAgentTestAttachment & PhoneChatPreviewAttachment & { id: string }
+type TestMessage = {
+  role: 'user' | 'assistant'
+  content: string
+  attachments?: TestAttachment[]
+  internal?: boolean
+}
+
+function getFileExtension(name = '') {
+  const match = String(name).toLowerCase().match(/\.([a-z0-9]+)$/)
+  return match?.[1] || ''
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error || new Error('No se pudo leer el audio'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error || new Error('No se pudo leer el texto'))
+    reader.readAsText(file)
+  })
+}
+
+function inferTestAttachmentKind(file: File): ConversationalAgentTestAttachment['kind'] {
+  const mimeType = file.type.toLowerCase()
+  const extension = getFileExtension(file.name)
+  if (mimeType.startsWith('image/')) return 'image'
+  if (mimeType.startsWith('audio/')) return 'audio'
+  if (mimeType.startsWith('video/')) return 'video'
+  if (mimeType === 'application/pdf' || extension === 'pdf') return 'pdf'
+  if (mimeType.startsWith('text/') || mimeType === 'application/json' || TEST_TEXT_EXTENSIONS.has(extension)) return 'text'
+  if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(extension)) return 'document'
+  return 'file'
+}
+
+function canReadTextAttachment(file: File) {
+  const kind = inferTestAttachmentKind(file)
+  return kind === 'text' && file.size <= MAX_TEST_TEXT_ATTACHMENT_BYTES
+}
+
+async function createTestAttachment(file: File): Promise<TestAttachment> {
+  const kind = inferTestAttachmentKind(file)
+  const dataUrl = await readFileAsDataUrl(file)
+  const text = canReadTextAttachment(file) ? await readFileAsText(file) : undefined
+  return {
+    id: `test-attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    kind,
+    name: file.name || `archivo.${getFileExtension(file.name) || 'bin'}`,
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    dataUrl,
+    ...(text ? { text: text.slice(0, 18_000) } : {})
+  }
+}
+
+function toTestPayloadMessage(message: TestMessage): ConversationalAgentTestMessage {
+  return {
+    role: message.role,
+    content: message.content,
+    attachments: (message.attachments || []).map((attachment) => ({
+      kind: attachment.kind,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      dataUrl: attachment.dataUrl,
+      thumbnailDataUrl: attachment.thumbnailDataUrl,
+      text: attachment.text,
+      durationMs: attachment.durationMs
+    }))
+  }
+}
+
+function getAttachmentMessageLabel(attachments: TestAttachment[] = []) {
+  if (!attachments.length) return ''
+  if (attachments.length === 1) {
+    const [attachment] = attachments
+    if (attachment.kind === 'audio') return 'Nota de voz'
+    if (attachment.kind === 'image') return attachment.name || 'Imagen'
+    if (attachment.kind === 'video') return attachment.name || 'Video'
+    return attachment.name || 'Archivo'
+  }
+  return `${attachments.length} archivos adjuntos`
+}
+
+function getSupportedTestVoiceMimeType() {
+  if (typeof MediaRecorder === 'undefined') return ''
+  return TEST_VOICE_MIME_CANDIDATES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || ''
+}
+
+function createTestVoiceBars(offset = 0) {
+  return Array.from({ length: TEST_VOICE_WAVE_BAR_COUNT }, (_, index) => {
+    const value = Math.sin((index + offset) * 0.82) * 0.5 + 0.5
+    return Math.round(TEST_VOICE_WAVE_MIN_HEIGHT + value * (TEST_VOICE_WAVE_MAX_HEIGHT - TEST_VOICE_WAVE_MIN_HEIGHT))
+  })
+}
 
 function normalizeTestResponseDelay(value: unknown) {
   const delayMs = Number(value)
@@ -480,7 +635,27 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const { showToast } = useNotification()
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
+  const [testAttachments, setTestAttachments] = useState<TestAttachment[]>([])
   const [testing, setTesting] = useState(false)
+  const [testVoiceRecording, setTestVoiceRecording] = useState(false)
+  const [testVoiceProcessing, setTestVoiceProcessing] = useState(false)
+  const [testVoiceDraft, setTestVoiceDraft] = useState<TestAttachment | null>(null)
+  const [testVoiceElapsedMs, setTestVoiceElapsedMs] = useState(0)
+  const [testVoicePlaying, setTestVoicePlaying] = useState(false)
+  const [testVoiceBars, setTestVoiceBars] = useState(() => createTestVoiceBars())
+  const testFileInputRef = useRef<HTMLInputElement | null>(null)
+  const testVoiceRecorderRef = useRef<MediaRecorder | null>(null)
+  const testVoiceStreamRef = useRef<MediaStream | null>(null)
+  const testVoiceChunksRef = useRef<Blob[]>([])
+  const testVoiceStartedAtRef = useRef(0)
+  const testVoiceTimerRef = useRef<number | null>(null)
+  const testVoiceSendAfterStopRef = useRef(false)
+  const testVoiceDiscardRef = useRef(false)
+  const testVoiceAudioRef = useRef<HTMLAudioElement | null>(null)
+
+  useEffect(() => () => {
+    cleanupTestVoiceRecorder()
+  }, [])
 
   const allowedActions = actionsByObjective[agent.objective] || actionsByObjective.custom
   const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
@@ -533,11 +708,22 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         }))
       ]
     : [{ value: '', label: 'Selecciona producto primero' }]
-  const hasTestConversation = testMessages.length > 0 || Boolean(testInput.trim())
+  const testVoicePanelActive = testVoiceRecording || testVoiceProcessing || Boolean(testVoiceDraft)
+  const hasTestConversation = testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
   const testPreviewMessages: PhoneChatPreviewMessage[] = testMessages.map((message, index) => ({
     id: `test-${index}`,
     direction: message.internal ? 'system' : message.role === 'user' ? 'outbound' : 'inbound',
-    body: message.content,
+    body: message.content || getAttachmentMessageLabel(message.attachments || []),
+    attachments: (message.attachments || []).map((attachment): PhoneChatPreviewAttachment => ({
+      id: attachment.id,
+      kind: attachment.kind,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      dataUrl: attachment.dataUrl,
+      thumbnailDataUrl: attachment.thumbnailDataUrl,
+      durationMs: attachment.durationMs
+    })),
     internal: message.internal,
     time: message.internal ? undefined : '11:48'
   }))
@@ -665,18 +851,58 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     updateGoalWorkflow({ triggerLink: getTriggerLinkWorkflow(triggerLink) })
   }
 
-  const handleSendTestMessage = async () => {
-    const content = testInput.trim()
-    if (!content || testing) return
+  function clearTestVoiceTimer() {
+    if (testVoiceTimerRef.current !== null) {
+      window.clearInterval(testVoiceTimerRef.current)
+      testVoiceTimerRef.current = null
+    }
+  }
 
-    const nextMessages: TestMessage[] = [...testMessages.filter((m) => !m.internal), { role: 'user' as const, content }]
-    setTestMessages([...testMessages, { role: 'user', content }])
-    setTestInput('')
+  function stopTestVoiceStream() {
+    testVoiceStreamRef.current?.getTracks().forEach((track) => track.stop())
+    testVoiceStreamRef.current = null
+  }
+
+  function cleanupTestVoiceRecorder() {
+    clearTestVoiceTimer()
+    const recorder = testVoiceRecorderRef.current
+    if (recorder) {
+      recorder.ondataavailable = null
+      recorder.onstop = null
+      if (recorder.state !== 'inactive') {
+        try {
+          recorder.stop()
+        } catch {
+          // El navegador puede marcar inactive justo al limpiar; no afecta la prueba.
+        }
+      }
+    }
+    testVoiceRecorderRef.current = null
+    stopTestVoiceStream()
+  }
+
+  async function submitTestMessage(input: { content?: string; attachments?: TestAttachment[]; clearComposer?: boolean }) {
+    const content = String(input.content ?? '').trim()
+    const attachments = input.attachments || []
+    if (testing || (!content && attachments.length === 0)) return
+
+    const userMessage: TestMessage = {
+      role: 'user',
+      content,
+      ...(attachments.length ? { attachments } : {})
+    }
+    const nextMessages: TestMessage[] = [...testMessages.filter((m) => !m.internal), userMessage]
+
+    setTestMessages((current) => [...current, userMessage])
+    if (input.clearComposer !== false) {
+      setTestInput('')
+      setTestAttachments([])
+    }
     setTesting(true)
 
     try {
       const result: ConversationalAgentTestResult = await conversationalAgentService.testAgent(
-        nextMessages.map(({ role, content: text }) => ({ role, content: text })),
+        nextMessages.map(toTestPayloadMessage),
         { config: agentToInput(agent) }
       )
 
@@ -708,10 +934,217 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     }
   }
 
+  const handleSendTestMessage = () => {
+    void submitTestMessage({
+      content: testInput,
+      attachments: testAttachments,
+      clearComposer: true
+    })
+  }
+
+  const handleOpenTestAttachmentPicker = () => {
+    if (testing || testVoicePanelActive) return
+    testFileInputRef.current?.click()
+  }
+
+  const handleTestAttachmentInputChange: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    const files = Array.from(event.currentTarget.files || [])
+    event.currentTarget.value = ''
+    if (!files.length || testing) return
+
+    const availableSlots = Math.max(0, MAX_TEST_ATTACHMENTS - testAttachments.length)
+    if (availableSlots <= 0) {
+      showToast('warning', 'Límite de archivos', `Puedes probar hasta ${MAX_TEST_ATTACHMENTS} adjuntos por mensaje.`)
+      return
+    }
+
+    const acceptedFiles = files.slice(0, availableSlots)
+    const oversized = acceptedFiles.find((file) => file.size > MAX_TEST_ATTACHMENT_BYTES)
+    if (oversized) {
+      showToast('error', 'Archivo muy pesado', `${oversized.name} supera el límite de 18 MB para pruebas.`)
+      return
+    }
+
+    try {
+      const attachments = await Promise.all(acceptedFiles.map(createTestAttachment))
+      setTestAttachments((current) => [...current, ...attachments].slice(0, MAX_TEST_ATTACHMENTS))
+      if (files.length > acceptedFiles.length) {
+        showToast('warning', 'Algunos archivos no se agregaron', `El demo acepta ${MAX_TEST_ATTACHMENTS} adjuntos por mensaje.`)
+      }
+    } catch (error: any) {
+      showToast('error', 'No se pudo leer el archivo', error?.message || 'Intenta con otro archivo.')
+    }
+  }
+
+  const handleRemoveTestAttachment = (attachmentId: string) => {
+    if (testing) return
+    setTestAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
+  }
+
+  const handleStopTestVoiceRecording = () => {
+    if (testVoiceRecorderRef.current?.state === 'recording') {
+      setTestVoiceProcessing(true)
+      testVoiceRecorderRef.current.stop()
+    }
+  }
+
+  const handleStartTestVoiceRecording = async () => {
+    if (testing || testVoiceRecording || testVoiceProcessing) return
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      showToast('error', 'Audio no disponible', 'Este navegador no permite grabar notas de voz aquí.')
+      return
+    }
+
+    setTestVoiceProcessing(true)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = getSupportedTestVoiceMimeType()
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      testVoiceStreamRef.current = stream
+      testVoiceRecorderRef.current = recorder
+      testVoiceChunksRef.current = []
+      testVoiceStartedAtRef.current = Date.now()
+      testVoiceSendAfterStopRef.current = false
+      testVoiceDiscardRef.current = false
+      setTestVoiceDraft(null)
+      setTestVoiceElapsedMs(0)
+      setTestVoiceBars(createTestVoiceBars())
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) {
+          testVoiceChunksRef.current.push(event.data)
+        }
+      }
+      recorder.onstop = async () => {
+        clearTestVoiceTimer()
+        stopTestVoiceStream()
+        testVoiceRecorderRef.current = null
+        setTestVoiceRecording(false)
+        setTestVoiceProcessing(true)
+
+        const durationMs = Math.max(0, Date.now() - testVoiceStartedAtRef.current)
+        const chunks = testVoiceChunksRef.current
+        const sendAfterStop = testVoiceSendAfterStopRef.current
+        const discard = testVoiceDiscardRef.current
+        testVoiceSendAfterStopRef.current = false
+        testVoiceDiscardRef.current = false
+
+        if (discard) {
+          setTestVoiceProcessing(false)
+          return
+        }
+
+        try {
+          const type = recorder.mimeType || mimeType || 'audio/webm'
+          const blob = new Blob(chunks, { type })
+          if (durationMs < MIN_TEST_VOICE_RECORDING_MS || blob.size === 0) {
+            showToast('warning', 'Nota muy corta', 'Graba tantito más para que el agente pueda escuchar algo útil.')
+            return
+          }
+          if (blob.size > MAX_TEST_ATTACHMENT_BYTES) {
+            showToast('error', 'Audio muy pesado', 'La nota de voz supera el límite de 18 MB para pruebas.')
+            return
+          }
+
+          const dataUrl = await readBlobAsDataUrl(blob)
+          const attachment: TestAttachment = {
+            id: `test-voice-${Date.now()}`,
+            kind: 'audio',
+            name: `nota-de-voz.${type.includes('mp4') ? 'm4a' : 'webm'}`,
+            mimeType: type,
+            size: blob.size,
+            durationMs,
+            dataUrl
+          }
+
+          if (sendAfterStop) {
+            setTestVoiceDraft(null)
+            await submitTestMessage({ content: '', attachments: [attachment], clearComposer: false })
+          } else {
+            setTestVoiceDraft(attachment)
+          }
+        } catch (error: any) {
+          showToast('error', 'No se pudo preparar el audio', error?.message || 'Intenta grabarlo otra vez.')
+        } finally {
+          setTestVoiceProcessing(false)
+        }
+      }
+
+      recorder.start()
+      setTestVoiceRecording(true)
+      setTestVoiceProcessing(false)
+      testVoiceTimerRef.current = window.setInterval(() => {
+        const elapsed = Date.now() - testVoiceStartedAtRef.current
+        setTestVoiceElapsedMs(elapsed)
+        setTestVoiceBars(createTestVoiceBars(Math.round(elapsed / 120)))
+        if (elapsed >= MAX_TEST_VOICE_RECORDING_MS) {
+          handleStopTestVoiceRecording()
+        }
+      }, 160)
+    } catch (error: any) {
+      cleanupTestVoiceRecorder()
+      setTestVoiceRecording(false)
+      setTestVoiceProcessing(false)
+      showToast('error', 'No se pudo grabar', error?.message || 'Revisa el permiso del micrófono e intenta de nuevo.')
+    }
+  }
+
+  const handleCancelTestVoiceDraft = () => {
+    if (testVoiceRecording) {
+      testVoiceSendAfterStopRef.current = false
+      testVoiceDiscardRef.current = true
+      testVoiceChunksRef.current = []
+      handleStopTestVoiceRecording()
+    }
+    testVoiceAudioRef.current?.pause()
+    setTestVoicePlaying(false)
+    setTestVoiceDraft(null)
+    setTestVoiceElapsedMs(0)
+  }
+
+  const handleTestVoicePrimary = () => {
+    if (testVoiceRecording) {
+      handleStopTestVoiceRecording()
+      return
+    }
+
+    const audio = testVoiceAudioRef.current
+    if (!audio) return
+    if (testVoicePlaying) {
+      audio.pause()
+      setTestVoicePlaying(false)
+      return
+    }
+    audio.play()
+      .then(() => setTestVoicePlaying(true))
+      .catch(() => showToast('error', 'No se pudo escuchar', 'Toca el audio otra vez.'))
+  }
+
+  const handleSendTestVoice = () => {
+    if (testVoiceRecording) {
+      testVoiceSendAfterStopRef.current = true
+      handleStopTestVoiceRecording()
+      return
+    }
+    if (!testVoiceDraft) return
+    const attachment = testVoiceDraft
+    setTestVoiceDraft(null)
+    setTestVoiceElapsedMs(0)
+    setTestVoicePlaying(false)
+    void submitTestMessage({ content: '', attachments: [attachment], clearComposer: false })
+  }
+
   const handleResetTestChat = () => {
     if (testing) return
+    cleanupTestVoiceRecorder()
     setTestMessages([])
     setTestInput('')
+    setTestAttachments([])
+    setTestVoiceDraft(null)
+    setTestVoiceRecording(false)
+    setTestVoiceProcessing(false)
+    setTestVoiceElapsedMs(0)
+    setTestVoicePlaying(false)
   }
 
   return (
@@ -1419,20 +1852,55 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 }
               ]}
               composer={(
-                <PhoneChatPreviewComposer
-                  value={testInput}
-                  placeholder="Ejemplo: Hola, quiero agendar"
-                  disabled={testing}
-                  sendDisabled={testing || !testInput.trim()}
-                  onChange={setTestInput}
-                  onSend={handleSendTestMessage}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      handleSendTestMessage()
-                    }
-                  }}
-                />
+                <>
+                  <input
+                    ref={testFileInputRef}
+                    type="file"
+                    accept={TEST_ATTACHMENT_ACCEPT}
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={handleTestAttachmentInputChange}
+                  />
+                  <PhoneChatPreviewDraftAttachments
+                    attachments={testAttachments}
+                    onRemove={handleRemoveTestAttachment}
+                  />
+                  <PhoneChatPreviewComposer
+                    value={testInput}
+                    placeholder="Ejemplo: Hola, quiero agendar"
+                    disabled={testing}
+                    sendDisabled={testing || (!testInput.trim() && testAttachments.length === 0)}
+                    hasDraftContent={testAttachments.length > 0}
+                    onChange={setTestInput}
+                    onSend={handleSendTestMessage}
+                    onAttach={handleOpenTestAttachmentPicker}
+                    onVoice={handleStartTestVoiceRecording}
+                    recording={testVoiceRecording}
+                    voicePanel={testVoicePanelActive ? (
+                      <PhoneChatPreviewVoiceComposer
+                        recording={testVoiceRecording}
+                        processing={testVoiceProcessing}
+                        playing={testVoicePlaying}
+                        durationMs={testVoiceDraft?.durationMs || testVoiceElapsedMs}
+                        bars={testVoiceBars}
+                        audioSrc={testVoiceDraft?.dataUrl}
+                        audioRef={testVoiceAudioRef}
+                        onCancel={handleCancelTestVoiceDraft}
+                        onPrimary={handleTestVoicePrimary}
+                        onSend={handleSendTestVoice}
+                        onAudioEnded={() => setTestVoicePlaying(false)}
+                        onAudioPause={() => setTestVoicePlaying(false)}
+                        onAudioPlay={() => setTestVoicePlaying(true)}
+                      />
+                    ) : undefined}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        handleSendTestMessage()
+                      }
+                    }}
+                  />
+                </>
               )}
             />
           </div>

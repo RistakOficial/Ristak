@@ -264,6 +264,25 @@ export interface ConversationalAgentTestResult {
   model: string
 }
 
+export type ConversationalAgentTestAttachmentKind = 'image' | 'audio' | 'video' | 'document' | 'pdf' | 'text' | 'file'
+
+export interface ConversationalAgentTestAttachment {
+  kind: ConversationalAgentTestAttachmentKind
+  name: string
+  mimeType?: string
+  size?: number
+  dataUrl?: string
+  thumbnailDataUrl?: string
+  text?: string
+  durationMs?: number
+}
+
+export interface ConversationalAgentTestMessage {
+  role: 'user' | 'assistant'
+  content: string
+  attachments?: ConversationalAgentTestAttachment[]
+}
+
 export interface ConversationalAgentEvent {
   id: string
   contactId: string | null
@@ -627,7 +646,7 @@ export const conversationalAgentService = {
   },
 
   testAgent(
-    messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+    messages: ConversationalAgentTestMessage[],
     options: { config?: ConversationalAgentDefInput; agentId?: string } = {}
   ): Promise<ConversationalAgentTestResult> {
     return request<ConversationalAgentTestResult>('/test', {

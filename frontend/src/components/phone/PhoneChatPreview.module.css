@@ -319,6 +319,172 @@
   white-space: pre-wrap;
 }
 
+.messageAttachments {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.messageImage,
+.messageVideo {
+  display: block;
+  width: min(238px, 100%);
+  max-height: 240px;
+  border-radius: 9px;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--pc-muted) 14%, transparent);
+}
+
+.messageVideo {
+  aspect-ratio: 16 / 10;
+}
+
+.messageFile {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-width: min(220px, 100%);
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--pc-border) 82%, transparent);
+  border-radius: 9px;
+  color: inherit;
+  background: color-mix(in srgb, var(--pc-surface) 74%, transparent);
+  text-decoration: none;
+}
+
+.messageRowOutbound .messageFile {
+  background: color-mix(in srgb, var(--pc-outbound) 64%, var(--pc-surface) 36%);
+}
+
+.messageFileIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--pc-on-primary);
+  background: var(--pc-primary);
+}
+
+.messageFileText {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.messageFileText strong,
+.messageFileText small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messageFileText strong {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.12;
+}
+
+.messageFileText small {
+  color: var(--pc-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.messageBubbleAudio {
+  min-width: 224px;
+  border-radius: 17px;
+}
+
+.messageBubbleFile {
+  min-width: 212px;
+}
+
+.messageAudio {
+  display: grid;
+  grid-template-columns: 31px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 38px;
+}
+
+.messageAudioNative {
+  display: none;
+}
+
+.messageAudioPlayButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 31px;
+  height: 31px;
+  padding: 0;
+  border: 0;
+  color: var(--pc-primary);
+  background: transparent;
+}
+
+.messageAudioPlayButton svg {
+  fill: currentColor;
+  stroke-width: 2.5;
+}
+
+.messageAudioWaveform {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 24px;
+  overflow: hidden;
+}
+
+.messageAudioWaveBar {
+  display: inline-block;
+  flex: 1 0 2px;
+  max-width: 3px;
+  height: var(--bar-height, 10px);
+  min-height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pc-muted) 48%, transparent);
+}
+
+.messageAudioProgressDot {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: clamp(7px, var(--audio-progress, 0%), calc(100% - 7px));
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: var(--pc-accent);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc-surface) 70%, transparent);
+}
+
+.messageRowOutbound .messageAudioProgressDot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc-outbound) 76%, transparent);
+}
+
+.messageAudioDuration {
+  color: var(--pc-muted);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.messageRowOutbound .messageAudioDuration {
+  color: var(--pc-outbound-meta);
+}
+
 .messageMeta {
   display: flex;
   align-items: flex-end;
@@ -505,6 +671,236 @@
 
 .composerSendButton:disabled {
   opacity: 0.52;
+}
+
+.composerRecording .composerSendButton {
+  background: var(--neg, var(--pc-accent));
+}
+
+.composerVoiceMode {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 112px;
+  padding: 8px 12px 9px;
+}
+
+.draftAttachments {
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px 8px 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.draftAttachments::-webkit-scrollbar {
+  display: none;
+}
+
+.draftAttachment {
+  position: relative;
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--pc-surface);
+  box-shadow: 0 0 0 1px var(--pc-border);
+}
+
+.draftAttachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.draftAttachmentFile {
+  width: 154px;
+}
+
+.draftAttachmentFileContent {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-rows: 1fr 1fr;
+  align-items: center;
+  column-gap: 8px;
+  height: 100%;
+  padding: 8px 28px 8px 9px;
+  color: var(--pc-text);
+}
+
+.draftAttachmentFileContent svg {
+  grid-row: 1 / -1;
+  color: var(--pc-muted);
+}
+
+.draftAttachmentFileContent strong,
+.draftAttachmentFileContent small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draftAttachmentFileContent strong {
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.08;
+}
+
+.draftAttachmentFileContent small {
+  color: var(--pc-muted);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.draftAttachment button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--pc-on-primary);
+  background: color-mix(in srgb, var(--pc-primary) 82%, transparent);
+}
+
+.voiceComposerPanel {
+  display: grid;
+  grid-template-rows: auto minmax(46px, auto);
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  color: var(--pc-text);
+}
+
+.voiceComposerTrack {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 34px;
+}
+
+.voiceComposerTime {
+  color: var(--pc-text);
+  font-size: 26px;
+  font-weight: 420;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.voiceComposerWaveform {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  min-width: 0;
+  height: 34px;
+  overflow: hidden;
+}
+
+.voiceComposerWaveform::before {
+  position: absolute;
+  inset: 50% 0 auto;
+  border-top: 2px dotted color-mix(in srgb, var(--pc-muted) 38%, transparent);
+  content: "";
+  transform: translateY(-50%);
+}
+
+.voiceComposerWaveBar {
+  position: relative;
+  z-index: 1;
+  display: block;
+  flex: 1 0 3px;
+  min-width: 3px;
+  max-width: 5px;
+  height: var(--voice-bar-height, 10px);
+  min-height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pc-muted) 88%, var(--pc-primary) 12%);
+  transition: height 90ms linear, background-color 180ms ease, opacity 180ms ease;
+}
+
+.voiceComposerWaveformRecording .voiceComposerWaveBar,
+.voiceComposerWaveformPlaying .voiceComposerWaveBar {
+  background: var(--pc-accent);
+}
+
+.voiceComposerPanelProcessing .voiceComposerWaveBar {
+  opacity: 0.46;
+}
+
+.voiceComposerActions {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 52px;
+  align-items: center;
+  min-width: 0;
+  min-height: 50px;
+}
+
+.voiceComposerButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.voiceComposerButton:disabled {
+  opacity: 0.48;
+}
+
+.voiceDeleteButton {
+  justify-self: start;
+  width: 42px;
+  height: 42px;
+  color: var(--pc-text);
+}
+
+.voicePauseButton {
+  justify-self: center;
+  width: 48px;
+  height: 48px;
+  border: 3px solid var(--neg, var(--pc-primary));
+  color: var(--neg, var(--pc-primary));
+  background: transparent;
+}
+
+.voicePauseButton svg {
+  fill: currentColor;
+  stroke-width: 2.6;
+}
+
+.voiceSendAudioButton {
+  justify-self: end;
+  width: 50px;
+  height: 50px;
+  color: var(--pc-on-primary);
+  background: var(--pc-accent);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--pc-accent) 24%, transparent);
+}
+
+.voiceSendAudioButton svg {
+  fill: currentColor;
+  stroke-width: 2.8;
+}
+
+.voicePreviewAudio {
+  display: none;
 }
 
 @media (max-width: 900px) {

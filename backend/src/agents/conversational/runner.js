@@ -51,7 +51,8 @@ import {
 } from './messageSplitter.js'
 import {
   buildConversationalMediaSummary,
-  hydrateConversationalMessagesMedia
+  hydrateConversationalMessagesMedia,
+  hydrateConversationalPreviewMessagesMedia
 } from './mediaContext.js'
 
 const HISTORY_LIMIT = 20
@@ -1101,8 +1102,17 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   const runtimeConfig = { ...config, aiProvider }
 
   const cleanMessages = (Array.isArray(messages) ? messages : [])
-    .filter((m) => m && typeof m.content === 'string' && m.content.trim())
-    .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content.trim() }))
+    .filter((m) => {
+      if (!m) return false
+      const hasText = typeof m.content === 'string' && m.content.trim()
+      const hasAttachments = Array.isArray(m.attachments) && m.attachments.length
+      return hasText || hasAttachments
+    })
+    .map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: typeof m.content === 'string' ? m.content.trim() : '',
+      attachments: Array.isArray(m.attachments) ? m.attachments : []
+    }))
     .slice(-HISTORY_LIMIT)
 
   if (!cleanMessages.length) {
@@ -1121,10 +1131,20 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     ruleContext: null
   })
 
+  const audioTranscriptionApiKey = aiProvider === 'openai'
+    ? runtime.apiKey
+    : await getOpenAIApiKey().catch(() => null)
+  const messagesForAgent = await hydrateConversationalPreviewMessagesMedia(cleanMessages, {
+    aiProvider,
+    apiKey: runtime.apiKey,
+    audioTranscriptionApiKey,
+    includeBinary: aiProvider === 'openai'
+  })
+
   const reply = await executeAgent({
     agent,
     modelProvider: runtime.modelProvider,
-    messages: cleanMessages,
+    messages: messagesForAgent,
     contactId: null,
     model,
     aiProvider
