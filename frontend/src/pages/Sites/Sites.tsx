@@ -18686,10 +18686,15 @@ const SitesMediaPickerModal: React.FC<{
   }
 
   return (
-    <div className={styles.mediaPickerOverlay} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div className={styles.mediaPickerModal} role="dialog" aria-modal="true" aria-label={title}>
+    <div
+      className={styles.mediaPickerOverlay}
+      role="presentation"
+      data-overlay=""
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}
+    >
+      <div className={styles.mediaPickerModal} role="dialog" aria-modal="true" aria-label={title} data-modal="">
         <header className={styles.mediaPickerHeader}>
-          <div>
+          <div className={styles.mediaPickerHeaderTitle}>
             <span>{kind === 'image' ? 'Biblioteca de imágenes' : 'Biblioteca de videos'}</span>
             <strong>{title}</strong>
           </div>
@@ -18733,43 +18738,47 @@ const SitesMediaPickerModal: React.FC<{
                 const name = getMediaPickerAssetName(asset)
                 const deleting = deletingAssetId === asset.id
                 const syncing = syncingAssetId === asset.id
-                const disabled = Boolean(syncingAssetId)
+                const disabled = Boolean(syncingAssetId) || deleting
 
                 return (
                   <div
-                    role="button"
-                    tabIndex={disabled ? -1 : 0}
                     key={asset.id}
                     className={styles.mediaPickerAsset}
                     aria-disabled={disabled}
-                    aria-busy={syncing}
-                    onClick={() => {
-                      if (disabled) return
-                      void selectAsset(asset)
-                    }}
-                    onKeyDown={(event) => {
-                      if (disabled) return
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        void selectAsset(asset)
-                      }
-                    }}
+                    aria-busy={syncing || deleting}
                   >
-                    <span className={styles.mediaPickerAssetPreview}>
-                      {kind === 'image' ? (
-                        <img src={previewUrl} alt="" loading="lazy" />
-                      ) : (
-                        assetUrl
-                          ? <video src={assetUrl} muted playsInline preload="metadata" />
-                          : <Video size={24} />
-                      )}
-                    </span>
-                    <span className={styles.mediaPickerAssetInfo}>
-                      <strong title={name}>{name}</strong>
-                      <small>{formatMediaPickerAssetSize(asset)}</small>
-                    </span>
+                    <button
+                      type="button"
+                      className={styles.mediaPickerAssetMain}
+                      onClick={() => { void selectAsset(asset) }}
+                      disabled={disabled}
+                      aria-label={`Elegir ${name}`}
+                    >
+                      <span className={styles.mediaPickerAssetPreview}>
+                        {kind === 'image' ? (
+                          <img src={previewUrl} alt="" loading="lazy" />
+                        ) : (
+                          assetUrl
+                            ? <video src={assetUrl} muted playsInline preload="metadata" />
+                            : <Video size={24} />
+                        )}
+                      </span>
+                      <span className={styles.mediaPickerAssetInfo}>
+                        <strong title={name}>{name}</strong>
+                        <small>{formatMediaPickerAssetSize(asset)}</small>
+                      </span>
+                    </button>
                     <span className={styles.mediaPickerAssetFooter}>
-                      <span>{syncing ? 'Sincronizando' : 'Elegir'}</span>
+                      <button
+                        type="button"
+                        className={styles.mediaPickerChooseButton}
+                        onClick={() => { void selectAsset(asset) }}
+                        disabled={disabled}
+                        aria-label={`Elegir ${name}`}
+                      >
+                        {syncing && <RefreshCw size={13} className={styles.previewSpin} aria-hidden="true" />}
+                        <span>{syncing ? 'Sincronizando' : 'Elegir'}</span>
+                      </button>
                       <button
                         type="button"
                         className={styles.mediaPickerDeleteButton}
@@ -18777,7 +18786,7 @@ const SitesMediaPickerModal: React.FC<{
                         disabled={deleting || Boolean(syncingAssetId)}
                         aria-label={`Eliminar ${name}`}
                       >
-                        {syncing ? <RefreshCw size={13} className={styles.previewSpin} /> : <Trash2 size={13} />}
+                        {(syncing || deleting) ? <RefreshCw size={13} className={styles.previewSpin} /> : <Trash2 size={13} />}
                       </button>
                     </span>
                   </div>

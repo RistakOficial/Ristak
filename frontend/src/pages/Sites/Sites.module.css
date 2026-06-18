@@ -11,17 +11,17 @@
   min-width: 0;
 }
 
-.mediaUploadControl button {
+.mediaUploadControl > button {
   width: 100%;
   min-height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid var(--design-control-border, rgba(148, 163, 184, 0.24));
-  border-radius: var(--design-control-radius, 8px);
-  background: var(--design-control-bg, var(--color-background-primary));
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
   padding: 0 12px;
   font: inherit;
   font-size: 0.8rem;
@@ -29,64 +29,67 @@
   cursor: pointer;
 }
 
-.mediaUploadControl button:hover:not(:disabled) {
-  border-color: var(--design-control-border-hover, rgba(148, 163, 184, 0.42));
-  background: var(--design-control-bg-hover, rgba(148, 163, 184, 0.1));
+.mediaUploadControl > button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
 }
 
-.mediaUploadControl button:disabled {
+.mediaUploadControl > button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
 }
 
-.mediaPickerOverlay {
+.mediaPickerOverlay[data-overlay] {
   position: fixed;
   inset: 0;
   z-index: 1200;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(8, 11, 16, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 3vw, 32px);
+  background: color-mix(in srgb, var(--bg) 68%, transparent);
   backdrop-filter: blur(8px);
 }
 
-.mediaPickerModal {
-  width: min(920px, calc(100vw - 32px));
-  max-height: min(760px, calc(100vh - 48px));
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+.mediaPickerModal[data-modal] {
+  width: min(1120px, calc(100vw - 40px));
+  min-height: min(600px, calc(100vh - 40px));
+  max-height: min(860px, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-card);
   background: var(--surface-solid, var(--surface));
   box-shadow: var(--shadow-pop);
 }
 
 .mediaPickerHeader {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px 20px 14px;
+  padding: 18px 64px 14px 20px;
   border-bottom: 1px solid var(--border);
 }
 
-.mediaPickerHeader div {
+.mediaPickerHeaderTitle {
   min-width: 0;
   display: grid;
   gap: 2px;
 }
 
-.mediaPickerHeader span {
-  color: var(--color-text-secondary);
+.mediaPickerHeaderTitle span {
+  color: var(--text-mute);
   font-size: 0.74rem;
   font-weight: 740;
   text-transform: uppercase;
   letter-spacing: 0;
 }
 
-.mediaPickerHeader strong {
-  color: var(--color-text-primary);
+.mediaPickerHeaderTitle strong {
+  color: var(--text);
   font-size: 1.08rem;
   font-weight: 780;
 }
@@ -103,13 +106,18 @@
 }
 
 .mediaPickerIconButton {
+  position: absolute;
+  top: 16px;
+  right: 20px;
   width: 34px;
   height: 34px;
+  flex: 0 0 34px;
   border-radius: var(--radius-ctl);
 }
 
 .mediaPickerToolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -118,9 +126,9 @@
 }
 
 .mediaPickerSearch {
+  width: 100%;
   min-width: 220px;
-  max-width: 420px;
-  flex: 1 1 320px;
+  max-width: 520px;
   min-height: 38px;
   display: flex;
   align-items: center;
@@ -147,7 +155,9 @@
 .mediaPickerActions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
 }
 
 .mediaPickerSecondaryButton,
@@ -157,12 +167,22 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border-radius: 10px;
+  max-width: 100%;
+  min-width: 0;
+  border-radius: var(--radius-ctl);
   padding: 0 12px;
   font: inherit;
   font-size: 0.82rem;
   font-weight: 760;
   cursor: pointer;
+}
+
+.mediaPickerSecondaryButton span,
+.mediaPickerUploadButton span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mediaPickerSecondaryButton {
@@ -185,7 +205,8 @@
 }
 
 .mediaPickerBody {
-  min-height: 320px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   padding: 18px 20px 20px;
   scrollbar-gutter: stable;
@@ -193,25 +214,24 @@
 
 .mediaPickerGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(152px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 12px;
 }
 
 .mediaPickerAsset {
   min-width: 0;
   display: grid;
-  gap: 9px;
+  gap: 10px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
   background: var(--surface);
   color: inherit;
   text-align: left;
-  cursor: pointer;
 }
 
 .mediaPickerAsset:hover,
-.mediaPickerAsset:focus-visible {
+.mediaPickerAsset:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
   outline: 0;
@@ -227,14 +247,32 @@
   box-shadow: none;
 }
 
+.mediaPickerAssetMain {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  gap: 9px;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--radius-ctl) - 2px);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mediaPickerAssetMain:disabled {
+  cursor: wait;
+}
+
 .mediaPickerAssetPreview {
   aspect-ratio: 16 / 10;
   display: grid;
   place-items: center;
   overflow: hidden;
-  border-radius: 9px;
-  background: var(--color-background-secondary);
-  color: var(--color-text-secondary);
+  border-radius: calc(var(--radius-ctl) - 1px);
+  background: var(--surface-2);
+  color: var(--text-mute);
 }
 
 .mediaPickerAssetPreview img,
@@ -259,32 +297,68 @@
 }
 
 .mediaPickerAssetInfo strong {
-  color: var(--color-text-primary);
+  color: var(--text);
   font-size: 0.82rem;
   font-weight: 720;
 }
 
 .mediaPickerAssetInfo small {
-  color: var(--color-text-secondary);
+  color: var(--text-mute);
   font-size: 0.74rem;
   font-weight: 560;
 }
 
 .mediaPickerAssetFooter {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   color: var(--accent);
   font-size: 0.78rem;
   font-weight: 760;
 }
 
+.mediaPickerChooseButton {
+  min-width: 0;
+  width: 100%;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.mediaPickerChooseButton span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mediaPickerChooseButton:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mediaPickerChooseButton:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
 .mediaPickerDeleteButton {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
-  border-radius: 8px;
+  border-radius: var(--radius-ctl);
 }
 
 .mediaPickerDeleteButton:hover:not(:disabled) {
@@ -304,8 +378,63 @@
 }
 
 .mediaPickerEmpty strong {
-  color: var(--color-text-primary);
+  color: var(--text);
   font-size: 0.95rem;
+}
+
+@media (max-width: 720px) {
+  .mediaPickerOverlay {
+    padding: 12px;
+  }
+
+  .mediaPickerModal[data-modal] {
+    width: calc(100vw - 24px);
+    min-height: calc(100vh - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .mediaPickerHeader {
+    padding: 16px 58px 13px 16px;
+  }
+
+  .mediaPickerIconButton {
+    top: 14px;
+    right: 16px;
+  }
+
+  .mediaPickerToolbar {
+    grid-template-columns: 1fr;
+    padding: 12px 16px;
+  }
+
+  .mediaPickerSearch {
+    min-width: 0;
+    max-width: none;
+  }
+
+  .mediaPickerActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mediaPickerSecondaryButton,
+  .mediaPickerUploadButton {
+    width: 100%;
+  }
+
+  .mediaPickerBody {
+    padding: 14px 16px 16px;
+  }
+}
+
+@media (max-width: 460px) {
+  .mediaPickerActions {
+    grid-template-columns: 1fr;
+  }
+
+  .mediaPickerGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .sectionBackgroundMedia {
