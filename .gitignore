@@ -42,3 +42,9 @@ Thumbs.db
 tmp/
 temp/
 _harness/
+
+# Android signing — NUNCA subir al repo
+frontend/android/app/*.keystore
+frontend/android/app/*.jks
+frontend/android/app/keystore.properties
+frontend/android/local.properties
