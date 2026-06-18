@@ -66,6 +66,7 @@ const viewTabs = [
 const analyticsViewTypes: ViewType[] = ['day', 'month', 'year']
 const analyticsMainChartViews: AnalyticsMainChartView[] = ['traffic', 'visitors-registrations', 'sessions-visitors', 'identity-returning']
 const analyticsConversionChartViews: AnalyticsConversionChartView[] = ['registrations-customers', 'appointments-attendances', 'prospects-customers', 'messages-appointments', 'appointments-patients']
+const defaultAnalyticsViewType: ViewType = 'month'
 const isAnalyticsViewType = (value?: string): value is ViewType => analyticsViewTypes.includes(value as ViewType)
 const isAnalyticsMainChartView = (value?: string): value is AnalyticsMainChartView => analyticsMainChartViews.includes(value as AnalyticsMainChartView)
 const isAnalyticsConversionChartView = (value?: string): value is AnalyticsConversionChartView => analyticsConversionChartViews.includes(value as AnalyticsConversionChartView)
@@ -74,7 +75,7 @@ const parseAnalyticsRoute = (pathname: string) => {
   const analyticsIndex = segments.indexOf('analytics')
   const routeSegments = analyticsIndex >= 0 ? segments.slice(analyticsIndex + 1) : []
   return {
-    viewType: isAnalyticsViewType(routeSegments[0]) ? routeSegments[0] : 'day',
+    viewType: isAnalyticsViewType(routeSegments[0]) ? routeSegments[0] : defaultAnalyticsViewType,
     mainChart: isAnalyticsMainChartView(routeSegments[1]) ? routeSegments[1] : 'traffic',
     conversionChart: isAnalyticsConversionChartView(routeSegments[2]) ? routeSegments[2] : 'registrations-customers'
   }
