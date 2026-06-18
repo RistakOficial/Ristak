@@ -29,6 +29,8 @@ const ctx = {
   channel: 'whatsapp'
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
 test('renderTemplate reemplaza variables del contacto y la conversación', () => {
   assert.equal(renderTemplate('Hola {{contact.first_name}}!', ctx), 'Hola María!')
   assert.equal(renderTemplate('Dijiste: {{conversation.last_message}}', ctx), 'Dijiste: Hola, quiero el precio por favor')
@@ -231,6 +233,96 @@ test('trigger de formulario reconoce IDs específicos de formularios embebidos',
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('acción de añadir etiqueta no vuelve a disparar automatizaciones si la etiqueta ya estaba aplicada', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_tag_loop_${suffix}`
+  const contactId = `contact_tag_loop_${suffix}`
+  const tagId = `tag_loop_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        category: 'trigger',
+        label: 'Cuando...',
+        position: { x: 120, y: 220 },
+        config: {
+          triggers: [{
+            id: 'trigger-contact-tag',
+            type: 'trigger-contact-tag',
+            config: { operator: 'added', tag: tagId, tagName: 'Prueba' }
+          }]
+        }
+      },
+      {
+        id: 'add-same-tag',
+        type: 'action-add-contact-tag',
+        label: 'Añadir / eliminar etiqueta',
+        position: { x: 420, y: 220 },
+        config: { tag: tagId, tagName: 'Prueba' }
+      }
+    ],
+    edges: [{
+      id: 'edge-tag-loop',
+      sourceNodeId: 'start',
+      sourceHandle: 'out',
+      targetNodeId: 'add-same-tag',
+      targetHandle: 'in',
+      animated: true
+    }],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [tagId, 'Prueba'])
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, tags, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `tag-loop-${suffix}@example.com`,
+        'Contacto Loop',
+        'Contacto',
+        JSON.stringify([tagId]),
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test loop etiqueta existente', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('tag-changed', {
+      contactId,
+      tag: 'Prueba',
+      tagId,
+      tagAction: 'added'
+    })
+    await sleep(80)
+
+    const countRow = await db.get(
+      'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(Number(countRow?.total || 0), 1)
+
+    const enrollment = await db.get(
+      'SELECT log FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? LIMIT 1',
+      [automationId, contactId]
+    )
+    const log = JSON.parse(enrollment?.log || '[]')
+    assert.ok(log.some((entry) => /ya estaba aplicada/.test(entry.detail || '')))
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId]).catch(() => undefined)
   }
 })
 

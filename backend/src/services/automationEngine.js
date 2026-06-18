@@ -1441,23 +1441,48 @@ async function applyTagAction(node, ctx, remove) {
   const row = await db.get('SELECT tags FROM contacts WHERE id = ?', [ctx.contact.id])
   const tags = parseJson(row?.tags, [])
   const list = Array.isArray(tags) ? tags : []
+  const matchesTag = (candidate) => {
+    const normalized = normalizeText(candidate)
+    return Boolean(
+      candidate === tagId ||
+        normalized === normalizeText(tag) ||
+        normalized === normalizeText(displayName)
+    )
+  }
+  const hadTag = list.some(matchesTag)
   const next = remove
-    ? list.filter((candidate) => candidate !== tagId && normalizeText(candidate) !== normalizeText(tag))
-    : [...new Set([...list, tagId].filter(Boolean))]
-  await db.run('UPDATE contacts SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [
-    JSON.stringify(next),
-    ctx.contact.id
-  ])
+    ? list.filter((candidate) => !matchesTag(candidate))
+    : hadTag
+      ? [...new Set(list.map((candidate) => (matchesTag(candidate) && tagId ? tagId : candidate)).filter(Boolean))]
+      : [...new Set([...list, tagId || tag].filter(Boolean))]
+  const changedTags = JSON.stringify(next) !== JSON.stringify(list)
+  if (changedTags) {
+    await db.run('UPDATE contacts SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [
+      JSON.stringify(next),
+      ctx.contact.id
+    ])
+  }
   ctx.contact.tags = next
-  // El cambio de etiqueta puede disparar otras automatizaciones
-  setImmediate(() => {
-    handleAutomationEvent('tag-changed', {
-      contactId: ctx.contact.id,
-      tag: displayName,
-      tagId: tagId || null,
-      tagAction: remove ? 'removed' : 'added'
-    }).catch(() => undefined)
-  })
+  ctx.contact.tagKeys = await buildTagMatchKeys(ctx.contact.id, next)
+    .then((keys) => [...keys])
+    .catch(() => next)
+  const didChangeSemanticTag = remove ? hadTag : !hadTag
+  if (didChangeSemanticTag) {
+    // El cambio real de etiqueta puede disparar otras automatizaciones.
+    setImmediate(() => {
+      handleAutomationEvent('tag-changed', {
+        contactId: ctx.contact.id,
+        tag: displayName,
+        tagId: tagId || null,
+        tagAction: remove ? 'removed' : 'added'
+      }).catch(() => undefined)
+    })
+  }
+  if (!didChangeSemanticTag) {
+    return remove
+      ? `Etiqueta "${displayName}" ya no estaba aplicada`
+      : `Etiqueta "${displayName}" ya estaba aplicada`
+  }
   return remove ? `Etiqueta "${displayName}" quitada` : `Etiqueta "${displayName}" añadida`
 }
 
