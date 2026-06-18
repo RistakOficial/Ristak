@@ -92,6 +92,240 @@
   font-weight: 780;
 }
 
+.videoAnalyticsPanel {
+  display: grid;
+  gap: 16px;
+  padding: 16px 0 18px;
+  border-bottom: 1px solid var(--design-panel-border);
+}
+
+.videoAnalyticsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.videoAnalyticsHeader h2 {
+  margin: 6px 0 0;
+  color: var(--color-text-primary);
+  font-size: 18px;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+
+.videoAnalyticsHeader p {
+  margin: 5px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.videoAnalyticsEyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.videoAnalyticsActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.videoAnalyticsTabs {
+  max-width: 280px;
+}
+
+.videoAnalyticsKpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.videoAnalyticsKpis div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 9px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--design-panel-border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.videoAnalyticsKpis svg {
+  color: var(--accent);
+}
+
+.videoAnalyticsKpis span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoAnalyticsKpis strong {
+  grid-column: 1 / -1;
+  color: var(--color-text-primary);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.videoAnalyticsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.videoChartBlock {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-height: 292px;
+  padding: 14px;
+  border: 1px solid var(--design-panel-border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.videoChartTitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.videoChartTitle span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.videoChartTitle strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 780;
+}
+
+.videoChartEmpty,
+.videoAnalyticsEmpty {
+  display: flex;
+  min-height: 200px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.videoChartEmpty {
+  min-height: 220px;
+  border: 1px dashed var(--design-panel-border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.videoAnalyticsEmpty strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 780;
+}
+
+.videoAnalyticsEmpty p {
+  max-width: 420px;
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.videoHeatmapBars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8px, 1fr));
+  align-items: end;
+  gap: 4px;
+  min-height: 220px;
+  padding: 12px;
+  border: 1px solid var(--design-panel-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent) 12%);
+}
+
+.videoHeatmapBars span {
+  min-height: 6px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--accent);
+}
+
+.videoCountryList {
+  display: grid;
+  gap: 8px;
+}
+
+.videoCountryList div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--design-panel-border);
+}
+
+.videoCountryList div:last-child {
+  border-bottom: 0;
+}
+
+.videoCountryList svg {
+  color: var(--color-text-tertiary);
+}
+
+.videoCountryList span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoCountryList strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.videoCountryList small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.videoAnalyticsErrorIcon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--neg) 14%, transparent);
+  color: var(--neg);
+}
+
 .explorerCard {
   overflow: hidden;
 }
@@ -911,6 +1145,21 @@
 
   .usageNumbers {
     align-items: flex-start;
+  }
+
+  .videoAnalyticsHeader,
+  .videoAnalyticsActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .videoAnalyticsKpis,
+  .videoAnalyticsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .videoAnalyticsTabs {
+    max-width: none;
   }
 
   .toolbar {

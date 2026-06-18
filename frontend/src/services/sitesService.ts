@@ -1,5 +1,6 @@
 import apiClient from './apiClient'
 import { apiUrl, getApiBaseUrl } from './apiBaseUrl'
+import type { MediaAsset, MediaStreamAnalytics, MediaStreamAnalyticsInput } from './mediaService'
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('auth_token')
@@ -763,6 +764,18 @@ export const sitesService = {
 
   getDomain() {
     return apiClient.get<SitesDomainConfig>('/sites/domain')
+  },
+
+  listVideoAssets() {
+    return apiClient.get<MediaAsset[]>('/sites/video-assets')
+  },
+
+  getVideoAnalytics(assetId: string, input: MediaStreamAnalyticsInput = {}) {
+    const params: Record<string, string> = {}
+    if (input.dateFrom) params.dateFrom = input.dateFrom
+    if (input.dateTo) params.dateTo = input.dateTo
+    if (input.hourly !== undefined) params.hourly = String(input.hourly)
+    return apiClient.get<MediaStreamAnalytics>(`/sites/video-analytics/${encodeURIComponent(assetId)}`, { params })
   },
 
   verifyDomain(domain: string) {

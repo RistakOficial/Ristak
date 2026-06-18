@@ -29,11 +29,13 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  BarChart3,
   Bold,
   CalendarDays,
   Check,
   CheckCircle2,
   ChevronDown,
+  Clock3,
   ChevronRight,
   Code2,
   Copy,
@@ -43,6 +45,7 @@ import {
   ExternalLink,
   FileText,
   Filter,
+  Flame,
   FormInput,
   Globe2,
   GripVertical,
@@ -87,6 +90,7 @@ import {
   X
 } from 'lucide-react'
 import {
+  AreaChart,
   Badge,
   type BadgeVariant,
   Button,
@@ -141,7 +145,7 @@ import {
 import { aiAgentService } from '@/services/aiAgentService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
-import mediaService, { type MediaAsset } from '@/services/mediaService'
+import mediaService, { type MediaAsset, type MediaStreamAnalytics, type StreamChartPoint } from '@/services/mediaService'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import {
   customFieldsService,
@@ -158,8 +162,10 @@ import customFieldModalStyles from '../Settings/CustomFields.module.css'
 import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
 
-type SitesSection = 'landings' | 'forms' | 'leads' | 'domains'
+type SitesSection = 'landings' | 'forms' | 'leads' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
+type SitesAnalyticsSiteType = 'all' | 'landings' | 'forms'
+type SitesAnalyticsPeriod = '7d' | '30d' | '90d'
 type CreateFlow =
   | 'closed'
   | 'landing-start'
@@ -223,6 +229,7 @@ const sectionItems: Array<{ id: SitesSection; label: string; icon: React.ReactNo
   { id: 'landings', label: 'Sitios web', icon: <LayoutTemplate size={17} /> },
   { id: 'forms', label: 'Formularios', icon: <FormInput size={17} /> },
   { id: 'leads', label: 'Respuestas', icon: <ListChecks size={17} /> },
+  { id: 'analytics', label: 'Analíticas', icon: <BarChart3 size={17} /> },
   { id: 'domains', label: 'Dominios', icon: <Globe2 size={17} /> }
 ]
 
@@ -655,6 +662,7 @@ const sitesSectionPathById: Record<SitesSection, string> = {
   landings: 'web',
   forms: 'forms',
   leads: 'responses',
+  analytics: 'analytics',
   domains: 'domains'
 }
 const sitesSectionByPath: Record<string, SitesSection> = {
@@ -663,6 +671,8 @@ const sitesSectionByPath: Record<string, SitesSection> = {
   forms: 'forms',
   leads: 'leads',
   responses: 'leads',
+  analytics: 'analytics',
+  analiticas: 'analytics',
   domains: 'domains'
 }
 const sitesCreateFlowPaths: Record<CreateFlow, string> = {
@@ -1336,6 +1346,106 @@ const formatDate = (value?: string | null) => {
     hour: '2-digit',
     minute: '2-digit'
   }).format(date)
+}
+
+const sitesAnalyticsPeriodTabs: Array<{ value: SitesAnalyticsPeriod; label: string }> = [
+  { value: '7d', label: '7 días' },
+  { value: '30d', label: '30 días' },
+  { value: '90d', label: '90 días' }
+]
+
+const formatSitesCompactNumber = (value?: number | null) => {
+  const parsed = Number(value || 0)
+  if (!Number.isFinite(parsed)) return '0'
+  return new Intl.NumberFormat('es-MX', { notation: parsed >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(parsed)
+}
+
+const formatSitesSeconds = (value?: number | null) => {
+  const total = Math.max(0, Math.round(Number(value || 0)))
+  if (!Number.isFinite(total) || total <= 0) return '0s'
+  if (total < 60) return `${total}s`
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  if (minutes < 60) return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return restMinutes ? `${hours}h ${restMinutes}m` : `${hours}h`
+}
+
+const getSitesAnalyticsRange = (period: SitesAnalyticsPeriod) => {
+  const days = period === '7d' ? 7 : period === '90d' ? 90 : 30
+  const end = new Date()
+  const start = new Date()
+  start.setDate(end.getDate() - days + 1)
+  return {
+    dateFrom: start.toISOString().slice(0, 10),
+    dateTo: end.toISOString().slice(0, 10),
+    hourly: period === '7d'
+  }
+}
+
+const getMediaMetadataRecord = (asset?: MediaAsset | null) => {
+  const metadata = asset?.metadata
+  return metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : {}
+}
+
+const getMediaStreamRecord = (asset?: MediaAsset | null) => {
+  const stream = getMediaMetadataRecord(asset).stream
+  return stream && typeof stream === 'object' ? stream as Record<string, unknown> : {}
+}
+
+const getMediaStreamSourceRecord = (asset?: MediaAsset | null) => {
+  const source = getMediaStreamRecord(asset).source
+  return source && typeof source === 'object' ? source as Record<string, unknown> : {}
+}
+
+const getMediaStreamVideoRecord = (asset?: MediaAsset | null) => {
+  const video = getMediaStreamRecord(asset).video
+  return video && typeof video === 'object' ? video as Record<string, unknown> : {}
+}
+
+const getMediaStreamVideoId = (asset?: MediaAsset | null) => {
+  const videoId = getMediaStreamRecord(asset).videoId
+  return typeof videoId === 'string' ? videoId.trim() : ''
+}
+
+const getMediaSourceSiteId = (asset?: MediaAsset | null) => {
+  const source = getMediaStreamSourceRecord(asset)
+  const sourceEntityId = typeof source.moduleEntityId === 'string' ? source.moduleEntityId.trim() : ''
+  return sourceEntityId || asset?.moduleEntityId || ''
+}
+
+const readSitesNumber = (value: unknown) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const formatSitesChartLabel = (value = '', compact = false) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('es-MX', compact
+    ? { day: '2-digit', month: 'short' }
+    : { day: '2-digit', month: 'short', hour: '2-digit' }
+  ).format(date)
+}
+
+const buildSitesChartPoints = (points: StreamChartPoint[] = [], mode: 'count' | 'seconds' = 'count') => (
+  points.map(point => ({
+    ...point,
+    label: formatSitesChartLabel(point.label || point.periodKey || '', mode === 'count'),
+    value: mode === 'seconds' ? Math.round((Number(point.value || 0) / 60) * 10) / 10 : Number(point.value || 0)
+  }))
+)
+
+const getSiteTypeFilterMatch = (site: PublicSite, selectedType: SitesAnalyticsSiteType) => {
+  if (selectedType === 'all') return true
+  if (selectedType === 'landings') return site.siteType === 'landing_page'
+  return site.siteType === 'standard_form' || site.siteType === 'interactive_form'
+}
+
+const getSiteAnalyticsVideoLabel = (asset: MediaAsset, sitesById: Map<string, PublicSite>) => {
+  const siteName = sitesById.get(getMediaSourceSiteId(asset))?.name
+  return [asset.originalFilename || asset.storedFilename || 'Video', siteName].filter(Boolean).join(' · ')
 }
 
 const slugifyName = (value: string) => value
@@ -4288,6 +4398,16 @@ export const Sites: React.FC = () => {
   const [paletteDragPosition, setPaletteDragPosition] = useState<PaletteDragPosition | null>(null)
   const [leadRows, setLeadRows] = useState<LeadRow[]>([])
   const [loadingLeads, setLoadingLeads] = useState(false)
+  const [siteVideoAssets, setSiteVideoAssets] = useState<MediaAsset[]>([])
+  const [loadingSiteVideos, setLoadingSiteVideos] = useState(false)
+  const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>('all')
+  const [sitesAnalyticsSiteId, setSitesAnalyticsSiteId] = useState('')
+  const [sitesAnalyticsVideoId, setSitesAnalyticsVideoId] = useState('')
+  const [sitesAnalyticsPeriod, setSitesAnalyticsPeriod] = useState<SitesAnalyticsPeriod>('30d')
+  const [sitesVideoAnalytics, setSitesVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
+  const [sitesVideoAnalyticsLoading, setSitesVideoAnalyticsLoading] = useState(false)
+  const [sitesVideoAnalyticsError, setSitesVideoAnalyticsError] = useState('')
+  const [sitesAnalyticsRefreshKey, setSitesAnalyticsRefreshKey] = useState(0)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [saveStatusNow, setSaveStatusNow] = useState(() => Date.now())
@@ -4402,6 +4522,42 @@ export const Sites: React.FC = () => {
     () => sites.filter(site => site.siteType === 'standard_form' || site.siteType === 'interactive_form'),
     [sites]
   )
+  const sitesById = useMemo(
+    () => new Map(sites.map(site => [site.id, site])),
+    [sites]
+  )
+  const analyticsSites = useMemo(
+    () => sites.filter(site => getSiteTypeFilterMatch(site, sitesAnalyticsSiteType)),
+    [sites, sitesAnalyticsSiteType]
+  )
+  const analyticsSiteIds = useMemo(
+    () => new Set(analyticsSites.map(site => site.id)),
+    [analyticsSites]
+  )
+  const filteredAnalyticsVideos = useMemo(() => (
+    siteVideoAssets.filter((asset) => {
+      const sourceSiteId = getMediaSourceSiteId(asset)
+      if (sitesAnalyticsSiteId) return sourceSiteId === sitesAnalyticsSiteId
+      if (!sourceSiteId) return sitesAnalyticsSiteType === 'all'
+      return analyticsSiteIds.has(sourceSiteId)
+    })
+  ), [analyticsSiteIds, siteVideoAssets, sitesAnalyticsSiteId, sitesAnalyticsSiteType])
+  const selectedAnalyticsVideo = useMemo(() => (
+    filteredAnalyticsVideos.find(asset => asset.id === sitesAnalyticsVideoId) || filteredAnalyticsVideos[0] || null
+  ), [filteredAnalyticsVideos, sitesAnalyticsVideoId])
+  useEffect(() => {
+    if (!sitesAnalyticsSiteId) return
+    if (!analyticsSites.some(site => site.id === sitesAnalyticsSiteId)) {
+      setSitesAnalyticsSiteId('')
+    }
+  }, [analyticsSites, sitesAnalyticsSiteId])
+  useEffect(() => {
+    if (section !== 'analytics') return
+    const nextVideoId = selectedAnalyticsVideo?.id || ''
+    if (sitesAnalyticsVideoId !== nextVideoId) {
+      setSitesAnalyticsVideoId(nextVideoId)
+    }
+  }, [section, selectedAnalyticsVideo?.id, sitesAnalyticsVideoId])
   const blocks = useMemo(
     () => [...(selectedSite?.blocks || [])].sort((a, b) => a.sortOrder - b.sortOrder),
     [selectedSite?.blocks]
@@ -5196,6 +5352,58 @@ export const Sites: React.FC = () => {
       setLoadingLeads(false)
     }
   }
+
+  const loadSiteVideos = async () => {
+    setLoadingSiteVideos(true)
+    try {
+      setSiteVideoAssets(await sitesService.listVideoAssets())
+    } catch (error) {
+      setSiteVideoAssets([])
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar los videos de sitios')
+    } finally {
+      setLoadingSiteVideos(false)
+    }
+  }
+
+  useEffect(() => {
+    if (section === 'analytics') {
+      void loadSiteVideos()
+    }
+  }, [section])
+
+  useEffect(() => {
+    if (section !== 'analytics') return
+    const asset = selectedAnalyticsVideo
+    const streamVideoId = getMediaStreamVideoId(asset)
+    if (!asset || !streamVideoId) {
+      setSitesVideoAnalytics(null)
+      setSitesVideoAnalyticsError('')
+      setSitesVideoAnalyticsLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setSitesVideoAnalyticsLoading(true)
+    setSitesVideoAnalyticsError('')
+
+    sitesService.getVideoAnalytics(asset.id, getSitesAnalyticsRange(sitesAnalyticsPeriod))
+      .then((analytics) => {
+        if (!cancelled) setSitesVideoAnalytics(analytics)
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSitesVideoAnalytics(null)
+          setSitesVideoAnalyticsError(error instanceof Error ? error.message : 'No se pudieron cargar las analíticas del video')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSitesVideoAnalyticsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [section, selectedAnalyticsVideo, sitesAnalyticsPeriod, sitesAnalyticsRefreshKey])
 
   const openSite = async (siteId: string, pageId?: string, options?: { replaceRoute?: boolean }) => {
     try {
@@ -8025,6 +8233,31 @@ export const Sites: React.FC = () => {
               />
             ) : section === 'leads' ? (
               <LeadsPanel rows={leadRows} loading={loadingLeads} onRefresh={loadLeads} />
+            ) : section === 'analytics' ? (
+              <SitesAnalyticsPanel
+                sites={analyticsSites}
+                allSites={sites}
+                sitesById={sitesById}
+                videos={filteredAnalyticsVideos}
+                selectedSiteType={sitesAnalyticsSiteType}
+                selectedSiteId={sitesAnalyticsSiteId}
+                selectedVideoId={sitesAnalyticsVideoId}
+                selectedVideo={selectedAnalyticsVideo}
+                analytics={sitesVideoAnalytics}
+                loadingVideos={loadingSiteVideos}
+                loadingAnalytics={sitesVideoAnalyticsLoading}
+                analyticsError={sitesVideoAnalyticsError}
+                period={sitesAnalyticsPeriod}
+                onSiteTypeChange={(value) => {
+                  setSitesAnalyticsSiteType(value)
+                  setSitesAnalyticsSiteId('')
+                }}
+                onSiteChange={setSitesAnalyticsSiteId}
+                onVideoChange={setSitesAnalyticsVideoId}
+                onPeriodChange={setSitesAnalyticsPeriod}
+                onRefreshVideos={loadSiteVideos}
+                onRefreshAnalytics={() => setSitesAnalyticsRefreshKey(current => current + 1)}
+              />
             ) : section === 'domains' ? (
               <DomainsPanel
                 domainConfig={domainConfig}
@@ -24911,6 +25144,284 @@ const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () =>
     </div>
   </section>
 )
+
+interface SitesAnalyticsPanelProps {
+  sites: PublicSite[]
+  allSites: PublicSite[]
+  sitesById: Map<string, PublicSite>
+  videos: MediaAsset[]
+  selectedSiteType: SitesAnalyticsSiteType
+  selectedSiteId: string
+  selectedVideoId: string
+  selectedVideo: MediaAsset | null
+  analytics: MediaStreamAnalytics | null
+  loadingVideos: boolean
+  loadingAnalytics: boolean
+  analyticsError: string
+  period: SitesAnalyticsPeriod
+  onSiteTypeChange: (value: SitesAnalyticsSiteType) => void
+  onSiteChange: (value: string) => void
+  onVideoChange: (value: string) => void
+  onPeriodChange: (value: SitesAnalyticsPeriod) => void
+  onRefreshVideos: () => void
+  onRefreshAnalytics: () => void
+}
+
+const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
+  sites,
+  allSites,
+  sitesById,
+  videos,
+  selectedSiteType,
+  selectedSiteId,
+  selectedVideoId,
+  selectedVideo,
+  analytics,
+  loadingVideos,
+  loadingAnalytics,
+  analyticsError,
+  period,
+  onSiteTypeChange,
+  onSiteChange,
+  onVideoChange,
+  onPeriodChange,
+  onRefreshVideos,
+  onRefreshAnalytics
+}) => {
+  const totalSiteViews = sites.reduce((total, site) => total + Number(site.trackingStats?.views || 0), 0)
+  const totalVisitors = sites.reduce((total, site) => total + Number(site.trackingStats?.visitors || 0), 0)
+  const totalConversions = sites.reduce((total, site) => total + Number(site.trackingStats?.conversions || site.submissionsCount || 0), 0)
+  const selectedVideoStats = getMediaStreamVideoRecord(selectedVideo)
+  const totalVideoViews = videos.reduce((total, asset) => total + readSitesNumber(getMediaStreamVideoRecord(asset).views), 0)
+  const totalVideoWatchTime = videos.reduce((total, asset) => total + readSitesNumber(getMediaStreamVideoRecord(asset).totalWatchTime), 0)
+  const videoViews = selectedVideo ? (analytics?.summary.views ?? readSitesNumber(selectedVideoStats.views)) : totalVideoViews
+  const videoWatchTime = selectedVideo ? (analytics?.summary.watchTime ?? readSitesNumber(selectedVideoStats.totalWatchTime)) : totalVideoWatchTime
+  const averageWatchTime = selectedVideo ? (analytics?.summary.averageWatchTime ?? readSitesNumber(selectedVideoStats.averageWatchTime)) : 0
+  const engagementScore = selectedVideo ? analytics?.summary.engagementScore ?? null : null
+  const streamVideoId = getMediaStreamVideoId(selectedVideo)
+  const viewsChart = buildSitesChartPoints(analytics?.viewsChart || [], 'count')
+  const watchTimeChart = buildSitesChartPoints(analytics?.watchTimeChart || [], 'seconds')
+  const heatmap = analytics?.heatmap || []
+  const countryRows = analytics?.countries || []
+  const scopeSiteLabel = selectedSiteId
+    ? sitesById.get(selectedSiteId)?.name || 'Sitio seleccionado'
+    : selectedSiteType === 'landings'
+      ? 'Sitios web'
+      : selectedSiteType === 'forms'
+        ? 'Formularios'
+        : 'Todos los sitios'
+
+  return (
+    <section className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`}>
+      <div className={styles.builderHeader}>
+        <div>
+          <h2>Analíticas</h2>
+          <p>Rendimiento individual de sitios, formularios y videos publicados en Stream.</p>
+        </div>
+        <div className={styles.sitesAnalyticsHeaderActions}>
+          <TabList
+            tabs={sitesAnalyticsPeriodTabs}
+            activeTab={period}
+            onTabChange={(value) => onPeriodChange(value as SitesAnalyticsPeriod)}
+            variant="compact"
+            className={styles.sitesAnalyticsTabs}
+          />
+          <Button
+            variant="secondary"
+            onClick={() => {
+              onRefreshVideos()
+              onRefreshAnalytics()
+            }}
+            loading={loadingVideos || loadingAnalytics}
+          >
+            <RefreshCw size={16} />
+            Refrescar
+          </Button>
+        </div>
+      </div>
+
+      <div className={styles.sitesAnalyticsFilters}>
+        <label className={styles.field}>
+          <span>Tipo</span>
+          <CustomSelect value={selectedSiteType} onChange={(event) => onSiteTypeChange(event.target.value as SitesAnalyticsSiteType)}>
+            <option value="all">Sitios y formularios</option>
+            <option value="landings">Sitios web</option>
+            <option value="forms">Formularios</option>
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Sitio</span>
+          <CustomSelect value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)}>
+            <option value="">Todos dentro del filtro</option>
+            {sites.map(site => (
+              <option key={site.id} value={site.id}>{site.name}</option>
+            ))}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Video</span>
+          <CustomSelect value={selectedVideoId} onChange={(event) => onVideoChange(event.target.value)} disabled={videos.length === 0}>
+            {videos.length === 0 ? (
+              <option value="">Sin videos</option>
+            ) : videos.map(asset => (
+              <option key={asset.id} value={asset.id}>{getSiteAnalyticsVideoLabel(asset, sitesById)}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      </div>
+
+      <div className={styles.sitesAnalyticsKpis}>
+        <div>
+          <Eye size={16} />
+          <span>Vistas sitio</span>
+          <strong>{formatSitesCompactNumber(totalSiteViews)}</strong>
+        </div>
+        <div>
+          <Globe2 size={16} />
+          <span>Visitantes</span>
+          <strong>{formatSitesCompactNumber(totalVisitors)}</strong>
+        </div>
+        <div>
+          <ListChecks size={16} />
+          <span>Conversiones</span>
+          <strong>{formatSitesCompactNumber(totalConversions)}</strong>
+        </div>
+        <div>
+          <Video size={16} />
+          <span>Videos</span>
+          <strong>{formatSitesCompactNumber(videos.length)}</strong>
+        </div>
+        <div>
+          <Play size={16} />
+          <span>Reproducciones</span>
+          <strong>{formatSitesCompactNumber(videoViews)}</strong>
+        </div>
+        <div>
+          <Clock3 size={16} />
+          <span>Tiempo visto</span>
+          <strong>{formatSitesSeconds(videoWatchTime)}</strong>
+        </div>
+      </div>
+
+      <div className={styles.sitesAnalyticsScope}>
+        <strong>{scopeSiteLabel}</strong>
+        <span>{allSites.length} sitio{allSites.length === 1 ? '' : 's'} total · {sites.length} en filtro · {videos.length} video{videos.length === 1 ? '' : 's'}</span>
+      </div>
+
+      {!selectedVideo ? (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <Video size={24} />
+          <strong>Sin videos en este filtro</strong>
+          <p>Cuando un sitio o formulario use un video sincronizado a Stream, aquí saldrán sus métricas.</p>
+        </div>
+      ) : !streamVideoId ? (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <BarChart3 size={24} />
+          <strong>Video sin analíticas</strong>
+          <p>Este archivo existe en storage, pero todavía no tiene ID de Stream para consultar reproducciones.</p>
+        </div>
+      ) : analyticsError ? (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <AlertTriangle size={24} />
+          <strong>No se cargaron los datos del video</strong>
+          <p>{analyticsError}</p>
+        </div>
+      ) : (
+        <div className={styles.sitesAnalyticsGrid}>
+          <div className={styles.sitesAnalyticsChartBlock}>
+            <div className={styles.sitesAnalyticsChartTitle}>
+              <span>Reproducciones del video</span>
+              <strong>{formatSitesCompactNumber(videoViews)}</strong>
+            </div>
+            {viewsChart.length ? (
+              <AreaChart
+                data={viewsChart}
+                height={220}
+                showLegend={false}
+                formatValue={(value) => formatSitesCompactNumber(value)}
+                formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} reproducciones`}
+              />
+            ) : (
+              <div className={styles.sitesAnalyticsChartEmpty}>Sin reproducciones en este periodo.</div>
+            )}
+          </div>
+
+          <div className={styles.sitesAnalyticsChartBlock}>
+            <div className={styles.sitesAnalyticsChartTitle}>
+              <span>Tiempo visto</span>
+              <strong>{formatSitesSeconds(videoWatchTime)}</strong>
+            </div>
+            {watchTimeChart.length ? (
+              <AreaChart
+                data={watchTimeChart}
+                height={220}
+                color="var(--pos)"
+                showLegend={false}
+                formatValue={(value) => `${formatSitesCompactNumber(value)}m`}
+                formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} min vistos`}
+              />
+            ) : (
+              <div className={styles.sitesAnalyticsChartEmpty}>Sin tiempo visto en este periodo.</div>
+            )}
+          </div>
+
+          <div className={styles.sitesAnalyticsChartBlock}>
+            <div className={styles.sitesAnalyticsChartTitle}>
+              <span>Retención</span>
+              <strong>{heatmap.length ? `${heatmap.length} puntos` : 'Sin dato'}</strong>
+            </div>
+            {heatmap.length ? (
+              <div className={styles.sitesAnalyticsHeatmap} aria-label="Mapa de retención">
+                {heatmap.map((point, index) => (
+                  <span
+                    key={`${point.segment}-${index}`}
+                    title={`${point.label || point.segment}: ${Math.round(point.intensity)}%`}
+                    style={{ height: `${Math.max(6, point.intensity)}%` }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className={styles.sitesAnalyticsChartEmpty}>Sin heatmap todavía.</div>
+            )}
+          </div>
+
+          <div className={styles.sitesAnalyticsChartBlock}>
+            <div className={styles.sitesAnalyticsChartTitle}>
+              <span>Detalle</span>
+              <strong>{engagementScore === null ? 'Sin engagement' : `${Math.round(engagementScore)}%`}</strong>
+            </div>
+            <div className={styles.sitesAnalyticsDetailList}>
+              <div>
+                <Flame size={15} />
+                <span>Engagement</span>
+                <strong>{engagementScore === null ? 'Sin dato' : `${Math.round(engagementScore)}%`}</strong>
+              </div>
+              <div>
+                <Clock3 size={15} />
+                <span>Promedio visto</span>
+                <strong>{formatSitesSeconds(averageWatchTime)}</strong>
+              </div>
+              {countryRows.slice(0, 4).map(country => (
+                <div key={country.country}>
+                  <Globe2 size={15} />
+                  <span>{country.country}</span>
+                  <strong>{formatSitesCompactNumber(country.views)} · {formatSitesSeconds(country.watchTime)}</strong>
+                </div>
+              ))}
+              {countryRows.length === 0 && (
+                <div>
+                  <Globe2 size={15} />
+                  <span>Países</span>
+                  <strong>Sin dato</strong>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
 
 interface DomainsPanelProps {
   domainConfig: SitesDomainConfig

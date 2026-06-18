@@ -38,6 +38,10 @@ import {
   getPublicCalendarBySlug,
   renderPublicCalendarHtml
 } from '../services/localCalendarService.js'
+import {
+  getMediaAssetBunnyStreamAnalytics,
+  listMediaAssets
+} from '../services/mediaStorageService.js'
 import { logger } from '../utils/logger.js'
 
 const SITE_PREVIEW_TTL_MS = 60 * 60 * 1000
@@ -147,6 +151,49 @@ export async function getSitesHandler(req, res) {
   } catch (error) {
     logger.error(`Error listando sites: ${error.message}`)
     sendError(res, error, 'Error listando sites')
+  }
+}
+
+export async function getSitesVideoAssetsHandler(req, res) {
+  try {
+    const assets = []
+    const pageSize = 250
+    let offset = 0
+    while (true) {
+      const page = await listMediaAssets({
+        businessId: req.query.businessId || 'default',
+        mediaType: 'video',
+        status: req.query.status || 'ready',
+        limit: pageSize,
+        offset
+      })
+      assets.push(...page)
+      if (page.length < pageSize) break
+      offset += pageSize
+    }
+    const siteVideos = assets.filter((asset) => {
+      const module = String(asset.module || '').toLowerCase()
+      const sourceModule = String(asset.metadata?.stream?.source?.module || '').toLowerCase()
+      return module === 'sites' || module === 'forms' || sourceModule === 'sites' || sourceModule === 'forms'
+    })
+    res.json({ success: true, data: siteVideos })
+  } catch (error) {
+    logger.error(`Error listando videos de sites: ${error.message}`)
+    sendError(res, error, 'Error listando videos de sites')
+  }
+}
+
+export async function getSitesVideoAnalyticsHandler(req, res) {
+  try {
+    const analytics = await getMediaAssetBunnyStreamAnalytics(req.params.assetId, {
+      dateFrom: req.query.dateFrom || req.query.date_from,
+      dateTo: req.query.dateTo || req.query.date_to,
+      hourly: req.query.hourly
+    })
+    res.json({ success: true, data: analytics })
+  } catch (error) {
+    logger.error(`Error obteniendo analíticas de video de sites: ${error.message}`)
+    sendError(res, error, 'Error obteniendo analíticas de video')
   }
 }
 

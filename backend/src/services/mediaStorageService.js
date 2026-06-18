@@ -735,6 +735,32 @@ async function getBunnyStreamVideo(config, videoId) {
   )
 }
 
+async function getBunnyStreamVideoStatistics(config, { videoGuid = '', dateFrom = '', dateTo = '', hourly = false } = {}) {
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/statistics`,
+    {
+      query: {
+        videoGuid,
+        dateFrom,
+        dateTo,
+        hourly: hourly ? 'true' : ''
+      }
+    }
+  )
+}
+
+async function getBunnyStreamVideoHeatmap(config, videoId) {
+  if (!videoId) return null
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos/${encodeURIComponent(videoId)}/heatmap`,
+    {
+      okStatuses: [200, 404]
+    }
+  )
+}
+
 async function deleteBunnyStreamVideo(config, videoId) {
   if (!config.bunnyStreamConfigured || !videoId) return null
   return await bunnyStreamRequest(
@@ -1354,12 +1380,174 @@ export async function uploadMediaAssetFromDataUrl(input = {}) {
   })
 }
 
+function normalizeStreamChart(chart = {}) {
+  const source = chart && typeof chart === 'object' ? chart : {}
+  return Object.entries(source)
+    .map(([key, value]) => ({
+      label: cleanString(key),
+      value: numberValue(value),
+      periodKey: cleanString(key),
+      periodStart: cleanString(key),
+      periodEnd: cleanString(key)
+    }))
+    .sort((a, b) => a.periodKey.localeCompare(b.periodKey))
+}
+
+function normalizeStreamHeatmap(payload = {}) {
+  const raw = payload?.heatmap || payload?.items || payload
+  if (Array.isArray(raw)) {
+    return raw
+      .map((entry, index) => ({
+        segment: numberValue(entry?.segment ?? entry?.position ?? entry?.second ?? entry?.time ?? index),
+        intensity: Math.max(0, Math.min(100, numberValue(entry?.intensity ?? entry?.value ?? entry?.views))),
+        label: cleanString(entry?.label) || `${index + 1}`
+      }))
+      .sort((a, b) => a.segment - b.segment)
+  }
+
+  if (raw && typeof raw === 'object') {
+    return Object.entries(raw)
+      .map(([key, value]) => ({
+        segment: numberValue(key),
+        intensity: Math.max(0, Math.min(100, numberValue(value))),
+        label: cleanString(key)
+      }))
+      .sort((a, b) => a.segment - b.segment)
+  }
+
+  return []
+}
+
+function normalizeStreamCountryMetrics(viewCounts = {}, watchTimes = {}) {
+  const countries = new Set([
+    ...Object.keys(viewCounts || {}),
+    ...Object.keys(watchTimes || {})
+  ])
+
+  return Array.from(countries)
+    .map((country) => ({
+      country: cleanString(country).toUpperCase(),
+      views: numberValue(viewCounts?.[country]),
+      watchTime: numberValue(watchTimes?.[country])
+    }))
+    .filter((entry) => entry.country)
+    .sort((a, b) => b.views - a.views || b.watchTime - a.watchTime || a.country.localeCompare(b.country))
+}
+
+function emptyStreamAnalytics(asset, config, status, extra = {}) {
+  return {
+    assetId: asset.id,
+    configured: Boolean(config?.bunnyStreamConfigured),
+    status,
+    dateFrom: extra.dateFrom || '',
+    dateTo: extra.dateTo || '',
+    hourly: Boolean(extra.hourly),
+    stream: asset.metadata?.stream || null,
+    video: asset.metadata?.stream?.video || null,
+    summary: {
+      views: numberValue(asset.metadata?.stream?.video?.views),
+      watchTime: numberValue(asset.metadata?.stream?.video?.totalWatchTime),
+      averageWatchTime: numberValue(asset.metadata?.stream?.video?.averageWatchTime),
+      engagementScore: null,
+      topCountry: ''
+    },
+    viewsChart: [],
+    watchTimeChart: [],
+    countries: [],
+    heatmap: [],
+    raw: null
+  }
+}
+
 export async function getMediaAsset(assetId) {
   const row = await db.get('SELECT * FROM media_assets WHERE id = ?', [assetId])
   if (!row || row.deleted_at || row.status === 'deleted') {
     throw errorWithStatus('Archivo multimedia no encontrado.', 404, 'media_not_found')
   }
   return mapAssetRow(row)
+}
+
+export async function getMediaAssetBunnyStreamAnalytics(assetId, options = {}) {
+  const asset = await getMediaAsset(assetId)
+  if (asset.mediaType !== 'video') {
+    throw errorWithStatus('Las analíticas de Stream solo aplican para videos.', 400, 'bunny_stream_not_video')
+  }
+
+  const config = await getStorageRuntimeConfig()
+  const dateFrom = cleanString(options.dateFrom || options.date_from)
+  const dateTo = cleanString(options.dateTo || options.date_to)
+  const hourly = boolValue(options.hourly)
+  const stream = asset.metadata?.stream || {}
+  const videoId = cleanString(stream.videoId)
+
+  if (!config.bunnyStreamEnabled) {
+    return emptyStreamAnalytics(asset, config, 'disabled', { dateFrom, dateTo, hourly })
+  }
+  if (!config.bunnyStreamConfigured) {
+    return emptyStreamAnalytics(asset, config, 'not_configured', { dateFrom, dateTo, hourly })
+  }
+  if (!videoId) {
+    return emptyStreamAnalytics(asset, config, 'not_synced', { dateFrom, dateTo, hourly })
+  }
+
+  const [statistics, heatmapPayload, videoPayload] = await Promise.all([
+    getBunnyStreamVideoStatistics(config, { videoGuid: videoId, dateFrom, dateTo, hourly }),
+    getBunnyStreamVideoHeatmap(config, videoId).catch((error) => {
+      logger.warn(`[MediaStorage] Bunny Stream heatmap no disponible para ${videoId}: ${error.message}`)
+      return null
+    }),
+    getBunnyStreamVideo(config, videoId).catch((error) => {
+      logger.warn(`[MediaStorage] Bunny Stream metadata no disponible para analíticas ${videoId}: ${error.message}`)
+      return null
+    })
+  ])
+
+  const video = normalizeBunnyStreamVideo(videoPayload) || stream.video || null
+  const viewsChart = normalizeStreamChart(statistics?.viewsChart)
+  const watchTimeChart = normalizeStreamChart(statistics?.watchTimeChart)
+  const countries = normalizeStreamCountryMetrics(statistics?.countryViewCounts, statistics?.countryWatchTime)
+  const heatmap = normalizeStreamHeatmap(heatmapPayload)
+  const viewsFromChart = viewsChart.reduce((total, point) => total + numberValue(point.value), 0)
+  const watchTimeFromChart = watchTimeChart.reduce((total, point) => total + numberValue(point.value), 0)
+  const watchTime = numberValue(video?.totalWatchTime) || watchTimeFromChart
+  const views = numberValue(video?.views) || viewsFromChart
+
+  return {
+    assetId: asset.id,
+    configured: true,
+    status: 'ready',
+    dateFrom,
+    dateTo,
+    hourly,
+    stream: {
+      provider: stream.provider || 'bunny_stream',
+      syncStatus: stream.syncStatus || '',
+      libraryId: stream.libraryId || config.bunnyStreamLibraryId,
+      collectionId: stream.collectionId || config.bunnyStreamCollectionId || null,
+      collectionName: stream.collectionName || config.bunnyStreamCollectionName || null,
+      videoId,
+      title: stream.title || video?.title || asset.originalFilename,
+      source: stream.source || null,
+      syncedAt: stream.syncedAt || null
+    },
+    video,
+    summary: {
+      views,
+      watchTime,
+      averageWatchTime: numberValue(video?.averageWatchTime) || (views > 0 ? Math.round((watchTime / views) * 100) / 100 : 0),
+      engagementScore: statistics?.engagementScore === undefined || statistics?.engagementScore === null
+        ? null
+        : numberValue(statistics.engagementScore),
+      topCountry: countries[0]?.country || ''
+    },
+    viewsChart,
+    watchTimeChart,
+    countries,
+    heatmap,
+    raw: {
+      statistics
+    }
+  }
 }
 
 export async function listMediaAssets({ businessId = 'default', module = '', mediaType = '', status = '', limit = 100, offset = 0 } = {}) {

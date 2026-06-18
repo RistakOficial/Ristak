@@ -13,6 +13,8 @@ import {
   getImportedSiteMappingHandler,
   getSiteHandler,
   getSitesHandler,
+  getSitesVideoAnalyticsHandler,
+  getSitesVideoAssetsHandler,
   importedSiteAssetHandler,
   metaPageEventPublicHandler,
   previewCalendarHandler,
@@ -54,6 +56,8 @@ router.post('/domain/verify', verifySitesDomainHandler)
 router.delete('/domain', removeSitesDomainHandler)
 router.post('/domain/app/verify', verifySitesAppDomainHandler)
 router.delete('/domain/app', removeSitesAppDomainHandler)
+router.get('/video-assets', getSitesVideoAssetsHandler)
+router.get('/video-analytics/:assetId', getSitesVideoAnalyticsHandler)
 router.get('/:siteId/import-mapping', getImportedSiteMappingHandler)
 router.get('/:siteId', getSiteHandler)
 router.put('/:siteId', updateSiteHandler)

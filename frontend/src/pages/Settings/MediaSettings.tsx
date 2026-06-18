@@ -1,22 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Activity,
   AudioLines,
+  BarChart3,
   ChevronRight,
+  Clock3,
   Copy,
   Download,
+  Eye,
   ExternalLink,
   File,
   FileAudio,
   FileImage,
   FileText,
   FileVideo,
+  Flame,
   Folder,
   FolderInput,
   Grid3X3,
+  Globe2,
   HardDrive,
   List,
   Loader2,
   MoreHorizontal,
+  PlayCircle,
   RefreshCw,
   Search,
   Trash2,
@@ -24,6 +31,7 @@ import {
   X
 } from 'lucide-react'
 import {
+  AreaChart,
   Button,
   Card,
   DropdownMenu,
@@ -37,11 +45,19 @@ import {
 } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
-import mediaService, { type MediaAsset, type MediaDownloadEntry, type MediaMoveEntry, type StorageUsage } from '@/services/mediaService'
+import mediaService, {
+  type MediaAsset,
+  type MediaDownloadEntry,
+  type MediaMoveEntry,
+  type MediaStreamAnalytics,
+  type StorageUsage,
+  type StreamChartPoint
+} from '@/services/mediaService'
 import styles from './MediaSettings.module.css'
 
 type MediaFilter = 'all' | 'image' | 'video' | 'audio' | 'document' | 'other'
 type ViewMode = 'grid' | 'list'
+type VideoAnalyticsPeriod = '7d' | '30d' | '90d'
 
 interface ExplorerFile {
   asset: MediaAsset
@@ -88,6 +104,12 @@ const mediaTabs: Array<{ value: MediaFilter; label: string; icon: React.ReactNod
   { value: 'audio', label: 'Audio', icon: <FileAudio size={14} /> },
   { value: 'document', label: 'Docs', icon: <FileText size={14} /> },
   { value: 'other', label: 'Otros', icon: <File size={14} /> }
+]
+
+const videoAnalyticsPeriodTabs: Array<{ value: VideoAnalyticsPeriod; label: string }> = [
+  { value: '7d', label: '7 días' },
+  { value: '30d', label: '30 días' },
+  { value: '90d', label: '90 días' }
 ]
 
 const folderLabelMap: Record<string, string> = {
@@ -157,6 +179,77 @@ function formatDate(value?: string | null) {
     hour: 'numeric',
     minute: '2-digit'
   }).format(date)
+}
+
+function formatCompactNumber(value?: number | null) {
+  const parsed = Number(value || 0)
+  if (!Number.isFinite(parsed)) return '0'
+  return new Intl.NumberFormat('es-MX', { notation: parsed >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(parsed)
+}
+
+function formatSeconds(value?: number | null) {
+  const total = Math.max(0, Math.round(Number(value || 0)))
+  if (!Number.isFinite(total) || total <= 0) return '0s'
+  if (total < 60) return `${total}s`
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  if (minutes < 60) return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return restMinutes ? `${hours}h ${restMinutes}m` : `${hours}h`
+}
+
+function getVideoAnalyticsRange(period: VideoAnalyticsPeriod) {
+  const days = period === '7d' ? 7 : period === '90d' ? 90 : 30
+  const end = new Date()
+  const start = new Date()
+  start.setDate(end.getDate() - days + 1)
+  return {
+    dateFrom: start.toISOString().slice(0, 10),
+    dateTo: end.toISOString().slice(0, 10),
+    hourly: period === '7d'
+  }
+}
+
+function getMetadataRecord(asset?: MediaAsset | null) {
+  const metadata = asset?.metadata
+  return metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : {}
+}
+
+function getStreamRecord(asset?: MediaAsset | null) {
+  const stream = getMetadataRecord(asset).stream
+  return stream && typeof stream === 'object' ? stream as Record<string, unknown> : {}
+}
+
+function getStreamVideoRecord(asset?: MediaAsset | null) {
+  const video = getStreamRecord(asset).video
+  return video && typeof video === 'object' ? video as Record<string, unknown> : {}
+}
+
+function readNumber(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function readString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function formatChartLabel(value: string, compact = false) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('es-MX', compact
+    ? { day: '2-digit', month: 'short' }
+    : { day: '2-digit', month: 'short', hour: '2-digit' }
+  ).format(date)
+}
+
+function chartPoints(points: StreamChartPoint[] = [], mode: 'count' | 'seconds' = 'count') {
+  return points.map((point) => ({
+    ...point,
+    label: formatChartLabel(point.label || point.periodKey || '', mode === 'count'),
+    value: mode === 'seconds' ? Math.round((Number(point.value || 0) / 60) * 10) / 10 : Number(point.value || 0)
+  }))
 }
 
 function formatFolderSegment(segment: string) {
@@ -387,6 +480,11 @@ export const MediaSettings: React.FC = () => {
   const [draggingFileIds, setDraggingFileIds] = useState<string[]>([])
   const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null)
+  const [videoAnalyticsPeriod, setVideoAnalyticsPeriod] = useState<VideoAnalyticsPeriod>('30d')
+  const [videoAnalytics, setVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
+  const [videoAnalyticsLoading, setVideoAnalyticsLoading] = useState(false)
+  const [videoAnalyticsError, setVideoAnalyticsError] = useState('')
+  const [videoAnalyticsRefreshKey, setVideoAnalyticsRefreshKey] = useState(0)
 
   const loadMedia = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
     if (mode === 'initial') setLoading(true)
@@ -475,6 +573,12 @@ export const MediaSettings: React.FC = () => {
   const selectedFile = useMemo(() => (
     files.find((file) => file.asset.id === selectedAssetId) || visibleFiles[0] || null
   ), [files, selectedAssetId, visibleFiles])
+  const selectedVideoFile = useMemo(() => {
+    if (selectedFile?.asset.mediaType === 'video') return selectedFile
+    if (activeFilter === 'video') return visibleFiles.find((file) => file.asset.mediaType === 'video') || null
+    return null
+  }, [activeFilter, selectedFile, visibleFiles])
+  const showVideoAnalytics = activeFilter === 'video' || selectedFile?.asset.mediaType === 'video'
   const usagePercent = Math.max(0, Math.min(100, Number(usage?.usage_percent || 0)))
   const filesCount = usage?.files_count ?? assets.length
   const folderPathParts = pathSegments(currentPath)
@@ -525,6 +629,39 @@ export const MediaSettings: React.FC = () => {
       return changed ? next : current
     })
   }, [allFolderPaths, filesById])
+
+  useEffect(() => {
+    const asset = showVideoAnalytics ? selectedVideoFile?.asset : null
+    const streamVideoId = readString(getStreamRecord(asset).videoId)
+    if (!asset || !streamVideoId) {
+      setVideoAnalytics(null)
+      setVideoAnalyticsError('')
+      setVideoAnalyticsLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setVideoAnalyticsLoading(true)
+    setVideoAnalyticsError('')
+
+    mediaService.getAssetStreamAnalytics(asset.id, getVideoAnalyticsRange(videoAnalyticsPeriod))
+      .then((analytics) => {
+        if (!cancelled) setVideoAnalytics(analytics)
+      })
+      .catch((analyticsError) => {
+        if (!cancelled) {
+          setVideoAnalytics(null)
+          setVideoAnalyticsError(analyticsError instanceof Error ? analyticsError.message : 'No se pudieron cargar las analíticas del video.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setVideoAnalyticsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedVideoFile?.asset, showVideoAnalytics, videoAnalyticsPeriod, videoAnalyticsRefreshKey])
 
   const handleFolderOpen = (path: string) => {
     setCurrentPath(path)
@@ -1298,6 +1435,18 @@ export const MediaSettings: React.FC = () => {
         </div>
       </section>
 
+      {showVideoAnalytics ? (
+        <VideoAnalyticsPanel
+          file={selectedVideoFile}
+          analytics={videoAnalytics}
+          loading={videoAnalyticsLoading}
+          error={videoAnalyticsError}
+          period={videoAnalyticsPeriod}
+          onPeriodChange={setVideoAnalyticsPeriod}
+          onRefresh={() => setVideoAnalyticsRefreshKey((current) => current + 1)}
+        />
+      ) : null}
+
       <Card padding="none" className={styles.explorerCard}>
         <div className={styles.toolbar}>
           <div className={styles.searchBox} data-ristak-unstyled>
@@ -1659,3 +1808,202 @@ export const MediaSettings: React.FC = () => {
     </div>
   )
 }
+
+interface VideoAnalyticsPanelProps {
+  file: ExplorerFile | null
+  analytics: MediaStreamAnalytics | null
+  loading: boolean
+  error: string
+  period: VideoAnalyticsPeriod
+  onPeriodChange: (period: VideoAnalyticsPeriod) => void
+  onRefresh: () => void
+}
+
+const VideoAnalyticsPanel: React.FC<VideoAnalyticsPanelProps> = ({
+  file,
+  analytics,
+  loading,
+  error,
+  period,
+  onPeriodChange,
+  onRefresh
+}) => {
+  const asset = file?.asset || null
+  const stream = getStreamRecord(asset)
+  const video = getStreamVideoRecord(asset)
+  const streamVideoId = readString(stream.videoId)
+  const fallbackViews = readNumber(video.views)
+  const fallbackWatchTime = readNumber(video.totalWatchTime)
+  const fallbackAverageWatchTime = readNumber(video.averageWatchTime)
+  const views = analytics?.summary.views ?? fallbackViews
+  const watchTime = analytics?.summary.watchTime ?? fallbackWatchTime
+  const averageWatchTime = analytics?.summary.averageWatchTime ?? fallbackAverageWatchTime
+  const engagementScore = analytics?.summary.engagementScore ?? null
+  const viewsChart = chartPoints(analytics?.viewsChart || [], 'count')
+  const watchTimeChart = chartPoints(analytics?.watchTimeChart || [], 'seconds')
+  const heatmap = analytics?.heatmap || []
+  const countries = analytics?.countries || []
+  const title = file?.fileName || 'Sin video seleccionado'
+
+  return (
+    <section className={styles.videoAnalyticsPanel} aria-label="Analíticas de video">
+      <div className={styles.videoAnalyticsHeader}>
+        <div>
+          <span className={styles.videoAnalyticsEyebrow}>
+            <BarChart3 size={14} />
+            Bunny Stream
+          </span>
+          <h2>{title}</h2>
+          <p>{streamVideoId ? `Video listo para métricas · ${streamVideoId}` : 'Selecciona un video sincronizado para ver reproducción, países y retención.'}</p>
+        </div>
+        <div className={styles.videoAnalyticsActions}>
+          <TabList
+            tabs={videoAnalyticsPeriodTabs}
+            activeTab={period}
+            onTabChange={(value) => onPeriodChange(value as VideoAnalyticsPeriod)}
+            variant="compact"
+            className={styles.videoAnalyticsTabs}
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={loading ? <Loader2 size={15} className={styles.spin} /> : <RefreshCw size={15} />}
+            onClick={onRefresh}
+            disabled={loading || !streamVideoId}
+          >
+            Actualizar
+          </Button>
+        </div>
+      </div>
+
+      <div className={styles.videoAnalyticsKpis}>
+        <div>
+          <Eye size={16} />
+          <span>Reproducciones</span>
+          <strong>{formatCompactNumber(views)}</strong>
+        </div>
+        <div>
+          <Clock3 size={16} />
+          <span>Tiempo visto</span>
+          <strong>{formatSeconds(watchTime)}</strong>
+        </div>
+        <div>
+          <PlayCircle size={16} />
+          <span>Promedio</span>
+          <strong>{formatSeconds(averageWatchTime)}</strong>
+        </div>
+        <div>
+          <Flame size={16} />
+          <span>Engagement</span>
+          <strong>{engagementScore === null ? 'Sin dato' : `${Math.round(engagementScore)}%`}</strong>
+        </div>
+      </div>
+
+      {!file ? (
+        <div className={styles.videoAnalyticsEmpty}>
+          <FileVideo size={24} />
+          <strong>No hay video seleccionado</strong>
+          <p>Abre Videos o selecciona un archivo de video para ver sus métricas.</p>
+        </div>
+      ) : !streamVideoId ? (
+        <div className={styles.videoAnalyticsEmpty}>
+          <Activity size={24} />
+          <strong>Sin Stream todavía</strong>
+          <p>Este video está en storage, pero todavía no tiene métricas de reproducción disponibles.</p>
+        </div>
+      ) : error ? (
+        <div className={styles.videoAnalyticsEmpty}>
+          <AlertTriangleIcon />
+          <strong>No se cargaron las analíticas</strong>
+          <p>{error}</p>
+        </div>
+      ) : (
+        <div className={styles.videoAnalyticsGrid}>
+          <div className={styles.videoChartBlock}>
+            <div className={styles.videoChartTitle}>
+              <span>Reproducciones</span>
+              <strong>{formatCompactNumber(views)}</strong>
+            </div>
+            {viewsChart.length ? (
+              <AreaChart
+                data={viewsChart}
+                height={220}
+                showLegend={false}
+                formatValue={(value) => formatCompactNumber(value)}
+                formatTooltipValue={(value) => `${formatCompactNumber(value)} reproducciones`}
+              />
+            ) : (
+              <div className={styles.videoChartEmpty}>Sin reproducciones en este periodo.</div>
+            )}
+          </div>
+
+          <div className={styles.videoChartBlock}>
+            <div className={styles.videoChartTitle}>
+              <span>Tiempo visto</span>
+              <strong>{formatSeconds(watchTime)}</strong>
+            </div>
+            {watchTimeChart.length ? (
+              <AreaChart
+                data={watchTimeChart}
+                height={220}
+                color="var(--pos)"
+                showLegend={false}
+                formatValue={(value) => `${formatCompactNumber(value)}m`}
+                formatTooltipValue={(value) => `${formatCompactNumber(value)} min vistos`}
+              />
+            ) : (
+              <div className={styles.videoChartEmpty}>Sin tiempo visto en este periodo.</div>
+            )}
+          </div>
+
+          <div className={styles.videoChartBlock}>
+            <div className={styles.videoChartTitle}>
+              <span>Retención</span>
+              <strong>{heatmap.length ? `${heatmap.length} puntos` : 'Sin dato'}</strong>
+            </div>
+            {heatmap.length ? (
+              <div className={styles.videoHeatmapBars} aria-label="Mapa de retención del video">
+                {heatmap.map((point, index) => (
+                  <span
+                    key={`${point.segment}-${index}`}
+                    title={`${point.label || point.segment}: ${Math.round(point.intensity)}%`}
+                    style={{ height: `${Math.max(6, point.intensity)}%` }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className={styles.videoChartEmpty}>Sin heatmap disponible todavía.</div>
+            )}
+          </div>
+
+          <div className={styles.videoChartBlock}>
+            <div className={styles.videoChartTitle}>
+              <span>Países</span>
+              <strong>{analytics?.summary.topCountry || 'Sin dato'}</strong>
+            </div>
+            {countries.length ? (
+              <div className={styles.videoCountryList}>
+                {countries.slice(0, 5).map((country) => (
+                  <div key={country.country}>
+                    <Globe2 size={15} />
+                    <span>{country.country}</span>
+                    <strong>{formatCompactNumber(country.views)}</strong>
+                    <small>{formatSeconds(country.watchTime)}</small>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className={styles.videoChartEmpty}>Sin países registrados.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+const AlertTriangleIcon = () => (
+  <span className={styles.videoAnalyticsErrorIcon}>
+    <X size={16} />
+  </span>
+)

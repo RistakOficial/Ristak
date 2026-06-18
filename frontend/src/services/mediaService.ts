@@ -70,6 +70,55 @@ export interface MediaMoveEntry {
   targetFolderPath?: string
 }
 
+export interface StreamChartPoint {
+  label: string
+  value: number
+  periodStart?: string
+  periodEnd?: string
+  periodKey?: string
+}
+
+export interface StreamHeatmapPoint {
+  segment: number
+  intensity: number
+  label: string
+}
+
+export interface StreamCountryMetric {
+  country: string
+  views: number
+  watchTime: number
+}
+
+export interface MediaStreamAnalytics {
+  assetId: string
+  configured: boolean
+  status: 'ready' | 'disabled' | 'not_configured' | 'not_synced' | string
+  dateFrom?: string
+  dateTo?: string
+  hourly?: boolean
+  stream?: Record<string, unknown> | null
+  video?: Record<string, unknown> | null
+  summary: {
+    views: number
+    watchTime: number
+    averageWatchTime: number
+    engagementScore: number | null
+    topCountry?: string
+  }
+  viewsChart: StreamChartPoint[]
+  watchTimeChart: StreamChartPoint[]
+  countries: StreamCountryMetric[]
+  heatmap: StreamHeatmapPoint[]
+  raw?: Record<string, unknown> | null
+}
+
+export interface MediaStreamAnalyticsInput {
+  dateFrom?: string
+  dateTo?: string
+  hourly?: boolean
+}
+
 function getAuthHeaders() {
   try {
     const token = localStorage.getItem('auth_token')
@@ -245,6 +294,14 @@ export const mediaService = {
     moduleEntityId?: string
   } = {}) {
     return apiClient.post<MediaAsset>(`/media/assets/${encodeURIComponent(assetId)}/stream/sync`, input)
+  },
+
+  getAssetStreamAnalytics(assetId: string, input: MediaStreamAnalyticsInput = {}) {
+    const params: Record<string, string> = {}
+    if (input.dateFrom) params.dateFrom = input.dateFrom
+    if (input.dateTo) params.dateTo = input.dateTo
+    if (input.hourly !== undefined) params.hourly = String(input.hourly)
+    return apiClient.get<MediaStreamAnalytics>(`/media/assets/${encodeURIComponent(assetId)}/stream/analytics`, { params })
   },
 
   getStorageUsage() {

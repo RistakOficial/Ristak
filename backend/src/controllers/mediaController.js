@@ -3,6 +3,7 @@ import JSZip from 'jszip'
 import {
   extractMediaAssetIdFromUrl,
   getMediaAsset,
+  getMediaAssetBunnyStreamAnalytics,
   getMediaAssetBuffer,
   getMediaAssetFile,
   getStorageUsage,
@@ -346,6 +347,19 @@ export async function syncMediaAssetStreamHandler(req, res) {
     res.json({ success: true, data: asset })
   } catch (error) {
     sendError(res, error, 'Error sincronizando metadata de Bunny Stream')
+  }
+}
+
+export async function getMediaAssetStreamAnalyticsHandler(req, res) {
+  try {
+    const analytics = await getMediaAssetBunnyStreamAnalytics(req.params.assetId, {
+      dateFrom: req.query.dateFrom || req.query.date_from,
+      dateTo: req.query.dateTo || req.query.date_to,
+      hourly: parseBoolean(req.query.hourly)
+    })
+    res.json({ success: true, data: analytics })
+  } catch (error) {
+    sendError(res, error, 'Error obteniendo analíticas de Bunny Stream')
   }
 }
 

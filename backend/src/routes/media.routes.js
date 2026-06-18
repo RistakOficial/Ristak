@@ -8,6 +8,7 @@ import {
   deleteMediaAssetHandler,
   downloadMediaAssetHandler,
   downloadMediaAssetsArchiveHandler,
+  getMediaAssetStreamAnalyticsHandler,
   getMediaAssetUrlHandler,
   getStorageUsageHandler,
   listMediaAssetsHandler,
@@ -44,6 +45,7 @@ router.get('/storage/usage', getStorageUsageHandler)
 router.get('/diagnostics', storageDiagnosticsHandler)
 router.get('/assets/:assetId/url', requireMediaAccess, getMediaAssetUrlHandler)
 router.get('/assets/:assetId/download', requireMediaAccess, downloadMediaAssetHandler)
+router.get('/assets/:assetId/stream/analytics', requireMediaAccess, getMediaAssetStreamAnalyticsHandler)
 router.post('/assets/download', requireMediaAccess, downloadMediaAssetsArchiveHandler)
 router.post('/assets/move', requireMediaAccess, moveMediaAssetsHandler)
 router.delete('/assets/:assetId', requireMediaAccess, deleteMediaAssetHandler)

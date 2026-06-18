@@ -182,6 +182,49 @@ async function createBunnyMockServer() {
         return
       }
 
+      if (path === '/stream/library/123/statistics' && req.method === 'GET') {
+        requests.push({
+          kind: 'stream-statistics',
+          videoGuid: url.searchParams.get('videoGuid'),
+          dateFrom: url.searchParams.get('dateFrom'),
+          dateTo: url.searchParams.get('dateTo'),
+          hourly: url.searchParams.get('hourly'),
+          accessKey: req.headers.accesskey
+        })
+        sendJson(res, 200, {
+          viewsChart: {
+            '2026-06-16T00:00:00Z': 2,
+            '2026-06-17T00:00:00Z': 5
+          },
+          watchTimeChart: {
+            '2026-06-16T00:00:00Z': 20,
+            '2026-06-17T00:00:00Z': 45
+          },
+          countryViewCounts: {
+            MX: 5,
+            US: 2
+          },
+          countryWatchTime: {
+            MX: 50,
+            US: 15
+          },
+          engagementScore: 82
+        })
+        return
+      }
+
+      if (path === '/stream/library/123/videos/stream-video-1/heatmap' && req.method === 'GET') {
+        requests.push({ kind: 'stream-heatmap', accessKey: req.headers.accesskey })
+        sendJson(res, 200, {
+          heatmap: {
+            0: 10,
+            1: 80,
+            2: 45
+          }
+        })
+        return
+      }
+
       if (path === '/stream/library/123/videos/stream-video-1' && req.method === 'DELETE') {
         requests.push({ kind: 'stream-delete-video', accessKey: req.headers.accesskey })
         sendJson(res, 200, { success: true, message: 'deleted', statusCode: 200 })
@@ -279,10 +322,31 @@ test('videos de Sites se copian a Bunny Stream y guardan metadata del video', as
     assert.equal(synced.metadata.stream.video.views, 7)
     assert.equal(synced.metadata.stream.video.chapters[0].title, 'Inicio')
 
+    const analytics = await mediaStorageService.getMediaAssetBunnyStreamAnalytics(created.id, {
+      dateFrom: '2026-06-16',
+      dateTo: '2026-06-17',
+      hourly: true
+    })
+    assert.equal(analytics.status, 'ready')
+    assert.equal(analytics.summary.views, 7)
+    assert.equal(analytics.summary.watchTime, 35)
+    assert.equal(analytics.summary.engagementScore, 82)
+    assert.equal(analytics.summary.topCountry, 'MX')
+    assert.equal(analytics.viewsChart.length, 2)
+    assert.equal(analytics.watchTimeChart[1].value, 45)
+    assert.equal(analytics.countries[0].country, 'MX')
+    assert.equal(analytics.heatmap[1].intensity, 80)
+
+    const statisticsRequest = bunny.requests.find(request => request.kind === 'stream-statistics')
+    assert.equal(statisticsRequest.videoGuid, 'stream-video-1')
+    assert.equal(statisticsRequest.dateFrom, '2026-06-16')
+    assert.equal(statisticsRequest.dateTo, '2026-06-17')
+    assert.equal(statisticsRequest.hourly, 'true')
     assert.ok(bunny.requests.some(request => request.kind === 'stream-list-collections'))
     assert.ok(bunny.requests.some(request => request.kind === 'stream-create-collection'))
     assert.ok(bunny.requests.some(request => request.kind === 'stream-create-video'))
     assert.ok(bunny.requests.some(request => request.kind === 'stream-upload-video'))
+    assert.ok(bunny.requests.some(request => request.kind === 'stream-heatmap'))
     assert.ok(bunny.requests.filter(request => request.kind === 'stream-get-video').length >= 2)
     assert.ok(bunny.requests.every(request => !request.accessKey || request.accessKey === 'stream-secret' || request.accessKey === 'storage-secret'))
   } finally {
