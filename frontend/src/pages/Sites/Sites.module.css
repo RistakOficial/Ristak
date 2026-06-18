@@ -16131,6 +16131,7 @@
 .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
   grid-template-columns: minmax(200px, 0.85fr) minmax(0, max-content) minmax(0, 1.15fr);
   gap: var(--sites-editor-toolbar-gap);
+  overflow: visible;
 }
 
 .pageFrame .containerFocused:has(.builder) .editorToolbarContext,
@@ -16142,7 +16143,9 @@
 
 .pageFrame .containerFocused:has(.builder) .editorToolbarTools {
   padding-inline: var(--sites-editor-tools-pad-x);
-  overflow: hidden;
+  position: relative;
+  z-index: var(--z-index-dropdown);
+  overflow: visible;
 }
 
 .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
@@ -16449,7 +16452,6 @@
   }
 
   .pageFrame .containerFocused:has(.builder) .editorToolbarContext,
-  .pageFrame .containerFocused:has(.builder) .editorToolbarTools,
   .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
     width: 100%;
     justify-content: flex-start;
@@ -16460,5 +16462,9 @@
 
   .pageFrame .containerFocused:has(.builder) .editorToolbarTools {
     max-width: none;
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    overflow: visible;
   }
 }
