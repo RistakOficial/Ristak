@@ -453,7 +453,7 @@
   box-shadow: 0 0 0 3px var(--chat-soft);
 }
 
-.chatRowArchiveButton {
+.chatRowMenuButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -464,21 +464,33 @@
   background: transparent;
   color: var(--color-text-tertiary);
   cursor: pointer;
-  opacity: 0;
   transition: opacity var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
 }
 
-.chatRow:hover .chatRowArchiveButton,
-.chatRow:focus-within .chatRowArchiveButton,
-.chatRowArchiveButton:focus-visible {
-  opacity: 1;
-}
-
-.chatRowArchiveButton:hover,
-.chatRowArchiveButton:focus-visible {
+.chatRowMenuButton:hover,
+.chatRowMenuButton:focus-visible,
+.chatRowMenuButton[data-state='open'] {
   border-color: var(--chat-border);
   background: var(--chat-soft);
   color: var(--color-text-primary);
+}
+
+.chatActionsMenu {
+  min-width: 190px;
+}
+
+.chatActionMenuItem {
+  gap: 10px;
+}
+
+.chatActionMenuItem svg {
+  flex: 0 0 auto;
+  color: var(--text-mute);
+}
+
+.chatActionMenuItemDanger[data-ristak-dropdown-item],
+.chatActionMenuItemDanger[data-ristak-dropdown-item] svg {
+  color: var(--neg);
 }
 
 .avatar {
