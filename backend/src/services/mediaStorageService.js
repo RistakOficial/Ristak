@@ -19,6 +19,8 @@ const BUNNY_CORE_API_BASE_URL = 'https://api.bunny.net'
 const BUNNY_STREAM_API_BASE_URL = 'https://video.bunnycdn.com'
 const DEFAULT_BUNNY_STREAM_LIBRARY_NAME = 'Ristak Sites & Forms'
 const DEFAULT_BUNNY_STREAM_COLLECTION_NAME = 'Ristak Sites & Forms'
+const DEFAULT_CLIENT_ACCOUNT_ID = 'default'
+const CLIENT_ACCOUNT_ROOT_FOLDER = 'accounts'
 const CENTRAL_STORAGE_CONFIG_TTL_MS = Math.max(
   30_000,
   Number(process.env.MEDIA_CENTRAL_CONFIG_TTL_MS || 5 * 60 * 1000) || 5 * 60 * 1000
@@ -135,6 +137,23 @@ function normalizeBusinessId(value = '') {
   return clean.replace(/[^a-zA-Z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || 'default'
 }
 
+function normalizeClientAccountId(value = '', fallback = DEFAULT_CLIENT_ACCOUNT_ID) {
+  const clean = cleanString(value || fallback)
+  return clean.replace(/[^a-zA-Z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || fallback
+}
+
+function buildClientAccountRootPath(accountId = DEFAULT_CLIENT_ACCOUNT_ID) {
+  return [CLIENT_ACCOUNT_ROOT_FOLDER, normalizeClientAccountId(accountId)].join('/')
+}
+
+function normalizeClientAccountContext(input = {}) {
+  const id = normalizeClientAccountId(input.id || input.clientAccountId || input.client_account_id || input.accountId || input.account_id || input.locationId || input.location_id)
+  return {
+    id,
+    rootPath: buildClientAccountRootPath(id)
+  }
+}
+
 function normalizeModule(value = '') {
   const clean = cleanString(value).toLowerCase().replace(/[^a-z0-9_]+/g, '_')
   return MEDIA_MODULES.has(clean) ? clean : 'other'
@@ -231,6 +250,53 @@ function parseJson(value, fallback = {}) {
   } catch {
     return fallback
   }
+}
+
+function firstCleanValue(...values) {
+  for (const value of values) {
+    const clean = cleanString(value)
+    if (clean) return clean
+  }
+  return ''
+}
+
+function clientAccountIdFromLocationData(locationData = {}) {
+  return firstCleanValue(
+    locationData.locationId,
+    locationData.location_id,
+    locationData.id,
+    locationData._id
+  )
+}
+
+async function highLevelClientAccountFallback() {
+  const row = await db.get('SELECT location_id, location_data FROM highlevel_config LIMIT 1').catch(() => null)
+  const locationData = parseJson(row?.location_data, {})
+  return firstCleanValue(row?.location_id, clientAccountIdFromLocationData(locationData))
+}
+
+async function resolveClientAccountContext(input = {}) {
+  const metadataAccount = input.metadata?.clientAccount || input.metadata?.client_account || {}
+  const accountId = firstCleanValue(
+    input.clientAccountId,
+    input.client_account_id,
+    input.accountId,
+    input.account_id,
+    input.locationId,
+    input.location_id,
+    metadataAccount.id,
+    metadataAccount.clientAccountId,
+    metadataAccount.client_account_id,
+    process.env.RISTAK_CLIENT_ACCOUNT_ID,
+    process.env.CLIENT_ACCOUNT_ID,
+    process.env.GHL_LOCATION_ID,
+    process.env.HIGHLEVEL_LOCATION_ID,
+    await highLevelClientAccountFallback(),
+    input.businessId,
+    DEFAULT_CLIENT_ACCOUNT_ID
+  )
+
+  return normalizeClientAccountContext({ id: accountId })
 }
 
 function mapAssetRow(row) {
@@ -727,16 +793,24 @@ function bunnyStreamCollectionFromRow(row = {}) {
   }
 }
 
-async function ensureBunnyStreamCollection(config) {
+function buildBunnyStreamCollectionName(config, clientAccount = {}) {
+  const baseName = config.bunnyStreamCollectionName || DEFAULT_BUNNY_STREAM_COLLECTION_NAME
+  const account = normalizeClientAccountContext(clientAccount)
+  return `${baseName} / ${account.id}`.slice(0, 180)
+}
+
+async function ensureBunnyStreamCollection(config, clientAccount = null) {
   if (!config.bunnyStreamConfigured) return null
-  if (config.bunnyStreamCollectionId) {
+  if (config.bunnyStreamCollectionId && !clientAccount) {
     return {
       id: config.bunnyStreamCollectionId,
       name: config.bunnyStreamCollectionName || ''
     }
   }
 
-  const name = config.bunnyStreamCollectionName || DEFAULT_BUNNY_STREAM_COLLECTION_NAME
+  const name = clientAccount
+    ? buildBunnyStreamCollectionName(config, clientAccount)
+    : config.bunnyStreamCollectionName || DEFAULT_BUNNY_STREAM_COLLECTION_NAME
   const cacheKey = `${config.bunnyStreamLibraryId}:${name.toLowerCase()}`
   const cached = bunnyStreamCollectionCache.get(cacheKey)
   if (cached?.collection && cached.expiresAt > Date.now()) return cached.collection
@@ -863,10 +937,13 @@ function bunnyStreamUsageContext(asset, context = {}) {
   }
 }
 
-function bunnyStreamSourceForAsset(asset, context) {
+function bunnyStreamSourceForAsset(asset, context, clientAccount = {}) {
+  const account = normalizeClientAccountContext(clientAccount || asset.metadata?.clientAccount || {})
   return {
     mediaAssetId: asset.id,
     businessId: asset.businessId,
+    clientAccountId: account.id,
+    accountRootPath: account.rootPath,
     module: context.module,
     moduleEntityId: context.moduleEntityId,
     storagePath: asset.bunnyPath,
@@ -875,7 +952,8 @@ function bunnyStreamSourceForAsset(asset, context) {
   }
 }
 
-function buildSkippedBunnyStreamMetadata(config, reason) {
+function buildSkippedBunnyStreamMetadata(config, reason, clientAccount = {}) {
+  const account = normalizeClientAccountContext(clientAccount)
   return {
     provider: 'bunny_stream',
     enabled: config.bunnyStreamEnabled,
@@ -884,7 +962,8 @@ function buildSkippedBunnyStreamMetadata(config, reason) {
     reason,
     libraryId: config.bunnyStreamLibraryId || null,
     collectionId: config.bunnyStreamCollectionId || null,
-    collectionName: config.bunnyStreamCollectionName || null,
+    collectionName: buildBunnyStreamCollectionName(config, account),
+    clientAccount: account,
     missingEnvironment: config.streamMissingEnvironment || [],
     checkedAt: nowIso()
   }
@@ -974,15 +1053,19 @@ async function syncVideoToBunnyStream({
   objectPath,
   publicUrl,
   mimeType,
-  buffer
+  buffer,
+  clientAccount
 }) {
-  if (!config.bunnyStreamEnabled) return buildSkippedBunnyStreamMetadata(config, 'stream_disabled')
-  if (!config.bunnyStreamConfigured) return buildSkippedBunnyStreamMetadata(config, 'stream_not_configured')
+  const account = normalizeClientAccountContext(clientAccount || { id: businessId })
+  if (!config.bunnyStreamEnabled) return buildSkippedBunnyStreamMetadata(config, 'stream_disabled', account)
+  if (!config.bunnyStreamConfigured) return buildSkippedBunnyStreamMetadata(config, 'stream_not_configured', account)
 
   const title = buildBunnyStreamTitle({ originalFilename, module, moduleEntityId, id })
   const source = {
     mediaAssetId: id,
     businessId,
+    clientAccountId: account.id,
+    accountRootPath: account.rootPath,
     module,
     moduleEntityId,
     storagePath: objectPath,
@@ -991,7 +1074,7 @@ async function syncVideoToBunnyStream({
   }
 
   try {
-    const collection = await ensureBunnyStreamCollection(config)
+    const collection = await ensureBunnyStreamCollection(config, account)
     logger.info(`[MediaStorage] Bunny Stream sync iniciada: ${id}`)
     const created = await createBunnyStreamVideo(config, {
       title,
@@ -1020,6 +1103,7 @@ async function syncVideoToBunnyStream({
       collectionName: collection?.name || config.bunnyStreamCollectionName || '',
       videoId,
       title,
+      clientAccount: account,
       source,
       uploadResult: {
         success: uploadResult?.success === undefined ? null : boolValue(uploadResult.success),
@@ -1038,8 +1122,9 @@ async function syncVideoToBunnyStream({
       failedAt: nowIso(),
       libraryId: config.bunnyStreamLibraryId,
       collectionId: config.bunnyStreamCollectionId || null,
-      collectionName: config.bunnyStreamCollectionName || null,
+      collectionName: buildBunnyStreamCollectionName(config, account),
       title,
+      clientAccount: account,
       source,
       error: error.message,
       code: error.code || 'bunny_stream_sync_failed'
@@ -1237,13 +1322,13 @@ async function processMedia({ buffer, mimeType, mediaType, config, skipCompressi
   }
 }
 
-function buildObjectPath({ businessId, mediaType, module, id, filename, extension, variant = '' }) {
+function buildObjectPath({ businessId, clientAccount, mediaType, module, id, filename, extension, variant = '' }) {
   const day = new Date().toISOString().slice(0, 10).replace(/-/g, '/')
   const folder = module && module !== 'other' ? module : `${mediaType}s`
   const suffix = variant ? `-${variant}` : ''
+  const rootPath = clientAccount?.rootPath || buildClientAccountRootPath(businessId)
   return [
-    'businesses',
-    normalizeBusinessId(businessId),
+    rootPath,
     folder,
     day,
     `${id}-${filenameBase(filename)}${suffix}.${extension}`
@@ -1372,10 +1457,23 @@ function getStoredObjectFilename(asset) {
   return sanitizeFilename(pathName || asset.storedFilename || `${asset.id}-${filenameBase(asset.originalFilename)}.${asset.extension || 'bin'}`)
 }
 
+function assetClientAccountRootPath(asset) {
+  const currentPathSegments = cleanString(asset.bunnyPath).split('/').filter(Boolean)
+  if (currentPathSegments[0] === CLIENT_ACCOUNT_ROOT_FOLDER && currentPathSegments[1]) {
+    return currentPathSegments.slice(0, 2).join('/')
+  }
+
+  const account = asset.metadata?.clientAccount || asset.metadata?.client_account || {}
+  if (account.id || account.clientAccountId || account.client_account_id) {
+    return normalizeClientAccountContext(account).rootPath
+  }
+
+  return ['businesses', normalizeBusinessId(asset.businessId)].join('/')
+}
+
 function buildMovedObjectPath(asset, targetFolderPath = '') {
   return [
-    'businesses',
-    normalizeBusinessId(asset.businessId),
+    assetClientAccountRootPath(asset),
     ...normalizeMediaFolderPath(targetFolderPath).split('/').filter(Boolean),
     getStoredObjectFilename(asset)
   ].join('/')
@@ -1417,6 +1515,7 @@ export async function uploadMediaAsset(input = {}) {
 
   const originalFilename = sanitizeFilename(input.filename || input.originalFilename || 'archivo')
   const businessId = normalizeBusinessId(input.businessId)
+  const clientAccount = await resolveClientAccountContext({ ...input, businessId })
   const userId = input.userId ? String(input.userId) : null
   const module = normalizeModule(input.module)
   const moduleEntityId = input.moduleEntityId ? String(input.moduleEntityId) : null
@@ -1449,6 +1548,7 @@ export async function uploadMediaAsset(input = {}) {
   const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
   const objectPath = buildObjectPath({
     businessId,
+    clientAccount,
     mediaType: finalMediaType,
     module,
     id,
@@ -1457,6 +1557,7 @@ export async function uploadMediaAsset(input = {}) {
   })
   const thumbnailPath = thumbnail ? buildObjectPath({
     businessId,
+    clientAccount,
     mediaType: finalMediaType,
     module,
     id,
@@ -1472,6 +1573,7 @@ export async function uploadMediaAsset(input = {}) {
     mimeDetection: detected.source,
     compression: processed.compression,
     storageStatus: config.storageStatus,
+    clientAccount,
     variants: {}
   }
 
@@ -1518,7 +1620,8 @@ export async function uploadMediaAsset(input = {}) {
       objectPath,
       publicUrl,
       mimeType: finalMimeType,
-      buffer: processed.buffer
+      buffer: processed.buffer,
+      clientAccount
     })
   }
 
@@ -2078,9 +2181,11 @@ export async function softDeleteMediaAsset(assetId) {
 
 export async function replaceMediaAsset(assetId, input = {}) {
   const current = await getMediaAsset(assetId)
+  const currentAccount = current.metadata?.clientAccount || current.metadata?.client_account || {}
   const nextInput = {
     ...input,
     businessId: input.businessId || current.businessId,
+    clientAccountId: input.clientAccountId || input.client_account_id || input.accountId || input.account_id || input.locationId || input.location_id || currentAccount.id,
     module: input.module || current.module,
     moduleEntityId: input.moduleEntityId || current.moduleEntityId,
     isPublic: input.isPublic !== undefined ? input.isPublic : current.isPublic
@@ -2158,6 +2263,11 @@ export async function getMediaAssetDataUrl(assetId) {
 export async function syncMediaAssetBunnyStream(assetId, context = {}) {
   const asset = await getMediaAsset(assetId)
   const usageContext = bunnyStreamUsageContext(asset, context)
+  const clientAccount = await resolveClientAccountContext({
+    ...context,
+    businessId: asset.businessId,
+    metadata: asset.metadata
+  })
   if (!isBunnyStreamEligibleVideo({ mediaType: asset.mediaType, module: usageContext.module })) {
     throw errorWithStatus('Este archivo no es un video de sitios o formularios.', 400, 'bunny_stream_not_applicable')
   }
@@ -2183,8 +2293,9 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
       title: currentStream.title || cleanString(video?.title),
       source: {
         ...(currentStream.source || {}),
-        ...bunnyStreamSourceForAsset(asset, usageContext)
+        ...bunnyStreamSourceForAsset(asset, usageContext, clientAccount)
       },
+      clientAccount,
       video: normalizeBunnyStreamVideo(video) || currentStream.video || null
     }
   } else {
@@ -2204,7 +2315,8 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
       objectPath: asset.bunnyPath,
       publicUrl: asset.publicUrl,
       mimeType: file.mimeType || asset.mimeType,
-      buffer: file.buffer
+      buffer: file.buffer,
+      clientAccount
     })
   }
 

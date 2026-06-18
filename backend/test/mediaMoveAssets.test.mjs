@@ -10,7 +10,9 @@ const ENV_KEYS = [
   'BUNNY_STORAGE_REGION',
   'BUNNY_STORAGE_ENDPOINT',
   'BUNNY_STORAGE_API_KEY',
-  'BUNNY_CDN_BASE_URL'
+  'BUNNY_CDN_BASE_URL',
+  'RISTAK_CLIENT_ACCOUNT_ID',
+  'CLIENT_ACCOUNT_ID'
 ]
 
 function snapshotEnv() {
@@ -50,6 +52,8 @@ test('moveMediaAssets reubica archivos locales y conserva lectura por metadata',
     delete process.env.BUNNY_STORAGE_ENDPOINT
     delete process.env.BUNNY_STORAGE_API_KEY
     delete process.env.BUNNY_CDN_BASE_URL
+    delete process.env.RISTAK_CLIENT_ACCOUNT_ID
+    delete process.env.CLIENT_ACCOUNT_ID
     process.env.MEDIA_STORAGE_PROVIDER = 'local'
 
     const [mediaStorageService, database] = await Promise.all([
@@ -65,6 +69,7 @@ test('moveMediaAssets reubica archivos locales y conserva lectura por metadata',
       mimeType: 'text/plain',
       module: 'documents',
       businessId: 'default',
+      clientAccountId: 'cuenta_local',
       skipCompression: true
     })
     mediaAssetId = created.id
@@ -77,7 +82,8 @@ test('moveMediaAssets reubica archivos locales y conserva lectura por metadata',
       targetFolderPath: 'media/clientes'
     })
 
-    assert.match(moved.bunnyPath, /^businesses\/default\/media\/clientes\//)
+    assert.match(created.bunnyPath, /^accounts\/cuenta_local\/documents\//)
+    assert.match(moved.bunnyPath, /^accounts\/cuenta_local\/media\/clientes\//)
     assert.notEqual(moved.bunnyPath, created.bunnyPath)
     assert.ok(moved.metadata.localPath)
     assert.notEqual(moved.metadata.localPath, beforeLocalPath)

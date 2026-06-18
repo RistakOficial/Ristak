@@ -130,6 +130,7 @@ async function uploadInputFromRequest(req) {
   const body = req.body || {}
   const common = {
     businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+    clientAccountId: body.clientAccountId || body.client_account_id || body.accountId || body.account_id || body.locationId || body.location_id || req.query?.clientAccountId || req.query?.client_account_id || req.query?.accountId || req.query?.account_id || req.query?.locationId || req.query?.location_id || null,
     userId: body.userId || body.user_id || req.user?.userId || req.user?.id || null,
     module: body.module || 'other',
     moduleEntityId: body.moduleEntityId || body.module_entity_id || null,

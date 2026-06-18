@@ -26,6 +26,10 @@ const ENV_KEYS = [
   'BUNNY_STREAM_COLLECTION_NAME',
   'BUNNY_STREAM_ENDPOINT',
   'BUNNY_STREAM_TIMEOUT_MS',
+  'RISTAK_CLIENT_ACCOUNT_ID',
+  'CLIENT_ACCOUNT_ID',
+  'GHL_LOCATION_ID',
+  'HIGHLEVEL_LOCATION_ID',
   'RENDER_EXTERNAL_URL',
   'PUBLIC_URL'
 ]
@@ -307,6 +311,10 @@ function configureBunnyEnv(baseUrl) {
   delete process.env.BUNNY_CORE_ENDPOINT
   delete process.env.BUNNY_API_ENDPOINT
   delete process.env.BUNNY_STREAM_COLLECTION_ID
+  delete process.env.RISTAK_CLIENT_ACCOUNT_ID
+  delete process.env.CLIENT_ACCOUNT_ID
+  delete process.env.GHL_LOCATION_ID
+  delete process.env.HIGHLEVEL_LOCATION_ID
   delete process.env.RENDER_EXTERNAL_URL
   delete process.env.PUBLIC_URL
   process.env.MEDIA_STORAGE_PROVIDER = 'bunny'
@@ -334,6 +342,10 @@ function configureBunnyAccountOnlyEnv(baseUrl) {
   delete process.env.BUNNY_STREAM_LIBRARY_ID
   delete process.env.BUNNY_STREAM_API_KEY
   delete process.env.BUNNY_STREAM_COLLECTION_ID
+  delete process.env.RISTAK_CLIENT_ACCOUNT_ID
+  delete process.env.CLIENT_ACCOUNT_ID
+  delete process.env.GHL_LOCATION_ID
+  delete process.env.HIGHLEVEL_LOCATION_ID
   delete process.env.RENDER_EXTERNAL_URL
   delete process.env.PUBLIC_URL
   process.env.MEDIA_STORAGE_PROVIDER = 'bunny'
@@ -460,6 +472,7 @@ test('videos de Sites se copian a Bunny Stream y guardan metadata del video', as
       module: 'sites',
       moduleEntityId: 'site_1',
       businessId: 'default',
+      clientAccountId: 'loc_mexico',
       isPublic: true,
       skipCompression: true
     })
@@ -467,11 +480,17 @@ test('videos de Sites se copian a Bunny Stream y guardan metadata del video', as
 
     assert.equal(created.mediaType, 'video')
     assert.equal(created.storageProvider, 'bunny')
+    assert.match(created.bunnyPath, /^accounts\/loc_mexico\/sites\//)
+    assert.equal(created.metadata.clientAccount.id, 'loc_mexico')
+    assert.equal(created.metadata.clientAccount.rootPath, 'accounts/loc_mexico')
     assert.equal(created.metadata.stream.syncStatus, 'uploaded')
     assert.equal(created.metadata.stream.provider, 'bunny_stream')
     assert.equal(created.metadata.stream.libraryId, '123')
     assert.equal(created.metadata.stream.collectionId, 'collection-sites-forms')
-    assert.equal(created.metadata.stream.collectionName, 'Ristak Sites & Forms')
+    assert.equal(created.metadata.stream.collectionName, 'Ristak Sites & Forms / loc_mexico')
+    assert.equal(created.metadata.stream.clientAccount.id, 'loc_mexico')
+    assert.equal(created.metadata.stream.source.clientAccountId, 'loc_mexico')
+    assert.equal(created.metadata.stream.source.accountRootPath, 'accounts/loc_mexico')
     assert.equal(created.metadata.stream.videoId, 'stream-video-1')
     assert.equal(created.metadata.stream.video.statusLabel, 'finished')
     assert.equal(created.metadata.stream.video.length, 17)
@@ -501,6 +520,10 @@ test('videos de Sites se copian a Bunny Stream y guardan metadata del video', as
     assert.equal(analytics.countries[0].country, 'MX')
     assert.equal(analytics.heatmap[1].intensity, 80)
 
+    const storageUploadRequest = bunny.requests.find(request => request.kind === 'storage-upload')
+    assert.match(storageUploadRequest.path, /^\/storage\/central-zone\/accounts\/loc_mexico\/sites\//)
+    const collectionRequest = bunny.requests.find(request => request.kind === 'stream-create-collection')
+    assert.equal(collectionRequest.body.name, 'Ristak Sites & Forms / loc_mexico')
     const statisticsRequest = bunny.requests.find(request => request.kind === 'stream-statistics')
     assert.equal(statisticsRequest.videoGuid, 'stream-video-1')
     assert.equal(statisticsRequest.dateFrom, '2026-06-16')
