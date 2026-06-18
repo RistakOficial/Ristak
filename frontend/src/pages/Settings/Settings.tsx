@@ -9,15 +9,11 @@ import {
   FileCode2,
   Globe2,
   Mail,
-  Megaphone,
-  MessageCircle,
   MonitorSmartphone,
   Settings2,
   Tags,
-  UploadCloud,
   User,
-  Users,
-  type LucideIcon
+  Users
 } from 'lucide-react'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { Costs } from './Costs'
@@ -37,6 +33,7 @@ import { CustomFields } from './CustomFields'
 import { VariableFields } from './VariableFields'
 import { TriggerLinks } from './TriggerLinks'
 import { TagsSettings } from './TagsSettings'
+import { HighLevelIcon, MetaIcon, WhatsAppIcon } from '@/components/common/Icon/CustomIcons'
 import { useAuth } from '@/contexts/AuthContext'
 import { getFirstAllowedAppPath, hasModuleAccess, type PermissionKey } from '@/utils/accessControl'
 import { cn } from '@/utils/cn'
@@ -59,15 +56,17 @@ const SettingsAccessGate: React.FC<{ moduleKey: PermissionKey; children: React.R
   return <>{children}</>
 }
 
-const settingsIcons: Record<string, LucideIcon> = {
+type SettingsIcon = React.ComponentType<{ size?: number; className?: string }>
+
+const settingsIcons: Record<string, SettingsIcon> = {
   '/settings/account': User,
   '/settings/users-access': Users,
   '/settings/mobile-app': MonitorSmartphone,
   '/settings/calendars': CalendarDays,
   '/settings/payments': CreditCard,
-  '/settings/highlevel': UploadCloud,
-  '/settings/meta-ads': Megaphone,
-  '/settings/whatsapp': MessageCircle,
+  '/settings/highlevel': HighLevelIcon,
+  '/settings/meta-ads': MetaIcon,
+  '/settings/whatsapp': WhatsAppIcon,
   '/settings/email': Mail,
   '/settings/tracking': FileCode2,
   '/settings/domains': Globe2,

@@ -1,7 +1,7 @@
 // Legacy Icon component for backward compatibility
 import React from 'react'
 import * as LucideIcons from 'lucide-react'
-import { MetaIcon, WhatsAppIcon, GoogleIcon } from './CustomIcons'
+import { MetaIcon, WhatsAppIcon, GoogleIcon, HighLevelIcon } from './CustomIcons'
 
 interface IconProps {
   name: string
@@ -89,6 +89,7 @@ const iconMap: Record<string, React.FC<any>> = {
   'meta': MetaIcon as any,
   'meta-ads': MetaIcon as any,
   'whatsapp': WhatsAppIcon as any,
+  'highlevel': HighLevelIcon as any,
   'google': GoogleIcon as any,
   'message-circle': LucideIcons.MessageCircle,
   'circle': LucideIcons.Circle
