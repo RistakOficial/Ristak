@@ -24296,7 +24296,7 @@ const SiteGlobalSettings: React.FC<{
   </div>
 )
 
-const hasBlockSettingsTabContent = (block: SiteBlock) => (
+const hasBlockExtraSettingsContent = (block: SiteBlock) => (
   isPanelBlock(block) ||
   block.blockType === SECTION_BLOCK_TYPE ||
   [
@@ -25055,7 +25055,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </label>
   ) : null
 
-  const blockHasSettingsContent = hasBlockSettingsTabContent(block)
+  const blockHasExtraSettingsContent = hasBlockExtraSettingsContent(block)
   const fieldEditControls = isField ? (
     <>
       <div className={styles.settingsGroup}>
@@ -25156,7 +25156,25 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       onSave={onSave}
     />
   ) : null
-  const defaultInspectorTab: InspectorTabId = isMediaBlock ? 'settings' : 'edit'
+  const settingsContent = (
+    <>
+      {!isField && blockHasExtraSettingsContent && (
+        <LandingBlockSettings
+          site={site}
+          block={block}
+          forms={forms}
+          calendars={calendars}
+          pages={pages}
+          activePageId={activePageId}
+          connectedSocialProfiles={connectedSocialProfiles}
+          loadingSocialProfiles={loadingSocialProfiles}
+          onPatchSettings={onPatchSettings}
+          onSave={onSave}
+        />
+      )}
+    </>
+  )
+
   const editContent = (
     <>
       {showBlockNameFirst && blockNameField}
@@ -25211,29 +25229,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {fieldEditControls}
 
       {choiceEditControls}
-    </>
-  )
 
-  const settingsContent = (
-    <>
-      {!isField && (
-        <LandingBlockSettings
-          site={site}
-          block={block}
-          forms={forms}
-          calendars={calendars}
-          pages={pages}
-          activePageId={activePageId}
-          connectedSocialProfiles={connectedSocialProfiles}
-          loadingSocialProfiles={loadingSocialProfiles}
-          onPatchSettings={onPatchSettings}
-          onSave={onSave}
-        />
-      )}
-
-      {!blockHasSettingsContent && (
-        <InspectorEmptyState>Este bloque no tiene ajustes extra.</InspectorEmptyState>
-      )}
+      {blockHasExtraSettingsContent && settingsContent}
     </>
   )
 
@@ -25258,16 +25255,12 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent }
   ]
 
-  if (blockHasSettingsContent) {
-    inspectorTabs.push({ value: 'settings', label: 'Ajustes', icon: <Settings2 size={14} />, content: settingsContent })
-  }
-
   return (
     <InspectorTabbedPanel
       key={`${block.id}:${block.blockType}`}
       title="Propiedades"
       subtitle={blockLabels[block.blockType]}
-      defaultTab={defaultInspectorTab}
+      defaultTab="edit"
       tabs={inspectorTabs}
     />
   )
