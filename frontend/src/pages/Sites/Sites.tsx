@@ -68,6 +68,7 @@ import {
   PanelBottom,
   PanelTop,
   Paperclip,
+  Pause,
   Pencil,
   Play,
   Plus,
@@ -87,6 +88,7 @@ import {
   Upload,
   Video,
   Volume2,
+  VolumeX,
   X
 } from 'lucide-react'
 import {
@@ -618,12 +620,29 @@ const videoSpeedOptions: Array<{ value: string; label: string }> = [
 ]
 
 const videoControlsModeOptions = [
-  { value: 'clean', label: 'Tipo Wistia' },
+  { value: 'clean', label: 'Personalizado' },
   { value: 'native', label: 'Controles del navegador' },
   { value: 'none', label: 'Sin reproductor visible' }
 ] as const
 type VideoControlsMode = typeof videoControlsModeOptions[number]['value']
+const videoPlayIconOptions = [
+  { value: 'solid', label: 'Triángulo sólido' },
+  { value: 'outline', label: 'Círculo lineal' },
+  { value: 'soft', label: 'Play suave' },
+  { value: 'spark', label: 'Play con brillo' }
+] as const
+type VideoPlayIconStyle = typeof videoPlayIconOptions[number]['value']
+const videoSoundNoticeDurationOptions = [
+  { value: '3', label: '3 segundos' },
+  { value: '5', label: '5 segundos' },
+  { value: '8', label: '8 segundos' },
+  { value: '12', label: '12 segundos' },
+  { value: '0', label: 'Nunca ocultar' }
+] as const
 const DEFAULT_VIDEO_CONTROLS_MODE: VideoControlsMode = 'clean'
+const DEFAULT_VIDEO_PLAY_ICON_STYLE: VideoPlayIconStyle = 'solid'
+const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
+const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
 const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0,0,0,.52)'
 const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
@@ -631,8 +650,13 @@ const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
   videoControls: false,
+  videoControlBar: false,
+  videoControlVolume: true,
+  videoControlSpeed: true,
   videoPreviewEnabled: true,
   videoSoundHint: true,
+  videoSoundNoticeText: DEFAULT_VIDEO_SOUND_NOTICE_TEXT,
+  videoSoundNoticeHideAfter: DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER,
   videoMuted: true,
   videoAutoplay: false,
   videoLoop: false,
@@ -646,6 +670,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoPlayColor: DEFAULT_VIDEO_PLAY_COLOR,
   videoPlaySize: 64,
   videoPlayRadius: 999,
+  videoPlayIconStyle: DEFAULT_VIDEO_PLAY_ICON_STYLE,
   videoPlayIconSize: 22,
   videoPlayBorderColor: DEFAULT_VIDEO_TRANSPARENT,
   videoPlayBorderWidth: 0,
@@ -1953,6 +1978,28 @@ const getVideoControlsMode = (settings: Record<string, unknown>): VideoControlsM
   if (isVideoControlsMode(rawMode)) return rawMode
   if (settings.videoControls === false) return 'none'
   return DEFAULT_VIDEO_CONTROLS_MODE
+}
+
+const isVideoPlayIconStyle = (value: string): value is VideoPlayIconStyle =>
+  videoPlayIconOptions.some(option => option.value === value)
+
+const getVideoPlayIconStyle = (settings: Record<string, unknown>): VideoPlayIconStyle => {
+  const rawStyle = getSettingString(settings, 'videoPlayIconStyle')
+  return isVideoPlayIconStyle(rawStyle) ? rawStyle : DEFAULT_VIDEO_PLAY_ICON_STYLE
+}
+
+const getVideoSoundNoticeText = (settings: Record<string, unknown>) => {
+  if (Object.prototype.hasOwnProperty.call(settings, 'videoSoundNoticeText')) {
+    return getSettingString(settings, 'videoSoundNoticeText').trim()
+  }
+  return DEFAULT_VIDEO_SOUND_NOTICE_TEXT
+}
+
+const getVideoSoundNoticeHideAfter = (settings: Record<string, unknown>) => {
+  const value = Number(settings.videoSoundNoticeHideAfter)
+  if (!Number.isFinite(value)) return DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER
+  if (value <= 0) return 0
+  return Math.min(12, Math.max(3, value))
 }
 
 const withDefaultVideoPlayerSettings = (settings: Record<string, unknown> = {}) => ({
@@ -3398,7 +3445,7 @@ const resolveEmbedPreview = (rawValue: string): EmbedPreviewConfig => {
 
   const wistiaId = extractImportedWistiaMediaId(raw)
   if (wistiaId) {
-    return { kind: 'url', src: getWistiaEmbedUrl(wistiaId), title: 'Video Wistia', allow: DEFAULT_EMBED_ALLOW, height: EMBED_DEFAULT_HEIGHT }
+    return { kind: 'url', src: getWistiaEmbedUrl(wistiaId), title: 'Video personalizado', allow: DEFAULT_EMBED_ALLOW, height: EMBED_DEFAULT_HEIGHT }
   }
 
   const directUrl = safeEmbedUrl(raw)
@@ -3438,7 +3485,7 @@ const resolveImportedVideoPreview = (rawValue: string): EmbedPreviewConfig => {
 
   const wistiaId = extractImportedWistiaMediaId(raw)
   if (wistiaId) {
-    return { kind: 'url', src: getWistiaEmbedUrl(wistiaId), title: 'Video Wistia', allow: DEFAULT_EMBED_ALLOW, height: 220 }
+    return { kind: 'url', src: getWistiaEmbedUrl(wistiaId), title: 'Video personalizado', allow: DEFAULT_EMBED_ALLOW, height: 220 }
   }
 
   const iframeSrc = getIframeSrcFromHtml(raw)
@@ -18534,7 +18581,9 @@ const VideoPlayerSettingsControls: React.FC<{
   onSave: () => void
 }> = ({ settings, onPatchSettings, onSave }) => {
   const controlsMode = getVideoControlsMode(settings)
-  const showWistiaControls = controlsMode === 'clean'
+  const showCustomControls = controlsMode === 'clean'
+  const showCustomControlBar = settings.videoControlBar === true
+  const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
 
   return (
     <div className={styles.videoSettingsBox}>
@@ -18653,9 +18702,63 @@ const VideoPlayerSettingsControls: React.FC<{
         </label>
       </div>
 
-      {showWistiaControls && (
+      {showCustomControls && (
         <>
-          <div className={styles.panelSubheader}>Controles custom</div>
+          <div className={styles.panelSubheader}>Controles personalizados</div>
+          <div className={styles.twoColumn}>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={showCustomControlBar}
+                onChange={(event) => {
+                  onPatchSettings({ videoControlBar: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Barra del reproductor</span>
+            </label>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={settings.videoControlVolume !== false}
+                disabled={!showCustomControlBar}
+                onChange={(event) => {
+                  onPatchSettings({ videoControlVolume: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Volumen</span>
+            </label>
+          </div>
+          <div className={styles.twoColumn}>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={settings.videoControlSpeed !== false}
+                disabled={!showCustomControlBar}
+                onChange={(event) => {
+                  onPatchSettings({ videoControlSpeed: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Velocidad</span>
+            </label>
+            <label className={styles.field}>
+              <span>Tipo de play</span>
+              <CustomSelect
+                value={getVideoPlayIconStyle(settings)}
+                onChange={(event) => {
+                  const nextStyle = isVideoPlayIconStyle(event.target.value) ? event.target.value : DEFAULT_VIDEO_PLAY_ICON_STYLE
+                  onPatchSettings({ videoPlayIconStyle: nextStyle })
+                }}
+                onBlur={onSave}
+              >
+                {videoPlayIconOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          </div>
           <div className={styles.twoColumn}>
             <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
             <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
@@ -18711,6 +18814,31 @@ const VideoPlayerSettingsControls: React.FC<{
             />
             <span>Mostrar bocina animada</span>
           </label>
+          {settings.videoSoundHint !== false && (
+            <div className={styles.twoColumn}>
+              <label className={styles.field}>
+                <span>Texto bocina (opcional)</span>
+                <input
+                  value={getVideoSoundNoticeText(settings)}
+                  placeholder={DEFAULT_VIDEO_SOUND_NOTICE_TEXT}
+                  onChange={(event) => onPatchSettings({ videoSoundNoticeText: event.target.value })}
+                  onBlur={onSave}
+                />
+              </label>
+              <label className={styles.field}>
+                <span>Ocultar bocina</span>
+                <CustomSelect
+                  value={String(soundNoticeHideAfter)}
+                  onChange={(event) => onPatchSettings({ videoSoundNoticeHideAfter: Number(event.target.value) })}
+                  onBlur={onSave}
+                >
+                  {videoSoundNoticeDurationOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -22247,21 +22375,60 @@ interface CanvasPreviewBlockProps {
   onSave?: () => void
 }
 
+const VideoPlayGlyph: React.FC<{ iconStyle: VideoPlayIconStyle; size: number }> = ({ iconStyle, size }) => {
+  if (iconStyle === 'outline') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M10 8.2v7.6l6-3.8z" fill="currentColor" />
+      </svg>
+    )
+  }
+  if (iconStyle === 'soft') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+        <path d="M8.2 6.8c0-1.05 1.14-1.7 2.04-1.15l8.05 4.95c.86.53.86 1.77 0 2.3l-8.05 4.95c-.9.55-2.04-.1-2.04-1.15z" fill="currentColor" opacity=".42" />
+        <path d="M9.4 8.45v6.6l5.38-3.3z" fill="currentColor" />
+      </svg>
+    )
+  }
+  if (iconStyle === 'spark') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+        <path d="M8.5 5.8v12.4l9.9-6.2z" fill="currentColor" />
+        <path d="M17.9 3.7l.72 1.65 1.65.72-1.65.72-.72 1.65-.72-1.65-1.65-.72 1.65-.72z" fill="currentColor" opacity=".76" />
+        <path d="M6.3 4.8l.45 1.03 1.03.45-1.03.45-.45 1.03-.45-1.03-1.03-.45 1.03-.45z" fill="currentColor" opacity=".58" />
+      </svg>
+    )
+  }
+  return <Play size={size} fill="currentColor" strokeWidth={0} />
+}
+
 const VideoPlayerPreview: React.FC<{
   src: string
   label?: string
   settings: Record<string, unknown>
 }> = ({ src, label, settings }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
+  const [progress, setProgress] = useState(0)
   const controlsMode = getVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
+  const showCustomControlBar = showOverlay && settings.videoControlBar === true
+  const showCustomVolume = settings.videoControlVolume !== false
+  const showCustomSpeed = settings.videoControlSpeed !== false
   const soundHint = settings.videoSoundHint !== false
+  const soundNoticeText = getVideoSoundNoticeText(settings)
+  const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
+  const soundNoticePersistent = soundNoticeHideAfter === 0
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
   const autoplay = Boolean(settings.videoAutoplay)
   const loop = Boolean(settings.videoLoop) || autoplay
   const speed = getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4)
+  const [currentSpeed, setCurrentSpeed] = useState(speed)
   const fit = getSettingString(settings, 'videoFit') || 'cover'
   const playerBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
   const playerRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
@@ -22271,32 +22438,83 @@ const VideoPlayerPreview: React.FC<{
   const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
   const playSize = `${getSettingNumber(settings, 'videoPlaySize', 64, 42, 110)}px`
   const playRadius = `${getSettingNumber(settings, 'videoPlayRadius', 999, 0, 999)}px`
+  const playIconStyle = getVideoPlayIconStyle(settings)
   const playIconSize = getSettingNumber(settings, 'videoPlayIconSize', 22, 14, 54)
   const playBorderColor = getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT
   const playBorderWidth = `${getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}px`
   const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
+  const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
   const className = [
     'rstk-video',
     'rstk-video-player',
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
-    soundHint && showOverlay ? 'rstk-video-sound-hint' : ''
+    showCustomControlBar ? 'rstk-video-has-control-bar' : '',
+    soundHint && showOverlay ? 'rstk-video-sound-hint' : '',
+    isPlaying ? 'rstk-video-is-playing' : '',
+    isMuted ? 'rstk-video-is-muted' : '',
+    `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.playbackRate = speed
-  }, [speed, src])
-
-  const handleOverlayClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
     const video = videoRef.current
     if (!video) return
-    video.muted = false
+    video.playbackRate = speed
+    video.muted = muted
+    setCurrentSpeed(speed)
+    setIsMuted(video.muted || video.volume === 0)
+    setIsPlaying(!video.paused)
+    setProgress(0)
+  }, [speed, muted, src])
+
+  const syncVideoState = () => {
+    const video = videoRef.current
+    if (!video) return
+    const duration = Number.isFinite(video.duration) ? video.duration : 0
+    setIsPlaying(!video.paused)
+    setIsMuted(video.muted || video.volume === 0)
+    setProgress(duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0)
+  }
+
+  const togglePlayback = (unmute = false) => {
+    const video = videoRef.current
+    if (!video) return
+    if (unmute) video.muted = false
     if (video.paused) {
       void video.play().catch(() => undefined)
     } else {
       video.pause()
     }
+    window.setTimeout(syncVideoState, 0)
+  }
+
+  const handleOverlayClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    togglePlayback(true)
+  }
+
+  const handleControlPlayClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    togglePlayback(false)
+  }
+
+  const handleMuteToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const video = videoRef.current
+    if (!video) return
+    video.muted = !(video.muted || video.volume === 0)
+    syncVideoState()
+  }
+
+  const handleSpeedChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    event.stopPropagation()
+    const nextSpeed = Number(event.target.value)
+    const video = videoRef.current
+    if (!Number.isFinite(nextSpeed)) return
+    if (video) video.playbackRate = nextSpeed
+    setCurrentSpeed(nextSpeed)
   }
 
   return (
@@ -22314,7 +22532,8 @@ const VideoPlayerPreview: React.FC<{
         ['--rstk-video-play-icon-size' as string]: `${playIconSize}px`,
         ['--rstk-video-play-border-color' as string]: playBorderColor,
         ['--rstk-video-play-border-width' as string]: playBorderWidth,
-        ['--rstk-video-sound-color' as string]: soundColor
+        ['--rstk-video-sound-color' as string]: soundColor,
+        ['--rstk-video-sound-cycle' as string]: soundNoticeCycle
       } as React.CSSProperties}
     >
       <video
@@ -22328,18 +22547,49 @@ const VideoPlayerPreview: React.FC<{
         playsInline
         preload={previewEnabled ? 'auto' : 'metadata'}
         style={{ objectFit: fit as React.CSSProperties['objectFit'] }}
+        onPlay={syncVideoState}
+        onPause={syncVideoState}
+        onTimeUpdate={syncVideoState}
+        onLoadedMetadata={syncVideoState}
+        onVolumeChange={syncVideoState}
       />
       {showOverlay && (
         <button type="button" className="rstk-video-overlay" onClick={handleOverlayClick} aria-label="Reproducir video">
-          <span className="rstk-video-play-dot"><Play size={playIconSize} fill="currentColor" /></span>
+          <span className="rstk-video-play-dot"><VideoPlayGlyph iconStyle={playIconStyle} size={playIconSize} /></span>
           {soundHint && (
-            <span className="rstk-video-sound">
-              <Volume2 size={16} />
-              <i />
-              <i />
+            <span className={`rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}`}>
+              <span className="rstk-video-sound-icon" aria-hidden="true">
+                <Volume2 size={16} />
+                <i />
+                <i />
+              </span>
+              {soundNoticeText && <span className="rstk-video-sound-text">{soundNoticeText}</span>}
             </span>
           )}
         </button>
+      )}
+      {showCustomControlBar && (
+        <div className="rstk-video-control-bar" onClick={(event) => event.stopPropagation()}>
+          <button type="button" className="rstk-video-control-button" onClick={handleControlPlayClick} aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}>
+            {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
+          </button>
+          <div className="rstk-video-progress" aria-hidden="true">
+            <span style={{ width: `${Math.round(progress * 100)}%` }} />
+          </div>
+          {showCustomVolume && (
+            <button type="button" className="rstk-video-control-button" onClick={handleMuteToggle} aria-label={isMuted ? 'Activar sonido' : 'Silenciar video'}>
+              {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+            </button>
+          )}
+          {showCustomSpeed && (
+            <label className="rstk-video-speed-control" aria-label="Velocidad de reproducción">
+              <Settings2 size={14} aria-hidden="true" />
+              <select value={String(currentSpeed)} onChange={handleSpeedChange}>
+                {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
       )}
     </div>
   )

@@ -1166,7 +1166,7 @@ function replaceImportedWistiaPlayers(html = '', report = []) {
     .replace(/<wistia-player\b([^>]*?)\s*\/>/gi, replacePlayer)
 
   if (converted) {
-    report.push(`Se convirtieron ${converted} videos Wistia para que funcionen en la vista previa`)
+    report.push(`Se convirtieron ${converted} videos personalizados para que funcionen en la vista previa`)
   }
   return nextHtml
 }
@@ -2013,7 +2013,7 @@ function getImportedVideoValueSource(value = '') {
     return {
       raw,
       candidate: buildWistiaIframeUrl(wistiaMediaId),
-      title: 'Video Wistia',
+      title: 'Video personalizado',
       allow: DEFAULT_EMBED_ALLOW
     }
   }
@@ -2036,7 +2036,7 @@ function normalizeImportedVideoEmbed(value = '') {
 
   const rawWistiaId = getWistiaMediaIdFromValue(`${source.raw} ${source.candidate}`)
   if (rawWistiaId) {
-    return { kind: 'iframe', src: buildWistiaIframeUrl(rawWistiaId), title: source.title || 'Wistia', allow: source.allow }
+    return { kind: 'iframe', src: buildWistiaIframeUrl(rawWistiaId), title: source.title || 'Video personalizado', allow: source.allow }
   }
 
   const safeCandidate = safeEmbedUrl(source.candidate)
@@ -2076,7 +2076,7 @@ function normalizeImportedVideoEmbed(value = '') {
     const wistiaId = getWistiaMediaIdFromValue(`${source.raw} ${parsed.toString()}`) ||
       (host.endsWith('wistia.com') || host.endsWith('wistia.net') ? pathParts[pathParts.length - 1] : '')
     if (wistiaId && /^[a-z0-9]+$/i.test(wistiaId)) {
-      return { kind: 'iframe', src: buildWistiaIframeUrl(wistiaId), title: source.title || 'Wistia', allow: source.allow }
+      return { kind: 'iframe', src: buildWistiaIframeUrl(wistiaId), title: source.title || 'Video personalizado', allow: source.allow }
     }
 
     if (host.endsWith('loom.com')) {
@@ -11392,11 +11392,57 @@ const RSTK_ICONS = {
   check: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   cross: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>',
   play: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 5h3v14H7zM14 5h3v14h-3z" fill="currentColor"/></svg>',
+  playOutline: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 8.2v7.6l6-3.8z" fill="currentColor"/></svg>',
+  playSoft: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8.2 6.8c0-1.05 1.14-1.7 2.04-1.15l8.05 4.95c.86.53.86 1.77 0 2.3l-8.05 4.95c-.9.55-2.04-.1-2.04-1.15z" fill="currentColor" opacity=".42"/><path d="M9.4 8.45v6.6l5.38-3.3z" fill="currentColor"/></svg>',
+  playSpark: '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8.5 5.8v12.4l9.9-6.2z" fill="currentColor"/><path d="M17.9 3.7l.72 1.65 1.65.72-1.65.72-.72 1.65-.72-1.65-1.65-.72 1.65-.72z" fill="currentColor" opacity=".76"/><path d="M6.3 4.8l.45 1.03 1.03.45-1.03.45-.45 1.03-.45-1.03-1.03-.45 1.03-.45z" fill="currentColor" opacity=".58"/></svg>',
+  volume: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/><path d="M16 9.2c.8.8 1.2 1.7 1.2 2.8s-.4 2-1.2 2.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  volumeMuted: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/><path d="M17 9l4 4M21 9l-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  settings: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 15.2A3.2 3.2 0 1 0 12 8.8a3.2 3.2 0 0 0 0 6.4Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.04.04a2 2 0 1 1-2.83 2.83l-.04-.04a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.87.34l-.04.04a2 2 0 1 1-2.83-2.83l.04-.04A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.08A1.7 1.7 0 0 0 4.6 8a1.7 1.7 0 0 0-.34-1.87l-.04-.04a2 2 0 1 1 2.83-2.83l.04.04A1.7 1.7 0 0 0 8.96 4.6 1.7 1.7 0 0 0 10 3.08V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.04-.04a2 2 0 1 1 2.83 2.83l-.04.04A1.7 1.7 0 0 0 19.4 8c.2.57.72.96 1.32.96H21a2 2 0 1 1 0 4h-.28A1.7 1.7 0 0 0 19.4 15Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   verified: '<svg class="rstk-verified" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7-2.25-1.8.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z"/><path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   globe: '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 12h18M12 3c3.2 3 3.2 15 0 18M12 3c-3.2 3-3.2 15 0 18" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
   camera: '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5.4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="17.6" cy="6.4" r="1.25" fill="currentColor"/></svg>',
   music: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M9 17.2a3.1 3.1 0 1 1-2-2.9V5l9-2v9.2a3.1 3.1 0 1 1-2-2.9V6.6L9 7.8z"/></svg>',
   lock: '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="10" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>'
+}
+
+const VIDEO_PLAY_ICON_STYLES = new Set(['solid', 'outline', 'soft', 'spark'])
+const DEFAULT_VIDEO_PLAY_ICON_STYLE = 'solid'
+const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
+const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
+const VIDEO_SPEED_OPTIONS = ['0.75', '1', '1.25', '1.5', '2']
+
+function normalizeVideoPlayIconStyle(value) {
+  const style = cleanString(value)
+  return VIDEO_PLAY_ICON_STYLES.has(style) ? style : DEFAULT_VIDEO_PLAY_ICON_STYLE
+}
+
+function getVideoPlayIconMarkup(style) {
+  if (style === 'outline') return RSTK_ICONS.playOutline
+  if (style === 'soft') return RSTK_ICONS.playSoft
+  if (style === 'spark') return RSTK_ICONS.playSpark
+  return RSTK_ICONS.play
+}
+
+function getVideoSoundNoticeText(settings = {}) {
+  if (Object.prototype.hasOwnProperty.call(settings, 'videoSoundNoticeText')) {
+    return cleanString(settings.videoSoundNoticeText)
+  }
+  return DEFAULT_VIDEO_SOUND_NOTICE_TEXT
+}
+
+function getVideoSoundNoticeHideAfter(settings = {}) {
+  const value = Number(settings.videoSoundNoticeHideAfter)
+  if (!Number.isFinite(value)) return DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER
+  if (value <= 0) return 0
+  return Math.min(12, Math.max(3, value))
+}
+
+function renderVideoSpeedOptions(selectedSpeed) {
+  const selected = cleanString(selectedSpeed || '1')
+  return VIDEO_SPEED_OPTIONS
+    .map(value => `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(value)}x</option>`)
+    .join('')
 }
 
 function getItemTone(item) {
@@ -11898,7 +11944,13 @@ function renderVideoPlayer(src, block, settings = {}) {
       : 'clean'
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
+  const showCustomControlBar = showOverlay && settings.videoControlBar === true
+  const showCustomVolume = settings.videoControlVolume !== false
+  const showCustomSpeed = settings.videoControlSpeed !== false
   const soundHint = settings.videoSoundHint !== false
+  const soundNoticeText = getVideoSoundNoticeText(settings)
+  const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
+  const soundNoticePersistent = soundNoticeHideAfter === 0
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
   const autoplay = Boolean(settings.videoAutoplay)
@@ -11918,17 +11970,21 @@ function renderVideoPlayer(src, block, settings = {}) {
   const playSize = Number.isFinite(rawPlaySize) ? Math.min(110, Math.max(42, rawPlaySize)) : 64
   const rawPlayRadius = Number(settings.videoPlayRadius ?? 999)
   const playRadius = Number.isFinite(rawPlayRadius) ? Math.min(999, Math.max(0, rawPlayRadius)) : 999
+  const playIconStyle = normalizeVideoPlayIconStyle(settings.videoPlayIconStyle)
   const rawPlayIconSize = Number(settings.videoPlayIconSize ?? 22)
   const playIconSize = Number.isFinite(rawPlayIconSize) ? Math.min(54, Math.max(14, rawPlayIconSize)) : 22
   const playBorderColor = normalizeCssPaint(settings.videoPlayBorderColor, 'rgba(255, 255, 255, 0)') || 'rgba(255, 255, 255, 0)'
   const rawPlayBorderWidth = Number(settings.videoPlayBorderWidth ?? 0)
   const playBorderWidth = Number.isFinite(rawPlayBorderWidth) ? Math.min(10, Math.max(0, rawPlayBorderWidth)) : 0
   const soundColor = normalizeCssPaint(settings.videoSoundColor, playColor) || playColor
+  const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
   const classes = [
     'rstk-video',
     'rstk-video-player',
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
-    soundHint && showOverlay ? 'rstk-video-sound-hint' : ''
+    showCustomControlBar ? 'rstk-video-has-control-bar' : '',
+    soundHint && showOverlay ? 'rstk-video-sound-hint' : '',
+    `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
   const styleVars = [
     `--rstk-video-bg:${escapeHtml(playerBackground)}`,
@@ -11942,7 +11998,8 @@ function renderVideoPlayer(src, block, settings = {}) {
     `--rstk-video-play-icon-size:${escapeHtml(String(playIconSize))}px`,
     `--rstk-video-play-border-color:${escapeHtml(playBorderColor)}`,
     `--rstk-video-play-border-width:${escapeHtml(String(playBorderWidth))}px`,
-    `--rstk-video-sound-color:${escapeHtml(soundColor)}`
+    `--rstk-video-sound-color:${escapeHtml(soundColor)}`,
+    `--rstk-video-sound-cycle:${escapeHtml(soundNoticeCycle)}`
   ].join(';')
 
   return `
@@ -11950,9 +12007,17 @@ function renderVideoPlayer(src, block, settings = {}) {
       <video src="${escapeHtml(src)}" title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
       ${showOverlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
-          <span class="rstk-video-play-dot">${RSTK_ICONS.play}</span>
-          ${soundHint ? `<span class="rstk-video-sound"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/><path d="M16 9.2c.8.8 1.2 1.7 1.2 2.8s-.4 2-1.2 2.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><i></i><i></i></span>` : ''}
+          <span class="rstk-video-play-dot">${getVideoPlayIconMarkup(playIconStyle)}</span>
+          ${soundHint ? `<span class="rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}"><span class="rstk-video-sound-icon" aria-hidden="true">${RSTK_ICONS.volume}<i></i><i></i></span>${soundNoticeText ? `<span class="rstk-video-sound-text">${escapeHtml(soundNoticeText)}</span>` : ''}</span>` : ''}
         </button>
+      ` : ''}
+      ${showCustomControlBar ? `
+        <div class="rstk-video-control-bar" data-rstk-video-control-bar>
+          <button type="button" class="rstk-video-control-button" data-rstk-video-toggle aria-label="Reproducir video"><span class="rstk-video-control-play">${RSTK_ICONS.play}</span><span class="rstk-video-control-pause">${RSTK_ICONS.pause}</span></button>
+          <div class="rstk-video-progress" aria-hidden="true"><span data-rstk-video-progress></span></div>
+          ${showCustomVolume ? `<button type="button" class="rstk-video-control-button" data-rstk-video-mute aria-label="Silenciar video"><span class="rstk-video-control-volume">${RSTK_ICONS.volume}</span><span class="rstk-video-control-muted">${RSTK_ICONS.volumeMuted}</span></button>` : ''}
+          ${showCustomSpeed ? `<label class="rstk-video-speed-control" aria-label="Velocidad de reproducción">${RSTK_ICONS.settings}<select data-rstk-video-speed-select>${renderVideoSpeedOptions(String(speed))}</select></label>` : ''}
+        </div>
       ` : ''}
     </div>
   `
@@ -12993,13 +13058,39 @@ const RSTK_BASE_CSS = `
   .rstk-video iframe,.rstk-video video{height:100%}
   .rstk-video video{background:var(--rstk-video-bg,#000);object-fit:cover}
   .rstk-video-player{isolation:isolate}
-  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.12));color:var(--rstk-video-play-color,#fff);cursor:pointer}
-  .rstk-video-play-dot{width:var(--rstk-video-play-size,64px);height:var(--rstk-video-play-size,64px);display:grid;place-items:center;border:var(--rstk-video-play-border-width,0) solid var(--rstk-video-play-border-color,transparent);border-radius:var(--rstk-video-play-radius,999px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28)}
-  .rstk-video-play-dot svg{width:var(--rstk-video-play-icon-size,22px);height:var(--rstk-video-play-icon-size,22px)}
-  .rstk-video-sound{position:absolute;right:14px;bottom:14px;display:inline-flex;align-items:center;gap:4px;border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-sound-color,var(--rstk-video-play-color,#fff));padding:8px 10px}
-  .rstk-video-sound i{width:5px;height:12px;border-radius:999px;background:currentColor;animation:rstkVideoSound 1s ease-in-out infinite}
-  .rstk-video-sound i:last-child{height:18px;animation-delay:.18s}
-  @keyframes rstkVideoSound{0%,100%{transform:scaleY(.55);opacity:.65}50%{transform:scaleY(1);opacity:1}}
+	  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.12));color:var(--rstk-video-play-color,#fff);cursor:pointer}
+	  .rstk-video-play-dot{width:var(--rstk-video-play-size,64px);height:var(--rstk-video-play-size,64px);display:grid;place-items:center;border:var(--rstk-video-play-border-width,0) solid var(--rstk-video-play-border-color,transparent);border-radius:var(--rstk-video-play-radius,999px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28);transition:opacity .18s ease,transform .18s ease}
+	  .rstk-video-is-playing .rstk-video-play-dot{opacity:0;transform:scale(.9)}
+	  .rstk-video-is-playing:hover .rstk-video-play-dot{opacity:.92;transform:scale(1)}
+	  .rstk-video-play-dot svg{width:var(--rstk-video-play-icon-size,22px);height:var(--rstk-video-play-icon-size,22px)}
+	  .rstk-video-sound{position:absolute;left:14px;bottom:14px;display:inline-flex;align-items:center;justify-content:flex-start;gap:9px;max-width:38px;min-height:38px;overflow:hidden;border-radius:999px;background:color-mix(in srgb,#020617 76%,transparent);color:var(--rstk-video-sound-color,var(--rstk-video-play-color,#fff));box-shadow:0 18px 42px rgba(0,0,0,.32);padding:8px 11px;pointer-events:none;backdrop-filter:blur(12px)}
+	  .rstk-video-has-control-bar .rstk-video-sound{bottom:64px}
+	  .rstk-video-sound-auto{animation:rstkVideoSoundNotice var(--rstk-video-sound-cycle,6.6s) cubic-bezier(.2,.8,.2,1) .45s both}
+	  .rstk-video-sound-persistent{animation:rstkVideoSoundNoticeOpen .8s cubic-bezier(.2,.8,.2,1) .45s both}
+	  .rstk-video-sound-icon{display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;min-width:16px}
+	  .rstk-video-sound-text{display:inline-block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:currentColor;font-size:.78rem;font-weight:750;letter-spacing:0;opacity:0;transform:translateX(-8px)}
+	  .rstk-video-sound-auto .rstk-video-sound-text{animation:rstkVideoSoundText var(--rstk-video-sound-cycle,6.6s) ease .45s both}
+	  .rstk-video-sound-persistent .rstk-video-sound-text{animation:rstkVideoSoundTextOpen .8s ease .55s both}
+	  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:grid;grid-template-columns:auto minmax(44px,1fr) auto auto;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:color-mix(in srgb,#020617 76%,transparent);color:var(--rstk-video-play-color,#fff);box-shadow:0 18px 42px rgba(0,0,0,.28);padding:7px;backdrop-filter:blur(14px)}
+	  .rstk-video-control-button{width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;cursor:pointer}
+	  .rstk-video-control-button:hover{background:rgba(255,255,255,.2)}
+	  .rstk-video-control-pause,.rstk-video-control-muted{display:none}
+	  .rstk-video-is-playing .rstk-video-control-play{display:none}
+	  .rstk-video-is-playing .rstk-video-control-pause{display:block}
+	  .rstk-video-is-muted .rstk-video-control-volume{display:none}
+	  .rstk-video-is-muted .rstk-video-control-muted{display:block}
+	  .rstk-video-progress{height:5px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.2)}
+	  .rstk-video-progress span{display:block;width:0;height:100%;border-radius:inherit;background:currentColor;transition:width .16s linear}
+	  .rstk-video-speed-control{min-width:66px;height:30px;display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;padding:0 8px}
+	  .rstk-video-speed-control select{width:42px;appearance:none;border:0;background:transparent;background-image:none;color:inherit;font:inherit;font-size:.76rem;font-weight:750;outline:0;padding:0}
+	  .rstk-video-speed-control option{color:#111827}
+	  @keyframes rstkVideoSoundNotice{0%,12%{max-width:38px}22%,70%{max-width:min(76%,380px)}100%{max-width:38px}}
+	  @keyframes rstkVideoSoundNoticeOpen{0%{max-width:38px}100%{max-width:min(76%,380px)}}
+	  @keyframes rstkVideoSoundText{0%,17%,76%,100%{opacity:0;transform:translateX(-8px)}26%,68%{opacity:1;transform:translateX(0)}}
+	  @keyframes rstkVideoSoundTextOpen{0%{opacity:0;transform:translateX(-8px)}100%{opacity:1;transform:translateX(0)}}
+	  .rstk-video-sound-icon i{width:5px;height:12px;border-radius:999px;background:currentColor;animation:rstkVideoSound 1s ease-in-out infinite}
+	  .rstk-video-sound-icon i:last-child{height:18px;animation-delay:.18s}
+	  @keyframes rstkVideoSound{0%,100%{transform:scaleY(.55);opacity:.65}50%{transform:scaleY(1);opacity:1}}
   .rstk-media-empty{min-height:190px;display:grid;place-items:center;gap:8px;color:var(--rstk-muted);font-size:.92rem}
   .rstk-play{display:grid;place-items:center;width:58px;height:58px;border-radius:50%;background:var(--rstk-accent);color:var(--rstk-on-accent)}
 
@@ -14501,28 +14592,69 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       });
     })();
   </script>
-  <script>
-    (() => {
-      document.querySelectorAll('.rstk-video-player video').forEach(video => {
-        const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
-        video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
-      });
-      document.addEventListener('click', event => {
-        const overlay = event.target && event.target.closest ? event.target.closest('[data-rstk-video-overlay]') : null;
-        if (!overlay) return;
-        event.preventDefault();
-        const host = overlay.closest('.rstk-video-player');
-        const video = host ? host.querySelector('video') : null;
-        if (!video) return;
-        video.muted = false;
-        if (video.paused) {
-          video.play().catch(() => {});
-        } else {
-          video.pause();
-        }
-      });
-    })();
-  </script>
+	  <script>
+	    (() => {
+	      document.querySelectorAll('.rstk-video-player').forEach(host => {
+	        const video = host.querySelector('video');
+	        if (!video) return;
+	        const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
+	        video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
+	        const progress = host.querySelector('[data-rstk-video-progress]');
+	        const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
+	        const toggleButtons = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
+	        const muteButtons = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
+	        const sync = () => {
+	          host.classList.toggle('rstk-video-is-playing', !video.paused);
+	          host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
+	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
+	          if (progress) progress.style.width = duration > 0 ? Math.max(0, Math.min(100, (video.currentTime / duration) * 100)) + '%' : '0%';
+	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused ? 'Reproducir video' : 'Pausar video'));
+	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
+	        };
+	        const togglePlayback = unmute => {
+	          if (unmute) video.muted = false;
+	          if (video.paused) {
+	            video.play().catch(() => {});
+	          } else {
+	            video.pause();
+	          }
+	          window.setTimeout(sync, 0);
+	        };
+	        const overlay = host.querySelector('[data-rstk-video-overlay]');
+	        if (overlay) {
+	          overlay.addEventListener('click', event => {
+	            event.preventDefault();
+	            togglePlayback(true);
+	          });
+	        }
+	        toggleButtons.forEach(button => {
+	          button.addEventListener('click', event => {
+	            event.preventDefault();
+	            event.stopPropagation();
+	            togglePlayback(false);
+	          });
+	        });
+	        muteButtons.forEach(button => {
+	          button.addEventListener('click', event => {
+	            event.preventDefault();
+	            event.stopPropagation();
+	            video.muted = !(video.muted || video.volume === 0);
+	            sync();
+	          });
+	        });
+	        if (speedSelect) {
+	          speedSelect.value = String(video.playbackRate);
+	          speedSelect.addEventListener('change', event => {
+	            const nextSpeed = Number(event.target.value);
+	            if (!Number.isFinite(nextSpeed)) return;
+	            video.playbackRate = Math.min(4, Math.max(0.25, nextSpeed));
+	          });
+	        }
+	        ['play', 'pause', 'timeupdate', 'loadedmetadata', 'volumechange', 'ended'].forEach(eventName => video.addEventListener(eventName, sync));
+	        sync();
+	      });
+	    })();
+	  </script>
   <script>
     (() => {
       const form = document.querySelector('[data-site-form]');
