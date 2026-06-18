@@ -14237,10 +14237,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const standardFormContentPages = isStandardFormType ? getStandardFormContentPages(site) : []
   const standardFormContentPageIds = standardFormContentPages.map(page => page.id)
   const standardFormPageIndex = isStandardFormType ? standardFormContentPageIds.indexOf(activePage?.id || '') : -1
-  const isStandardFormIntermediatePage = isStandardFormType && standardFormPageIndex >= 0 && standardFormPageIndex < standardFormContentPageIds.length - 1
+  const isStandardFormContentPage = isStandardFormType && standardFormPageIndex >= 0
+  const isStandardFormIntermediatePage = isStandardFormContentPage && standardFormPageIndex < standardFormContentPageIds.length - 1
   const standardFormNextPage = isStandardFormIntermediatePage ? standardFormContentPages[standardFormPageIndex + 1] : null
   const nativeFormContext = getNativeFormContext(site, blocks)
   const hasForm = fieldBlocks.length > 0
+  const hasFormActions = hasForm || (isInteractive && interactivePageCount > 1) || isStandardFormContentPage
   const completionAction = isLandingType
     ? getFormCompletionAction(blocks)
     : isStandardFormType
@@ -14312,7 +14314,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     ? Object.fromEntries(collectFieldBlockPageEntries(isStandardFormType ? (Array.isArray(site.blocks) ? site.blocks : []) : blocks, pages))
     : {}
 
-  const submitArea = hasForm && !isLandingType
+  const submitArea = hasFormActions && !isLandingType
     ? `
       <div class="rstk-actions">
         ${isInteractive && interactivePageCount > 1 ? `<button type="button" class="rstk-secondary" data-back hidden>${escapeHtml(backText)}</button>` : ''}
@@ -14370,7 +14372,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     ${siteNavHtml}
     <main class="rstk-page">
       <div class="rstk-shell">
-        ${isInteractive && hasForm && interactivePageCount > 1 ? `<div class="rstk-progress" data-progress><span class="rstk-progress-track"><span class="rstk-progress-fill" data-progress-fill></span></span><b data-progress-label>Pantalla ${interactiveInitialIndex + 1} de ${interactivePageCount}</b></div>` : ''}
+        ${isInteractive && interactivePageCount > 1 ? `<div class="rstk-progress" data-progress><span class="rstk-progress-track"><span class="rstk-progress-fill" data-progress-fill></span></span><b data-progress-label>Pantalla ${interactiveInitialIndex + 1} de ${interactivePageCount}</b></div>` : ''}
         <form data-site-form data-site-id="${escapeHtml(site.id)}" data-page-id="${escapeHtml(activePage?.id || '')}" novalidate>
           ${bodyBlocks}
           ${submitArea}

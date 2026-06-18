@@ -4457,7 +4457,14 @@ export const Sites: React.FC = () => {
   const activeDragBlock = editableCanvasBlocks.find(block => block.id === activeDragId) || null
   const activeAIGeneration = aiEditorGeneration && editorSite?.id === aiEditorGeneration.siteId ? aiEditorGeneration : null
   const editorAIGenerating = Boolean(activeAIGeneration)
-  const formCanvasHasFields = Boolean(editorSite && isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)))
+  const formCanvasShowsActions = Boolean(
+    editorSite &&
+    isFormSite(editorSite) &&
+    (
+      canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)) ||
+      (activePage && isStandardForm(editorSite) && !isFormFinalPage(activePage))
+    )
+  )
   const formCanvasActionLabel = editorSite && activePage && isStandardForm(editorSite) && !isLastFormContentPage(editorSite, pages, activePage.id)
     ? getThemeString(editorSite.theme, 'continueText') || 'Continuar'
     : undefined
@@ -8168,7 +8175,7 @@ export const Sites: React.FC = () => {
                                   })}
                                 </>
                               )}
-                              {formCanvasHasFields && (
+                              {formCanvasShowsActions && (
                                 <div className="rstk-actions">
                                   <button type="button" data-submit><SubmitButtonContent theme={editorSite.theme} label={formCanvasActionLabel} /></button>
                                 </div>

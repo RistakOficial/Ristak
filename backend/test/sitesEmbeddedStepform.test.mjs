@@ -111,3 +111,93 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /embeddedForms\.forEach\(renderEmbeddedForm\)/)
   assert.match(html, /state\.index = 0;/)
 })
+
+test('standard form content-only pages still render navigation actions', async () => {
+  const site = {
+    id: 'site_standard_content_steps',
+    name: 'Formulario con paginas de contenido',
+    title: 'Formulario con paginas de contenido',
+    description: '',
+    slug: 'formulario-contenido',
+    siteType: 'standard_form',
+    status: 'published',
+    theme: {
+      template: 'compact',
+      pages: [
+        { id: 'page-1', title: 'Intro', sortOrder: 0 },
+        { id: 'page-content', title: 'Video', sortOrder: 1 }
+      ]
+    },
+    blocks: [
+      {
+        id: 'intro-title',
+        siteId: 'site_standard_content_steps',
+        blockType: 'title',
+        label: 'Titulo',
+        content: 'Antes de empezar',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 0,
+        settings: { pageId: 'page-1' }
+      },
+      {
+        id: 'intro-copy',
+        siteId: 'site_standard_content_steps',
+        blockType: 'text',
+        label: 'Texto',
+        content: 'Esta pagina no tiene campos.',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 1,
+        settings: { pageId: 'page-1' }
+      },
+      {
+        id: 'content-video',
+        siteId: 'site_standard_content_steps',
+        blockType: 'video',
+        label: 'Video',
+        content: '',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 2,
+        settings: { pageId: 'page-content', mediaUrl: 'https://example.test/video.mp4' }
+      },
+      {
+        id: 'content-copy',
+        siteId: 'site_standard_content_steps',
+        blockType: 'text',
+        label: 'Texto',
+        content: 'Ultima pagina antes de enviar.',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 3,
+        settings: { pageId: 'page-content' }
+      }
+    ]
+  }
+
+  const firstPageHtml = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(firstPageHtml, /Antes de empezar/)
+  assert.match(firstPageHtml, /<button type="button" data-form-next>/)
+  assert.match(firstPageHtml, /<button type="submit" hidden data-submit>/)
+
+  const lastContentPageHtml = await renderPublicSiteHtml(site, {
+    pageId: 'page-content',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(lastContentPageHtml, /Ultima pagina antes de enviar/)
+  assert.doesNotMatch(lastContentPageHtml, /<button type="button" data-form-next>/)
+  assert.doesNotMatch(lastContentPageHtml, /<button type="submit" hidden data-submit>/)
+  assert.match(lastContentPageHtml, /<button type="submit"\s+data-submit>/)
+})
