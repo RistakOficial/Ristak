@@ -7,8 +7,9 @@ import { sendAppNotificationPayload } from './pushNotificationsService.js'
 
 export { isAffirmativeReply }
 
-// Tiempo de espera tras el último mensaje antes de clasificar (3 minutos).
-const DEBOUNCE_MS = 3 * 60 * 1000
+// Tiempo de espera tras el último mensaje del contacto antes de clasificar (2 minutos).
+const DEBOUNCE_MS = 2 * 60 * 1000
+const CONFIRMATION_SUCCESS_ACTIONS = new Set(['mark_confirmed', 'chat_card', 'notify_push', 'chat_badge'])
 
 function makeWindowId() {
   return `conf_win_${crypto.randomUUID()}`
@@ -25,6 +26,11 @@ function parseMessages(raw) {
   } catch {
     return []
   }
+}
+
+function normalizeConfirmationSuccessAction(value) {
+  const clean = String(value || '').trim()
+  return CONFIRMATION_SUCCESS_ACTIONS.has(clean) ? clean : 'chat_card'
 }
 
 /**
@@ -62,6 +68,7 @@ export async function handleInboundForConfirmation({ contactId, text } = {}) {
       s.appointment_id,
       s.reminder_id,
       r.bypass_automations,
+      r.confirmation_success_action,
       a.title
     FROM appointment_reminder_sends s
     JOIN appointments a ON a.id = s.appointment_id
@@ -105,17 +112,19 @@ export async function handleInboundForConfirmation({ contactId, text } = {}) {
     await db.run(`
       INSERT INTO appointment_confirmation_windows
         (id, contact_id, appointment_id, reminder_send_id, status,
-         accumulated_messages, bypass_automations, last_message_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?)
+         accumulated_messages, bypass_automations, confirmation_success_action, last_message_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, ?)
       ON CONFLICT(contact_id, appointment_id) DO UPDATE SET
         status = 'waiting',
         accumulated_messages = excluded.accumulated_messages,
         bypass_automations = excluded.bypass_automations,
+        confirmation_success_action = excluded.confirmation_success_action,
         last_message_at = excluded.last_message_at,
         updated_at = excluded.updated_at
     `, [
       makeWindowId(), id, pending.appointment_id, pending.send_id,
       JSON.stringify(messages), bypassAutomations ? 1 : 0,
+      normalizeConfirmationSuccessAction(pending.confirmation_success_action),
       now, now, now
     ])
     logger.info(`[Confirmación IA] Ventana abierta para contacto ${id}, cita ${pending.appointment_id}`)
@@ -125,7 +134,7 @@ export async function handleInboundForConfirmation({ contactId, text } = {}) {
 }
 
 /**
- * Procesa todas las ventanas cuyo temporizador expiró (≥ 3 min sin mensajes nuevos).
+ * Procesa todas las ventanas cuyo temporizador expiró (≥ 2 min sin mensajes nuevos).
  * Llamado desde el cron de mensajes automáticos.
  */
 export async function processExpiredConfirmationWindows() {
@@ -172,7 +181,7 @@ async function processConfirmationWindow(win) {
 
   // Obtener datos del recordatorio para la acción configurada.
   const reminderData = await db.get(`
-    SELECT r.no_confirm_action, r.bypass_automations, c.phone, c.first_name
+    SELECT r.no_confirm_action, r.bypass_automations, r.confirmation_success_action, c.phone, c.first_name
     FROM appointment_reminder_sends s
     JOIN appointment_reminders r ON r.id = s.reminder_id
     JOIN contacts c ON c.id = s.contact_id
@@ -204,6 +213,13 @@ async function processConfirmationWindow(win) {
       SET appointment_status = 'confirmed', status = 'confirmed', date_updated = CURRENT_TIMESTAMP
       WHERE id = ? AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('confirmed')
     `, [appointmentId])
+    await executeConfirmationSuccessAction({
+      contactId,
+      appointmentId,
+      action: normalizeConfirmationSuccessAction(win.confirmation_success_action || reminderData?.confirmation_success_action),
+      resultDetail,
+      reminderData
+    })
     logger.info(`[Confirmación IA] Cita ${appointmentId} confirmada automáticamente`)
   } else {
     // Para reschedule, cancel, ambiguous, human_needed → ejecutar la acción del recordatorio.
@@ -223,6 +239,48 @@ async function processConfirmationWindow(win) {
     SET status = 'done', result = ?, result_detail = ?, processed_at = ?, updated_at = ?
     WHERE id = ?
   `, [result, resultDetail.slice(0, 500), nowIso(), nowIso(), win.id])
+}
+
+async function executeConfirmationSuccessAction({ contactId, appointmentId, action, resultDetail, reminderData }) {
+  const normalizedAction = normalizeConfirmationSuccessAction(action)
+  const appointment = await db.get(`
+    SELECT a.id, a.title, a.start_time, c.first_name, c.full_name
+    FROM appointments a
+    LEFT JOIN contacts c ON c.id = a.contact_id
+    WHERE a.id = ?
+  `, [appointmentId])
+
+  const contactName = String(appointment?.first_name || appointment?.full_name || reminderData?.first_name || 'Contacto').trim()
+  const appointmentTitle = String(appointment?.title || 'cita').trim()
+
+  if (normalizedAction === 'chat_badge') {
+    await db.run(`
+      UPDATE appointments
+      SET confirmation_badge_until = COALESCE(start_time, ?), date_updated = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), appointmentId])
+    logger.info(`[Confirmación IA] Etiqueta visual temporal activada para cita ${appointmentId}`)
+    return
+  }
+
+  if (normalizedAction === 'notify_push') {
+    const payload = {
+      title: `Cita confirmada: ${contactName}`,
+      body: `${contactName} confirmó "${appointmentTitle}". ${resultDetail || ''}`.trim().slice(0, 160),
+      tag: `conf-ok-${appointmentId}`,
+      url: `/phone/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`
+    }
+
+    await sendAppNotificationPayload(payload).catch(error => {
+      logger.warn(`[Confirmación IA] No se pudo enviar notificación push de confirmación: ${error.message}`)
+    })
+    logger.info(`[Confirmación IA] Notificación de confirmación enviada para cita ${appointmentId}`)
+    return
+  }
+
+  if (normalizedAction === 'chat_card') {
+    logger.info(`[Confirmación IA] Tarjeta de confirmación disponible en journey para cita ${appointmentId}`)
+  }
 }
 
 async function executeNoConfirmAction({ contactId, appointmentId, action, result, resultDetail, reminderData }) {

@@ -73,6 +73,10 @@
   background: var(--surface-2);
 }
 
+.stackedSwitchRow {
+  margin-top: 0.75rem;
+}
+
 .fieldRow {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -248,6 +252,12 @@
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+}
+
+.confirmationActionBox {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
 }
 
 .noConfirmTitle {

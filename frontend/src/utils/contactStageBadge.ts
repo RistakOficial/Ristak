@@ -104,6 +104,11 @@ const isActiveAppointmentStatus = (status?: string | null) => {
   return !normalized || !INACTIVE_APPOINTMENT_STATUSES.has(normalized)
 }
 
+const isFutureTimestamp = (value: unknown) => {
+  const time = new Date(String(value || '')).getTime()
+  return Number.isFinite(time) && time > Date.now()
+}
+
 export const getContactStageBadge = (
   contactInput: unknown,
   labels: ContactStageLabels
@@ -133,6 +138,23 @@ export const getContactStageBadge = (
 
   const payments = getPayments(contact)
   const appointments = getAppointments(contact)
+  const hasUpcomingConfirmedAppointmentBadge =
+    toBoolean(contact.hasUpcomingConfirmedAppointmentBadge) ||
+    appointments.some(appointment => {
+      if (!appointment || typeof appointment !== 'object') return false
+      const item = appointment as Record<string, unknown>
+      const badgeUntil = item.confirmationBadgeUntil ?? item.confirmation_badge_until
+      return isFutureTimestamp(badgeUntil) && normalizeValue(getAppointmentStatus(appointment)) === 'confirmed'
+    })
+
+  if (hasUpcomingConfirmedAppointmentBadge) {
+    return {
+      stage: 'appointment',
+      text: 'Asistirá a cita',
+      variant: CONTACT_STAGE_BADGE_VARIANTS.appointment
+    }
+  }
+
   const hasPaymentFacts =
     Array.isArray(contact.payments) ||
     Array.isArray(contact.payment_details) ||

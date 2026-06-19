@@ -2034,6 +2034,7 @@ async function initTables() {
         address TEXT,
         start_time DATETIME,
         end_time DATETIME,
+        confirmation_badge_until DATETIME,
         date_added DATETIME,
         date_updated DATETIME,
         google_event_id TEXT UNIQUE,
@@ -4400,6 +4401,7 @@ async function initTables() {
         smart_start TEXT DEFAULT '09:00',
         smart_end TEXT DEFAULT '21:00',
         smart_overflow TEXT DEFAULT 'before',
+        confirmation_success_action TEXT DEFAULT 'chat_card',
         position INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -4482,6 +4484,10 @@ async function initTables() {
     } catch (_) { /* columna ya existe */ }
 
     try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN confirmation_success_action TEXT DEFAULT 'chat_card'")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
       await db.run("ALTER TABLE appointment_reminders ADD COLUMN bypass_automations INTEGER DEFAULT 0")
     } catch (_) { /* columna ya existe */ }
 
@@ -4501,7 +4507,11 @@ async function initTables() {
       await db.run('ALTER TABLE appointment_reminders ADD COLUMN qr_fallback_enabled INTEGER DEFAULT 0')
     } catch (_) { /* columna ya existe */ }
 
-    // Ventanas de confirmación con IA: acumula mensajes durante 3 min antes de clasificar.
+    try {
+      await db.run('ALTER TABLE appointments ADD COLUMN confirmation_badge_until DATETIME')
+    } catch (_) { /* columna ya existe */ }
+
+    // Ventanas de confirmación con IA: acumula mensajes durante 2 min antes de clasificar.
     await db.run(`
       CREATE TABLE IF NOT EXISTS appointment_confirmation_windows (
         id TEXT PRIMARY KEY,
@@ -4511,6 +4521,7 @@ async function initTables() {
         status TEXT DEFAULT 'waiting',
         accumulated_messages TEXT DEFAULT '[]',
         bypass_automations INTEGER DEFAULT 0,
+        confirmation_success_action TEXT DEFAULT 'chat_card',
         last_message_at DATETIME NOT NULL,
         result TEXT,
         result_detail TEXT,
@@ -4520,6 +4531,9 @@ async function initTables() {
         UNIQUE(contact_id, appointment_id)
       )
     `)
+    try {
+      await db.run("ALTER TABLE appointment_confirmation_windows ADD COLUMN confirmation_success_action TEXT DEFAULT 'chat_card'")
+    } catch (_) { /* columna ya existe */ }
     await db.run('CREATE INDEX IF NOT EXISTS idx_conf_windows_contact ON appointment_confirmation_windows(contact_id, status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conf_windows_last_msg ON appointment_confirmation_windows(last_message_at, status)')
 

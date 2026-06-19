@@ -12,6 +12,8 @@ export interface ContactAppointment {
   title?: string | null
   status?: string | null
   appointment_status?: string | null
+  confirmation_badge_until?: string | null
+  confirmationBadgeUntil?: string | null
   start_time: string
   end_time?: string | null
   notes?: string | null
@@ -172,6 +174,7 @@ export interface Contact {
   hasAppointments?: boolean
   hasShowedAppointment?: boolean
   hasAttendedAppointment?: boolean
+  hasUpcomingConfirmedAppointmentBadge?: boolean
   payments?: ContactPayment[]
   appointments?: ContactAppointment[]
   firstSession?: ContactFirstSession | null

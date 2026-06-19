@@ -5,6 +5,7 @@ import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import {
   type AppointmentReminder,
   type AppointmentReminderInput,
+  type ReminderConfirmationSuccessAction,
   type ReminderChannelOption,
   type ReminderNoConfirmAction,
   type ReminderSenderOption,
@@ -34,6 +35,47 @@ const DEFAULT_TEMPLATE_NAME_BY_TYPE = {
   reminder: 'recordatorio_cita_un_dia_antes',
   confirmation: 'confirmacion_cita_dia_anterior'
 } as const
+
+const CONFIRMATION_SUCCESS_ACTION_OPTIONS: { value: ReminderConfirmationSuccessAction; label: string; description: string }[] = [
+  {
+    value: 'chat_card',
+    label: 'Agregar tarjetita en el chat',
+    description: 'Ristak deja una tarjeta visible en la conversación indicando que la cita quedó confirmada.'
+  },
+  {
+    value: 'notify_push',
+    label: 'Mandarme notificación push',
+    description: 'Te avisa cuando la IA detecta que la persona sí confirmó su cita.'
+  },
+  {
+    value: 'chat_badge',
+    label: 'Mostrar etiqueta "Asistirá a cita"',
+    description: 'El chat muestra esa etiqueta en compu y celular hasta que pase la hora de la cita.'
+  },
+  {
+    value: 'mark_confirmed',
+    label: 'Sólo marcar la cita confirmada',
+    description: 'La cita cambia a confirmada sin agregar avisos extra.'
+  }
+]
+
+const NO_CONFIRM_ACTION_OPTIONS: { value: ReminderNoConfirmAction; label: string; description: string }[] = [
+  {
+    value: 'no_action',
+    label: 'No hacer nada',
+    description: 'Ristak deja la cita como está y no avisa al equipo.'
+  },
+  {
+    value: 'cancel_appointment',
+    label: 'Cancelar la cita',
+    description: 'La cita se marca como cancelada si la respuesta no confirma asistencia.'
+  },
+  {
+    value: 'notify_push',
+    label: 'Enviarme una notificación',
+    description: 'Te avisa si la IA detecta que no confirmó, quiere moverla o hace falta revisar.'
+  }
+]
 
 const getTemplateReviewStatus = (template?: MessageTemplate | null) => String(template?.ycloudStatus || '').toUpperCase()
 
@@ -107,7 +149,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       smartStart: reminder.smartStart,
       smartEnd: reminder.smartEnd,
       smartOverflow: reminder.smartOverflow,
-      noConfirmAction: reminder.noConfirmAction
+      noConfirmAction: reminder.noConfirmAction,
+      confirmationSuccessAction: reminder.confirmationSuccessAction
     })
     setSaving(false)
     setDeleting(false)
@@ -160,6 +203,12 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   const selectedTemplatePreview = useMemo(() => buildTemplatePreview(selectedTemplate), [selectedTemplate])
   const selectedTemplateApproved = getTemplateReviewStatus(selectedTemplate) === 'APPROVED'
+  const selectedConfirmationSuccessAction = CONFIRMATION_SUCCESS_ACTION_OPTIONS.find(
+    option => option.value === (draft.confirmationSuccessAction || 'chat_card')
+  ) || CONFIRMATION_SUCCESS_ACTION_OPTIONS[0]
+  const selectedNoConfirmAction = NO_CONFIRM_ACTION_OPTIONS.find(
+    option => option.value === (draft.noConfirmAction || 'no_action')
+  ) || NO_CONFIRM_ACTION_OPTIONS[0]
 
   const senderOptions = useMemo(() => senders.map(sender => ({
     value: sender.id,
@@ -275,57 +324,70 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                   <span>
                     <span className={styles.switchLabel}>Confirmación automática con IA</span>
                     <span className={styles.helpText}>
-                      Al enviarse este mensaje se activa una inteligencia artificial que espera hasta
-                      3 minutos tras el último mensaje del contacto antes de clasificar su respuesta
-                      como confirmada, reagendada, cancelada o pendiente de atención humana.
+                      Al enviarse este mensaje, la IA queda pendiente de la respuesta del contacto.
+                      En cuanto responda, esperará 2 minutos después de su último mensaje antes de
+                      clasificar si confirmó, quiere reagendar, canceló o necesita atención humana.
                     </span>
                   </span>
                 </label>
 
                 {draft.aiEnabled !== false && (
-                  <label className={styles.switchRow} style={{ marginTop: '10px' }}>
-                    <span className={styles.switchControl}>
-                      <input
-                        type="checkbox"
-                        checked={draft.bypassAutomations === true}
-                        onChange={(e) => set('bypassAutomations', e.target.checked)}
-                      />
-                      <span className={styles.switchTrack} />
-                    </span>
-                    <span>
-                      <span className={styles.switchLabel}>Pausar agentes y automatizaciones durante la confirmación</span>
-                      <span className={styles.helpText}>
-                        Mientras el contacto esté respondiendo al mensaje de confirmación, otros agentes
-                        de IA y automatizaciones activas quedarán en pausa para evitar respuestas cruzadas.
-                        Se reanudan automáticamente cuando la IA termina de clasificar la respuesta.
+                  <>
+                    <label className={`${styles.switchRow} ${styles.stackedSwitchRow}`}>
+                      <span className={styles.switchControl}>
+                        <input
+                          type="checkbox"
+                          checked={draft.bypassAutomations === true}
+                          onChange={(e) => set('bypassAutomations', e.target.checked)}
+                        />
+                        <span className={styles.switchTrack} />
                       </span>
-                    </span>
-                  </label>
+                      <span>
+                        <span className={styles.switchLabel}>Pausar agentes y automatizaciones durante la confirmación</span>
+                        <span className={styles.helpText}>
+                          Mientras el contacto esté respondiendo al mensaje de confirmación, otros agentes
+                          de IA y automatizaciones activas quedarán en pausa para evitar respuestas cruzadas.
+                          Se reanudan automáticamente cuando la IA termina de clasificar la respuesta.
+                        </span>
+                      </span>
+                    </label>
+
+                    <div className={styles.confirmationActionBox}>
+                      <div className={styles.field}>
+                        <label className={styles.fieldLabel}>Qué quieres que pase cuando se detecte que confirmó la cita</label>
+                        <CustomSelect
+                          value={draft.confirmationSuccessAction || 'chat_card'}
+                          options={CONFIRMATION_SUCCESS_ACTION_OPTIONS.map(option => ({
+                            value: option.value,
+                            label: option.label
+                          }))}
+                          onValueChange={(value) => set('confirmationSuccessAction', value as ReminderConfirmationSuccessAction)}
+                          aria-label="Acción cuando el contacto confirma la cita"
+                          portal
+                        />
+                        <span className={styles.helpText}>{selectedConfirmationSuccessAction.description}</span>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             )}
 
             {isConfirmation && (
               <div className={styles.noConfirmBox}>
-                <span className={styles.noConfirmTitle}>Si el contacto no confirma</span>
-                <div className={styles.radioGroup}>
-                  {(
-                    [
-                      { value: 'no_action', label: 'No hacer nada' },
-                      { value: 'cancel_appointment', label: 'Cancelar la cita' },
-                      { value: 'notify_push', label: 'Enviarme una notificación' }
-                    ] as { value: ReminderNoConfirmAction; label: string }[]
-                  ).map(({ value, label }) => (
-                    <label key={value} className={styles.radioRow}>
-                      <input
-                        type="radio"
-                        name="noConfirmAction"
-                        checked={(draft.noConfirmAction || 'no_action') === value}
-                        onChange={() => set('noConfirmAction', value)}
-                      />
-                      <span>{label}</span>
-                    </label>
-                  ))}
+                <div className={styles.field}>
+                  <label className={styles.fieldLabel}>Si el contacto no confirma</label>
+                  <CustomSelect
+                    value={draft.noConfirmAction || 'no_action'}
+                    options={NO_CONFIRM_ACTION_OPTIONS.map(option => ({
+                      value: option.value,
+                      label: option.label
+                    }))}
+                    onValueChange={(value) => set('noConfirmAction', value as ReminderNoConfirmAction)}
+                    aria-label="Acción si el contacto no confirma"
+                    portal
+                  />
+                  <span className={styles.helpText}>{selectedNoConfirmAction.description}</span>
                 </div>
               </div>
             )}

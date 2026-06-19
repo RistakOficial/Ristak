@@ -1246,7 +1246,37 @@ function getJourneyMediaAttachment(event: JourneyEvent): DesktopChatMessage['att
   }
 }
 
+function formatAppointmentConfirmationTime(value?: unknown) {
+  if (!value) return ''
+  const date = new Date(String(value))
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('es-MX', {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }).format(date).replace('.', '')
+}
+
+function getAppointmentConfirmationSystemText(event: JourneyEvent) {
+  const data = event.data || {}
+  const title = String(data.title || '').trim() || 'la cita'
+  const when = formatAppointmentConfirmationTime(data.start_time)
+  return `Cita confirmada por IA: ${title}${when ? ` · ${when}` : ''}.`
+}
+
 function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessage | null {
+  if (event.type === 'appointment_confirmation') {
+    return {
+      id: String(event.data?.id || event.data?.appointment_id || `appointment-confirmation-${index}`),
+      text: getAppointmentConfirmationSystemText(event),
+      date: event.date,
+      direction: 'system',
+      status: 'confirmed'
+    }
+  }
+
   if (event.type !== 'whatsapp_message' && event.type !== 'meta_message') return null
   const data = event.data || {}
   const attachment = getJourneyMediaAttachment(event)

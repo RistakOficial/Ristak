@@ -126,6 +126,7 @@ const APPOINTMENT_ATTENDED_STATUSES = new Set(['showed', 'attended', 'completed'
 const sqlList = values => [...values].map(value => `'${value}'`).join(', ')
 const ACTIVE_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) NOT IN (${sqlList(APPOINTMENT_CANCELED_STATUSES)})`
 const ATTENDED_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) IN (${sqlList(APPOINTMENT_ATTENDED_STATUSES)})`
+const CONFIRMATION_BADGE_CONDITION = `COALESCE(confirmation_badge_until, '') != '' AND datetime(confirmation_badge_until) > datetime('now')`
 const CONTACT_WHATSAPP_PROFILE_SELECTS = `
         (
           SELECT profile_name
@@ -1142,6 +1143,7 @@ const mapContactRowForResponse = (contact = {}) => {
     hasAppointments: Boolean(contact.has_appointments),
     hasShowedAppointment: Boolean(contact.has_showed_appointment),
     hasAttendedAppointment: Boolean(contact.has_showed_appointment),
+    hasUpcomingConfirmedAppointmentBadge: Boolean(contact.has_confirmation_badge),
     source: contact.source,
     profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
     ad_name: adFields.ad_name,
@@ -1683,6 +1685,12 @@ ${CONTACT_META_PROFILE_SELECT},
               AND ${ATTENDED_APPOINTMENT_CONDITION}
           )
         ) AS has_showed_appointment,
+        (
+          SELECT COUNT(*) > 0
+          FROM appointments
+          WHERE contact_id = c.id
+            AND ${CONFIRMATION_BADGE_CONDITION}
+        ) AS has_confirmation_badge,
         ranked_chats.message_count,
         ranked_chats.last_message_date,
         lm.message_text AS last_message_text,
@@ -1892,7 +1900,13 @@ ${CONTACT_META_PROFILE_SELECT},
             WHERE contact_id = c.id
               AND ${ATTENDED_APPOINTMENT_CONDITION}
           )
-        ) AS has_showed_appointment
+        ) AS has_showed_appointment,
+        (
+          SELECT COUNT(*) > 0
+          FROM appointments
+          WHERE contact_id = c.id
+            AND ${CONFIRMATION_BADGE_CONDITION}
+        ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       ${mainWhereClause}
@@ -2025,6 +2039,7 @@ ${CONTACT_META_PROFILE_SELECT},
         hasAppointments: Boolean(c.has_appointments),
         hasShowedAppointment: Boolean(c.has_showed_appointment),
         hasAttendedAppointment: Boolean(c.has_showed_appointment),
+        hasUpcomingConfirmedAppointmentBadge: Boolean(c.has_confirmation_badge),
         source: c.source,
         attribution_url: attributionFields.attribution_url,
         attribution_session_source: attributionFields.attribution_session_source,
@@ -2166,7 +2181,13 @@ ${CONTACT_META_PROFILE_SELECT},
             WHERE contact_id = c.id
               AND ${ATTENDED_APPOINTMENT_CONDITION}
           )
-        ) AS has_showed_appointment
+        ) AS has_showed_appointment,
+        (
+          SELECT COUNT(*) > 0
+          FROM appointments
+          WHERE contact_id = c.id
+            AND ${CONFIRMATION_BADGE_CONDITION}
+        ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       WHERE c.id = ?`,
@@ -2455,6 +2476,7 @@ ${CONTACT_META_PROFILE_SELECT},
       hasAppointments: Boolean(contact.has_appointments),
       hasShowedAppointment,
       hasAttendedAppointment: hasShowedAppointment,
+      hasUpcomingConfirmedAppointmentBadge: Boolean(contact.has_confirmation_badge),
       attribution_url: attributionFields.attribution_url,
       attribution_session_source: attributionFields.attribution_session_source,
       attribution_medium: attributionFields.attribution_medium,
@@ -2571,7 +2593,13 @@ ${CONTACT_META_PROFILE_SELECT},
             WHERE contact_id = c.id
               AND ${ATTENDED_APPOINTMENT_CONDITION}
           )
-        ) AS has_showed_appointment
+        ) AS has_showed_appointment,
+        (
+          SELECT COUNT(*) > 0
+          FROM appointments
+          WHERE contact_id = c.id
+            AND ${CONFIRMATION_BADGE_CONDITION}
+        ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       WHERE ${searchClause.condition}
@@ -2607,6 +2635,7 @@ ${CONTACT_META_PROFILE_SELECT},
         hasAppointments: Boolean(c.has_appointments),
         hasShowedAppointment: Boolean(c.has_showed_appointment),
         hasAttendedAppointment: Boolean(c.has_showed_appointment),
+        hasUpcomingConfirmedAppointmentBadge: Boolean(c.has_confirmation_badge),
         source: c.source,
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,
@@ -3953,6 +3982,43 @@ export const getContactJourney = async (req, res) => {
           end_time: appointment.end_time,
           address: appointment.address,
           notes: appointment.notes
+        }
+      })
+    })
+
+    const appointmentConfirmationCards = await db.all(
+      `SELECT
+         w.id,
+         w.appointment_id,
+         w.result_detail,
+         w.processed_at,
+         w.updated_at,
+         w.created_at,
+         a.title,
+         a.start_time,
+         a.end_time
+       FROM appointment_confirmation_windows w
+       LEFT JOIN appointments a ON a.id = w.appointment_id
+       WHERE w.contact_id = ?
+         AND w.status = 'done'
+         AND w.result = 'confirmed'
+         AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
+       ORDER BY COALESCE(w.processed_at, w.updated_at, w.created_at) ASC`,
+      [id]
+    ).catch(() => [])
+
+    appointmentConfirmationCards.forEach(card => {
+      journey.push({
+        type: 'appointment_confirmation',
+        date: card.processed_at || card.updated_at || card.created_at,
+        data: {
+          id: card.id,
+          appointment_id: card.appointment_id,
+          title: card.title,
+          status: 'confirmed',
+          start_time: card.start_time,
+          end_time: card.end_time,
+          result_detail: card.result_detail
         }
       })
     })

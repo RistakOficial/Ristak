@@ -32,6 +32,7 @@ const OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
 const SENDER_MODES = new Set(['contact', 'default', 'specific'])
 const SMART_OVERFLOWS = new Set(['before', 'next_day'])
 const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
+const CONFIRMATION_SUCCESS_ACTIONS = new Set(['mark_confirmed', 'chat_card', 'notify_push', 'chat_badge'])
 const DEFAULT_TEMPLATE_NAME_BY_MESSAGE_TYPE = {
   reminder: 'recordatorio_cita_un_dia_antes',
   confirmation: 'confirmacion_cita_dia_anterior'
@@ -116,6 +117,7 @@ function normalizeReminderRow(row = {}) {
     smartEnd: cleanString(row.smart_end) || '21:00',
     smartOverflow: SMART_OVERFLOWS.has(cleanString(row.smart_overflow)) ? cleanString(row.smart_overflow) : 'before',
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(row.no_confirm_action)) ? cleanString(row.no_confirm_action) : 'no_action',
+    confirmationSuccessAction: CONFIRMATION_SUCCESS_ACTIONS.has(cleanString(row.confirmation_success_action)) ? cleanString(row.confirmation_success_action) : 'chat_card',
     bypassAutomations: Number(row.bypass_automations || 0) === 1,
     qrFallbackEnabled: Number(row.qr_fallback_enabled || 0) === 1,
     position: Number(row.position || 0),
@@ -265,6 +267,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
     smartEnd,
     smartOverflow: SMART_OVERFLOWS.has(cleanString(merged.smartOverflow)) ? cleanString(merged.smartOverflow) : 'before',
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(merged.noConfirmAction)) ? cleanString(merged.noConfirmAction) : 'no_action',
+    confirmationSuccessAction: CONFIRMATION_SUCCESS_ACTIONS.has(cleanString(merged.confirmationSuccessAction)) ? cleanString(merged.confirmationSuccessAction) : 'chat_card',
     bypassAutomations: merged.bypassAutomations === true ? 1 : 0,
     qrFallbackEnabled: merged.qrFallbackEnabled === true ? 1 : 0
   }
@@ -282,14 +285,14 @@ export async function createAppointmentReminder(input = {}) {
       sender_phone_number_id, template_id, template_name, template_language,
       qr_fallback_enabled, offset_value, offset_unit, message_text,
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
-      bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      confirmation_success_action, bypass_automations, position
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
     data.senderMode, data.senderPhoneNumberId, data.templateId, data.templateName,
     data.templateLanguage, data.qrFallbackEnabled, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
-    data.smartOverflow, data.noConfirmAction, data.bypassAutomations,
+    data.smartOverflow, data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations,
     Number(positionRow?.next || 0)
   ])
 
@@ -316,14 +319,14 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
       sender_phone_number_id = ?, template_id = ?, template_name = ?, template_language = ?,
       qr_fallback_enabled = ?, offset_value = ?, offset_unit = ?, message_text = ?,
       smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
-      no_confirm_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
+      no_confirm_action = ?, confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
     name, data.enabled, data.messageType, data.aiEnabled, data.senderMode,
     data.senderPhoneNumberId, data.templateId, data.templateName, data.templateLanguage,
     data.qrFallbackEnabled, data.offsetValue, data.offsetUnit, data.messageText,
     data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
-    data.noConfirmAction, data.bypassAutomations, id
+    data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations, id
   ])
 
   // Si cambió la configuración de tiempo, los envíos pendientes se recalculan

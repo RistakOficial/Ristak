@@ -378,6 +378,7 @@ const getEventIcon = (event: JourneyEvent) => {
     case 'contact_created':
       return 'user-plus'
     case 'appointment':
+    case 'appointment_confirmation':
       return 'calendar'
     case 'payment':
       return 'circle-dollar-sign'
@@ -400,6 +401,8 @@ const getEventTitle = (event: JourneyEvent) => {
       return 'Contacto'
     case 'appointment':
       return 'Cita'
+    case 'appointment_confirmation':
+      return 'Confirmación'
     case 'payment':
       return 'Compra'
     default:
@@ -424,6 +427,7 @@ const getEventColor = (event: JourneyEvent) => {
     case 'contact_created':
       return 'purple'
     case 'appointment':
+    case 'appointment_confirmation':
       return 'orange'
     case 'payment':
       return 'success'
@@ -493,6 +497,10 @@ const getEventDescription = (event?: JourneyEvent | null): string => {
   if (type === 'appointment') {
     // NO mostrar el título largo, solo "Cita"
     return 'Agendada'
+  }
+
+  if (type === 'appointment_confirmation') {
+    return 'Confirmada por IA'
   }
 
   if (type === 'payment') {
@@ -671,7 +679,7 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
     appendMatchTooltipItems(items, data)
   }
 
-  if (type === 'appointment') {
+  if (type === 'appointment' || type === 'appointment_confirmation') {
     if (data.title) {
       items.push({ label: 'Título', value: data.title })
     }

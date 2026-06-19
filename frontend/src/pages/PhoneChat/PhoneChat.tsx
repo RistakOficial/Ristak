@@ -1753,6 +1753,18 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
 }
 
 function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | null {
+  if (event.type === 'appointment_confirmation') {
+    const title = String(event.data?.title || '').trim() || 'la cita'
+    const when = formatMessageDate(String(event.data?.start_time || ''))
+    return {
+      id: String(event.data?.id || event.data?.appointment_id || `appointment-confirmation-${index}`),
+      text: `Cita confirmada por IA: ${title}${when ? ` · ${when}` : ''}.`,
+      date: event.date,
+      direction: 'system',
+      status: 'confirmed'
+    }
+  }
+
   const isMetaMessage = event.type === 'meta_message'
   if (event.type !== 'whatsapp_message' && !isMetaMessage) return null
   const eventData = (event.data || {}) as Record<string, unknown>
@@ -2311,6 +2323,7 @@ function getJourneyEventLabel(event: JourneyEvent, leadLabel: string) {
   if (event.type === 'page_visit') return isJourneyFormEvent(event) ? 'Llenó formulario' : 'Visitó una página'
   if (event.type === 'contact_created') return `Se hizo ${leadLabel.toLowerCase()}`
   if (event.type === 'appointment') return 'Agendó una cita'
+  if (event.type === 'appointment_confirmation') return 'Confirmó la cita'
   if (event.type === 'payment') return 'Registró un pago'
   if (event.type === 'whatsapp_message') return 'WhatsApp'
   if (event.type === 'meta_message') return getReadableValue(event.data?.source) || 'Meta'
@@ -2657,6 +2670,7 @@ function getJourneyEventIcon(event: JourneyEvent) {
   }
   if (event.type === 'contact_created') return <User size={15} />
   if (event.type === 'appointment') return <CalendarDays size={15} />
+  if (event.type === 'appointment_confirmation') return <CalendarDays size={15} />
   if (event.type === 'payment') return <DollarSign size={15} />
 
   return <MousePointerClick size={15} />
@@ -2670,6 +2684,7 @@ function getJourneyEventIconClass(event: JourneyEvent) {
   if (event.type === 'contact_created' && hasWebJourneySignal(event)) return getJourneyPlatformClass(getJourneyPlatformLabel(event)) || styles.contactInfoTimelineIconVisit
   if (event.type === 'contact_created') return styles.contactInfoTimelineIconContact
   if (event.type === 'appointment') return styles.contactInfoTimelineIconAppointment
+  if (event.type === 'appointment_confirmation') return styles.contactInfoTimelineIconAppointment
   if (event.type === 'payment') return styles.contactInfoTimelineIconPayment
 
   return styles.contactInfoTimelineIconDefault
@@ -2712,6 +2727,10 @@ function getJourneyEventDescription(event: JourneyEvent) {
 
   if (event.type === 'appointment') {
     return getReadableValue(data.title) || formatPlainStatus(data.status) || 'Cita'
+  }
+
+  if (event.type === 'appointment_confirmation') {
+    return getReadableValue(data.title) || 'Confirmada por IA'
   }
 
   if (event.type === 'payment') {
