@@ -14,6 +14,7 @@ import {
   setConversationStatus,
   recordConversationalAgentEvent,
   applyAgentSuccessExtras,
+  applyAgentCompletionAction,
   updateConversationClosingContext,
   createConversationGoalLink,
   DEFAULT_GOAL_TRACKING_PARAM
@@ -50,6 +51,37 @@ function getConfiguredGoalUrl(config = {}) {
 
 function getConfiguredTriggerLink(config = {}) {
   return config.goalWorkflow?.triggerLink || {}
+}
+
+function getDepositRequirement(config = {}) {
+  const deposit = config.goalWorkflow?.deposit || {}
+  const actionSupportsDeposit = (
+    (config.objective === 'citas' || config.objective === 'ventas') &&
+    ['book_appointment', 'ready_for_human', 'ready_to_buy'].includes(config.successAction)
+  )
+  return actionSupportsDeposit && deposit.enabled ? deposit : null
+}
+
+function formatDepositRequirement(deposit = {}) {
+  const currency = deposit.currency || 'MXN'
+  if (deposit.mode === 'range') {
+    const min = Number(deposit.minAmount) || 0
+    const max = Number(deposit.maxAmount) || 0
+    if (min > 0 && max > 0) return `entre ${min} y ${max} ${currency}`
+    if (min > 0) return `desde ${min} ${currency}`
+    if (max > 0) return `hasta ${max} ${currency}`
+  }
+  const amount = Number(deposit.amount) || 0
+  return amount > 0 ? `${amount} ${currency}` : 'monto pendiente de configurar'
+}
+
+function rejectMissingDepositIfNeeded(config = {}, anticipoValidado) {
+  const deposit = getDepositRequirement(config)
+  if (!deposit || anticipoValidado === true) return null
+  return {
+    ok: false,
+    error: `Falta validar el anticipo (${formatDepositRequirement(deposit)}). Pide foto o archivo del comprobante y sólo avanza cuando el comprobante coincida con el monto configurado.`
+  }
 }
 
 function compactObject(input = {}) {
@@ -354,9 +386,13 @@ export function createConversationalTools(ctx) {
       calendarId: z.string().describe('ID del calendario (usa list_calendars o get_business_profile)'),
       startTime: z.string().describe('Inicio exacto del slot elegido, ISO 8601 tal como lo devolvió get_free_slots'),
       title: z.string().nullable().describe('Título corto de la cita (ej. "Cita - Juan Pérez")'),
-      notes: z.string().nullable().describe('Resumen breve de lo que busca la persona')
+      notes: z.string().nullable().describe('Resumen breve de lo que busca la persona'),
+      anticipoValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió anticipo y el contacto ya mandó comprobante válido del pago')
     }),
-    execute: async ({ calendarId, startTime, title, notes }) => {
+    execute: async ({ calendarId, startTime, title, notes, anticipoValidado }) => {
+      const depositError = rejectMissingDepositIfNeeded(config, anticipoValidado)
+      if (depositError) return depositError
+
       const start = new Date(startTime)
       if (Number.isNaN(start.getTime())) {
         return { ok: false, error: 'startTime inválido: usa exactamente un slot devuelto por get_free_slots' }
@@ -426,6 +462,7 @@ export function createConversationalTools(ctx) {
           summary: `${finalTitle} · ${start.toISOString()}`,
           status: 'completed'
         })
+        await applyAgentCompletionAction(config, ctx.contactId)
         await notifyHumanPriority(ctx, {
           reason: 'Cita agendada por el agente',
           summary: `${finalTitle} · ${start.toISOString()}`,
@@ -449,9 +486,13 @@ export function createConversationalTools(ctx) {
       intencionDetectada: z.string().describe('Qué quiere la persona (ej. "agendar valoración esta semana")'),
       resumen: z.string().describe('Resumen breve de la conversación y su situación'),
       urgencia: z.enum(['baja', 'media', 'alta']).describe('Qué tan pronto quiere avanzar'),
-      siguientePaso: z.string().nullable().describe('Siguiente paso recomendado para el humano')
+      siguientePaso: z.string().nullable().describe('Siguiente paso recomendado para el humano'),
+      anticipoValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió anticipo y el contacto ya mandó comprobante válido del pago')
     }),
-    execute: async ({ intencionDetectada, resumen, urgencia, siguientePaso }) => {
+    execute: async ({ intencionDetectada, resumen, urgencia, siguientePaso, anticipoValidado }) => {
+      const depositError = rejectMissingDepositIfNeeded(config, anticipoValidado)
+      if (depositError) return depositError
+
       const signal = resolveAdvanceSignal(config)
       pushAction(ctx, 'mark_ready_to_advance', { signal, intencionDetectada, urgencia, extras: config.successExtras || [] })
       if (ctx.dryRun) return { ok: true, simulated: true, signal }
@@ -462,6 +503,7 @@ export function createConversationalTools(ctx) {
           summary: [resumen, siguientePaso ? `Siguiente paso: ${siguientePaso}` : ''].filter(Boolean).join(' · '),
           status: 'completed'
         })
+        await applyAgentCompletionAction(config, ctx.contactId)
         await notifyHumanPriority(ctx, {
           reason: intencionDetectada,
           summary: [resumen, siguientePaso ? `Siguiente paso: ${siguientePaso}` : ''].filter(Boolean).join(' · '),
@@ -490,12 +532,16 @@ export function createConversationalTools(ctx) {
       concept: z.string().describe('Concepto breve del cobro'),
       dueDate: z.string().nullable().describe('Fecha límite de pago YYYY-MM-DD opcional'),
       channel: z.enum(['email', 'whatsapp', 'sms', 'all']).describe('Canal confirmado para enviar el link'),
-      confirm: z.boolean().describe('true sólo cuando la persona ya aprobó explícitamente el cobro')
+      confirm: z.boolean().describe('true sólo cuando la persona ya aprobó explícitamente el cobro'),
+      anticipoValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió anticipo y el contacto ya mandó comprobante válido del pago')
     }),
-    execute: async ({ amount, currency, concept, dueDate, channel, confirm }) => {
+    execute: async ({ amount, currency, concept, dueDate, channel, confirm, anticipoValidado }) => {
       if (!confirm) {
         return { ok: false, error: 'Falta confirmación explícita. Resume monto, concepto y canal, y pide aprobación antes de crear el link.' }
       }
+      const depositError = rejectMissingDepositIfNeeded(config, anticipoValidado)
+      if (depositError) return depositError
+
       const contact = await getPaymentContact(ctx.contactId)
       if (!contact) return { ok: false, error: 'Contacto no encontrado' }
 
@@ -521,6 +567,7 @@ export function createConversationalTools(ctx) {
           summary: `${concept} · ${result.amount} ${result.currency}`,
           status: 'completed'
         })
+        await applyAgentCompletionAction(config, ctx.contactId)
         await notifyHumanPriority(ctx, {
           reason: 'Link de pago enviado por el agente',
           summary: `${concept} · ${result.amount} ${result.currency}`,

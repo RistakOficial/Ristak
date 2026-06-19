@@ -329,6 +329,19 @@ const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     triggerLinkPublicId: '',
     triggerLinkName: '',
     triggerLinkUrl: ''
+  },
+  deposit: {
+    enabled: false,
+    mode: 'fixed',
+    amount: null,
+    minAmount: null,
+    maxAmount: null,
+    currency: 'MXN'
+  },
+  completion: {
+    mode: 'notify_only',
+    userId: '',
+    userName: ''
   }
 }
 
@@ -396,6 +409,14 @@ function getPhoneAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWork
     triggerLink: {
       ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.triggerLink,
       ...((workflow.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
+    },
+    deposit: {
+      ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.deposit,
+      ...((workflow.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>)
+    },
+    completion: {
+      ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.completion,
+      ...((workflow.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
     }
   }
 }

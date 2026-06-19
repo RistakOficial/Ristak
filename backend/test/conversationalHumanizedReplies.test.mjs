@@ -14,6 +14,7 @@ import {
   getAgentFollowUpStepDelayMs,
   getAgentReplyDeliveryPartDelayMs,
   handleConversationalAgentTriggerLinkClick,
+  applyAgentCompletionAction,
   mergeAdvancedClosingContext,
   normalizeAgentFollowUp,
   normalizeAgentGoalWorkflow,
@@ -32,6 +33,7 @@ import {
   shouldRecoverPendingInbound,
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
+import { createConversationalTools } from '../src/agents/conversational/tools.js'
 import {
   buildConversationalMediaSummary,
   hydrateConversationalMessagesMedia,
@@ -191,6 +193,18 @@ test('normaliza flujo por enlace con parametro de seguimiento', () => {
       triggerLinkPublicId: 'abc123',
       triggerLinkName: 'Ficha de diagnóstico',
       triggerLinkUrl: 'https://app.test/trigger-links/abc123'
+    },
+    deposit: {
+      enabled: true,
+      mode: 'range',
+      minAmount: '200',
+      maxAmount: '900',
+      currency: 'mxn'
+    },
+    completion: {
+      mode: 'assign_user',
+      userId: 'user_123',
+      userName: 'Ana Ventas'
     }
   })
 
@@ -203,6 +217,96 @@ test('normaliza flujo por enlace con parametro de seguimiento', () => {
   assert.equal(workflow.triggerLink.triggerLinkPublicId, 'abc123')
   assert.equal(workflow.triggerLink.triggerLinkName, 'Ficha de diagnóstico')
   assert.equal(workflow.triggerLink.triggerLinkUrl, 'https://app.test/trigger-links/abc123')
+  assert.equal(workflow.deposit.enabled, true)
+  assert.equal(workflow.deposit.mode, 'range')
+  assert.equal(workflow.deposit.minAmount, 200)
+  assert.equal(workflow.deposit.maxAmount, 900)
+  assert.equal(workflow.deposit.currency, 'MXN')
+  assert.equal(workflow.completion.mode, 'assign_user')
+  assert.equal(workflow.completion.userId, 'user_123')
+  assert.equal(workflow.completion.userName, 'Ana Ventas')
+})
+
+test('tool de avance bloquea la meta si falta validar anticipo configurado', async () => {
+  const ctx = {
+    contactId: 'test_deposit_gate_contact',
+    dryRun: true,
+    actions: [],
+    config: {
+      objective: 'citas',
+      successAction: 'ready_for_human',
+      goalWorkflow: {
+        deposit: {
+          enabled: true,
+          mode: 'fixed',
+          amount: 900,
+          currency: 'MXN'
+        }
+      }
+    }
+  }
+  const markReadyTool = createConversationalTools(ctx).find((item) => item.name === 'mark_ready_to_advance')
+  assert.ok(markReadyTool)
+
+  const blocked = await markReadyTool.invoke(null, JSON.stringify({
+    intencionDetectada: 'Quiere agendar valoración',
+    resumen: 'Pidió horarios para esta semana',
+    urgencia: 'media',
+    siguientePaso: 'Validar anticipo',
+    anticipoValidado: false
+  }))
+
+  assert.equal(blocked.ok, false)
+  assert.match(blocked.error, /Falta validar el anticipo \(900 MXN\)/)
+  assert.equal(ctx.actions.length, 0)
+
+  const allowed = await markReadyTool.invoke(null, JSON.stringify({
+    intencionDetectada: 'Quiere agendar valoración',
+    resumen: 'Mandó comprobante del anticipo',
+    urgencia: 'media',
+    siguientePaso: 'Confirmar horario',
+    anticipoValidado: true
+  }))
+
+  assert.equal(allowed.ok, true)
+  assert.equal(allowed.simulated, true)
+  assert.equal(allowed.signal, 'ready_for_human')
+  assert.equal(ctx.actions[0]?.type, 'mark_ready_to_advance')
+})
+
+test('acción final del agente asigna el contacto al usuario configurado', async () => {
+  const contactId = 'test_completion_assign_contact'
+
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, custom_fields, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215550000033', 'completion@test.local', 'Completion Test', JSON.stringify({ leadScore: 'alto' }), 'test']
+    )
+
+    const result = await applyAgentCompletionAction({
+      goalWorkflow: {
+        completion: {
+          mode: 'assign_user',
+          userId: 'user_completion_1',
+          userName: 'Ana Ventas'
+        }
+      }
+    }, contactId)
+
+    assert.equal(result.mode, 'assign_user')
+    assert.equal(result.userId, 'user_completion_1')
+
+    const row = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+    const customFields = JSON.parse(row.custom_fields)
+    assert.equal(customFields.leadScore, 'alto')
+    assert.equal(customFields.assignedUser, 'user_completion_1')
+    assert.equal(customFields.assignedUserName, 'Ana Ventas')
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
 })
 
 test('click del enlace de disparo cumple objetivo personalizado y detiene la IA', async () => {
@@ -1400,6 +1504,50 @@ test('instrucciones del agente respetan el toggle de emojis', () => {
   assert.match(enabledInstructions, /incluye 1 emoji cuando suene natural/)
   assert.match(enabledInstructions, /No uses más de 1 emoji por mensaje/)
   assert.doesNotMatch(enabledInstructions, /Control de emojis: APAGADO/)
+})
+
+test('instrucciones del agente incluyen anticipo y acción final configurados', () => {
+  const instructions = buildConversationalInstructions({
+    config: {
+      objective: 'citas',
+      customObjective: '',
+      successAction: 'ready_for_human',
+      requiredData: '',
+      handoffRules: '',
+      extraInstructions: '',
+      allowEmojis: false,
+      closingStrategyMode: 'custom',
+      closingStrategyCustom: 'Haz cierre breve y humano.',
+      goalWorkflow: {
+        deposit: {
+          enabled: true,
+          mode: 'range',
+          minAmount: 200,
+          maxAmount: 900,
+          currency: 'MXN'
+        },
+        completion: {
+          mode: 'assign_user',
+          userId: 'user_ventas',
+          userName: 'Ana Ventas'
+        }
+      }
+    },
+    businessContext: '',
+    brandVoice: '',
+    businessName: 'Clinica Sol',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: null,
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  })
+
+  assert.match(instructions, /Anticipo antes de concretar/)
+  assert.match(instructions, /Monto configurado: entre 200 y 900 MXN/)
+  assert.match(instructions, /NO ejecutes la acción de avance hasta que el contacto haya enviado comprobante/)
+  assert.match(instructions, /anticipoValidado=true/)
+  assert.match(instructions, /Después de cumplir el objetivo/)
+  assert.match(instructions, /asigna el contacto a Ana Ventas/)
 })
 
 test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {

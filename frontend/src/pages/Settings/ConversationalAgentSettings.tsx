@@ -27,6 +27,8 @@ import { useAIAgentAvailability } from '@/hooks'
 import {
   conversationalAgentService,
   type AgentFilterOptions,
+  type AgentCompletionMode,
+  type AgentDepositMode,
   type AgentFollowUpConfig,
   type AgentFollowUpStepConfig,
   type AgentFollowUpUnit,
@@ -51,6 +53,7 @@ import {
   type ConversationalSuccessAction,
   type SuccessExtraType
 } from '@/services/conversationalAgentService'
+import { userAccessService, type TeamUser } from '@/services/userAccessService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { triggerLinksService, type TriggerLink } from '@/services/triggerLinksService'
 import apiClient from '@/services/apiClient'
@@ -72,13 +75,13 @@ const objectiveOptions: Array<{ value: ConversationalObjective; label: string; d
 ]
 
 const successActionLabels: Record<ConversationalSuccessAction, { label: string; description: string }> = {
-  book_appointment: { label: 'Que agende la IA', description: 'La IA busca un horario libre y lo agenda. Ejemplo: si dicen "mañana a las 4", revisa si se puede.' },
-  ready_for_human: { label: 'Pasar a un humano', description: 'Manda el chat al equipo. Ejemplo: aparece como importante para que alguien lo atienda.' },
-  ready_to_buy: { label: 'Que mande link de pago', description: 'Manda el pago cuando la persona ya quiere comprar. Ejemplo: "sí, pásame el link".' },
+  book_appointment: { label: 'Que la agende la IA', description: 'La IA concreta el agendamiento sólo cuando tiene día, hora y calendario reales.' },
+  ready_for_human: { label: 'Que lo cierre un humano', description: 'El bot detecta intención real, saca el chat del bot y avisa al equipo.' },
+  ready_to_buy: { label: 'Que la IA mande link de pago', description: 'La IA concreta el avance creando el link cuando la persona ya aceptó pagar.' },
   send_goal_url: { label: 'Mandar enlace confirmado', description: 'Manda un enlace y espera confirmación. Ejemplo: link de agenda o de compra.' },
   send_trigger_link: { label: 'Mandar enlace y detenerse', description: 'Manda un enlace y se detiene cuando lo tocan. Ejemplo: link de WhatsApp, formulario o página.' },
-  internal_signal: { label: 'Pasar a un humano', description: 'Manda el chat al equipo. Ejemplo: aparece como importante para que alguien lo atienda.' },
-  none: { label: 'Pasar a un humano', description: 'Manda el chat al equipo. Ejemplo: aparece como importante para que alguien lo atienda.' }
+  internal_signal: { label: 'Que lo cierre un humano', description: 'El bot detecta intención real, saca el chat del bot y avisa al equipo.' },
+  none: { label: 'Que lo cierre un humano', description: 'El bot detecta intención real, saca el chat del bot y avisa al equipo.' }
 }
 
 const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
@@ -106,15 +109,20 @@ const attendedChatActionOptions = [
     value: 'mute_only',
     label: 'Visible, pero sin avisos',
     description: 'El chat se ve, pero no suena. Ejemplo: puedes verlo sin notificaciones.'
-  },
-  {
-    value: 'hide_and_mute',
-    label: 'Escóndelo y avísame si ya urge',
-    description: 'Se guarda y no molesta. Ejemplo: vuelve arriba si ya necesita al equipo.'
   }
 ] as const
 
 type AttendedChatActionValue = (typeof attendedChatActionOptions)[number]['value']
+
+const depositModeOptions: Array<{ value: AgentDepositMode; label: string }> = [
+  { value: 'fixed', label: 'Valor único' },
+  { value: 'range', label: 'Rango' }
+]
+
+const completionModeOptions: Array<{ value: AgentCompletionMode; label: string }> = [
+  { value: 'notify_only', label: 'Sacarlo del chat del bot y avisarme' },
+  { value: 'assign_user', label: 'Asignar a un usuario y avisar' }
+]
 
 const extraTypeOptions: Array<{ value: SuccessExtraType; label: string }> = [
   { value: 'add_tag', label: 'Agregar etiqueta' },
@@ -223,6 +231,19 @@ const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
     triggerLinkPublicId: '',
     triggerLinkName: '',
     triggerLinkUrl: ''
+  },
+  deposit: {
+    enabled: false,
+    mode: 'fixed',
+    amount: null,
+    minAmount: null,
+    maxAmount: null,
+    currency: 'MXN'
+  },
+  completion: {
+    mode: 'notify_only',
+    userId: '',
+    userName: ''
   }
 }
 
@@ -269,20 +290,59 @@ function getSuccessActionInfo(action: ConversationalSuccessAction, objective: Co
       description: 'Manda un enlace y se detiene cuando la persona lo toca. Ejemplo: link de formulario o página.'
     }
   }
+  if (action === 'ready_for_human') {
+    if (objective === 'citas') {
+      return {
+        label: 'Que un humano confirme la cita',
+        description: 'La IA detecta que ya quiere agendar y pasa el chat al equipo para concretar.'
+      }
+    }
+    if (objective === 'ventas') {
+      return {
+        label: 'Que un humano cierre la venta',
+        description: 'La IA detecta intención de compra y pasa el chat al equipo para cerrar.'
+      }
+    }
+    if (objective === 'datos') {
+      return {
+        label: 'Que el equipo reciba los datos',
+        description: 'La IA junta los datos clave y pasa el chat al equipo.'
+      }
+    }
+    if (objective === 'filtrar') {
+      return {
+        label: 'Que el equipo reciba al prospecto filtrado',
+        description: 'La IA califica la conversación y pasa al equipo sólo lo que ya vale atender.'
+      }
+    }
+  }
   if (action !== 'send_goal_url') return successActionLabels[action] || successActionLabels.ready_for_human
   if (objective === 'citas') {
     return {
-      label: 'Mandar enlace del calendario',
-      description: 'Manda el link para agendar. Ejemplo: la persona elige su horario.'
+      label: 'Que agende por enlace',
+      description: 'La meta se confirma cuando el enlace devuelve la cita real.'
     }
   }
   if (objective === 'ventas') {
     return {
-      label: 'Mandar enlace del pedido',
-      description: 'Manda el link para comprar. Ejemplo: la persona paga el producto elegido.'
+      label: 'Que compre por enlace',
+      description: 'La meta se confirma cuando el enlace devuelve la compra o pago real.'
     }
   }
   return successActionLabels.send_goal_url
+}
+
+function getObjectiveCompletionLabel(objective: ConversationalObjective) {
+  if (objective === 'citas') return 'el agendamiento'
+  if (objective === 'ventas') return 'la venta'
+  if (objective === 'datos') return 'la captura de datos'
+  if (objective === 'filtrar') return 'la filtración'
+  return 'el objetivo'
+}
+
+function actionCanRequireDeposit(objective: ConversationalObjective, action: ConversationalSuccessAction) {
+  return (objective === 'citas' || objective === 'ventas') &&
+    (action === 'book_appointment' || action === 'ready_for_human' || action === 'ready_to_buy')
 }
 
 const systemReplyDeliveryDefaults: Pick<
@@ -738,6 +798,14 @@ function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowC
     triggerLink: {
       ...defaultGoalWorkflow.triggerLink,
       ...((workflow.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
+    },
+    deposit: {
+      ...defaultGoalWorkflow.deposit,
+      ...((workflow.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>)
+    },
+    completion: {
+      ...defaultGoalWorkflow.completion,
+      ...((workflow.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
     }
   }
 }
@@ -816,6 +884,14 @@ function mergeGoalWorkflow(
     triggerLink: {
       ...base.triggerLink,
       ...((patch.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
+    },
+    deposit: {
+      ...base.deposit,
+      ...((patch.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>)
+    },
+    completion: {
+      ...base.completion,
+      ...((patch.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
     }
   }
 }
@@ -833,7 +909,6 @@ function getObjectiveSuccessAction(objective: ConversationalObjective, workflow:
 }
 
 function getAttendedChatActionValue(agent: Pick<ConversationalAgentDef, 'hideAttended' | 'hideAttendedNotifications'>): AttendedChatActionValue {
-  if (agent.hideAttended && agent.hideAttendedNotifications) return 'hide_and_mute'
   if (agent.hideAttended) return 'hide_only'
   if (agent.hideAttendedNotifications) return 'mute_only'
   return 'keep_visible'
@@ -841,8 +916,8 @@ function getAttendedChatActionValue(agent: Pick<ConversationalAgentDef, 'hideAtt
 
 function getAttendedChatActionPatch(value: AttendedChatActionValue): Pick<ConversationalAgentDefInput, 'hideAttended' | 'hideAttendedNotifications'> {
   return {
-    hideAttended: value === 'hide_only' || value === 'hide_and_mute',
-    hideAttendedNotifications: value === 'mute_only' || value === 'hide_and_mute'
+    hideAttended: value === 'hide_only',
+    hideAttendedNotifications: value === 'mute_only'
   }
 }
 
@@ -1016,6 +1091,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testVoiceElapsedMs, setTestVoiceElapsedMs] = useState(0)
   const [testVoicePlaying, setTestVoicePlaying] = useState(false)
   const [testVoiceBars, setTestVoiceBars] = useState(() => createTestVoiceBars())
+  const [teamUsers, setTeamUsers] = useState<TeamUser[]>([])
+  const [teamUsersLoading, setTeamUsersLoading] = useState(false)
   const [guidanceOpen, setGuidanceOpen] = useState({
     requiredData: false,
     handoffRules: false,
@@ -1061,6 +1138,25 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     void clearExpiredTestMediaCache().catch(() => undefined)
   }, [])
 
+  useEffect(() => {
+    let alive = true
+    setTeamUsersLoading(true)
+    userAccessService.listUsers()
+      .then((users) => {
+        if (!alive) return
+        setTeamUsers(users.filter((user) => user.isActive))
+      })
+      .catch(() => {
+        if (alive) setTeamUsers([])
+      })
+      .finally(() => {
+        if (alive) setTeamUsersLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
   const allowedActions = actionsByObjective[agent.objective] || actionsByObjective.custom
   const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
   const selectedActionInfo = getSuccessActionInfo(agent.successAction, agent.objective)
@@ -1101,6 +1197,18 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const handoffRulesConfigOpen = guidanceOpen.handoffRules || Boolean(String(agent.handoffRules || '').trim())
   const extraInstructionsConfigOpen = guidanceOpen.extraInstructions || Boolean(String(agent.extraInstructions || '').trim())
   const goalWorkflow = getAgentGoalWorkflow(agent)
+  const deposit = goalWorkflow.deposit
+  const completion = goalWorkflow.completion
+  const depositConfigAvailable = actionCanRequireDeposit(agent.objective, agent.successAction)
+  const completionMode = completion.mode === 'assign_user' ? 'assign_user' : 'notify_only'
+  const selectedCompletionUser = teamUsers.find((user) => user.id === completion.userId) || null
+  const teamUserOptions = [
+    { value: '', label: teamUsersLoading ? 'Cargando usuarios...' : 'Elegir usuario' },
+    ...teamUsers.map((user) => ({
+      value: user.id,
+      label: user.fullName || user.email || user.phone || user.username || `Usuario ${user.id}`
+    }))
+  ]
   const goalUrlConfig = agent.objective === 'ventas' ? goalWorkflow.sales : goalWorkflow.appointments
   const goalUrlLabel = agent.objective === 'ventas' ? 'Enlace del pedido' : 'Enlace del calendario'
   const goalUrlPlaceholder = agent.objective === 'ventas' ? 'https://tutienda.com/checkout' : 'https://calendly.com/tu-negocio/cita'
@@ -1213,6 +1321,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     onChange({ goalWorkflow: mergeGoalWorkflow(goalWorkflow, patch) })
   }
 
+  const updateDeposit = (patch: Partial<AgentGoalWorkflowConfig['deposit']>) => {
+    updateGoalWorkflow({ deposit: { ...goalWorkflow.deposit, ...patch } })
+  }
+
+  const updateCompletion = (patch: Partial<AgentGoalWorkflowConfig['completion']>) => {
+    updateGoalWorkflow({ completion: { ...goalWorkflow.completion, ...patch } })
+  }
+
   const getTriggerLinkWorkflow = (triggerLink?: TriggerLink | null): AgentGoalWorkflowConfig['triggerLink'] => ({
     triggerLinkId: triggerLink?.id || '',
     triggerLinkPublicId: triggerLink?.publicId || '',
@@ -1271,6 +1387,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     if (successAction === 'send_trigger_link') {
       nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
         triggerLink: getTriggerLinkWorkflow(selectedTriggerLink || triggerLinks[0] || null)
+      })
+    }
+    if (!actionCanRequireDeposit(agent.objective, successAction)) {
+      nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
+        deposit: { ...goalWorkflow.deposit, enabled: false }
       })
     }
     if (nextGoalWorkflow) patch.goalWorkflow = nextGoalWorkflow
@@ -2034,7 +2155,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>2. Qué debe lograr</h3>
             <p className={styles.agentSectionHint}>
-              Dile qué hacer con el chat, cuál es la meta y qué pasa cuando la cumple. Ejemplo: pasar a un humano o agendar.
+              Define el objetivo, qué acción lo confirma y qué pasa después. Ejemplo: pedir anticipo antes de agendar.
             </p>
             <div className={styles.configQuestionList}>
               <QuestionSelectRow
@@ -2056,13 +2177,163 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               />
 
               <QuestionSelectRow
-                question="Cuando cumpla la meta, ¿qué hace?"
+                question={`¿Qué acción confirma que se concretó ${getObjectiveCompletionLabel(agent.objective)}?`}
                 helper={selectedActionInfo.description}
                 value={agent.successAction}
                 options={allowedActions.map((action) => ({ value: action, label: getSuccessActionInfo(action, agent.objective).label }))}
-                selectLabel="Acción al lograr objetivo"
+                selectLabel="Acción que confirma el objetivo"
                 onChange={(action) => handleSuccessActionChange(action as ConversationalSuccessAction)}
-              />
+              >
+                {depositConfigAvailable && (
+                  <div className={styles.depositConfigBlock}>
+                    <div className={styles.inlineFields}>
+                      <div className={styles.field}>
+                        <label className={styles.label}>Pedir anticipo</label>
+                        <CustomSelect
+                          value={deposit.enabled ? 'yes' : 'no'}
+                          onChange={(event) => updateDeposit({ enabled: event.target.value === 'yes' })}
+                          portal
+                        >
+                          {binaryChoiceOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </CustomSelect>
+                      </div>
+
+                      {deposit.enabled && (
+                        <div className={styles.field}>
+                          <label className={styles.label}>Tipo de valor</label>
+                          <CustomSelect
+                            value={deposit.mode}
+                            onChange={(event) => updateDeposit({ mode: event.target.value as AgentDepositMode })}
+                            portal
+                          >
+                            {depositModeOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </CustomSelect>
+                        </div>
+                      )}
+                    </div>
+
+                    {deposit.enabled && (
+                      <>
+                        <div className={styles.depositAmountFields}>
+                          {deposit.mode === 'range' ? (
+                            <>
+                              <div className={styles.field}>
+                                <label className={styles.label}>Desde</label>
+                                <div className={styles.moneyInputWrap}>
+                                  <span className={styles.moneyPrefix}>$</span>
+                                  <NumberInput
+                                    className={`${styles.input} ${styles.moneyInput}`}
+                                    min={0}
+                                    step={50}
+                                    value={deposit.minAmount ?? ''}
+                                    onValueChange={(value) => updateDeposit({ minAmount: value })}
+                                  />
+                                </div>
+                              </div>
+                              <div className={styles.field}>
+                                <label className={styles.label}>Hasta</label>
+                                <div className={styles.moneyInputWrap}>
+                                  <span className={styles.moneyPrefix}>$</span>
+                                  <NumberInput
+                                    className={`${styles.input} ${styles.moneyInput}`}
+                                    min={0}
+                                    step={50}
+                                    value={deposit.maxAmount ?? ''}
+                                    onValueChange={(value) => updateDeposit({ maxAmount: value })}
+                                  />
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className={styles.field}>
+                              <label className={styles.label}>Monto</label>
+                              <div className={styles.moneyInputWrap}>
+                                <span className={styles.moneyPrefix}>$</span>
+                                <NumberInput
+                                  className={`${styles.input} ${styles.moneyInput}`}
+                                  min={0}
+                                  step={50}
+                                  value={deposit.amount ?? ''}
+                                  onValueChange={(value) => updateDeposit({ amount: value })}
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          <div className={styles.field}>
+                            <label className={styles.label}>Moneda</label>
+                            <input
+                              className={styles.input}
+                              value={deposit.currency || 'MXN'}
+                              maxLength={12}
+                              onChange={(event) => updateDeposit({ currency: event.target.value.toUpperCase() })}
+                            />
+                          </div>
+                        </div>
+                        <p className={styles.helper}>
+                          El agente sólo avanzará cuando reciba comprobante y el anticipo coincida con este valor.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
+              </QuestionSelectRow>
+
+              <QuestionSelectRow
+                question="Al momento de cumplir el objetivo, ¿qué quieres que suceda?"
+                helper={completionMode === 'assign_user'
+                  ? (selectedCompletionUser
+                      ? `Se asigna a ${selectedCompletionUser.fullName || selectedCompletionUser.email || selectedCompletionUser.phone || selectedCompletionUser.username} y se avisa.`
+                      : 'Elige quién lo toma cuando el bot termine.')
+                  : 'El bot deja de atender ese chat y te avisa para que el equipo lo vea.'}
+                value={completionMode}
+                options={completionModeOptions.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                  disabled: option.value === 'assign_user' && (teamUsersLoading || teamUsers.length === 0)
+                }))}
+                selectLabel="Qué pasa al cumplir el objetivo"
+                onChange={(mode) => {
+                  if (mode === 'assign_user' && (teamUsersLoading || teamUsers.length === 0)) return
+                  if (mode === 'assign_user') {
+                    const user = selectedCompletionUser || teamUsers[0] || null
+                    updateCompletion({
+                      mode,
+                      userId: user?.id || completion.userId || '',
+                      userName: user ? (user.fullName || user.email || user.phone || user.username || '') : completion.userName
+                    })
+                    return
+                  }
+                  updateCompletion({ mode: 'notify_only', userId: '', userName: '' })
+                }}
+              >
+                {completionMode === 'assign_user' && teamUsers.length > 0 && (
+                  <div className={styles.inlineFields}>
+                    <div className={styles.field}>
+                      <label className={styles.label}>Usuario asignado</label>
+                      <CustomSelect
+                        value={completion.userId}
+                        onChange={(event) => {
+                          const user = teamUsers.find((item) => item.id === event.target.value) || null
+                          updateCompletion({
+                            userId: user?.id || '',
+                            userName: user ? (user.fullName || user.email || user.phone || user.username || '') : ''
+                          })
+                        }}
+                        portal
+                      >
+                        {teamUserOptions.map((option) => (
+                          <option key={option.value || 'empty-user'} value={option.value}>{option.label}</option>
+                        ))}
+                      </CustomSelect>
+                    </div>
+                  </div>
+                )}
+              </QuestionSelectRow>
             </div>
 
             <div className={styles.agentOpsGrid}>

@@ -1508,6 +1508,58 @@ function describeObjective(config) {
   return OBJECTIVE_TEXTS[config.objective] || OBJECTIVE_TEXTS.citas
 }
 
+function actionSupportsDeposit(config = {}) {
+  return (
+    (config.objective === 'citas' || config.objective === 'ventas') &&
+    ['book_appointment', 'ready_for_human', 'ready_to_buy'].includes(config.successAction)
+  )
+}
+
+function formatDepositAmount(deposit = {}) {
+  const currency = deposit.currency || 'MXN'
+  if (deposit.mode === 'range') {
+    const min = Number(deposit.minAmount) || 0
+    const max = Number(deposit.maxAmount) || 0
+    if (min > 0 && max > 0) return `entre ${min} y ${max} ${currency}`
+    if (min > 0) return `desde ${min} ${currency}`
+    if (max > 0) return `hasta ${max} ${currency}`
+  }
+  const amount = Number(deposit.amount) || 0
+  return amount > 0 ? `${amount} ${currency}` : 'monto pendiente de configurar'
+}
+
+function buildDepositRequirementSection(config = {}) {
+  const deposit = config.goalWorkflow?.deposit || {}
+  if (!deposit.enabled || !actionSupportsDeposit(config)) return ''
+
+  const nextStep = config.successAction === 'book_appointment'
+    ? 'agendar la cita'
+    : config.successAction === 'ready_to_buy'
+      ? 'crear o mandar el link de pago'
+      : 'pasar la conversación al equipo como objetivo cumplido'
+
+  return `## Anticipo antes de concretar
+- Este negocio pide anticipo antes de ${nextStep}.
+- Monto configurado: ${formatDepositAmount(deposit)}.
+- Pide el anticipo con naturalidad y solicita foto o archivo del comprobante.
+- NO ejecutes la acción de avance hasta que el contacto haya enviado comprobante y el monto coincida con lo configurado.
+- Si el comprobante no se puede leer, no coincide o falta información, pide una foto más clara o manda a humano con send_to_human.
+- Cuando ya esté validado, ejecuta la tool de avance con anticipoValidado=true.`
+}
+
+function buildCompletionActionSection(config = {}) {
+  const completion = config.goalWorkflow?.completion || {}
+  if (completion.mode === 'assign_user' && completion.userId) {
+    return `## Después de cumplir el objetivo
+- Cuando la acción de avance se complete, Ristak saca el chat del bot, asigna el contacto a ${completion.userName || completion.userId} y avisa al equipo.
+- No prometas al contacto el nombre de la persona asignada si no hace falta; sólo cierra con una frase breve y natural.`
+  }
+
+  return `## Después de cumplir el objetivo
+- Cuando la acción de avance se complete, Ristak saca el chat del bot y avisa al equipo.
+- No sigas vendiendo ni hagas otro cierre largo después de ejecutar la tool.`
+}
+
 function buildGoalWorkflowSection(config = {}) {
   const workflow = config.goalWorkflow || {}
   const sections = []
@@ -1676,6 +1728,13 @@ ${String(followUpContext.strategy || '').trim().slice(0, 5000)}`)
 
   const workflowSection = buildGoalWorkflowSection(config)
   if (workflowSection && !followUpContext) sections.push(workflowSection)
+
+  const depositSection = buildDepositRequirementSection(config)
+  if (depositSection && !followUpContext) sections.push(depositSection)
+
+  if (!followUpContext) {
+    sections.push(buildCompletionActionSection(config))
+  }
 
   if (config.requiredData) {
     sections.push(`## Datos mínimos antes de cumplir el objetivo

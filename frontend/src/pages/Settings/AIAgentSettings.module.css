@@ -434,6 +434,43 @@
   margin-top: 10px;
 }
 
+.depositConfigBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.depositAmountFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 180px));
+  gap: 10px;
+  max-width: 620px;
+  min-width: 0;
+}
+
+.moneyInputWrap {
+  position: relative;
+  min-width: 0;
+}
+
+.moneyPrefix {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-mute);
+  font-size: 13px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.moneyInput {
+  padding-left: 28px;
+}
+
 .inlineFields {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(128px, 180px));

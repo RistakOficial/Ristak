@@ -71,6 +71,8 @@ export interface AgentFollowUpConfig {
 }
 
 export type AgentGoalOwner = 'human' | 'ai' | 'url'
+export type AgentDepositMode = 'fixed' | 'range'
+export type AgentCompletionMode = 'notify_only' | 'assign_user'
 
 export interface AgentGoalWorkflowConfig {
   appointments: {
@@ -103,6 +105,19 @@ export interface AgentGoalWorkflowConfig {
     triggerLinkPublicId: string
     triggerLinkName: string
     triggerLinkUrl: string
+  }
+  deposit: {
+    enabled: boolean
+    mode: AgentDepositMode
+    amount: number | null
+    minAmount: number | null
+    maxAmount: number | null
+    currency: string
+  }
+  completion: {
+    mode: AgentCompletionMode
+    userId: string
+    userName: string
   }
 }
 
@@ -397,6 +412,19 @@ const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     triggerLinkPublicId: '',
     triggerLinkName: '',
     triggerLinkUrl: ''
+  },
+  deposit: {
+    enabled: false,
+    mode: 'fixed',
+    amount: null,
+    minAmount: null,
+    maxAmount: null,
+    currency: 'MXN'
+  },
+  completion: {
+    mode: 'notify_only',
+    userId: '',
+    userName: ''
   }
 }
 
@@ -479,6 +507,14 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
       triggerLink: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.triggerLink,
         ...((agent.goalWorkflow?.triggerLink || {}) as Partial<AgentGoalWorkflowConfig['triggerLink']>)
+      },
+      deposit: {
+        ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit,
+        ...((agent.goalWorkflow?.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>)
+      },
+      completion: {
+        ...DEFAULT_AGENT_GOAL_WORKFLOW.completion,
+        ...((agent.goalWorkflow?.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
       }
     }
   }

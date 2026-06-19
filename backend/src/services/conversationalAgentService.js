@@ -677,6 +677,8 @@ function normalizeAgentFilters(input) {
 
 const SUCCESS_EXTRA_TYPES = new Set(['add_tag', 'remove_tag', 'set_custom_field'])
 const GOAL_WORKFLOW_OWNERS = new Set(['human', 'ai', 'url'])
+const GOAL_WORKFLOW_DEPOSIT_MODES = new Set(['fixed', 'range'])
+const GOAL_WORKFLOW_COMPLETION_MODES = new Set(['notify_only', 'assign_user'])
 export const CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH = '/webhook/conversational-agent/goal'
 export const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
 
@@ -711,6 +713,19 @@ const DEFAULT_GOAL_WORKFLOW_CONFIG = {
     triggerLinkPublicId: '',
     triggerLinkName: '',
     triggerLinkUrl: ''
+  },
+  deposit: {
+    enabled: false,
+    mode: 'fixed',
+    amount: null,
+    minAmount: null,
+    maxAmount: null,
+    currency: 'MXN'
+  },
+  completion: {
+    mode: 'notify_only',
+    userId: '',
+    userName: ''
   }
 }
 
@@ -731,6 +746,16 @@ function normalizeSuccessExtras(input) {
 function normalizeGoalOwner(value, fallback = 'human') {
   const owner = String(value || '').trim()
   return GOAL_WORKFLOW_OWNERS.has(owner) ? owner : fallback
+}
+
+function normalizeDepositMode(value, fallback = 'fixed') {
+  const mode = String(value || '').trim()
+  return GOAL_WORKFLOW_DEPOSIT_MODES.has(mode) ? mode : fallback
+}
+
+function normalizeCompletionMode(value, fallback = 'notify_only') {
+  const mode = String(value || '').trim()
+  return GOAL_WORKFLOW_COMPLETION_MODES.has(mode) ? mode : fallback
 }
 
 function normalizeTrackingParam(value) {
@@ -768,6 +793,8 @@ export function normalizeAgentGoalWorkflow(input) {
   const sales = raw.sales && typeof raw.sales === 'object' ? raw.sales : {}
   const qualification = raw.qualification && typeof raw.qualification === 'object' ? raw.qualification : {}
   const triggerLink = raw.triggerLink && typeof raw.triggerLink === 'object' ? raw.triggerLink : {}
+  const deposit = raw.deposit && typeof raw.deposit === 'object' ? raw.deposit : {}
+  const completion = raw.completion && typeof raw.completion === 'object' ? raw.completion : {}
 
   return {
     appointments: {
@@ -800,6 +827,19 @@ export function normalizeAgentGoalWorkflow(input) {
       triggerLinkPublicId: String(triggerLink.triggerLinkPublicId || triggerLink.publicId || '').trim().slice(0, 120),
       triggerLinkName: String(triggerLink.triggerLinkName || triggerLink.name || '').trim().slice(0, 160),
       triggerLinkUrl: normalizeGoalUrl(triggerLink.triggerLinkUrl || triggerLink.publicUrl || triggerLink.url)
+    },
+    deposit: {
+      enabled: toBoolean(deposit.enabled),
+      mode: normalizeDepositMode(deposit.mode, DEFAULT_GOAL_WORKFLOW_CONFIG.deposit.mode),
+      amount: normalizeNullableAmount(deposit.amount),
+      minAmount: normalizeNullableAmount(deposit.minAmount),
+      maxAmount: normalizeNullableAmount(deposit.maxAmount),
+      currency: String(deposit.currency || DEFAULT_GOAL_WORKFLOW_CONFIG.deposit.currency).trim().slice(0, 12).toUpperCase() || 'MXN'
+    },
+    completion: {
+      mode: normalizeCompletionMode(completion.mode, DEFAULT_GOAL_WORKFLOW_CONFIG.completion.mode),
+      userId: String(completion.userId || completion.user_id || '').trim().slice(0, 120),
+      userName: String(completion.userName || completion.user_name || '').trim().slice(0, 180)
     }
   }
 }
@@ -1052,9 +1092,17 @@ export async function completeConversationGoalLink(goalId, {
   if (row.agent_id) {
     const agent = await getConversationalAgent(row.agent_id).catch(() => null)
     if (agent) {
+      await applyAgentCompletionAction(agent, row.contact_id)
       await applyAgentSuccessExtras(agent, row.contact_id)
     }
   }
+
+  await notifyConversationalCompletion({
+    contactId: row.contact_id,
+    reason: mapped.reason,
+    summary,
+    signal: mapped.signal
+  })
 
   await recordConversationalAgentEvent({
     contactId: row.contact_id,
@@ -2439,6 +2487,78 @@ export async function applyAgentSuccessExtras(agent, contactId) {
   return applied
 }
 
+export async function applyAgentCompletionAction(agent, contactId) {
+  if (!agent || !contactId) return null
+  const workflow = normalizeAgentGoalWorkflow(agent.goalWorkflow)
+  const completion = workflow.completion || DEFAULT_GOAL_WORKFLOW_CONFIG.completion
+  if (completion.mode !== 'assign_user') return { mode: 'notify_only' }
+
+  const configuredUserId = String(completion.userId || '').trim()
+  if (!configuredUserId) return { mode: 'assign_user', skipped: true, reason: 'missing_user' }
+
+  const user = await db.get(
+    `SELECT id, username, email, full_name, first_name, last_name, phone
+     FROM users
+     WHERE id = ? AND is_active = 1`,
+    [configuredUserId]
+  ).catch(() => null)
+
+  const assignedUserId = String(user?.id || configuredUserId)
+  const assignedUserName = String(
+    user?.full_name ||
+    [user?.first_name, user?.last_name].filter(Boolean).join(' ') ||
+    user?.email ||
+    user?.phone ||
+    user?.username ||
+    completion.userName ||
+    ''
+  ).trim().slice(0, 180)
+
+  const row = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+  const fields = parseJsonField(row?.custom_fields, {})
+  const customFields = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields : {}
+  customFields.assignedUser = assignedUserId
+  if (assignedUserName) customFields.assignedUserName = assignedUserName
+
+  await db.run(`UPDATE contacts SET custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [
+    JSON.stringify(customFields),
+    contactId
+  ])
+
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'completion_user_assigned',
+    detail: {
+      agentId: agent.id || null,
+      assignedUserId,
+      assignedUserName: assignedUserName || null
+    }
+  })
+
+  return { mode: 'assign_user', userId: assignedUserId, userName: assignedUserName || null }
+}
+
+async function notifyConversationalCompletion({ contactId, reason = '', summary = '', signal = 'ready_for_human' } = {}) {
+  if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
+  try {
+    const { sendConversationalAgentPriorityNotification } = await import('./pushNotificationsService.js')
+    const result = await sendConversationalAgentPriorityNotification({ contactId, reason, summary, signal })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'priority_push_notification',
+      detail: { signal, sent: result?.sent || 0, skipped: Boolean(result?.skipped), reason: result?.reason || null }
+    })
+    return result
+  } catch (error) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'priority_push_notification_failed',
+      detail: { signal, error: error.message }
+    })
+    return { sent: 0, skipped: true, reason: error.message }
+  }
+}
+
 function mapStateRow(row) {
   if (!row) return null
   return {
@@ -2642,7 +2762,14 @@ export async function handleConversationalAgentTriggerLinkClick(payload = {}) {
     summary: `El contacto tocó el enlace de disparo "${triggerLinkName}". El equipo debe continuar la conversación.`,
     status: 'completed'
   })
+  await applyAgentCompletionAction(agent, contactId)
   await applyAgentSuccessExtras(agent, contactId)
+  await notifyConversationalCompletion({
+    contactId,
+    reason: `Tocó el enlace de disparo: ${triggerLinkName}`,
+    summary: `El contacto tocó el enlace de disparo "${triggerLinkName}". El equipo debe continuar la conversación.`,
+    signal: 'ready_for_human'
+  })
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'trigger_link_goal_completed',
