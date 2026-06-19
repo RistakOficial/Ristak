@@ -1789,13 +1789,15 @@ function getStripePlanRecurrenceLabel(frequency) {
 
 function getStripePlanMirrorStatus(flow = {}) {
   const state = cleanString(flow.current_state).toLowerCase()
+  if (state === STRIPE_PLAN_STATES.DRAFT) return 'draft'
   if (state === STRIPE_PLAN_STATES.DELETED) return 'deleted'
   if (state === STRIPE_PLAN_STATES.CANCELLED) return 'cancelled'
   if (state === STRIPE_PLAN_STATES.PAUSED) return 'paused'
+  if (state === STRIPE_PLAN_STATES.FIRST_PAYMENT_PENDING) return 'pending'
+  if (state === STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION) return 'pending'
   if (state === STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE) return 'active'
   if (state === STRIPE_PLAN_STATES.INSTALLMENT_PLAN_CREATED) return 'scheduled'
   if (state === STRIPE_PLAN_STATES.CARD_AUTHORIZED) return 'scheduled'
-  if (state === STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION) return 'scheduled'
   return 'scheduled'
 }
 

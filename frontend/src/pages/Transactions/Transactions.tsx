@@ -425,14 +425,8 @@ export const Transactions: React.FC = () => {
   useEffect(() => {
     if (paymentTableTab !== 'payment-plans') return
 
-    if (!highLevelConnected) {
-      setPaymentPlans([])
-      setPaymentPlansLoading(false)
-      return
-    }
-
     fetchPaymentPlans()
-  }, [highLevelConnected, paymentTableTab])
+  }, [highLevelConnected, paymentTableTab, stripeConnected])
 
   useEffect(() => {
     setPaymentTableTab(current => current === routeState.tab ? current : routeState.tab)
@@ -498,7 +492,7 @@ export const Transactions: React.FC = () => {
       const plans = await transactionsService.getPaymentPlans()
       setPaymentPlans(plans)
     } catch (error) {
-      showToast('error', 'No se pudieron cargar los planes de pago', 'HighLevel no devolvió la lista de facturas recurrentes. Intenta actualizar de nuevo.')
+      showToast('error', 'No se pudieron cargar los planes de pago', 'Ristak no pudo leer los planes guardados. Intenta actualizar de nuevo.')
     } finally {
       setPaymentPlansLoading(false)
     }
@@ -508,13 +502,13 @@ export const Transactions: React.FC = () => {
     setSyncing(true)
     try {
       if (paymentTableTab === 'payment-plans') {
-        if (!highLevelConnected) {
-          showToast('warning', 'HighLevel no está conectado', 'Conecta HighLevel para consultar y programar planes de pago.')
+        if (!stripeConnected && !highLevelConnected && paymentPlans.length === 0) {
+          showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o HighLevel para consultar y programar planes de pago.')
           return
         }
-        showToast('info', 'Actualizando planes de pago', 'Consultando facturas recurrentes en HighLevel...')
+        showToast('info', 'Actualizando planes de pago', 'Consultando planes guardados en Ristak y tus pasarelas conectadas...')
         await fetchPaymentPlans()
-        showToast('success', 'Planes actualizados', 'La lista de planes de pago se actualizó desde HighLevel')
+        showToast('success', 'Planes actualizados', 'La lista de planes de pago se actualizó correctamente.')
         return
       }
 
@@ -1857,7 +1851,7 @@ export const Transactions: React.FC = () => {
             </div>
           ) : (
             <div className={styles.dateFilters}>
-              {highLevelConnected ? statusFilterControl : null}
+              {paymentPlans.length > 0 ? statusFilterControl : null}
             </div>
           )}
           <div className={styles.actions}>
@@ -1965,7 +1959,7 @@ export const Transactions: React.FC = () => {
             data={filteredPaymentPlans}
             keyExtractor={(item) => item.id}
             onRowClick={handleOpenPaymentPlan}
-            emptyMessage={highLevelConnected ? 'No hay planes de pago' : 'Conecta HighLevel para ver y programar planes de pago'}
+            emptyMessage={canProgramPaymentPlan ? 'No hay planes de pago' : 'Conecta Stripe o HighLevel para ver y programar planes de pago'}
             loading={paymentPlansLoading}
             searchable={true}
             searchPlaceholder="Buscar planes de pago..."
@@ -2621,7 +2615,7 @@ export const Transactions: React.FC = () => {
           // El modal ya sincronizó el invoice específico desde GHL.
           // Solo recargar desde BD local (sin sync completo).
           fetchData()
-          if (recordPaymentInitialMode === 'partial' && highLevelConnected) {
+          if (recordPaymentInitialMode === 'partial') {
             fetchPaymentPlans()
           }
         }}

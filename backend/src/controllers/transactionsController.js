@@ -16,6 +16,7 @@ import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLo
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
+const STRIPE_PLAN_AUTHORIZATION_TRIGGERS = new Set(['card_setup', 'card_setup_authorization', 'first_payment', 'first_payment_saved_card'])
 const MAX_STRIPE_LIST_REFRESHES = 25
 const VALID_TRANSACTION_STATUSES = new Set([
   'draft',
@@ -105,6 +106,26 @@ const isStripeBackedTransaction = (transaction = {}) => {
   const metadata = parseJson(transaction.metadata_json, {})
   return Boolean(metadata?.paymentPlan?.flowId)
 }
+
+const isStripePlanAuthorizationTransaction = (transaction = {}) => {
+  const metadata = parseJson(transaction.metadata_json, {})
+  const plan = metadata?.paymentPlan && typeof metadata.paymentPlan === 'object'
+    ? metadata.paymentPlan
+    : {}
+  const trigger = cleanString(plan.trigger).toLowerCase()
+  const source = cleanString(metadata.source).toLowerCase()
+
+  return Boolean(plan.flowId && (
+    STRIPE_PLAN_AUTHORIZATION_TRIGGERS.has(trigger) ||
+    source === 'stripe_payment_plan_card_setup' ||
+    source === 'stripe_payment_plan_first_link'
+  ))
+}
+
+const sendStripePlanAuthorizationManualPaymentError = (res) => res.status(422).json({
+  success: false,
+  error: 'Este pago activa la domiciliación del plan y solo Stripe puede marcarlo como pagado cuando el cliente complete el enlace. No se puede registrar como pago offline.'
+})
 
 const splitName = (name = '') => {
   const parts = cleanString(name).split(/\s+/).filter(Boolean)
@@ -945,6 +966,10 @@ export const updateTransaction = async (req, res) => {
     const statusChanged = nextStatus !== currentStatus
     const invoiceId = transaction.ghl_invoice_id
 
+    if (statusChanged && nextStatus === 'paid' && isStripePlanAuthorizationTransaction(transaction)) {
+      return sendStripePlanAuthorizationManualPaymentError(res)
+    }
+
     if (invoiceId && statusChanged && nextStatus === 'refunded') {
       return res.status(422).json({
         success: false,
@@ -1301,6 +1326,10 @@ export const recordPayment = async (req, res) => {
         success: false,
         error: 'Transacción no encontrada'
       })
+    }
+
+    if (isStripePlanAuthorizationTransaction(transaction)) {
+      return sendStripePlanAuthorizationManualPaymentError(res)
     }
 
     // Marcar como pagado en HighLevel si tiene invoice asociado

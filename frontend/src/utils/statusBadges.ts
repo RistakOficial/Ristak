@@ -43,6 +43,7 @@ export const getTransactionStatusBadge = (status: unknown): StatusBadgeDescripto
 // ===== Planes de pago =====
 export const PAYMENT_PLAN_STATUS_BADGES: Record<string, StatusBadgeDescriptor> = {
   active: { label: 'Activo', variant: 'info' },
+  pending: { label: 'Pendiente', variant: 'warning' },
   scheduled: { label: 'Programado', variant: 'warning' },
   paused: { label: 'Pausado', variant: 'warning' },
   cancelled: { label: 'Cancelado', variant: 'error' },
