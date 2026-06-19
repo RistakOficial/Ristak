@@ -1201,10 +1201,15 @@ const buildContactPhonesForResponse = (contact = {}) => {
     if (!phone || byPhone.has(phone)) return
 
     const isPrimary = Boolean(entry.isPrimary || entry.is_primary || phone === cleanString(contact.phone))
+    const label = isPrimary
+      ? 'Principal'
+      : cleanString(entry.label) && cleanString(entry.label) !== 'Principal'
+        ? cleanString(entry.label)
+        : 'Adicional'
     byPhone.set(phone, {
       id: cleanString(entry.id) || phone,
       phone,
-      label: cleanString(entry.label) || (isPrimary ? 'Principal' : 'Adicional'),
+      label,
       isPrimary,
       is_primary: isPrimary,
       source: cleanString(entry.source),

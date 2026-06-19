@@ -1065,7 +1065,7 @@ const ContactsTable: React.FC = () => {
   const handleUpdateContactIdentity = async (
     contactId: string,
     updates: Partial<Record<'name' | 'email' | 'phone', string | null>>
-  ): Promise<Partial<Record<'name' | 'email' | 'phone', string | null>>> => {
+  ): Promise<Partial<Contact>> => {
     try {
       const updatedContact = await contactsService.updateContact(contactId, updates as Partial<Contact>)
       const identityPatch: Partial<Record<'name' | 'email' | 'phone', string | null>> = {}
@@ -1089,7 +1089,7 @@ const ContactsTable: React.FC = () => {
       setSelectedContact(prev => prev?.id === contactId ? { ...prev, ...nextPatch } : prev)
       setContacts(prev => prev.map(contact => contact.id === contactId ? { ...contact, ...nextPatch } : contact))
 
-      return identityPatch
+      return nextPatch
     } catch (error) {
       showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta editar el contacto otra vez.')
       throw error

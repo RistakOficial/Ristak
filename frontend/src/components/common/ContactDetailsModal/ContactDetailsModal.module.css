@@ -882,34 +882,6 @@
   color: var(--color-text-primary);
 }
 
-.contactPhoneList {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-  gap: 0.25rem;
-}
-
-.contactPhoneValue {
-  display: grid;
-  min-width: 0;
-  gap: 0.0625rem;
-  color: var(--color-text-secondary);
-}
-
-.contactPhoneValue span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.contactPhoneValue small {
-  color: var(--color-text-tertiary);
-  font-size: 0.6875rem;
-  font-weight: 500;
-  line-height: 1.25;
-}
-
 .whatsappPreference {
   display: grid;
   gap: 0.625rem;

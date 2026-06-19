@@ -98,11 +98,16 @@ const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
     const phone = String(entry?.phone || '').trim()
     if (!phone || phonesByValue.has(phone)) return
     const isPrimary = Boolean(entry?.isPrimary || entry?.is_primary || phone === String((result as any).phone || '').trim())
+    const label = isPrimary
+      ? 'Principal'
+      : entry?.label && entry.label !== 'Principal'
+        ? entry.label
+        : 'Adicional'
     phonesByValue.set(phone, {
       ...entry,
       id: entry?.id || phone,
       phone,
-      label: entry?.label || (isPrimary ? 'Principal' : 'Adicional'),
+      label,
       isPrimary,
       is_primary: isPrimary
     })

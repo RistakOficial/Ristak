@@ -1,7 +1,7 @@
 import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { CheckCheck, CircleAlert, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
 import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
-import { Modal, Icon, Badge, Button, CustomSelect, InlineEditableText, TagPicker, type BadgeVariant } from '@/components/common'
+import { Modal, Icon, Badge, Button, CustomSelect, ContactPhoneSelector, InlineEditableText, TagPicker, type BadgeVariant } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import automationsService, {
   type AutomationSummary,
@@ -147,7 +147,7 @@ interface ContactDetailsModalProps {
   loading: boolean
   type?: 'interesados' | 'sales' | 'appointments' | 'attendances' | null
   onUpdateCustomFields?: (contactId: string, customFields: ContactCustomField[]) => Promise<ContactCustomField[]>
-  onUpdateContact?: (contactId: string, updates: ContactIdentityUpdate) => Promise<ContactIdentityUpdate | void>
+  onUpdateContact?: (contactId: string, updates: ContactIdentityUpdate) => Promise<Partial<ContactDetail> | void>
   onUpdateTags?: (contactId: string, tagIds: string[]) => Promise<string[] | void>
   whatsappPhoneNumbers?: WhatsAppPhoneOption[]
   onUpdatePreferredWhatsAppPhoneNumber?: (contactId: string, phoneNumberId: string) => Promise<Partial<ContactDetail> | void>
@@ -162,11 +162,16 @@ const getContactPhoneEntries = (contact?: ContactDetail | null): ContactPhoneNum
     const phone = String(entry?.phone || '').trim()
     if (!phone || byPhone.has(phone)) return
     const isPrimary = Boolean(entry?.isPrimary || entry?.is_primary || phone === String(contact?.phone || '').trim())
+    const label = isPrimary
+      ? 'Principal'
+      : entry?.label && entry.label !== 'Principal'
+        ? entry.label
+        : 'Adicional'
     byPhone.set(phone, {
       ...entry,
       id: entry?.id || phone,
       phone,
-      label: entry?.label || (isPrimary ? 'Principal' : 'Adicional'),
+      label,
       isPrimary,
       is_primary: isPrimary
     })
@@ -679,6 +684,7 @@ export function ContactDetailsModal({
   const [whatsappPreferenceError, setWhatsappPreferenceError] = useState<string | null>(null)
   const [savingTags, setSavingTags] = useState(false)
   const [tagsError, setTagsError] = useState<string | null>(null)
+  const [savingPrimaryPhone, setSavingPrimaryPhone] = useState<string | null>(null)
   const { labels } = useLabels()
   const { formatLocalDateShort, formatLocalDateTime, timezone } = useTimezone()
   const visibleCustomFields = useMemo(
@@ -730,6 +736,7 @@ export function ContactDetailsModal({
       setWhatsappPreferenceError(null)
       setSavingTags(false)
       setTagsError(null)
+      setSavingPrimaryPhone(null)
     }
   }, [isOpen, data])
 
@@ -765,6 +772,7 @@ export function ContactDetailsModal({
     setWhatsappPreferenceError(null)
     setSavingTags(false)
     setTagsError(null)
+    setSavingPrimaryPhone(null)
   }, [selectedContact?.id])
 
   useEffect(() => {
@@ -1084,6 +1092,20 @@ export function ContactDetailsModal({
     } catch (error) {
       setSelectedContact(prev => prev?.id === contactId ? { ...prev, [field]: previousValue } : prev)
       throw error
+    }
+  }
+
+  const makeContactPhonePrimary = async (phone: string) => {
+    if (!selectedContact || !onUpdateContact) return
+
+    const nextPhone = String(phone || '').trim()
+    if (!nextPhone || nextPhone === String(selectedContact.phone || '').trim()) return
+
+    setSavingPrimaryPhone(nextPhone)
+    try {
+      await saveContactIdentityField('phone', nextPhone)
+    } finally {
+      setSavingPrimaryPhone(null)
     }
   }
 
@@ -1837,42 +1859,14 @@ export function ContactDetailsModal({
                       </div>
                       <div className={styles.detailItem}>
                         <Icon name="phone" size={16} />
-                        <div className={styles.contactPhoneList}>
-                          {selectedContactPhones.length > 0 ? (
-                            selectedContactPhones.map((phoneEntry) => {
-                              const isPrimary = Boolean(phoneEntry.isPrimary || phoneEntry.is_primary)
-                              return isPrimary ? (
-                                <InlineEditableText
-                                  key={phoneEntry.id || phoneEntry.phone}
-                                  value={phoneEntry.phone}
-                                  emptyLabel="Sin teléfono"
-                                  ariaLabel="Editar teléfono principal del contacto"
-                                  type="tel"
-                                  inputMode="tel"
-                                  layout="block"
-                                  disabled={!onUpdateContact}
-                                  onSave={(value) => saveContactIdentityField('phone', value)}
-                                />
-                              ) : (
-                                <span key={phoneEntry.id || phoneEntry.phone} className={styles.contactPhoneValue}>
-                                  <span>{phoneEntry.phone}</span>
-                                  <small>{phoneEntry.label || 'Adicional'}</small>
-                                </span>
-                              )
-                            })
-                          ) : (
-                            <InlineEditableText
-                              value=""
-                              emptyLabel="Sin teléfono"
-                              ariaLabel="Editar teléfono del contacto"
-                              type="tel"
-                              inputMode="tel"
-                              layout="block"
-                              disabled={!onUpdateContact}
-                              onSave={(value) => saveContactIdentityField('phone', value)}
-                            />
-                          )}
-                        </div>
+                        <ContactPhoneSelector
+                          phones={selectedContactPhones}
+                          emptyLabel="Sin teléfono"
+                          disabled={!onUpdateContact}
+                          savingPhone={savingPrimaryPhone}
+                          onSavePrimaryPhone={(value) => saveContactIdentityField('phone', value)}
+                          onMakePrimary={makeContactPhonePrimary}
+                        />
                       </div>
                       <div className={styles.detailItem}>
                         <Icon name="calendar" size={16} />

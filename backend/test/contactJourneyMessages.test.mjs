@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { db } from '../src/config/database.js'
-import { getChatContacts, getContactJourney } from '../src/controllers/contactsController.js'
+import { getChatContacts, getContactJourney, updateContact } from '../src/controllers/contactsController.js'
 
 function createMockResponse() {
   return {
@@ -286,6 +286,78 @@ test('chat and journey include WhatsApp messages from secondary contact phones',
     assert.ok(
       journey.some(event => event.type === 'whatsapp_message' && event.data.phone === secondaryPhone),
       'journey should include WhatsApp messages matched by secondary phone'
+    )
+  } finally {
+    await cleanup(contactId, primaryPhone, [secondaryPhone])
+  }
+})
+
+test('updating contact phone promotes a secondary number to primary', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const contactId = `journey_primary_phone_${id}`
+  const primaryPhone = `+52656${suffix}`
+  const secondaryPhone = `+52657${suffix}`
+
+  await cleanup(contactId, primaryPhone, [secondaryPhone])
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone: primaryPhone,
+      full_name: 'Cliente Principal',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2099-06-16T10:00:00.000Z',
+      updated_at: '2099-06-16T10:00:00.000Z'
+    })
+
+    await insertRow('contact_phone_numbers', {
+      id: `contact_phone_primary_${id}`,
+      contact_id: contactId,
+      phone: primaryPhone,
+      label: 'Principal',
+      is_primary: 1,
+      source: 'test',
+      created_at: '2099-06-16T10:00:00.000Z',
+      updated_at: '2099-06-16T10:00:00.000Z'
+    })
+
+    await insertRow('contact_phone_numbers', {
+      id: `contact_phone_secondary_${id}`,
+      contact_id: contactId,
+      phone: secondaryPhone,
+      label: 'Adicional',
+      is_primary: 0,
+      source: 'whatsapp_api',
+      created_at: '2099-06-16T10:01:00.000Z',
+      updated_at: '2099-06-16T10:01:00.000Z'
+    })
+
+    const res = createMockResponse()
+    await updateContact({ params: { id: contactId }, body: { phone: secondaryPhone } }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.body?.success, true)
+    assert.equal(res.body?.data?.phone, secondaryPhone)
+    assert.deepEqual(
+      res.body.data.phones.map(phone => ({ phone: phone.phone, isPrimary: phone.isPrimary, label: phone.label })),
+      [
+        { phone: secondaryPhone, isPrimary: true, label: 'Principal' },
+        { phone: primaryPhone, isPrimary: false, label: 'Adicional' }
+      ]
+    )
+
+    const rows = await db.all(
+      'SELECT phone, is_primary, label FROM contact_phone_numbers WHERE contact_id = ? ORDER BY is_primary DESC, phone ASC',
+      [contactId]
+    )
+    assert.deepEqual(
+      rows.map(row => ({ phone: row.phone, isPrimary: Boolean(row.is_primary), label: row.label })),
+      [
+        { phone: secondaryPhone, isPrimary: true, label: 'Principal' },
+        { phone: primaryPhone, isPrimary: false, label: 'Adicional' }
+      ]
     )
   } finally {
     await cleanup(contactId, primaryPhone, [secondaryPhone])

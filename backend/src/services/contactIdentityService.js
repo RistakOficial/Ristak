@@ -277,7 +277,11 @@ export async function recordContactPhoneNumber({
 
   if (isPrimary) {
     await db.run(
-      'UPDATE contact_phone_numbers SET is_primary = 0, updated_at = CURRENT_TIMESTAMP WHERE contact_id = ?',
+      `UPDATE contact_phone_numbers
+       SET is_primary = 0,
+           label = CASE WHEN label = 'Principal' THEN 'Adicional' ELSE label END,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE contact_id = ?`,
       [id]
     ).catch(() => {})
   }

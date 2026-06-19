@@ -39,6 +39,7 @@ import {
   AppointmentModal,
   Button,
   CustomSelect,
+  ContactPhoneSelector,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -1381,11 +1382,16 @@ function getContactPhoneEntries(contact?: Contact | null): ContactPhoneNumber[] 
     const phone = String(entry?.phone || '').trim()
     if (!phone || byPhone.has(phone)) return
     const isPrimary = Boolean(entry?.isPrimary || entry?.is_primary || phone === String(contact?.phone || '').trim())
+    const label = isPrimary
+      ? 'Principal'
+      : entry?.label && entry.label !== 'Principal'
+        ? entry.label
+        : 'Adicional'
     byPhone.set(phone, {
       ...entry,
       id: entry?.id || phone,
       phone,
-      label: entry?.label || (isPrimary ? 'Principal' : 'Adicional'),
+      label,
       isPrimary,
       is_primary: isPrimary
     })
@@ -1709,6 +1715,7 @@ export const DesktopChat: React.FC = () => {
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [contactInfoData, setContactInfoData] = useState<Contact | null>(null)
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
+  const [savingPrimaryPhone, setSavingPrimaryPhone] = useState<string | null>(null)
   const [infoPanelView, setInfoPanelView] = useState<InfoPanelView>('summary')
 
   const [composerText, setComposerText] = useState('')
@@ -2895,6 +2902,19 @@ export const DesktopChat: React.FC = () => {
       throw error
     }
   }, [activeContact, contactInfoData, showToast])
+
+  const handleMakePrimaryPhone = useCallback(async (phone: string) => {
+    const nextPhone = String(phone || '').trim()
+    const currentContact = contactInfoData || activeContact
+    if (!activeContact?.id || !nextPhone || nextPhone === String(currentContact?.phone || '').trim()) return
+
+    setSavingPrimaryPhone(nextPhone)
+    try {
+      await handleUpdateContactIdentityField('phone', nextPhone)
+    } finally {
+      setSavingPrimaryPhone(null)
+    }
+  }, [activeContact, contactInfoData, handleUpdateContactIdentityField])
 
   const openNewAppointment = useCallback(() => {
     setEditingAppointmentEvent(null)
@@ -5231,40 +5251,13 @@ export const DesktopChat: React.FC = () => {
                   <div>
                     <dt><Phone size={14} /> Teléfono</dt>
                     <dd>
-                      <div className={styles.contactPhoneList}>
-                        {activeContactPhones.length > 0 ? (
-                          activeContactPhones.map((phoneEntry) => {
-                            const isPrimary = Boolean(phoneEntry.isPrimary || phoneEntry.is_primary)
-                            return isPrimary ? (
-                              <InlineEditableText
-                                key={phoneEntry.id || phoneEntry.phone}
-                                value={phoneEntry.phone}
-                                emptyLabel="Sin teléfono"
-                                ariaLabel="Editar teléfono principal del contacto"
-                                type="tel"
-                                inputMode="tel"
-                                layout="block"
-                                onSave={(value) => handleUpdateContactIdentityField('phone', value)}
-                              />
-                            ) : (
-                              <span key={phoneEntry.id || phoneEntry.phone} className={styles.contactPhoneValue}>
-                                <span>{phoneEntry.phone}</span>
-                                <small>{phoneEntry.label || 'Adicional'}</small>
-                              </span>
-                            )
-                          })
-                        ) : (
-                          <InlineEditableText
-                            value=""
-                            emptyLabel="Sin teléfono"
-                            ariaLabel="Editar teléfono del contacto"
-                            type="tel"
-                            inputMode="tel"
-                            layout="block"
-                            onSave={(value) => handleUpdateContactIdentityField('phone', value)}
-                          />
-                        )}
-                      </div>
+                      <ContactPhoneSelector
+                        phones={activeContactPhones}
+                        emptyLabel="Sin teléfono"
+                        savingPhone={savingPrimaryPhone}
+                        onSavePrimaryPhone={(value) => handleUpdateContactIdentityField('phone', value)}
+                        onMakePrimary={handleMakePrimaryPhone}
+                      />
                     </dd>
                   </div>
                   <div>
