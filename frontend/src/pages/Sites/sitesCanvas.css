@@ -306,14 +306,14 @@
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: var(--rstk-video-play-radius, 8px);
-  background: var(--rstk-video-player-color, rgba(0,0,0,.52));
+  border-radius: var(--rstk-video-play-radius, 0);
+  background: var(--rstk-video-player-color, #000000);
   color: var(--rstk-video-play-color, #fff);
   box-shadow: none;
   transition: opacity .18s ease, transform .18s ease;
 }
 .rstkCanvas .rstk-video-play-shape-round .rstk-video-play-dot { border-radius: var(--rstk-video-play-radius, 999px); }
-.rstkCanvas .rstk-video-play-shape-rectangle .rstk-video-play-dot { border-radius: var(--rstk-video-play-radius, 8px); }
+.rstkCanvas .rstk-video-play-shape-rectangle .rstk-video-play-dot { border-radius: var(--rstk-video-play-radius, 0); }
 .rstkCanvas .rstk-video-play-dot svg {
   width: var(--rstk-video-play-icon-size, 95px);
   height: var(--rstk-video-play-icon-size, 95px);
@@ -389,7 +389,7 @@
   gap: 8px;
   border: 1px solid rgba(255,255,255,.14);
   border-radius: 999px;
-  background: var(--rstk-video-player-color, rgba(0,0,0,.52));
+  background: var(--rstk-video-player-color, #000000);
   color: var(--rstk-video-play-color, #fff);
   box-shadow: none;
   opacity: 1;

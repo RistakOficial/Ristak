@@ -17346,7 +17346,7 @@
   width: 82px;
   height: 56px;
   border: 0;
-  border-radius: var(--video-settings-play-radius, 8px);
+  border-radius: var(--video-settings-play-radius, 0);
   background: var(--video-settings-play-bg, var(--accent));
   color: var(--video-settings-play-color, var(--on-accent));
   box-shadow: none;

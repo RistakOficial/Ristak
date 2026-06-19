@@ -665,7 +665,7 @@ const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
-const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0,0,0,.52)'
+const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
 const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
@@ -674,7 +674,7 @@ const LEGACY_VIDEO_PLAY_ICON_SIZE = 32
 const LEGACY_VIDEO_PLAY_RADIUS = 999
 const DEFAULT_VIDEO_PLAY_SIZE = 160
 const DEFAULT_VIDEO_PLAY_ICON_SIZE = 95
-const DEFAULT_VIDEO_PLAY_RADIUS = 8
+const DEFAULT_VIDEO_PLAY_RADIUS = 0
 const VIDEO_CONTROLS_IDLE_MS = 2600
 const VIDEO_CONTROLS_LEAVE_IDLE_MS = 650
 const VIDEO_PLAY_SIZE_MIN = 56
@@ -682,13 +682,13 @@ const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
 const VIDEO_PLAY_ICON_SIZE_MAX = 95
 const VIDEO_PREVIEW_MAX_SECONDS = 40
-const VIDEO_PREVIEW_DEFAULT_SECONDS = 5
+const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
   videoControls: false,
   videoControlBar: false,
-  videoControlBarInitiallyVisible: true,
+  videoControlBarInitiallyVisible: false,
   videoControlVolume: true,
   videoControlSpeed: true,
   videoPreviewEnabled: true,
@@ -19806,7 +19806,7 @@ const VideoPlayerSettingsControls: React.FC<{
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
-                  checked={settings.videoControlBarInitiallyVisible !== false}
+                  checked={settings.videoControlBarInitiallyVisible === true}
                   disabled={!showCustomControlBar}
                   onChange={(event) => {
                     onPatchSettings({ videoControlBarInitiallyVisible: event.target.checked })
@@ -23581,7 +23581,7 @@ const VideoPlayerPreview: React.FC<{
   const [isPreviewLooping, setIsPreviewLooping] = useState(false)
   const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
   const [progress, setProgress] = useState(0)
-  const showControlBarInitially = settings.videoControlBarInitiallyVisible !== false
+  const showControlBarInitially = settings.videoControlBarInitiallyVisible === true
   const [controlsVisible, setControlsVisible] = useState(showControlBarInitially)
   const controlsMode = getVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native'
@@ -23620,7 +23620,7 @@ const VideoPlayerPreview: React.FC<{
   const shouldLetEditorSelect = editable && !selected
   const controlsHideTimerRef = useRef<number | null>(null)
   const showOverlayLayer = showOverlay && (!isPlaying || isPreviewLooping)
-  const showSoundNotice = showOverlayLayer && soundHint && !hasStartedPlayback
+  const showSoundNotice = showOverlay && soundHint && !hasStartedPlayback
   const shouldHideControlBarAtStart = showCustomControlBar && !showControlBarInitially && !hasStartedPlayback
   const clearControlsHideTimer = useCallback(() => {
     if (!controlsHideTimerRef.current) return
@@ -23961,15 +23961,15 @@ const VideoPlayerPreview: React.FC<{
       {showOverlayLayer && (
         <button type="button" className="rstk-video-overlay" onClick={handleOverlayClick} aria-label="Reproducir video">
           <span className="rstk-video-play-dot"><VideoPlayGlyph iconStyle={playIconStyle} size={playIconSize} /></span>
-          {showSoundNotice && (
-            <span className={`rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}`}>
-              <span className="rstk-video-sound-icon" aria-hidden="true">
-                <Volume2 size={22} />
-              </span>
-              {soundNoticeText && <span className="rstk-video-sound-text">{soundNoticeText}</span>}
-            </span>
-          )}
         </button>
+      )}
+      {showSoundNotice && (
+        <span className={`rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}`}>
+          <span className="rstk-video-sound-icon" aria-hidden="true">
+            <Volume2 size={22} />
+          </span>
+          {soundNoticeText && <span className="rstk-video-sound-text">{soundNoticeText}</span>}
+        </span>
       )}
       {showCustomControlBar && (
         <div className="rstk-video-control-bar" onClick={(event) => {

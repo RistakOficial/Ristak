@@ -12441,7 +12441,7 @@ const LEGACY_VIDEO_PLAY_ICON_SIZE = 32
 const LEGACY_VIDEO_PLAY_RADIUS = 999
 const DEFAULT_VIDEO_PLAY_SIZE = 160
 const DEFAULT_VIDEO_PLAY_ICON_SIZE = 95
-const DEFAULT_VIDEO_PLAY_RADIUS = 8
+const DEFAULT_VIDEO_PLAY_RADIUS = 0
 const VIDEO_PLAY_SIZE_MIN = 56
 const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
@@ -12450,13 +12450,14 @@ const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
+const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
 const VIDEO_CONTROLS_IDLE_MS = 2600
 const VIDEO_CONTROLS_LEAVE_IDLE_MS = 650
 const VIDEO_SPEED_OPTIONS = ['0.75', '1', '1.25', '1.5', '2']
 const VIDEO_PREVIEW_MAX_SECONDS = 40
-const VIDEO_PREVIEW_DEFAULT_SECONDS = 5
+const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
 
 function isTransparentCssColorValue(value = '') {
@@ -13100,7 +13101,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
   const showCustomControlBar = showOverlay && settings.videoControlBar === true
-  const showControlBarInitially = settings.videoControlBarInitiallyVisible !== false
+  const showControlBarInitially = settings.videoControlBarInitiallyVisible === true
   const showCustomVolume = settings.videoControlVolume !== false
   const showCustomSpeed = settings.videoControlSpeed !== false
   const soundHint = settings.videoSoundHint !== false
@@ -13117,7 +13118,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const rawSpeed = Number(settings.videoDefaultSpeed || 1)
   const speed = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1
   const fit = ['cover', 'contain', 'fill'].includes(cleanString(settings.videoFit)) ? cleanString(settings.videoFit) : 'cover'
-  const playerColor = normalizeCssPaint(settings.videoPlayerColor, 'rgba(0,0,0,.52)') || 'rgba(0,0,0,.52)'
+  const playerColor = normalizeCssPaint(settings.videoPlayerColor, DEFAULT_VIDEO_PLAYER_COLOR) || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = normalizeCssPaint(settings.videoPlayColor, '#ffffff') || '#ffffff'
   const playShape = normalizeVideoPlayShape(settings)
   const playSize = normalizeVideoPlaySize(settings)
@@ -13176,9 +13177,9 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
       ${showOverlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
           <span class="rstk-video-play-dot">${getVideoPlayIconMarkup(playIconStyle)}</span>
-          ${showSoundNotice ? `<span class="rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}"><span class="rstk-video-sound-icon" aria-hidden="true">${RSTK_ICONS.volume}</span>${soundNoticeText ? `<span class="rstk-video-sound-text">${escapeHtml(soundNoticeText)}</span>` : ''}</span>` : ''}
         </button>
       ` : ''}
+      ${showSoundNotice ? `<span class="rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}"><span class="rstk-video-sound-icon" aria-hidden="true">${RSTK_ICONS.volume}</span>${soundNoticeText ? `<span class="rstk-video-sound-text">${escapeHtml(soundNoticeText)}</span>` : ''}</span>` : ''}
       ${showCustomControlBar ? `
         <div class="rstk-video-control-bar" data-rstk-video-control-bar>
           <button type="button" class="rstk-video-control-button" data-rstk-video-toggle aria-label="Reproducir video"><span class="rstk-video-control-play">${RSTK_ICONS.play}</span><span class="rstk-video-control-pause">${RSTK_ICONS.pause}</span></button>
@@ -14266,10 +14267,10 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-player{container-type:inline-size;isolation:isolate}
 	  .rstk-video-custom-controls video{cursor:pointer}
 		  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:transparent;color:var(--rstk-video-play-color,#fff);cursor:pointer}
-		  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:0;border-radius:var(--rstk-video-play-radius,8px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:none;transition:opacity .18s ease,transform .18s ease}
+		  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:0;border-radius:var(--rstk-video-play-radius,0);background:var(--rstk-video-player-color,#000000);color:var(--rstk-video-play-color,#fff);box-shadow:none;transition:opacity .18s ease,transform .18s ease}
 		  .rstk-video-is-playing .rstk-video-play-dot{opacity:0;transform:scale(.9)}
 		  .rstk-video-play-shape-round .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,999px)}
-		  .rstk-video-play-shape-rectangle .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,8px)}
+		  .rstk-video-play-shape-rectangle .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,0)}
 		  .rstk-video-play-dot svg{width:var(--rstk-video-play-icon-size,95px);height:var(--rstk-video-play-icon-size,95px)}
 		  .rstk-video-sound{--rstk-video-sound-size:58px;--rstk-video-sound-icon-size:34px;position:absolute;top:22px;right:22px;z-index:3;box-sizing:border-box;display:inline-flex;flex-direction:row-reverse;align-items:center;justify-content:flex-start;gap:10px;width:max-content;max-width:var(--rstk-video-sound-size);min-width:var(--rstk-video-sound-size);height:var(--rstk-video-sound-size);min-height:var(--rstk-video-sound-size);overflow:hidden;border-radius:999px;background:color-mix(in srgb,#020617 72%,transparent);color:var(--rstk-video-sound-color,var(--rstk-video-play-color,#fff));box-shadow:none;padding:0 12px;pointer-events:none;backdrop-filter:blur(14px);transform-origin:right center}
 		  .rstk-video-has-control-bar .rstk-video-sound{top:22px}
@@ -14280,7 +14281,7 @@ const RSTK_BASE_CSS = `
 		  .rstk-video-sound-text{display:inline-block;max-width:min(260px,calc(100vw - 150px));min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:currentColor;font-size:1rem;font-weight:500;letter-spacing:0;opacity:0;transform:translateX(10px)}
 	  .rstk-video-sound-auto .rstk-video-sound-text{animation:rstkVideoSoundText var(--rstk-video-sound-cycle,6.6s) ease .45s both}
 	  .rstk-video-sound-persistent .rstk-video-sound-text{animation:rstkVideoSoundTextOpen .8s ease .55s both}
-	  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:grid;grid-template-columns:auto minmax(44px,1fr) auto auto;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:none;opacity:1;padding:7px;pointer-events:auto;transform:translateY(0);transition:opacity .2s ease,transform .2s ease;backdrop-filter:blur(14px)}
+	  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:grid;grid-template-columns:auto minmax(44px,1fr) auto auto;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:var(--rstk-video-player-color,#000000);color:var(--rstk-video-play-color,#fff);box-shadow:none;opacity:1;padding:7px;pointer-events:auto;transform:translateY(0);transition:opacity .2s ease,transform .2s ease;backdrop-filter:blur(14px)}
 	  .rstk-video-controls-hidden .rstk-video-control-bar{opacity:0;pointer-events:none;transform:translateY(8px)}
 	  .rstk-video-controls-hidden .rstk-video-control-bar:focus-within{opacity:1;pointer-events:auto;transform:translateY(0)}
 	  .rstk-video-custom-controls.rstk-video-is-playing.rstk-video-controls-hidden video{cursor:none}

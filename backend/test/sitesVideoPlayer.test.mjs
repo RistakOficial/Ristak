@@ -141,9 +141,33 @@ test('video player default preset uses large rectangular solid play button', asy
 
   assert.match(signature.classes, /\brstk-video-play-shape-rectangle\b/)
   assert.match(signature.classes, /\brstk-video-play-solid\b/)
+  assert.match(signature.style, /--rstk-video-player-color:#000000/)
   assert.match(signature.style, /--rstk-video-play-width:232px/)
   assert.match(signature.style, /--rstk-video-play-size:160px/)
+  assert.match(signature.style, /--rstk-video-play-radius:0px/)
   assert.match(signature.style, /--rstk-video-play-icon-size:95px/)
+  assert.match(html, /data-rstk-video-preview="true"/)
+  assert.match(html, /data-rstk-video-preview-start="0"/)
+  assert.match(html, /data-rstk-video-preview-end="40"/)
+  assert.equal(signature.hasSoundNotice, true)
+  assert.equal(signature.soundText, 'Haz clic para activar el sonido')
+  assert.match(html, /<\/button>\s*<span class="rstk-video-sound\b/)
+})
+
+test('video player defaults hide the custom control bar at initial render', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'clean',
+    videoControlBar: true
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.equal(signature.hasControlBar, true)
+  assert.match(signature.classes, /\brstk-video-controls-hidden\b/)
+  assert.doesNotMatch(signature.classes, /\brstk-video-controls-visible\b/)
 })
 
 test('video player renders configurable first-seconds preview loop settings', async () => {
@@ -220,7 +244,7 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     'rstk-video-player',
     'rstk-video-custom-controls',
     'rstk-video-has-control-bar',
-    'rstk-video-controls-visible',
+    'rstk-video-controls-hidden',
     'rstk-video-sound-hint',
     'rstk-video-is-muted',
     'rstk-video-play-shape-rectangle',
@@ -288,7 +312,7 @@ test('video player uses the same visual signature for direct and Bunny Stream re
       'rstk-video-player',
       'rstk-video-custom-controls',
       'rstk-video-has-control-bar',
-      'rstk-video-controls-visible',
+      'rstk-video-controls-hidden',
       'rstk-video-is-muted',
       'rstk-video-play-shape-rectangle',
       'rstk-video-play-spark'
@@ -319,6 +343,24 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     assert.match(hiddenInitialSignature.classes, /\brstk-video-controls-hidden\b/)
     assert.doesNotMatch(hiddenInitialSignature.classes, /\brstk-video-controls-visible\b/)
     assert.deepEqual(getVideoPlayerVisualSignature(streamHiddenHtml), hiddenInitialSignature)
+
+    const visibleInitialSettings = {
+      ...visualSettings,
+      videoControlBarInitiallyVisible: true
+    }
+    const plainVisibleHtml = await render(baseSite({
+      ...visibleInitialSettings,
+      mediaUrl: plainUrl
+    }), { trackingEnabled: false, preview: true })
+    const streamVisibleHtml = await render(baseSite({
+      ...visibleInitialSettings,
+      mediaUrl: storageUrl
+    }), { trackingEnabled: true, preview: false })
+    const visibleInitialSignature = getVideoPlayerVisualSignature(plainVisibleHtml)
+
+    assert.match(visibleInitialSignature.classes, /\brstk-video-controls-visible\b/)
+    assert.doesNotMatch(visibleInitialSignature.classes, /\brstk-video-controls-hidden\b/)
+    assert.deepEqual(getVideoPlayerVisualSignature(streamVisibleHtml), visibleInitialSignature)
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }
