@@ -17994,11 +17994,15 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
       </div>
 
       {routeEditingSite && (
-        <div className={styles.libraryRouteOverlay} onMouseDown={(event) => {
+        <div className={styles.libraryRouteOverlay} data-overlay="" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) cancelRouteEdit()
         }}>
           <form
             className={styles.libraryRouteEditor}
+            data-modal=""
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="library-route-title"
             data-library-card-action="true"
             onMouseDown={stopCardAction}
             onClick={stopCardAction}
@@ -18010,7 +18014,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             <div className={styles.libraryRouteEditorHeader}>
               <div>
                 <span>Ruta pública</span>
-                <strong>{routeEditingSite.name}</strong>
+                <strong id="library-route-title">{routeEditingSite.name}</strong>
               </div>
               <button type="button" className={styles.libraryRouteClose} disabled={routeSavingId === routeEditingSite.id} onClick={cancelRouteEdit} aria-label="Cerrar editor de ruta">
                 <X size={17} />

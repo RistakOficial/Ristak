@@ -47,8 +47,9 @@
   align-items: center;
   justify-content: center;
   padding: clamp(16px, 3vw, 32px);
-  background: color-mix(in srgb, var(--bg) 68%, transparent);
-  backdrop-filter: blur(8px);
+  background: var(--modal-backdrop-bg);
+  backdrop-filter: var(--modal-backdrop-filter);
+  -webkit-backdrop-filter: var(--modal-backdrop-filter);
 }
 
 .mediaPickerModal[data-modal] {
@@ -61,8 +62,8 @@
   overflow: hidden;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-card);
-  background: var(--surface-solid, var(--surface));
-  box-shadow: var(--shadow-pop);
+  background: var(--modal-surface-bg);
+  box-shadow: var(--modal-shadow);
 }
 
 .mediaPickerHeader {
@@ -2622,17 +2623,20 @@
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(15, 23, 42, 0.52);
+  background: var(--modal-backdrop-bg);
+  backdrop-filter: var(--modal-backdrop-filter);
+  -webkit-backdrop-filter: var(--modal-backdrop-filter);
 }
 
 .aiCreationDialog {
   width: min(760px, 100%);
   max-height: min(760px, calc(100dvh - 40px));
   overflow: hidden;
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
-  background: #ffffff;
-  color: #0f172a;
-  box-shadow: 0 30px 90px -42px rgba(15, 23, 42, 0.88);
+  background: var(--modal-surface-bg);
+  color: var(--text);
+  box-shadow: var(--modal-shadow);
 }
 
 .aiCreationDialog form {
@@ -3840,7 +3844,9 @@
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(15, 23, 42, 0.48);
+  background: var(--modal-backdrop-bg);
+  backdrop-filter: var(--modal-backdrop-filter);
+  -webkit-backdrop-filter: var(--modal-backdrop-filter);
 }
 
 .importReviewDialog {
@@ -3849,10 +3855,11 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
-  background: #ffffff;
-  color: #0f172a;
-  box-shadow: 0 28px 80px -36px rgba(15, 23, 42, 0.72);
+  background: var(--modal-surface-bg);
+  color: var(--text);
+  box-shadow: var(--modal-shadow);
 }
 
 /* The security note is optional; flex keeps the list as the only stretching
@@ -7085,17 +7092,18 @@
   z-index: 1600;
   display: grid;
   place-items: center;
-  background: rgba(2, 6, 23, 0.58);
-  backdrop-filter: blur(6px);
+  background: var(--modal-backdrop-bg);
+  backdrop-filter: var(--modal-backdrop-filter);
+  -webkit-backdrop-filter: var(--modal-backdrop-filter);
   padding: 24px;
 }
 
 .unsavedModal {
   width: min(460px, 100%);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
-  background: var(--surface-solid, var(--color-background-secondary));
-  box-shadow: 0 28px 80px -36px rgba(0, 0, 0, 0.78);
+  background: var(--modal-surface-bg);
+  box-shadow: var(--modal-shadow);
   padding: 20px;
 }
 
@@ -7105,8 +7113,8 @@
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: rgba(245, 158, 11, 0.14);
-  color: var(--badge-warning-text);
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .unsavedModal h2 {
@@ -7137,8 +7145,9 @@
   z-index: 1650;
   display: grid;
   place-items: center;
-  background: rgba(2, 6, 23, 0.56);
-  backdrop-filter: blur(8px);
+  background: var(--modal-backdrop-bg);
+  backdrop-filter: var(--modal-backdrop-filter);
+  -webkit-backdrop-filter: var(--modal-backdrop-filter);
   padding: 24px;
 }
 
@@ -7148,10 +7157,10 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
-  background: var(--surface-solid, var(--color-background-secondary));
-  box-shadow: 0 30px 90px -38px rgba(2, 6, 23, 0.82);
+  background: var(--modal-surface-bg);
+  box-shadow: var(--modal-shadow);
 }
 
 .headerModal {
@@ -10226,28 +10235,32 @@
   max-width: 100%;
 }
 
-.libraryRouteOverlay {
+.libraryRouteOverlay,
+.libraryRouteOverlay[data-overlay] {
   position: fixed;
   inset: 0;
   z-index: 1200;
   display: grid;
   place-items: center;
-  background: rgba(2, 6, 23, 0.42);
+  background: var(--modal-backdrop-bg);
+  backdrop-filter: var(--modal-backdrop-filter);
+  -webkit-backdrop-filter: var(--modal-backdrop-filter);
   padding: 18px;
 }
 
-.libraryRouteEditor {
+.libraryRouteEditor,
+.libraryRouteEditor[data-modal] {
   width: min(560px, calc(100vw - 36px));
   min-width: 0;
   display: grid;
   gap: 14px;
-  border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.24));
+  border: 1px solid var(--border-strong);
   border-radius: 12px;
-  background: var(--color-background-secondary);
-  color: var(--color-text-primary);
+  background: var(--modal-surface-bg);
+  color: var(--text);
   padding: 16px;
   cursor: default;
-  box-shadow: 0 32px 86px -46px rgba(0, 0, 0, 0.72);
+  box-shadow: var(--modal-shadow);
 }
 
 .libraryRouteEditorHeader {

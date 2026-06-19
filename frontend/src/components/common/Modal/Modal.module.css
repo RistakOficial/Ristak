@@ -4,9 +4,9 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(8, 11, 16, 0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: var(--modal-backdrop-bg, color-mix(in srgb, var(--bg, var(--color-background-primary)) 72%, transparent));
+  backdrop-filter: var(--modal-backdrop-filter, blur(8px) saturate(1.08));
+  -webkit-backdrop-filter: var(--modal-backdrop-filter, blur(8px) saturate(1.08));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -25,14 +25,14 @@
 }
 
 .modal {
-  background: var(--surface-solid, var(--surface));
+  background: var(--modal-surface-bg, var(--surface-solid, var(--surface, var(--color-background-primary))));
   border-radius: var(--radius-card);
   width: 100%;
   max-height: 90vh;
   overflow: hidden;
   animation: modalSlideUp 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
   border: 1px solid var(--border-strong);
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--modal-shadow, var(--shadow-pop));
   position: relative;
 }
 

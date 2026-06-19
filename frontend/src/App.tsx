@@ -496,6 +496,7 @@ const TabletViewPreferenceGate: React.FC = () => {
       role="dialog"
       aria-modal="true"
       aria-labelledby="tablet-view-choice-title"
+      data-overlay=""
       style={{
         position: 'fixed',
         inset: 0,
@@ -504,18 +505,20 @@ const TabletViewPreferenceGate: React.FC = () => {
         alignItems: 'center',
         justifyContent: 'center',
         padding: '24px',
-        background: 'rgba(15, 23, 42, 0.42)',
-        backdropFilter: 'blur(16px)'
+        background: 'var(--modal-backdrop-bg)',
+        backdropFilter: 'var(--modal-backdrop-filter)',
+        WebkitBackdropFilter: 'var(--modal-backdrop-filter)'
       }}
     >
       <div
+        data-modal=""
         style={{
           width: 'min(100%, 480px)',
-          borderRadius: '18px',
-          border: '1px solid rgba(148, 163, 184, 0.22)',
-          background: 'var(--color-background-primary)',
+          borderRadius: 'var(--radius-card)',
+          border: '1px solid var(--border-strong)',
+          background: 'var(--modal-surface-bg)',
           color: 'var(--color-text-primary)',
-          boxShadow: '0 24px 70px rgba(15, 23, 42, 0.24)',
+          boxShadow: 'var(--modal-shadow)',
           padding: '24px'
         }}
       >

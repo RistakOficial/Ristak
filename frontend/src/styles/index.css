@@ -2630,7 +2630,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --label-font: var(--font-body); --label-transform: none; --label-spacing: 0.005em; --num-font: var(--font-display);
     --radius-card: 14px; --radius-ctl: 10px; --radius-pill: 999px;
     --shadow-card: 0 1px 2px rgba(0,0,0,0.28); --shadow-xs: 0 1px 2px rgba(0,0,0,0.22); --shadow-pop: 0 22px 48px -22px rgba(0,0,0,0.6);
-    --bg:#0b0e13; --bg-soft:#10141a; --surface:#161c25; --surface-2:#1f2733; --surface-hover:#27303d;
+    --bg:#0b0e13; --bg-soft:#10141a; --surface:#161c25; --surface-2:#1f2733; --surface-hover:#27303d; --surface-solid:var(--surface);
     --border:rgba(255,255,255,0.09); --border-strong:rgba(255,255,255,0.18);
     --text:#eef2f7; --text-dim:#9aa6b6; --text-mute:#65707f;
     --accent:#4c8dff; --accent-rgb:76,141,255; --accent-2:#7aa9ff; --on-accent:#ffffff; --accent-soft:rgba(76,141,255,0.16);
@@ -2654,6 +2654,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --label-font: var(--font-body); --label-transform: none; --label-spacing: 0.012em; --num-font: var(--font-display);
     --radius-card: 9px; --radius-ctl: 8px; --radius-pill: 999px;
     --shadow-card: 0 1px 2px rgba(0,0,0,0.3); --shadow-xs: 0 1px 2px rgba(0,0,0,0.25); --shadow-pop: 0 24px 50px -22px rgba(0,0,0,0.66);
+    --surface-solid: var(--surface);
   }
   body[data-dir^='c'].dark {
     --bg:#06070a; --bg-soft:#0c0e12; --surface:#13161c; --surface-2:#1d212a; --surface-hover:#262b35;
@@ -2688,6 +2689,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --font-display:'Space Grotesk', 'Sora', system-ui, -apple-system, sans-serif; --font-body:'Space Grotesk', system-ui, -apple-system, sans-serif; --font-mono:'Space Mono', ui-monospace, 'SF Mono', monospace;
     --label-font:var(--font-mono); --label-transform:uppercase; --label-spacing:0.08em; --num-font:var(--font-display);
     --radius-card:2px; --radius-ctl:2px; --radius-pill:3px;
+    --surface-solid: var(--surface);
   }
   body[data-dir^='d'].dark {
     --bg:#121212; --bg-soft:#171717; --surface:#1d1d1d; --surface-2:#272727; --surface-hover:#323232;
@@ -2726,6 +2728,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --label-font:var(--font-body); --label-transform:none; --label-spacing:0.012em; --num-font:var(--font-display);
     --radius-card:20px; --radius-ctl:13px; --radius-pill:999px;
     --shadow-card:0 22px 50px -30px rgba(0,0,0,0.6); --shadow-xs:0 8px 18px -12px rgba(0,0,0,0.45); --shadow-pop:0 32px 72px -32px rgba(0,0,0,0.65);
+    --surface-solid: var(--surface);
   }
   body[data-dir^='e'].light {
     --shadow-card:0 22px 48px -30px rgba(40,44,90,0.4); --shadow-xs:0 8px 18px -12px rgba(40,44,90,0.28); --shadow-pop:0 30px 64px -30px rgba(40,44,90,0.4);
@@ -2885,9 +2888,9 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   [data-radio][data-on='true'] { border-color: var(--accent); }
   [data-radio] .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform .12s; }
   [data-radio][data-on='true'] .dot { transform: scale(1); }
-  [data-overlay] { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(8,11,16,0.55); backdrop-filter: blur(4px); animation: rk-ovfade 0.16s ease both; }
+  [data-overlay] { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--modal-backdrop-bg, color-mix(in srgb, var(--bg, var(--color-background-primary)) 72%, transparent)); backdrop-filter: var(--modal-backdrop-filter, blur(8px) saturate(1.08)); -webkit-backdrop-filter: var(--modal-backdrop-filter, blur(8px) saturate(1.08)); animation: rk-ovfade 0.16s ease both; }
   @keyframes rk-ovfade { from { opacity: 0; } to { opacity: 1; } }
-  [data-modal] { background: var(--surface-solid, var(--surface)); border: 1px solid var(--border-strong); border-radius: var(--radius-card); box-shadow: 0 40px 80px -24px rgba(0,0,0,0.6); width: 100%; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; animation: rk-modalin 0.2s cubic-bezier(0.4,0,0.2,1) both; }
+  [data-modal] { background: var(--modal-surface-bg, var(--surface-solid, var(--surface, var(--color-background-primary)))); border: 1px solid var(--border-strong); border-radius: var(--radius-card); box-shadow: var(--modal-shadow, var(--shadow-pop)); width: 100%; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; animation: rk-modalin 0.2s cubic-bezier(0.4,0,0.2,1) both; }
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
     --modal-density-control-height: 34px;
     --modal-density-control-padding-x: 10px;
@@ -3340,6 +3343,10 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --ristak-focus-ring: 0 0 0 3px var(--accent-soft);
     --ristak-focus-ring-strong: 0 0 0 3px var(--accent-soft);
     --ristak-focus-border: var(--accent);
+    --modal-backdrop-bg: color-mix(in srgb, var(--bg) 72%, transparent);
+    --modal-backdrop-filter: blur(8px) saturate(1.08);
+    --modal-surface-bg: var(--surface-solid, var(--surface));
+    --modal-shadow: var(--shadow-pop);
 
     /* Controles / paneles / tarjetas (--design-*) */
     --design-control-bg: var(--bg-soft);

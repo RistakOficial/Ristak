@@ -609,8 +609,9 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.34);
-  backdrop-filter: blur(10px);
+  background: var(--modal-backdrop-bg);
+  backdrop-filter: var(--modal-backdrop-filter);
+  -webkit-backdrop-filter: var(--modal-backdrop-filter);
 }
 
 .editorPanel {
@@ -618,11 +619,11 @@
   width: min(100%, 680px);
   max-height: min(760px, calc(100vh - 48px));
   flex-direction: column;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--border-strong);
   border-radius: 12px;
-  background: var(--surface-solid, var(--surface));
-  color: var(--color-text-primary);
-  box-shadow: 0 28px 80px -42px rgba(15, 23, 42, 0.82);
+  background: var(--modal-surface-bg);
+  color: var(--text);
+  box-shadow: var(--modal-shadow);
 }
 
 .folderEditorPanel {
