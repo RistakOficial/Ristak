@@ -1629,6 +1629,8 @@ async function initTables() {
         ycloud_raw_payload_json TEXT,
         ycloud_submitted_at DATETIME,
         ycloud_synced_at DATETIME,
+        ycloud_review_retry_count INTEGER DEFAULT 0,
+        ycloud_review_retry_last_at DATETIME,
         last_error TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1644,6 +1646,8 @@ async function initTables() {
       ['ycloud_raw_payload_json', 'TEXT'],
       ['ycloud_submitted_at', 'DATETIME'],
       ['ycloud_synced_at', 'DATETIME'],
+      ['ycloud_review_retry_count', 'INTEGER DEFAULT 0'],
+      ['ycloud_review_retry_last_at', 'DATETIME'],
       ['last_error', 'TEXT']
     ]) {
       try {

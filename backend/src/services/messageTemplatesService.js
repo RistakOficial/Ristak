@@ -178,9 +178,17 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     }
   }
 ]
+const DEFAULT_APPOINTMENT_TEMPLATE_NAMES = new Set(DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES.map(template => template.name))
+const DEFAULT_APPOINTMENT_REVIEW_RETRY_TIMEOUT_MS = 6 * 60 * 60 * 1000
+const DEFAULT_APPOINTMENT_REVIEW_MAX_RETRIES = 2
+const DEFAULT_APPOINTMENT_REVIEW_RETRY_ALERT_TYPE = 'template_review_retry_exhausted'
 
 function makeId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`
+}
+
+function hashId(prefix, value) {
+  return `${prefix}_${crypto.createHash('sha256').update(String(value || crypto.randomUUID())).digest('hex').slice(0, 24)}`
 }
 
 function cleanString(value) {
@@ -457,6 +465,8 @@ function mapTemplate(row) {
     ycloudRawPayload: parseJson(row.ycloud_raw_payload_json, null),
     ycloudSubmittedAt: row.ycloud_submitted_at || null,
     ycloudSyncedAt: row.ycloud_synced_at || null,
+    ycloudReviewRetryCount: Number(row.ycloud_review_retry_count || 0),
+    ycloudReviewRetryLastAt: row.ycloud_review_retry_last_at || null,
     lastError: row.last_error || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -1126,6 +1136,133 @@ async function ensureDefaultMessageTemplate(definition, folderId) {
 }
 
 const TEMPLATE_REVIEW_STATES = new Set(['APPROVED', 'PENDING', 'IN_APPEAL', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'])
+const TEMPLATE_RETRYABLE_REVIEW_STATES = new Set(['PENDING', 'IN_APPEAL', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'])
+
+function isDefaultAppointmentTemplate(template = {}) {
+  return DEFAULT_APPOINTMENT_TEMPLATE_NAMES.has(cleanString(template.name))
+}
+
+function parseTimestampMs(value) {
+  const text = cleanString(value)
+  if (!text) return null
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)
+    ? `${text.replace(' ', 'T')}Z`
+    : text
+  const parsed = Date.parse(normalized)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function isStaleDefaultAppointmentReview(template = {}, nowMs = Date.now()) {
+  const status = normalizeYCloudTemplateStatus(template.ycloudStatus)
+  if (!TEMPLATE_RETRYABLE_REVIEW_STATES.has(status)) return false
+
+  const submittedAt = parseTimestampMs(template.ycloudSubmittedAt || template.ycloudSyncedAt || template.updatedAt)
+  if (!submittedAt) return false
+
+  return nowMs - submittedAt >= DEFAULT_APPOINTMENT_REVIEW_RETRY_TIMEOUT_MS
+}
+
+function haveDefaultAppointmentPeersAccepted(template = {}, templates = []) {
+  const peers = templates.filter((candidate) => (
+    candidate.id !== template.id &&
+    isDefaultAppointmentTemplate(candidate)
+  ))
+  return peers.length > 0 && peers.every((peer) => normalizeYCloudTemplateStatus(peer.ycloudStatus) === 'APPROVED')
+}
+
+async function upsertDefaultAppointmentReviewRetryAlert(template = {}) {
+  const alertType = DEFAULT_APPOINTMENT_REVIEW_RETRY_ALERT_TYPE
+  const entityType = 'template'
+  const entityId = cleanString(template.id || `${template.name}:${template.language}`)
+  if (!entityId) return null
+
+  const id = hashId('waapi_alert', `${alertType}|${entityType}|${entityId}`)
+  const name = cleanString(template.name) || 'plantilla de recordatorio'
+  const language = cleanString(template.language) || DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE
+  const retryCount = Number(template.ycloudReviewRetryCount || 0)
+
+  await db.run(`
+    INSERT INTO whatsapp_api_alerts (
+      id, severity, alert_type, title, message, entity_type, entity_id,
+      status, raw_payload_json, updated_at
+    ) VALUES (?, 'warning', ?, ?, ?, ?, ?, 'active', ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      severity = 'warning',
+      title = excluded.title,
+      message = excluded.message,
+      entity_type = excluded.entity_type,
+      entity_id = excluded.entity_id,
+      status = 'active',
+      raw_payload_json = excluded.raw_payload_json,
+      resolved_at = NULL,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    id,
+    alertType,
+    'Plantilla de recordatorio atorada en revisión',
+    `Meta dejó ${name} (${language}) en revisión después de ${retryCount} reintentos automáticos. Ristak ya no la recreará para evitar un ciclo; espera la notificación de Meta o revisa la plantilla manualmente.`,
+    entityType,
+    entityId,
+    jsonString({
+      templateId: template.id,
+      name: template.name,
+      language: template.language,
+      ycloudStatus: template.ycloudStatus,
+      ycloudSubmittedAt: template.ycloudSubmittedAt,
+      retryCount
+    })
+  ])
+
+  return id
+}
+
+async function resolveDefaultAppointmentReviewRetryAlert(template = {}) {
+  const entityId = cleanString(template.id || `${template.name}:${template.language}`)
+  if (!entityId) return
+
+  await db.run(`
+    UPDATE whatsapp_api_alerts
+    SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE status = 'active'
+      AND alert_type = ?
+      AND COALESCE(entity_type, '') = 'template'
+      AND COALESCE(entity_id, '') = ?
+  `, [DEFAULT_APPOINTMENT_REVIEW_RETRY_ALERT_TYPE, entityId])
+}
+
+async function retryDefaultAppointmentTemplateReview(template = {}) {
+  const deleteResult = await deleteWhatsAppApiTemplate({
+    wabaId: getTemplateWabaId(template),
+    name: template.name,
+    language: template.language
+  })
+
+  await db.run(`
+    UPDATE whatsapp_message_templates
+    SET
+      ycloud_template_id = NULL,
+      ycloud_status = NULL,
+      ycloud_reason = NULL,
+      ycloud_status_update_event = NULL,
+      ycloud_quality_rating = NULL,
+      ycloud_raw_payload_json = NULL,
+      ycloud_submitted_at = NULL,
+      ycloud_synced_at = CURRENT_TIMESTAMP,
+      ycloud_review_retry_count = COALESCE(ycloud_review_retry_count, 0) + 1,
+      ycloud_review_retry_last_at = CURRENT_TIMESTAMP,
+      last_error = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [template.id])
+
+  const result = await submitMessageTemplateToYCloud(template.id)
+  await resolveDefaultAppointmentReviewRetryAlert(result.template)
+  return {
+    template: result.template,
+    ycloud: result.ycloud,
+    deleted: deleteResult
+  }
+}
 
 async function shouldSubmitDefaultAppointmentTemplates() {
   const [enabled, apiKey] = await Promise.all([
@@ -1139,21 +1276,55 @@ async function shouldSubmitDefaultAppointmentTemplates() {
 export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud = false } = {}) {
   const results = []
   const folder = await ensureDefaultTemplateFolder()
+  const templates = []
 
   for (const definition of DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES) {
-    let template = await ensureDefaultMessageTemplate(definition, folder.id)
+    templates.push(await ensureDefaultMessageTemplate(definition, folder.id))
+  }
+
+  for (let index = 0; index < templates.length; index += 1) {
+    let template = templates[index]
     const ycloudStatus = normalizeYCloudTemplateStatus(template.ycloudStatus)
     let submitted = false
+    let retried = false
+    let retryAlerted = false
     let error = null
+
+    if (submitToYCloud && ycloudStatus === 'APPROVED') {
+      await resolveDefaultAppointmentReviewRetryAlert(template)
+    }
 
     if (submitToYCloud && !TEMPLATE_REVIEW_STATES.has(ycloudStatus) && !template.ycloudTemplateId) {
       try {
         const result = await submitMessageTemplateToYCloud(template.id)
         template = result.template
+        templates[index] = template
         submitted = true
       } catch (submitError) {
         error = getTemplateErrorMessage(submitError, 'No se pudo enviar a revisión')
         logger.warn(`No se pudo enviar plantilla default ${template.name}/${template.language} a revisión: ${error}`)
+      }
+    } else if (
+      submitToYCloud &&
+      isDefaultAppointmentTemplate(template) &&
+      isStaleDefaultAppointmentReview(template) &&
+      haveDefaultAppointmentPeersAccepted(template, templates)
+    ) {
+      const retryCount = Number(template.ycloudReviewRetryCount || 0)
+      if (retryCount >= DEFAULT_APPOINTMENT_REVIEW_MAX_RETRIES) {
+        await upsertDefaultAppointmentReviewRetryAlert(template)
+        retryAlerted = true
+      } else {
+        try {
+          const result = await retryDefaultAppointmentTemplateReview(template)
+          template = result.template
+          templates[index] = template
+          submitted = true
+          retried = true
+        } catch (retryError) {
+          error = getTemplateErrorMessage(retryError, 'No se pudo recrear la plantilla atorada')
+          logger.warn(`No se pudo reintentar plantilla default ${template.name}/${template.language}: ${error}`)
+        }
       }
     }
 
@@ -1162,7 +1333,10 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
       name: template.name,
       language: template.language,
       ycloudStatus: template.ycloudStatus || null,
+      reviewRetryCount: template.ycloudReviewRetryCount || 0,
       submitted,
+      retried,
+      retryAlerted,
       error
     })
   }

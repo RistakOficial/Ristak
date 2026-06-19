@@ -61,6 +61,14 @@ async function snapshotAppConfig(keys = [], callback) {
 
 async function deleteDefaultTemplates() {
   const placeholders = DEFAULT_TEMPLATE_NAMES.map(() => '?').join(', ')
+  const rows = await db.all(`SELECT id FROM whatsapp_message_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
+  const ids = rows.map(row => row.id).filter(Boolean)
+  if (ids.length) {
+    await db.run(
+      `DELETE FROM whatsapp_api_alerts WHERE entity_id IN (${ids.map(() => '?').join(', ')})`,
+      ids
+    )
+  }
   await db.run(`DELETE FROM whatsapp_message_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
   await db.run(`DELETE FROM whatsapp_api_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
   await db.run('DELETE FROM whatsapp_template_folders WHERE id = ?', [DEFAULT_FOLDER_ID])
@@ -215,6 +223,171 @@ test('repara defaults existentes sin enviar y manda solo los pendientes', async 
       assert.equal(byName.get('recordatorio_cita_un_dia_antes').ycloudStatus, 'APPROVED')
       assert.equal(byName.get('cita_programada').ycloudStatus, 'PENDING')
       assert.equal(byName.get('confirmacion_cita_dia_anterior').ycloudStatus, 'PENDING')
+    } finally {
+      setYCloudFetchForTest(null)
+      await deleteDefaultTemplates()
+    }
+  })
+})
+
+test('recrea una plantilla default atorada en revisión después de seis horas', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const wabaId = 'waba_default_templates_retry_test'
+  const targetName = 'recordatorio_cita_un_dia_antes'
+  const requests = []
+
+  await snapshotAppConfig([keys.enabled, keys.apiKey, keys.wabaId], async () => {
+    await deleteDefaultTemplates()
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.apiKey, encrypt('ycloud_default_templates_retry_secret'))
+    await setAppConfig(keys.wabaId, wabaId)
+
+    setYCloudFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const path = parsed.pathname.replace(/^\/v2/, '')
+      const method = String(options.method || 'GET').toUpperCase()
+      requests.push({ method, path, body: options.body ? JSON.parse(options.body) : null })
+
+      if (path === `/whatsapp/templates/${wabaId}/${targetName}/es_MX` && method === 'DELETE') {
+        return ycloudJsonResponse({ deleted: true })
+      }
+
+      if (path === '/whatsapp/templates' && method === 'POST') {
+        const body = JSON.parse(options.body || '{}')
+        return ycloudJsonResponse({
+          id: `official_retry_${body.name}`,
+          wabaId: body.wabaId,
+          name: body.name,
+          language: body.language,
+          category: body.category,
+          status: 'PENDING',
+          components: body.components
+        })
+      }
+
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET ycloud_status = 'APPROVED',
+            ycloud_template_id = 'official_' || name,
+            ycloud_submitted_at = datetime('now', '-1 hour'),
+            ycloud_review_retry_count = 0
+        WHERE name IN ('cita_programada', 'confirmacion_cita_dia_anterior')
+      `)
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET ycloud_status = 'PENDING',
+            ycloud_template_id = ?,
+            ycloud_raw_payload_json = ?,
+            ycloud_submitted_at = datetime('now', '-7 hours'),
+            ycloud_review_retry_count = 0,
+            ycloud_review_retry_last_at = NULL
+        WHERE name = ?
+      `, [
+        `official_old_${targetName}`,
+        JSON.stringify({ wabaId, name: targetName, language: 'es_MX' }),
+        targetName
+      ])
+
+      const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
+      const targetResult = result.templates.find((template) => template.name === targetName)
+      assert.equal(result.submitted, 1)
+      assert.equal(targetResult.retried, true)
+      assert.equal(targetResult.retryAlerted, false)
+      assert.equal(targetResult.reviewRetryCount, 1)
+      assert.deepEqual(
+        requests.map((request) => `${request.method} ${request.path}`),
+        [
+          `DELETE /whatsapp/templates/${wabaId}/${targetName}/es_MX`,
+          'POST /whatsapp/templates'
+        ]
+      )
+      assert.equal(requests[1].body.name, targetName)
+
+      const row = await db.get(
+        'SELECT ycloud_status, ycloud_template_id, ycloud_review_retry_count, ycloud_review_retry_last_at FROM whatsapp_message_templates WHERE name = ?',
+        [targetName]
+      )
+      assert.equal(row.ycloud_status, 'PENDING')
+      assert.equal(row.ycloud_template_id, `official_retry_${targetName}`)
+      assert.equal(row.ycloud_review_retry_count, 1)
+      assert.ok(row.ycloud_review_retry_last_at)
+    } finally {
+      setYCloudFetchForTest(null)
+      await deleteDefaultTemplates()
+    }
+  })
+})
+
+test('crea alerta y no reintenta cuando la plantilla default ya agotó dos reintentos', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const wabaId = 'waba_default_templates_retry_exhausted_test'
+  const targetName = 'recordatorio_cita_un_dia_antes'
+  const requests = []
+
+  await snapshotAppConfig([keys.enabled, keys.apiKey, keys.wabaId], async () => {
+    await deleteDefaultTemplates()
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.apiKey, encrypt('ycloud_default_templates_retry_exhausted_secret'))
+    await setAppConfig(keys.wabaId, wabaId)
+
+    setYCloudFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const path = parsed.pathname.replace(/^\/v2/, '')
+      const method = String(options.method || 'GET').toUpperCase()
+      requests.push({ method, path })
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET ycloud_status = 'APPROVED',
+            ycloud_template_id = 'official_' || name,
+            ycloud_submitted_at = datetime('now', '-1 hour')
+        WHERE name IN ('cita_programada', 'confirmacion_cita_dia_anterior')
+      `)
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET ycloud_status = 'PENDING',
+            ycloud_template_id = ?,
+            ycloud_raw_payload_json = ?,
+            ycloud_submitted_at = datetime('now', '-7 hours'),
+            ycloud_review_retry_count = 2,
+            ycloud_review_retry_last_at = datetime('now', '-7 hours')
+        WHERE name = ?
+      `, [
+        `official_old_${targetName}`,
+        JSON.stringify({ wabaId, name: targetName, language: 'es_MX' }),
+        targetName
+      ])
+
+      const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
+      const targetResult = result.templates.find((template) => template.name === targetName)
+      assert.equal(result.submitted, 0)
+      assert.equal(targetResult.retried, false)
+      assert.equal(targetResult.retryAlerted, true)
+      assert.deepEqual(requests, [])
+
+      const target = await db.get('SELECT id FROM whatsapp_message_templates WHERE name = ?', [targetName])
+      const alert = await db.get(`
+        SELECT severity, alert_type, title, message, entity_type, entity_id, status
+        FROM whatsapp_api_alerts
+        WHERE alert_type = 'template_review_retry_exhausted'
+          AND entity_id = ?
+      `, [target.id])
+      assert.equal(alert.status, 'active')
+      assert.equal(alert.severity, 'warning')
+      assert.equal(alert.entity_type, 'template')
+      assert.match(alert.title, /Plantilla de recordatorio/)
+      assert.match(alert.message, /2 reintentos/)
     } finally {
       setYCloudFetchForTest(null)
       await deleteDefaultTemplates()
