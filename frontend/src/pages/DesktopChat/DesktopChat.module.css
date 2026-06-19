@@ -432,16 +432,17 @@
   gap: 1px;
 }
 
-.chatSelectionMenuItem strong {
+.chatSelectionMenuItemTitle {
   color: currentColor;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.2;
 }
 
 .chatSelectionMenuItem small {
   color: var(--text-mute);
   font-size: 11px;
+  font-weight: 400;
   line-height: 1.25;
 }
 

@@ -4682,15 +4682,25 @@ export const DesktopChat: React.FC = () => {
                   <DropdownMenuItem className={styles.chatSelectionMenuItem} onSelect={() => handleMarkSelectedChatsAsRead()}>
                     <CheckCheck size={15} />
                     <span>
-                      <strong>Marcar como leídos</strong>
+                      <span className={styles.chatSelectionMenuItemTitle}>Marcar como leídos</span>
                       <small>Quita pendientes de los seleccionados.</small>
                     </span>
                   </DropdownMenuItem>
                   <DropdownMenuItem className={styles.chatSelectionMenuItem} onSelect={() => handleOpenBulkArchiveConfirm()}>
                     <Archive size={15} />
                     <span>
-                      <strong>{bulkArchiveActionLabel}</strong>
+                      <span className={styles.chatSelectionMenuItemTitle}>{bulkArchiveActionLabel}</span>
                       <small>{archivedViewOpen ? 'Devuelve estos chats a conversaciones.' : 'Mueve estos chats fuera de la bandeja principal.'}</small>
+                    </span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className={`${styles.chatSelectionMenuItem} ${styles.chatActionMenuItemDanger}`}
+                    onSelect={() => handleOpenBulkRemoveConfirm()}
+                  >
+                    <Trash2 size={15} />
+                    <span>
+                      <span className={styles.chatSelectionMenuItemTitle}>Eliminar de la vista</span>
+                      <small>Oculta los chats sin borrar historial.</small>
                     </span>
                   </DropdownMenuItem>
                   {showBulkAgentAssignmentActions ? (
@@ -4704,7 +4714,7 @@ export const DesktopChat: React.FC = () => {
                         <DropdownMenuItem className={styles.chatSelectionMenuItem} disabled>
                           <Bot size={15} />
                           <span>
-                            <strong>Agente conversacional apagado</strong>
+                            <span className={styles.chatSelectionMenuItemTitle}>Agente conversacional apagado</span>
                             <small>Actívalo en Agente AI para usarlo aquí.</small>
                           </span>
                         </DropdownMenuItem>
@@ -4718,7 +4728,7 @@ export const DesktopChat: React.FC = () => {
                           >
                             <Bot size={15} />
                             <span>
-                              <strong>{agent.name || 'Agente sin nombre'}</strong>
+                              <span className={styles.chatSelectionMenuItemTitle}>{agent.name || 'Agente sin nombre'}</span>
                               <small>{getConversationAgentObjectiveLabel(agent.objective)}</small>
                             </span>
                           </DropdownMenuItem>
@@ -4727,7 +4737,7 @@ export const DesktopChat: React.FC = () => {
                         <DropdownMenuItem className={styles.chatSelectionMenuItem} disabled>
                           <Bot size={15} />
                           <span>
-                            <strong>Sin agentes activos</strong>
+                            <span className={styles.chatSelectionMenuItemTitle}>Sin agentes activos</span>
                             <small>Crea o activa un agente en Agente AI.</small>
                           </span>
                         </DropdownMenuItem>
@@ -4750,7 +4760,7 @@ export const DesktopChat: React.FC = () => {
                       >
                         <Pause size={15} />
                         <span>
-                          <strong>Pausar bot</strong>
+                          <span className={styles.chatSelectionMenuItemTitle}>Pausar bot</span>
                           <small>Detiene respuestas automáticas en esos chats.</small>
                         </span>
                       </DropdownMenuItem>
@@ -4767,7 +4777,7 @@ export const DesktopChat: React.FC = () => {
                       >
                         <User size={15} />
                         <span>
-                          <strong>Sacar del bot</strong>
+                          <span className={styles.chatSelectionMenuItemTitle}>Sacar del bot</span>
                           <small>Pasa estos chats a atención humana.</small>
                         </span>
                       </DropdownMenuItem>
@@ -4784,30 +4794,12 @@ export const DesktopChat: React.FC = () => {
                       >
                         <X size={15} />
                         <span>
-                          <strong>Omitir bot</strong>
+                          <span className={styles.chatSelectionMenuItemTitle}>Omitir bot</span>
                           <small>Bloquea que el bot los retome después.</small>
                         </span>
                       </DropdownMenuItem>
                     </>
                   ) : null}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className={`${styles.chatSelectionMenuItem} ${styles.chatActionMenuItemDanger}`}
-                    onSelect={() => handleOpenBulkRemoveConfirm()}
-                  >
-                    <Trash2 size={15} />
-                    <span>
-                      <strong>Eliminar de la vista</strong>
-                      <small>Oculta los chats sin borrar historial.</small>
-                    </span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem className={styles.chatSelectionMenuItem} onSelect={() => setSelectedChatIds([])}>
-                    <X size={15} />
-                    <span>
-                      <strong>Limpiar selección</strong>
-                      <small>Deja todo como estaba.</small>
-                    </span>
-                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
