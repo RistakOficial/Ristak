@@ -31,7 +31,7 @@ function welcomeTemplateFlow() {
             {
               id: genId('trig'),
               type: 'trigger-whatsapp-message',
-              config: { keywords: [], match: 'contains' }
+              config: { filters: [] }
             }
           ]
         }

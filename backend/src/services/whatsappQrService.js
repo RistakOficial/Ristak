@@ -6,8 +6,9 @@ import { logger } from '../utils/logger.js'
 
 const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak solo la usará para mensajes individuales cuando yo lo active.'
 const CONNECT_TIMEOUT_MS = 20000
-const QR_SEND_ACK_TIMEOUT_MS = 10000
+const QR_SEND_ACK_TIMEOUT_MS = 20000
 const QR_RECENT_ACK_RETENTION_MS = 90000
+const QR_RECENT_RISTAK_OUTBOUND_RETENTION_MS = 90000
 const QR_PROFILE_PICTURE_TIMEOUT_MS = 4500
 const QR_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const QR_PROFILE_PICTURE_BATCH_LIMIT = 8
@@ -50,6 +51,7 @@ const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 const liveSessions = new Map()
 const qrSendAckWaiters = new Map()
 const qrRecentMessageAcks = new Map()
+const qrRecentRistakOutboundAttempts = new Map()
 let baileysRuntime = null
 
 // Cache de mensajes enviados para responder reintentos de descifrado
@@ -250,6 +252,40 @@ function buildOutboundPhoneCandidates(value = '') {
   return [...candidates]
 }
 
+function normalizeQrAttemptText(value = '') {
+  return cleanString(value).toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function qrOutboundAttemptKey({ phoneId, contactPhone, type, text = '' } = {}) {
+  const contact = normalizePhoneDigits(contactPhone)
+  const cleanType = cleanString(type || 'text').toLowerCase()
+  return `${cleanString(phoneId)}|${contact}|${cleanType}|${normalizeQrAttemptText(text)}`
+}
+
+function cleanupRecentRistakQrOutboundAttempts() {
+  const now = Date.now()
+  for (const [key, entry] of qrRecentRistakOutboundAttempts.entries()) {
+    if (!entry?.expiresAt || entry.expiresAt <= now) {
+      qrRecentRistakOutboundAttempts.delete(key)
+    }
+  }
+}
+
+function rememberRistakQrOutboundAttempt({ phoneId, contactPhone, type, text = '' } = {}) {
+  if (!cleanString(phoneId) || !normalizePhoneDigits(contactPhone)) return
+  const key = qrOutboundAttemptKey({ phoneId, contactPhone, type, text })
+  cleanupRecentRistakQrOutboundAttempts()
+  qrRecentRistakOutboundAttempts.set(key, {
+    expiresAt: Date.now() + QR_RECENT_RISTAK_OUTBOUND_RETENTION_MS
+  })
+}
+
+function isRecentRistakQrOutboundAttempt({ phoneId, contactPhone, type, text = '' } = {}) {
+  cleanupRecentRistakQrOutboundAttempts()
+  const key = qrOutboundAttemptKey({ phoneId, contactPhone, type, text })
+  return qrRecentRistakOutboundAttempts.has(key)
+}
+
 function getJidPhoneDigits(jid = '') {
   return normalizePhoneDigits(normalizePhoneFromJid(jid))
 }
@@ -376,6 +412,12 @@ function shouldResolveQrAck(ack = {}) {
   const status = cleanString(ack.status).toLowerCase()
   const code = getBaileysStatusCode(ack.statusCode)
   return status === 'failed' || code === QR_ACK_STATUS.ERROR || code >= QR_ACK_STATUS.SERVER_ACK
+}
+
+function isConfirmedQrSendAck(ack = {}) {
+  const status = cleanString(ack.status).toLowerCase()
+  const code = getBaileysStatusCode(ack.statusCode)
+  return ['sent', 'delivered', 'read', 'played'].includes(status) || code >= QR_ACK_STATUS.SERVER_ACK
 }
 
 function getQrAckError(update = {}) {
@@ -601,6 +643,16 @@ async function handleQrIncomingMessages(phone, upsert = {}) {
       const content = describeBaileysMessageContent(message?.message)
       if (!content) continue
 
+      if (key.fromMe && isRecentRistakQrOutboundAttempt({
+        phoneId: phone.id,
+        contactPhone,
+        type: content.type,
+        text: content.text
+      })) {
+        logger.info(`[WhatsApp QR] Mensaje saliente ${wamid} omitido del sync porque lo está confirmando Ristak (${phone.id})`)
+        continue
+      }
+
       const { captureQrChatMessage } = await loadWhatsAppApiService()
       const result = await captureQrChatMessage({
         phoneNumberId: phone.id,
@@ -673,6 +725,14 @@ async function finalizeQrSendResponse({ response, recipient, externalId }) {
     const error = new Error(ack.errorMessage || 'WhatsApp rechazo el mensaje enviado por QR')
     error.code = ack.errorCode || 'qr_send_failed'
     error.statusCode = 400
+    error.qrAck = ack
+    throw error
+  }
+
+  if (!isConfirmedQrSendAck(ack)) {
+    const error = new Error('WhatsApp QR no confirmó que el mensaje saliera. Revisa que el teléfono siga conectado y vuelve a intentar.')
+    error.code = ack.timedOut ? 'qr_send_ack_timeout' : 'qr_send_not_confirmed'
+    error.statusCode = 408
     error.qrAck = ack
     throw error
   }
@@ -1687,6 +1747,12 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
 
   const sock = await ensureOpenSocket(phone)
   const recipient = await resolveRecipientJid(sock, toPhone)
+  rememberRistakQrOutboundAttempt({
+    phoneId: phone.id,
+    contactPhone: recipient.verifiedPhone || toPhone,
+    type: 'text',
+    text: body
+  })
   const response = await sock.sendMessage(recipient.jid, { text: body })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
 
@@ -1725,6 +1791,12 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
   })
   const sock = await ensureOpenSocket(phone)
   const recipient = await resolveRecipientJid(sock, toPhone)
+  rememberRistakQrOutboundAttempt({
+    phoneId: phone.id,
+    contactPhone: recipient.verifiedPhone || toPhone,
+    type: 'image',
+    text: cleanCaption
+  })
   const response = await sock.sendMessage(recipient.jid, {
     image: media.content,
     ...(media.mimeType ? { mimetype: media.mimeType } : {}),
@@ -1772,6 +1844,12 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
   const seconds = getAudioDurationSeconds(durationMs)
   const sock = await ensureOpenSocket(phone)
   const recipient = await resolveRecipientJid(sock, toPhone)
+  rememberRistakQrOutboundAttempt({
+    phoneId: phone.id,
+    contactPhone: recipient.verifiedPhone || toPhone,
+    type: 'audio',
+    text: ''
+  })
   const response = await sock.sendMessage(recipient.jid, {
     audio: media.content,
     mimetype: mimeType,
@@ -1830,6 +1908,12 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
   })
   const sock = await ensureOpenSocket(phone)
   const recipient = await resolveRecipientJid(sock, toPhone)
+  rememberRistakQrOutboundAttempt({
+    phoneId: phone.id,
+    contactPhone: recipient.verifiedPhone || toPhone,
+    type: 'document',
+    text: cleanCaption || cleanFilename
+  })
   const response = await sock.sendMessage(recipient.jid, {
     document: media.content,
     mimetype: documentMimeType,

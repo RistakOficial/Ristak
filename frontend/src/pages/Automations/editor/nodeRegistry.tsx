@@ -487,20 +487,7 @@ const FORM_FIELDS: VariableSchemaField[] = [
   field('Respuestas por ID', 'respuestas_por_id', 'object')
 ]
 
-const MESSAGE_TRIGGER_FIELDS: ConfigField[] = [
-  { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', advanced: true },
-  {
-    key: 'match',
-    label: 'Coincidencia',
-    type: 'select',
-    advanced: true,
-    options: [
-      { value: 'contains', label: 'Contiene' },
-      { value: 'exact', label: 'Coincidencia exacta' },
-      { value: 'starts_with', label: 'Empieza con' }
-    ]
-  }
-]
+const MESSAGE_TRIGGER_FIELDS: ConfigField[] = []
 
 const TRIGGER_LINK_FIELDS: VariableSchemaField[] = [
   field('ID del enlace', 'id_enlace'),
@@ -631,8 +618,8 @@ function messageTriggerDefinition({
     description,
     icon,
     accent,
-    addButtonLabel: 'Configurar mensaje',
-    defaultConfig: () => ({ keywords: [], match: 'contains' }),
+    addButtonLabel: 'Añadir filtro',
+    defaultConfig: () => ({ filters: [] }),
     fields: MESSAGE_TRIGGER_FIELDS,
     outputs: () => SINGLE_OUTPUT,
     variableOutput: () => ({
