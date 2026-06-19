@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowRight,
   Banknote,
@@ -34,7 +34,7 @@ import {
   MessageCircle,
   Mic,
   Moon,
-  MonitorX,
+  Monitor,
   MoreHorizontal,
   MousePointerClick,
   Pause,
@@ -124,7 +124,7 @@ import {
   getContactCustomFieldKeys
 } from '@/utils/contactCustomFields'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
-import { getLocalPhonePreviewDeviceMode, getPortableDeviceMode, isLocalPhonePreviewHost, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
+import { getLocalPhonePreviewDeviceMode, getPortableDeviceMode, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import styles from './PhoneChat.module.css'
 
@@ -237,7 +237,7 @@ const VOICE_MIME_CANDIDATES = [
 ]
 const VOICE_WAVE_BASE_PATTERN = [8, 16, 24, 31, 18, 13, 23, 30, 21, 9, 6, 15, 27, 33, 20, 12, 25, 30]
 
-type AccessState = 'checking' | 'allowed' | 'blocked'
+type AccessState = 'checking' | 'allowed'
 type PhoneChatDeviceMode = PortableDeviceMode | 'checking'
 type ComposerStatus = 'idle' | 'sending'
 type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
@@ -752,8 +752,7 @@ function getPhoneChatDeviceMode(): PhoneChatDeviceMode {
 
 function getAccessState(deviceMode = getPhoneChatDeviceMode()): AccessState {
   if (deviceMode === 'checking') return 'checking'
-  if (isLocalPhonePreviewHost()) return 'allowed'
-  return deviceMode === 'desktop' ? 'blocked' : 'allowed'
+  return 'allowed'
 }
 
 function readChatReadState(): ChatReadState {
@@ -2813,10 +2812,24 @@ function getChatPreview(contact: ChatContact) {
 
 function getNotificationPermissionLabel() {
   if (mobileAppService.isNative()) return 'Toca Activar para permitir alertas en este celular.'
-  if (typeof window === 'undefined' || !('Notification' in window)) return 'Este celular no permite alertas de la app.'
-  if (Notification.permission === 'granted') return 'Este celular ya puede recibir alertas.'
-  if (Notification.permission === 'denied') return 'Este celular bloqueó las alertas. Actívalas desde la configuración del navegador.'
-  return 'Toca Activar para permitir alertas en este celular.'
+  const isDesktopBrowser = getPortableDeviceMode() === 'desktop'
+  const target = isDesktopBrowser ? 'esta computadora' : 'este celular'
+  if (typeof window === 'undefined' || !('Notification' in window)) return `El navegador en ${target} no permite alertas de la app.`
+  if (Notification.permission === 'granted') return `${capitalizeFirst(target)} ya puede recibir alertas.`
+  if (Notification.permission === 'denied') return `El navegador en ${target} bloqueó las alertas. Actívalas desde la configuración del navegador.`
+  return `Toca Activar para permitir alertas de navegador en ${target}.`
+}
+
+function getNotificationSettingsDeviceLabel() {
+  if (mobileAppService.isNative()) return 'Este celular'
+  return getPortableDeviceMode() === 'desktop' ? 'Esta computadora' : 'Este celular'
+}
+
+function getNotificationActivationToastMessage() {
+  if (mobileAppService.isNative()) return 'Este celular ya puede recibir alertas de Ristak.'
+  return getPortableDeviceMode() === 'desktop'
+    ? 'Esta computadora ya puede recibir alertas de Ristak por el navegador.'
+    : 'Este celular ya puede recibir alertas de Ristak por el navegador.'
 }
 
 function normalizePhoneValue(value?: string | null) {
@@ -3050,6 +3063,7 @@ export const PhoneChat: React.FC = () => {
 
   const [deviceMode, setDeviceMode] = useState<PhoneChatDeviceMode>(getPhoneChatDeviceMode)
   const [accessState, setAccessState] = useState<AccessState>(() => getAccessState(deviceMode))
+  const isWideChatDevice = deviceMode === 'tablet' || deviceMode === 'desktop'
   const [chats, setChats] = useState<ChatContact[]>([])
   const [chatsLoading, setChatsLoading] = useState(true)
   const [chatsRefreshing, setChatsRefreshing] = useState(false)
@@ -7707,7 +7721,7 @@ export const PhoneChat: React.FC = () => {
       })
 
       if (result.status === 'subscribed') {
-        showToast('success', 'Alertas activadas', 'Este celular ya puede recibir alertas de Ristak.')
+        showToast('success', 'Alertas activadas', getNotificationActivationToastMessage())
       } else {
         showToast('warning', 'No se activaron las alertas', result.reason)
       }
@@ -10590,14 +10604,18 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (activeSettingsSection === 'notifications') {
+      const NotificationDeviceIcon = !mobileAppService.isNative() && getPortableDeviceMode() === 'desktop'
+        ? Monitor
+        : Smartphone
+
       return renderSettingsDetail('Notificaciones', (
         <>
           <section className={styles.permissionCard}>
             <span>
-              <Smartphone size={18} />
+              <NotificationDeviceIcon size={18} />
             </span>
             <div>
-              <strong>Este celular</strong>
+              <strong>{getNotificationSettingsDeviceLabel()}</strong>
               <small>{getNotificationPermissionLabel()}</small>
             </div>
             <button type="button" onClick={handleRequestPush} disabled={requestingPush}>
@@ -12622,26 +12640,6 @@ export const PhoneChat: React.FC = () => {
     return <PhoneStartupLoader />
   }
 
-  if (accessState === 'blocked') {
-    return (
-      <main className={styles.blockedPage}>
-        <section className={styles.blockedPanel} aria-labelledby="phone-chat-blocked-title">
-          <div className={styles.blockedIcon} aria-hidden="true">
-            <MonitorX size={28} />
-          </div>
-          <div className={styles.blockedCopy}>
-            <p className={styles.eyebrow}>Ristak</p>
-            <h1 id="phone-chat-blocked-title">Sólo móvil o tablet</h1>
-            <p>Esta app de chat está hecha para usarse desde el celular, como una app guardada en tu pantalla de inicio.</p>
-          </div>
-          <Link className={styles.dashboardLink} to="/dashboard">
-            Volver al panel
-          </Link>
-        </section>
-      </main>
-    )
-  }
-
   return (
     <main
       className={`${styles.phoneChatPage} ${conversationVisible ? styles.conversationOpen : ''} ${sheet || appointmentOpen ? styles.sheetOpen : ''}`}
@@ -12665,7 +12663,7 @@ export const PhoneChat: React.FC = () => {
       >
         <section className={styles.chatListScreen} aria-label="Lista de chats">
           <header className={`${styles.chatListHeader} ${chatSearchExpanded ? styles.chatListHeaderSearchExpanded : ''}`}>
-            {deviceMode !== 'tablet' && (
+            {!isWideChatDevice && (
               <div className={styles.topActionRow} aria-hidden={chatSearchExpanded}>
                 {renderAgentRobotButton({
                   active: agentEnabled,
@@ -12689,7 +12687,7 @@ export const PhoneChat: React.FC = () => {
             <div className={styles.chatTitleRow} aria-hidden={chatSearchExpanded}>
               <div className={styles.chatTitleMain}>
                 <h1>Chats</h1>
-                {deviceMode === 'tablet' && renderTabletNewChatAction()}
+                {isWideChatDevice && renderTabletNewChatAction()}
               </div>
               <div className={styles.chatTitleRight}>
                 {chatPhoneFilterEnabled && (
@@ -12763,7 +12761,7 @@ export const PhoneChat: React.FC = () => {
               {renderChats()}
             </div>
           </div>
-          {deviceMode === 'tablet' && !chatSearchExpanded && (
+          {isWideChatDevice && !chatSearchExpanded && (
             <div className={styles.tabletChatDock}>
               <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} placement="top" />
             </div>
@@ -12963,7 +12961,7 @@ export const PhoneChat: React.FC = () => {
 
       {renderMessageActionMenu()}
 
-      {deviceMode !== 'tablet' && !conversationOpen && !cameraSharePhoto && !aiAgentHubOpen && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
+      {!isWideChatDevice && !conversationOpen && !cameraSharePhoto && !aiAgentHubOpen && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
 
       <input
         ref={cameraInputRef}

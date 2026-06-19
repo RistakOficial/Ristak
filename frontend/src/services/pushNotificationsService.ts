@@ -1,5 +1,6 @@
 import apiClient from './apiClient'
 import { mobileAppService } from './mobileAppService'
+import { getPortableDeviceMode } from '@/utils/phoneAccess'
 
 export interface WebPushPublicConfig {
   configured: boolean
@@ -37,6 +38,10 @@ function isPushAvailable() {
   )
 }
 
+function getBrowserNotificationTarget() {
+  return getPortableDeviceMode() === 'desktop' ? 'esta computadora' : 'este celular'
+}
+
 export const pushNotificationsService = {
   async getPublicConfig(): Promise<WebPushPublicConfig> {
     return apiClient.get<WebPushPublicConfig>('/push/public-key')
@@ -48,9 +53,10 @@ export const pushNotificationsService = {
     }
 
     if (!isPushAvailable()) {
+      const target = getBrowserNotificationTarget()
       return {
         status: 'not_supported',
-        reason: 'Este navegador no permite notificaciones de la app. En iPhone, abre Ristak desde el icono agregado al inicio.'
+        reason: `El navegador en ${target} no permite notificaciones de la app. Revisa que estés en HTTPS o localhost; en iPhone, abre Ristak desde el icono agregado al inicio.`
       }
     }
 
@@ -58,7 +64,7 @@ export const pushNotificationsService = {
     if (!config.configured || !config.publicKey) {
       return {
         status: 'not_configured',
-        reason: 'El servidor todavía no pudo preparar las notificaciones para este celular. Cierra y vuelve a abrir Ristak; si sigue igual, revisa la configuración de notificaciones del servidor.'
+        reason: `El servidor todavía no pudo preparar las notificaciones para ${getBrowserNotificationTarget()}. Cierra y vuelve a abrir Ristak; si sigue igual, revisa la configuración de notificaciones del servidor.`
       }
     }
 
@@ -69,7 +75,7 @@ export const pushNotificationsService = {
     if (permission !== 'granted') {
       return {
         status: 'denied',
-        reason: 'El celular no dio permiso para recibir notificaciones de Ristak.'
+        reason: `El navegador en ${getBrowserNotificationTarget()} no dio permiso para recibir notificaciones de Ristak.`
       }
     }
 

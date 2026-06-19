@@ -6953,18 +6953,18 @@
   animation: spin 0.8s linear infinite;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) {
   --tablet-chat-list-width: clamp(336px, 38vw, 460px);
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .phoneFrame {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .phoneFrame {
   display: grid;
   grid-template-columns: var(--tablet-chat-list-width) minmax(0, 1fr);
   animation: none !important;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .chatListScreen,
-.phoneChatPage[data-phone-chat-device="tablet"] .conversationScreen {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationScreen {
   position: relative;
   inset: auto;
   width: auto;
@@ -6977,71 +6977,71 @@
   will-change: auto;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .chatListScreen {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen {
   z-index: 2;
   border-right: 1px solid var(--phone-chat-border);
   box-shadow: 10px 0 30px rgba(var(--phone-chat-primary-rgb), 0.04);
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .conversationScreen {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationScreen {
   z-index: 1;
   border-left: 0;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"].conversationOpen .chatListScreen,
-.phoneChatPage[data-phone-chat-device="tablet"].conversationOpen .conversationScreen {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]).conversationOpen .chatListScreen,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]).conversationOpen .conversationScreen {
   pointer-events: auto;
   transform: translate3d(0, 0, 0) !important;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .chatListHeader {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListHeader {
   gap: 10px;
   padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .chatListHeader h1 {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListHeader h1 {
   font-size: 36px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .chatTitleRow {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatTitleRow {
   align-items: center;
   justify-content: space-between;
   min-height: 44px;
   max-height: none;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .chatTitleMain {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatTitleMain {
   align-items: center;
   flex: 0 0 auto;
   gap: 6px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .chatTitleRight {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatTitleRight {
   flex: 1 1 auto;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .tabletNewChatButton {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletNewChatButton {
   display: inline-flex;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .tabletNewChatButton svg {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletNewChatButton svg {
   width: 24px;
   height: 24px;
   stroke-width: 2.7;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .roundButton,
-.phoneChatPage[data-phone-chat-device="tablet"] .newChatButton {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .roundButton,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .newChatButton {
   width: 42px;
   height: 42px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .newChatButton svg {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .newChatButton svg {
   width: 30px;
   height: 30px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .chatList {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatList {
   padding-bottom: 108px;
 }
 
@@ -7049,7 +7049,7 @@
   display: none;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .tabletChatDock {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletChatDock {
   position: absolute;
   right: 14px;
   bottom: max(10px, env(safe-area-inset-bottom));
@@ -7060,7 +7060,7 @@
   pointer-events: none;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .tabletChatDock::before {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletChatDock::before {
   content: "";
   position: absolute;
   right: -14px;
@@ -7077,71 +7077,71 @@
   );
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .tabletChatDock > * {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletChatDock > * {
   position: relative;
   z-index: 1;
   pointer-events: auto;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .conversationHeader {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationHeader {
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: calc(62px + env(safe-area-inset-top));
   padding: calc(env(safe-area-inset-top) + 8px) 16px 8px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .conversationHeader .backButton {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationHeader .backButton {
   display: none;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .conversationContactButton {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationContactButton {
   padding-inline: 0;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .messagesPane {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messagesPane {
   padding-inline: clamp(18px, 4vw, 54px);
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .messageAudioBubble {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messageAudioBubble {
   width: min(390px, 48vw);
   max-width: 390px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .messageAudio {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messageAudio {
   min-height: 64px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .messageAudioInbound {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messageAudioInbound {
   grid-template-columns: 32px minmax(0, 1fr) 58px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .messageAudioOutbound {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messageAudioOutbound {
   grid-template-columns: 48px 32px minmax(0, 1fr);
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .messageAudioWaveform {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messageAudioWaveform {
   gap: 2px;
   padding-inline: 0;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .messageAudioWaveBar {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messageAudioWaveBar {
   flex-basis: 2.5px;
   width: 2.5px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .composerShell {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerShell {
   padding-inline: clamp(8px, 1.4vw, 18px);
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .composer {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composer {
   gap: 6px;
   padding-inline: 0;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .composerHasContent {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerHasContent {
   gap: 5px;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .mobileDock {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .mobileDock {
   display: none;
 }
 

@@ -6,9 +6,11 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { mobileAppService } from '@/services/mobileAppService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
+import { getPortableDeviceMode } from '@/utils/phoneAccess'
 import styles from './MobileNotificationOnboarding.module.css'
 
 type PromptStep = 'intro' | 'first_decline' | 'final_decline' | 'system_denied'
+type NotificationPromptSurface = 'native_phone' | 'mobile_browser' | 'desktop_browser'
 
 const STORAGE_PREFIX = 'ristak_mobile_message_notifications_prompt_v1'
 const SHOW_DELAY_MS = 650
@@ -34,13 +36,51 @@ function getBrowserNotificationPermission() {
   return window.Notification.permission
 }
 
-function getStepCopy(step: PromptStep, denialReason = '') {
+function capitalizeFirst(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+function getNotificationPromptSurface(): NotificationPromptSurface {
+  if (mobileAppService.isNative()) return 'native_phone'
+  return getPortableDeviceMode() === 'desktop' ? 'desktop_browser' : 'mobile_browser'
+}
+
+function getPromptTargetCopy(surface: NotificationPromptSurface) {
+  if (surface === 'desktop_browser') {
+    return {
+      channel: 'notificaciones del navegador',
+      device: 'esta computadora',
+      deviceShort: 'la computadora',
+      permissionOwner: 'el navegador'
+    }
+  }
+
+  if (surface === 'mobile_browser') {
+    return {
+      channel: 'notificaciones del navegador',
+      device: 'este celular',
+      deviceShort: 'el celular',
+      permissionOwner: 'el navegador'
+    }
+  }
+
+  return {
+    channel: 'notificaciones',
+    device: 'este celular',
+    deviceShort: 'el celular',
+    permissionOwner: 'el celular'
+  }
+}
+
+function getStepCopy(step: PromptStep, surface: NotificationPromptSurface, denialReason = '') {
+  const target = getPromptTargetCopy(surface)
+
   if (step === 'first_decline') {
     return {
       icon: AlertTriangle,
       eyebrow: 'Notificaciones apagadas',
       title: 'Sin notificaciones te puedes perder mensajes',
-      message: 'Si rechazas esto, el celular no te va a notificar cuando llegue un WhatsApp nuevo. Tendrás que abrir la app para revisar si alguien escribió.',
+      message: `Si rechazas esto, ${target.permissionOwner} no te va a avisar cuando llegue un WhatsApp nuevo. Tendrás que abrir Ristak para revisar si alguien escribió.`,
       primary: 'Mejor activar',
       secondary: 'Seguir sin notificaciones',
       warning: true
@@ -52,7 +92,7 @@ function getStepCopy(step: PromptStep, denialReason = '') {
       icon: Bell,
       eyebrow: 'Última confirmación',
       title: '¿Seguro que no quieres notificaciones?',
-      message: 'Esta es la última pregunta. Si dejas las notificaciones apagadas, no vas a saber al momento cuando un cliente te mande mensaje.',
+      message: `Esta es la última pregunta. Si dejas las notificaciones apagadas en ${target.device}, no vas a saber al momento cuando un cliente te mande mensaje.`,
       primary: 'Activar notificaciones',
       secondary: 'Sí, no quiero notificaciones',
       warning: true
@@ -62,9 +102,9 @@ function getStepCopy(step: PromptStep, denialReason = '') {
   if (step === 'system_denied') {
     return {
       icon: AlertTriangle,
-      eyebrow: 'El celular no activó notificaciones',
+      eyebrow: `${capitalizeFirst(target.permissionOwner)} no activó notificaciones`,
       title: 'Todavía no van a llegar notificaciones',
-      message: 'El permiso no quedó activo. Puedes intentar otra vez o seguir sin notificaciones en este celular.',
+      message: `El permiso no quedó activo. Puedes intentar otra vez o seguir sin notificaciones en ${target.device}.`,
       primary: 'Intentar activar',
       secondary: 'Seguir sin notificaciones',
       reason: denialReason,
@@ -74,9 +114,9 @@ function getStepCopy(step: PromptStep, denialReason = '') {
 
   return {
     icon: MessageCircle,
-    eyebrow: 'Mensajes de WhatsApp',
+    eyebrow: surface === 'desktop_browser' ? 'Notificaciones del navegador' : 'Mensajes de WhatsApp',
     title: 'Activa las notificaciones',
-    message: 'Para saber al momento cuando un cliente te escribe, es súper importante activar las notificaciones de mensajes en este celular.',
+    message: `Para saber al momento cuando un cliente te escribe, Ristak necesita activar ${target.channel} en ${target.device}.`,
     primary: 'Activar',
     secondary: 'Ahora no',
     warning: false
@@ -153,6 +193,7 @@ export function MobileNotificationOnboarding() {
   }
 
   const closeAsDeclined = () => {
+    const target = getPromptTargetCopy(getNotificationPromptSurface())
     saveStoredDecision(storageKey, 'declined')
     setVisible(false)
     setStep('intro')
@@ -160,7 +201,7 @@ export function MobileNotificationOnboarding() {
     showToast(
       'warning',
       'Notificaciones apagadas',
-      'No recibirás notificaciones de mensajes en este celular. Puedes activarlas después desde ajustes.'
+      `No recibirás notificaciones de mensajes en ${target.device}. Puedes activarlas después desde ajustes.`
     )
   }
 
@@ -170,8 +211,9 @@ export function MobileNotificationOnboarding() {
       const result = await pushNotificationsService.subscribeToAppNotifications()
 
       if (result.status === 'subscribed') {
+        const target = getPromptTargetCopy(getNotificationPromptSurface())
         closeAsAccepted()
-        showToast('success', 'Notificaciones activadas', 'Este celular ya puede notificarte cuando llegue un mensaje.')
+        showToast('success', 'Notificaciones activadas', `${capitalizeFirst(target.deviceShort)} ya puede avisarte cuando llegue un mensaje.`)
         return
       }
 
@@ -204,11 +246,13 @@ export function MobileNotificationOnboarding() {
     handleDecline()
   }
 
-  const copy = getStepCopy(step, denialReason)
+  const surface = getNotificationPromptSurface()
+  const copy = getStepCopy(step, surface, denialReason)
   const Icon = copy.icon
   const permission = getBrowserNotificationPermission()
+  const target = getPromptTargetCopy(surface)
   const reason = copy.reason || (step === 'system_denied' && permission === 'denied'
-    ? 'El celular bloqueó las notificaciones. Si no aparece el permiso otra vez, actívalas desde los ajustes del sistema.'
+    ? `${capitalizeFirst(target.permissionOwner)} bloqueó las notificaciones. Si no aparece el permiso otra vez, actívalas desde los ajustes del sistema.`
     : '')
 
   return (
