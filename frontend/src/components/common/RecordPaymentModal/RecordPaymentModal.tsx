@@ -23,7 +23,11 @@ import {
   Plus,
   Trash2,
   ShieldCheck,
-  User
+  User,
+  Copy,
+  ExternalLink,
+  Mail,
+  MessageCircle
 } from 'lucide-react'
 import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -35,6 +39,8 @@ import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocale
 import { highLevelService } from '@/services/highLevelService'
 import { transactionsService } from '@/services/transactionsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
+import { contactsService, type PaymentLinkDeliveryChannelKey, type PaymentLinkDeliveryOptions } from '@/services/contactsService'
+import { emailService } from '@/services/emailService'
 
 const IVA_RATE = 0.16
 const DEFAULT_INVOICE_TITLE = 'Pago'
@@ -61,6 +67,8 @@ type StripePlanCardSource = 'new_card' | 'saved_card'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
 type PaymentSegmentedOption = { value: string; label: string }
+type RecordPaymentStep = 'form' | 'options' | 'processing' | 'link_ready'
+type CreatedPaymentLinkKind = 'single' | 'first_payment' | 'card_setup'
 
 const INSTALLMENT_VALUE_TYPE_OPTIONS = [
   { value: 'amount', label: 'Monto fijo' },
@@ -171,6 +179,7 @@ const PHONE_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'sms', 'email_whatsa
 const SMS_SEND_METHODS = new Set<SendMethod>(['sms', 'email_sms', 'all'])
 const WHATSAPP_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'email_whatsapp', 'all'])
 const DEFAULT_SEND_METHOD: SendMethod = 'all'
+const PAYMENT_LINK_DELIVERY_CHANNELS: PaymentLinkDeliveryChannelKey[] = ['whatsapp', 'messenger', 'email']
 
 const getSendMethodOptions = (contact: Contact | null) => {
   const hasEmail = Boolean(contact?.email)
@@ -261,6 +270,18 @@ interface ManualPaymentData {
   paymentMethod: string
   reference: string
   notes: string
+}
+
+interface CreatedPaymentLink {
+  kind: CreatedPaymentLinkKind
+  title: string
+  description: string
+  paymentUrl: string
+  amount: number
+  currency: string
+  contact: Contact
+  paymentId?: string | null
+  publicPaymentId?: string | null
 }
 
 const defaultManualPaymentData = (): ManualPaymentData => ({
@@ -419,7 +440,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   variant = 'modal'
 }) => {
   const [loading, setLoading] = useState(false)
-  const [step, setStep] = useState<'form' | 'options' | 'processing'>('form')
+  const [step, setStep] = useState<RecordPaymentStep>('form')
 
   // Contact search
   const [searchQuery, setSearchQuery] = useState('')
@@ -493,6 +514,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [savedPaymentMethods, setSavedPaymentMethods] = useState<StripeSavedPaymentMethod[]>([])
   const [selectedSavedPaymentMethodId, setSelectedSavedPaymentMethodId] = useState('')
   const [stripePlanCardSource, setStripePlanCardSource] = useState<StripePlanCardSource>('new_card')
+  const [createdPaymentLink, setCreatedPaymentLink] = useState<CreatedPaymentLink | null>(null)
+  const [paymentLinkDeliveryOptions, setPaymentLinkDeliveryOptions] = useState<PaymentLinkDeliveryOptions | null>(null)
+  const [loadingPaymentLinkDeliveryOptions, setLoadingPaymentLinkDeliveryOptions] = useState(false)
+  const [sendingPaymentLinkChannel, setSendingPaymentLinkChannel] = useState<PaymentLinkDeliveryChannelKey | null>(null)
 
   // Estado de conexión con HighLevel. Cuando NO está conectado, Ristak opera en
   // modo local: productos y pagos manuales siguen funcionando; enlaces y
@@ -715,6 +740,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSavedPaymentMethods([])
     setSelectedSavedPaymentMethodId('')
     setStripePlanCardSource('new_card')
+    setCreatedPaymentLink(null)
+    setPaymentLinkDeliveryOptions(null)
+    setLoadingPaymentLinkDeliveryOptions(false)
+    setSendingPaymentLinkChannel(null)
   }
 
   const loadConfig = async () => {
@@ -1164,6 +1193,106 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
+  const loadPaymentLinkDeliveryOptions = async (contactId: string) => {
+    setLoadingPaymentLinkDeliveryOptions(true)
+    try {
+      const options = await contactsService.getPaymentLinkDeliveryOptions(contactId)
+      setPaymentLinkDeliveryOptions(options)
+    } catch {
+      setPaymentLinkDeliveryOptions(null)
+    } finally {
+      setLoadingPaymentLinkDeliveryOptions(false)
+    }
+  }
+
+  const showPaymentLinkReady = (link: CreatedPaymentLink) => {
+    setCreatedPaymentLink(link)
+    setPaymentLinkDeliveryOptions(null)
+    setSendingPaymentLinkChannel(null)
+    setStep('link_ready')
+    void loadPaymentLinkDeliveryOptions(link.contact.id)
+  }
+
+  const getCreatedPaymentLinkShareText = (link: CreatedPaymentLink) => {
+    const contactName = getContactDisplayName(link.contact)
+    const amountText = link.amount > 0 ? ` por ${formatCurrency(link.amount, link.currency)}` : ''
+    const intro = link.kind === 'card_setup'
+      ? `Hola ${contactName}, te comparto el enlace para domiciliar tu tarjeta${amountText} y activar tu plan de pagos:`
+      : link.kind === 'first_payment'
+        ? `Hola ${contactName}, te comparto el enlace del primer pago${amountText}. Al pagarlo se guarda tu tarjeta para los siguientes cobros programados:`
+        : `Hola ${contactName}, te comparto tu enlace de pago${amountText}:`
+
+    return `${intro}\n${link.paymentUrl}`
+  }
+
+  const getCreatedPaymentLinkEmailSubject = (link: CreatedPaymentLink) => {
+    if (link.kind === 'card_setup') return `Domiciliación de tarjeta - ${businessName}`
+    if (link.kind === 'first_payment') return `Primer pago - ${businessName}`
+    return `Enlace de pago - ${businessName}`
+  }
+
+  const handleCopyCreatedPaymentLink = async () => {
+    if (!createdPaymentLink?.paymentUrl) return
+
+    const copied = await copyTextToClipboard(createdPaymentLink.paymentUrl)
+    showToast(
+      copied ? 'success' : 'error',
+      copied ? 'Enlace copiado' : 'No se pudo copiar el enlace'
+    )
+  }
+
+  const handleOpenCreatedPaymentLink = () => {
+    if (!createdPaymentLink?.paymentUrl || typeof window === 'undefined') return
+    window.open(createdPaymentLink.paymentUrl, '_blank', 'noopener,noreferrer')
+  }
+
+  const getPaymentLinkChannelIcon = (channel: PaymentLinkDeliveryChannelKey) => {
+    if (channel === 'email') return <Mail size={16} />
+    if (channel === 'messenger') return <Send size={16} />
+    return <MessageCircle size={16} />
+  }
+
+  const handleSendCreatedPaymentLink = async (channel: PaymentLinkDeliveryChannelKey) => {
+    if (!createdPaymentLink) return
+
+    const deliveryChannel = paymentLinkDeliveryOptions?.channels[channel]
+    if (!deliveryChannel?.available) {
+      showToast('error', 'Canal no disponible', deliveryChannel?.reason || 'Este contacto no tiene ese canal conectado.')
+      return
+    }
+
+    setSendingPaymentLinkChannel(channel)
+    try {
+      const message = getCreatedPaymentLinkShareText(createdPaymentLink)
+      const externalId = `payment_link_${createdPaymentLink.kind}_${channel}_${Date.now()}`
+
+      if (channel === 'email') {
+        await emailService.send({
+          contactId: createdPaymentLink.contact.id,
+          to: deliveryChannel.value || createdPaymentLink.contact.email,
+          subject: getCreatedPaymentLinkEmailSubject(createdPaymentLink),
+          text: message,
+          externalId,
+          includeSignature: true
+        })
+      } else {
+        await highLevelService.sendConversationMessage({
+          contactId: createdPaymentLink.contact.id,
+          channel: channel === 'messenger' ? 'messenger' : 'whatsapp_api',
+          message,
+          toNumber: channel === 'whatsapp' ? (deliveryChannel.value || createdPaymentLink.contact.phone) : undefined,
+          externalId
+        })
+      }
+
+      showToast('success', 'Enlace enviado', `Se mandó por ${deliveryChannel.label}.`)
+    } catch (error: any) {
+      showToast('error', `No se pudo enviar por ${deliveryChannel.label}`, error.message || 'Intenta copiar el enlace y mandarlo manualmente.')
+    } finally {
+      setSendingPaymentLinkChannel(null)
+    }
+  }
+
   const handleSelectContact = (contact: Contact) => {
     // Solo guardar los datos primitivos del contacto para evitar referencias circulares
     const nextContact = {
@@ -1213,6 +1342,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setInvoicePayload(null)
     setInvoiceSummary(null)
     setPaymentOption(getDefaultPaymentOption())
+    setCreatedPaymentLink(null)
+    setPaymentLinkDeliveryOptions(null)
+    setSendingPaymentLinkChannel(null)
   }
 
   const handleEmbeddedBack = () => {
@@ -1636,27 +1768,43 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         )
 
         if (result.cardSetupLink) {
-          const copied = await copyTextToClipboard(result.cardSetupLink)
           const setupAmount = result.cardSetupAmount || cardSetupAmount
           const manualFirstPaymentRegistered = firstPaymentEnabled && isOfflineFirstPaymentMethod(firstPaymentMethod)
+          showPaymentLinkReady({
+            kind: 'card_setup',
+            title: 'Enlace de domiciliación listo',
+            description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.`,
+            paymentUrl: result.cardSetupLink,
+            amount: setupAmount,
+            currency: invoiceSummary.currency,
+            contact: selectedContact,
+            paymentId: result.cardSetupPaymentId
+          })
           showToast(
             'success',
             'Plan de Stripe creado',
-            copied
-              ? `${manualFirstPaymentRegistered ? 'El primer pago quedó registrado. ' : ''}La liga de domiciliación por ${formatCurrency(setupAmount, invoiceSummary.currency)} quedó copiada. El plan se activa cuando el cliente la pague y guarde su tarjeta.`
-              : result.cardSetupLink,
-            copied ? undefined : 9000
+            `${manualFirstPaymentRegistered ? 'El primer pago quedó registrado. ' : ''}El enlace de domiciliación por ${formatCurrency(setupAmount, invoiceSummary.currency)} está listo para compartir.`
           )
+          onSuccess?.()
+          return
         } else if (result.firstPaymentLink) {
-          const copied = await copyTextToClipboard(result.firstPaymentLink)
+          showPaymentLinkReady({
+            kind: 'first_payment',
+            title: 'Primer pago listo',
+            description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.',
+            paymentUrl: result.firstPaymentLink,
+            amount: firstPaymentAmount,
+            currency: invoiceSummary.currency,
+            contact: selectedContact,
+            paymentId: result.firstPaymentPaymentId
+          })
           showToast(
             'success',
             'Plan de Stripe creado',
-            copied
-              ? 'El primer link quedó copiado. Cuando el cliente pague, la tarjeta queda guardada y los siguientes cobros se activan.'
-              : result.firstPaymentLink,
-            copied ? undefined : 9000
+            'El enlace del primer pago está listo para compartir.'
           )
+          onSuccess?.()
+          return
         } else {
           showToast(
             'success',
@@ -1699,17 +1847,23 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
         })
 
-        const copied = await copyTextToClipboard(result.paymentUrl)
+        showPaymentLinkReady({
+          kind: 'single',
+          title: 'Enlace de pago listo',
+          description: 'Comparte este enlace para que el cliente pague con tarjeta desde la página pública segura.',
+          paymentUrl: result.paymentUrl,
+          amount: invoiceSummary.amount,
+          currency: invoiceSummary.currency,
+          contact: selectedContact,
+          paymentId: result.payment?.id,
+          publicPaymentId: result.publicPaymentId
+        })
         showToast(
           'success',
           'Link de Stripe creado',
-          copied
-            ? 'El enlace público quedó copiado para enviarlo al cliente.'
-            : result.paymentUrl,
-          copied ? undefined : 9000
+          'El enlace público está listo para copiar o enviar.'
         )
         onSuccess?.()
-        onClose()
       } catch (stripeError: any) {
         showToast('error', 'No se pudo crear el link de Stripe', stripeError.message || 'Revisa la configuración de Stripe.')
         setStep('options')
@@ -3132,9 +3286,118 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     </div>
   )
 
+  const renderPaymentLinkReady = () => {
+    if (!createdPaymentLink) {
+      return renderProcessing()
+    }
+
+    const availableChannels = PAYMENT_LINK_DELIVERY_CHANNELS
+      .map(channel => paymentLinkDeliveryOptions?.channels[channel])
+      .filter((channel): channel is NonNullable<typeof channel> => Boolean(channel?.available))
+
+    return (
+      <div className={styles.paymentLinkReady}>
+        <div className={styles.paymentLinkReadyHeader}>
+          <div className={styles.paymentLinkReadyIcon}>
+            <LinkIcon size={20} aria-hidden="true" />
+          </div>
+          <div className={styles.paymentLinkReadyTitle}>
+            <p>{createdPaymentLink.title}</p>
+            <span>{createdPaymentLink.description}</span>
+          </div>
+        </div>
+
+        <div className={styles.paymentLinkMeta}>
+          <div>
+            <span>Cliente</span>
+            <strong>{getContactDisplayName(createdPaymentLink.contact)}</strong>
+          </div>
+          <div>
+            <span>Monto</span>
+            <strong>{formatCurrency(createdPaymentLink.amount, createdPaymentLink.currency)}</strong>
+          </div>
+        </div>
+
+        <div className={styles.paymentLinkBox}>
+          <label>Enlace público de pago</label>
+          <div className={styles.paymentLinkActions}>
+            <div className={styles.paymentLinkUrl}>{createdPaymentLink.paymentUrl}</div>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              leftIcon={<Copy size={15} />}
+              onClick={handleCopyCreatedPaymentLink}
+            >
+              Copiar
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              leftIcon={<ExternalLink size={15} />}
+              onClick={handleOpenCreatedPaymentLink}
+            >
+              Abrir
+            </Button>
+          </div>
+        </div>
+
+        <div className={styles.paymentLinkDelivery}>
+          <div className={styles.paymentLinkDeliveryHeader}>
+            <p>Enviar por</p>
+            <span>Solo aparecen los canales conectados para este contacto.</span>
+          </div>
+
+          {loadingPaymentLinkDeliveryOptions ? (
+            <div className={styles.paymentLinkDeliveryLoading}>
+              <Loader2 size={16} aria-hidden="true" />
+              Revisando canales...
+            </div>
+          ) : availableChannels.length > 0 ? (
+            <div className={styles.paymentLinkChannelActions}>
+              {availableChannels.map(channel => (
+                <Button
+                  key={channel.key}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={getPaymentLinkChannelIcon(channel.key)}
+                  loading={sendingPaymentLinkChannel === channel.key}
+                  disabled={Boolean(sendingPaymentLinkChannel)}
+                  onClick={() => handleSendCreatedPaymentLink(channel.key)}
+                >
+                  {channel.label}
+                </Button>
+              ))}
+            </div>
+          ) : (
+            <p className={styles.paymentLinkDeliveryEmpty}>
+              Este contacto no tiene canales conectados para envío directo. Copia el enlace y mándalo manualmente.
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const renderFooter = () => {
     if (step === 'processing') {
       return null
+    }
+
+    if (step === 'link_ready') {
+      return (
+        <div className={styles.footer} data-modal-footer="">
+          <Button
+            variant="primary"
+            onClick={onClose}
+            disabled={Boolean(sendingPaymentLinkChannel)}
+          >
+            Listo
+          </Button>
+        </div>
+      )
     }
 
     if (step === 'options') {
@@ -3280,6 +3543,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           {step === 'processing' && renderProcessing()}
           {step === 'form' && renderForm()}
           {step === 'options' && renderPaymentOptions()}
+          {step === 'link_ready' && renderPaymentLinkReady()}
           {step !== 'processing' && (
             <div className={styles.embeddedActions}>
               {step === 'form' && (
@@ -3304,7 +3568,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title={
-        step === 'options'
+        step === 'link_ready'
+          ? 'Enlace de pago listo'
+          : step === 'options'
           ? 'Elige cómo cobrar'
           : activePaymentMode === 'partial' ? 'Registrar cobro parcial' : 'Registrar nuevo cobro'
       }
@@ -3316,6 +3582,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       {step === 'processing' && renderProcessing()}
       {step === 'form' && renderForm()}
       {step === 'options' && renderPaymentOptions()}
+      {step === 'link_ready' && renderPaymentLinkReady()}
       {renderFooter()}
     </Modal>
   )

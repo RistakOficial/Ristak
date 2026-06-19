@@ -50,6 +50,7 @@ import {
   shouldReplaceWhatsAppApiContactName
 } from '../utils/whatsappContactProfile.js'
 import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/contactTagsService.js'
+import { getEmailStatus } from '../services/emailService.js'
 import fetch from 'node-fetch'
 import { randomUUID } from 'crypto'
 
@@ -2848,6 +2849,114 @@ ${CONTACT_META_PROFILE_SELECT},
     res.status(500).json({
       success: false,
       error: 'Error buscando contactos'
+    })
+  }
+}
+
+export const getContactPaymentLinkDeliveryOptions = async (req, res) => {
+  try {
+    const contactId = cleanString(req.params.id)
+    if (!contactId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Contacto inválido'
+      })
+    }
+
+    const contact = await db.get(
+      `SELECT id, full_name, first_name, last_name, email, phone
+       FROM contacts
+       WHERE id = ?
+       LIMIT 1`,
+      [contactId]
+    )
+
+    if (!contact) {
+      return res.status(404).json({
+        success: false,
+        error: 'Contacto no encontrado'
+      })
+    }
+
+    const [emailStatus, highLevelConfig, metaProfiles] = await Promise.all([
+      getEmailStatus().catch(() => ({ connected: false })),
+      db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1').catch(() => null),
+      db.all(
+        `SELECT platform, profile_name, username
+         FROM meta_social_contacts
+         WHERE contact_id = ?
+         GROUP BY platform, profile_name, username`,
+        [contactId]
+      ).catch(() => [])
+    ])
+
+    const email = cleanString(contact.email)
+    const phone = cleanString(contact.phone)
+    const highLevelConnected = Boolean(
+      cleanString(highLevelConfig?.location_id) &&
+      cleanString(highLevelConfig?.api_token)
+    )
+    const metaPlatforms = new Set(
+      metaProfiles
+        .map(profile => cleanString(profile.platform).toLowerCase())
+        .filter(Boolean)
+    )
+    const hasMessengerProfile = metaPlatforms.has('messenger')
+
+    res.json({
+      success: true,
+      data: {
+        contact: {
+          id: contact.id,
+          name: getContactDisplayName(contact),
+          email,
+          phone
+        },
+        channels: {
+          whatsapp: {
+            key: 'whatsapp',
+            label: 'WhatsApp',
+            available: Boolean(highLevelConnected && phone),
+            connected: highLevelConnected,
+            value: phone,
+            reason: !phone
+              ? 'El contacto no tiene teléfono'
+              : !highLevelConnected
+                ? 'HighLevel no está conectado'
+                : ''
+          },
+          messenger: {
+            key: 'messenger',
+            label: 'Messenger DM',
+            available: Boolean(highLevelConnected && hasMessengerProfile),
+            connected: highLevelConnected,
+            value: metaProfiles.find(profile => cleanString(profile.platform).toLowerCase() === 'messenger')?.profile_name || '',
+            reason: !highLevelConnected
+              ? 'HighLevel no está conectado'
+              : !hasMessengerProfile
+                ? 'El contacto no tiene Messenger enlazado'
+                : ''
+          },
+          email: {
+            key: 'email',
+            label: 'Correo electrónico',
+            available: Boolean(emailStatus.connected && email),
+            connected: Boolean(emailStatus.connected),
+            value: email,
+            reason: !email
+              ? 'El contacto no tiene correo'
+              : !emailStatus.connected
+                ? 'El correo no está conectado'
+                : ''
+          }
+        }
+      }
+    })
+  } catch (error) {
+    logger.error(`Error obteniendo canales de cobro para contacto: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'No se pudieron leer los canales del contacto'
     })
   }
 }

@@ -10,6 +10,7 @@ import {
   getContactStats,
   getContactsChart,
   syncContactsStats,
+  getContactPaymentLinkDeliveryOptions,
   updateContact,
   bulkUpdateContactTags,
   cancelBulkContactAction,
@@ -57,6 +58,7 @@ router.post('/bulk-actions/:actionId/resume', resumeBulkContactAction)
 router.post('/bulk-actions/:actionId/reschedule', rescheduleBulkContactAction)
 router.post('/bulk-actions/:actionId/cancel', cancelBulkContactAction)
 router.delete('/bulk-actions/:actionId', deleteBulkContactAction)
+router.get('/:id/payment-link-delivery-options', getContactPaymentLinkDeliveryOptions)
 router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
 router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)

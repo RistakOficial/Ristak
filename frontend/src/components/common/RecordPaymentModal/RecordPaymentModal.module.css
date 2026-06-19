@@ -1412,6 +1412,154 @@ body.dark .tooltipInfo {
   margin: 0;
 }
 
+.paymentLinkReady {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 28px 32px;
+}
+
+.paymentLinkReadyHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.paymentLinkReadyIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  flex: 0 0 auto;
+}
+
+.paymentLinkReadyTitle {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.paymentLinkReadyTitle p {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.paymentLinkReadyTitle span {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.paymentLinkMeta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.paymentLinkMeta div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.paymentLinkMeta span,
+.paymentLinkBox label {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.paymentLinkMeta strong {
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paymentLinkBox {
+  display: grid;
+  gap: 10px;
+}
+
+.paymentLinkActions {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.paymentLinkUrl {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  font-size: 13px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.paymentLinkDelivery {
+  display: grid;
+  gap: 12px;
+}
+
+.paymentLinkDeliveryHeader {
+  display: grid;
+  gap: 3px;
+}
+
+.paymentLinkDeliveryHeader p {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.paymentLinkDeliveryHeader span,
+.paymentLinkDeliveryEmpty,
+.paymentLinkDeliveryLoading {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.paymentLinkChannelActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.paymentLinkDeliveryLoading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.paymentLinkDeliveryLoading svg {
+  color: var(--color-primary);
+  animation: spin 1s linear infinite;
+}
+
+.paymentLinkDeliveryEmpty {
+  margin: 0;
+}
+
 .textArea {
   width: 100%;
   min-height: 80px;
@@ -1582,6 +1730,19 @@ body.dark .tooltipInfo {
     max-width: none;
     flex: 1 1 auto;
   }
+
+  .paymentLinkReady {
+    padding: 20px 24px;
+  }
+
+  .paymentLinkMeta {
+    grid-template-columns: 1fr;
+  }
+
+  .paymentLinkActions > button,
+  .paymentLinkChannelActions > button {
+    flex: 1 1 150px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1594,6 +1755,10 @@ body.dark .tooltipInfo {
   }
 
   .optionsContent {
+    padding: 18px 20px;
+  }
+
+  .paymentLinkReady {
     padding: 18px 20px;
   }
 
@@ -1718,7 +1883,8 @@ body.dark .tooltipInfo {
 }
 
 .embeddedRoot .content,
-.embeddedRoot .optionsContent {
+.embeddedRoot .optionsContent,
+.embeddedRoot .paymentLinkReady {
   box-sizing: border-box;
   width: min(100%, 430px);
   margin: 0 auto;
@@ -1728,7 +1894,8 @@ body.dark .tooltipInfo {
 }
 
 .embeddedRoot .content::-webkit-scrollbar,
-.embeddedRoot .optionsContent::-webkit-scrollbar {
+.embeddedRoot .optionsContent::-webkit-scrollbar,
+.embeddedRoot .paymentLinkReady::-webkit-scrollbar {
   display: none;
 }
 
@@ -2147,6 +2314,22 @@ body.dark .tooltipInfo {
   border-bottom: 1px solid var(--record-payment-embedded-border);
   border-radius: 0;
   background: transparent;
+}
+
+.embeddedRoot .paymentLinkReadyTitle p,
+.embeddedRoot .paymentLinkMeta strong,
+.embeddedRoot .paymentLinkDeliveryHeader p,
+.embeddedRoot .paymentLinkUrl {
+  color: var(--record-payment-embedded-text);
+}
+
+.embeddedRoot .paymentLinkMeta,
+.embeddedRoot .paymentLinkUrl {
+  border-color: var(--record-payment-embedded-border);
+}
+
+.embeddedRoot .paymentLinkUrl {
+  background: var(--record-payment-embedded-panel);
 }
 
 .embeddedRoot .planStep,

@@ -48,6 +48,27 @@ export interface ContactsPageResult {
   pagination: ContactsPagination
 }
 
+export type PaymentLinkDeliveryChannelKey = 'whatsapp' | 'messenger' | 'email'
+
+export interface PaymentLinkDeliveryChannel {
+  key: PaymentLinkDeliveryChannelKey
+  label: string
+  available: boolean
+  connected: boolean
+  value: string
+  reason?: string
+}
+
+export interface PaymentLinkDeliveryOptions {
+  contact: {
+    id: string
+    name: string
+    email: string
+    phone: string
+  }
+  channels: Record<PaymentLinkDeliveryChannelKey, PaymentLinkDeliveryChannel>
+}
+
 interface ContactsPageParams {
   startDate?: string
   endDate?: string
@@ -300,6 +321,10 @@ export const contactsService = {
   async getContactDetails(id: string): Promise<Contact> {
     const data = await apiClient.get<Contact>(`/contacts/${id}`)
     return normalizeContact(data)
+  },
+
+  getPaymentLinkDeliveryOptions(contactId: string): Promise<PaymentLinkDeliveryOptions> {
+    return apiClient.get<PaymentLinkDeliveryOptions>(`/contacts/${encodeURIComponent(contactId)}/payment-link-delivery-options`)
   },
 
   async getContactJourney(id: string, options: ContactJourneyOptions = {}): Promise<JourneyEvent[]> {
