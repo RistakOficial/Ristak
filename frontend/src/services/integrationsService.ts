@@ -33,12 +33,21 @@ export interface GoogleCalendarStatus {
   connected: boolean
 }
 
+export interface StripeStatus {
+  configured: boolean
+  connected: boolean
+  mode?: 'test' | 'live'
+  publishableKey?: string | null
+  accountLabel?: string | null
+}
+
 export interface IntegrationsStatus {
   highlevel: HighLevelStatus
   meta: MetaStatus
   whatsapp: WhatsappStatus
   openai: OpenAiStatus
   googleCalendar: GoogleCalendarStatus
+  stripe?: StripeStatus
 }
 
 // El estado de integraciones se consulta desde muchos componentes al montar

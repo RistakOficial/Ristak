@@ -184,6 +184,7 @@ const mapTransactionRow = (t) => ({
   method: t.payment_method || 'other',
   status: normalizeStatus(t.status),
   paymentMode: t.payment_mode || 'live',
+  paymentProvider: t.payment_provider || (t.ghl_invoice_id ? 'highlevel' : 'manual'),
   reference: t.reference,
   title: t.title || t.description || 'Pago',
   description: t.description,
@@ -192,7 +193,11 @@ const mapTransactionRow = (t) => ({
   invoiceId: t.ghl_invoice_id,
   invoiceNumber: t.invoice_number,
   dueDate: t.due_date,
-  sentAt: t.sent_at
+  sentAt: t.sent_at,
+  publicPaymentId: t.public_payment_id,
+  paymentUrl: t.payment_url,
+  stripePaymentIntentId: t.stripe_payment_intent_id,
+  paidAt: t.paid_at
 })
 
 const getInvoiceFromResponse = (response) => response?.invoice || response?.data || response || {}
@@ -300,6 +305,7 @@ const getTransactionByIdForResponse = async (id) => {
       p.currency,
       p.status,
       p.payment_mode,
+      p.payment_provider,
       p.payment_method,
       p.reference,
       p.title,
@@ -311,6 +317,10 @@ const getTransactionByIdForResponse = async (id) => {
       p.invoice_number,
       p.due_date,
       p.sent_at,
+      p.public_payment_id,
+      p.payment_url,
+      p.stripe_payment_intent_id,
+      p.paid_at,
       c.full_name as contact_name,
       c.email as contact_email,
       c.phone as contact_phone
@@ -389,8 +399,8 @@ export const createTransaction = async (req, res) => {
     await db.run(
       `INSERT INTO payments (
         id, contact_id, amount, currency, status, payment_method, payment_mode,
-        reference, title, description, date, due_date, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        payment_provider, reference, title, description, date, due_date, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         transactionId,
         finalContactId,
@@ -399,6 +409,7 @@ export const createTransaction = async (req, res) => {
         finalStatus,
         finalMethod,
         finalPaymentMode,
+        'manual',
         reference || null,
         finalTitle,
         finalDescription,
@@ -540,6 +551,7 @@ export const getTransactions = async (req, res) => {
         p.currency,
         p.status,
         p.payment_mode,
+        p.payment_provider,
         p.payment_method,
         p.reference,
         p.title,
@@ -551,6 +563,10 @@ export const getTransactions = async (req, res) => {
         p.invoice_number,
         p.due_date,
         p.sent_at,
+        p.public_payment_id,
+        p.payment_url,
+        p.stripe_payment_intent_id,
+        p.paid_at,
         c.full_name as contact_name,
         c.email as contact_email,
         c.phone as contact_phone
@@ -647,6 +663,7 @@ export const getTransactionById = async (req, res) => {
       method: transaction.payment_method || 'other',
       status: normalizeStatus(transaction.status),
       paymentMode: transaction.payment_mode || 'live',
+      paymentProvider: transaction.payment_provider || (transaction.ghl_invoice_id ? 'highlevel' : 'manual'),
       reference: transaction.reference,
       title: transaction.title || transaction.description || 'Pago',
       description: transaction.description,
@@ -656,6 +673,10 @@ export const getTransactionById = async (req, res) => {
       invoiceNumber: transaction.invoice_number,
       dueDate: transaction.due_date,
       sentAt: transaction.sent_at,
+      publicPaymentId: transaction.public_payment_id,
+      paymentUrl: transaction.payment_url,
+      stripePaymentIntentId: transaction.stripe_payment_intent_id,
+      paidAt: transaction.paid_at,
       contactSource: transaction.contact_source,
       attributionAdName: transaction.attribution_ad_name,
       attributionAdId: transaction.attribution_ad_id

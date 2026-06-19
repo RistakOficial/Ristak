@@ -9,9 +9,10 @@ export interface Transaction {
   phone?: string
   amount: number
   currency?: string
-  method: 'card' | 'transfer' | 'cash' | 'paypal' | 'other' | 'bank_transfer' | 'check'
+  method: 'card' | 'transfer' | 'cash' | 'paypal' | 'other' | 'bank_transfer' | 'check' | 'stripe'
   status: 'draft' | 'sent' | 'paid' | 'pending' | 'overdue' | 'partial' | 'void' | 'refunded' | 'failed' | 'deleted'
   paymentMode?: 'live' | 'test'
+  paymentProvider?: 'manual' | 'highlevel' | 'stripe' | string
   reference?: string
   title?: string
   description?: string
@@ -21,6 +22,10 @@ export interface Transaction {
   invoiceNumber?: string
   dueDate?: string
   sentAt?: string
+  publicPaymentId?: string
+  paymentUrl?: string
+  stripePaymentIntentId?: string
+  paidAt?: string
 }
 
 export interface TransactionSummary {

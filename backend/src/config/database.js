@@ -1960,9 +1960,16 @@ async function initTables() {
         status TEXT,
         payment_method TEXT,
         payment_mode TEXT DEFAULT 'live',
+        payment_provider TEXT DEFAULT 'manual',
         reference TEXT,
         title TEXT,
         description TEXT,
+        public_payment_id TEXT,
+        payment_url TEXT,
+        stripe_payment_intent_id TEXT,
+        stripe_charge_id TEXT,
+        paid_at DATETIME,
+        metadata_json TEXT,
         date DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -3015,8 +3022,38 @@ async function initTables() {
         }
       }
 
+      const paymentProviderColumns = [
+        ['payment_provider', "TEXT DEFAULT 'manual'"],
+        ['public_payment_id', 'TEXT'],
+        ['payment_url', 'TEXT'],
+        ['stripe_payment_intent_id', 'TEXT'],
+        ['stripe_charge_id', 'TEXT'],
+        ['paid_at', 'DATETIME'],
+        ['metadata_json', 'TEXT']
+      ]
+
+      for (const [column, type] of paymentProviderColumns) {
+        try {
+          await db.run(`ALTER TABLE payments ADD COLUMN ${column} ${type}`)
+        } catch (err) {
+          if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+            throw err
+          }
+        }
+      }
+
       try {
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_payment_mode ON payments(payment_mode)')
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('no such column')) {
+          throw err
+        }
+      }
+
+      try {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payments_provider ON payments(payment_provider)')
+        await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_public_payment ON payments(public_payment_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payments_stripe_intent ON payments(stripe_payment_intent_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column')) {
           throw err

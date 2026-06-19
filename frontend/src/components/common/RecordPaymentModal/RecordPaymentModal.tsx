@@ -13,6 +13,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   DollarSign,
   Link as LinkIcon,
   Check,
@@ -33,6 +34,7 @@ import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { highLevelService } from '@/services/highLevelService'
 import { transactionsService } from '@/services/transactionsService'
+import { stripePaymentsService } from '@/services/stripePaymentsService'
 
 const IVA_RATE = 0.16
 const DEFAULT_INVOICE_TITLE = 'Pago'
@@ -50,7 +52,7 @@ const normalizeAmount = (value: string | number): number => {
   return Math.round(parsed * 100) / 100
 }
 
-type PaymentOption = 'send' | 'manual'
+type PaymentOption = 'send' | 'manual' | 'stripe'
 type PaymentMode = 'single' | 'partial'
 type InstallmentValueType = 'percentage' | 'amount'
 type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
@@ -446,6 +448,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   // modo local: productos y pagos manuales siguen funcionando; enlaces y
   // parcialidades remotas quedan desactivados.
   const [highLevelConnected, setHighLevelConnected] = useState(false)
+  const [stripeConnected, setStripeConnected] = useState(false)
 
   const { showToast } = useNotification()
   const detectedLocaleDefaults = useMemo(getDetectedAccountLocaleDefaults, [])
@@ -569,6 +572,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )
   }
 
+  const getDefaultPaymentOption = () : PaymentOption => {
+    if (stripeConnected) return 'stripe'
+    return highLevelConnected ? 'send' : 'manual'
+  }
+
   useEffect(() => {
     if (sendMethodOptions.length === 0) return
     if (!selectedSendMethodOption) {
@@ -631,7 +639,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setNewProductCurrency(defaultCurrency || 'MXN')
     setInvoicePayload(null)
     setInvoiceSummary(null)
-    setPaymentOption('send')
+    setPaymentOption(getDefaultPaymentOption())
     setSendMethod(resolvedInitialContact ? getDefaultSendMethod(getSendMethodOptions(resolvedInitialContact)) : DEFAULT_SEND_METHOD)
     setManualPaymentData(defaultManualPaymentData())
   }
@@ -670,19 +678,21 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     try {
       const data = await getIntegrationsStatus()
       setHighLevelConnected(Boolean(data?.highlevel?.connected))
+      setStripeConnected(Boolean(data?.stripe?.connected))
     } catch (error) {
       setHighLevelConnected(false)
+      setStripeConnected(false)
     }
   }
 
-  // En modo local (sin HighLevel) forzamos pago único y registro manual: no hay
-  // envío de enlaces ni parcialidades remotas, pero el catalogo local sigue activo.
+  // En modo local (sin HighLevel) forzamos pago único. Si Stripe está configurado,
+  // puede seguir creando links públicos; si no, queda registro manual.
   useEffect(() => {
     if (!highLevelConnected) {
       setPaymentMode('single')
-      setPaymentOption('manual')
+      setPaymentOption(stripeConnected ? 'stripe' : 'manual')
     }
-  }, [highLevelConnected])
+  }, [highLevelConnected, stripeConnected])
 
   useEffect(() => {
     if (!isOpen) {
@@ -1009,6 +1019,26 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
+  const copyTextToClipboard = async (text: string) => {
+    if (!text) return false
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        const input = document.createElement('input')
+        input.value = text
+        document.body.appendChild(input)
+        input.select()
+        document.execCommand('copy')
+        document.body.removeChild(input)
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   const handleSelectContact = (contact: Contact) => {
     // Solo guardar los datos primitivos del contacto para evitar referencias circulares
     const nextContact = {
@@ -1057,7 +1087,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setStep('form')
     setInvoicePayload(null)
     setInvoiceSummary(null)
-    setPaymentOption(highLevelConnected ? 'send' : 'manual')
+    setPaymentOption(getDefaultPaymentOption())
   }
 
   const handleEmbeddedBack = () => {
@@ -1361,7 +1391,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
 
       setManualPaymentData(defaultManualPaymentData())
-      setPaymentOption(highLevelConnected ? 'send' : 'manual')
+      setPaymentOption(getDefaultPaymentOption())
 
       setStep('options')
     } catch (error: any) {
@@ -1382,6 +1412,49 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     setLoading(true)
     setStep('processing')
+
+    if (paymentOption === 'stripe') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await stripePaymentsService.createPaymentLink({
+          contactId: selectedContact.id,
+          contactName: invoiceSummary.contactName || selectedContact.name,
+          email: selectedContact.email || invoiceSummary.contactEmail || '',
+          phone: selectedContact.phone || '',
+          amount: invoiceSummary.amount,
+          currency: invoiceSummary.currency,
+          title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
+          description: invoiceSummary.description,
+          dueDate: invoicePayload.dueDate,
+          source: 'record_payment_modal',
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+        })
+
+        const copied = await copyTextToClipboard(result.paymentUrl)
+        showToast(
+          'success',
+          'Link de Stripe creado',
+          copied
+            ? 'El enlace público quedó copiado para enviarlo al cliente.'
+            : result.paymentUrl,
+          copied ? undefined : 9000
+        )
+        onSuccess?.()
+        onClose()
+      } catch (stripeError: any) {
+        showToast('error', 'No se pudo crear el link de Stripe', stripeError.message || 'Revisa la configuración de Stripe.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
 
     // Modo local (sin HighLevel): registrar el pago directamente en Ristak.
     if (!highLevelConnected) {
@@ -2500,6 +2573,25 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         </div>
 
         <div className={styles.paymentOptions}>
+          {stripeConnected && (
+            <button
+              type="button"
+              className={`${styles.optionButton} ${paymentOption === 'stripe' ? styles.optionButtonActive : ''}`}
+              onClick={() => setPaymentOption('stripe')}
+            >
+              <div className={styles.optionInfo}>
+                <div className={styles.optionIcon}>
+                  <CreditCard size={18} />
+                </div>
+                <div>
+                  <p>Crear enlace con Stripe</p>
+                  <span>Genera tu página pública de invoice con campo seguro de tarjeta</span>
+                </div>
+              </div>
+              {paymentOption === 'stripe' && <Check size={18} className={styles.optionCheck} />}
+            </button>
+          )}
+
           {/* Enviar enlace de pago por... (solo disponible con HighLevel conectado) */}
           {highLevelConnected && (
           <div
@@ -2662,9 +2754,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (step === 'options') {
       const requiresDeliveryChannel = paymentOption === 'send'
       const lacksDeliveryChannel = requiresDeliveryChannel && !selectedContact?.email && !selectedContact?.phone
-      const confirmLabel = paymentOption === 'send'
-        ? activePaymentMode === 'partial' ? 'Crear y enviar enlace' : 'Enviar enlace'
-        : 'Registrar pago'
+      const confirmLabel = paymentOption === 'stripe'
+        ? 'Crear link Stripe'
+        : paymentOption === 'send'
+          ? activePaymentMode === 'partial' ? 'Crear y enviar enlace' : 'Enviar enlace'
+          : 'Registrar pago'
 
       return (
         <div className={styles.footer} data-modal-footer="">

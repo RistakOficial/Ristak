@@ -4,6 +4,7 @@ import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
 import { getAIAgentStatus } from '../services/aiAgentService.js';
 import { getGoogleCalendarConfig } from '../services/googleCalendarService.js';
+import { getStripePaymentConfig } from '../services/stripePaymentService.js';
 
 // La verificación del token contra la API de HighLevel es costosa y este
 // endpoint se consulta varias veces por carga de página. Se cachea el
@@ -150,13 +151,29 @@ export const getStatus = async (req, res) => {
       logger.warn(`Error obteniendo estado de Google Calendar: ${error.message}`);
     }
 
+    // Stripe
+    let stripeStatus = { configured: false, connected: false };
+    try {
+      const stripeConfig = await getStripePaymentConfig();
+      stripeStatus = {
+        configured: Boolean(stripeConfig?.configured),
+        connected: Boolean(stripeConfig?.configured),
+        mode: stripeConfig?.mode || 'test',
+        publishableKey: stripeConfig?.publishableKey || null,
+        accountLabel: stripeConfig?.accountLabel || null
+      };
+    } catch (error) {
+      logger.warn(`Error obteniendo estado de Stripe: ${error.message}`);
+    }
+
     // Respuesta con estructura mejorada
     res.json({
       highlevel: highlevelStatus,
       meta: metaStatus,
       whatsapp: whatsappStatus,
       openai: openaiStatus,
-      googleCalendar: googleCalendarStatus
+      googleCalendar: googleCalendarStatus,
+      stripe: stripeStatus
     });
 
   } catch (error) {

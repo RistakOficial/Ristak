@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Card, Button, NumberInput } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
-import { CheckCircle, Clock, CreditCard, Loader2 } from 'lucide-react'
+import { CheckCircle, Clock, CreditCard, KeyRound, Loader2, ShieldCheck } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
+import { invalidateIntegrationsStatus } from '@/services/integrationsService'
+import { stripePaymentsService, type StripePaymentConfig } from '@/services/stripePaymentsService'
 import styles from './HighLevelIntegration.module.css'
 
 type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip' | 'gigstacK'
@@ -14,7 +16,7 @@ interface PaymentGatewayOption {
   id: PaymentGatewayId
   name: string
   description: string
-  status: 'connected' | 'soon'
+  status: 'connected' | 'available' | 'soon'
 }
 
 interface PaymentGatewayCategory {
@@ -33,21 +35,9 @@ const HIGHLIGHT_GATEWAY_OPTION: PaymentGatewayOption = {
 
 const UPCOMING_CHARGE_GATEWAYS: PaymentGatewayOption[] = [
   {
-    id: 'stripe',
-    name: 'Stripe',
-    description: 'Para cobrar con tarjeta y links de pago cuando esta conexión esté lista.',
-    status: 'soon'
-  },
-  {
     id: 'mercado-libre',
     name: 'Mercado Libre',
     description: 'Para preparar cobros con Mercado Pago dentro del flujo de Ristak.',
-    status: 'soon'
-  },
-  {
-    id: 'clip',
-    name: 'Clip',
-    description: 'Para ventas con terminal o links de pago conectados a Clip.',
     status: 'soon'
   },
   {
@@ -92,6 +82,16 @@ export const PaymentsConfiguration: React.FC = () => {
   const [cardSetupAmount, setCardSetupAmount] = useState(25)
   const [ghlInvoiceMode, setGhlInvoiceMode] = useState<'live' | 'test'>('live')
   const [loadingPaymentConfig, setLoadingPaymentConfig] = useState(false)
+  const [stripeConfig, setStripeConfig] = useState<StripePaymentConfig | null>(null)
+  const [stripeMode, setStripeMode] = useState<'test' | 'live'>('test')
+  const [stripeDefaultCurrency, setStripeDefaultCurrency] = useState('MXN')
+  const [stripeAccountLabel, setStripeAccountLabel] = useState('')
+  const [stripePublishableKey, setStripePublishableKey] = useState('')
+  const [stripeSecretKey, setStripeSecretKey] = useState('')
+  const [stripeWebhookSecret, setStripeWebhookSecret] = useState('')
+  const [loadingStripeConfig, setLoadingStripeConfig] = useState(false)
+  const [savingStripeConfig, setSavingStripeConfig] = useState(false)
+  const [testingStripeConfig, setTestingStripeConfig] = useState(false)
 
   useEffect(() => {
     if (loadingHighLevelConnection) return
@@ -102,6 +102,19 @@ export const PaymentsConfiguration: React.FC = () => {
       loadPaymentConfig()
     }
   }, [highLevelConnected, loadingHighLevelConnection, routeGateway])
+
+  useEffect(() => {
+    loadStripeConfig()
+  }, [])
+
+  const stripeGatewayOption: PaymentGatewayOption = useMemo(() => ({
+    id: 'stripe',
+    name: 'Stripe',
+    description: stripeConfig?.configured
+      ? `Cobra con tarjeta en tu plantilla pública de invoice (${stripeConfig.mode === 'live' ? 'en vivo' : 'prueba'}).`
+      : 'Configura Stripe para crear links de pago públicos con tarjeta dentro de Ristak.',
+    status: stripeConfig?.configured ? 'connected' : 'available'
+  }), [stripeConfig?.configured, stripeConfig?.mode])
 
   const gatewayCategories: PaymentGatewayCategory[] = [
     {
@@ -114,6 +127,7 @@ export const PaymentsConfiguration: React.FC = () => {
         ...(highLevelConnected
           ? [HIGHLIGHT_GATEWAY_OPTION]
           : []),
+        stripeGatewayOption,
         ...UPCOMING_CHARGE_GATEWAYS
       ]
     },
@@ -128,6 +142,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const selectedGatewayOption = allGatewayOptions.find((gateway) => gateway.id === selectedGateway)
   const showHighLevelSettings = highLevelConnected && selectedGateway === 'highlevel'
+  const showStripeSettings = selectedGateway === 'stripe'
 
   const loadPaymentConfig = async () => {
     try {
@@ -182,6 +197,64 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
+  const applyStripeConfig = (config: StripePaymentConfig) => {
+    setStripeConfig(config)
+    setStripeMode(config.mode || 'test')
+    setStripeDefaultCurrency(config.defaultCurrency || 'MXN')
+    setStripeAccountLabel(config.accountLabel || '')
+    setStripePublishableKey(config.publishableKey || '')
+    setStripeSecretKey(config.secretKeyPreview || '')
+    setStripeWebhookSecret(config.webhookSecretPreview || '')
+  }
+
+  const loadStripeConfig = async () => {
+    setLoadingStripeConfig(true)
+    try {
+      const config = await stripePaymentsService.getConfig()
+      applyStripeConfig(config)
+    } catch {
+      setStripeConfig(null)
+    } finally {
+      setLoadingStripeConfig(false)
+    }
+  }
+
+  const buildStripeConfigPayload = () => ({
+    enabled: true,
+    mode: stripeMode,
+    defaultCurrency: stripeDefaultCurrency.trim().toUpperCase() || 'MXN',
+    accountLabel: stripeAccountLabel.trim(),
+    publishableKey: stripePublishableKey.trim(),
+    secretKey: stripeSecretKey.trim(),
+    webhookSecret: stripeWebhookSecret.trim()
+  })
+
+  const handleSaveStripeConfig = async () => {
+    setSavingStripeConfig(true)
+    try {
+      const config = await stripePaymentsService.saveConfig(buildStripeConfigPayload())
+      applyStripeConfig(config)
+      invalidateIntegrationsStatus()
+      showToast('success', 'Stripe guardado', 'Ristak ya puede crear links de pago con Stripe.')
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar Stripe', error.message || 'Revisa tus llaves de Stripe.')
+    } finally {
+      setSavingStripeConfig(false)
+    }
+  }
+
+  const handleTestStripeConfig = async () => {
+    setTestingStripeConfig(true)
+    try {
+      await stripePaymentsService.testConfig(buildStripeConfigPayload())
+      showToast('success', 'Stripe respondió bien', 'Las credenciales permiten consultar la cuenta.')
+    } catch (error: any) {
+      showToast('error', 'Stripe no respondió', error.message || 'Revisa la Secret key.')
+    } finally {
+      setTestingStripeConfig(false)
+    }
+  }
+
   const handleSelectGateway = (gateway: PaymentGatewayOption) => {
     setSelectedGateway(gateway.id)
     navigate(`/settings/payments/${gateway.id}`)
@@ -213,6 +286,11 @@ export const PaymentsConfiguration: React.FC = () => {
                   <Loader2 size={16} className={styles.spinIcon} />
                   <span>Revisando conexión</span>
                 </Badge>
+              ) : stripeConfig?.configured ? (
+                <Badge variant="success">
+                  <CheckCircle size={16} />
+                  <span>Stripe conectado</span>
+                </Badge>
               ) : highLevelConnected ? (
                 <Badge variant="success">
                   <CheckCircle size={16} />
@@ -242,6 +320,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 {category.options.map((gateway) => {
                   const isSelected = selectedGateway === gateway.id
                   const isConnected = gateway.status === 'connected'
+                  const isAvailable = gateway.status === 'available'
 
                   return (
                     <button
@@ -253,8 +332,8 @@ export const PaymentsConfiguration: React.FC = () => {
                     >
                       <span className={styles.gatewayCardHeader}>
                         <span className={styles.gatewayCardName}>{gateway.name}</span>
-                        <Badge variant={isConnected ? 'success' : 'warning'}>
-                          {isConnected ? 'Conectado' : 'Próximamente'}
+                        <Badge variant={isConnected ? 'success' : isAvailable ? 'info' : 'warning'}>
+                          {isConnected ? 'Conectado' : isAvailable ? 'Configurar' : 'Próximamente'}
                         </Badge>
                       </span>
                       <span className={styles.gatewayCardDescription}>{gateway.description}</span>
@@ -265,11 +344,11 @@ export const PaymentsConfiguration: React.FC = () => {
             </section>
           ))}
 
-          {!loadingHighLevelConnection && !highLevelConnected && (
+          {!loadingHighLevelConnection && !highLevelConnected && !stripeConfig?.configured && (
             <div className={styles.gatewayNotice}>
-              <h4>Primero conecta una pasarela</h4>
+              <h4>Conecta Stripe para cobrar con tarjeta</h4>
               <p>
-                Cuando una pasarela esté disponible, aquí podrás activarla y Ristak mostrará sus ajustes. Mientras tanto no se muestran opciones de GoHighLevel porque esa conexión no está activa.
+                GoHighLevel no está activo en esta cuenta, pero Stripe ya se puede configurar aquí para crear links de pago públicos desde Ristak.
               </p>
             </div>
           )}
@@ -281,6 +360,160 @@ export const PaymentsConfiguration: React.FC = () => {
                 Esta opción todavía no cobra ni guarda datos reales. La dejamos visible para que elijas el camino que quieres usar cuando se libere.
               </p>
             </div>
+          )}
+
+          {showStripeSettings && (
+            <>
+              <div className={styles.sectionHeader}>
+                <div>
+                  <h3 className={styles.sectionTitle}>Stripe</h3>
+                  <p className={styles.sectionDescription}>
+                    Guarda las llaves de Stripe en esta instalación para crear links de pago con tu plantilla pública de invoice.
+                  </p>
+                </div>
+                {loadingStripeConfig ? (
+                  <Badge variant="warning">
+                    <Loader2 size={16} className={styles.spinIcon} />
+                    <span>Cargando</span>
+                  </Badge>
+                ) : stripeConfig?.configured ? (
+                  <Badge variant="success">
+                    <ShieldCheck size={16} />
+                    <span>Listo para cobrar</span>
+                  </Badge>
+                ) : (
+                  <Badge variant="warning">
+                    <KeyRound size={16} />
+                    <span>Faltan llaves</span>
+                  </Badge>
+                )}
+              </div>
+
+              <div className={styles.sectionContent}>
+                <div className={styles.formField}>
+                  <label className={styles.label}>Modo de Stripe</label>
+                  <div className={styles.toggleContainer}>
+                    <span className={`${styles.toggleLabel} ${stripeMode === 'test' ? styles.toggleLabelActive : ''}`}>
+                      Prueba
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setStripeMode(stripeMode === 'live' ? 'test' : 'live')}
+                      className={`${styles.toggle} ${stripeMode === 'live' ? styles.toggleActive : ''}`}
+                      disabled={savingStripeConfig || testingStripeConfig}
+                      aria-pressed={stripeMode === 'live'}
+                      aria-label="Cambiar modo de Stripe"
+                    >
+                      <span className={styles.toggleThumb} />
+                    </button>
+                    <span className={`${styles.toggleLabel} ${stripeMode === 'live' ? styles.toggleLabelActive : ''}`}>
+                      En vivo
+                    </span>
+                  </div>
+                  <p className={styles.hint}>
+                    Usa llaves `pk_test_/sk_test_` para pruebas y `pk_live_/sk_live_` cuando vayas a cobrar real.
+                  </p>
+                </div>
+
+                <div className={styles.formField}>
+                  <label className={styles.label}>Nombre de cuenta</label>
+                  <input
+                    type="text"
+                    value={stripeAccountLabel}
+                    onChange={(event) => setStripeAccountLabel(event.target.value)}
+                    placeholder="ej: Stripe Principal"
+                    className={styles.input}
+                    autoComplete="off"
+                  />
+                  <p className={styles.hint}>Sólo sirve para identificar esta conexión dentro de Ristak.</p>
+                </div>
+
+                <div className={styles.formField}>
+                  <label className={styles.label}>Moneda principal</label>
+                  <input
+                    type="text"
+                    value={stripeDefaultCurrency}
+                    onChange={(event) => setStripeDefaultCurrency(event.target.value.toUpperCase().slice(0, 3))}
+                    placeholder="MXN"
+                    className={styles.input}
+                    autoComplete="off"
+                  />
+                  <p className={styles.hint}>Los cobros pueden enviar otra moneda desde el modal, pero esta queda como default.</p>
+                </div>
+
+                <div className={styles.formField}>
+                  <label className={styles.label}>Publishable key</label>
+                  <input
+                    type="text"
+                    value={stripePublishableKey}
+                    onChange={(event) => setStripePublishableKey(event.target.value)}
+                    placeholder="pk_test_..."
+                    className={styles.input}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <p className={styles.hint}>Esta llave puede usarse en la página pública para cargar Stripe Elements.</p>
+                </div>
+
+                <div className={styles.formField}>
+                  <label className={styles.label}>Secret key</label>
+                  <input
+                    type="password"
+                    value={stripeSecretKey}
+                    onChange={(event) => setStripeSecretKey(event.target.value)}
+                    placeholder={stripeConfig?.hasSecretKey ? stripeConfig.secretKeyPreview : 'sk_test_...'}
+                    className={styles.input}
+                    autoComplete="new-password"
+                    spellCheck={false}
+                  />
+                  <p className={styles.hint}>Se guarda cifrada y sólo la usa el backend para crear PaymentIntents.</p>
+                </div>
+
+                <div className={styles.formField}>
+                  <label className={styles.label}>Webhook signing secret</label>
+                  <input
+                    type="password"
+                    value={stripeWebhookSecret}
+                    onChange={(event) => setStripeWebhookSecret(event.target.value)}
+                    placeholder={stripeConfig?.hasWebhookSecret ? stripeConfig.webhookSecretPreview : 'whsec_...'}
+                    className={styles.input}
+                    autoComplete="new-password"
+                    spellCheck={false}
+                  />
+                  <p className={styles.hint}>Configura en Stripe un webhook hacia `/api/stripe/webhook` para marcar pagos como pagados automáticamente.</p>
+                </div>
+              </div>
+
+              <div className={styles.actions}>
+                <Button
+                  variant="secondary"
+                  onClick={handleTestStripeConfig}
+                  disabled={testingStripeConfig || savingStripeConfig || !stripeSecretKey.trim()}
+                >
+                  {testingStripeConfig ? (
+                    <>
+                      <Loader2 size={18} className={styles.spinIcon} />
+                      Probando...
+                    </>
+                  ) : (
+                    'Probar conexión'
+                  )}
+                </Button>
+                <Button
+                  onClick={handleSaveStripeConfig}
+                  disabled={savingStripeConfig || testingStripeConfig}
+                >
+                  {savingStripeConfig ? (
+                    <>
+                      <Loader2 size={18} className={styles.spinIcon} />
+                      Guardando...
+                    </>
+                  ) : (
+                    'Guardar Stripe'
+                  )}
+                </Button>
+              </div>
+            </>
           )}
 
           {showHighLevelSettings && (

@@ -30,6 +30,7 @@ import { PhoneCalendar } from '@/pages/PhoneCalendar'
 import { PhoneChat } from '@/pages/PhoneChat'
 import { PhonePayments } from '@/pages/PhonePayments'
 import { PhoneSettings } from '@/pages/PhoneSettings'
+import { PublicPayment } from '@/pages/PublicPayment'
 import { Login } from '@/pages/Login'
 import { Setup } from '@/pages/Login/Setup'
 import { LicenseBlocked } from '@/pages/Login/LicenseBlocked'
@@ -607,6 +608,7 @@ const AppWithNotifications: React.FC = () => {
           <Route path="/license-blocked" element={<LicenseBlocked />} />
           <Route path="/sso" element={<Sso />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/pay/:publicPaymentId" element={<PublicPayment />} />
           <Route path="/phone/tenant" element={<MobileTenantSetup />} />
           <Route path="/phone/login" element={<Login />} />
           <Route
