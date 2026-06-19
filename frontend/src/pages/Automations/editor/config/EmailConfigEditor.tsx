@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Edit3 } from 'lucide-react'
-import { emailHtmlToPlainText, plainTextToEmailHtml } from '@/components/common'
+import { emailHtmlToPlainText, plainTextToEmailHtml, type EmailRichTextVariable } from '@/components/common'
 import { Field } from './configPrimitives'
 import { VariableTextInput } from '../composer/MessageComposer'
 import { BASE_VARIABLES, FlowVariablesContext, loadAllVariables } from '../variablesCatalog'
-import { RichEmailEditorModal } from './RichEmailEditorModal'
 import styles from '../AutomationEditor.module.css'
 
 type ConfigValue = Record<string, unknown>
@@ -12,14 +11,22 @@ type ConfigValue = Record<string, unknown>
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
 const bool = (value: unknown, fallback: boolean): boolean => (typeof value === 'boolean' ? value : fallback)
 
+export interface EmailRichEditorRequest {
+  subject: string
+  body: string
+  bodyHtml: string
+  includeSignature: boolean
+  variables: EmailRichTextVariable[]
+}
+
 interface EmailConfigEditorProps {
   config: ConfigValue
   onChange: (config: ConfigValue) => void
+  onOpenRichEditor: (request: EmailRichEditorRequest) => void
 }
 
-export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, onChange }) => {
+export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, onChange, onOpenRichEditor }) => {
   const flowVariables = React.useContext(FlowVariablesContext)
-  const [editorOpen, setEditorOpen] = useState(false)
   const [variables, setVariables] = useState(BASE_VARIABLES)
   const setValue = (key: string, value: unknown) => onChange({ ...config, [key]: value })
 
@@ -33,7 +40,7 @@ export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, on
     }
   }, [])
 
-  const richEditorVariables = useMemo(() => {
+  const richEditorVariables = useMemo<EmailRichTextVariable[]>(() => {
     const byId = new Map<string, { value: string; label: string }>()
     ;[...variables, ...flowVariables.variables].forEach((variable) => {
       if (!variable.fieldId) return
@@ -78,7 +85,15 @@ export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, on
           type="button"
           className={styles.emailEditorTrigger}
           data-empty={bodyPreview ? undefined : 'true'}
-          onClick={() => setEditorOpen(true)}
+          onClick={() =>
+            onOpenRichEditor({
+              subject: str(config.subject),
+              body,
+              bodyHtml,
+              includeSignature,
+              variables: richEditorVariables
+            })
+          }
         >
           <span className={styles.emailEditorTriggerTop}>
             <span>{bodyPreview ? 'Correo preparado' : 'Editar contenido del correo'}</span>
@@ -92,17 +107,6 @@ export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, on
           </span>
         </button>
       </Field>
-
-      <RichEmailEditorModal
-        open={editorOpen}
-        subject={str(config.subject)}
-        body={body}
-        bodyHtml={bodyHtml}
-        includeSignature={includeSignature}
-        variables={richEditorVariables}
-        onClose={() => setEditorOpen(false)}
-        onSave={(nextConfig) => onChange({ ...config, ...nextConfig })}
-      />
     </>
   )
 }

@@ -21,7 +21,7 @@ import { DripConfigEditor } from './config/DripConfigEditor'
 import { GoalConfigEditor } from './config/GoalConfigEditor'
 import { WhatsAppConfigEditor } from './config/WhatsAppConfigEditor'
 import { MessageBlocksEditor } from './config/MessageBlocksEditor'
-import { EmailConfigEditor } from './config/EmailConfigEditor'
+import { EmailConfigEditor, type EmailRichEditorRequest } from './config/EmailConfigEditor'
 import { TriggerFiltersEditor } from './config/TriggerFiltersEditor'
 import { SchedulerConfigEditor } from './config/SchedulerConfigEditor'
 import type { TriggerFilter } from './crmFields'
@@ -40,6 +40,7 @@ interface NodeConfigBubbleProps {
   onChange: (config: ConfigValue) => void
   waitMessageSources?: WaitMessageSourceOption[]
   onRefreshWebhookSample?: (endpointId: string) => Promise<Record<string, unknown> | null>
+  onOpenRichEmailEditor: (request: EmailRichEditorRequest) => void
   onClose: () => void
 }
 
@@ -61,6 +62,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   onChange,
   waitMessageSources = [],
   onRefreshWebhookSample,
+  onOpenRichEmailEditor,
   onClose
 }) => {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -702,7 +704,9 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             />
           </>
         )}
-        {definition.configComponent === 'email' && <EmailConfigEditor config={config} onChange={onChange} />}
+        {definition.configComponent === 'email' && (
+          <EmailConfigEditor config={config} onChange={onChange} onOpenRichEditor={onOpenRichEmailEditor} />
+        )}
         {definition.configComponent === 'scheduler' && (
           <SchedulerConfigEditor config={config} onChange={onChange} />
         )}

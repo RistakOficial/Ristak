@@ -78,6 +78,8 @@ import { FlowSettingsPanel } from './FlowSettingsPanel'
 import { EnrollmentRecordsModal, type RecordsTab } from './EnrollmentRecordsModal'
 import { createEditorState, editorReducer } from './editorState'
 import { validateAutomationFlow } from './automationValidation'
+import { RichEmailEditorModal } from './config/RichEmailEditorModal'
+import type { EmailRichEditorRequest } from './config/EmailConfigEditor'
 import styles from './AutomationEditor.module.css'
 
 // El AppShell escucha este evento (lo usa el editor de Sitios) para ocultar el
@@ -120,6 +122,15 @@ interface ConfigState {
   /** Ya se registró un punto de historial en esta sesión de edición */
   committed: boolean
 }
+
+type EmailEditorSaveConfig = {
+  subject: string
+  body: string
+  bodyHtml: string
+  includeSignature: boolean
+}
+
+type EmailEditorState = EmailRichEditorRequest & Pick<ConfigState, 'nodeId' | 'triggerId' | 'committed'>
 
 interface PreviewStep {
   key: string
@@ -258,6 +269,9 @@ export const AutomationEditor: React.FC = () => {
   const flowSettingsRef = useRef(flowSettings)
   flowSettingsRef.current = flowSettings
   const [config, setConfig] = useState<ConfigState | null>(null)
+  const [emailEditor, setEmailEditor] = useState<EmailEditorState | null>(null)
+  const emailEditorRef = useRef<EmailEditorState | null>(null)
+  emailEditorRef.current = emailEditor
   const configRef = useRef<typeof config>(null)
   useEffect(() => {
     configRef.current = config
@@ -1186,6 +1200,13 @@ export const AutomationEditor: React.FC = () => {
           target.tagName === 'SELECT' ||
           target.isContentEditable)
 
+      if (emailEditorRef.current) {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+          event.preventDefault()
+        }
+        return
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
         event.preventDefault()
         void persistAutomation({ notify: true })
@@ -1465,6 +1486,61 @@ export const AutomationEditor: React.FC = () => {
     }
   }
 
+  const handleOpenRichEmailEditor = (request: EmailRichEditorRequest) => {
+    const currentConfig = configRef.current
+    if (!currentConfig) return
+
+    const nextEmailEditor = {
+      ...request,
+      nodeId: currentConfig.nodeId,
+      triggerId: currentConfig.triggerId,
+      committed: currentConfig.committed
+    }
+    emailEditorRef.current = nextEmailEditor
+    configRef.current = null
+    setEmailEditor(nextEmailEditor)
+    setPicker(null)
+    setConfig(null)
+  }
+
+  const closeRichEmailEditor = () => {
+    emailEditorRef.current = null
+    setEmailEditor(null)
+  }
+
+  const handleSaveRichEmailEditor = (nextConfig: EmailEditorSaveConfig) => {
+    if (!emailEditor) return
+
+    const current = stateRef.current.present
+    const node = current.nodes.find((candidate) => candidate.id === emailEditor.nodeId)
+    if (!node) {
+      closeRichEmailEditor()
+      return
+    }
+
+    const withHistory = !emailEditor.committed
+    if (emailEditor.triggerId) {
+      const triggers = getStartTriggers(node).map((trigger) =>
+        trigger.id === emailEditor.triggerId
+          ? { ...trigger, config: { ...trigger.config, ...nextConfig } }
+          : trigger
+      )
+      const mergedConfig = { ...node.config, triggers }
+      updateNodeConfig(node.id, mergedConfig, withHistory)
+      if (nodeErrors[node.id]?.length) {
+        syncNodeConfigErrors({ ...node, config: mergedConfig })
+      }
+    } else {
+      const mergedConfig = { ...node.config, ...nextConfig }
+      updateNodeConfig(node.id, mergedConfig, withHistory)
+      if (nodeErrors[node.id]?.length) {
+        syncNodeConfigErrors({ ...node, config: mergedConfig })
+      }
+    }
+
+    closeRichEmailEditor()
+  }
+
   const status = automation.status
   const currentAutomationSummary = toAutomationSummary(automation)
   const requiresReview = automation.reviewStatus?.state === 'requires_review'
@@ -1696,7 +1772,7 @@ export const AutomationEditor: React.FC = () => {
         pendingEdge={pendingEdge}
         fitSignal={fitSignal}
         nodeStats={nodeStats}
-        hideFirstStepGhost={Boolean(picker)}
+        hideFirstStepGhost={Boolean(picker) && !emailEditor}
         actions={canvasActions}
       >
         <button
@@ -1711,7 +1787,7 @@ export const AutomationEditor: React.FC = () => {
           <Plus size={20} />
         </button>
 
-        {picker && (
+        {!emailEditor && picker && (
           <StepPickerBubble
             kind={picker.kind}
             variant={picker.variant}
@@ -1733,7 +1809,7 @@ export const AutomationEditor: React.FC = () => {
         )}
 
         {/* Panel de configuración flotante junto al evento */}
-        {config && configNode && configDefinition && configAnchor && (
+        {!emailEditor && config && configNode && configDefinition && configAnchor && (
           <NodeConfigBubble
             definition={configDefinition}
             config={(configTrigger ? configTrigger.config : configNode.config) || {}}
@@ -1742,11 +1818,23 @@ export const AutomationEditor: React.FC = () => {
             onChange={handleConfigChange}
             waitMessageSources={waitMessageSources}
             onRefreshWebhookSample={refreshWebhookSample}
+            onOpenRichEmailEditor={handleOpenRichEmailEditor}
             onClose={closeConfig}
           />
         )}
       </AutomationCanvas>
       </div>
+
+      <RichEmailEditorModal
+        open={Boolean(emailEditor)}
+        subject={emailEditor?.subject || ''}
+        body={emailEditor?.body || ''}
+        bodyHtml={emailEditor?.bodyHtml || ''}
+        includeSignature={emailEditor?.includeSignature ?? true}
+        variables={emailEditor?.variables || []}
+        onClose={closeRichEmailEditor}
+        onSave={handleSaveRichEmailEditor}
+      />
 
       {/* ------------------ Inscripciones y registros ----------------------- */}
       <EnrollmentRecordsModal
