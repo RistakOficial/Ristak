@@ -3453,10 +3453,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const lacksStripePlanAuthorization = paymentOption === 'stripe' &&
         activePaymentMode === 'partial' &&
         !stripePlanCanBeAuthorized
+      const stripePlanWillRegisterOfflineFirstPayment = firstPaymentEnabled && isOfflineFirstPaymentMethod(firstPaymentMethod)
       const confirmLabel = paymentOption === 'stripe_saved_card'
         ? 'Cobrar tarjeta'
         : paymentOption === 'stripe' && activePaymentMode === 'partial'
-          ? stripePlanCardSource === 'saved_card' ? 'Programar con tarjeta' : 'Crear link de domiciliación'
+          ? stripePlanCardSource === 'saved_card'
+            ? 'Programar con tarjeta'
+            : stripePlanWillRegisterOfflineFirstPayment
+              ? 'Registrar pago y enviar enlace de domiciliación'
+              : 'Crear link de domiciliación'
         : paymentOption === 'stripe'
         ? 'Crear link Stripe'
         : paymentOption === 'send'
