@@ -289,9 +289,9 @@
 }
 
 .chatSelectionBar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   flex: 0 0 auto;
   min-height: 0;
@@ -300,7 +300,7 @@
   background: var(--surface);
   color: var(--text-dim);
   font-size: var(--font-size-xs);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .chatSelectionBar[data-chat-selection-active='true'] {
@@ -350,35 +350,66 @@
   white-space: nowrap;
 }
 
-.chatSelectionActions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-}
-
-.chatSelectionActions [data-btn] {
-  width: 100%;
-  min-width: 0;
+.chatSelectionMenuButton[data-btn] {
+  flex: 0 0 auto;
   min-height: 30px;
-  padding: 0 8px;
-  gap: 5px;
-  justify-content: center;
-  white-space: normal;
-  line-height: 1.12;
+  padding: 0 10px;
+  gap: 6px;
 }
 
-.chatSelectionDeleteAction[data-btn] {
-  grid-column: 1 / span 2;
+.chatSelectionMenu {
+  min-width: min(310px, calc(100vw - 32px));
+  padding: 6px;
 }
 
-.chatSelectionClear[data-btn] {
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  align-self: stretch;
-  padding: 0;
+.chatSelectionMenuHeader {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid var(--chat-border);
+}
+
+.chatSelectionMenuHeader strong {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.chatSelectionMenuHeader span {
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
+.chatSelectionMenuItem {
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 9px;
+}
+
+.chatSelectionMenuItem svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--text-mute);
+}
+
+.chatSelectionMenuItem > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.chatSelectionMenuItem strong {
+  color: currentColor;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.chatSelectionMenuItem small {
+  color: var(--text-mute);
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .chatSelectControl {
@@ -2765,10 +2796,5 @@
 
   .chatSelectionCount {
     margin-left: 0;
-  }
-
-  .chatSelectionActions {
-    width: 100%;
-    justify-content: flex-start;
   }
 }
