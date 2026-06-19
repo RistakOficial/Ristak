@@ -575,8 +575,8 @@
 .modal.confirm,
 .modal.alert,
 .modal.info {
-  width: min(92vw, 520px);
-  max-width: 520px;
+  width: min(92vw, 640px);
+  max-width: 640px;
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-pop);
 }
@@ -585,7 +585,7 @@
 .modal.alert .header,
 .modal.info .header {
   align-items: flex-start;
-  padding: 22px 24px 8px;
+  padding: 28px 32px 10px;
   border-bottom: 0;
 }
 
@@ -600,7 +600,7 @@
 .modal.confirm .title,
 .modal.alert .title,
 .modal.info .title {
-  font-size: 18px;
+  font-size: 20px;
   line-height: 1.35;
 }
 
@@ -615,22 +615,22 @@
 .modal.confirm .content,
 .modal.alert .content,
 .modal.info .content {
-  padding: 12px 24px 0;
-  max-height: min(62vh, 420px);
+  padding: 16px 32px 0;
+  max-height: min(64vh, 480px);
 }
 
 .modal.confirm .message,
 .modal.alert .message,
 .modal.info .message {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.55;
 }
 
 .modal.confirm .footer,
 .modal.alert .footer,
 .modal.info .footer {
-  gap: 10px;
-  padding: 20px 24px 24px;
+  gap: 12px;
+  padding: 24px 32px 28px;
   border-top: 0;
   background: transparent;
 }
@@ -641,10 +641,10 @@
 }
 
 .modal.confirm .footer [data-btn] {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 1 1 168px;
+  min-width: 148px;
   max-width: 100%;
-  padding-inline: 12px;
+  padding-inline: 16px;
   text-align: center;
   white-space: normal;
   line-height: 1.15;
