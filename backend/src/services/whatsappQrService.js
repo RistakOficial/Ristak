@@ -411,13 +411,13 @@ function pickBestQrAck(current, next) {
 function shouldResolveQrAck(ack = {}) {
   const status = cleanString(ack.status).toLowerCase()
   const code = getBaileysStatusCode(ack.statusCode)
-  return status === 'failed' || code === QR_ACK_STATUS.ERROR || code >= QR_ACK_STATUS.SERVER_ACK
+  return status === 'failed' || code === QR_ACK_STATUS.ERROR || code >= QR_ACK_STATUS.DELIVERY_ACK
 }
 
 function isConfirmedQrSendAck(ack = {}) {
   const status = cleanString(ack.status).toLowerCase()
   const code = getBaileysStatusCode(ack.statusCode)
-  return ['sent', 'delivered', 'read', 'played'].includes(status) || code >= QR_ACK_STATUS.SERVER_ACK
+  return ['delivered', 'read', 'played'].includes(status) || code >= QR_ACK_STATUS.DELIVERY_ACK
 }
 
 function getQrAckError(update = {}) {
@@ -461,8 +461,10 @@ function buildQrAckFromMessageUpdate(update = {}) {
   }
 }
 
-function buildQrAckFromSendResponse(messageId, response = {}) {
+function buildQrFailureAckFromSendResponse(messageId, response = {}) {
   const statusCode = getBaileysStatusCode(response?.status)
+  if (statusCode !== QR_ACK_STATUS.ERROR) return null
+
   return {
     messageId,
     remoteJid: normalizeJid(response?.key?.remoteJid),
@@ -472,6 +474,48 @@ function buildQrAckFromSendResponse(messageId, response = {}) {
     errorCode: '',
     errorMessage: '',
     source: 'sendMessage',
+    receivedAt: nowIso()
+  }
+}
+
+function hasQrReceiptTimestamp(value) {
+  if (value === null || value === undefined || value === '') return false
+  if (typeof value === 'object' && typeof value.toNumber === 'function') {
+    return value.toNumber() > 0
+  }
+  return Number(value) > 0
+}
+
+function getQrReceiptStatusCode(receipt = {}) {
+  if (hasQrReceiptTimestamp(receipt.playedTimestamp)) return QR_ACK_STATUS.PLAYED
+  if (hasQrReceiptTimestamp(receipt.readTimestamp)) return QR_ACK_STATUS.READ
+  if (hasQrReceiptTimestamp(receipt.receiptTimestamp)) return QR_ACK_STATUS.DELIVERY_ACK
+  return null
+}
+
+function getQrReceiptTimestamp(receipt = {}) {
+  return receipt.playedTimestamp || receipt.readTimestamp || receipt.receiptTimestamp || null
+}
+
+function buildQrAckFromMessageReceipt(update = {}) {
+  const messageId = cleanString(update?.key?.id)
+  if (!messageId) return null
+
+  const receipt = update?.receipt || {}
+  const statusCode = getQrReceiptStatusCode(receipt)
+  if (statusCode === null) return null
+
+  return {
+    messageId,
+    remoteJid: normalizeJid(update?.key?.remoteJid),
+    fromMe: update?.key?.fromMe === true,
+    participant: normalizeJid(receipt.userJid || update?.key?.participant),
+    statusCode,
+    status: mapBaileysAckToMessageStatus(statusCode),
+    errorCode: '',
+    errorMessage: '',
+    messageTimestamp: getQrReceiptTimestamp(receipt),
+    source: 'message-receipt.update',
     receivedAt: nowIso()
   }
 }
@@ -543,14 +587,28 @@ async function handleQrMessageUpdates(phone, updates = []) {
     const ack = buildQrAckFromMessageUpdate(update)
     if (!ack) continue
 
-    rememberQrAck(ack)
-    resolveQrAckWaiter(ack)
-    updateStoredQrMessageAck(ack).catch(error => {
-      logger.warn(`[WhatsApp QR] No se pudo guardar ACK ${ack.messageId} (${phone.id}): ${error.message}`)
-    })
-
-    logger.info(`[WhatsApp QR] ACK ${ack.messageId} ${ack.status}${ack.errorMessage ? `: ${ack.errorMessage}` : ''}`)
+    processQrAck(phone, ack)
   }
+}
+
+async function handleQrMessageReceipts(phone, updates = []) {
+  const list = Array.isArray(updates) ? updates : []
+  for (const update of list) {
+    const ack = buildQrAckFromMessageReceipt(update)
+    if (!ack) continue
+
+    processQrAck(phone, ack)
+  }
+}
+
+function processQrAck(phone, ack) {
+  rememberQrAck(ack)
+  resolveQrAckWaiter(ack)
+  updateStoredQrMessageAck(ack).catch(error => {
+    logger.warn(`[WhatsApp QR] No se pudo guardar ACK ${ack.messageId} (${phone.id}): ${error.message}`)
+  })
+
+  logger.info(`[WhatsApp QR] ACK ${ack.messageId} ${ack.status}${ack.errorMessage ? `: ${ack.errorMessage}` : ''}`)
 }
 
 let whatsappApiServiceModulePromise = null
@@ -688,7 +746,7 @@ function waitForQrSendAck(messageId, response = {}) {
     })
   }
 
-  const initialAck = buildQrAckFromSendResponse(cleanMessageId, response)
+  const initialAck = buildQrFailureAckFromSendResponse(cleanMessageId, response)
   const recentAck = qrRecentMessageAcks.get(cleanMessageId)?.ack
   const bestImmediateAck = pickBestQrAck(recentAck, initialAck)
   if (shouldResolveQrAck(bestImmediateAck)) return Promise.resolve(bestImmediateAck)
@@ -730,7 +788,7 @@ async function finalizeQrSendResponse({ response, recipient, externalId }) {
   }
 
   if (!isConfirmedQrSendAck(ack)) {
-    const error = new Error('WhatsApp QR no confirmó que el mensaje saliera. Revisa que el teléfono siga conectado y vuelve a intentar.')
+    const error = new Error('WhatsApp QR no confirmó entrega al destinatario. Revisa que el teléfono siga conectado y que el contacto pueda recibir mensajes.')
     error.code = ack.timedOut ? 'qr_send_ack_timeout' : 'qr_send_not_confirmed'
     error.statusCode = 408
     error.qrAck = ack
@@ -1321,6 +1379,7 @@ function closeLiveSession(phoneNumberId) {
     live.sock.ev?.removeAllListeners?.('connection.update')
     live.sock.ev?.removeAllListeners?.('creds.update')
     live.sock.ev?.removeAllListeners?.('messages.update')
+    live.sock.ev?.removeAllListeners?.('message-receipt.update')
     live.sock.ws?.close?.()
   } catch (error) {
     logger.warn(`[WhatsApp QR] No se pudo cerrar socket ${phoneNumberId}: ${error.message}`)
@@ -1392,6 +1451,11 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
   sock.ev.on('messages.update', (updates) => {
     handleQrMessageUpdates(phone, updates).catch(error => {
       logger.warn(`[WhatsApp QR] No se pudieron procesar actualizaciones de mensajes ${phone.id}: ${error.message}`)
+    })
+  })
+  sock.ev.on('message-receipt.update', (updates) => {
+    handleQrMessageReceipts(phone, updates).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudieron procesar recibos de mensajes ${phone.id}: ${error.message}`)
     })
   })
   sock.ev.on('messages.upsert', (upsert) => {
