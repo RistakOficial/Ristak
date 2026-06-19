@@ -3843,18 +3843,6 @@ export const PhoneChat: React.FC = () => {
     setAiAgentHubAgentFilter('all')
   }, [aiAgentHubAgentFilter, aiAgentHubAgentFilters])
 
-  const agentHiddenChatIdSet = useMemo(() => {
-    if (!agentEnabled) return new Set<string>()
-    return new Set(
-      Object.values(agentStates)
-        .filter((state) => {
-          if (state.status !== 'active' || state.signal) return false
-          const agent = state.agentId ? agentDefById.get(state.agentId) : null
-          return Boolean(agent?.enabled && agent.hideAttended)
-        })
-        .map((state) => state.contactId)
-    )
-  }, [agentDefById, agentEnabled, agentStates])
   const listBaseChats = useMemo(
     () => chats.filter((contact) => {
       if (agentPriorityViewOpen) return agentPriorityChatIdSet.has(contact.id)
@@ -3862,11 +3850,9 @@ export const PhoneChat: React.FC = () => {
       if (archivedChatIdSet.has(contact.id)) return false
       // Las conversaciones con señal del agente suben como filas de acción.
       if (agentPriorityChatIdSet.has(contact.id)) return false
-      // "Ocultar atendidas por el agente": solo reaparecen con señal o humano
-      if (agentHiddenChatIdSet.has(contact.id)) return false
       return true
     }),
-    [agentEnabled, agentHiddenChatIdSet, agentPriorityChatIdSet, agentPriorityViewOpen, archivedChatIdSet, archivedViewOpen, chats]
+    [agentPriorityChatIdSet, agentPriorityViewOpen, archivedChatIdSet, archivedViewOpen, chats]
   )
   const customerLabel = labels.customer?.trim() || 'Cliente'
   const leadLabel = labels.lead?.trim() || 'Interesado'
@@ -11565,29 +11551,19 @@ export const PhoneChat: React.FC = () => {
           <span>Orden del chat</span>
           <small>{agent.name || 'Agente seleccionado'}</small>
         </div>
-        <label className={`${styles.agentCompactToggle} ${agent.hideAttended ? styles.agentCompactToggleActive : ''}`}>
-          <input
-            type="checkbox"
-            checked={Boolean(agent.hideAttended)}
-            disabled={agentConfigSaving}
-            onChange={(event) => saveAgentPatch(agent.id, { hideAttended: event.target.checked })}
-          />
-          <span>
-            <strong>Ocultar atendidas</strong>
-            <small>Oculta conversaciones que este agente esté atendiendo.</small>
-          </span>
-        </label>
-
         <label className={`${styles.agentCompactToggle} ${agent.hideAttendedNotifications ? styles.agentCompactToggleActive : ''}`}>
           <input
             type="checkbox"
             checked={Boolean(agent.hideAttendedNotifications)}
             disabled={agentConfigSaving}
-            onChange={(event) => saveAgentPatch(agent.id, { hideAttendedNotifications: event.target.checked })}
+            onChange={(event) => saveAgentPatch(agent.id, {
+              hideAttended: false,
+              hideAttendedNotifications: event.target.checked
+            })}
           />
           <span>
-            <strong>Silenciar atendidas</strong>
-            <small>Sin avisos mientras responde; al cumplir objetivo vuelve a avisar.</small>
+            <strong>Silenciar al contacto hasta que termine meta</strong>
+            <small>Siempre queda en el chat de la IA; sólo cambia si manda avisos.</small>
           </span>
         </label>
       </section>
@@ -11997,8 +11973,7 @@ export const PhoneChat: React.FC = () => {
                         <div className={styles.agentListMeta}>
                           <span>{getKnownAIModel(agent.model || DEFAULT_AI_MODEL)}</span>
                           <span>{getPhoneReplyDeliverySummary(delivery)}</span>
-                          {agent.hideAttended && <span>Oculta atendidas</span>}
-                          {agent.hideAttendedNotifications && <span>Silencia avisos</span>}
+                          {agent.hideAttendedNotifications && <span>Silencia hasta meta</span>}
                         </div>
 
                         <div className={styles.agentListActions}>

@@ -9,6 +9,7 @@ import {
   completeConversationGoalLinkFromWebhook,
   createConversationalAgent,
   createConversationGoalLink,
+  getConversationalAgent,
   getConversationGoalLink,
   getConversationState,
   getAgentFollowUpStepDelayMs,
@@ -539,6 +540,42 @@ test('no migra una configuración legacy vacía como agente predeterminado', () 
     objective: 'ventas',
     extra_instructions: 'Pregunta presupuesto antes de pasar al equipo.'
   }), true)
+})
+
+test('ocultar atendidas legacy se guarda como silenciar sin sacar el chat de IA', async () => {
+  const agent = await createConversationalAgent({
+    name: 'Agente visible silenciado',
+    enabled: false,
+    hideAttended: true,
+    hideAttendedNotifications: false
+  })
+
+  try {
+    assert.equal(agent.hideAttended, false)
+    assert.equal(agent.hideAttendedNotifications, true)
+
+    let row = await db.get('SELECT hide_attended, hide_attended_notifications FROM conversational_agents WHERE id = ?', [agent.id])
+    assert.equal(row.hide_attended, 0)
+    assert.equal(row.hide_attended_notifications, 1)
+
+    const notifyAgent = await updateConversationalAgent(agent.id, {
+      hideAttended: false,
+      hideAttendedNotifications: false
+    })
+    assert.equal(notifyAgent.hideAttended, false)
+    assert.equal(notifyAgent.hideAttendedNotifications, false)
+
+    row = await db.get('SELECT hide_attended, hide_attended_notifications FROM conversational_agents WHERE id = ?', [agent.id])
+    assert.equal(row.hide_attended, 0)
+    assert.equal(row.hide_attended_notifications, 0)
+
+    await db.run('UPDATE conversational_agents SET hide_attended = 1, hide_attended_notifications = 0 WHERE id = ?', [agent.id])
+    const legacyHiddenAgent = await getConversationalAgent(agent.id)
+    assert.equal(legacyHiddenAgent.hideAttended, false)
+    assert.equal(legacyHiddenAgent.hideAttendedNotifications, true)
+  } finally {
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+  }
 })
 
 test('calcula métricas del agente conversacional por estado y errores', () => {

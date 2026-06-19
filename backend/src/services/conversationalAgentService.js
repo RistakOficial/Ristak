@@ -155,6 +155,11 @@ function mapConfigRow(row) {
     }
   }
 
+  const legacyHideAttended = toBoolean(row.hide_attended)
+  const hideAttendedNotifications = row.hide_attended_notifications === null || row.hide_attended_notifications === undefined
+    ? legacyHideAttended
+    : (toBoolean(row.hide_attended_notifications) || legacyHideAttended)
+
   return {
     enabled: toBoolean(row.enabled),
     aiProvider: normalizeConversationalAIProvider(row.ai_provider),
@@ -166,10 +171,8 @@ function mapConfigRow(row) {
     handoffRules: row.handoff_rules || '',
     extraInstructions: row.extra_instructions || '',
     allowEmojis: toBoolean(row.allow_emojis),
-    hideAttended: toBoolean(row.hide_attended),
-    hideAttendedNotifications: row.hide_attended_notifications === null || row.hide_attended_notifications === undefined
-      ? toBoolean(row.hide_attended)
-      : toBoolean(row.hide_attended_notifications),
+    hideAttended: false,
+    hideAttendedNotifications,
     defaultCalendarId: row.default_calendar_id || null,
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
@@ -200,8 +203,10 @@ export async function saveConversationalAgentConfig(input = {}) {
     handoffRules: input.handoffRules === undefined ? current.handoffRules : String(input.handoffRules || '').slice(0, 4000),
     extraInstructions: input.extraInstructions === undefined ? current.extraInstructions : String(input.extraInstructions || '').slice(0, 8000),
     allowEmojis: input.allowEmojis === undefined ? current.allowEmojis : toBoolean(input.allowEmojis),
-    hideAttended: input.hideAttended === undefined ? current.hideAttended : toBoolean(input.hideAttended),
-    hideAttendedNotifications: input.hideAttendedNotifications === undefined ? current.hideAttendedNotifications : toBoolean(input.hideAttendedNotifications),
+    hideAttended: false,
+    hideAttendedNotifications: input.hideAttendedNotifications === undefined
+      ? (current.hideAttendedNotifications || toBoolean(input.hideAttended))
+      : (toBoolean(input.hideAttendedNotifications) || toBoolean(input.hideAttended)),
     defaultCalendarId: input.defaultCalendarId === undefined ? current.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null),
     closingStrategyMode: input.closingStrategyMode === undefined
       ? current.closingStrategyMode
@@ -224,7 +229,7 @@ export async function saveConversationalAgentConfig(input = {}) {
     `, [
       next.enabled ? 1 : 0, next.aiProvider, next.model, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
-      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
+      next.allowEmojis ? 1 : 0, 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
       next.closingStrategyMode, next.closingStrategyCustom
     ])
   } else {
@@ -238,7 +243,7 @@ export async function saveConversationalAgentConfig(input = {}) {
     `, [
       next.enabled ? 1 : 0, next.aiProvider, next.model, next.objective, next.customObjective, next.successAction,
       next.requiredData, next.handoffRules, next.extraInstructions,
-      next.allowEmojis ? 1 : 0, next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
+      next.allowEmojis ? 1 : 0, 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
       next.closingStrategyMode, next.closingStrategyCustom
     ])
   }
@@ -1459,6 +1464,10 @@ export function getAgentReplyDeliveryPartDelayMs(agentConfig = {}) {
 function mapAgentRow(row) {
   if (!row) return null
   const aiProvider = normalizeConversationalAIProvider(row.ai_provider)
+  const legacyHideAttended = toBoolean(row.hide_attended)
+  const hideAttendedNotifications = row.hide_attended_notifications === null || row.hide_attended_notifications === undefined
+    ? legacyHideAttended
+    : (toBoolean(row.hide_attended_notifications) || legacyHideAttended)
   return {
     id: row.id,
     name: row.name || 'Agente',
@@ -1474,10 +1483,8 @@ function mapAgentRow(row) {
     handoffRules: row.handoff_rules || '',
     extraInstructions: row.extra_instructions || '',
     allowEmojis: toBoolean(row.allow_emojis),
-    hideAttended: toBoolean(row.hide_attended),
-    hideAttendedNotifications: row.hide_attended_notifications === null || row.hide_attended_notifications === undefined
-      ? toBoolean(row.hide_attended)
-      : toBoolean(row.hide_attended_notifications),
+    hideAttended: false,
+    hideAttendedNotifications,
     defaultCalendarId: row.default_calendar_id || null,
     closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     closingStrategyCustom: row.closing_strategy_custom || '',
@@ -1545,10 +1552,10 @@ export async function ensureAgentsMigration() {
     legacy.handoff_rules || '',
     legacy.extra_instructions || '',
     toBoolean(legacy.allow_emojis) ? 1 : 0,
-    toBoolean(legacy.hide_attended) ? 1 : 0,
+    0,
     legacy.hide_attended_notifications === null || legacy.hide_attended_notifications === undefined
       ? (toBoolean(legacy.hide_attended) ? 1 : 0)
-      : (toBoolean(legacy.hide_attended_notifications) ? 1 : 0),
+      : ((toBoolean(legacy.hide_attended_notifications) || toBoolean(legacy.hide_attended)) ? 1 : 0),
     legacy.default_calendar_id || null,
     legacy.closing_strategy_mode === 'custom' ? 'custom' : 'system',
     legacy.closing_strategy_custom || '',
@@ -1746,8 +1753,10 @@ function agentInputToRowValues(input, base) {
     handoffRules: input.handoffRules === undefined ? base.handoffRules : String(input.handoffRules || '').slice(0, 4000),
     extraInstructions: input.extraInstructions === undefined ? base.extraInstructions : String(input.extraInstructions || '').slice(0, 8000),
     allowEmojis: input.allowEmojis === undefined ? base.allowEmojis : toBoolean(input.allowEmojis),
-    hideAttended: input.hideAttended === undefined ? base.hideAttended : toBoolean(input.hideAttended),
-    hideAttendedNotifications: input.hideAttendedNotifications === undefined ? base.hideAttendedNotifications : toBoolean(input.hideAttendedNotifications),
+    hideAttended: false,
+    hideAttendedNotifications: input.hideAttendedNotifications === undefined
+      ? (base.hideAttendedNotifications || toBoolean(input.hideAttended))
+      : (toBoolean(input.hideAttendedNotifications) || toBoolean(input.hideAttended)),
     defaultCalendarId: input.defaultCalendarId === undefined ? base.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null),
     closingStrategyMode: input.closingStrategyMode === undefined
       ? base.closingStrategyMode
@@ -1815,7 +1824,7 @@ export async function createConversationalAgent(input = {}) {
     id, next.name, next.enabled ? 1 : 0, next.aiProvider, next.model, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
     next.extraInstructions, next.allowEmojis ? 1 : 0,
-    next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
+    0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters)
   ])
@@ -1843,7 +1852,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
     next.name, next.enabled ? 1 : 0, next.aiProvider, next.model, next.position, next.objective, next.customObjective,
     next.successAction, JSON.stringify(next.successExtras), next.requiredData, next.handoffRules,
     next.extraInstructions, next.allowEmojis ? 1 : 0,
-    next.hideAttended ? 1 : 0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
+    0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
     agentId

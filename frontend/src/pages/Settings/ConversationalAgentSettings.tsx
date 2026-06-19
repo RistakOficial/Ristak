@@ -96,19 +96,14 @@ const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
 
 const attendedChatActionOptions = [
   {
-    value: 'keep_visible',
-    label: 'Nada raro: visible y con avisos',
-    description: 'El chat se queda normal. Ejemplo: lo ves y te llegan avisos.'
-  },
-  {
-    value: 'hide_only',
-    label: 'Escóndelo mientras lo atiende',
-    description: 'El chat se guarda mientras la IA habla. Ejemplo: no te llena la bandeja.'
-  },
-  {
     value: 'mute_only',
-    label: 'Visible, pero sin avisos',
-    description: 'El chat se ve, pero no suena. Ejemplo: puedes verlo sin notificaciones.'
+    label: 'Silenciar al contacto hasta que termine meta',
+    description: 'El contacto sigue en el chat de la IA, pero no manda avisos hasta que la meta termine.'
+  },
+  {
+    value: 'keep_visible',
+    label: 'Recibir notificaciones incluso si la IA responde',
+    description: 'El contacto sigue en el chat de la IA y manda avisos aunque el agente esté respondiendo.'
   }
 ] as const
 
@@ -909,14 +904,13 @@ function getObjectiveSuccessAction(objective: ConversationalObjective, workflow:
 }
 
 function getAttendedChatActionValue(agent: Pick<ConversationalAgentDef, 'hideAttended' | 'hideAttendedNotifications'>): AttendedChatActionValue {
-  if (agent.hideAttended) return 'hide_only'
   if (agent.hideAttendedNotifications) return 'mute_only'
   return 'keep_visible'
 }
 
 function getAttendedChatActionPatch(value: AttendedChatActionValue): Pick<ConversationalAgentDefInput, 'hideAttended' | 'hideAttendedNotifications'> {
   return {
-    hideAttended: value === 'hide_only',
+    hideAttended: false,
     hideAttendedNotifications: value === 'mute_only'
   }
 }
@@ -3529,8 +3523,7 @@ export const ConversationalAgentSettings: React.FC = () => {
                     <span>{entryRules > 0 ? `${entryRules} ${entryRules === 1 ? 'regla' : 'reglas'}` : 'Cualquier chat'}</span>
                     <span>{agentMetrics?.assignedConversations ?? 0} atendiendo</span>
                     <span>{agentMetrics?.completedConversations ?? 0} cumplidos</span>
-                    {agent.hideAttended && <span>Oculta atendidas</span>}
-                    {agent.hideAttendedNotifications && <span>Silencia avisos</span>}
+                    {agent.hideAttendedNotifications && <span>Silencia hasta meta</span>}
                   </div>
                 </button>
                 <div className={styles.agentDirectoryActions}>
