@@ -1155,6 +1155,12 @@ body.dark .summaryBadge,
   flex: 0 0 224px;
 }
 
+.savedCardSelector {
+  width: 260px;
+  max-width: 260px;
+  flex: 0 0 260px;
+}
+
 /* Mensaje cuando no hay opciones de envío */
 .noOptionsMessage {
   display: flex;
@@ -1562,6 +1568,12 @@ body.dark .tooltipInfo {
   }
 
   .sendMethodSelector {
+    width: 100%;
+    max-width: none;
+    flex: 1 1 auto;
+  }
+
+  .savedCardSelector {
     width: 100%;
     max-width: none;
     flex: 1 1 auto;

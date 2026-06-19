@@ -214,6 +214,28 @@
   gap: 16px;
 }
 
+.saveMethodConsent {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.saveMethodConsent input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+
 .stripeElementShell {
   padding: 14px;
   border: 1px solid var(--border);

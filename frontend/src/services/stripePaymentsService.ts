@@ -76,6 +76,42 @@ export interface StripePaymentIntentResponse {
   status: string
 }
 
+export interface StripeSavedPaymentMethod {
+  id: string
+  contactId: string
+  stripeCustomerId: string
+  stripePaymentMethodId: string
+  brand: string
+  last4: string
+  expMonth: number
+  expYear: number
+  funding?: string
+  country?: string
+  mode: 'test' | 'live'
+  isDefault: boolean
+  label: string
+  expiresLabel: string
+}
+
+export interface StripeSavedCardPaymentPayload {
+  contactId: string
+  paymentMethodId: string
+  contactName?: string
+  email?: string
+  phone?: string
+  amount: number
+  currency: string
+  title?: string
+  description?: string
+  dueDate?: string
+  source?: string
+  lineItems?: Array<Record<string, unknown>>
+}
+
+export interface CreatePublicPaymentIntentPayload {
+  savePaymentMethod?: boolean
+}
+
 async function parseApiResponse<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
@@ -151,13 +187,33 @@ export const stripePaymentsService = {
     return parseApiResponse<PublicStripePayment>(response)
   },
 
-  async createPublicPaymentIntent(publicPaymentId: string): Promise<StripePaymentIntentResponse> {
+  async createPublicPaymentIntent(publicPaymentId: string, payload: CreatePublicPaymentIntentPayload = {}): Promise<StripePaymentIntentResponse> {
     const response = await fetch(apiUrl(`/api/stripe/public/payments/${encodeURIComponent(publicPaymentId)}/intent`), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
-      }
+      },
+      body: JSON.stringify(payload)
     })
     return parseApiResponse<StripePaymentIntentResponse>(response)
+  },
+
+  async getSavedPaymentMethods(contactId: string): Promise<StripeSavedPaymentMethod[]> {
+    const response = await fetch(apiUrl(`/api/stripe/contacts/${encodeURIComponent(contactId)}/payment-methods`), {
+      headers: getAuthHeaders()
+    })
+    return parseApiResponse<StripeSavedPaymentMethod[]>(response)
+  },
+
+  async createSavedCardPayment(payload: StripeSavedCardPaymentPayload): Promise<{ payment: any }> {
+    const response = await fetch(apiUrl('/api/stripe/saved-card-payments'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify(payload)
+    })
+    return parseApiResponse(response)
   }
 }

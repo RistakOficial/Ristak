@@ -1,9 +1,11 @@
 import {
+  createStripeSavedCardPayment,
   createStripePaymentIntent,
   createStripePaymentLink,
   deleteStripePaymentConfig,
   getPublicStripePayment,
   getStripePaymentConfig,
+  getStripeSavedPaymentMethods,
   handleStripeWebhookEvent,
   saveStripePaymentConfig,
   testStripePaymentConfig
@@ -188,11 +190,31 @@ export async function getPublicStripePaymentView(req, res) {
 
 export async function createPublicStripePaymentIntentView(req, res) {
   try {
-    const result = await createStripePaymentIntent(req.params.publicPaymentId)
+    const result = await createStripePaymentIntent(req.params.publicPaymentId, req.body || {})
     res.json({ success: true, data: result })
   } catch (error) {
     logger.error(`Error creando PaymentIntent público Stripe: ${error.message}`)
     sendStripeError(res, error, 'No se pudo iniciar el pago con Stripe')
+  }
+}
+
+export async function getStripeSavedPaymentMethodsView(req, res) {
+  try {
+    const methods = await getStripeSavedPaymentMethods(req.params.contactId)
+    res.json({ success: true, data: methods })
+  } catch (error) {
+    logger.error(`Error obteniendo tarjetas guardadas Stripe: ${error.message}`)
+    sendStripeError(res, error, 'No se pudieron obtener las tarjetas guardadas')
+  }
+}
+
+export async function createStripeSavedCardPaymentView(req, res) {
+  try {
+    const result = await createStripeSavedCardPayment(req.body || {})
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error cobrando tarjeta guardada Stripe: ${error.message}`)
+    sendStripeError(res, error, 'No se pudo cobrar la tarjeta guardada')
   }
 }
 

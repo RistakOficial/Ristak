@@ -34,7 +34,7 @@ import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { highLevelService } from '@/services/highLevelService'
 import { transactionsService } from '@/services/transactionsService'
-import { stripePaymentsService } from '@/services/stripePaymentsService'
+import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
 
 const IVA_RATE = 0.16
 const DEFAULT_INVOICE_TITLE = 'Pago'
@@ -52,7 +52,7 @@ const normalizeAmount = (value: string | number): number => {
   return Math.round(parsed * 100) / 100
 }
 
-type PaymentOption = 'send' | 'manual' | 'stripe'
+type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card'
 type PaymentMode = 'single' | 'partial'
 type InstallmentValueType = 'percentage' | 'amount'
 type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
@@ -158,6 +158,17 @@ const getContactDisplayName = (contact?: Partial<Contact> | null) => (
 const getContactDisplayDetail = (contact?: Partial<Contact> | null) => (
   contact?.email || contact?.phone || 'Sin información de contacto'
 )
+
+const getSavedCardLabel = (method?: StripeSavedPaymentMethod | null) => {
+  if (!method) return 'Tarjeta guardada'
+  const brand = method.brand ? method.brand.toUpperCase() : 'Tarjeta'
+  return `${brand} •••• ${method.last4 || '----'}`
+}
+
+const getSavedCardDescription = (method?: StripeSavedPaymentMethod | null) => {
+  const label = getSavedCardLabel(method)
+  return method?.expiresLabel ? `${label} · vence ${method.expiresLabel}` : label
+}
 
 const EMAIL_SEND_METHODS = new Set<SendMethod>(['email', 'email_whatsapp', 'email_sms', 'all'])
 const PHONE_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'sms', 'email_whatsapp', 'email_sms', 'all'])
@@ -443,6 +454,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [sendMethod, setSendMethod] = useState<SendMethod>(DEFAULT_SEND_METHOD)
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(defaultManualPaymentData)
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
+  const [savedPaymentMethods, setSavedPaymentMethods] = useState<StripeSavedPaymentMethod[]>([])
+  const [selectedSavedPaymentMethodId, setSelectedSavedPaymentMethodId] = useState('')
 
   // Estado de conexión con HighLevel. Cuando NO está conectado, Ristak opera en
   // modo local: productos y pagos manuales siguen funcionando; enlaces y
@@ -535,6 +548,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   )
   const sendMethodOptions = useMemo(() => getSendMethodOptions(selectedContact), [selectedContact?.email, selectedContact?.phone])
   const selectedSendMethodOption = sendMethodOptions.find(option => option.value === sendMethod)
+  const savedPaymentMethodOptions = useMemo(() => (
+    savedPaymentMethods.map((method) => ({
+      value: method.stripePaymentMethodId,
+      label: getSavedCardDescription(method)
+    }))
+  ), [savedPaymentMethods])
+  const selectedSavedPaymentMethod = savedPaymentMethods.find((method) => (
+    method.stripePaymentMethodId === selectedSavedPaymentMethodId || method.id === selectedSavedPaymentMethodId
+  )) || null
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
   const isEmbedded = variant === 'embedded'
   const renderPaymentSegmentedTabs = ({
@@ -642,6 +664,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setPaymentOption(getDefaultPaymentOption())
     setSendMethod(resolvedInitialContact ? getDefaultSendMethod(getSendMethodOptions(resolvedInitialContact)) : DEFAULT_SEND_METHOD)
     setManualPaymentData(defaultManualPaymentData())
+    setSavedPaymentMethods([])
+    setSelectedSavedPaymentMethodId('')
   }
 
   const loadConfig = async () => {
@@ -693,6 +717,50 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setPaymentOption(stripeConnected ? 'stripe' : 'manual')
     }
   }, [highLevelConnected, stripeConnected])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!isOpen || !stripeConnected || !selectedContact?.id || activePaymentMode !== 'single') {
+      setSavedPaymentMethods([])
+      setSelectedSavedPaymentMethodId('')
+      if (paymentOption === 'stripe_saved_card') {
+        setPaymentOption(getDefaultPaymentOption())
+      }
+      return () => {
+        cancelled = true
+      }
+    }
+
+    stripePaymentsService.getSavedPaymentMethods(selectedContact.id)
+      .then((methods) => {
+        if (cancelled) return
+        setSavedPaymentMethods(methods)
+        setSelectedSavedPaymentMethodId((current) => {
+          const stillExists = methods.some((method) => (
+            method.stripePaymentMethodId === current || method.id === current
+          ))
+          if (stillExists) return current
+          const preferred = methods.find((method) => method.isDefault) || methods[0]
+          return preferred?.stripePaymentMethodId || ''
+        })
+        if (!methods.length && paymentOption === 'stripe_saved_card') {
+          setPaymentOption(getDefaultPaymentOption())
+        }
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSavedPaymentMethods([])
+        setSelectedSavedPaymentMethodId('')
+        if (paymentOption === 'stripe_saved_card') {
+          setPaymentOption(getDefaultPaymentOption())
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, stripeConnected, selectedContact?.id, activePaymentMode, paymentOption])
 
   useEffect(() => {
     if (!isOpen) {
@@ -1412,6 +1480,56 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     setLoading(true)
     setStep('processing')
+
+    if (paymentOption === 'stripe_saved_card') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      if (!selectedSavedPaymentMethod) {
+        showToast('error', 'Selecciona una tarjeta guardada')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await stripePaymentsService.createSavedCardPayment({
+          contactId: selectedContact.id,
+          paymentMethodId: selectedSavedPaymentMethod.stripePaymentMethodId,
+          contactName: invoiceSummary.contactName || selectedContact.name,
+          email: selectedContact.email || invoiceSummary.contactEmail || '',
+          phone: selectedContact.phone || '',
+          amount: invoiceSummary.amount,
+          currency: invoiceSummary.currency,
+          title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
+          description: invoiceSummary.description,
+          dueDate: invoicePayload.dueDate,
+          source: 'record_payment_modal_saved_card',
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+        })
+
+        const paid = result.payment?.status === 'paid'
+        showToast(
+          'success',
+          paid ? 'Cobro realizado' : 'Cobro enviado a Stripe',
+          paid
+            ? `${getSavedCardLabel(selectedSavedPaymentMethod)} quedó cobrada correctamente.`
+            : 'Stripe está terminando de procesar este cobro.'
+        )
+        onSuccess?.()
+        onClose()
+      } catch (stripeError: any) {
+        showToast('error', 'No se pudo cobrar la tarjeta', stripeError.message || 'Revisa la tarjeta guardada o envía un link de Stripe.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
 
     if (paymentOption === 'stripe') {
       if (!selectedContact) {
@@ -2573,6 +2691,39 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         </div>
 
         <div className={styles.paymentOptions}>
+          {stripeConnected && savedPaymentMethods.length > 0 && (
+            <button
+              type="button"
+              className={`${styles.optionButton} ${paymentOption === 'stripe_saved_card' ? styles.optionButtonActive : ''}`}
+              onClick={() => setPaymentOption('stripe_saved_card')}
+            >
+              <div className={styles.optionInfo}>
+                <div className={styles.optionIcon}>
+                  <ShieldCheck size={18} />
+                </div>
+                <div>
+                  <p>Cobrar tarjeta guardada</p>
+                  <span>{getSavedCardDescription(selectedSavedPaymentMethod || savedPaymentMethods[0])}</span>
+                </div>
+              </div>
+              {paymentOption === 'stripe_saved_card' && (
+                <div className={styles.optionAction}>
+                  <Check size={18} className={styles.optionCheck} />
+                  {savedPaymentMethods.length > 1 && (
+                    <div className={styles.savedCardSelector} onClick={(e) => e.stopPropagation()}>
+                      <CustomSelect
+                        value={selectedSavedPaymentMethodId}
+                        onValueChange={setSelectedSavedPaymentMethodId}
+                        options={savedPaymentMethodOptions}
+                        portal
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </button>
+          )}
+
           {stripeConnected && (
             <button
               type="button"
@@ -2754,7 +2905,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (step === 'options') {
       const requiresDeliveryChannel = paymentOption === 'send'
       const lacksDeliveryChannel = requiresDeliveryChannel && !selectedContact?.email && !selectedContact?.phone
-      const confirmLabel = paymentOption === 'stripe'
+      const lacksSavedCard = paymentOption === 'stripe_saved_card' && !selectedSavedPaymentMethodId
+      const confirmLabel = paymentOption === 'stripe_saved_card'
+        ? 'Cobrar tarjeta'
+        : paymentOption === 'stripe'
         ? 'Crear link Stripe'
         : paymentOption === 'send'
           ? activePaymentMode === 'partial' ? 'Crear y enviar enlace' : 'Enviar enlace'
@@ -2777,11 +2931,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               onClick={() => handleConfirm()}
               disabled={
                 loading ||
-                lacksDeliveryChannel
+                lacksDeliveryChannel ||
+                lacksSavedCard
               }
               title={
                 lacksDeliveryChannel
                   ? 'El contacto no tiene email ni teléfono para enviar el enlace'
+                  : lacksSavedCard
+                    ? 'Selecciona una tarjeta guardada'
                   : undefined
               }
             >
@@ -2799,6 +2956,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               <div className={styles.tooltipInfo}>
                 <AlertCircle size={14} />
                 <span>El contacto necesita email o teléfono para enviar</span>
+              </div>
+            )}
+            {lacksSavedCard && (
+              <div className={styles.tooltipInfo}>
+                <AlertCircle size={14} />
+                <span>Selecciona una tarjeta guardada</span>
               </div>
             )}
           </div>

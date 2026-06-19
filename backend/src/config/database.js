@@ -1803,6 +1803,7 @@ async function initTables() {
         meta_purchase_event_id TEXT,
         preferred_whatsapp_phone_number_id TEXT,
         ghl_contact_id TEXT,
+        stripe_customer_id TEXT,
         custom_fields ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -1821,10 +1822,19 @@ async function initTables() {
       // Columna ya existe, ignorar.
     }
 
+    try {
+      await db.run('ALTER TABLE contacts ADD COLUMN stripe_customer_id TEXT')
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        throw err
+      }
+    }
+
     // Índices para contacts
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ghl_contact_id ON contacts(ghl_contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_stripe_customer ON contacts(stripe_customer_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ad_id ON contacts(attribution_ad_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_preferred_whatsapp_phone ON contacts(preferred_whatsapp_phone_number_id)')
@@ -1980,6 +1990,28 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_contact ON payments(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(date)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS stripe_payment_methods (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT,
+        stripe_customer_id TEXT NOT NULL,
+        stripe_payment_method_id TEXT NOT NULL UNIQUE,
+        brand TEXT,
+        last4 TEXT,
+        exp_month INTEGER,
+        exp_year INTEGER,
+        funding TEXT,
+        country TEXT,
+        mode TEXT DEFAULT 'test',
+        is_default INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_stripe_payment_methods_contact ON stripe_payment_methods(contact_id, mode)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_stripe_payment_methods_customer ON stripe_payment_methods(stripe_customer_id)')
 
     // Tabla local de planes de pago / invoice schedules de HighLevel.
     // GoHighLevel sigue siendo la integración activa, pero guardamos un espejo local
@@ -3141,6 +3173,7 @@ async function initTables() {
       try {
         await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_meta_schedule_sent ON contacts(meta_schedule_event_sent)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_meta_purchase_sent ON contacts(meta_purchase_event_sent)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_stripe_customer ON contacts(stripe_customer_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err

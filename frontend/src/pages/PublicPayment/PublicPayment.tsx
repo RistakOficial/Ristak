@@ -145,10 +145,12 @@ export const PublicPayment: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [startingPayment, setStartingPayment] = useState(false)
   const [error, setError] = useState('')
+  const [savePaymentMethod, setSavePaymentMethod] = useState(false)
 
   const status = getStatusCopy(payment?.status || '')
   const isPaid = Boolean(payment && ['paid', 'succeeded', 'completed'].includes(payment.status.toLowerCase()))
   const isClosed = Boolean(payment && ['void', 'refunded', 'deleted'].includes(payment.status.toLowerCase()))
+  const canSavePaymentMethod = Boolean(payment?.contact?.id)
 
   const stripePromise = useMemo<StripePromise | null>(() => {
     const key = intent?.publishableKey || payment?.publishableKey
@@ -199,7 +201,9 @@ export const PublicPayment: React.FC = () => {
     setStartingPayment(true)
     setError('')
     try {
-      const nextIntent = await stripePaymentsService.createPublicPaymentIntent(payment.publicPaymentId)
+      const nextIntent = await stripePaymentsService.createPublicPaymentIntent(payment.publicPaymentId, {
+        savePaymentMethod: canSavePaymentMethod && savePaymentMethod
+      })
       setIntent(nextIntent)
     } catch (intentError: any) {
       setError(intentError.message || 'No se pudo iniciar el cobro.')
@@ -246,7 +250,7 @@ export const PublicPayment: React.FC = () => {
             <span className={styles.eyebrow}>Ristak Payments</span>
             <h1 className={styles.title}>{payment.title || 'Pago pendiente'}</h1>
             <p className={styles.subtitle}>
-              Revisa los datos del cobro y paga de forma segura con Stripe. Ristak no guarda los datos de tu tarjeta.
+              Revisa los datos del cobro y paga de forma segura con Stripe. Ristak no ve ni guarda el número de tu tarjeta.
             </p>
           </div>
           <span className={`${styles.statusBadge} ${status.className}`}>
@@ -330,6 +334,18 @@ export const PublicPayment: React.FC = () => {
                   <ShieldCheck size={16} />
                   <span>Stripe abrirá el campo seguro de tarjeta cuando inicies el pago.</span>
                 </p>
+                {canSavePaymentMethod && (
+                  <label className={styles.saveMethodConsent}>
+                    <input
+                      type="checkbox"
+                      checked={savePaymentMethod}
+                      onChange={(event) => setSavePaymentMethod(event.target.checked)}
+                    />
+                    <span>
+                      Guardar esta tarjeta en Stripe para futuros cargos autorizados con Ristak.
+                    </span>
+                  </label>
+                )}
                 <div className={styles.actions}>
                   <button
                     type="button"
