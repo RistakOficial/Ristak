@@ -2,6 +2,11 @@ import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
+import {
+  buildTrackingIdentitySignals,
+  recordTrackingIdentityMatch,
+  resolveTrackingIdentity
+} from './trackingIdentityService.js'
 
 const VIDEO_EVENTS = new Set([
   'video_ready',
@@ -113,6 +118,17 @@ function readVideoData(body = {}) {
     browserVersion: cleanString(data.browser_version || data.browserVersion, 80),
     language: cleanString(data.language, 80),
     timezone: cleanString(data.timezone, 120),
+    screenWidth: numberOrNull(data.screen_width || data.screenWidth),
+    screenHeight: numberOrNull(data.screen_height || data.screenHeight),
+    viewportWidth: numberOrNull(data.viewport_width || data.viewportWidth),
+    viewportHeight: numberOrNull(data.viewport_height || data.viewportHeight),
+    colorDepth: numberOrNull(data.color_depth || data.colorDepth),
+    devicePixelRatio: numberOrNull(data.device_pixel_ratio || data.devicePixelRatio),
+    hardwareConcurrency: numberOrNull(data.hardware_concurrency || data.hardwareConcurrency),
+    deviceMemory: numberOrNull(data.device_memory || data.deviceMemory),
+    maxTouchPoints: numberOrNull(data.max_touch_points || data.maxTouchPoints),
+    platform: cleanString(data.platform, 120),
+    vendor: cleanString(data.vendor, 120),
     position,
     duration,
     progressPercent,
@@ -121,7 +137,40 @@ function readVideoData(body = {}) {
   }
 }
 
-async function resolveContactForPlayback(tx, contactId, visitorId) {
+function videoIdentityData(video = {}) {
+  return {
+    tracking_source: video.trackingSource,
+    site_id: video.siteId,
+    site_slug: video.siteSlug,
+    site_name: video.siteName,
+    site_type: video.siteType,
+    form_site_id: video.formSiteId,
+    form_site_name: video.formSiteName,
+    public_page_id: video.publicPageId,
+    public_page_title: video.publicPageTitle,
+    url: video.pageUrl,
+    referrer: video.referrerUrl,
+    device_type: video.deviceType,
+    os: video.os,
+    browser: video.browser,
+    browser_version: video.browserVersion,
+    language: video.language,
+    timezone: video.timezone,
+    screen_width: video.screenWidth,
+    screen_height: video.screenHeight,
+    viewport_width: video.viewportWidth,
+    viewport_height: video.viewportHeight,
+    color_depth: video.colorDepth,
+    device_pixel_ratio: video.devicePixelRatio,
+    hardware_concurrency: video.hardwareConcurrency,
+    device_memory: video.deviceMemory,
+    max_touch_points: video.maxTouchPoints,
+    platform: video.platform,
+    vendor: video.vendor
+  }
+}
+
+async function resolveContactForPlayback(tx, contactId, visitorId, video, requestInfo, eventAt) {
   const directContactId = cleanString(contactId, 160)
   if (directContactId) {
     const contact = await tx.get('SELECT id, full_name, email FROM contacts WHERE id = ?', [directContactId])
@@ -130,7 +179,8 @@ async function resolveContactForPlayback(tx, contactId, visitorId) {
         id: contact.id,
         fullName: contact.full_name || null,
         email: contact.email || null,
-        matchMethod: 'direct_contact_id'
+        matchMethod: 'direct_contact_id',
+        matchConfidence: 100
       }
     }
   }
@@ -150,12 +200,40 @@ async function resolveContactForPlayback(tx, contactId, visitorId) {
         id: contact.id,
         fullName: contact.full_name || null,
         email: contact.email || null,
-        matchMethod: 'visitor_id_contact'
+        matchMethod: 'visitor_id_contact',
+        matchConfidence: 98
       }
     }
   }
 
-  return { id: null, fullName: null, email: null, matchMethod: 'anonymous' }
+  const identity = await resolveTrackingIdentity({
+    visitorId,
+    contactId: null,
+    data: videoIdentityData(video),
+    ip: requestInfo.ip,
+    userAgent: requestInfo.userAgent,
+    now: new Date(eventAt)
+  })
+
+  if (identity.accepted && identity.contactId) {
+    return {
+      id: identity.contactId,
+      fullName: identity.fullName,
+      email: identity.email,
+      matchMethod: identity.matchMethod,
+      matchConfidence: identity.matchConfidence,
+      identity
+    }
+  }
+
+  return {
+    id: null,
+    fullName: null,
+    email: null,
+    matchMethod: identity.matchMethod || 'anonymous',
+    matchConfidence: identity.matchConfidence || 0,
+    identity
+  }
 }
 
 function computeWatchedDelta(existing, video) {
@@ -250,6 +328,18 @@ async function upsertPlaybackSession(tx, body, video, contact, requestInfo, even
   const fullName = contact.fullName || existing?.full_name || null
   const email = contact.email || existing?.email || null
   const matchMethod = contact.id ? contact.matchMethod : (existing?.match_method || 'anonymous')
+  const matchConfidence = contact.id
+    ? Number(contact.matchConfidence || 100)
+    : Number(existing?.match_confidence || contact.matchConfidence || 0)
+  const identity = contact.identity || {
+    signals: buildTrackingIdentitySignals({
+      data: videoIdentityData(video),
+      ip: requestInfo.ip,
+      userAgent: requestInfo.userAgent
+    }),
+    evidenceJson: null
+  }
+  const identityEvidenceJson = contact.identity?.evidenceJson || existing?.identity_evidence_json || null
 
   if (!existing) {
     await tx.run(`
@@ -297,11 +387,16 @@ async function upsertPlaybackSession(tx, body, video, contact, requestInfo, even
         seek_count,
         ended,
         match_method,
+        match_confidence,
+        identity_hash,
+        device_signature,
+        network_signature,
+        identity_evidence_json,
         first_event_at,
         started_at,
         last_event_at,
         ended_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       crypto.randomUUID(),
       video.playbackId,
@@ -346,6 +441,11 @@ async function upsertPlaybackSession(tx, body, video, contact, requestInfo, even
       seekCount,
       ended,
       matchMethod,
+      matchConfidence,
+      identity.signals.identityHash,
+      identity.signals.deviceSignature,
+      identity.signals.networkSignature,
+      identityEvidenceJson,
       eventAt,
       eventAt,
       eventAt,
@@ -394,6 +494,11 @@ async function upsertPlaybackSession(tx, body, video, contact, requestInfo, even
         seek_count = ?,
         ended = ?,
         match_method = ?,
+        match_confidence = ?,
+        identity_hash = COALESCE(?, identity_hash),
+        device_signature = COALESCE(?, device_signature),
+        network_signature = COALESCE(?, network_signature),
+        identity_evidence_json = COALESCE(?, identity_evidence_json),
         last_event_at = ?,
         ended_at = ?,
         updated_at = CURRENT_TIMESTAMP
@@ -438,6 +543,11 @@ async function upsertPlaybackSession(tx, body, video, contact, requestInfo, even
       seekCount,
       ended,
       matchMethod,
+      matchConfidence,
+      identity.signals.identityHash,
+      identity.signals.deviceSignature,
+      identity.signals.networkSignature,
+      identityEvidenceJson,
       eventAt,
       endedAt,
       video.playbackId
@@ -452,7 +562,8 @@ async function upsertPlaybackSession(tx, body, video, contact, requestInfo, even
     progressPercent,
     watchedSeconds,
     ended: Boolean(ended),
-    matchMethod
+    matchMethod,
+    matchConfidence
   }
 }
 
@@ -477,9 +588,25 @@ export async function recordVideoPlaybackEvent(input = {}) {
   }
 
   return db.transaction(async (tx) => {
-    const contact = await resolveContactForPlayback(tx, body.contactId, body.visitorId)
+    const contact = await resolveContactForPlayback(tx, body.contactId, body.visitorId, video, requestInfo, eventAt)
     const summary = await upsertPlaybackSession(tx, body, video, contact, requestInfo, eventAt)
     await insertPlaybackEvent(tx, body, video, contact, eventAt)
+    await recordTrackingIdentityMatch({
+      subjectKind: 'video_playback',
+      subjectId: video.playbackId,
+      visitorId: body.visitorId,
+      sessionId: body.sessionId,
+      contactId: summary.contactId,
+      matchMethod: summary.matchMethod,
+      matchConfidence: summary.matchConfidence,
+      accepted: Boolean(summary.contactId && summary.matchConfidence >= 90),
+      signals: contact.identity?.signals || buildTrackingIdentitySignals({
+        data: videoIdentityData(video),
+        ip: requestInfo.ip,
+        userAgent: requestInfo.userAgent
+      }),
+      evidenceJson: contact.identity?.evidenceJson || null
+    })
     return summary
   })
 }
@@ -500,6 +627,7 @@ export async function linkVideoVisitorToContact(visitorId, contactId, fullName =
       full_name = COALESCE(full_name, ?),
       email = COALESCE(email, ?),
       match_method = CASE WHEN match_method = 'anonymous' THEN 'visitor_linked_later' ELSE match_method END,
+      match_confidence = CASE WHEN COALESCE(match_confidence, 0) < 98 THEN 98 ELSE match_confidence END,
       updated_at = CURRENT_TIMESTAMP
     WHERE visitor_id = ?
       AND (contact_id IS NULL OR contact_id = '')

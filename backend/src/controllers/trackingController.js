@@ -560,6 +560,26 @@ export async function servePixel(req, res) {
     return os;
   }
 
+  function getClientIdentitySignals() {
+    var screenInfo = window.screen || {};
+    var doc = document.documentElement || {};
+    return {
+      screen_width: screenInfo.width || null,
+      screen_height: screenInfo.height || null,
+      viewport_width: window.innerWidth || doc.clientWidth || null,
+      viewport_height: window.innerHeight || doc.clientHeight || null,
+      color_depth: screenInfo.colorDepth || null,
+      device_pixel_ratio: window.devicePixelRatio || 1,
+      hardware_concurrency: navigator.hardwareConcurrency || null,
+      device_memory: navigator.deviceMemory || null,
+      max_touch_points: navigator.maxTouchPoints || 0,
+      platform: navigator.platform || null,
+      vendor: navigator.vendor || null,
+      cookies_enabled: navigator.cookieEnabled === true,
+      do_not_track: navigator.doNotTrack || window.doNotTrack || null
+    };
+  }
+
   // Extraer cookies de Facebook si existen
   function getFacebookCookies() {
     var cookies = {};
@@ -691,6 +711,8 @@ export async function servePixel(req, res) {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
       user_agent: navigator.userAgent
     };
+
+    Object.assign(data, getClientIdentitySignals());
 
     // Agregar UTMs y click IDs
     Object.assign(data, utmParams);

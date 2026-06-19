@@ -11931,6 +11931,26 @@ function buildNativeSiteTrackingScript(context) {
         return 'Unknown';
       };
 
+      const getClientIdentitySignals = () => {
+        const screenInfo = window.screen || {};
+        const doc = document.documentElement || {};
+        return {
+          screen_width: screenInfo.width || null,
+          screen_height: screenInfo.height || null,
+          viewport_width: window.innerWidth || doc.clientWidth || null,
+          viewport_height: window.innerHeight || doc.clientHeight || null,
+          color_depth: screenInfo.colorDepth || null,
+          device_pixel_ratio: window.devicePixelRatio || 1,
+          hardware_concurrency: navigator.hardwareConcurrency || null,
+          device_memory: navigator.deviceMemory || null,
+          max_touch_points: navigator.maxTouchPoints || 0,
+          platform: navigator.platform || null,
+          vendor: navigator.vendor || null,
+          cookies_enabled: navigator.cookieEnabled === true,
+          do_not_track: navigator.doNotTrack || window.doNotTrack || null
+        };
+      };
+
       const buildTrackingData = (extra = {}) => {
         const browserInfo = getBrowserInfo();
         return Object.assign({
@@ -11953,7 +11973,7 @@ function buildNativeSiteTrackingScript(context) {
           language: navigator.language || navigator.userLanguage || null,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
           user_agent: navigator.userAgent
-        }, getParams(), getFacebookCookies(), extra);
+        }, getClientIdentitySignals(), getParams(), getFacebookCookies(), extra);
       };
 
       const sendEvent = (eventName, extra = {}) => {
@@ -12044,6 +12064,26 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         return false;
       };
       if (isNoTrackMode()) return;
+
+      const getClientIdentitySignals = () => {
+        const screenInfo = window.screen || {};
+        const doc = document.documentElement || {};
+        return {
+          screen_width: screenInfo.width || null,
+          screen_height: screenInfo.height || null,
+          viewport_width: window.innerWidth || doc.clientWidth || null,
+          viewport_height: window.innerHeight || doc.clientHeight || null,
+          color_depth: screenInfo.colorDepth || null,
+          device_pixel_ratio: window.devicePixelRatio || 1,
+          hardware_concurrency: navigator.hardwareConcurrency || null,
+          device_memory: navigator.deviceMemory || null,
+          max_touch_points: navigator.maxTouchPoints || 0,
+          platform: navigator.platform || null,
+          vendor: navigator.vendor || null,
+          cookies_enabled: navigator.cookieEnabled === true,
+          do_not_track: navigator.doNotTrack || window.doNotTrack || null
+        };
+      };
 
       const readJson = (storage, key) => {
         try {
@@ -12151,7 +12191,7 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           language: navigator.language || navigator.userLanguage || null,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
           user_agent: navigator.userAgent
-        }, extra || {});
+        }, getClientIdentitySignals(), extra || {});
       };
       const sendPayload = (eventName, meta, options = {}) => {
         const identity = getIdentity();

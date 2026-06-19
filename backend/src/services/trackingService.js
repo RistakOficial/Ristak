@@ -2,6 +2,11 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { linkVideoVisitorToContact, unifyVideoPlaybackVisitorIds } from './videoTrackingService.js'
+import {
+  linkRelatedTrackingToContact,
+  recordTrackingIdentityMatch,
+  resolveTrackingIdentity
+} from './trackingIdentityService.js'
 import fetch from 'node-fetch'
 
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
@@ -316,6 +321,20 @@ export async function createSession(sessionData) {
   const adsParams = extractAdsParams(data)
   const sourceInfo = deriveSourceInfo(data, utms, clickIds)
   const nativeSiteInfo = extractNativeSiteInfo(data)
+  const identity = await resolveTrackingIdentity({
+    visitorId: visitor_id,
+    contactId: contact_id,
+    data: {
+      ...data,
+      ...utms,
+      ...clickIds,
+      ...adsParams,
+      ...nativeSiteInfo
+    },
+    ip,
+    userAgent: user_agent,
+    now: new Date(ts)
+  })
 
   // Obtener geolocalización desde la IP del request (en vez de confiar en el cliente)
   const geoInfo = await getGeoInfoFromIP(ip)
@@ -327,18 +346,22 @@ export async function createSession(sessionData) {
   let validFullName = null
   let validEmail = null
 
-  if (contact_id) {
+  const candidateContactId = identity.accepted && identity.contactId
+    ? identity.contactId
+    : contact_id
+
+  if (candidateContactId) {
     try {
       const contact = await db.get(
         'SELECT id, full_name, email FROM contacts WHERE id = ?',
-        [contact_id]
+        [candidateContactId]
       )
       if (contact) {
         validContactId = contact.id
-        validFullName = contact.full_name || full_name
+        validFullName = contact.full_name || full_name || identity.fullName
         validEmail = contact.email || null
       } else {
-        logger.warn(`Contact ID ${contact_id} del localStorage no existe en DB - se guardará sin contact_id`)
+        logger.warn(`Contact ID ${candidateContactId} del tracking no existe en DB - se guardará sin contact_id`)
       }
     } catch (err) {
       logger.warn(`Error validando contact_id: ${err.message}`)
@@ -410,13 +433,20 @@ export async function createSession(sessionData) {
         public_page_id,
         public_page_title,
         conversion_type,
-        submission_id
+        submission_id,
+        identity_hash,
+        device_signature,
+        network_signature,
+        match_method,
+        match_confidence,
+        identity_evidence_json
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?
       )
     `, [
       session_id,
@@ -480,8 +510,44 @@ export async function createSession(sessionData) {
       nativeSiteInfo.public_page_id,
       nativeSiteInfo.public_page_title,
       nativeSiteInfo.conversion_type,
-      nativeSiteInfo.submission_id
+      nativeSiteInfo.submission_id,
+      identity.signals.identityHash,
+      identity.signals.deviceSignature,
+      identity.signals.networkSignature,
+      identity.matchMethod,
+      identity.matchConfidence,
+      identity.evidenceJson
     ])
+
+    await recordTrackingIdentityMatch({
+      subjectKind: 'session',
+      subjectId: session_id,
+      visitorId: visitor_id,
+      sessionId: session_id,
+      contactId: validContactId,
+      matchMethod: identity.matchMethod,
+      matchConfidence: identity.matchConfidence,
+      accepted: Boolean(validContactId && identity.accepted),
+      signals: identity.signals,
+      evidenceJson: identity.evidenceJson
+    })
+
+    if (validContactId) {
+      await linkRelatedTrackingToContact({
+        contactId: validContactId,
+        visitorId: visitor_id,
+        fullName: validFullName,
+        email: validEmail,
+        signals: identity.signals,
+        data: {
+          ...data,
+          ...utms,
+          ...clickIds,
+          ...adsParams,
+          ...nativeSiteInfo
+        }
+      })
+    }
 
     const pageUrl = data.url || 'unknown'
     const logMsg = validContactId

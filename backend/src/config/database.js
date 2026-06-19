@@ -3468,6 +3468,12 @@ async function initTables() {
         public_page_title TEXT,
         conversion_type TEXT,
         submission_id TEXT,
+        identity_hash TEXT,
+        device_signature TEXT,
+        network_signature TEXT,
+        match_method TEXT DEFAULT 'anonymous',
+        match_confidence INTEGER DEFAULT 0,
+        identity_evidence_json TEXT,
 
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
       )
@@ -3484,7 +3490,13 @@ async function initTables() {
       ['public_page_id', 'TEXT'],
       ['public_page_title', 'TEXT'],
       ['conversion_type', 'TEXT'],
-      ['submission_id', 'TEXT']
+      ['submission_id', 'TEXT'],
+      ['identity_hash', 'TEXT'],
+      ['device_signature', 'TEXT'],
+      ['network_signature', 'TEXT'],
+      ['match_method', "TEXT DEFAULT 'anonymous'"],
+      ['match_confidence', 'INTEGER DEFAULT 0'],
+      ['identity_evidence_json', 'TEXT']
     ]) {
       try {
         await db.run(`ALTER TABLE sessions ADD COLUMN ${columnName} ${columnType}`)
@@ -3506,6 +3518,9 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_tracking_source ON sessions(tracking_source)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_site ON sessions(site_id, site_type)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_form_site ON sessions(form_site_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_identity_hash ON sessions(identity_hash)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_device_network ON sessions(device_signature, network_signature)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_match_method ON sessions(match_method, match_confidence)')
 
     // Tracking granular de reproducciones de video.
     // video_playback_sessions es el resumen por reproducción; video_playback_events
@@ -3560,6 +3575,11 @@ async function initTables() {
         ended INTEGER DEFAULT 0,
 
         match_method TEXT DEFAULT 'anonymous',
+        match_confidence INTEGER DEFAULT 0,
+        identity_hash TEXT,
+        device_signature TEXT,
+        network_signature TEXT,
+        identity_evidence_json TEXT,
         first_event_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         last_event_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3570,6 +3590,22 @@ async function initTables() {
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
       )
     `)
+
+    for (const [columnName, columnType] of [
+      ['match_confidence', 'INTEGER DEFAULT 0'],
+      ['identity_hash', 'TEXT'],
+      ['device_signature', 'TEXT'],
+      ['network_signature', 'TEXT'],
+      ['identity_evidence_json', 'TEXT']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE video_playback_sessions ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          logger.warn(`Advertencia al migrar video_playback_sessions.${columnName}: ${err.message}`)
+        }
+      }
+    }
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS video_playback_events (
@@ -3610,9 +3646,35 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_stream_video ON video_playback_sessions(stream_video_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_site ON video_playback_sessions(site_id, public_page_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_last_event ON video_playback_sessions(last_event_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_identity_hash ON video_playback_sessions(identity_hash)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_device_network ON video_playback_sessions(device_signature, network_signature)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_match_method ON video_playback_sessions(match_method, match_confidence)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_playback ON video_playback_events(playback_id, event_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_contact ON video_playback_events(contact_id, event_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_stream_video ON video_playback_events(stream_video_id, event_at)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS tracking_identity_matches (
+        id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT,
+        visitor_id TEXT,
+        session_id TEXT,
+        contact_id TEXT,
+        identity_hash TEXT,
+        device_signature TEXT,
+        network_signature TEXT,
+        match_method TEXT NOT NULL DEFAULT 'anonymous',
+        match_confidence INTEGER DEFAULT 0,
+        accepted INTEGER DEFAULT 0,
+        evidence_json TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_tracking_identity_matches_subject ON tracking_identity_matches(subject_kind, subject_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_tracking_identity_matches_contact ON tracking_identity_matches(contact_id, match_confidence)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_tracking_identity_matches_identity ON tracking_identity_matches(identity_hash, accepted)')
 
     // Tabla de usuarios (para autenticación)
     await db.run(`
