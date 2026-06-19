@@ -23487,7 +23487,7 @@ const VideoPlayerPreview: React.FC<{
           if (!shouldLetEditorSelect) event.stopPropagation()
         }}>
           <button type="button" className="rstk-video-control-button" onClick={handleControlPlayClick} aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}>
-            {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
+            {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play className="rstk-video-control-play-icon" size={15} fill="currentColor" />}
           </button>
           <div className="rstk-video-progress" aria-hidden="true">
             <span style={{ width: `${Math.round(progress * 100)}%` }} />

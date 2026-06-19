@@ -398,6 +398,13 @@
   cursor: pointer;
 }
 .rstkCanvas .rstk-video-control-button:hover { background: rgba(255,255,255,.2); }
+.rstkCanvas .rstk-video-control-button svg {
+  display: block;
+  flex: 0 0 auto;
+}
+.rstkCanvas .rstk-video-control-play-icon {
+  transform: translateX(1px);
+}
 .rstkCanvas .rstk-video-progress {
   height: 5px;
   overflow: hidden;
@@ -413,6 +420,7 @@
   transition: width .16s linear;
 }
 .rstkCanvas .rstk-video-speed-control {
+  position: relative;
   min-width: 66px;
   height: 30px;
   display: inline-flex;
@@ -421,18 +429,40 @@
   border-radius: 999px;
   background: rgba(255,255,255,.12);
   color: inherit;
-  padding: 0 8px;
+  padding: 0 20px 0 8px;
+}
+.rstkCanvas .rstk-video-speed-control::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 0;
+  height: 0;
+  border-top: 4px solid currentColor;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  opacity: 0.72;
+  pointer-events: none;
+  transform: translateY(-35%);
 }
 .rstkCanvas .rstk-video-speed-control select {
-  width: 42px;
+  -webkit-appearance: none;
   appearance: none;
-  border: 0;
-  background: transparent;
-  background-image: none;
+  width: 34px;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
   color: inherit;
+  cursor: pointer;
   font: inherit;
   font-size: .76rem;
   font-weight: 750;
+  line-height: 1;
   outline: 0;
   padding: 0;
 }
@@ -468,7 +498,23 @@
   .rstkCanvas .rstk-video-speed-control {
     min-width: max(54px, min(66px, 11cqw));
     height: max(24px, min(30px, 5cqw));
-    padding-inline: max(6px, min(8px, 1.5cqw));
+    padding-inline: max(6px, min(8px, 1.5cqw)) max(18px, min(20px, 3cqw));
+  }
+
+  @media (max-width: 760px) {
+    .rstkCanvas .rstk-video-play-dot {
+      width: min(var(--rstk-video-play-size, 160px), max(60px, min(12cqw, calc(100% - 32px))));
+      height: min(var(--rstk-video-play-size, 160px), max(60px, min(12cqw, calc(100% - 32px))));
+    }
+
+    .rstkCanvas .rstk-video-play-shape-rectangle .rstk-video-play-dot {
+      width: min(var(--rstk-video-play-width, 232px), max(88px, min(18cqw, calc(100% - 32px))));
+    }
+
+    .rstkCanvas .rstk-video-play-dot svg {
+      width: min(var(--rstk-video-play-icon-size, 95px), max(36px, min(7cqw, calc(100% - 20px))));
+      height: min(var(--rstk-video-play-icon-size, 95px), max(36px, min(7cqw, calc(100% - 20px))));
+    }
   }
 }
 @keyframes rstkVideoSoundNotice {
