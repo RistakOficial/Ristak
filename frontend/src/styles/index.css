@@ -2964,7 +2964,9 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --modal-density-control-padding-x: 14px;
     --modal-density-control-font-size: 15px;
     --modal-density-label-font-size: 14px;
-    --modal-density-helper-font-size: 13px;
+    --modal-density-body-font-size: 15px;
+    --modal-density-supporting-font-size: 14px;
+    --modal-density-helper-font-size: 13.5px;
     --modal-density-title-font-size: 18px;
     --modal-density-section-title-font-size: 15px;
     --modal-density-header-padding-x: 32px;
@@ -3070,9 +3072,24 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     line-height: 1.25;
   }
 
-  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(p, small, [class*='hint'], [class*='Hint'], [class*='subtitle'], [class*='Subtitle'], [class*='detail'], [class*='Detail']) {
-    font-size: var(--modal-density-helper-font-size);
-    line-height: 1.35;
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(label > span, [class*='field'] > span, [class*='Field'] > span) {
+    font-size: var(--modal-density-label-font-size) !important;
+    line-height: 1.25;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(p) {
+    font-size: var(--modal-density-body-font-size) !important;
+    line-height: 1.5;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where([class*='description'], [class*='Description'], [class*='subtitle'], [class*='Subtitle'], [class*='detail'], [class*='Detail']) {
+    font-size: var(--modal-density-supporting-font-size) !important;
+    line-height: 1.45;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(small, [class*='hint'], [class*='Hint'], [class*='meta'], [class*='Meta'], [class*='caption'], [class*='Caption']) {
+    font-size: var(--modal-density-helper-font-size) !important;
+    line-height: 1.4;
   }
 
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(
@@ -3183,7 +3200,9 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
       --modal-density-control-padding-x: 10px;
       --modal-density-control-font-size: 13px;
       --modal-density-label-font-size: 12px;
-      --modal-density-helper-font-size: 11.5px;
+      --modal-density-body-font-size: 14px;
+      --modal-density-supporting-font-size: 13px;
+      --modal-density-helper-font-size: 12.5px;
       --modal-density-title-font-size: 16px;
       --modal-density-section-title-font-size: 13.5px;
       --modal-density-header-padding-x: 24px;
@@ -3234,7 +3253,9 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
       --modal-density-control-padding-x: 9px;
       --modal-density-control-font-size: 12.5px;
       --modal-density-label-font-size: 11.5px;
-      --modal-density-helper-font-size: 11px;
+      --modal-density-body-font-size: 13.5px;
+      --modal-density-supporting-font-size: 12.5px;
+      --modal-density-helper-font-size: 12px;
       --modal-density-title-font-size: 15px;
       --modal-density-section-title-font-size: 13px;
       --modal-density-header-padding-x: 20px;
