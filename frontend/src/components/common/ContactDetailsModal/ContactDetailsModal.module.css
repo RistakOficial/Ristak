@@ -368,10 +368,6 @@
   object-fit: cover;
 }
 
-.contactItem:hover .contactAvatar {
-  background: rgba(var(--color-primary-rgb), 0.18);
-}
-
 .contactInfo {
   flex: 1;
   min-width: 0;
