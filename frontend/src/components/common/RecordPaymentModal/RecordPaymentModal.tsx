@@ -300,13 +300,13 @@ const defaultPartialInstallments = (): InstallmentDraft[] => {
     {
       id: createInstallmentId(),
       type: 'percentage',
-      value: '30',
+      value: '50',
       dueDate: toDateInputValue(addMonths(today, 1))
     },
     {
       id: createInstallmentId(),
       type: 'percentage',
-      value: '30',
+      value: '50',
       dueDate: toDateInputValue(addMonths(today, 2))
     }
   ]
@@ -406,7 +406,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   // Partial payments
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
-  const [firstPaymentEnabled, setFirstPaymentEnabled] = useState(true)
+  const [firstPaymentEnabled, setFirstPaymentEnabled] = useState(false)
   const [firstPaymentType, setFirstPaymentType] = useState<InstallmentValueType>('percentage')
   const [firstPaymentValue, setFirstPaymentValue] = useState('40')
   const [firstPaymentDate, setFirstPaymentDate] = useState(toDateInputValue(new Date()))
@@ -641,7 +641,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setCurrency(defaultCurrency || 'MXN')
     setIncludeIVA(false)
     setPaymentMode(initialPaymentMode)
-    setFirstPaymentEnabled(true)
+    setFirstPaymentEnabled(false)
     setFirstPaymentType('percentage')
     setFirstPaymentValue('40')
     setFirstPaymentDate(toDateInputValue(new Date()))
@@ -2339,27 +2339,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           />
         </div>
 
-        <div className={styles.field}>
-          <label className={styles.label}>IVA</label>
-          <div className={styles.segmentedTabsField}>
-            {renderPaymentSegmentedTabs({
-              ariaLabel: 'IVA',
-              options: [
-                { value: 'sin', label: 'Sin IVA' },
-                { value: 'con', label: 'Aplicar IVA 16%' }
-              ],
-              value: includeIVA ? 'con' : 'sin',
-              onChange: (value) => setIncludeIVA(value === 'con')
-            })}
-          </div>
-        </div>
-
         {activePaymentMode === 'partial' && (
           <div className={styles.planSection}>
             <div className={styles.planIntro}>
               <div className={styles.planIntroText}>
                 <p>Plan de parcialidades</p>
-                <span>Define el enganche y los cobros automáticos hasta cubrir el total.</span>
+                <span>Define si habrá enganche y programa los cobros automáticos hasta cubrir el total.</span>
               </div>
               <div className={styles.planTotalChip}>
                 <span>Total a financiar</span>
@@ -2373,14 +2358,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   <span className={styles.stepNumber}>1</span>
                   <div>
                     <p>Primer pago</p>
-                    <span>El enganche con el que arranca el plan.</span>
+                    <span>Activa un enganche si el plan debe iniciar con un primer pago.</span>
                   </div>
                 </div>
                 {renderPaymentSegmentedTabs({
                   ariaLabel: 'Primer pago',
                   options: [
-                    { value: 'yes', label: 'Con enganche' },
-                    { value: 'no', label: 'Sin enganche' }
+                    { value: 'no', label: 'Sin enganche' },
+                    { value: 'yes', label: 'Con enganche' }
                   ],
                   value: firstPaymentEnabled ? 'yes' : 'no',
                   onChange: (value) => {
@@ -2625,6 +2610,21 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             </div>
           </div>
         )}
+
+        <div className={styles.field}>
+          <label className={styles.label}>IVA</label>
+          <div className={styles.segmentedTabsField}>
+            {renderPaymentSegmentedTabs({
+              ariaLabel: 'IVA',
+              options: [
+                { value: 'sin', label: 'Sin IVA' },
+                { value: 'con', label: 'Aplicar IVA 16%' }
+              ],
+              value: includeIVA ? 'con' : 'sin',
+              onChange: (value) => setIncludeIVA(value === 'con')
+            })}
+          </div>
+        </div>
 
         {/* En embedded el total vive en la barra inferior fija; la tarjeta solo aplica en el modal de escritorio */}
         {!isEmbedded && (
