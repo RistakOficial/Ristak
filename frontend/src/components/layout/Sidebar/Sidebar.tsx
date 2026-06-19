@@ -701,7 +701,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {showUserMenu && (
             <div
               data-ristak-user-menu
-              className="absolute left-2 top-[calc(100%-0.5rem)] z-50 w-[min(22rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-[rgba(148,163,184,0.18)] bg-[var(--color-background-secondary)] shadow-xl"
+              className="absolute left-2 top-[calc(100%-0.5rem)] z-[var(--z-index-popover)] w-[min(22rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-[rgba(148,163,184,0.18)] bg-[var(--color-background-secondary)] shadow-xl"
               role="menu"
             >
               <div className="border-b border-[rgba(148,163,184,0.1)] p-4">

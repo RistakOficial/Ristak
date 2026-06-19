@@ -3412,12 +3412,22 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-
 }
 
 body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-layout-sidebar] {
+  position: relative;
   width: var(--app-sidebar-width) !important;
   overflow-x: hidden;
 }
 
 body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-sidebar] {
   overflow-x: hidden;
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-layout-sidebar]:has([data-ristak-user-menu]) {
+  z-index: var(--z-index-popover);
+  overflow: visible;
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-sidebar]:has([data-ristak-user-menu]) {
+  overflow: visible;
 }
 
 body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-layout-sidebar][data-collapsed='true'] {
