@@ -24,21 +24,6 @@
   min-width: 0;
 }
 
-.phoneStatusIcon {
-  display: inline-flex;
-  flex: 0 0 1.25rem;
-  width: 1.25rem;
-  height: 1.25rem;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-mute);
-  line-height: 1;
-}
-
-.phoneStatusIcon[data-primary='true'] {
-  color: var(--accent);
-}
-
 .phoneText {
   min-width: 0;
   overflow: visible;

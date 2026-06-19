@@ -85,15 +85,6 @@ export function ContactPhoneSelector({
             </div>
 
             <div className={styles.phoneActions}>
-              {isPrimary ? (
-                <span
-                  className={styles.phoneStatusIcon}
-                  data-primary="true"
-                  aria-hidden="true"
-                >
-                  <Star size={13} fill="currentColor" />
-                </span>
-              ) : null}
               <Badge variant={isPrimary ? 'primary' : 'neutral'} className={styles.phoneBadge}>
                 {isPrimary ? 'Principal' : 'Secundario'}
               </Badge>
