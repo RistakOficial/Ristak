@@ -26815,10 +26815,10 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       ? [
           { key: 'videos', icon: <Video size={16} />, label: 'Videos', value: formatSitesCompactNumber(videos.length) },
           { key: 'plays', icon: <Play size={16} />, label: 'Reproducciones', value: formatSitesCompactNumber(videoViews) },
-          { key: 'viewers', icon: <Eye size={16} />, label: 'Viewers', value: formatSitesCompactNumber(uniqueVideoViewers) },
-          { key: 'play-rate', icon: <MousePointerClick size={16} />, label: 'Play rate', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate) },
+          { key: 'viewers', icon: <Eye size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(uniqueVideoViewers) },
+          { key: 'play-rate', icon: <MousePointerClick size={16} />, label: 'Tasa de reproducción', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate) },
           { key: 'watch-time', icon: <Clock3 size={16} />, label: 'Tiempo visto', value: formatSitesSeconds(videoWatchTime) },
-          { key: 'engagement', icon: <Flame size={16} />, label: 'Engagement', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore) }
+          { key: 'engagement', icon: <Flame size={16} />, label: 'Interacción', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore) }
         ]
       : [
           { key: 'videos', icon: <Video size={16} />, label: 'Videos', value: formatSitesCompactNumber(videos.length) },
@@ -27007,7 +27007,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 
         <div className={styles.sitesAnalyticsChartBlock}>
           <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Videos con más plays</span>
+            <span>Videos con más reproducciones</span>
             <strong>{formatSitesCompactNumber(videoRowsByViews[0]?.views || 0)} top</strong>
           </div>
           {renderDetailRows(
@@ -27015,9 +27015,9 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               key: row.key,
               icon: <Play size={15} />,
               label: row.label,
-              value: `${formatSitesCompactNumber(row.views)} plays`
+              value: `${formatSitesCompactNumber(row.views)} reproducciones`
             })),
-            'Sin plays registrados en estos videos.'
+            'Sin reproducciones registradas en estos videos.'
           )}
         </div>
 
@@ -27056,11 +27056,11 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         <div className={styles.sitesAnalyticsChartBlock}>
           <div className={styles.sitesAnalyticsChartTitle}>
             <span>Calidad de consumo</span>
-            <strong>{aggregateEngagementScore === null ? 'Sin engagement' : formatSitesPercent(aggregateEngagementScore)}</strong>
+            <strong>{aggregateEngagementScore === null ? 'Sin interacción' : formatSitesPercent(aggregateEngagementScore)}</strong>
           </div>
           {renderDetailRows([
             { key: 'stream-ready', icon: <CheckCircle2 size={15} />, label: 'Videos listos en Stream', value: `${formatSitesCompactNumber(totalStreamVideos)} de ${formatSitesCompactNumber(videos.length)}` },
-            { key: 'average-watch', icon: <Flame size={15} />, label: 'Promedio visto por play', value: formatSitesSeconds(aggregateAverageWatchTime) },
+            { key: 'average-watch', icon: <Flame size={15} />, label: 'Promedio visto por reproducción', value: formatSitesSeconds(aggregateAverageWatchTime) },
             { key: 'top-average', icon: <BarChart3 size={15} />, label: videoRowsByAverageWatch[0]?.label || 'Top promedio', value: videoRowsByAverageWatch[0] ? formatSitesSeconds(videoRowsByAverageWatch[0].averageWatchTime) : 'Sin dato' },
             { key: 'storage-only', icon: <Video size={15} />, label: 'Sólo storage / sin Stream', value: formatSitesCompactNumber(Math.max(0, videos.length - totalStreamVideos)) }
           ], 'Sin métricas suficientes.')}
@@ -27105,17 +27105,17 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     }
 
     const primaryVideoMetrics = [
-      { key: 'engagement', label: 'Average engagement', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore), hint: 'Promedio del máximo visto por sesión.' },
-      { key: 'plays', label: 'Total plays', value: formatSitesCompactNumber(videoViews), hint: `${formatSitesCompactNumber(videoLoads)} cargas detectadas.` },
-      { key: 'play-rate', label: 'Play rate', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate), hint: 'Sesiones que sí dieron play.' },
-      { key: 'completion', label: 'Completion', value: completionRate === null ? 'Sin dato' : formatSitesPercent(completionRate), hint: `${firstPartySummary?.completions ?? 0} completados.` },
-      { key: 'drop-off', label: 'Drop off', value: dropOffRate === null ? 'Sin dato' : formatSitesPercent(dropOffRate), hint: 'Promedio que se perdió antes del final.' },
-      { key: 'identified', label: 'Identificados', value: formatSitesCompactNumber(firstPartySummary?.identifiedContacts ?? 0), hint: `${formatSitesCompactNumber(firstPartySummary?.anonymousVisitors ?? 0)} anónimos.` }
+      { key: 'engagement', icon: <Flame size={15} />, label: 'Interacción promedio', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore), hint: 'Promedio del máximo visto por sesión.' },
+      { key: 'plays', icon: <Play size={15} />, label: 'Reproducciones', value: formatSitesCompactNumber(videoViews), hint: `${formatSitesCompactNumber(videoLoads)} cargas detectadas.` },
+      { key: 'play-rate', icon: <MousePointerClick size={15} />, label: 'Tasa de reproducción', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate), hint: 'Sesiones que sí reprodujeron el video.' },
+      { key: 'completion', icon: <CheckCircle2 size={15} />, label: 'Finalización', value: completionRate === null ? 'Sin dato' : formatSitesPercent(completionRate), hint: `${firstPartySummary?.completions ?? 0} reproducciones completas.` },
+      { key: 'drop-off', icon: <ArrowDown size={15} />, label: 'Abandono', value: dropOffRate === null ? 'Sin dato' : formatSitesPercent(dropOffRate), hint: 'Promedio que se perdió antes del final.' },
+      { key: 'identified', icon: <Eye size={15} />, label: 'Contactos identificados', value: formatSitesCompactNumber(firstPartySummary?.identifiedContacts ?? 0), hint: `${formatSitesCompactNumber(firstPartySummary?.anonymousVisitors ?? 0)} visitantes anónimos.` }
     ]
     const videoDetailMetrics = [
       { key: 'average', icon: <Clock3 size={15} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime) },
-      { key: 'viewers', icon: <Eye size={15} />, label: 'Viewers únicos', value: formatSitesCompactNumber(uniqueVideoViewers) },
-      { key: 'loads', icon: <MousePointerClick size={15} />, label: 'Cargas del player', value: formatSitesCompactNumber(videoLoads) },
+      { key: 'viewers', icon: <Eye size={15} />, label: 'Visitantes únicos', value: formatSitesCompactNumber(uniqueVideoViewers) },
+      { key: 'loads', icon: <MousePointerClick size={15} />, label: 'Cargas del reproductor', value: formatSitesCompactNumber(videoLoads) },
       { key: 'top-country', icon: <Globe2 size={15} />, label: 'País top', value: topCountry }
     ]
 
@@ -27139,6 +27139,22 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                   </div>
                 ))}
               </div>
+              <div className={styles.videoDetailEngagementBlock}>
+                <div className={styles.videoDetailBreakdownTitle}>
+                  <Flame size={15} />
+                  <span>Interacción del video</span>
+                </div>
+                <div className={styles.videoEngagementMetricList}>
+                  {primaryVideoMetrics.map(metric => (
+                    <div key={metric.key} className={styles.videoEngagementMetric}>
+                      <span className={styles.videoEngagementMetricIcon}>{metric.icon}</span>
+                      <span>{metric.label}</span>
+                      <strong>{metric.value}</strong>
+                      <small>{metric.hint}</small>
+                    </div>
+                  ))}
+                </div>
+              </div>
               <div className={styles.videoDetailBreakdowns}>
                 <div className={styles.videoDetailBreakdownGroup}>
                   <div className={styles.videoDetailBreakdownTitle}>
@@ -27150,7 +27166,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                       key: row.key,
                       icon: <LayoutTemplate size={15} />,
                       label: row.label,
-                      value: `${formatSitesCompactNumber(row.plays)} plays · ${formatSitesPercent(row.avgProgressPercent)}`
+                      value: `${formatSitesCompactNumber(row.plays)} reproducciones · ${formatSitesPercent(row.avgProgressPercent)}`
                     })),
                     'Sin páginas asociadas.'
                   )}
@@ -27260,7 +27276,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           <section className={styles.videoAnalyticsSection}>
             <div className={styles.videoAnalyticsSectionHeader}>
               <div>
-                <span>Heatmaps por viewer</span>
+                <span>Mapas de calor por visitante</span>
                 <strong>{formatSitesCompactNumber(videoViewers.length)} recientes</strong>
               </div>
               <div className={styles.viewerHeatmapLegend}>
@@ -27277,7 +27293,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                       <strong>{getSitesViewerName(viewer)}</strong>
                       <span>{getSitesViewerMeta(viewer)}</span>
                     </div>
-                    <div className={styles.viewerHeatmapTrack} aria-label={`Heatmap de ${getSitesViewerName(viewer)}`}>
+                    <div className={styles.viewerHeatmapTrack} aria-label={`Mapa de calor de ${getSitesViewerName(viewer)}`}>
                       {buildSitesViewerHeatmapSegments(viewer).map(segment => (
                         <span
                           key={segment.index}
@@ -27297,26 +27313,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                 ))}
               </div>
             ) : (
-              <div className={styles.sitesAnalyticsChartEmpty}>Sin viewers identificados todavía.</div>
+              <div className={styles.sitesAnalyticsChartEmpty}>Sin visitantes identificados todavía.</div>
             )}
-          </section>
-
-          <section className={styles.videoAnalyticsSection}>
-            <div className={styles.videoAnalyticsSectionHeader}>
-              <div>
-                <span>Engagement</span>
-                <strong>{firstPartyTracking ? 'Tracking Ristak' : 'Stream'}</strong>
-              </div>
-            </div>
-            <div className={styles.videoEngagementMetricList}>
-              {primaryVideoMetrics.map(metric => (
-                <div key={metric.key} className={styles.videoEngagementMetric}>
-                  <span>{metric.label}</span>
-                  <strong>{metric.value}</strong>
-                  <small>{metric.hint}</small>
-                </div>
-              ))}
-            </div>
           </section>
         </div>
 
