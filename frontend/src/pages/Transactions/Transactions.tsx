@@ -1929,8 +1929,15 @@ export const Transactions: React.FC = () => {
 
       {isClient && transactionsPendingDeletion.length > 0 && createPortal(
         <div className={styles.modalOverlay} onClick={closeTransactionDeleteModal}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
+          <div
+            className={styles.modal}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="sm"
+            data-modal-type="confirm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.modalHeader} data-modal-header="">
               <div>
                 <h2>Eliminar pago{transactionsPendingDeletion.length === 1 ? '' : 's'}</h2>
                 <p className={styles.modalSubtitle}>Esta acción borra los registros seleccionados y no se puede deshacer.</p>
@@ -1958,7 +1965,7 @@ export const Transactions: React.FC = () => {
                 autoFocus
               />
             </div>
-            <div className={styles.formActions}>
+            <div className={styles.formActions} data-modal-footer="">
               <Button type="button" variant="ghost" onClick={closeTransactionDeleteModal} disabled={deletingTransactions}>
                 Cancelar
               </Button>
@@ -1978,9 +1985,16 @@ export const Transactions: React.FC = () => {
 
       {isClient && modal.type && createPortal(
         <div className={styles.modalOverlay} onClick={closeTransactionModal}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+          <div
+            className={styles.modal}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="md"
+            data-modal-type="custom"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h2>{modal.type === 'create' ? 'Nuevo Pago' : 'Editar Pago'}</h2>
-            <form className={styles.form} onSubmit={(e) => {
+            <form className={styles.form} data-modal-form="" onSubmit={(e) => {
               e.preventDefault()
               const formData = new FormData(e.currentTarget)
               handleSaveTransaction(formData)
@@ -2095,7 +2109,7 @@ export const Transactions: React.FC = () => {
                   defaultValue={modal.transaction?.description}
                 />
               </div>
-              <div className={styles.formActions}>
+              <div className={styles.formActions} data-modal-footer="">
                 <Button type="button" variant="ghost" onClick={closeTransactionModal}>
                   Cancelar
                 </Button>
@@ -2111,8 +2125,15 @@ export const Transactions: React.FC = () => {
 
       {isClient && paymentPlanCreateModal.open && createPortal(
         <div className={styles.modalOverlay} onClick={closePaymentPlanCreateModal}>
-          <div className={`${styles.modal} ${styles.paymentPlanModal}`} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
+          <div
+            className={`${styles.modal} ${styles.paymentPlanModal}`}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="lg"
+            data-modal-type="custom"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.modalHeader} data-modal-header="">
               <div>
                 <h2>Programar plan de pago</h2>
                 <p className={styles.modalSubtitle}>Crea una factura recurrente y déjala programada en HighLevel.</p>
@@ -2127,7 +2148,7 @@ export const Transactions: React.FC = () => {
               </button>
             </div>
 
-            <form className={styles.form} onSubmit={(e) => {
+            <form className={styles.form} data-modal-form="" onSubmit={(e) => {
               e.preventDefault()
               handleCreatePaymentPlan(new FormData(e.currentTarget))
             }}>
@@ -2391,7 +2412,7 @@ export const Transactions: React.FC = () => {
                 </div>
               </div>
 
-              <div className={styles.formActions}>
+              <div className={styles.formActions} data-modal-footer="">
                 <Button type="button" variant="ghost" onClick={closePaymentPlanCreateModal}>
                   Cancelar
                 </Button>
@@ -2407,8 +2428,15 @@ export const Transactions: React.FC = () => {
 
       {isClient && paymentPlanModal.plan && createPortal(
         <div className={styles.modalOverlay} onClick={closePaymentPlanModal}>
-          <div className={`${styles.modal} ${styles.paymentPlanModal}`} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
+          <div
+            className={`${styles.modal} ${styles.paymentPlanModal}`}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="lg"
+            data-modal-type="custom"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.modalHeader} data-modal-header="">
               <div>
                 <h2>Plan de pago</h2>
                 <p className={styles.modalSubtitle}>{paymentPlanModal.plan.id}</p>
@@ -2428,7 +2456,7 @@ export const Transactions: React.FC = () => {
                 <Loader2 size={22} className={styles.spinning} aria-hidden="true" />
               </div>
             ) : (
-              <form className={styles.form} onSubmit={(e) => {
+              <form className={styles.form} data-modal-form="" onSubmit={(e) => {
                 e.preventDefault()
                 handleSavePaymentPlan(new FormData(e.currentTarget))
               }}>
@@ -2499,7 +2527,7 @@ export const Transactions: React.FC = () => {
                     />
                   </div>
                 </div>
-                <div className={styles.formActions}>
+                <div className={styles.formActions} data-modal-footer="">
                   <Button type="button" variant="ghost" onClick={closePaymentPlanModal}>
                     Cancelar
                   </Button>

@@ -70,7 +70,7 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
       type="custom"
       flushContent
     >
-      <div className={styles.container}>
+      <div className={styles.container} data-modal-panel="">
         {loading ? (
           <div className={styles.loading} role="status" aria-live="polite" aria-label="Cargando transacciones">
             <div className={styles.spinner} aria-hidden="true"></div>

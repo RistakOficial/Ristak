@@ -2027,8 +2027,15 @@ const ContactsTable: React.FC = () => {
           setShowNewContactModal(false)
           navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
         }}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
+          <div
+            className={styles.modal}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="md"
+            data-modal-type="custom"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.modalHeader} data-modal-header="">
               <div>
                 <h2>Nuevo contacto</h2>
                 <p className={styles.modalSubtitle}>Guarda a la persona para verla en tu lista y usarla en pagos o seguimiento.</p>
@@ -2044,7 +2051,7 @@ const ContactsTable: React.FC = () => {
                 <X size={20} />
               </button>
             </div>
-            <form className={styles.form} onSubmit={(e) => {
+            <form className={styles.form} data-modal-form="" onSubmit={(e) => {
               e.preventDefault()
               const formData = new FormData(e.currentTarget)
               const contact = {
@@ -2072,7 +2079,7 @@ const ContactsTable: React.FC = () => {
                 <label>Fuente</label>
                 <input name="source" type="text" placeholder="Manual, WhatsApp, referido..." />
               </div>
-              <div className={styles.formActions}>
+              <div className={styles.formActions} data-modal-footer="">
 	                <Button type="button" variant="ghost" onClick={() => {
                     setShowNewContactModal(false)
                     navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
@@ -2094,8 +2101,15 @@ const ContactsTable: React.FC = () => {
           setEditingContact(null)
           navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
         }}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
+          <div
+            className={styles.modal}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="md"
+            data-modal-type="custom"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.modalHeader} data-modal-header="">
               <h2>Editar Contacto</h2>
 	              <button
 	                className={styles.closeButton}
@@ -2107,7 +2121,7 @@ const ContactsTable: React.FC = () => {
                 <X size={20} />
               </button>
             </div>
-            <form className={styles.form} onSubmit={async (e) => {
+            <form className={styles.form} data-modal-form="" onSubmit={async (e) => {
               e.preventDefault()
               const formData = new FormData(e.currentTarget)
               const updatedContact = {
@@ -2156,7 +2170,7 @@ const ContactsTable: React.FC = () => {
                   defaultValue={editingContact.source || ''}
                 />
               </div>
-              <div className={styles.formActions}>
+              <div className={styles.formActions} data-modal-footer="">
 	                <Button type="button" variant="ghost" onClick={() => {
                     setEditingContact(null)
                     navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
@@ -2175,8 +2189,15 @@ const ContactsTable: React.FC = () => {
 
       {isClient && contactsPendingDeletion.length > 0 && createPortal(
         <div className={styles.modalOverlay} onClick={closeContactDeleteModal}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
+          <div
+            className={styles.modal}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="sm"
+            data-modal-type="confirm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.modalHeader} data-modal-header="">
               <div>
                 <h2>Eliminar contacto{contactsPendingDeletion.length === 1 ? '' : 's'}</h2>
                 <p className={styles.modalSubtitle}>Esta acción borra la información seleccionada y no se puede deshacer.</p>
@@ -2204,7 +2225,7 @@ const ContactsTable: React.FC = () => {
                 autoFocus
               />
             </div>
-            <div className={styles.formActions}>
+            <div className={styles.formActions} data-modal-footer="">
               <Button type="button" variant="ghost" onClick={closeContactDeleteModal} disabled={deletingContacts}>
                 Cancelar
               </Button>

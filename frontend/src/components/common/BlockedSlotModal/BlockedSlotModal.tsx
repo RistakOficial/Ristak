@@ -579,7 +579,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         type="custom"
         flushContent
       >
-        <div className={styles.modalContent}>
+        <div className={styles.modalContent} data-modal-panel="">
         {/* Formulario */}
         <div className={styles.form}>
           {/* Título/Razón */}

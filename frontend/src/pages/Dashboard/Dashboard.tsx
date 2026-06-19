@@ -1904,7 +1904,7 @@ export const Dashboard: React.FC = () => {
           type="custom"
           flushContent
         >
-          <div className="space-y-5 p-6">
+          <div className="space-y-5 p-6" data-modal-panel="">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="m-0 text-sm text-[var(--color-text-secondary)]">{chartInsightModal.subtitle}</p>
               {!chartInsightModal.loading && chartInsightModal.columns.length > 0 && (

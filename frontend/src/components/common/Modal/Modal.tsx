@@ -227,6 +227,9 @@ export const Modal: React.FC<ModalProps> = ({
       <div
         className={`${styles.modal} ${styles[type]} ${styles[size]} ${isDestructiveConfirm ? styles.destructive : ''} ${draggableSheet ? styles.bottomSheetModal : ''} ${draggableSheet && bottomSheetMoving ? styles.bottomSheetModalInteractive : ''} ${sheetExiting ? styles.bottomSheetModalExiting : ''} ${className}`.trim()}
         style={draggableSheet ? bottomSheetDismiss.sheetStyle : undefined}
+        data-modal=""
+        data-modal-size={size}
+        data-modal-type={type}
         {...(draggableSheet ? bottomSheetDismiss.sheetDragProps : {})}
       >
         {draggableSheet && (
@@ -234,7 +237,7 @@ export const Modal: React.FC<ModalProps> = ({
         )}
         {/* Solo mostrar header si hay título o botón de cerrar */}
         {(title || showCloseButton) && (
-          <div className={styles.header}>
+          <div className={styles.header} data-modal-header="">
             <div className={styles.titleWrapper}>
               {type !== 'custom' && (
                 <div className={styles.iconWrapper}>
@@ -257,7 +260,12 @@ export const Modal: React.FC<ModalProps> = ({
         )}
 
         {(message || children) && (
-          <div className={`${styles.content} ${flushContent ? styles.flush : ''} ${contentClassName}`.trim()} data-phone-scrollable="true">
+          <div
+            className={`${styles.content} ${flushContent ? styles.flush : ''} ${contentClassName}`.trim()}
+            data-modal-content=""
+            data-modal-flush={flushContent ? 'true' : undefined}
+            data-phone-scrollable="true"
+          >
             {message && <p className={styles.message}>{message}</p>}
             {requiresTypedConfirmation && (
               <div className={styles.typeToConfirm}>
@@ -281,7 +289,7 @@ export const Modal: React.FC<ModalProps> = ({
         )}
 
         {type !== 'custom' && (
-          <div className={styles.footer}>
+          <div className={styles.footer} data-modal-footer="">
             {type === 'confirm' && (
               <>
                 <Button

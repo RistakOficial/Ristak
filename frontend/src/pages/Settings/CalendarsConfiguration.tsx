@@ -1137,7 +1137,7 @@ export const CalendarsConfiguration: React.FC = () => {
       size="md"
       flushContent
     >
-      <div className={pageStyles.createCalendarForm}>
+      <div className={pageStyles.createCalendarForm} data-modal-panel="">
         <div className={styles.formField}>
           <label className={styles.label}>Nombre del calendario</label>
           <input
@@ -1228,7 +1228,7 @@ export const CalendarsConfiguration: React.FC = () => {
       showCloseButton={!savingGoogleDefaultPrompt}
       flushContent
     >
-      <div className={pageStyles.defaultPromptModal}>
+      <div className={pageStyles.defaultPromptModal} data-modal-panel="">
         <div className={pageStyles.defaultPromptIcon}>
           <Calendar size={24} />
         </div>
@@ -1283,7 +1283,7 @@ export const CalendarsConfiguration: React.FC = () => {
       showCloseButton={!savingGoogleMergePrompt}
       flushContent
     >
-      <div className={pageStyles.defaultPromptModal}>
+      <div className={pageStyles.defaultPromptModal} data-modal-panel="">
         <div className={pageStyles.defaultPromptIcon}>
           <RefreshCw size={24} />
         </div>
@@ -1871,7 +1871,7 @@ export const CalendarsConfiguration: React.FC = () => {
       size="md"
       flushContent
     >
-      <div className={pageStyles.notificationsModal}>
+      <div className={pageStyles.notificationsModal} data-modal-panel="">
         <section className={pageStyles.notificationsHero}>
           <div className={pageStyles.notificationsTitle}>
             <span className={pageStyles.notificationsIcon}>

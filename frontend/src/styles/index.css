@@ -2888,6 +2888,229 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   [data-overlay] { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(8,11,16,0.55); backdrop-filter: blur(4px); animation: rk-ovfade 0.16s ease both; }
   @keyframes rk-ovfade { from { opacity: 0; } to { opacity: 1; } }
   [data-modal] { background: var(--surface-solid, var(--surface)); border: 1px solid var(--border-strong); border-radius: var(--radius-card); box-shadow: 0 40px 80px -24px rgba(0,0,0,0.6); width: 100%; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; animation: rk-modalin 0.2s cubic-bezier(0.4,0,0.2,1) both; }
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
+    --modal-density-control-height: 34px;
+    --modal-density-control-padding-x: 10px;
+    --modal-density-control-font-size: 13px;
+    --modal-density-label-font-size: 12px;
+    --modal-density-helper-font-size: 11.5px;
+    --modal-density-title-font-size: 16px;
+    --modal-density-header-padding-x: 24px;
+    --modal-density-header-padding-y: 18px;
+    --modal-density-content-padding-x: 24px;
+    --modal-density-content-padding-y: 18px;
+    --modal-density-footer-padding-x: 24px;
+    --modal-density-footer-padding-y: 16px;
+    --modal-density-form-gap: 12px;
+    --modal-density-field-gap: 5px;
+    --modal-density-grid-gap: 10px;
+    --modal-density-card-padding: 10px;
+    --modal-density-button-height: 34px;
+    --modal-density-button-height-sm: 28px;
+    --modal-density-button-padding-x: 12px;
+    --modal-density-dropdown-item-height: 30px;
+    --modal-density-table-cell-padding: 0.5rem 0.625rem;
+    --app-control-height: var(--modal-density-control-height);
+    --native-control-height: var(--modal-density-control-height);
+    --ristak-dropdown-trigger-height: var(--modal-density-control-height);
+    --app-button-height: var(--modal-density-button-height);
+    --app-button-height-sm: var(--modal-density-button-height-sm);
+    --app-button-padding-x: var(--modal-density-button-padding-x);
+    --app-button-padding-x-sm: 9px;
+    --app-button-font-size: var(--modal-density-control-font-size);
+    --app-button-font-size-sm: 11.5px;
+    --app-segment-height: 28px;
+    --app-segment-padding-y: 0.2rem;
+    --app-segment-padding-x: 0.5rem;
+    --app-table-cell-padding: var(--modal-density-table-cell-padding);
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal][data-modal-size='sm'],
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal][data-modal-size='md'] {
+    --modal-density-control-height: 32px;
+    --modal-density-title-font-size: 15.5px;
+    --modal-density-header-padding-x: 22px;
+    --modal-density-header-padding-y: 16px;
+    --modal-density-content-padding-x: 22px;
+    --modal-density-content-padding-y: 16px;
+    --modal-density-footer-padding-x: 22px;
+    --modal-density-footer-padding-y: 14px;
+    --modal-density-form-gap: 10px;
+    --modal-density-grid-gap: 9px;
+    --modal-density-card-padding: 9px;
+    --modal-density-button-height: 32px;
+    --modal-density-button-height-sm: 26px;
+    --modal-density-dropdown-item-height: 28px;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal-header] {
+    padding: var(--modal-density-header-padding-y) var(--modal-density-header-padding-x) !important;
+    gap: var(--modal-density-grid-gap);
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal-content]:not([data-modal-flush='true']) {
+    padding: var(--modal-density-content-padding-y) var(--modal-density-content-padding-x) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal-content][data-modal-flush='true'] > [data-modal-panel] {
+    gap: var(--modal-density-form-gap) !important;
+    padding: var(--modal-density-content-padding-y) var(--modal-density-content-padding-x) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal-footer] {
+    gap: var(--modal-density-grid-gap) !important;
+    padding: var(--modal-density-footer-padding-y) var(--modal-density-footer-padding-x) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal][data-modal-shell='legacy'] {
+    display: block;
+    overflow-y: auto;
+    padding: var(--modal-density-content-padding-y) var(--modal-density-content-padding-x) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal][data-modal-shell='legacy'] > [data-modal-header] {
+    padding: 0 !important;
+    margin-bottom: var(--modal-density-form-gap) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal][data-modal-shell='legacy'] [data-modal-footer] {
+    padding: 0 !important;
+    margin-top: var(--modal-density-grid-gap) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(form, [data-modal-form]) {
+    gap: var(--modal-density-form-gap) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where([class*='formActions'], [class*='actionsRight']) {
+    gap: var(--modal-density-grid-gap) !important;
+    margin-top: var(--modal-density-grid-gap) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where([class*='formGrid'], [class*='fieldGrid'], [class*='typeGrid'], [class*='summaryGrid'], [class*='planSummaryGrid']) {
+    gap: var(--modal-density-grid-gap) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where([class*='formGroup'], [class*='field'], [class*='sectionBlock'], [class*='section']) {
+    gap: var(--modal-density-field-gap);
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(h2) {
+    font-size: var(--modal-density-title-font-size) !important;
+    line-height: 1.28;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(h3, h4) {
+    font-size: 13.5px !important;
+    line-height: 1.25;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(label, [class*='label'], [class*='Label']) {
+    font-size: var(--modal-density-label-font-size) !important;
+    line-height: 1.25;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(p, small, [class*='hint'], [class*='Hint'], [class*='subtitle'], [class*='Subtitle'], [class*='detail'], [class*='Detail']) {
+    font-size: var(--modal-density-helper-font-size);
+    line-height: 1.35;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(
+    input:not([type]),
+    input[type='text'],
+    input[type='email'],
+    input[type='password'],
+    input[type='number'],
+    input[type='tel'],
+    input[type='url'],
+    input[type='search'],
+    input[type='date'],
+    input[type='time'],
+    input[type='datetime-local'],
+    input[type='month'],
+    input[type='week'],
+    select
+  ):not(:where(input[type='hidden'], input[type='checkbox'], input[type='radio'], input[type='range'], input[type='color'], .rstkCanvas *, .rstk-block-style *, .rstk-phone-input *, [data-ristak-unstyled], [data-ristak-unstyled] *)) {
+    min-height: var(--modal-density-control-height) !important;
+    padding: 0 var(--modal-density-control-padding-x) !important;
+    font-size: var(--modal-density-control-font-size) !important;
+    line-height: 1.3;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(select, input[type='date'], input[type='time'], input[type='datetime-local'], input[type='month'], input[type='week']) {
+    padding-right: calc(var(--modal-density-control-padding-x) + 24px) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(textarea):not(:where(.rstkCanvas *, .rstk-block-style *, [data-ristak-unstyled], [data-ristak-unstyled] *)) {
+    min-height: 68px !important;
+    padding: 8px var(--modal-density-control-padding-x) !important;
+    font-size: var(--modal-density-control-font-size) !important;
+    line-height: 1.35;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-btn] {
+    height: var(--modal-density-button-height) !important;
+    padding: 0 var(--modal-density-button-padding-x) !important;
+    font-size: var(--modal-density-control-font-size) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-btn][data-size='sm'] {
+    height: var(--modal-density-button-height-sm) !important;
+    padding: 0 9px !important;
+    font-size: 11.5px !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-ristak-dropdown-trigger] {
+    min-height: var(--modal-density-control-height) !important;
+    padding-inline: var(--modal-density-control-padding-x) !important;
+    font-size: var(--modal-density-control-font-size) !important;
+    gap: 8px;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-ristak-dropdown-item] {
+    min-height: var(--modal-density-dropdown-item-height) !important;
+    padding: 7px 10px !important;
+    font-size: var(--modal-density-control-font-size) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-ristak-tablist-tab] {
+    min-height: var(--app-segment-height) !important;
+    padding: var(--app-segment-padding-y) var(--app-segment-padding-x) !important;
+    font-size: 12px !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-ristak-table] :where(th, td) {
+    padding: var(--modal-density-table-cell-padding) !important;
+    font-size: var(--modal-density-control-font-size) !important;
+  }
+
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(button[class*='typeCard'], div[class*='lockedContact'], div[class*='selectedContact'], div[class*='planSummaryItem'], label[class*='checkboxRow'], [class*='sectionBlock']) {
+    padding: var(--modal-density-card-padding) !important;
+  }
+
+  @media (max-width: 1366px) {
+    body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
+      --modal-density-control-height: 30px;
+      --modal-density-control-padding-x: 9px;
+      --modal-density-control-font-size: 12.5px;
+      --modal-density-label-font-size: 11.5px;
+      --modal-density-helper-font-size: 11px;
+      --modal-density-title-font-size: 15px;
+      --modal-density-header-padding-x: 20px;
+      --modal-density-header-padding-y: 14px;
+      --modal-density-content-padding-x: 20px;
+      --modal-density-content-padding-y: 14px;
+      --modal-density-footer-padding-x: 20px;
+      --modal-density-footer-padding-y: 12px;
+      --modal-density-form-gap: 9px;
+      --modal-density-grid-gap: 8px;
+      --modal-density-card-padding: 8px;
+      --modal-density-button-height: 30px;
+      --modal-density-button-height-sm: 25px;
+      --modal-density-button-padding-x: 10px;
+      --modal-density-dropdown-item-height: 27px;
+    }
+  }
   @keyframes rk-modalin { from { opacity: 0; transform: translateY(10px) scale(0.99); } to { opacity: 1; transform: none; } }
   [data-amt][data-tone='pos'] { color: var(--pos); }
   [data-amt][data-tone='neg'] { color: var(--neg); }

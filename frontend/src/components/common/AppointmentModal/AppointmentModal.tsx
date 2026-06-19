@@ -1647,6 +1647,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       >
         <div
           className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}
+          data-modal-panel=""
           data-phone-scrollable={isMobileSheet ? 'true' : undefined}
         >
         {showCalendarPicker && (

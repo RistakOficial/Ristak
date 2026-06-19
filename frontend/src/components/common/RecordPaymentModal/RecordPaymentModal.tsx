@@ -1718,7 +1718,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     return (
-      <div className={styles.content}>
+      <div className={styles.content} data-modal-panel="">
         {!contactLocked && (
           <div className={styles.field}>
             <label className={styles.label}>Cliente</label>
@@ -2667,7 +2667,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         : 'Registrar pago'
 
       return (
-        <div className={styles.footer}>
+        <div className={styles.footer} data-modal-footer="">
           {!isEmbedded && (
             <Button
               variant="secondary"
@@ -2713,7 +2713,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     return (
-      <div className={styles.footer}>
+      <div className={styles.footer} data-modal-footer="">
         {variant !== 'embedded' && (
           <Button
             variant="secondary"
