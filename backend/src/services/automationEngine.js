@@ -2449,16 +2449,19 @@ async function sendEmailAutomationMessage(node, ctx) {
   const config = node.config || {}
   const subject = renderTemplate(str(config.subject), ctx, { preserveUnknown: true }).trim()
   const body = renderTemplate(str(config.body || config.message), ctx, { preserveUnknown: true }).trim()
+  const html = renderTemplate(str(config.bodyHtml || config.html || config.messageHtml), ctx, { preserveUnknown: true }).trim()
   const to = renderTemplate(str(config.toEmail || config.to), ctx, { preserveUnknown: true }).trim()
 
   if (!subject) throw new Error('El correo necesita asunto')
-  if (!body) throw new Error('El correo necesita contenido')
+  if (!body && !html) throw new Error('El correo necesita contenido')
 
   const result = await sendEmailToContact({
     contactId: ctx.contact?.id,
     to,
     subject,
     text: body,
+    html: html || undefined,
+    includeSignature: config.includeSignature !== false,
     externalId: makeId('automation_email')
   })
 

@@ -1,10 +1,16 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Edit3 } from 'lucide-react'
+import { emailHtmlToPlainText, plainTextToEmailHtml } from '@/components/common'
 import { Field } from './configPrimitives'
-import { MessageComposer, VariableTextInput } from '../composer/MessageComposer'
+import { VariableTextInput } from '../composer/MessageComposer'
+import { BASE_VARIABLES, FlowVariablesContext, loadAllVariables } from '../variablesCatalog'
+import { RichEmailEditorModal } from './RichEmailEditorModal'
+import styles from '../AutomationEditor.module.css'
 
 type ConfigValue = Record<string, unknown>
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
+const bool = (value: unknown, fallback: boolean): boolean => (typeof value === 'boolean' ? value : fallback)
 
 interface EmailConfigEditorProps {
   config: ConfigValue
@@ -12,7 +18,37 @@ interface EmailConfigEditorProps {
 }
 
 export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, onChange }) => {
-  const setValue = (key: string, value: string) => onChange({ ...config, [key]: value })
+  const flowVariables = React.useContext(FlowVariablesContext)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [variables, setVariables] = useState(BASE_VARIABLES)
+  const setValue = (key: string, value: unknown) => onChange({ ...config, [key]: value })
+
+  useEffect(() => {
+    let cancelled = false
+    void loadAllVariables().then((loaded) => {
+      if (!cancelled) setVariables(loaded)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const richEditorVariables = useMemo(() => {
+    const byId = new Map<string, { value: string; label: string }>()
+    ;[...variables, ...flowVariables.variables].forEach((variable) => {
+      if (!variable.fieldId) return
+      byId.set(variable.fieldId, {
+        value: variable.fieldId,
+        label: variable.categoryLabel ? `${variable.categoryLabel} · ${variable.label}` : variable.label
+      })
+    })
+    return Array.from(byId.values())
+  }, [flowVariables.variables, variables])
+
+  const body = str(config.body)
+  const bodyHtml = str(config.bodyHtml) || plainTextToEmailHtml(body)
+  const bodyPreview = (emailHtmlToPlainText(bodyHtml) || body).trim()
+  const includeSignature = bool(config.includeSignature, true)
 
   return (
     <>
@@ -38,14 +74,35 @@ export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, on
       </Field>
 
       <Field label="Mensaje">
-        <MessageComposer
-          value={str(config.body)}
-          onChange={(value) => setValue('body', value)}
-          placeholder="Escribe el correo..."
-          showEmoji={false}
-          aria-label="Mensaje del correo"
-        />
+        <button
+          type="button"
+          className={styles.emailEditorTrigger}
+          data-empty={bodyPreview ? undefined : 'true'}
+          onClick={() => setEditorOpen(true)}
+        >
+          <span className={styles.emailEditorTriggerTop}>
+            <span>{bodyPreview ? 'Correo preparado' : 'Editar contenido del correo'}</span>
+            <Edit3 size={15} />
+          </span>
+          <span className={styles.emailEditorPreview}>
+            {bodyPreview || 'Abre el editor para escribir el correo con formato, HTML, imágenes y firma.'}
+          </span>
+          <span className={styles.emailEditorHint}>
+            {includeSignature ? 'Firma guardada incluida al enviar.' : 'Firma guardada desactivada para este correo.'}
+          </span>
+        </button>
       </Field>
+
+      <RichEmailEditorModal
+        open={editorOpen}
+        subject={str(config.subject)}
+        body={body}
+        bodyHtml={bodyHtml}
+        includeSignature={includeSignature}
+        variables={richEditorVariables}
+        onClose={() => setEditorOpen(false)}
+        onSave={(nextConfig) => onChange({ ...config, ...nextConfig })}
+      />
     </>
   )
 }

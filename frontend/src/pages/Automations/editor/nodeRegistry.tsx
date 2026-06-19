@@ -1459,7 +1459,9 @@ const CHANNEL_NODES: NodeDefinition[] = [
 	    defaultConfig: () => ({
 	      toEmail: '{{contact.email}}',
 	      subject: '',
-	      body: ''
+	      body: '',
+	      bodyHtml: '',
+	      includeSignature: true
 	    }),
 	    fields: [],
 	    outputs: () => SINGLE_OUTPUT,
@@ -1472,14 +1474,14 @@ const CHANNEL_NODES: NodeDefinition[] = [
 	      const errors: string[] = []
 	      if (!str(config.toEmail)) errors.push('Define el correo destino')
 	      if (!str(config.subject).trim()) errors.push('Escribe el asunto del correo')
-	      if (!str(config.body).trim()) errors.push('Escribe el mensaje del correo')
+	      if (!str(config.body).trim() && !str(config.bodyHtml).trim()) errors.push('Escribe el mensaje del correo')
 	      return errors
 	    },
 	    summary: (config) => ({
 	      text: str(config.toEmail) && str(config.toEmail) !== '{{contact.email}}'
 	        ? `Para ${str(config.toEmail)}`
 	        : 'Al correo del contacto',
-	      box: str(config.subject) || str(config.body) || undefined,
+	      box: str(config.subject) || str(config.body) || str(config.bodyHtml).replace(/<[^>]+>/g, ' ').trim() || undefined,
 	      empty: 'Configura asunto y mensaje'
 	    })
 	  },

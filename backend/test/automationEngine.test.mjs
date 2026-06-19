@@ -587,7 +587,9 @@ test('acción de correo en automatizaciones envía email al contacto y registra 
         config: {
           toEmail: '{{contact.email}}',
           subject: 'Hola {{contact.first_name}}',
-          body: 'Te escribo por correo sobre: {{conversation.last_message}}'
+          body: 'Te escribo por correo sobre: {{conversation.last_message}}',
+          bodyHtml: '<p><strong>Te escribo por correo</strong> sobre: {{conversation.last_message}}</p>',
+          includeSignature: false
         }
       },
       {
@@ -662,7 +664,10 @@ test('acción de correo en automatizaciones envía email al contacto y registra 
       assert.equal(emailMessage.status, 'sent')
       assert.equal(emailMessage.to_email, `email-action-${suffix}@example.com`)
       assert.match(emailMessage.message_text, /quiero correo con detalles/)
+      assert.match(emailMessage.html_body, /<strong>Te escribo por correo<\/strong>/)
+      assert.match(emailMessage.html_body, /quiero correo con detalles/)
       assert.equal(sentMessages.length, 2)
+      assert.match(sentMessages[1].html, /<strong>Te escribo por correo<\/strong>/)
 
       const enrollment = await db.get(
         'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',

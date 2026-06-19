@@ -206,6 +206,17 @@ test('agrega la firma guardada al enviar correos', async () => {
       assert.ok(outgoing.html.indexOf('Raúl Gómez') < outgoing.html.indexOf('<blockquote>Texto citado</blockquote>'))
       assert.match(outgoing.text, /Mensaje principal/)
       assert.match(outgoing.text, /Raúl Gómez/)
+
+      await sendEmail({
+        to: 'cliente@example.com',
+        subject: 'Sin firma',
+        text: 'Mensaje sin firma',
+        html: '<p>Mensaje sin firma</p>',
+        includeSignature: false
+      })
+
+      assert.equal(sentMessages.length, 3)
+      assert.doesNotMatch(sentMessages[2].html, /data-ristak-email-signature/)
     } finally {
       setEmailTransportFactoryForTest(null)
       setEmailMxResolverForTest(null)

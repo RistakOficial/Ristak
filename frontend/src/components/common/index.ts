@@ -55,6 +55,13 @@ export { AppStartupLoader } from './AppStartupLoader'
 export { MediaUploadTray } from './MediaUploadTray'
 export type { MediaUploadTask, MediaUploadTaskStatus } from './MediaUploadTray'
 export {
+  EmailRichTextEditor,
+  emailHtmlToPlainText,
+  plainTextToEmailHtml,
+  sanitizeEmailRichHtmlForEditor,
+  type EmailRichTextVariable
+} from './EmailRichTextEditor'
+export {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,

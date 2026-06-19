@@ -1232,6 +1232,143 @@
   line-height: 1.45;
 }
 
+.emailEditorTrigger {
+  display: grid;
+  width: 100%;
+  min-height: 126px;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+}
+
+.emailEditorTrigger:hover {
+  background: var(--surface-hover);
+}
+
+.emailEditorTrigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.emailEditorTriggerTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.emailEditorTriggerTop svg {
+  flex: 0 0 auto;
+  color: var(--text-mute);
+}
+
+.emailEditorPreview {
+  display: -webkit-box;
+  min-height: 46px;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 13.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.emailEditorTrigger[data-empty='true'] .emailEditorPreview {
+  color: var(--text-mute);
+}
+
+.emailEditorHint {
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.emailModalContent {
+  overflow: visible;
+}
+
+.emailModalBody {
+  display: grid;
+  gap: 16px;
+}
+
+.emailModalHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.emailModalHeader strong {
+  display: block;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.emailModalHeader p {
+  margin: 3px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.emailModalIcon {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.emailModalField {
+  display: grid;
+  gap: 7px;
+}
+
+.emailModalField > span {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.emailSignatureToggle {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.emailModalActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
 .configInfo {
   font-size: 12.5px;
   color: var(--color-text-secondary);

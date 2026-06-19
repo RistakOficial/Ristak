@@ -83,6 +83,7 @@ export interface EmailSendPayload {
   html?: string
   replyTo?: string
   externalId?: string
+  includeSignature?: boolean
 }
 
 export interface EmailSendResult extends EmailTestResult {

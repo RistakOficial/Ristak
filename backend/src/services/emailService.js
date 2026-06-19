@@ -27,6 +27,7 @@ const ALLOWED_SIGNATURE_TAGS = new Set([
   'br',
   'div',
   'em',
+  'font',
   'hr',
   'i',
   'img',
@@ -408,8 +409,22 @@ function sanitizeSignatureStyle(value) {
     .join('; ')
 }
 
+function legacyFontSizeToCss(value) {
+  const sizes = {
+    '1': '10px',
+    '2': '12px',
+    '3': '14px',
+    '4': '16px',
+    '5': '18px',
+    '6': '24px',
+    '7': '32px'
+  }
+  return sizes[cleanString(value)] || ''
+}
+
 function sanitizeSignatureAttributes(tagName, rawAttributes = '') {
   const attrs = []
+  let styleValue = ''
   const attrPattern = /([a-z0-9:-]+)(?:\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/gi
   let match = null
 
@@ -419,8 +434,23 @@ function sanitizeSignatureAttributes(tagName, rawAttributes = '') {
     if (!name || name.startsWith('on')) continue
 
     if (name === 'style') {
-      const style = sanitizeSignatureStyle(value)
-      if (style) attrs.push(`style="${escapeAttribute(style)}"`)
+      styleValue = [styleValue, value].filter(Boolean).join('; ')
+      continue
+    }
+
+    if (tagName === 'font' && name === 'face' && value) {
+      styleValue = [styleValue, `font-family: ${value}`].filter(Boolean).join('; ')
+      continue
+    }
+
+    if (tagName === 'font' && name === 'size') {
+      const fontSize = legacyFontSizeToCss(value)
+      if (fontSize) styleValue = [styleValue, `font-size: ${fontSize}`].filter(Boolean).join('; ')
+      continue
+    }
+
+    if (tagName === 'font' && name === 'color' && value) {
+      styleValue = [styleValue, `color: ${value}`].filter(Boolean).join('; ')
       continue
     }
 
@@ -451,6 +481,9 @@ function sanitizeSignatureAttributes(tagName, rawAttributes = '') {
       attrs.push(`title="${escapeAttribute(value).slice(0, 160)}"`)
     }
   }
+
+  const style = sanitizeSignatureStyle(styleValue)
+  if (style) attrs.unshift(`style="${escapeAttribute(style)}"`)
 
   return attrs.length ? ` ${[...new Set(attrs)].join(' ')}` : ''
 }
@@ -940,7 +973,7 @@ export async function connectEmail(payload = {}) {
  * Envía un correo usando la configuración de la cuenta.
  * Es el punto único de salida para que otras features lo reutilicen después.
  */
-export async function sendEmail({ to, subject, text, html, replyTo } = {}) {
+export async function sendEmail({ to, subject, text, html, replyTo, includeSignature = true } = {}) {
   const config = await readStoredConfig()
   const password = await readStoredPassword()
 
@@ -954,7 +987,7 @@ export async function sendEmail({ to, subject, text, html, replyTo } = {}) {
   if (!cleanString(text) && !cleanString(html)) throw httpError(400, 'El correo necesita contenido')
 
   const transporter = await getTransporter(config, password)
-  const signature = await readStoredSignatureConfig()
+  const signature = includeSignature === false ? null : await readStoredSignatureConfig()
   const signedMessage = applySignatureToMessage({
     to: recipient,
     subject,
@@ -981,7 +1014,8 @@ export async function sendEmailToContact({
   text,
   html,
   replyTo,
-  externalId
+  externalId,
+  includeSignature = true
 } = {}) {
   const config = await readStoredConfig()
   const password = await readStoredPassword()
@@ -1006,7 +1040,8 @@ export async function sendEmailToContact({
   const rawBase = {
     provider: 'smtp',
     connectedProvider: config.providerId || config.provider || 'smtp',
-    senderName: config.fromName || ''
+    senderName: config.fromName || '',
+    includeSignature: includeSignature !== false
   }
 
   await saveEmailMessageRow({
@@ -1029,7 +1064,8 @@ export async function sendEmailToContact({
       subject: cleanSubject,
       text: cleanText,
       html: cleanHtml,
-      replyTo: cleanReplyTo || undefined
+      replyTo: cleanReplyTo || undefined,
+      includeSignature
     })
     await saveEmailMessageRow({
       id: localMessageId,
