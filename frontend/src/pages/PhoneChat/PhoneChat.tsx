@@ -313,6 +313,7 @@ const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     priceName: '',
     amount: null,
     currency: '',
+    paymentMode: 'full_payment',
     url: '',
     trackingParam: 'ristak_goal_id'
   },
@@ -387,6 +388,13 @@ function getPhoneAgentReplyDelivery(agent: ConversationalAgentDef): AgentReplyDe
 
 function getPhoneAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowConfig {
   const workflow = (agent.goalWorkflow || {}) as Partial<AgentGoalWorkflowConfig>
+  const sales = (workflow.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>
+  const deposit = (workflow.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>
+  const salesPaymentMode = sales.paymentMode === 'deposit' || sales.paymentMode === 'full_payment'
+    ? sales.paymentMode
+    : deposit.enabled
+      ? 'deposit'
+      : DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.sales.paymentMode
   return {
     ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW,
     ...workflow,
@@ -396,7 +404,8 @@ function getPhoneAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWork
     },
     sales: {
       ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.sales,
-      ...((workflow.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>)
+      ...sales,
+      paymentMode: salesPaymentMode
     },
     data: {
       ...DEFAULT_PHONE_AGENT_GOAL_WORKFLOW.data,

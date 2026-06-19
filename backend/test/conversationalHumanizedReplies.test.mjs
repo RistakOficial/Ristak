@@ -187,6 +187,7 @@ test('normaliza flujo por enlace con parametro de seguimiento', () => {
     sales: {
       owner: 'url',
       url: 'https://tienda.test/checkout',
+      paymentMode: 'deposit',
       trackingParam: 'order_id'
     },
     triggerLink: {
@@ -213,6 +214,7 @@ test('normaliza flujo por enlace con parametro de seguimiento', () => {
   assert.equal(workflow.appointments.url, 'https://agenda.test/reserva')
   assert.equal(workflow.appointments.trackingParam, 'booking-ref')
   assert.equal(workflow.sales.owner, 'url')
+  assert.equal(workflow.sales.paymentMode, 'deposit')
   assert.equal(workflow.sales.trackingParam, 'order_id')
   assert.equal(workflow.triggerLink.triggerLinkId, 'trigger_link_123')
   assert.equal(workflow.triggerLink.triggerLinkPublicId, 'abc123')
@@ -226,6 +228,27 @@ test('normaliza flujo por enlace con parametro de seguimiento', () => {
   assert.equal(workflow.completion.mode, 'assign_user')
   assert.equal(workflow.completion.userId, 'user_123')
   assert.equal(workflow.completion.userName, 'Ana Ventas')
+})
+
+test('normaliza venta completa como modo default sin forzar moneda fija', () => {
+  const workflow = normalizeAgentGoalWorkflow({
+    sales: {
+      owner: 'ai',
+      paymentMode: 'full_payment',
+      currency: ''
+    },
+    deposit: {
+      enabled: true,
+      mode: 'fixed',
+      amount: '500'
+    }
+  })
+
+  assert.equal(workflow.sales.owner, 'ai')
+  assert.equal(workflow.sales.paymentMode, 'full_payment')
+  assert.equal(workflow.deposit.enabled, true)
+  assert.equal(workflow.deposit.amount, 500)
+  assert.equal(workflow.deposit.currency, '')
 })
 
 test('tool de avance bloquea la meta si falta validar anticipo configurado', async () => {
@@ -271,6 +294,91 @@ test('tool de avance bloquea la meta si falta validar anticipo configurado', asy
 
   assert.equal(allowed.ok, true)
   assert.equal(allowed.simulated, true)
+  assert.equal(allowed.signal, 'ready_for_human')
+  assert.equal(ctx.actions[0]?.type, 'mark_ready_to_advance')
+})
+
+test('modo venta completa no bloquea avance por anticipo legacy', async () => {
+  const ctx = {
+    contactId: 'test_sales_full_payment_contact',
+    dryRun: true,
+    actions: [],
+    accountLocale: { currency: 'USD' },
+    config: {
+      objective: 'ventas',
+      successAction: 'ready_to_buy',
+      goalWorkflow: {
+        sales: {
+          paymentMode: 'full_payment'
+        },
+        deposit: {
+          enabled: true,
+          mode: 'fixed',
+          amount: 500
+        }
+      }
+    }
+  }
+  const markReadyTool = createConversationalTools(ctx).find((item) => item.name === 'mark_ready_to_advance')
+  assert.ok(markReadyTool)
+
+  const allowed = await markReadyTool.invoke(null, JSON.stringify({
+    intencionDetectada: 'Quiere comprar el curso completo',
+    resumen: 'Pidió pagar todo',
+    urgencia: 'media',
+    siguientePaso: 'Crear link de pago'
+  }))
+
+  assert.equal(allowed.ok, true)
+  assert.equal(allowed.signal, 'ready_to_buy')
+  assert.equal(ctx.actions[0]?.type, 'mark_ready_to_advance')
+})
+
+test('modo solicitar anticipo en venta bloquea hasta comprobante y usa moneda de cuenta', async () => {
+  const ctx = {
+    contactId: 'test_sales_deposit_contact',
+    dryRun: true,
+    actions: [],
+    accountLocale: { currency: 'USD' },
+    config: {
+      objective: 'ventas',
+      successAction: 'ready_for_human',
+      goalWorkflow: {
+        sales: {
+          paymentMode: 'deposit'
+        },
+        deposit: {
+          enabled: false,
+          mode: 'fixed',
+          amount: 300,
+          currency: ''
+        }
+      }
+    }
+  }
+  const markReadyTool = createConversationalTools(ctx).find((item) => item.name === 'mark_ready_to_advance')
+  assert.ok(markReadyTool)
+
+  const blocked = await markReadyTool.invoke(null, JSON.stringify({
+    intencionDetectada: 'Quiere apartar su lugar',
+    resumen: 'Aceptó dejar pago inicial',
+    urgencia: 'alta',
+    siguientePaso: 'Pasar al asesor'
+  }))
+
+  assert.equal(blocked.ok, false)
+  assert.match(blocked.error, /Falta validar el pago solicitado \(300 USD\)/)
+  assert.equal(ctx.actions.length, 0)
+
+  const allowed = await markReadyTool.invoke(null, JSON.stringify({
+    intencionDetectada: 'Quiere apartar su lugar',
+    resumen: 'Mandó comprobante válido',
+    urgencia: 'alta',
+    siguientePaso: 'Pasar al asesor',
+    comprobanteValidado: true
+  }))
+
+  assert.equal(allowed.ok, true)
   assert.equal(allowed.signal, 'ready_for_human')
   assert.equal(ctx.actions[0]?.type, 'mark_ready_to_advance')
 })
@@ -1582,9 +1690,52 @@ test('instrucciones del agente incluyen anticipo y acción final configurados', 
   assert.match(instructions, /Anticipo antes de concretar/)
   assert.match(instructions, /Monto configurado: entre 200 y 900 MXN/)
   assert.match(instructions, /NO ejecutes la acción de avance hasta que el contacto haya enviado comprobante/)
-  assert.match(instructions, /anticipoValidado=true/)
+  assert.match(instructions, /comprobanteValidado=true/)
   assert.match(instructions, /Después de cumplir el objetivo/)
   assert.match(instructions, /asigna el contacto a Ana Ventas/)
+})
+
+test('instrucciones de venta completa no piden comprobante aunque exista deposito legacy', () => {
+  const instructions = buildConversationalInstructions({
+    config: {
+      objective: 'ventas',
+      customObjective: '',
+      successAction: 'ready_to_buy',
+      requiredData: '',
+      handoffRules: '',
+      extraInstructions: '',
+      allowEmojis: false,
+      closingStrategyMode: 'custom',
+      closingStrategyCustom: 'Haz cierre breve y humano.',
+      goalWorkflow: {
+        sales: {
+          owner: 'ai',
+          paymentMode: 'full_payment',
+          productName: 'Curso Intensivo',
+          amount: 1200,
+          currency: ''
+        },
+        deposit: {
+          enabled: true,
+          mode: 'fixed',
+          amount: 300,
+          currency: ''
+        }
+      }
+    },
+    businessContext: '',
+    brandVoice: '',
+    businessName: 'Academia Sol',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: null,
+    accountLocale: { countryCode: 'US', currency: 'USD', dialCode: '1' }
+  })
+
+  assert.match(instructions, /Flujo de cobro configurado/)
+  assert.match(instructions, /Curso Intensivo · 1200 USD/)
+  assert.doesNotMatch(instructions, /Pago solicitado antes de concretar la venta/)
+  assert.doesNotMatch(instructions, /comprobanteValidado=true/)
 })
 
 test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {

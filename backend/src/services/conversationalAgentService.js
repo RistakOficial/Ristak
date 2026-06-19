@@ -683,6 +683,7 @@ function normalizeAgentFilters(input) {
 const SUCCESS_EXTRA_TYPES = new Set(['add_tag', 'remove_tag', 'set_custom_field'])
 const GOAL_WORKFLOW_OWNERS = new Set(['human', 'ai', 'url'])
 const GOAL_WORKFLOW_DEPOSIT_MODES = new Set(['fixed', 'range'])
+const GOAL_WORKFLOW_SALES_PAYMENT_MODES = new Set(['full_payment', 'deposit'])
 const GOAL_WORKFLOW_COMPLETION_MODES = new Set(['notify_only', 'assign_user'])
 export const CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH = '/webhook/conversational-agent/goal'
 export const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
@@ -702,6 +703,7 @@ const DEFAULT_GOAL_WORKFLOW_CONFIG = {
     priceName: '',
     amount: null,
     currency: '',
+    paymentMode: 'full_payment',
     url: '',
     trackingParam: DEFAULT_GOAL_TRACKING_PARAM
   },
@@ -725,7 +727,7 @@ const DEFAULT_GOAL_WORKFLOW_CONFIG = {
     amount: null,
     minAmount: null,
     maxAmount: null,
-    currency: 'MXN'
+    currency: ''
   },
   completion: {
     mode: 'notify_only',
@@ -756,6 +758,11 @@ function normalizeGoalOwner(value, fallback = 'human') {
 function normalizeDepositMode(value, fallback = 'fixed') {
   const mode = String(value || '').trim()
   return GOAL_WORKFLOW_DEPOSIT_MODES.has(mode) ? mode : fallback
+}
+
+function normalizeSalesPaymentMode(value, fallback = 'full_payment') {
+  const mode = String(value || '').trim()
+  return GOAL_WORKFLOW_SALES_PAYMENT_MODES.has(mode) ? mode : fallback
 }
 
 function normalizeCompletionMode(value, fallback = 'notify_only') {
@@ -800,6 +807,11 @@ export function normalizeAgentGoalWorkflow(input) {
   const triggerLink = raw.triggerLink && typeof raw.triggerLink === 'object' ? raw.triggerLink : {}
   const deposit = raw.deposit && typeof raw.deposit === 'object' ? raw.deposit : {}
   const completion = raw.completion && typeof raw.completion === 'object' ? raw.completion : {}
+  const legacyDepositEnabled = toBoolean(deposit.enabled)
+  const salesPaymentMode = normalizeSalesPaymentMode(
+    sales.paymentMode || sales.payment_mode,
+    legacyDepositEnabled ? 'deposit' : DEFAULT_GOAL_WORKFLOW_CONFIG.sales.paymentMode
+  )
 
   return {
     appointments: {
@@ -816,6 +828,7 @@ export function normalizeAgentGoalWorkflow(input) {
       priceName: String(sales.priceName || '').trim().slice(0, 160),
       amount: normalizeNullableAmount(sales.amount),
       currency: String(sales.currency || '').trim().slice(0, 12).toUpperCase(),
+      paymentMode: salesPaymentMode,
       url: normalizeGoalUrl(sales.url),
       trackingParam: normalizeTrackingParam(sales.trackingParam)
     },
@@ -839,7 +852,7 @@ export function normalizeAgentGoalWorkflow(input) {
       amount: normalizeNullableAmount(deposit.amount),
       minAmount: normalizeNullableAmount(deposit.minAmount),
       maxAmount: normalizeNullableAmount(deposit.maxAmount),
-      currency: String(deposit.currency || DEFAULT_GOAL_WORKFLOW_CONFIG.deposit.currency).trim().slice(0, 12).toUpperCase() || 'MXN'
+      currency: String(deposit.currency || sales.currency || DEFAULT_GOAL_WORKFLOW_CONFIG.deposit.currency).trim().slice(0, 12).toUpperCase()
     },
     completion: {
       mode: normalizeCompletionMode(completion.mode, DEFAULT_GOAL_WORKFLOW_CONFIG.completion.mode),

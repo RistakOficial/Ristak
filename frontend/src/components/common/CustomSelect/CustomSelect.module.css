@@ -101,7 +101,7 @@
 .options {
   max-height: var(--custom-select-options-max-height, 280px);
   overflow-y: auto;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
   padding: 0;
 }
 

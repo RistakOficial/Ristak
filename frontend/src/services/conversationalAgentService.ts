@@ -72,6 +72,7 @@ export interface AgentFollowUpConfig {
 
 export type AgentGoalOwner = 'human' | 'ai' | 'url'
 export type AgentDepositMode = 'fixed' | 'range'
+export type AgentSalesPaymentMode = 'full_payment' | 'deposit'
 export type AgentCompletionMode = 'notify_only' | 'assign_user'
 
 export interface AgentGoalWorkflowConfig {
@@ -89,6 +90,7 @@ export interface AgentGoalWorkflowConfig {
     priceName: string
     amount: number | null
     currency: string
+    paymentMode: AgentSalesPaymentMode
     url: string
     trackingParam: string
   }
@@ -396,6 +398,7 @@ const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     priceName: '',
     amount: null,
     currency: '',
+    paymentMode: 'full_payment',
     url: '',
     trackingParam: 'ristak_goal_id'
   },
@@ -419,7 +422,7 @@ const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     amount: null,
     minAmount: null,
     maxAmount: null,
-    currency: 'MXN'
+    currency: ''
   },
   completion: {
     mode: 'notify_only',

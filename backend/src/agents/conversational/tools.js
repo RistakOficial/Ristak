@@ -53,17 +53,33 @@ function getConfiguredTriggerLink(config = {}) {
   return config.goalWorkflow?.triggerLink || {}
 }
 
-function getDepositRequirement(config = {}) {
-  const deposit = config.goalWorkflow?.deposit || {}
-  const actionSupportsDeposit = (
-    (config.objective === 'citas' || config.objective === 'ventas') &&
-    ['book_appointment', 'ready_for_human', 'ready_to_buy'].includes(config.successAction)
-  )
-  return actionSupportsDeposit && deposit.enabled ? deposit : null
+function getSalesPaymentMode(config = {}) {
+  const mode = String(config.goalWorkflow?.sales?.paymentMode || config.goalWorkflow?.sales?.payment_mode || '').trim()
+  if (mode === 'deposit' || mode === 'full_payment') return mode
+  return config.goalWorkflow?.deposit?.enabled ? 'deposit' : 'full_payment'
 }
 
-function formatDepositRequirement(deposit = {}) {
-  const currency = deposit.currency || 'MXN'
+function getDepositRequirement(config = {}) {
+  const deposit = config.goalWorkflow?.deposit || {}
+  const actionSupportsDeposit = ['book_appointment', 'ready_for_human', 'ready_to_buy'].includes(config.successAction)
+  if (!actionSupportsDeposit) return null
+  if (config.objective === 'ventas') {
+    return getSalesPaymentMode(config) === 'deposit' ? { ...deposit, enabled: true } : null
+  }
+  return config.objective === 'citas' && deposit.enabled ? deposit : null
+}
+
+function getAccountCurrencyLabel(accountLocale = {}) {
+  const currency = String(accountLocale?.currency || '').trim().toUpperCase()
+  return currency || 'moneda configurada en la cuenta'
+}
+
+function getDepositRequirementLabel(config = {}) {
+  return config.objective === 'ventas' ? 'pago solicitado' : 'anticipo'
+}
+
+function formatDepositRequirement(deposit = {}, accountLocale = {}) {
+  const currency = String(deposit.currency || '').trim().toUpperCase() || getAccountCurrencyLabel(accountLocale)
   if (deposit.mode === 'range') {
     const min = Number(deposit.minAmount) || 0
     const max = Number(deposit.maxAmount) || 0
@@ -75,12 +91,13 @@ function formatDepositRequirement(deposit = {}) {
   return amount > 0 ? `${amount} ${currency}` : 'monto pendiente de configurar'
 }
 
-function rejectMissingDepositIfNeeded(config = {}, anticipoValidado) {
+function rejectMissingDepositIfNeeded(config = {}, comprobanteValidado, accountLocale = {}) {
   const deposit = getDepositRequirement(config)
-  if (!deposit || anticipoValidado === true) return null
+  if (!deposit || comprobanteValidado === true) return null
+  const paymentLabel = getDepositRequirementLabel(config)
   return {
     ok: false,
-    error: `Falta validar el anticipo (${formatDepositRequirement(deposit)}). Pide foto o archivo del comprobante y sólo avanza cuando el comprobante coincida con el monto configurado.`
+    error: `Falta validar el ${paymentLabel} (${formatDepositRequirement(deposit, accountLocale)}). Pide foto o archivo del comprobante y sólo avanza cuando el comprobante coincida con el monto configurado.`
   }
 }
 
@@ -265,7 +282,7 @@ export function createConversationalTools(ctx) {
           byProduct.get(row.id).prices.push({
             name: row.price_name || null,
             amount: row.amount,
-            currency: row.currency || 'MXN',
+            currency: row.currency || ctx.accountLocale?.currency || null,
             type: row.price_type || 'one_time'
           })
         }
@@ -387,10 +404,11 @@ export function createConversationalTools(ctx) {
       startTime: z.string().describe('Inicio exacto del slot elegido, ISO 8601 tal como lo devolvió get_free_slots'),
       title: z.string().nullable().describe('Título corto de la cita (ej. "Cita - Juan Pérez")'),
       notes: z.string().nullable().describe('Resumen breve de lo que busca la persona'),
-      anticipoValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió anticipo y el contacto ya mandó comprobante válido del pago')
+      comprobanteValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió pago previo y el contacto ya mandó comprobante válido'),
+      anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
     }),
-    execute: async ({ calendarId, startTime, title, notes, anticipoValidado }) => {
-      const depositError = rejectMissingDepositIfNeeded(config, anticipoValidado)
+    execute: async ({ calendarId, startTime, title, notes, comprobanteValidado, anticipoValidado }) => {
+      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
       const start = new Date(startTime)
@@ -487,10 +505,11 @@ export function createConversationalTools(ctx) {
       resumen: z.string().describe('Resumen breve de la conversación y su situación'),
       urgencia: z.enum(['baja', 'media', 'alta']).describe('Qué tan pronto quiere avanzar'),
       siguientePaso: z.string().nullable().describe('Siguiente paso recomendado para el humano'),
-      anticipoValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió anticipo y el contacto ya mandó comprobante válido del pago')
+      comprobanteValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió pago previo y el contacto ya mandó comprobante válido'),
+      anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
     }),
-    execute: async ({ intencionDetectada, resumen, urgencia, siguientePaso, anticipoValidado }) => {
-      const depositError = rejectMissingDepositIfNeeded(config, anticipoValidado)
+    execute: async ({ intencionDetectada, resumen, urgencia, siguientePaso, comprobanteValidado, anticipoValidado }) => {
+      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
       const signal = resolveAdvanceSignal(config)
@@ -528,18 +547,19 @@ export function createConversationalTools(ctx) {
     description: 'Crea y envía un link de pago real al contacto actual. Úsala sólo después de confirmar concepto, monto, moneda y canal con la persona. Nunca inventes precios: usa list_products o el producto configurado del agente.',
     parameters: z.object({
       amount: z.number().positive().describe('Monto confirmado del cobro'),
-      currency: z.string().nullable().describe('Moneda ISO, por ejemplo MXN'),
+      currency: z.string().nullable().describe('Moneda ISO opcional; si falta se usa la moneda de la cuenta'),
       concept: z.string().describe('Concepto breve del cobro'),
       dueDate: z.string().nullable().describe('Fecha límite de pago YYYY-MM-DD opcional'),
       channel: z.enum(['email', 'whatsapp', 'sms', 'all']).describe('Canal confirmado para enviar el link'),
       confirm: z.boolean().describe('true sólo cuando la persona ya aprobó explícitamente el cobro'),
-      anticipoValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió anticipo y el contacto ya mandó comprobante válido del pago')
+      comprobanteValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió pago previo y el contacto ya mandó comprobante válido'),
+      anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
     }),
-    execute: async ({ amount, currency, concept, dueDate, channel, confirm, anticipoValidado }) => {
+    execute: async ({ amount, currency, concept, dueDate, channel, confirm, comprobanteValidado, anticipoValidado }) => {
       if (!confirm) {
         return { ok: false, error: 'Falta confirmación explícita. Resume monto, concepto y canal, y pide aprobación antes de crear el link.' }
       }
-      const depositError = rejectMissingDepositIfNeeded(config, anticipoValidado)
+      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
       const contact = await getPaymentContact(ctx.contactId)

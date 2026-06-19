@@ -567,7 +567,7 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     businessName = userRow?.business_name || null
   }
 
-  const ctx = { contactId, config, dryRun, followUpMode: Boolean(followUpContext), actions: [], suppressReply: false }
+  const ctx = { contactId, config, dryRun, followUpMode: Boolean(followUpContext), accountLocale, actions: [], suppressReply: false }
   const tools = createConversationalTools(ctx)
   const runtimeBusinessContext = buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile)
   const advancedClosingContext = await loadAdvancedClosingRuntimeContext({

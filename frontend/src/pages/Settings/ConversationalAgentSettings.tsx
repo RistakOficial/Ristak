@@ -23,7 +23,7 @@ import {
   type ConversationalAIProviderId
 } from '@/constants/conversationalAIProviders'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAIAgentAvailability } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig } from '@/hooks'
 import {
   conversationalAgentService,
   type AgentFilterOptions,
@@ -38,6 +38,7 @@ import {
   type AgentResponseDelayConfig,
   type AgentResponseDelayMode,
   type AgentResponseDelayUnit,
+  type AgentSalesPaymentMode,
   type AgentSuccessExtra,
   type ClosingStrategyMode,
   type ConversationalAIProviderStatus,
@@ -53,6 +54,7 @@ import {
   type ConversationalSuccessAction,
   type SuccessExtraType
 } from '@/services/conversationalAgentService'
+import { ACCOUNT_CURRENCY_CONFIG_KEY, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { userAccessService, type TeamUser } from '@/services/userAccessService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { triggerLinksService, type TriggerLink } from '@/services/triggerLinksService'
@@ -112,6 +114,11 @@ type AttendedChatActionValue = (typeof attendedChatActionOptions)[number]['value
 const depositModeOptions: Array<{ value: AgentDepositMode; label: string }> = [
   { value: 'fixed', label: 'Valor único' },
   { value: 'range', label: 'Rango' }
+]
+
+const salesPaymentModeOptions: Array<{ value: AgentSalesPaymentMode; label: string }> = [
+  { value: 'full_payment', label: 'Venta completa' },
+  { value: 'deposit', label: 'Solicitar anticipo' }
 ]
 
 const completionModeOptions: Array<{ value: AgentCompletionMode; label: string }> = [
@@ -210,6 +217,7 @@ const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
     priceName: '',
     amount: null,
     currency: '',
+    paymentMode: 'full_payment',
     url: '',
     trackingParam: DEFAULT_GOAL_TRACKING_PARAM
   },
@@ -233,7 +241,7 @@ const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
     amount: null,
     minAmount: null,
     maxAmount: null,
-    currency: 'MXN'
+    currency: ''
   },
   completion: {
     mode: 'notify_only',
@@ -276,6 +284,19 @@ function getPrimaryPrice(product?: ProductItem | null) {
 
 function getPriceAmount(price?: ProductPrice | null) {
   return Number(price?.amount ?? price?.price ?? 0) || 0
+}
+
+function normalizeCurrencyCode(value?: string | null) {
+  return String(value || '').trim().toUpperCase().slice(0, 12)
+}
+
+function getWorkflowSalesPaymentMode(workflow: {
+  sales?: Partial<AgentGoalWorkflowConfig['sales']>
+  deposit?: Partial<AgentGoalWorkflowConfig['deposit']>
+}): AgentSalesPaymentMode {
+  const paymentMode = workflow.sales?.paymentMode
+  if (paymentMode === 'deposit' || paymentMode === 'full_payment') return paymentMode
+  return workflow.deposit?.enabled ? 'deposit' : 'full_payment'
 }
 
 function getSuccessActionInfo(action: ConversationalSuccessAction, objective: ConversationalObjective) {
@@ -771,6 +792,8 @@ function getAgentFollowUp(agent: ConversationalAgentDef): AgentFollowUpConfig {
 
 function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowConfig {
   const workflow = (agent.goalWorkflow || {}) as Partial<AgentGoalWorkflowConfig>
+  const sales = (workflow.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>
+  const deposit = (workflow.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>
   return {
     ...defaultGoalWorkflow,
     ...workflow,
@@ -780,7 +803,8 @@ function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowC
     },
     sales: {
       ...defaultGoalWorkflow.sales,
-      ...((workflow.sales || {}) as Partial<AgentGoalWorkflowConfig['sales']>)
+      ...sales,
+      paymentMode: getWorkflowSalesPaymentMode({ sales, deposit })
     },
     data: {
       ...defaultGoalWorkflow.data,
@@ -796,7 +820,7 @@ function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowC
     },
     deposit: {
       ...defaultGoalWorkflow.deposit,
-      ...((workflow.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>)
+      ...deposit
     },
     completion: {
       ...defaultGoalWorkflow.completion,
@@ -1072,6 +1096,8 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
 
 const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, triggerLinks, triggerLinksLoading, filterOptions, systemStrategy, businessPromptStatus, onConnectProvider, onBack, onChange, onDelete }) => {
   const { showToast } = useNotification()
+  const detectedLocaleDefaults = getDetectedAccountLocaleDefaults()
+  const [accountCurrencyConfig] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
   const [testInput, setTestInput] = useState('')
   const [testAttachments, setTestAttachments] = useState<TestAttachment[]>([])
@@ -1211,6 +1237,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const selectedSalesPrice = selectedSalesProduct
     ? (selectedSalesProduct.prices || []).find((price) => getPriceId(price) === goalWorkflow.sales.priceId) || getPrimaryPrice(selectedSalesProduct)
     : null
+  const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig || detectedLocaleDefaults.currency)
+  const salesCurrency = normalizeCurrencyCode(goalWorkflow.sales.currency || selectedSalesPrice?.currency || selectedSalesProduct?.currency || accountCurrency)
+  const depositCurrency = normalizeCurrencyCode(deposit.currency || salesCurrency || accountCurrency)
+  const salesPaymentMode = getWorkflowSalesPaymentMode(goalWorkflow)
+  const depositEnabledForForm = agent.objective === 'ventas' ? salesPaymentMode === 'deposit' : deposit.enabled
+  const depositHelper = agent.objective === 'ventas'
+    ? (agent.successAction === 'ready_to_buy'
+        ? 'La IA sólo avanzará cuando reciba comprobante y el pago solicitado coincida con este valor. Se usa la moneda configurada en la cuenta.'
+        : 'La IA validará el comprobante y después pasará el chat al humano. Se usa la moneda configurada en la cuenta.')
+    : 'El agente sólo avanzará cuando reciba comprobante y el anticipo coincida con este valor. Se usa la moneda configurada en la cuenta.'
   const selectedTriggerLink = triggerLinks.find((link) => link.id === goalWorkflow.triggerLink.triggerLinkId) || null
   const triggerLinkOptions = [
     { value: '', label: triggerLinksLoading ? 'Cargando enlaces...' : 'Elegir enlace' },
@@ -1225,7 +1261,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         { value: '', label: 'Precio base' },
         ...(selectedSalesProduct.prices || []).map((price) => ({
           value: getPriceId(price),
-          label: `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), price.currency || selectedSalesProduct.currency || 'MXN')}`
+          label: `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), price.currency || selectedSalesProduct.currency || accountCurrency)}`
         }))
       ]
     : [{ value: '', label: 'Selecciona producto primero' }]
@@ -1316,7 +1352,25 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const updateDeposit = (patch: Partial<AgentGoalWorkflowConfig['deposit']>) => {
-    updateGoalWorkflow({ deposit: { ...goalWorkflow.deposit, ...patch } })
+    const nextDeposit = { ...goalWorkflow.deposit, ...patch }
+    if ((nextDeposit.enabled || patch.enabled) && !normalizeCurrencyCode(nextDeposit.currency)) {
+      nextDeposit.currency = depositCurrency || accountCurrency
+    }
+    updateGoalWorkflow({ deposit: nextDeposit })
+  }
+
+  const updateSalesPaymentMode = (paymentMode: AgentSalesPaymentMode) => {
+    const needsDeposit = paymentMode === 'deposit'
+    updateGoalWorkflow({
+      sales: { ...goalWorkflow.sales, paymentMode },
+      deposit: {
+        ...goalWorkflow.deposit,
+        enabled: needsDeposit,
+        currency: needsDeposit
+          ? normalizeCurrencyCode(goalWorkflow.deposit.currency || salesCurrency || accountCurrency)
+          : goalWorkflow.deposit.currency
+      }
+    })
   }
 
   const updateCompletion = (patch: Partial<AgentGoalWorkflowConfig['completion']>) => {
@@ -2181,20 +2235,35 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 {depositConfigAvailable && (
                   <div className={styles.depositConfigBlock}>
                     <div className={styles.inlineFields}>
-                      <div className={styles.field}>
-                        <label className={styles.label}>Pedir anticipo</label>
-                        <CustomSelect
-                          value={deposit.enabled ? 'yes' : 'no'}
-                          onChange={(event) => updateDeposit({ enabled: event.target.value === 'yes' })}
-                          portal
-                        >
-                          {binaryChoiceOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </CustomSelect>
-                      </div>
+                      {agent.objective === 'ventas' ? (
+                        <div className={styles.field}>
+                          <label className={styles.label}>Tipo de venta</label>
+                          <CustomSelect
+                            value={salesPaymentMode}
+                            onChange={(event) => updateSalesPaymentMode(event.target.value as AgentSalesPaymentMode)}
+                            portal
+                          >
+                            {salesPaymentModeOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </CustomSelect>
+                        </div>
+                      ) : (
+                        <div className={styles.field}>
+                          <label className={styles.label}>Pedir anticipo</label>
+                          <CustomSelect
+                            value={deposit.enabled ? 'yes' : 'no'}
+                            onChange={(event) => updateDeposit({ enabled: event.target.value === 'yes' })}
+                            portal
+                          >
+                            {binaryChoiceOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </CustomSelect>
+                        </div>
+                      )}
 
-                      {deposit.enabled && (
+                      {depositEnabledForForm && (
                         <div className={styles.field}>
                           <label className={styles.label}>Tipo de valor</label>
                           <CustomSelect
@@ -2210,7 +2279,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                       )}
                     </div>
 
-                    {deposit.enabled && (
+                    {depositEnabledForForm && (
                       <>
                         <div className={styles.depositAmountFields}>
                           {deposit.mode === 'range' ? (
@@ -2257,19 +2326,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                               </div>
                             </div>
                           )}
-
-                          <div className={styles.field}>
-                            <label className={styles.label}>Moneda</label>
-                            <input
-                              className={styles.input}
-                              value={deposit.currency || 'MXN'}
-                              maxLength={12}
-                              onChange={(event) => updateDeposit({ currency: event.target.value.toUpperCase() })}
-                            />
-                          </div>
                         </div>
                         <p className={styles.helper}>
-                          El agente sólo avanzará cuando reciba comprobante y el anticipo coincida con este valor.
+                          {depositHelper}
                         </p>
                       </>
                     )}
@@ -2415,7 +2474,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                           </CustomSelect>
                           {selectedSalesPrice && (
                             <p className={styles.helper}>
-                              {selectedSalesProduct.name} · {formatCurrency(getPriceAmount(selectedSalesPrice), selectedSalesPrice.currency || selectedSalesProduct.currency || 'MXN')}
+                              {selectedSalesProduct.name} · {formatCurrency(getPriceAmount(selectedSalesPrice), selectedSalesPrice.currency || selectedSalesProduct.currency || accountCurrency)}
                             </p>
                           )}
                         </div>

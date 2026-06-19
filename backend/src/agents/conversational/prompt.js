@@ -1508,15 +1508,29 @@ function describeObjective(config) {
   return OBJECTIVE_TEXTS[config.objective] || OBJECTIVE_TEXTS.citas
 }
 
+function getSalesPaymentMode(config = {}) {
+  const mode = String(config.goalWorkflow?.sales?.paymentMode || config.goalWorkflow?.sales?.payment_mode || '').trim()
+  if (mode === 'deposit' || mode === 'full_payment') return mode
+  return config.goalWorkflow?.deposit?.enabled ? 'deposit' : 'full_payment'
+}
+
 function actionSupportsDeposit(config = {}) {
+  const actionSupportsDeposit = ['book_appointment', 'ready_for_human', 'ready_to_buy'].includes(config.successAction)
+  if (!actionSupportsDeposit) return false
+  if (config.objective === 'ventas') return getSalesPaymentMode(config) === 'deposit'
   return (
-    (config.objective === 'citas' || config.objective === 'ventas') &&
-    ['book_appointment', 'ready_for_human', 'ready_to_buy'].includes(config.successAction)
+    config.objective === 'citas' &&
+    Boolean(config.goalWorkflow?.deposit?.enabled)
   )
 }
 
-function formatDepositAmount(deposit = {}) {
-  const currency = deposit.currency || 'MXN'
+function getAccountCurrencyLabel(accountLocale = {}) {
+  const currency = String(accountLocale?.currency || '').trim().toUpperCase()
+  return currency || 'moneda configurada en la cuenta'
+}
+
+function formatDepositAmount(deposit = {}, accountLocale = {}) {
+  const currency = String(deposit.currency || '').trim().toUpperCase() || getAccountCurrencyLabel(accountLocale)
   if (deposit.mode === 'range') {
     const min = Number(deposit.minAmount) || 0
     const max = Number(deposit.maxAmount) || 0
@@ -1528,23 +1542,27 @@ function formatDepositAmount(deposit = {}) {
   return amount > 0 ? `${amount} ${currency}` : 'monto pendiente de configurar'
 }
 
-function buildDepositRequirementSection(config = {}) {
+function buildDepositRequirementSection(config = {}, accountLocale = {}) {
   const deposit = config.goalWorkflow?.deposit || {}
-  if (!deposit.enabled || !actionSupportsDeposit(config)) return ''
+  if (!actionSupportsDeposit(config)) return ''
 
   const nextStep = config.successAction === 'book_appointment'
     ? 'agendar la cita'
     : config.successAction === 'ready_to_buy'
       ? 'crear o mandar el link de pago'
       : 'pasar la conversación al equipo como objetivo cumplido'
+  const paymentLabel = config.objective === 'ventas' ? 'pago solicitado' : 'anticipo'
+  const sectionTitle = config.objective === 'ventas'
+    ? 'Pago solicitado antes de concretar la venta'
+    : 'Anticipo antes de concretar'
 
-  return `## Anticipo antes de concretar
-- Este negocio pide anticipo antes de ${nextStep}.
-- Monto configurado: ${formatDepositAmount(deposit)}.
-- Pide el anticipo con naturalidad y solicita foto o archivo del comprobante.
+  return `## ${sectionTitle}
+- Este negocio pide ${paymentLabel} antes de ${nextStep}.
+- Monto configurado: ${formatDepositAmount(deposit, accountLocale)}.
+- Pide el ${paymentLabel} con naturalidad y solicita foto o archivo del comprobante.
 - NO ejecutes la acción de avance hasta que el contacto haya enviado comprobante y el monto coincida con lo configurado.
 - Si el comprobante no se puede leer, no coincide o falta información, pide una foto más clara o manda a humano con send_to_human.
-- Cuando ya esté validado, ejecuta la tool de avance con anticipoValidado=true.`
+- Cuando ya esté validado, ejecuta la tool de avance con comprobanteValidado=true.`
 }
 
 function buildCompletionActionSection(config = {}) {
@@ -1560,7 +1578,7 @@ function buildCompletionActionSection(config = {}) {
 - No sigas vendiendo ni hagas otro cierre largo después de ejecutar la tool.`
 }
 
-function buildGoalWorkflowSection(config = {}) {
+function buildGoalWorkflowSection(config = {}, accountLocale = {}) {
   const workflow = config.goalWorkflow || {}
   const sections = []
   const usesTriggerLink = config.successAction === 'send_trigger_link'
@@ -1602,7 +1620,7 @@ function buildGoalWorkflowSection(config = {}) {
     const sales = workflow.sales || {}
     if (sales.owner === 'url') {
       const productLine = sales.productName
-        ? `Producto del pedido: ${sales.productName}${sales.priceName ? ` · ${sales.priceName}` : ''}${sales.amount ? ` · ${sales.amount} ${sales.currency || 'MXN'}` : ''}.`
+        ? `Producto del pedido: ${sales.productName}${sales.priceName ? ` · ${sales.priceName}` : ''}${sales.amount ? ` · ${sales.amount} ${sales.currency || getAccountCurrencyLabel(accountLocale)}` : ''}.`
         : 'Producto del pedido: sin producto fijo configurado.'
       sections.push(`## Flujo de cobro configurado
 - Este agente debe mandar el enlace del pedido para comprar o pagar.
@@ -1613,7 +1631,7 @@ function buildGoalWorkflowSection(config = {}) {
 - La venta sólo queda confirmada cuando llega el ID real de compra, orden o pago de ese producto y ese enlace.`)
     } else if (sales.owner === 'ai') {
       const productLine = sales.productName
-        ? `Producto configurado: ${sales.productName}${sales.amount ? ` · ${sales.amount} ${sales.currency || 'MXN'}` : ''}.`
+        ? `Producto configurado: ${sales.productName}${sales.amount ? ` · ${sales.amount} ${sales.currency || getAccountCurrencyLabel(accountLocale)}` : ''}.`
         : 'No hay producto fijo configurado; usa list_products para encontrar el producto correcto.'
       sections.push(`## Flujo de cobro configurado
 - Este agente puede enviar link de pago por IA.
@@ -1726,10 +1744,10 @@ Estrategia configurada por el negocio:
 ${String(followUpContext.strategy || '').trim().slice(0, 5000)}`)
   }
 
-  const workflowSection = buildGoalWorkflowSection(config)
+  const workflowSection = buildGoalWorkflowSection(config, accountLocale)
   if (workflowSection && !followUpContext) sections.push(workflowSection)
 
-  const depositSection = buildDepositRequirementSection(config)
+  const depositSection = buildDepositRequirementSection(config, accountLocale)
   if (depositSection && !followUpContext) sections.push(depositSection)
 
   if (!followUpContext) {
