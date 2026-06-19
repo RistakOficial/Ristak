@@ -32,7 +32,7 @@ import {
   syncProductsWithSavedConfig,
   updateLocalProduct
 } from '../services/localProductService.js';
-import { applyStripePaymentPlanAction, refreshStripePaymentPlanMirrors } from '../services/stripePaymentService.js';
+import { applyStripePaymentPlanAction, refreshStripePaymentPlanMirrors, updateStripePaymentPlanSchedule } from '../services/stripePaymentService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -3237,9 +3237,13 @@ export const updateInvoiceSchedule = async (req, res) => {
 
     const localSchedule = await getLocalInvoiceSchedule(scheduleId);
     if (isStripeLocalInvoiceSchedule(localSchedule)) {
-      return res.status(409).json({
-        success: false,
-        error: 'Este plan se administra con Stripe en Ristak. Usa las acciones del plan para pausarlo, activarlo, cancelarlo o eliminarlo.'
+      await updateStripePaymentPlanSchedule(scheduleId, payload);
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+
+      return res.json({
+        success: true,
+        data: updatedLocalSchedule,
+        source: 'local_stripe'
       });
     }
 

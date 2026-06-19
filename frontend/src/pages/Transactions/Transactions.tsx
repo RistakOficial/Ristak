@@ -42,6 +42,7 @@ import {
   TRANSACTION_STATUS_BADGES,
   PAYMENT_PLAN_STATUS_BADGES
 } from '@/utils/statusBadges'
+import type { BadgeVariant } from '@/components/common/Badge'
 import styles from './Transactions.module.css'
 
 
@@ -69,6 +70,18 @@ interface PaymentPlanCreateModalData {
   frequency: 'daily' | 'weekly' | 'monthly' | 'yearly'
   endType: 'never' | 'count' | 'by'
   monthlyMode: 'dayOfMonth' | 'weekOfMonth'
+}
+
+interface StripePlanPaymentDraft {
+  localId: string
+  id?: string
+  label: string
+  amount: string
+  dueDate: string
+  method: string
+  status: string
+  paymentId?: string | null
+  locked?: boolean
 }
 
 interface TransactionsRouteState {
@@ -131,6 +144,23 @@ const buildTransactionDetailPath = (viewMode: TransactionsViewMode, transactionI
   `${buildTransactionsPath(viewMode)}/${encodeURIComponent(transactionId)}`
 const buildPaymentPlansPath = () => '/transactions/payment-plans'
 const buildPaymentPlanDetailPath = (planId: string) => `${buildPaymentPlansPath()}/${encodeURIComponent(planId)}`
+const isStripePaymentPlan = (plan: PaymentPlan) => plan.source === 'stripe' || plan.raw?.provider === 'stripe'
+const STRIPE_PLAN_LOCKED_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled', 'registered'])
+const STRIPE_PLAN_PAYMENT_METHOD_OPTIONS = [
+  { value: 'stripe_auto', label: 'Tarjeta automática' },
+  { value: 'bank_transfer', label: 'Transferencia' },
+  { value: 'cash', label: 'Efectivo' },
+  { value: 'deposit', label: 'Depósito' },
+  { value: 'check', label: 'Cheque' },
+  { value: 'other', label: 'Otro' }
+]
+const STRIPE_PLAN_FREQUENCY_OPTIONS = [
+  { value: 'custom', label: 'Personalizada' },
+  { value: 'daily', label: 'Diaria' },
+  { value: 'weekly', label: 'Semanal' },
+  { value: 'monthly', label: 'Mensual' },
+  { value: 'yearly', label: 'Anual' }
+]
 
 const toDateInputValue = (value?: string | null): string => {
   if (!value) return formatDateToISO(new Date())
@@ -156,6 +186,57 @@ const getPlanPayload = (plan: PaymentPlan): Record<string, any> => {
 const getPlanTermsNotes = (plan: PaymentPlan | null): string => {
   const payload = plan ? getPlanPayload(plan) : {}
   return String(payload.termsNotes || payload.terms || payload.notes || '')
+}
+
+const getStripePlanSchedulePayload = (plan: PaymentPlan | null): Record<string, any> => {
+  const raw = plan?.raw && typeof plan.raw === 'object' ? plan.raw : {}
+  const schedule = raw.schedule && typeof raw.schedule === 'object' ? raw.schedule : {}
+  return schedule
+}
+
+const getEditableStripeMethod = (method?: string | null) => {
+  const normalized = String(method || '').toLowerCase()
+  if (!normalized || normalized.startsWith('stripe') || ['card', 'payment_link', 'direct_card', 'saved_card'].includes(normalized)) {
+    return 'stripe_auto'
+  }
+  if (normalized === 'transfer') return 'bank_transfer'
+  return normalized
+}
+
+const getStripePlanMethodLabel = (method?: string | null) => {
+  const normalized = getEditableStripeMethod(method)
+  return STRIPE_PLAN_PAYMENT_METHOD_OPTIONS.find(option => option.value === normalized)?.label || normalized
+}
+
+const createStripePlanDraftId = () => `draft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+
+const isStripePlanPaymentLocked = (status?: string | null) => STRIPE_PLAN_LOCKED_STATUSES.has(String(status || '').toLowerCase())
+
+const getStripePlanPaymentStatusBadgeConfig = (status?: string | null): { label: string; variant: BadgeVariant } => {
+  const normalized = String(status || '').toLowerCase()
+  if (['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'registered', 'authorized', 'card_authorized'].includes(normalized)) {
+    return { label: 'Pagado', variant: 'success' }
+  }
+  if (normalized === 'scheduled') return { label: 'Programado', variant: 'info' }
+  if (['waiting_card_authorization', 'pending_card', 'pending_card_authorization', 'link_generated', 'sent'].includes(normalized)) {
+    return { label: 'Pendiente de tarjeta', variant: 'warning' }
+  }
+  if (['pending', 'draft', 'sent'].includes(normalized)) return { label: 'Pendiente', variant: 'warning' }
+  if (['failed', 'requires_action', 'overdue'].includes(normalized)) return { label: 'Revisar', variant: 'error' }
+  if (['cancelled', 'canceled', 'void', 'deleted'].includes(normalized)) return { label: 'Cancelado', variant: 'neutral' }
+  return { label: normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Pendiente', variant: 'neutral' }
+}
+
+const getNextPlanDueDate = (installments: StripePlanPaymentDraft[], fallback?: string | null) => {
+  const lastDate = [...installments].reverse().find(item => item.dueDate)?.dueDate || fallback || formatDateToISO(new Date())
+  const date = parseLocalDateString(lastDate)
+  date.setMonth(date.getMonth() + 1)
+  return formatDateToISO(date)
+}
+
+const normalizeDraftAmount = (value?: number | string | null) => {
+  const amount = Number(value || 0)
+  return Number.isFinite(amount) && amount > 0 ? String(Math.round(amount * 100) / 100) : ''
 }
 
 const getDefaultScheduleTime = () => '09:00'
@@ -355,6 +436,8 @@ export const Transactions: React.FC = () => {
     loading: false,
     saving: false
   })
+  const [stripePlanFirstPaymentDraft, setStripePlanFirstPaymentDraft] = useState<StripePlanPaymentDraft | null>(null)
+  const [stripePlanInstallmentDrafts, setStripePlanInstallmentDrafts] = useState<StripePlanPaymentDraft[]>([])
   const [paymentPlanCreateModal, setPaymentPlanCreateModal] = useState<PaymentPlanCreateModalData>({
     open: false,
     selectedContact: null,
@@ -389,11 +472,68 @@ export const Transactions: React.FC = () => {
     navigate({ pathname, search: location.search }, options)
   }, [location.search, navigate])
 
+  const hydrateStripePlanDraft = useCallback((plan: PaymentPlan | null) => {
+    if (!plan || !isStripePaymentPlan(plan)) {
+      setStripePlanFirstPaymentDraft(null)
+      setStripePlanInstallmentDrafts([])
+      return
+    }
+
+    const schedule = getStripePlanSchedulePayload(plan)
+    const firstPayment = schedule.firstPayment && typeof schedule.firstPayment === 'object'
+      ? schedule.firstPayment
+      : null
+    const firstAmount = Number(firstPayment?.amount || 0)
+    const firstStatus = String(firstPayment?.status || 'pending').toLowerCase()
+
+    setStripePlanFirstPaymentDraft(firstAmount > 0 ? {
+      localId: 'stripe_first_payment',
+      id: 'stripe_first_payment',
+      label: 'Primer pago',
+      amount: normalizeDraftAmount(firstAmount),
+      dueDate: toDateInputValue(firstPayment?.date || firstPayment?.dueDate || plan.startDate),
+      method: getEditableStripeMethod(firstPayment?.method || firstPayment?.paymentMethod),
+      status: firstStatus || 'pending',
+      paymentId: firstPayment?.paymentId || null,
+      locked: isStripePlanPaymentLocked(firstStatus)
+    } : null)
+
+    const installments = Array.isArray(schedule.installments) ? schedule.installments : []
+    setStripePlanInstallmentDrafts(installments.map((item: Record<string, any>, index: number) => {
+      const status = String(item.status || 'pending').toLowerCase()
+      const id = String(item.id || `stripe_installment_${index + 1}`)
+
+      return {
+        localId: id,
+        id: item.id ? String(item.id) : undefined,
+        label: `Pago ${Number(item.sequence || index + 1)}`,
+        amount: normalizeDraftAmount(item.amount),
+        dueDate: toDateInputValue(item.dueDate || item.date || item.scheduledAt || plan.nextRunAt),
+        method: getEditableStripeMethod(item.paymentMethod || item.method),
+        status,
+        paymentId: item.paymentId || null,
+        locked: isStripePlanPaymentLocked(status)
+      }
+    }))
+  }, [])
+
+  const stripePlanInstallmentsTotal = useMemo(() => (
+    stripePlanInstallmentDrafts.reduce((total, installment) => total + (Number(installment.amount) || 0), 0)
+  ), [stripePlanInstallmentDrafts])
+
+  const stripePlanDraftTotal = useMemo(() => (
+    stripePlanInstallmentsTotal + (Number(stripePlanFirstPaymentDraft?.amount) || 0)
+  ), [stripePlanFirstPaymentDraft?.amount, stripePlanInstallmentsTotal])
+
   useUrlDateRangeSync({
     dateRange,
     setDateRange,
     enabled: paymentTableTab === 'transactions' && viewMode === 'by-date'
   })
+
+  useEffect(() => {
+    hydrateStripePlanDraft(paymentPlanModal.plan)
+  }, [hydrateStripePlanDraft, paymentPlanModal.plan])
 
   useEffect(() => {
     let cancelled = false
@@ -632,10 +772,108 @@ export const Transactions: React.FC = () => {
     }
   }
 
+  const updateStripeFirstPaymentDraft = (updates: Partial<StripePlanPaymentDraft>) => {
+    setStripePlanFirstPaymentDraft(prev => prev && !prev.locked ? { ...prev, ...updates } : prev)
+  }
+
+  const updateStripeInstallmentDraft = (localId: string, updates: Partial<StripePlanPaymentDraft>) => {
+    setStripePlanInstallmentDrafts(prev => prev.map(installment => (
+      installment.localId === localId && !installment.locked
+        ? { ...installment, ...updates }
+        : installment
+    )))
+  }
+
+  const addStripeInstallmentDraft = () => {
+    setStripePlanInstallmentDrafts(prev => {
+      const nextIndex = prev.length + 1
+      const nextDueDate = getNextPlanDueDate(prev, paymentPlanModal.plan?.nextRunAt || paymentPlanModal.plan?.startDate)
+
+      return [
+        ...prev,
+        {
+          localId: createStripePlanDraftId(),
+          label: `Pago ${nextIndex}`,
+          amount: '',
+          dueDate: nextDueDate,
+          method: 'stripe_auto',
+          status: 'pending',
+          paymentId: null,
+          locked: false
+        }
+      ]
+    })
+  }
+
+  const removeStripeInstallmentDraft = (localId: string) => {
+    setStripePlanInstallmentDrafts(prev => prev.filter(installment => (
+      installment.localId !== localId || installment.locked
+    )))
+  }
+
   const handleSavePaymentPlan = async (formData: FormData) => {
     if (!paymentPlanModal.plan) return
     if (isStripePaymentPlan(paymentPlanModal.plan)) {
-      showToast('info', 'Plan Stripe', 'Este plan se administra desde el flujo de Stripe en Ristak.')
+      const plan = paymentPlanModal.plan
+      const schedule = getStripePlanSchedulePayload(plan)
+      const name = String(formData.get('name') || plan.name || plan.title || 'Plan de pago').trim()
+      const title = String(formData.get('title') || plan.title || name).trim()
+      const termsNotes = String(formData.get('termsNotes') || '').trim()
+      const remainingFrequency = String(formData.get('remainingFrequency') || schedule.remainingFrequency || 'custom').trim() || 'custom'
+
+      const installments = stripePlanInstallmentDrafts.map((draft, index) => ({
+        id: draft.id,
+        amount: Number(draft.amount),
+        dueDate: draft.dueDate,
+        method: draft.method || 'stripe_auto',
+        sequence: index + 1
+      }))
+
+      const invalidAmount = installments.find(installment => !Number.isFinite(installment.amount) || installment.amount <= 0)
+      if (invalidAmount) {
+        showToast('error', 'Monto inválido', 'Cada pago pendiente debe tener un monto mayor a cero.')
+        return
+      }
+
+      const missingDate = installments.find(installment => !installment.dueDate)
+      if (missingDate) {
+        showToast('error', 'Fecha requerida', 'Cada pago pendiente necesita fecha de cobro.')
+        return
+      }
+
+      const payload: Record<string, any> = {
+        name,
+        title,
+        description: name,
+        termsNotes: termsNotes || null,
+        remainingFrequency,
+        installments
+      }
+
+      if (stripePlanFirstPaymentDraft) {
+        payload.firstPayment = {
+          amount: Number(stripePlanFirstPaymentDraft.amount),
+          dueDate: stripePlanFirstPaymentDraft.dueDate,
+          method: stripePlanFirstPaymentDraft.method || 'stripe_auto'
+        }
+      }
+
+      setPaymentPlanModal(prev => ({ ...prev, saving: true }))
+
+      try {
+        const updatedPlan = await transactionsService.updatePaymentPlan(plan.id, payload)
+        setPaymentPlans(prev => prev.map(item => item.id === updatedPlan.id ? updatedPlan : item))
+        setPaymentPlanModal({
+          plan: updatedPlan,
+          loading: false,
+          saving: false
+        })
+        showToast('success', 'Calendario actualizado', 'El plan de Stripe quedó actualizado con los pagos configurados.')
+        fetchPaymentPlans()
+      } catch (error: any) {
+        setPaymentPlanModal(prev => ({ ...prev, saving: false }))
+        showToast('error', 'No se pudo guardar el plan', error?.message || 'Stripe no pudo actualizar el calendario de pagos.')
+      }
       return
     }
 
@@ -1516,7 +1754,6 @@ export const Transactions: React.FC = () => {
   }
 
   const getNormalizedPlanStatus = (plan: PaymentPlan) => String(plan.status || 'active').toLowerCase()
-  const isStripePaymentPlan = (plan: PaymentPlan) => plan.source === 'stripe' || plan.raw?.provider === 'stripe'
   const getPlanFilterStatus = (plan: PaymentPlan) => {
     const status = getNormalizedPlanStatus(plan)
     if (status === 'canceled') return 'cancelled'
@@ -1634,6 +1871,191 @@ export const Transactions: React.FC = () => {
       </Button>
     </div>
   ) : null
+
+  const renderStripePlanPaymentStatusBadge = (status?: string | null) => {
+    const config = getStripePlanPaymentStatusBadgeConfig(status)
+    return <Badge variant={config.variant}>{config.label}</Badge>
+  }
+
+  const renderStripePaymentDraftRow = (
+    draft: StripePlanPaymentDraft,
+    index: number,
+    options: {
+      kind: 'first' | 'installment'
+      onUpdate: (updates: Partial<StripePlanPaymentDraft>) => void
+      onRemove?: () => void
+    }
+  ) => {
+    const locked = Boolean(draft.locked)
+    const methodLabel = getStripePlanMethodLabel(draft.method)
+
+    return (
+      <div
+        key={draft.localId}
+        className={`${styles.stripePlanPaymentRow} ${locked ? styles.stripePlanPaymentLocked : ''}`}
+      >
+        <div className={styles.stripePlanPaymentMeta}>
+          <span className={styles.stripePlanPaymentIndex}>{options.kind === 'first' ? '1' : index + 1}</span>
+          <div>
+            <strong>{draft.label}</strong>
+            <span>{locked ? 'Registro bloqueado porque ya fue cobrado.' : 'Puedes ajustar monto, fecha y forma de cobro.'}</span>
+          </div>
+        </div>
+
+        <div className={styles.stripePlanPaymentFields}>
+          <div className={styles.formGroup}>
+            <label>Monto</label>
+            {locked ? (
+              <div className={styles.stripePlanReadonlyValue}>{formatCurrency(Number(draft.amount || 0))}</div>
+            ) : (
+              <div className={styles.inputWithIcon}>
+                <span className={styles.inputIcon}>$</span>
+                <NumberInput
+                  min="0.01"
+                  step="0.01"
+                  value={draft.amount}
+                  onChange={(event) => options.onUpdate({ amount: event.currentTarget.value })}
+                  className={styles.amountInput}
+                  required
+                />
+              </div>
+            )}
+          </div>
+
+          <div className={styles.formGroup}>
+            <label>Fecha</label>
+            {locked ? (
+              <div className={styles.stripePlanReadonlyValue}>{draft.dueDate ? formatLocalDateShort(draft.dueDate) : '-'}</div>
+            ) : (
+              <input
+                type="date"
+                value={draft.dueDate}
+                onChange={(event) => options.onUpdate({ dueDate: event.currentTarget.value })}
+                required
+              />
+            )}
+          </div>
+
+          <div className={styles.formGroup}>
+            <label>Forma de cobro</label>
+            {locked ? (
+              <div className={styles.stripePlanReadonlyValue}>{methodLabel}</div>
+            ) : (
+              <CustomSelect
+                value={draft.method || 'stripe_auto'}
+                onChange={(event) => options.onUpdate({ method: event.target.value })}
+              >
+                {STRIPE_PLAN_PAYMENT_METHOD_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            )}
+          </div>
+        </div>
+
+        <div className={styles.stripePlanPaymentActions}>
+          {renderStripePlanPaymentStatusBadge(draft.status)}
+          {options.onRemove && (
+            <button
+              type="button"
+              className={styles.actionButton}
+              onClick={options.onRemove}
+              disabled={locked}
+              title={locked ? 'No puedes eliminar un pago ya cobrado' : 'Quitar pago'}
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const renderStripePlanScheduleEditor = (plan: PaymentPlan) => {
+    const schedule = getStripePlanSchedulePayload(plan)
+    const cardSetupRequired = Boolean(schedule.cardSetupRequired)
+    const cardSetupAmount = Number(schedule.cardSetupAmount || 0)
+    const cardSetupStatus = String(schedule.cardSetupStatus || '').toLowerCase()
+
+    return (
+      <section className={styles.stripePlanEditor}>
+        <div className={styles.stripePlanEditorHeader}>
+          <div>
+            <h3>Calendario del plan</h3>
+            <p>Revisa el enganche, las parcialidades y los próximos cobros automáticos o manuales.</p>
+          </div>
+          <div className={styles.stripePlanEditorTotal}>
+            <span>Total del plan</span>
+            <strong>{formatCurrency(selectedPaymentPlanDisplayTotal)}</strong>
+          </div>
+        </div>
+
+        <div className={styles.stripePlanControls}>
+          <div className={styles.formGroup}>
+            <label>Frecuencia base</label>
+            <CustomSelect name="remainingFrequency" defaultValue={schedule.remainingFrequency || 'custom'}>
+              {STRIPE_PLAN_FREQUENCY_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </div>
+          <div className={styles.stripePlanReadonlySummary}>
+            <span>Pagos restantes</span>
+            <strong>{formatCurrency(stripePlanInstallmentsTotal)}</strong>
+          </div>
+        </div>
+
+        <div className={styles.stripePlanPaymentRows}>
+          {cardSetupRequired && (
+            <div className={styles.stripePlanPaymentRow}>
+              <div className={styles.stripePlanPaymentMeta}>
+                <span className={styles.stripePlanPaymentIndex}>D</span>
+                <div>
+                  <strong>Domiciliación de tarjeta</strong>
+                  <span>Autoriza la tarjeta que se usará para los cobros futuros.</span>
+                </div>
+              </div>
+              <div className={styles.stripePlanPaymentFields}>
+                <div className={styles.formGroup}>
+                  <label>Monto</label>
+                  <div className={styles.stripePlanReadonlyValue}>{cardSetupAmount > 0 ? formatCurrency(cardSetupAmount) : 'Autorización'}</div>
+                </div>
+                <div className={styles.formGroup}>
+                  <label>Forma de cobro</label>
+                  <div className={styles.stripePlanReadonlyValue}>Tarjeta / enlace</div>
+                </div>
+              </div>
+              <div className={styles.stripePlanPaymentActions}>
+                {renderStripePlanPaymentStatusBadge(cardSetupStatus || 'pending')}
+              </div>
+            </div>
+          )}
+
+          {stripePlanFirstPaymentDraft && renderStripePaymentDraftRow(stripePlanFirstPaymentDraft, 0, {
+            kind: 'first',
+            onUpdate: updateStripeFirstPaymentDraft
+          })}
+
+          {stripePlanInstallmentDrafts.map((draft, index) => renderStripePaymentDraftRow(draft, index, {
+            kind: 'installment',
+            onUpdate: (updates) => updateStripeInstallmentDraft(draft.localId, updates),
+            onRemove: () => removeStripeInstallmentDraft(draft.localId)
+          }))}
+
+          {stripePlanInstallmentDrafts.length === 0 && (
+            <div className={styles.stripePlanEmpty}>Este plan todavía no tiene pagos restantes configurados.</div>
+          )}
+        </div>
+
+        <div className={styles.stripePlanAddRow}>
+          <Button type="button" variant="secondary" size="sm" onClick={addStripeInstallmentDraft}>
+            <Plus size={16} />
+            Agregar pago
+          </Button>
+        </div>
+      </section>
+    )
+  }
 
   const paymentPlanColumns: Column<PaymentPlan>[] = [
     {
@@ -1796,6 +2218,11 @@ export const Transactions: React.FC = () => {
   const lockedContactName = modal.transaction?.contactName || modal.selectedContact?.name || 'Sin nombre'
   const lockedContactDetail = modal.transaction?.email || modal.selectedContact?.email || modal.transaction?.phone || modal.selectedContact?.phone
   const isPaymentPlansPage = paymentTableTab === 'payment-plans'
+  const selectedPaymentPlanIsStripe = paymentPlanModal.plan ? isStripePaymentPlan(paymentPlanModal.plan) : false
+  const selectedPaymentPlanHasDraftRows = Boolean(stripePlanFirstPaymentDraft) || stripePlanInstallmentDrafts.length > 0
+  const selectedPaymentPlanDisplayTotal = selectedPaymentPlanIsStripe && selectedPaymentPlanHasDraftRows
+    ? stripePlanDraftTotal
+    : Number(paymentPlanModal.plan?.total || 0)
   const canProgramPaymentPlan = stripeConnected || highLevelConnected
   const paymentPlanConnectionLoading = stripeStatusLoading || highLevelLoading
   const pageTitle = isPaymentPlansPage ? 'Planes de pago' : 'Transacciones'
@@ -2182,7 +2609,7 @@ export const Transactions: React.FC = () => {
             <div className={styles.modalHeader} data-modal-header="">
               <div>
                 <h2>Programar plan de pago</h2>
-                <p className={styles.modalSubtitle}>Crea una factura recurrente y déjala programada en HighLevel.</p>
+                <p className={styles.modalSubtitle}>Crea un plan recurrente y déjalo programado en tu pasarela conectada.</p>
               </div>
               <button
                 className={styles.closeButton}
@@ -2513,7 +2940,7 @@ export const Transactions: React.FC = () => {
                   </div>
                   <div className={styles.planSummaryItem}>
                     <span>Monto</span>
-                    <strong>{formatCurrency(Number(paymentPlanModal.plan.total || 0))}</strong>
+                    <strong>{formatCurrency(selectedPaymentPlanDisplayTotal)}</strong>
                   </div>
                   <div className={styles.planSummaryItem}>
                     <span>Contacto</span>
@@ -2542,28 +2969,32 @@ export const Transactions: React.FC = () => {
                       defaultValue={paymentPlanModal.plan.title || paymentPlanModal.plan.name || ''}
                     />
                   </div>
-                  <div className={styles.formGroup}>
-                    <label>Monto</label>
-                    <div className={styles.inputWithIcon}>
-                      <span className={styles.inputIcon}>$</span>
-                      <input
-                        name="total"
-                        type="text"
-                        pattern="[0-9]*[.]?[0-9]+"
-                        inputMode="decimal"
-                        defaultValue={paymentPlanModal.plan.total}
-                        className={styles.amountInput}
-                      />
-                    </div>
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label>Próximo cobro / ejecución</label>
-                    <input
-                      name="executeAt"
-                      type="datetime-local"
-                      defaultValue={toDateTimeInputValue(paymentPlanModal.plan.nextRunAt || paymentPlanModal.plan.startDate)}
-                    />
-                  </div>
+                  {!selectedPaymentPlanIsStripe && (
+                    <>
+                      <div className={styles.formGroup}>
+                        <label>Monto</label>
+                        <div className={styles.inputWithIcon}>
+                          <span className={styles.inputIcon}>$</span>
+                          <input
+                            name="total"
+                            type="text"
+                            pattern="[0-9]*[.]?[0-9]+"
+                            inputMode="decimal"
+                            defaultValue={paymentPlanModal.plan.total}
+                            className={styles.amountInput}
+                          />
+                        </div>
+                      </div>
+                      <div className={styles.formGroup}>
+                        <label>Próximo cobro / ejecución</label>
+                        <input
+                          name="executeAt"
+                          type="datetime-local"
+                          defaultValue={toDateTimeInputValue(paymentPlanModal.plan.nextRunAt || paymentPlanModal.plan.startDate)}
+                        />
+                      </div>
+                    </>
+                  )}
                   <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                     <label>Términos / notas</label>
                     <textarea
@@ -2573,6 +3004,7 @@ export const Transactions: React.FC = () => {
                     />
                   </div>
                 </div>
+                {selectedPaymentPlanIsStripe && renderStripePlanScheduleEditor(paymentPlanModal.plan)}
                 <div className={styles.formActions} data-modal-footer="">
                   <Button type="button" variant="ghost" onClick={closePaymentPlanModal}>
                     Cancelar

@@ -71,6 +71,9 @@ const STRIPE_PLAN_STATES = {
 }
 const FIRST_PAYMENT_PLAN_TRIGGERS = new Set(['first_payment', 'first_payment_saved_card'])
 const CARD_SETUP_PLAN_TRIGGERS = new Set(['card_setup', 'card_setup_authorization'])
+const LOCKED_PLAN_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled'])
+const AUTOMATIC_PLAN_PAYMENT_METHODS = new Set(['', 'stripe_auto', 'stripe_saved_card', 'stripe_pending_card', 'stripe_scheduled_card', 'card', 'payment_link', 'direct_card', 'saved_card'])
+const MANUAL_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other', 'manual', 'offline'])
 const ZERO_DECIMAL_CURRENCIES = new Set([
   'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf',
   'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf'
@@ -1891,6 +1894,65 @@ function getPlanTriggerStatusFromPaymentStatus(status) {
   return 'pending'
 }
 
+function normalizePlanEditableAmount(value, fieldLabel = 'monto') {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount < 0) {
+    const error = new Error(`El ${fieldLabel} debe ser un número válido.`)
+    error.status = 400
+    throw error
+  }
+
+  return Math.round(amount * 100) / 100
+}
+
+function normalizePlanEditablePaymentMethod(value, hasSavedCard) {
+  const method = cleanString(value).toLowerCase()
+  if (AUTOMATIC_PLAN_PAYMENT_METHODS.has(method)) {
+    return {
+      automatic: 1,
+      installmentMethod: hasSavedCard ? 'stripe_saved_card' : 'stripe_pending_card',
+      paymentMethod: 'stripe_scheduled_card'
+    }
+  }
+
+  if (!MANUAL_PLAN_PAYMENT_METHODS.has(method)) {
+    const error = new Error('Forma de cobro inválida para la parcialidad.')
+    error.status = 400
+    throw error
+  }
+
+  const normalizedManualMethod = method === 'transfer' ? 'bank_transfer' : method === 'offline' ? 'other' : method
+  return {
+    automatic: 0,
+    installmentMethod: normalizedManualMethod,
+    paymentMethod: normalizedManualMethod
+  }
+}
+
+function resolveEditableInstallmentStatus({ currentStatus, automatic, flowHasSavedCard, flowState }) {
+  const normalizedStatus = cleanString(currentStatus).toLowerCase()
+  if (LOCKED_PLAN_PAYMENT_STATUSES.has(normalizedStatus)) return normalizedStatus
+  if (!automatic) return normalizedStatus === 'failed' ? 'failed' : 'pending'
+  if (flowState === STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE && flowHasSavedCard) return 'scheduled'
+  return 'waiting_card_authorization'
+}
+
+function buildPlanInstallmentPaymentMetadata(flow, installment, sequence, paymentMode, source = 'stripe_payment_plan_installment') {
+  return {
+    stripeMode: paymentMode || 'test',
+    source,
+    contactName: flow.contact_name,
+    contactEmail: flow.contact_email,
+    contactPhone: flow.contact_phone,
+    paymentPlan: {
+      flowId: flow.id,
+      installmentId: installment.id,
+      sequence,
+      trigger: 'scheduled_installment'
+    }
+  }
+}
+
 async function persistStripePaymentPlanMirror(flowId, extra = {}) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId) return null
@@ -1906,19 +1968,23 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
     [cleanFlowId]
   )
   const metadata = parseJson(flow.metadata, {})
-  const nextInstallment = (installments || []).find((installment) => (
+  const visibleInstallments = (installments || []).filter((installment) => (
+    !['cancelled', 'canceled', 'deleted', 'void'].includes(cleanString(installment.status).toLowerCase())
+  ))
+  const nextInstallment = visibleInstallments.find((installment) => (
     !['paid', 'cancelled', 'canceled', 'deleted'].includes(cleanString(installment.status).toLowerCase())
-  )) || (installments || [])[0] || null
-  const lastInstallment = (installments || [])[Math.max(0, (installments || []).length - 1)] || null
-  const startDate = flow.first_payment_date || (installments || [])[0]?.due_date || flow.created_at
+  )) || visibleInstallments[0] || null
+  const lastInstallment = visibleInstallments[Math.max(0, visibleInstallments.length - 1)] || null
+  const startDate = flow.first_payment_date || visibleInstallments[0]?.due_date || flow.created_at
   const nextRunAt = nextInstallment?.due_date || flow.first_payment_date || flow.created_at
-  const itemCount = (Number(flow.first_payment_amount || 0) > 0 ? 1 : 0) + (installments || []).length
+  const itemCount = (Number(flow.first_payment_amount || 0) > 0 ? 1 : 0) + visibleInstallments.length
   const scheduleJson = {
     provider: 'stripe',
     flowId: cleanFlowId,
     remainingFrequency: metadata.remainingFrequency || 'custom',
     cardSetupRequired: Boolean(flow.card_setup_required),
     cardSetupStatus: flow.card_setup_status || null,
+    cardSetupAmount: Number(flow.card_setup_amount || 0),
     firstPayment: {
       amount: Number(flow.first_payment_amount || 0),
       date: flow.first_payment_date || null,
@@ -1926,7 +1992,7 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
       status: flow.first_payment_status || null,
       paymentId: flow.first_payment_invoice_id || null
     },
-    installments: (installments || []).map((installment) => ({
+    installments: visibleInstallments.map((installment) => ({
       id: installment.id,
       sequence: installment.sequence,
       amount: Number(installment.amount || 0),
@@ -1944,6 +2010,7 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
       id: cleanFlowId,
       state: flow.current_state,
       contactId: flow.contact_id,
+      cardSetupAmount: Number(flow.card_setup_amount || 0),
       cardSetupPaymentLink: flow.card_setup_payment_link || null,
       stripePaymentMethodLabel: flow.stripe_payment_method_label || null
     },
@@ -2022,6 +2089,277 @@ export async function refreshStripePaymentPlanMirrors() {
   }
 
   return refreshed
+}
+
+export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
+  const cleanFlowId = cleanString(flowId)
+  if (!cleanFlowId) {
+    const error = new Error('Plan Stripe requerido.')
+    error.status = 400
+    throw error
+  }
+
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  if (!flow || flow.payment_provider !== 'stripe') {
+    const error = new Error('Plan Stripe no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  const metadata = parseJson(flow.metadata, {})
+  const hasSavedCard = Boolean(cleanString(flow.stripe_payment_method_id))
+  const nextConcept = cleanString(input.name || input.title || input.description || input.concept || flow.concept || 'Plan de pagos')
+  const nextFrequency = cleanString(input.remainingFrequency || input.frequency || metadata.remainingFrequency || 'custom') || 'custom'
+  const submittedInstallments = Array.isArray(input.installments)
+    ? input.installments
+    : Array.isArray(input.remainingPayments)
+      ? input.remainingPayments
+      : []
+
+  const existingInstallments = await db.all(
+    `SELECT i.*, p.status AS payment_status, p.payment_mode AS payment_mode
+     FROM installment_payments i
+     LEFT JOIN payments p ON p.id = i.payment_id
+     WHERE i.flow_id = ?
+       AND LOWER(COALESCE(i.status, 'pending')) NOT IN ('deleted', 'cancelled', 'canceled', 'void')
+     ORDER BY i.sequence ASC`,
+    [cleanFlowId]
+  )
+  const existingById = new Map((existingInstallments || []).map(installment => [installment.id, installment]))
+  const submittedExistingIds = new Set()
+  let nextSequence = 1
+  let remainingTotal = 0
+
+  for (const submitted of submittedInstallments) {
+    const existingId = cleanString(submitted.id)
+    const existing = existingId ? existingById.get(existingId) : null
+    const existingStatus = cleanString(existing?.status || existing?.payment_status).toLowerCase()
+
+    if (existing?.id) submittedExistingIds.add(existing.id)
+
+    if (LOCKED_PLAN_PAYMENT_STATUSES.has(existingStatus)) {
+      remainingTotal += Number(existing.amount || 0)
+      nextSequence += 1
+      continue
+    }
+
+    const amount = normalizePlanEditableAmount(submitted.amount, 'monto de la parcialidad')
+    if (amount <= 0) {
+      const error = new Error('Cada parcialidad futura debe tener un monto mayor a 0.')
+      error.status = 400
+      throw error
+    }
+
+    const dueDate = normalizeDateOnly(submitted.dueDate || submitted.date || submitted.scheduledAt)
+    if (!dueDate) {
+      const error = new Error('Cada parcialidad futura necesita fecha de cobro.')
+      error.status = 400
+      throw error
+    }
+
+    const method = normalizePlanEditablePaymentMethod(submitted.paymentMethod || submitted.method, hasSavedCard)
+    const status = resolveEditableInstallmentStatus({
+      currentStatus: existingStatus,
+      automatic: method.automatic,
+      flowHasSavedCard: hasSavedCard,
+      flowState: flow.current_state
+    })
+    const installmentId = existing?.id || createId('stripe_installment')
+    const paymentId = existing?.payment_id || createId('stripe_plan_payment')
+    const paymentMode = existing?.payment_mode || metadata.stripeMode || metadata.paymentMode || 'test'
+    const title = `${nextConcept} - pago ${nextSequence}`
+    const notes = method.automatic
+      ? hasSavedCard
+        ? `Programado para cobrarse con ${flow.stripe_payment_method_label || 'tarjeta guardada'}`
+        : 'Esperando domiciliación de tarjeta en Stripe.'
+      : 'Pago manual dentro del plan.'
+
+    if (existing) {
+      await db.run(
+        `UPDATE installment_payments
+         SET sequence = ?,
+             amount = ?,
+             percentage = ?,
+             due_date = ?,
+             frequency = ?,
+             payment_method = ?,
+             automatic = ?,
+             status = ?,
+             payment_id = ?,
+             notes = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          nextSequence,
+          amount,
+          submitted.percentage ?? null,
+          dueDate,
+          nextFrequency,
+          method.installmentMethod,
+          method.automatic,
+          status,
+          paymentId,
+          notes,
+          existing.id
+        ]
+      )
+    } else {
+      await db.run(
+        `INSERT INTO installment_payments (
+          id, flow_id, sequence, amount, percentage, due_date, frequency,
+          payment_method, automatic, status, payment_id, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [
+          installmentId,
+          cleanFlowId,
+          nextSequence,
+          amount,
+          submitted.percentage ?? null,
+          dueDate,
+          nextFrequency,
+          method.installmentMethod,
+          method.automatic,
+          status,
+          paymentId,
+          notes
+        ]
+      )
+    }
+
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, title, description, date, due_date, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'stripe', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        contact_id = excluded.contact_id,
+        amount = excluded.amount,
+        currency = excluded.currency,
+        status = CASE
+          WHEN payments.status IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success') THEN payments.status
+          ELSE excluded.status
+        END,
+        payment_method = excluded.payment_method,
+        payment_mode = excluded.payment_mode,
+        payment_provider = 'stripe',
+        title = excluded.title,
+        description = excluded.description,
+        date = excluded.date,
+        due_date = excluded.due_date,
+        metadata_json = excluded.metadata_json,
+        updated_at = CURRENT_TIMESTAMP`,
+      [
+        paymentId,
+        flow.contact_id,
+        amount,
+        flow.currency || DEFAULT_CURRENCY,
+        status === 'waiting_card_authorization' ? 'pending' : status,
+        method.paymentMethod,
+        paymentMode,
+        title,
+        title,
+        dueDate,
+        dueDate,
+        JSON.stringify(buildPlanInstallmentPaymentMetadata(flow, { id: installmentId }, nextSequence, paymentMode))
+      ]
+    )
+
+    remainingTotal += amount
+    nextSequence += 1
+  }
+
+  for (const existing of existingInstallments || []) {
+    if (submittedExistingIds.has(existing.id)) continue
+    const existingStatus = cleanString(existing.status || existing.payment_status).toLowerCase()
+
+    if (LOCKED_PLAN_PAYMENT_STATUSES.has(existingStatus)) {
+      remainingTotal += Number(existing.amount || 0)
+      continue
+    }
+
+    await db.run(
+      `UPDATE installment_payments
+       SET status = 'deleted',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [existing.id]
+    )
+
+    if (existing.payment_id) {
+      await db.run(
+        `UPDATE payments
+         SET status = 'deleted',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+        [existing.payment_id]
+      )
+    }
+  }
+
+  const firstPayment = input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
+  let firstPaymentAmount = Number(flow.first_payment_amount || 0)
+  let firstPaymentDate = flow.first_payment_date || null
+  let firstPaymentMethod = flow.first_payment_method || null
+  const firstPaymentStatus = cleanString(flow.first_payment_status).toLowerCase()
+  const firstPaymentLocked = LOCKED_PLAN_PAYMENT_STATUSES.has(firstPaymentStatus) || ['registered', 'paid'].includes(firstPaymentStatus)
+
+  if (firstPayment && !firstPaymentLocked && Number(flow.first_payment_amount || 0) > 0) {
+    firstPaymentAmount = normalizePlanEditableAmount(firstPayment.amount, 'monto del primer pago')
+    firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate)
+    firstPaymentMethod = cleanString(firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'card')
+
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_amount = ?,
+           first_payment_value = ?,
+           first_payment_date = ?,
+           first_payment_method = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [firstPaymentAmount, firstPaymentAmount, firstPaymentDate, firstPaymentMethod, cleanFlowId]
+    )
+
+    if (flow.first_payment_invoice_id) {
+      await db.run(
+        `UPDATE payments
+         SET amount = ?,
+             payment_method = ?,
+             date = COALESCE(?, date),
+             due_date = COALESCE(?, due_date),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+        [firstPaymentAmount, firstPaymentMethod, firstPaymentDate, firstPaymentDate, flow.first_payment_invoice_id]
+      )
+    }
+  }
+
+  const nextTotal = Math.round((remainingTotal + Number(firstPaymentAmount || 0)) * 100) / 100
+  await db.run(
+    `UPDATE payment_flows
+     SET total_amount = ?,
+         concept = ?,
+         metadata = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      nextTotal,
+      nextConcept,
+      JSON.stringify({
+        ...metadata,
+        remainingFrequency: nextFrequency
+      }),
+      cleanFlowId
+    ]
+  )
+
+  const mirrored = await persistStripePaymentPlanMirror(cleanFlowId, {
+    localAction: 'update_schedule',
+    actionedAt: new Date().toISOString()
+  })
+
+  return mirrored
 }
 
 async function activateStripePaymentPlan(flowId, savedMethod, config) {

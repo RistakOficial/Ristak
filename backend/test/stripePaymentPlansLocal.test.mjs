@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
 import {
   actionInvoiceSchedule,
-  getInvoiceSchedule
+  getInvoiceSchedule,
+  updateInvoiceSchedule
 } from '../src/controllers/highlevelController.js'
 
 function createResponse() {
@@ -27,6 +28,7 @@ async function cleanup(ids) {
   await db.run('DELETE FROM installment_payments WHERE flow_id = ?', [ids.flowId]).catch(() => undefined)
   await db.run('DELETE FROM payment_flows WHERE id = ?', [ids.flowId]).catch(() => undefined)
   await db.run('DELETE FROM payments WHERE id IN (?, ?)', [ids.cardSetupPaymentId, ids.installmentPaymentId]).catch(() => undefined)
+  await db.run('DELETE FROM payments WHERE metadata_json LIKE ?', [`%${ids.flowId}%`]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [ids.contactId]).catch(() => undefined)
 }
 
@@ -177,6 +179,63 @@ test('cancela un plan Stripe local y anula pagos pendientes ligados', async () =
     assert.equal(installment.status, 'cancelled')
     assert.equal(setupPayment.status, 'void')
     assert.equal(installmentPayment.status, 'void')
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('edita calendario de pagos de un plan Stripe local', async () => {
+  const ids = await seedStripePlan()
+
+  try {
+    const res = createResponse()
+    await updateInvoiceSchedule({
+      params: { scheduleId: ids.flowId },
+      body: {
+        payload: {
+          name: 'Plan local Stripe editado',
+          remainingFrequency: 'monthly',
+          installments: [
+            {
+              id: ids.installmentId,
+              amount: 500,
+              dueDate: '2099-02-01',
+              method: 'stripe_auto'
+            },
+            {
+              amount: 250,
+              dueDate: '2099-03-01',
+              method: 'bank_transfer'
+            }
+          ]
+        }
+      }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+    assert.equal(res.payload.source, 'local_stripe')
+    assert.equal(res.payload.data.total, 750)
+    assert.equal(res.payload.data.name, 'Plan local Stripe editado')
+
+    const flow = await db.get('SELECT total_amount, concept FROM payment_flows WHERE id = ?', [ids.flowId])
+    const installments = await db.all(
+      `SELECT amount, due_date, automatic, payment_method, status
+       FROM installment_payments
+       WHERE flow_id = ? AND status != 'deleted'
+       ORDER BY sequence ASC`,
+      [ids.flowId]
+    )
+
+    assert.equal(flow.total_amount, 750)
+    assert.equal(flow.concept, 'Plan local Stripe editado')
+    assert.equal(installments.length, 2)
+    assert.equal(installments[0].amount, 500)
+    assert.equal(installments[0].due_date, '2099-02-01')
+    assert.equal(installments[0].automatic, 1)
+    assert.equal(installments[1].amount, 250)
+    assert.equal(installments[1].payment_method, 'bank_transfer')
+    assert.equal(installments[1].automatic, 0)
   } finally {
     await cleanup(ids)
   }
