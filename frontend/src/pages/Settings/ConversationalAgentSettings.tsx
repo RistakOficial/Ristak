@@ -2347,7 +2347,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
               {followUp.enabled && (
                 <>
-                  <div className={styles.followUpDelayRow}>
+                  <div className={`${styles.followUpDelayRow} ${styles.followUpDelayRowSpaced}`}>
                     <span className={styles.followUpDelayLabel}>¿Cuándo lo manda?</span>
                     <span className={styles.followUpDelayText}>Después de</span>
                     <NumberInput

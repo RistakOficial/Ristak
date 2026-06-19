@@ -541,6 +541,10 @@
   min-width: 0;
 }
 
+.followUpDelayRowSpaced {
+  margin-bottom: 12px;
+}
+
 .followUpDelayLabel {
   align-self: center;
   color: var(--text);
