@@ -10397,10 +10397,11 @@ function buildVideoTrackingAttributes({ enabled = false, block = {}, asset = nul
   })
 }
 
-function renderBunnyStreamIframe(embedUrl, block, tracking = {}) {
+function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}) {
   const playbackId = tracking.enabled ? (tracking.playbackId || crypto.randomUUID()) : ''
   const stream = tracking.stream || getBunnyStreamMetadataFromUrl(embedUrl)
   const trackedEmbedUrl = playbackId ? appendBunnyStreamPlaybackId(embedUrl, playbackId) : embedUrl
+  const frameStyle = renderVideoFrameStyle(settings)
   const trackingAttrs = buildVideoTrackingAttributes({
     enabled: tracking.enabled,
     block,
@@ -10409,7 +10410,7 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}) {
     provider: 'bunny_stream',
     playbackId
   })
-  return `<div class="rstk-video"><iframe src="${escapeHtml(trackedEmbedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"${trackingAttrs ? ` ${trackingAttrs}` : ''}></iframe></div>`
+  return `<div class="rstk-video rstk-video-stream-frame" style="${frameStyle}"><iframe src="${escapeHtml(trackedEmbedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"${trackingAttrs ? ` ${trackingAttrs}` : ''}></iframe></div>`
 }
 
 function collectVideoStorageUrlsFromBlocks(blocks = [], urls = new Set()) {
@@ -12448,10 +12449,28 @@ const VIDEO_PLAY_ICON_SIZE_MAX = 95
 const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
+const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
+const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
+const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
+const VIDEO_CONTROLS_IDLE_MS = 2600
+const VIDEO_CONTROLS_LEAVE_IDLE_MS = 650
 const VIDEO_SPEED_OPTIONS = ['0.75', '1', '1.25', '1.5', '2']
 const VIDEO_PREVIEW_MAX_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 5
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
+
+function isTransparentCssColorValue(value = '') {
+  const raw = cleanString(value).toLowerCase()
+  if (!raw || raw === 'transparent') return true
+  const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
+  if (!match) return false
+  const alpha = match[4] === undefined ? 1 : Number(match[4])
+  return Number.isFinite(alpha) && alpha <= 0
+}
+
+function getVisibleVideoBorderColor(value = '') {
+  return isTransparentCssColorValue(value) ? DEFAULT_VIDEO_BORDER_FALLBACK : value
+}
 
 function normalizeVideoPlayIconStyle(value) {
   const style = cleanString(value)
@@ -12523,6 +12542,27 @@ function getVideoSoundNoticeHideAfter(settings = {}) {
   if (!Number.isFinite(value)) return DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER
   if (value <= 0) return 0
   return Math.min(12, Math.max(3, value))
+}
+
+function getVideoFrameStyleVars(settings = {}) {
+  const playerBackground = normalizeCssPaint(settings.videoPlayerBackground, DEFAULT_VIDEO_PLAYER_BACKGROUND) || DEFAULT_VIDEO_PLAYER_BACKGROUND
+  const rawPlayerRadius = Number(settings.videoPlayerRadius ?? 18)
+  const playerRadius = Number.isFinite(rawPlayerRadius) ? Math.min(80, Math.max(0, rawPlayerRadius)) : 18
+  const rawPlayerBorderColor = normalizeCssPaint(settings.videoPlayerBorderColor, DEFAULT_VIDEO_TRANSPARENT) || DEFAULT_VIDEO_TRANSPARENT
+  const playerBorderColor = getVisibleVideoBorderColor(rawPlayerBorderColor)
+  const rawPlayerBorderWidth = Number(settings.videoPlayerBorderWidth ?? 0)
+  const playerBorderWidth = Number.isFinite(rawPlayerBorderWidth) ? Math.min(12, Math.max(0, rawPlayerBorderWidth)) : 0
+
+  return [
+    `--rstk-video-bg:${escapeHtml(playerBackground)}`,
+    `--rstk-video-radius:${escapeHtml(String(playerRadius))}px`,
+    `--rstk-video-border-color:${escapeHtml(playerBorderColor)}`,
+    `--rstk-video-border-width:${escapeHtml(String(playerBorderWidth))}px`
+  ]
+}
+
+function renderVideoFrameStyle(settings = {}) {
+  return getVideoFrameStyleVars(settings).join(';')
 }
 
 function roundVideoPreviewSecond(value) {
@@ -13076,12 +13116,6 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const rawSpeed = Number(settings.videoDefaultSpeed || 1)
   const speed = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1
   const fit = ['cover', 'contain', 'fill'].includes(cleanString(settings.videoFit)) ? cleanString(settings.videoFit) : 'cover'
-  const playerBackground = normalizeCssPaint(settings.videoPlayerBackground, '#000000') || '#000000'
-  const rawPlayerRadius = Number(settings.videoPlayerRadius ?? 18)
-  const playerRadius = Number.isFinite(rawPlayerRadius) ? Math.min(80, Math.max(0, rawPlayerRadius)) : 18
-  const playerBorderColor = normalizeCssPaint(settings.videoPlayerBorderColor, 'rgba(255, 255, 255, 0)') || 'rgba(255, 255, 255, 0)'
-  const rawPlayerBorderWidth = Number(settings.videoPlayerBorderWidth ?? 0)
-  const playerBorderWidth = Number.isFinite(rawPlayerBorderWidth) ? Math.min(12, Math.max(0, rawPlayerBorderWidth)) : 0
   const playerColor = normalizeCssPaint(settings.videoPlayerColor, 'rgba(0,0,0,.52)') || 'rgba(0,0,0,.52)'
   const playColor = normalizeCssPaint(settings.videoPlayColor, '#ffffff') || '#ffffff'
   const playShape = normalizeVideoPlayShape(settings)
@@ -13100,16 +13134,14 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     'rstk-video-player',
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
+    showCustomControlBar ? 'rstk-video-controls-visible' : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
     muted ? 'rstk-video-is-muted' : '',
     `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
   const styleVars = [
-    `--rstk-video-bg:${escapeHtml(playerBackground)}`,
-    `--rstk-video-radius:${escapeHtml(String(playerRadius))}px`,
-    `--rstk-video-border-color:${escapeHtml(playerBorderColor)}`,
-    `--rstk-video-border-width:${escapeHtml(String(playerBorderWidth))}px`,
+    ...getVideoFrameStyleVars(settings),
     `--rstk-video-player-color:${escapeHtml(playerColor)}`,
     `--rstk-video-play-color:${escapeHtml(playColor)}`,
     `--rstk-video-play-width:${escapeHtml(String(playWidth))}px`,
@@ -13262,10 +13294,10 @@ function renderContentBlock(block, context = {}) {
           enabled: !context.noTrack,
           asset: storageAssetForStreamVideo,
           stream: getStreamMetadataForVideoUrl(embedVideoUrl, context)
-        })
+        }, settings)
       }
 
-      return `<div class="rstk-video"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+      return `<div class="rstk-video rstk-video-embed-frame" style="${renderVideoFrameStyle(settings)}"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
     }
 
     return `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
@@ -14237,21 +14269,25 @@ const RSTK_BASE_CSS = `
 	  .rstk-video video{background:var(--rstk-video-bg,#000);object-fit:cover}
 	  .rstk-video-player{container-type:inline-size;isolation:isolate}
 	  .rstk-video-custom-controls video{cursor:pointer}
-		  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.12));color:var(--rstk-video-play-color,#fff);cursor:pointer}
-		  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:var(--rstk-video-play-border-width,0) solid var(--rstk-video-play-border-color,transparent);border-radius:var(--rstk-video-play-radius,8px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 16px 38px rgba(0,0,0,.28);transition:opacity .18s ease,transform .18s ease}
+		  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:transparent;color:var(--rstk-video-play-color,#fff);cursor:pointer}
+		  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:var(--rstk-video-play-border-width,0) solid var(--rstk-video-play-border-color,transparent);border-radius:var(--rstk-video-play-radius,8px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:none;transition:opacity .18s ease,transform .18s ease}
 		  .rstk-video-is-playing .rstk-video-play-dot{opacity:0;transform:scale(.9)}
 		  .rstk-video-play-shape-round .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,999px)}
 		  .rstk-video-play-shape-rectangle .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,8px)}
 		  .rstk-video-play-dot svg{width:var(--rstk-video-play-icon-size,95px);height:var(--rstk-video-play-icon-size,95px)}
-		  .rstk-video-sound{position:absolute;top:22px;right:22px;z-index:3;box-sizing:border-box;display:inline-flex;flex-direction:row-reverse;align-items:center;justify-content:flex-end;gap:13px;max-width:76px;min-height:64px;overflow:hidden;border-radius:999px;background:color-mix(in srgb,#020617 88%,transparent);color:var(--rstk-video-sound-color,var(--rstk-video-play-color,#fff));box-shadow:0 18px 44px rgba(0,0,0,.34);padding:0 19px 0 22px;pointer-events:none;backdrop-filter:blur(14px);transform-origin:right center}
+		  .rstk-video-sound{--rstk-video-sound-size:58px;--rstk-video-sound-icon-size:34px;position:absolute;top:22px;right:22px;z-index:3;box-sizing:border-box;display:inline-flex;flex-direction:row-reverse;align-items:center;justify-content:flex-start;gap:10px;width:max-content;max-width:var(--rstk-video-sound-size);min-width:var(--rstk-video-sound-size);height:var(--rstk-video-sound-size);min-height:var(--rstk-video-sound-size);overflow:hidden;border-radius:999px;background:color-mix(in srgb,#020617 72%,transparent);color:var(--rstk-video-sound-color,var(--rstk-video-play-color,#fff));box-shadow:none;padding:0 12px;pointer-events:none;backdrop-filter:blur(14px);transform-origin:right center}
 		  .rstk-video-has-control-bar .rstk-video-sound{top:22px}
 		  .rstk-video-sound-auto{animation:rstkVideoSoundNotice var(--rstk-video-sound-cycle,6.6s) cubic-bezier(.2,.8,.2,1) .45s both}
 		  .rstk-video-sound-persistent{animation:rstkVideoSoundNoticeOpen .8s cubic-bezier(.2,.8,.2,1) .45s both}
-		  .rstk-video-sound-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:28px;min-width:28px;height:28px}
-		  .rstk-video-sound-text{display:inline-block;max-width:min(260px,calc(100vw - 150px));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:currentColor;font-size:1rem;font-weight:500;letter-spacing:0;opacity:0;transform:translateX(10px)}
+		  .rstk-video-sound-icon{display:grid;place-items:center;flex:0 0 var(--rstk-video-sound-icon-size);width:var(--rstk-video-sound-icon-size);min-width:var(--rstk-video-sound-icon-size);height:var(--rstk-video-sound-icon-size);border-radius:999px}
+		  .rstk-video-sound-icon svg{display:block}
+		  .rstk-video-sound-text{display:inline-block;max-width:min(260px,calc(100vw - 150px));min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:currentColor;font-size:1rem;font-weight:500;letter-spacing:0;opacity:0;transform:translateX(10px)}
 	  .rstk-video-sound-auto .rstk-video-sound-text{animation:rstkVideoSoundText var(--rstk-video-sound-cycle,6.6s) ease .45s both}
 	  .rstk-video-sound-persistent .rstk-video-sound-text{animation:rstkVideoSoundTextOpen .8s ease .55s both}
-	  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:grid;grid-template-columns:auto minmax(44px,1fr) auto auto;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:0 18px 42px rgba(0,0,0,.28);padding:7px;backdrop-filter:blur(14px)}
+	  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:grid;grid-template-columns:auto minmax(44px,1fr) auto auto;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:none;opacity:1;padding:7px;pointer-events:auto;transform:translateY(0);transition:opacity .2s ease,transform .2s ease;backdrop-filter:blur(14px)}
+	  .rstk-video-controls-hidden .rstk-video-control-bar{opacity:0;pointer-events:none;transform:translateY(8px)}
+	  .rstk-video-controls-hidden .rstk-video-control-bar:focus-within{opacity:1;pointer-events:auto;transform:translateY(0)}
+	  .rstk-video-custom-controls.rstk-video-is-playing.rstk-video-controls-hidden video{cursor:none}
 	  .rstk-video-control-button{width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;cursor:pointer}
 	  .rstk-video-control-button:hover{background:rgba(255,255,255,.2)}
 	  .rstk-video-control-button svg{display:block;flex:0 0 auto}
@@ -14268,8 +14304,8 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-speed-control select{-webkit-appearance:none;appearance:none;width:34px;min-width:0;height:100%;margin:0;border:0!important;border-radius:0;background:transparent!important;background-image:none!important;box-shadow:none!important;color:inherit;cursor:pointer;font:inherit;font-size:.76rem;font-weight:750;line-height:1;outline:0;padding:0}
 	  .rstk-video-speed-control option{color:#111827}
 	  @supports (width:1cqw){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(104px,min(22cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))))}.rstk-video-control-bar{left:max(6px,min(12px,2cqw));right:max(6px,min(12px,2cqw));bottom:max(6px,min(12px,2cqw));gap:max(4px,min(8px,1.4cqw));padding:max(5px,min(7px,1.2cqw))}.rstk-video-control-button{width:max(24px,min(30px,5cqw));height:max(24px,min(30px,5cqw))}.rstk-video-speed-control{min-width:max(54px,min(66px,11cqw));height:max(24px,min(30px,5cqw));padding-inline:max(6px,min(8px,1.5cqw)) max(18px,min(20px,3cqw))}@media (max-width:760px){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(88px,min(18cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))))}}}
-		  @keyframes rstkVideoSoundNotice{0%,12%{max-width:76px}22%,70%{max-width:min(calc(100% - 44px),360px)}100%{max-width:76px}}
-		  @keyframes rstkVideoSoundNoticeOpen{0%{max-width:76px}100%{max-width:min(calc(100% - 44px),360px)}}
+		  @keyframes rstkVideoSoundNotice{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}10%,18%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}28%,70%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0) scale(1)}86%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}100%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}}
+		  @keyframes rstkVideoSoundNoticeOpen{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}45%{opacity:1;transform:translateY(0) scale(1)}100%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0) scale(1)}}
 		  @keyframes rstkVideoSoundText{0%,17%,76%,100%{opacity:0;transform:translateX(10px)}26%,68%{opacity:1;transform:translateX(0)}}
 		  @keyframes rstkVideoSoundTextOpen{0%{opacity:0;transform:translateX(10px)}100%{opacity:1;transform:translateX(0)}}
   .rstk-media-empty{min-height:190px;display:grid;place-items:center;gap:8px;color:var(--rstk-muted);font-size:.92rem}
@@ -15826,6 +15862,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	      };
 	      const previewStep = 0.25;
 	      const previewMax = 40;
+	      const controlsIdleMs = ${VIDEO_CONTROLS_IDLE_MS};
+	      const controlsLeaveIdleMs = ${VIDEO_CONTROLS_LEAVE_IDLE_MS};
 	      const roundPreviewSecond = value => Math.round(value / previewStep) * previewStep;
 	      const normalizePreviewRange = video => {
 	        const rawDuration = Number(video.duration);
@@ -15880,9 +15918,51 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        const toggleButtons = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
 	        const muteButtons = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
 	        const soundNotice = host.querySelector('.rstk-video-sound');
+	        const controlBar = host.querySelector('[data-rstk-video-control-bar]');
+	        const hasControlBar = Boolean(controlBar);
 	        const previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
 	        let previewing = false;
 	        let hasUserPlayed = Boolean(video.autoplay);
+	        let controlsAreVisible = true;
+	        let controlsHideTimer = 0;
+	        const setControlsVisible = visible => {
+	          if (!hasControlBar) return;
+	          controlsAreVisible = Boolean(visible);
+	          host.classList.toggle('rstk-video-controls-visible', controlsAreVisible);
+	          host.classList.toggle('rstk-video-controls-hidden', !controlsAreVisible);
+	        };
+	        const clearControlsHideTimer = () => {
+	          if (!controlsHideTimer) return;
+	          window.clearTimeout(controlsHideTimer);
+	          controlsHideTimer = 0;
+	        };
+	        const hideControlsAfter = delay => {
+	          clearControlsHideTimer();
+	          if (!hasControlBar || video.paused || previewing) return;
+	          controlsHideTimer = window.setTimeout(() => {
+	            setControlsVisible(false);
+	            controlsHideTimer = 0;
+	          }, Number.isFinite(delay) ? delay : controlsIdleMs);
+	        };
+	        const showControlsTemporarily = delay => {
+	          if (!hasControlBar) return;
+	          setControlsVisible(true);
+	          hideControlsAfter(Number.isFinite(delay) ? delay : controlsIdleMs);
+	        };
+	        const handlePlayerActivity = () => showControlsTemporarily();
+	        const handlePlayerLeave = event => {
+	          if (event && event.relatedTarget && host.contains(event.relatedTarget)) return;
+	          hideControlsAfter(controlsLeaveIdleMs);
+	        };
+	        if (hasControlBar) {
+	          setControlsVisible(true);
+	          ['pointerenter', 'pointermove', 'touchstart', 'focusin'].forEach(eventName => host.addEventListener(eventName, handlePlayerActivity, { passive: true }));
+	          ['pointerleave', 'focusout'].forEach(eventName => host.addEventListener(eventName, handlePlayerLeave));
+	          controlBar.addEventListener('click', event => {
+	            event.stopPropagation();
+	            showControlsTemporarily();
+	          });
+	        }
 	        const hideSoundNotice = () => {
 	          if (!hasUserPlayed) return;
 	          host.classList.remove('rstk-video-sound-hint');
@@ -15923,6 +16003,14 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          if (progress) progress.style.width = duration > 0 ? Math.max(0, Math.min(100, (video.currentTime / duration) * 100)) + '%' : '0%';
 	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused || previewing ? 'Reproducir video' : 'Pausar video'));
 	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
+	          if (hasControlBar) {
+	            if (!video.paused && !previewing) {
+	              if (controlsAreVisible && !controlsHideTimer) hideControlsAfter(controlsIdleMs);
+	            } else {
+	              clearControlsHideTimer();
+	              setControlsVisible(true);
+	            }
+	          }
 	          hideSoundNotice();
 	        };
 	        const togglePlayback = unmute => {
@@ -15930,6 +16018,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          if (wasPreviewing) stopPreviewLoop();
 	          hasUserPlayed = true;
 	          hideSoundNotice();
+	          showControlsTemporarily();
 	          if (unmute) {
 	            video.muted = false;
 	            if (video.volume === 0) video.volume = 1;
@@ -15942,6 +16031,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	            }).finally(() => window.setTimeout(sync, 0));
 	          } else {
 	            video.pause();
+	            setControlsVisible(true);
 	            sync();
 	          }
 	        };
@@ -15950,6 +16040,11 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          overlay.addEventListener('click', event => {
 	            event.preventDefault();
 	            event.stopPropagation();
+	            if (host.classList.contains('rstk-video-controls-hidden') && !video.paused && !previewing) {
+	              showControlsTemporarily();
+	              return;
+	            }
+	            showControlsTemporarily();
 	            togglePlayback(true);
 	          });
 	        }
@@ -15957,6 +16052,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          button.addEventListener('click', event => {
 	            event.preventDefault();
 	            event.stopPropagation();
+	            showControlsTemporarily();
 	            togglePlayback(false);
 	          });
 	        });
@@ -15964,6 +16060,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          button.addEventListener('click', event => {
 	            event.preventDefault();
 	            event.stopPropagation();
+	            showControlsTemporarily();
 	            const shouldUnmute = video.muted || video.volume === 0;
 	            video.muted = !shouldUnmute;
 	            if (shouldUnmute && video.volume === 0) video.volume = 1;
@@ -15973,6 +16070,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        if (speedSelect) {
 	          speedSelect.value = String(video.playbackRate);
 	          speedSelect.addEventListener('change', event => {
+	            showControlsTemporarily();
 	            const nextSpeed = Number(event.target.value);
 	            if (!Number.isFinite(nextSpeed)) return;
 	            video.playbackRate = Math.min(4, Math.max(0.25, nextSpeed));

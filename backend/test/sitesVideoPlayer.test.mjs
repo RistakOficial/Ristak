@@ -118,7 +118,11 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /--rstk-video-play-border-color:#facc15/)
   assert.match(html, /--rstk-video-play-border-width:2px/)
   assert.match(html, /--rstk-video-sound-color:#22d3ee/)
+  assert.match(html, /\.rstk-video-overlay\{[^}]*background:transparent/)
+  assert.match(html, /\.rstk-video-play-dot\{[^}]*box-shadow:none/)
   assert.match(html, /\.rstk-video-control-bar\{[^}]*background:var\(--rstk-video-player-color/)
+  assert.match(html, /\.rstk-video-control-bar\{[^}]*box-shadow:none/)
+  assert.match(html, /\.rstk-video-controls-hidden \.rstk-video-control-bar\{[^}]*opacity:0/)
   assert.match(html, /\.rstk-video-player\{container-type:inline-size/)
   assert.match(html, /15cqw/)
   assert.match(html, /22cqw/)
@@ -220,6 +224,7 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     'rstk-video-player',
     'rstk-video-custom-controls',
     'rstk-video-has-control-bar',
+    'rstk-video-controls-visible',
     'rstk-video-sound-hint',
     'rstk-video-is-muted',
     'rstk-video-play-shape-rectangle',
@@ -287,11 +292,17 @@ test('video player uses the same visual signature for direct and Bunny Stream re
       'rstk-video-player',
       'rstk-video-custom-controls',
       'rstk-video-has-control-bar',
+      'rstk-video-controls-visible',
       'rstk-video-is-muted',
       'rstk-video-play-shape-rectangle',
       'rstk-video-play-spark'
     ].join(' '))
     assert.equal(autoplaySignature.hasSoundNotice, false)
+    assert.match(streamLiveHtml, /const controlsIdleMs = 2600/)
+    assert.match(streamLiveHtml, /const controlsLeaveIdleMs = 650/)
+    assert.match(streamLiveHtml, /setControlsVisible\(false\)/)
+    assert.match(streamLiveHtml, /rstk-video-controls-hidden/)
+    assert.match(streamLiveHtml, /showControlsTemporarily\(\)/)
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }
@@ -378,6 +389,31 @@ test('video player prepares HLS sources for Bunny Stream playback', async () => 
   assert.match(html, /data-rstk-video-src="https:\/\/vz-123\.b-cdn\.net\/stream-video\/playlist\.m3u8"/)
   assert.doesNotMatch(html, /<video src="https:\/\/vz-123\.b-cdn\.net\/stream-video\/playlist\.m3u8"/)
   assert.match(html, /hls\.js@1\/dist\/hls\.min\.js/)
+})
+
+test('live Bunny Stream iframe uses the same editable video frame settings', async () => {
+  const streamVideoId = `stream-frame-${Date.now()}`
+  const html = await renderPublicSiteHtml(baseSite({
+    mediaUrl: `https://player.mediadelivery.net/embed/123456/${streamVideoId}`,
+    videoPlayerBackground: '#101010',
+    videoPlayerRadius: 22,
+    videoPlayerBorderColor: 'rgba(255, 255, 255, 0)',
+    videoPlayerBorderWidth: 4
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: true,
+    preview: false
+  })
+
+  assert.match(html, /class="rstk-video rstk-video-stream-frame" style="[^"]*--rstk-video-bg:#101010/)
+  assert.match(html, /class="rstk-video rstk-video-stream-frame" style="[^"]*--rstk-video-radius:22px/)
+  assert.match(html, /class="rstk-video rstk-video-stream-frame" style="[^"]*--rstk-video-border-color:var\(--rstk-border\)/)
+  assert.match(html, /class="rstk-video rstk-video-stream-frame" style="[^"]*--rstk-video-border-width:4px/)
+  assert.match(html, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${escapeRegExp(streamVideoId)}\\?rstk_play_id=[^"]+"`))
+  assert.match(html, /data-rstk-video-track="true"/)
+  assert.match(html, /data-rstk-video-provider="bunny_stream"/)
+  assert.match(html, new RegExp(`data-rstk-stream-video-id="${escapeRegExp(streamVideoId)}"`))
+  assert.doesNotMatch(html, /class="[^"]*\brstk-video-player\b/)
 })
 
 test('live render keeps the custom player style when a storage video is synced to Bunny Stream', async () => {
