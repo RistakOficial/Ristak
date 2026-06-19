@@ -90,6 +90,11 @@ const REMAINING_FREQUENCY_OPTIONS = [
   { value: 'custom', label: 'Personalizada' }
 ]
 
+const LINK_READY_SUCCESS_CONTEXT: RecordPaymentSuccessContext = {
+  keepOpen: true,
+  paymentLinkReady: true
+}
+
 const MANUAL_PAYMENT_METHOD_OPTIONS = [
   { value: 'cash', label: 'Efectivo' },
   { value: 'bank_transfer', label: 'Transferencia bancaria' },
@@ -105,10 +110,15 @@ interface InstallmentDraft {
   dueDate: string
 }
 
+export interface RecordPaymentSuccessContext {
+  keepOpen?: boolean
+  paymentLinkReady?: boolean
+}
+
 interface RecordPaymentModalProps {
   isOpen: boolean
   onClose: () => void
-  onSuccess?: () => void
+  onSuccess?: (context?: RecordPaymentSuccessContext) => void
   initialPaymentMode?: PaymentMode
   initialContact?: Partial<Contact> | null
   lockInitialContact?: boolean
@@ -1485,7 +1495,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         paymentId: data.cardSetupInvoiceId
       })
       showToast('success', 'Parcialidades creadas', 'El enlace de domiciliación está listo para copiar o enviar.')
-      onSuccess?.()
+      onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
       return
     }
 
@@ -1501,7 +1511,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         paymentId: data.firstPaymentInvoiceId
       })
       showToast('success', 'Parcialidades creadas', 'El enlace del primer pago está listo para copiar o enviar.')
-      onSuccess?.()
+      onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
       return
     }
 
@@ -1817,7 +1827,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             'Plan de Stripe creado',
             `${manualFirstPaymentRegistered ? 'El primer pago quedó registrado. ' : ''}El enlace de domiciliación por ${formatCurrency(setupAmount, invoiceSummary.currency)} está listo para compartir.`
           )
-          onSuccess?.()
+          onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
           return
         } else if (result.firstPaymentLink) {
           showPaymentLinkReady({
@@ -1835,7 +1845,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             'Plan de Stripe creado',
             'El enlace del primer pago está listo para compartir.'
           )
-          onSuccess?.()
+          onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
           return
         } else {
           showToast(
@@ -1895,7 +1905,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           'Link de Stripe creado',
           'El enlace público está listo para copiar o enviar.'
         )
-        onSuccess?.()
+        onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
       } catch (stripeError: any) {
         showToast('error', 'No se pudo crear el link de Stripe', stripeError.message || 'Revisa la configuración de Stripe.')
         setStep('options')

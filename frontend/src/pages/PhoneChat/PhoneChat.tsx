@@ -13064,7 +13064,9 @@ export const PhoneChat: React.FC = () => {
                     lockInitialContact={Boolean(initialContact?.id)}
                     showEmbeddedBackButton={false}
                     onClose={actionSheetDismiss.requestClose}
-                    onSuccess={() => {
+                    onSuccess={(context) => {
+                      if (context?.keepOpen) return
+
                       actionSheetDismiss.requestClose()
                       setMessages((current) => [
                         ...current,

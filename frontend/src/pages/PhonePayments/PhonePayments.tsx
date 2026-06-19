@@ -755,7 +755,10 @@ export const PhonePayments: React.FC = () => {
               isOpen
               initialPaymentMode={formMode}
               onClose={() => setView('select')}
-              onSuccess={() => setView('select')}
+              onSuccess={(context) => {
+                if (context?.keepOpen) return
+                setView('select')
+              }}
             />
           </div>
         ) : view === 'products' ? (

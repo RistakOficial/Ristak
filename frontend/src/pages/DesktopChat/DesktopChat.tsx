@@ -5429,7 +5429,12 @@ export const DesktopChat: React.FC = () => {
         onClose={() => setPaymentOpen(false)}
         initialContact={activeContact}
         lockInitialContact={Boolean(activeContact?.id)}
-        onSuccess={() => {
+        onSuccess={(context) => {
+          if (context?.keepOpen) {
+            if (activeContactId) void loadConversation(activeContactId)
+            return
+          }
+
           setPaymentOpen(false)
           showToast('success', 'Pago registrado', 'El pago quedó guardado para este contacto.')
           if (activeContactId) void loadConversation(activeContactId)

@@ -2604,7 +2604,15 @@ export const Transactions: React.FC = () => {
           setShowRecordPaymentModal(false)
           navigateTransactionsPath(targetPath, { replace: true })
         }}
-        onSuccess={() => {
+        onSuccess={(context) => {
+          if (context?.keepOpen) {
+            fetchData()
+            if (recordPaymentInitialMode === 'partial') {
+              fetchPaymentPlans()
+            }
+            return
+          }
+
           const targetPath = recordPaymentInitialMode === 'partial'
             ? buildPaymentPlansPath()
             : buildTransactionsPath(viewMode)
