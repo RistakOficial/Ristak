@@ -65,12 +65,19 @@ const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
 
   const result = { ...contact } as T & Record<string, any>
 
-  if (typeof (result as any).name === 'string') {
+  const hasName = typeof (result as any).name === 'string'
+  const hasFullName = typeof (result as any).full_name === 'string'
+
+  if (hasName) {
     (result as any).name = formatName((result as any).name)
   }
 
-  if (typeof (result as any).full_name === 'string') {
+  if (hasFullName) {
     (result as any).full_name = formatName((result as any).full_name)
+  }
+
+  if (!hasName && hasFullName) {
+    (result as any).name = (result as any).full_name
   }
 
   if (typeof (result as any).fullName === 'string') {
@@ -235,7 +242,12 @@ export const contactsService = {
   },
 
   async updateContact(id: string, contact: Partial<Contact>): Promise<Contact> {
-    const data = await apiClient.put<Contact>(`/contacts/${id}`, contact)
+    const payload: Record<string, unknown> = { ...contact }
+    if (Object.prototype.hasOwnProperty.call(payload, 'name') && !Object.prototype.hasOwnProperty.call(payload, 'full_name')) {
+      payload.full_name = payload.name
+    }
+
+    const data = await apiClient.put<Contact>(`/contacts/${id}`, payload)
     return normalizeContact(data)
   },
 

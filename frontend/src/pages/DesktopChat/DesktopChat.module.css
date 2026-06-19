@@ -84,6 +84,13 @@
   font-weight: var(--font-weight-semibold);
 }
 
+.infoHeaderName {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.25;
+}
+
 .inboxHeader p,
 .conversationHeader p,
 .infoHeader p {

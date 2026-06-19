@@ -962,6 +962,40 @@ const ContactsTable: React.FC = () => {
     }
   }
 
+  const handleUpdateContactIdentity = async (
+    contactId: string,
+    updates: Partial<Record<'name' | 'email' | 'phone', string | null>>
+  ): Promise<Partial<Record<'name' | 'email' | 'phone', string | null>>> => {
+    try {
+      const updatedContact = await contactsService.updateContact(contactId, updates as Partial<Contact>)
+      const identityPatch: Partial<Record<'name' | 'email' | 'phone', string | null>> = {}
+
+      if (Object.prototype.hasOwnProperty.call(updates, 'name')) {
+        identityPatch.name = updatedContact.name ?? (updatedContact as any).full_name ?? updates.name ?? ''
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'email')) {
+        identityPatch.email = updatedContact.email ?? updates.email ?? ''
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'phone')) {
+        identityPatch.phone = updatedContact.phone ?? updates.phone ?? ''
+      }
+
+      const nextPatch: Partial<Contact> = { ...updatedContact }
+      if (identityPatch.name !== undefined) nextPatch.name = identityPatch.name ?? ''
+      if (identityPatch.email !== undefined) nextPatch.email = identityPatch.email ?? ''
+      if (identityPatch.phone !== undefined) nextPatch.phone = identityPatch.phone ?? ''
+
+      setSelectedContactDetails(prev => prev?.id === contactId ? { ...prev, ...nextPatch } : prev)
+      setSelectedContact(prev => prev?.id === contactId ? { ...prev, ...nextPatch } : prev)
+      setContacts(prev => prev.map(contact => contact.id === contactId ? { ...contact, ...nextPatch } : contact))
+
+      return identityPatch
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta editar el contacto otra vez.')
+      throw error
+    }
+  }
+
   const handleUpdateContactTags = async (contactId: string, tagIds: string[]) => {
     const updatedContact = await contactsService.updateContact(contactId, { tags: tagIds } as Partial<Contact>)
     const nextTags = Array.isArray(updatedContact.tags) ? updatedContact.tags : tagIds
@@ -2016,6 +2050,7 @@ const ContactsTable: React.FC = () => {
           loading={contactDetailsLoading}
           type={null}
           onUpdateCustomFields={handleUpdateContactCustomFields}
+          onUpdateContact={handleUpdateContactIdentity}
           onUpdateTags={handleUpdateContactTags}
           whatsappPhoneNumbers={whatsappPhoneNumbers}
           onUpdatePreferredWhatsAppPhoneNumber={handleUpdatePreferredWhatsAppPhoneNumber}

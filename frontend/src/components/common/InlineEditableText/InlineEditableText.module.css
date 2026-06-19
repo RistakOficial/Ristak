@@ -1,0 +1,85 @@
+.inlineEditableText {
+  display: inline-grid;
+  max-width: 100%;
+  min-width: 0;
+  gap: 0.25rem;
+  color: inherit;
+  vertical-align: top;
+}
+
+.displayButton {
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  margin: -0.125rem -0.25rem;
+  padding: 0.125rem 0.25rem;
+  border: 0;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.displayButton:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.displayButton:focus-visible {
+  outline: none;
+  background: var(--surface);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.displayButton:disabled {
+  cursor: default;
+}
+
+.emptyValue {
+  color: var(--text-mute);
+  font-weight: 500;
+}
+
+.input {
+  width: min(100%, 18rem);
+  min-width: min(12rem, 100%);
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.3;
+  padding: 0.375rem 0.5rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.input:disabled {
+  opacity: 0.68;
+  cursor: wait;
+}
+
+.status,
+.error {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.status {
+  color: var(--text-mute);
+}
+
+.error {
+  color: var(--neg);
+}

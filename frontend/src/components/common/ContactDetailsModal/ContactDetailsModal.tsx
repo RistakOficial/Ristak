@@ -1,5 +1,5 @@
 import { useCallback, useState, useMemo, useEffect } from 'react'
-import { Modal, Icon, Badge, Button, CustomSelect, TagPicker, type BadgeVariant } from '@/components/common'
+import { Modal, Icon, Badge, Button, CustomSelect, InlineEditableText, TagPicker, type BadgeVariant } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import automationsService, {
   type AutomationSummary,
@@ -107,10 +107,14 @@ interface ContactDetailsModalProps {
   loading: boolean
   type?: 'interesados' | 'sales' | 'appointments' | 'attendances' | null
   onUpdateCustomFields?: (contactId: string, customFields: ContactCustomField[]) => Promise<ContactCustomField[]>
+  onUpdateContact?: (contactId: string, updates: ContactIdentityUpdate) => Promise<ContactIdentityUpdate | void>
   onUpdateTags?: (contactId: string, tagIds: string[]) => Promise<string[] | void>
   whatsappPhoneNumbers?: WhatsAppPhoneOption[]
   onUpdatePreferredWhatsAppPhoneNumber?: (contactId: string, phoneNumberId: string) => Promise<Partial<ContactDetail> | void>
 }
+
+type ContactIdentityField = 'name' | 'email' | 'phone'
+type ContactIdentityUpdate = Partial<Pick<ContactDetail, ContactIdentityField>>
 
 const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
   field.id || field.key || field.fieldKey || field.label || field.name || `custom-field-${index}`
@@ -276,6 +280,7 @@ export function ContactDetailsModal({
   loading,
   type,
   onUpdateCustomFields,
+  onUpdateContact,
   onUpdateTags,
   whatsappPhoneNumbers = [],
   onUpdatePreferredWhatsAppPhoneNumber
@@ -587,6 +592,27 @@ export function ContactDetailsModal({
     }
   }
 
+  const saveContactIdentityField = async (field: ContactIdentityField, value: string) => {
+    if (!selectedContact || !onUpdateContact) return
+
+    const contactId = selectedContact.id
+    const previousValue = selectedContact[field] || ''
+    const patch = { [field]: value } as ContactIdentityUpdate
+
+    setSelectedContact(prev => prev?.id === contactId ? { ...prev, ...patch } : prev)
+
+    try {
+      const updatedContact = await onUpdateContact(contactId, patch)
+      setSelectedContact(prev => prev?.id === contactId
+        ? { ...prev, ...patch, ...(updatedContact || {}) }
+        : prev
+      )
+    } catch (error) {
+      setSelectedContact(prev => prev?.id === contactId ? { ...prev, [field]: previousValue } : prev)
+      throw error
+    }
+  }
+
   const updateContactTags = async (tagIds: string[]) => {
     if (!selectedContact || !onUpdateTags) return
     const previous = selectedContact.tags || []
@@ -853,9 +879,14 @@ export function ContactDetailsModal({
                 </div>
                 <div className={styles.contactHeaderInfo}>
                   <div className={styles.contactHeaderNameRow}>
-                    <h4 className={styles.contactHeaderName}>
-                      {selectedContact.name || '—'}
-                    </h4>
+                    <InlineEditableText
+                      className={styles.contactHeaderName}
+                      value={selectedContact.name || ''}
+                      emptyLabel="Sin nombre"
+                      ariaLabel="Editar nombre del contacto"
+                      disabled={!onUpdateContact}
+                      onSave={(value) => saveContactIdentityField('name', value)}
+                    />
                     {(() => {
                       const badge = resolveContactBadge(selectedContact)
                       return badge ? (
@@ -868,13 +899,27 @@ export function ContactDetailsModal({
                   {(selectedContact.email || selectedContact.phone) && (
                     <div className={styles.contactHeaderMeta}>
                       {selectedContact.email && (
-                        <span>{selectedContact.email}</span>
+                        <InlineEditableText
+                          value={selectedContact.email}
+                          ariaLabel="Editar correo del contacto"
+                          type="email"
+                          inputMode="email"
+                          disabled={!onUpdateContact}
+                          onSave={(value) => saveContactIdentityField('email', value)}
+                        />
                       )}
                       {selectedContact.email && selectedContact.phone && (
                         <span className={styles.metaSeparator}>/</span>
                       )}
                       {selectedContact.phone && (
-                        <span>{selectedContact.phone}</span>
+                        <InlineEditableText
+                          value={selectedContact.phone}
+                          ariaLabel="Editar teléfono del contacto"
+                          type="tel"
+                          inputMode="tel"
+                          disabled={!onUpdateContact}
+                          onSave={(value) => saveContactIdentityField('phone', value)}
+                        />
                       )}
                     </div>
                   )}
@@ -889,18 +934,30 @@ export function ContactDetailsModal({
                     Información de Contacto
                   </h5>
                   <div className={styles.detailSectionContent}>
-                    {selectedContact.email && (
-                      <div className={styles.detailItem}>
-                        <Icon name="mail" size={16} />
-                        <span>{selectedContact.email}</span>
-                      </div>
-                    )}
-                    {selectedContact.phone && (
-                      <div className={styles.detailItem}>
-                        <Icon name="phone" size={16} />
-                        <span>{selectedContact.phone}</span>
-                      </div>
-                    )}
+                    <div className={styles.detailItem}>
+                      <Icon name="mail" size={16} />
+                      <InlineEditableText
+                        value={selectedContact.email || ''}
+                        emptyLabel="Sin correo"
+                        ariaLabel="Editar correo del contacto"
+                        type="email"
+                        inputMode="email"
+                        disabled={!onUpdateContact}
+                        onSave={(value) => saveContactIdentityField('email', value)}
+                      />
+                    </div>
+                    <div className={styles.detailItem}>
+                      <Icon name="phone" size={16} />
+                      <InlineEditableText
+                        value={selectedContact.phone || ''}
+                        emptyLabel="Sin teléfono"
+                        ariaLabel="Editar teléfono del contacto"
+                        type="tel"
+                        inputMode="tel"
+                        disabled={!onUpdateContact}
+                        onSave={(value) => saveContactIdentityField('phone', value)}
+                      />
+                    </div>
                     <div className={styles.detailItem}>
                       <Icon name="calendar" size={16} />
                       <span>{formatLocalDateShort(selectedContact.created_at)}</span>

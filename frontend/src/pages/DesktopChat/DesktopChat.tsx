@@ -45,6 +45,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Icon,
+  InlineEditableText,
   Modal,
   RecordPaymentModal,
   SearchField,
@@ -96,6 +97,7 @@ type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' 
 type SchedulePeriod = 'AM' | 'PM'
 type TemplatePanelMode = 'choice' | 'select' | 'create'
 type ComposerChannel = 'whatsapp' | 'messenger' | 'instagram' | 'email'
+type ContactIdentityField = 'name' | 'email' | 'phone'
 
 interface ContactChannelBadge {
   kind: ContactChannelBadgeKind
@@ -2802,6 +2804,43 @@ export const DesktopChat: React.FC = () => {
     }
   }, [activeContact, contactInfoData, showToast])
 
+  const handleUpdateContactIdentityField = useCallback(async (field: ContactIdentityField, value: string) => {
+    if (!activeContact?.id) return
+
+    const contactId = activeContact.id
+    const previousContact = contactInfoData || activeContact
+    const patch = { [field]: value } as Partial<Contact>
+
+    setContactInfoData((current) => current?.id === contactId ? { ...current, ...patch } : current)
+    setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...patch } : contact))
+
+    try {
+      const updatedContact = await contactsService.updateContact(contactId, patch)
+      const identityPatch: Partial<Contact> = {}
+
+      if (field === 'name') {
+        identityPatch.name = updatedContact.name ?? (updatedContact as any).full_name ?? value
+      } else if (field === 'email') {
+        identityPatch.email = updatedContact.email ?? value
+      } else if (field === 'phone') {
+        identityPatch.phone = updatedContact.phone ?? value
+      }
+
+      const nextPatch: Partial<Contact> = {
+        ...updatedContact,
+        ...identityPatch
+      }
+
+      setContactInfoData((current) => current?.id === contactId ? { ...current, ...nextPatch } : current)
+      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...nextPatch } : contact))
+    } catch (error: any) {
+      setContactInfoData((current) => current?.id === contactId ? { ...current, ...previousContact } : current)
+      setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...previousContact } : contact))
+      showToast('error', 'No se guardó el contacto', error?.message || 'Intenta editarlo otra vez.')
+      throw error
+    }
+  }, [activeContact, contactInfoData, showToast])
+
   const openNewAppointment = useCallback(() => {
     setEditingAppointmentEvent(null)
     setAppointmentOpen(true)
@@ -4935,7 +4974,13 @@ export const DesktopChat: React.FC = () => {
               <div className={styles.infoHeader}>
                   {renderAvatar(contactInfoData || activeContact)}
                 <div>
-                  <h2>{getContactName(contactInfoData || activeContact)}</h2>
+                  <InlineEditableText
+                    className={styles.infoHeaderName}
+                    value={(contactInfoData || activeContact).name || ''}
+                    emptyLabel="Contacto sin nombre"
+                    ariaLabel="Editar nombre del contacto"
+                    onSave={(value) => handleUpdateContactIdentityField('name', value)}
+                  />
                   <p>{stageLabel}</p>
                 </div>
               </div>
@@ -4945,8 +4990,32 @@ export const DesktopChat: React.FC = () => {
               <div className={styles.infoSection}>
                 <h3>Contacto</h3>
                 <dl className={styles.detailList}>
-                  <div><dt><Phone size={14} /> Teléfono</dt><dd>{activeContact.phone || 'Sin teléfono'}</dd></div>
-                  <div><dt><Mail size={14} /> Correo</dt><dd>{activeContact.email || 'Sin correo'}</dd></div>
+                  <div>
+                    <dt><Phone size={14} /> Teléfono</dt>
+                    <dd>
+                      <InlineEditableText
+                        value={(contactInfoData || activeContact).phone || ''}
+                        emptyLabel="Sin teléfono"
+                        ariaLabel="Editar teléfono del contacto"
+                        type="tel"
+                        inputMode="tel"
+                        onSave={(value) => handleUpdateContactIdentityField('phone', value)}
+                      />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt><Mail size={14} /> Correo</dt>
+                    <dd>
+                      <InlineEditableText
+                        value={(contactInfoData || activeContact).email || ''}
+                        emptyLabel="Sin correo"
+                        ariaLabel="Editar correo del contacto"
+                        type="email"
+                        inputMode="email"
+                        onSave={(value) => handleUpdateContactIdentityField('email', value)}
+                      />
+                    </dd>
+                  </div>
                   <div><dt><Tag size={14} /> Estado</dt><dd>{stageLabel}</dd></div>
                 </dl>
                 <div className={styles.contactTools}>
