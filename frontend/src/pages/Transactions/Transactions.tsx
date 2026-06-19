@@ -1907,7 +1907,7 @@ export const Transactions: React.FC = () => {
 
   const renderStripePaymentDraftRow = (
     draft: StripePlanPaymentDraft,
-    index: number,
+    _index: number,
     options: {
       kind: 'first' | 'installment'
       onUpdate: (updates: Partial<StripePlanPaymentDraft>) => void
@@ -1923,11 +1923,7 @@ export const Transactions: React.FC = () => {
         className={`${styles.stripePlanPaymentRow} ${locked ? styles.stripePlanPaymentLocked : ''}`}
       >
         <div className={styles.stripePlanPaymentMeta}>
-          <span className={styles.stripePlanPaymentIndex}>{options.kind === 'first' ? '1' : index + 1}</span>
-          <div>
-            <strong>{draft.label}</strong>
-            <span>{locked ? 'Registro bloqueado porque ya fue cobrado.' : 'Puedes ajustar monto, fecha y forma de cobro.'}</span>
-          </div>
+          <strong>{draft.label}</strong>
         </div>
 
         <div className={styles.stripePlanPaymentFields}>
@@ -2037,13 +2033,9 @@ export const Transactions: React.FC = () => {
           {cardSetupRequired && (
             <div className={styles.stripePlanPaymentRow}>
               <div className={styles.stripePlanPaymentMeta}>
-                <span className={styles.stripePlanPaymentIndex}>D</span>
-                <div>
-                  <strong>Domiciliación de tarjeta</strong>
-                  <span>Autoriza la tarjeta que se usará para los cobros futuros.</span>
-                </div>
+                <strong>Domiciliación</strong>
               </div>
-              <div className={styles.stripePlanPaymentFields}>
+              <div className={`${styles.stripePlanPaymentFields} ${styles.stripePlanPaymentFieldsCompact}`}>
                 <div className={styles.formGroup}>
                   <label>Monto</label>
                   <div className={styles.stripePlanReadonlyValue}>{cardSetupAmount > 0 ? formatCurrency(cardSetupAmount) : 'Autorización'}</div>
