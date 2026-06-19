@@ -2955,58 +2955,47 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   @keyframes rk-ovfade { from { opacity: 0; } to { opacity: 1; } }
   [data-modal] { background: var(--modal-surface-bg, var(--surface-solid, var(--surface, var(--color-background-primary)))); border: 1px solid var(--border-strong); border-radius: var(--radius-card); box-shadow: var(--modal-shadow, var(--shadow-pop)); width: 100%; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; animation: rk-modalin 0.2s cubic-bezier(0.4,0,0.2,1) both; }
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
-    --modal-density-control-height: 34px;
-    --modal-density-control-padding-x: 10px;
-    --modal-density-control-font-size: 13px;
-    --modal-density-label-font-size: 12px;
-    --modal-density-helper-font-size: 11.5px;
-    --modal-density-title-font-size: 16px;
-    --modal-density-header-padding-x: 24px;
-    --modal-density-header-padding-y: 18px;
-    --modal-density-content-padding-x: 24px;
-    --modal-density-content-padding-y: 18px;
-    --modal-density-footer-padding-x: 24px;
-    --modal-density-footer-padding-y: 16px;
-    --modal-density-form-gap: 12px;
-    --modal-density-field-gap: 5px;
-    --modal-density-grid-gap: 10px;
-    --modal-density-card-padding: 10px;
-    --modal-density-button-height: 34px;
-    --modal-density-button-height-sm: 28px;
-    --modal-density-button-padding-x: 12px;
-    --modal-density-dropdown-item-height: 30px;
-    --modal-density-table-cell-padding: 0.5rem 0.625rem;
+    --modal-density-control-height: 40px;
+    --modal-density-control-padding-x: var(--design-control-padding-x, 12px);
+    --modal-density-control-font-size: 14px;
+    --modal-density-label-font-size: 13px;
+    --modal-density-helper-font-size: 12.5px;
+    --modal-density-title-font-size: 17px;
+    --modal-density-section-title-font-size: 14.5px;
+    --modal-density-header-padding-x: 32px;
+    --modal-density-header-padding-y: 24px;
+    --modal-density-content-padding-x: 32px;
+    --modal-density-content-padding-y: 24px;
+    --modal-density-footer-padding-x: 32px;
+    --modal-density-footer-padding-y: 20px;
+    --modal-density-form-gap: 14px;
+    --modal-density-field-gap: 8px;
+    --modal-density-grid-gap: 12px;
+    --modal-density-card-padding: 12px;
+    --modal-density-button-height: 38px;
+    --modal-density-button-height-sm: 32px;
+    --modal-density-button-padding-x: 16px;
+    --modal-density-button-padding-x-sm: 12px;
+    --modal-density-button-font-size-sm: 12.5px;
+    --modal-density-dropdown-item-height: 36px;
+    --modal-density-table-cell-padding: var(--spacing-md);
+    --modal-density-segment-height: 32px;
+    --modal-density-segment-padding-y: 0.375rem;
+    --modal-density-segment-padding-x: 0.75rem;
+    --modal-density-segment-font-size: var(--font-size-sm);
     --app-control-height: var(--modal-density-control-height);
     --native-control-height: var(--modal-density-control-height);
     --ristak-dropdown-trigger-height: var(--modal-density-control-height);
     --app-button-height: var(--modal-density-button-height);
     --app-button-height-sm: var(--modal-density-button-height-sm);
     --app-button-padding-x: var(--modal-density-button-padding-x);
-    --app-button-padding-x-sm: 9px;
+    --app-button-padding-x-sm: var(--modal-density-button-padding-x-sm);
     --app-button-font-size: var(--modal-density-control-font-size);
-    --app-button-font-size-sm: 11.5px;
-    --app-segment-height: 28px;
-    --app-segment-padding-y: 0.2rem;
-    --app-segment-padding-x: 0.5rem;
+    --app-button-font-size-sm: var(--modal-density-button-font-size-sm);
+    --app-segment-height: var(--modal-density-segment-height);
+    --app-segment-padding-y: var(--modal-density-segment-padding-y);
+    --app-segment-padding-x: var(--modal-density-segment-padding-x);
     --app-table-cell-padding: var(--modal-density-table-cell-padding);
-  }
-
-  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal][data-modal-size='sm'],
-  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal][data-modal-size='md'] {
-    --modal-density-control-height: 32px;
-    --modal-density-title-font-size: 15.5px;
-    --modal-density-header-padding-x: 22px;
-    --modal-density-header-padding-y: 16px;
-    --modal-density-content-padding-x: 22px;
-    --modal-density-content-padding-y: 16px;
-    --modal-density-footer-padding-x: 22px;
-    --modal-density-footer-padding-y: 14px;
-    --modal-density-form-gap: 10px;
-    --modal-density-grid-gap: 9px;
-    --modal-density-card-padding: 9px;
-    --modal-density-button-height: 32px;
-    --modal-density-button-height-sm: 26px;
-    --modal-density-dropdown-item-height: 28px;
   }
 
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal-header] {
@@ -3067,7 +3056,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   }
 
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(h3, h4) {
-    font-size: 13.5px !important;
+    font-size: var(--modal-density-section-title-font-size) !important;
     line-height: 1.25;
   }
 
@@ -3122,8 +3111,8 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
 
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-btn][data-size='sm'] {
     height: var(--modal-density-button-height-sm) !important;
-    padding: 0 9px !important;
-    font-size: 11.5px !important;
+    padding: 0 var(--modal-density-button-padding-x-sm) !important;
+    font-size: var(--modal-density-button-font-size-sm) !important;
   }
 
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-ristak-dropdown-trigger] {
@@ -3142,7 +3131,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-ristak-tablist-tab] {
     min-height: var(--app-segment-height) !important;
     padding: var(--app-segment-padding-y) var(--app-segment-padding-x) !important;
-    font-size: 12px !important;
+    font-size: var(--modal-density-segment-font-size) !important;
   }
 
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] [data-ristak-table] :where(th, td) {
@@ -3154,7 +3143,60 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     padding: var(--modal-density-card-padding) !important;
   }
 
-  @media (max-width: 1366px) {
+  /* Compactar modales solo cuando la ventana de verdad aprieta: no por ancho
+     nominal de laptop si todavía hay altura suficiente para leer cómodo. */
+  @media (max-width: 1180px), (max-width: 1366px) and (max-height: 820px), (max-height: 760px) {
+    body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
+      --modal-density-control-height: 34px;
+      --modal-density-control-padding-x: 10px;
+      --modal-density-control-font-size: 13px;
+      --modal-density-label-font-size: 12px;
+      --modal-density-helper-font-size: 11.5px;
+      --modal-density-title-font-size: 16px;
+      --modal-density-section-title-font-size: 13.5px;
+      --modal-density-header-padding-x: 24px;
+      --modal-density-header-padding-y: 18px;
+      --modal-density-content-padding-x: 24px;
+      --modal-density-content-padding-y: 18px;
+      --modal-density-footer-padding-x: 24px;
+      --modal-density-footer-padding-y: 16px;
+      --modal-density-form-gap: 12px;
+      --modal-density-field-gap: 5px;
+      --modal-density-grid-gap: 10px;
+      --modal-density-card-padding: 10px;
+      --modal-density-button-height: 34px;
+      --modal-density-button-height-sm: 28px;
+      --modal-density-button-padding-x: 12px;
+      --modal-density-button-padding-x-sm: 9px;
+      --modal-density-button-font-size-sm: 11.5px;
+      --modal-density-dropdown-item-height: 30px;
+      --modal-density-table-cell-padding: 0.5rem 0.625rem;
+      --modal-density-segment-height: 28px;
+      --modal-density-segment-padding-y: 0.2rem;
+      --modal-density-segment-padding-x: 0.5rem;
+      --modal-density-segment-font-size: 12px;
+    }
+
+    body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal][data-modal-size='sm'],
+    body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal][data-modal-size='md'] {
+      --modal-density-control-height: 32px;
+      --modal-density-title-font-size: 15.5px;
+      --modal-density-header-padding-x: 22px;
+      --modal-density-header-padding-y: 16px;
+      --modal-density-content-padding-x: 22px;
+      --modal-density-content-padding-y: 16px;
+      --modal-density-footer-padding-x: 22px;
+      --modal-density-footer-padding-y: 14px;
+      --modal-density-form-gap: 10px;
+      --modal-density-grid-gap: 9px;
+      --modal-density-card-padding: 9px;
+      --modal-density-button-height: 32px;
+      --modal-density-button-height-sm: 26px;
+      --modal-density-dropdown-item-height: 28px;
+    }
+  }
+
+  @media (max-width: 900px), (max-height: 680px) {
     body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
       --modal-density-control-height: 30px;
       --modal-density-control-padding-x: 9px;
@@ -3162,6 +3204,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
       --modal-density-label-font-size: 11.5px;
       --modal-density-helper-font-size: 11px;
       --modal-density-title-font-size: 15px;
+      --modal-density-section-title-font-size: 13px;
       --modal-density-header-padding-x: 20px;
       --modal-density-header-padding-y: 14px;
       --modal-density-content-padding-x: 20px;
@@ -3174,7 +3217,12 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
       --modal-density-button-height: 30px;
       --modal-density-button-height-sm: 25px;
       --modal-density-button-padding-x: 10px;
+      --modal-density-button-padding-x-sm: 8px;
+      --modal-density-button-font-size-sm: 11px;
       --modal-density-dropdown-item-height: 27px;
+      --modal-density-segment-height: 26px;
+      --modal-density-segment-padding-x: 0.45rem;
+      --modal-density-segment-font-size: 11.5px;
     }
   }
   @keyframes rk-modalin { from { opacity: 0; transform: translateY(10px) scale(0.99); } to { opacity: 1; transform: none; } }
@@ -3797,7 +3845,7 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) .dashb
   }
 }
 
-@media (max-width: 1366px) {
+@media (max-width: 1180px), (max-width: 1366px) and (max-height: 820px) {
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
     --font-size-xs: 0.7rem;
     --font-size-sm: 0.8125rem;
