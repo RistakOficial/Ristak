@@ -17354,7 +17354,7 @@
   place-items: center;
   width: 82px;
   height: 56px;
-  border: var(--video-settings-play-border-width, 0) solid var(--video-settings-play-border-color, transparent);
+  border: 0;
   border-radius: var(--video-settings-play-radius, 8px);
   background: var(--video-settings-play-bg, var(--accent));
   color: var(--video-settings-play-color, var(--on-accent));

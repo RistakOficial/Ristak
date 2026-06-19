@@ -91,8 +91,6 @@ test('video player clean mode renders custom overlay controls', async () => {
     videoPlaySize: 82,
     videoPlayRadius: 24,
     videoPlayIconSize: 30,
-    videoPlayBorderColor: '#facc15',
-    videoPlayBorderWidth: 2,
     videoSoundColor: '#22d3ee'
   }), {
     pageId: 'page-1',
@@ -115,11 +113,11 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /--rstk-video-play-size:82px/)
   assert.match(html, /--rstk-video-play-radius:24px/)
   assert.match(html, /--rstk-video-play-icon-size:30px/)
-  assert.match(html, /--rstk-video-play-border-color:#facc15/)
-  assert.match(html, /--rstk-video-play-border-width:2px/)
+  assert.doesNotMatch(html, /--rstk-video-play-border-/)
   assert.match(html, /--rstk-video-sound-color:#22d3ee/)
   assert.match(html, /\.rstk-video-overlay\{[^}]*background:transparent/)
   assert.match(html, /\.rstk-video-play-dot\{[^}]*box-shadow:none/)
+  assert.match(html, /\.rstk-video-play-dot\{[^}]*border:0/)
   assert.match(html, /\.rstk-video-control-bar\{[^}]*background:var\(--rstk-video-player-color/)
   assert.match(html, /\.rstk-video-control-bar\{[^}]*box-shadow:none/)
   assert.match(html, /\.rstk-video-controls-hidden \.rstk-video-control-bar\{[^}]*opacity:0/)
@@ -215,8 +213,6 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     videoPlayRadius: 17,
     videoPlayIconStyle: 'spark',
     videoPlayIconSize: 48,
-    videoPlayBorderColor: 'rgba(255, 255, 255, 0.35)',
-    videoPlayBorderWidth: 3,
     videoSoundColor: '#facc15'
   }
   const expectedEditorInitialClasses = [

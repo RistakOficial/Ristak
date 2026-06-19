@@ -13124,9 +13124,6 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const playRadius = normalizeVideoPlayRadius(settings, playShape)
   const playIconStyle = normalizeVideoPlayIconStyle(settings.videoPlayIconStyle)
   const playIconSize = normalizeVideoPlayIconSize(settings)
-  const playBorderColor = normalizeCssPaint(settings.videoPlayBorderColor, 'rgba(255, 255, 255, 0)') || 'rgba(255, 255, 255, 0)'
-  const rawPlayBorderWidth = Number(settings.videoPlayBorderWidth ?? 0)
-  const playBorderWidth = Number.isFinite(rawPlayBorderWidth) ? Math.min(10, Math.max(0, rawPlayBorderWidth)) : 0
   const soundColor = normalizeCssPaint(settings.videoSoundColor, playColor) || playColor
   const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
   const classes = [
@@ -13148,8 +13145,6 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     `--rstk-video-play-size:${escapeHtml(String(playSize))}px`,
     `--rstk-video-play-radius:${escapeHtml(String(playRadius))}px`,
     `--rstk-video-play-icon-size:${escapeHtml(String(playIconSize))}px`,
-    `--rstk-video-play-border-color:${escapeHtml(playBorderColor)}`,
-    `--rstk-video-play-border-width:${escapeHtml(String(playBorderWidth))}px`,
     `--rstk-video-sound-color:${escapeHtml(soundColor)}`,
     `--rstk-video-sound-cycle:${escapeHtml(soundNoticeCycle)}`
   ].join(';')
@@ -14270,7 +14265,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-player{container-type:inline-size;isolation:isolate}
 	  .rstk-video-custom-controls video{cursor:pointer}
 		  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:transparent;color:var(--rstk-video-play-color,#fff);cursor:pointer}
-		  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:var(--rstk-video-play-border-width,0) solid var(--rstk-video-play-border-color,transparent);border-radius:var(--rstk-video-play-radius,8px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:none;transition:opacity .18s ease,transform .18s ease}
+		  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:0;border-radius:var(--rstk-video-play-radius,8px);background:var(--rstk-video-player-color,rgba(0,0,0,.52));color:var(--rstk-video-play-color,#fff);box-shadow:none;transition:opacity .18s ease,transform .18s ease}
 		  .rstk-video-is-playing .rstk-video-play-dot{opacity:0;transform:scale(.9)}
 		  .rstk-video-play-shape-round .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,999px)}
 		  .rstk-video-play-shape-rectangle .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,8px)}

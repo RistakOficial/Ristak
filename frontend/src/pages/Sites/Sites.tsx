@@ -712,8 +712,6 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoPlayRadius: DEFAULT_VIDEO_PLAY_RADIUS,
   videoPlayIconStyle: DEFAULT_VIDEO_PLAY_ICON_STYLE,
   videoPlayIconSize: DEFAULT_VIDEO_PLAY_ICON_SIZE,
-  videoPlayBorderColor: DEFAULT_VIDEO_TRANSPARENT,
-  videoPlayBorderWidth: 0,
   videoSoundColor: DEFAULT_VIDEO_PLAY_COLOR
 }
 
@@ -19569,8 +19567,6 @@ const VideoSettingsElementPreview: React.FC<{
   const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
   const playRadius = `${getVideoPlayRadiusValue(settings, playShape)}px`
-  const playBorderColor = getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT
-  const playBorderWidth = `${getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}px`
   const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
 
   return (
@@ -19584,8 +19580,6 @@ const VideoSettingsElementPreview: React.FC<{
         ['--video-settings-play-bg' as string]: playerColor,
         ['--video-settings-play-color' as string]: playColor,
         ['--video-settings-play-radius' as string]: playRadius,
-        ['--video-settings-play-border-color' as string]: playBorderColor,
-        ['--video-settings-play-border-width' as string]: playBorderWidth,
         ['--video-settings-sound-color' as string]: soundColor
       } as React.CSSProperties}
     >
@@ -19897,17 +19891,6 @@ const VideoPlayerSettingsControls: React.FC<{
             <div className={styles.twoColumn}>
               <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
               <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
-            </div>
-            <div className={styles.twoColumn}>
-              <ColorField label="Borde del play" value={getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayBorderColor: value })} onCommit={onSave} />
-              <VideoDimensionSliderField
-                label="Borde del player"
-                value={getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}
-                min={0}
-                max={10}
-                onChange={(value) => onPatchSettings({ videoPlayBorderWidth: value })}
-                onCommit={onSave}
-              />
             </div>
             <div className={styles.twoColumn}>
               <VideoDimensionSliderField
@@ -23626,8 +23609,6 @@ const VideoPlayerPreview: React.FC<{
   const playRadius = `${getVideoPlayRadiusValue(settings, playShape)}px`
   const playIconStyle = getVideoPlayIconStyle(settings)
   const playIconSize = getVideoPlayIconSizeValue(settings)
-  const playBorderColor = getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT
-  const playBorderWidth = `${getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}px`
   const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
   const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
   const shouldLetEditorSelect = editable && !selected
@@ -23935,8 +23916,6 @@ const VideoPlayerPreview: React.FC<{
         ['--rstk-video-play-size' as string]: playSize,
         ['--rstk-video-play-radius' as string]: playRadius,
         ['--rstk-video-play-icon-size' as string]: `${playIconSize}px`,
-        ['--rstk-video-play-border-color' as string]: playBorderColor,
-        ['--rstk-video-play-border-width' as string]: playBorderWidth,
         ['--rstk-video-sound-color' as string]: soundColor,
         ['--rstk-video-sound-cycle' as string]: soundNoticeCycle
       } as React.CSSProperties}

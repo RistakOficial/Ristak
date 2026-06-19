@@ -305,7 +305,7 @@
   height: var(--rstk-video-play-size, 160px);
   display: grid;
   place-items: center;
-  border: var(--rstk-video-play-border-width, 0) solid var(--rstk-video-play-border-color, transparent);
+  border: 0;
   border-radius: var(--rstk-video-play-radius, 8px);
   background: var(--rstk-video-player-color, rgba(0,0,0,.52));
   color: var(--rstk-video-play-color, #fff);
