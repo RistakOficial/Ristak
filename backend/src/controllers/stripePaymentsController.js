@@ -1,4 +1,6 @@
 import {
+  completeStripeConnectOAuth,
+  createStripeConnectOAuthUrl,
   createStripePaymentPlan,
   createStripeSavedCardPayment,
   createStripePaymentIntent,
@@ -119,6 +121,19 @@ function sendStripeError(res, error, fallback = 'No se pudo procesar Stripe') {
   })
 }
 
+function buildStripeSettingsRedirect(path, params = {}) {
+  const target = cleanString(path).startsWith('/settings/payments/stripe')
+    ? cleanString(path)
+    : '/settings/payments/stripe'
+  const url = new URL(target, 'https://ristak.local')
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value).slice(0, 400))
+    }
+  }
+  return `${url.pathname}${url.search}`
+}
+
 export async function getStripeConfigView(req, res) {
   try {
     const config = await getStripePaymentConfig()
@@ -126,6 +141,53 @@ export async function getStripeConfigView(req, res) {
   } catch (error) {
     logger.error(`Error obteniendo configuración Stripe: ${error.message}`)
     sendStripeError(res, error, 'No se pudo obtener la configuración de Stripe')
+  }
+}
+
+export async function createStripeConnectUrlView(req, res) {
+  try {
+    const result = await createStripeConnectOAuthUrl({
+      mode: req.body?.mode || req.query?.mode || 'test',
+      baseUrl: getRequestBaseUrl(req),
+      returnPath: req.body?.returnPath || '/settings/payments/stripe'
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error creando URL OAuth Stripe Connect: ${error.message}`)
+    sendStripeError(res, error, 'No se pudo iniciar Stripe Connect')
+  }
+}
+
+export async function stripeConnectCallbackView(req, res) {
+  let returnPath = '/settings/payments/stripe'
+  try {
+    if (req.query?.error) {
+      const message = cleanString(req.query.error_description || req.query.error || 'Stripe canceló la conexión.')
+      return res.redirect(buildStripeSettingsRedirect(returnPath, {
+        stripe_connect: 'error',
+        stripe_message: message
+      }))
+    }
+
+    const result = await completeStripeConnectOAuth({
+      code: req.query?.code,
+      state: req.query?.state,
+      baseUrl: getRequestBaseUrl(req)
+    })
+    returnPath = result.returnPath || returnPath
+    res.redirect(buildStripeSettingsRedirect(returnPath, {
+      stripe_connect: result.webhook?.status === 'active' ? 'success' : 'warning',
+      stripe_mode: result.config?.mode || '',
+      stripe_message: result.webhook?.status === 'active'
+        ? 'Stripe quedó conectado.'
+        : result.webhook?.error || 'Stripe conectó, pero el webhook necesita revisión.'
+    }))
+  } catch (error) {
+    logger.error(`Error completando OAuth Stripe Connect: ${error.message}`)
+    res.redirect(buildStripeSettingsRedirect(returnPath, {
+      stripe_connect: 'error',
+      stripe_message: error.message || 'No se pudo conectar Stripe.'
+    }))
   }
 }
 

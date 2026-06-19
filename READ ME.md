@@ -7,7 +7,7 @@ Este archivo es la fuente de verdad operativa del proyecto. Actualizado contra e
 1. No crear módulos duplicados si ya existe uno equivalente.
 2. No dejar código muerto, imports fantasma ni componentes huérfanos.
 3. No usar `alert`, `confirm` ni `prompt`; usar `NotificationContext` y modales propios.
-4. No implementar OAuth centralizado para integraciones externas. Cada instancia usa credenciales propias del usuario.
+4. No implementar OAuth centralizado para integraciones externas salvo integraciones diseñadas para plataforma como Stripe Connect. Cada instancia guarda su cuenta conectada o credenciales propias.
 5. No contar pagos `refunded`, `cancelled`, `void`, `failed` o `pending` como ingresos.
 6. No borrar Custom Values en HighLevel cuando el usuario limpia campos en Ristak; solo limpiar estado local/DB de Ristak.
 7. Mantener esta documentación sincronizada cuando cambien rutas, schema, deploy o arquitectura.

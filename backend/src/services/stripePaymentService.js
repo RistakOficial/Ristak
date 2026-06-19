@@ -7,16 +7,48 @@ import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 
 const CONFIG_KEYS = {
   enabled: 'stripe_enabled',
+  connectionType: 'stripe_connection_type',
   mode: 'stripe_mode',
   publishableKey: 'stripe_publishable_key',
   secretKey: 'stripe_secret_key_encrypted',
   webhookSecret: 'stripe_webhook_secret_encrypted',
   defaultCurrency: 'stripe_default_currency',
-  accountLabel: 'stripe_account_label'
+  accountLabel: 'stripe_account_label',
+  connectAccountId: 'stripe_connect_account_id',
+  connectScope: 'stripe_connect_scope',
+  connectLivemode: 'stripe_connect_livemode',
+  connectTokenType: 'stripe_connect_token_type',
+  connectAccessToken: 'stripe_connect_access_token_encrypted',
+  connectRefreshToken: 'stripe_connect_refresh_token_encrypted',
+  connectPublishableKey: 'stripe_connect_publishable_key',
+  connectAccountEmail: 'stripe_connect_account_email',
+  connectChargesEnabled: 'stripe_connect_charges_enabled',
+  connectPayoutsEnabled: 'stripe_connect_payouts_enabled',
+  connectDetailsSubmitted: 'stripe_connect_details_submitted',
+  connectWebhookEndpointId: 'stripe_connect_webhook_endpoint_id',
+  connectWebhookUrl: 'stripe_connect_webhook_url',
+  connectWebhookStatus: 'stripe_connect_webhook_status',
+  connectWebhookLastError: 'stripe_connect_webhook_last_error',
+  connectConnectedAt: 'stripe_connect_connected_at',
+  connectDisconnectedAt: 'stripe_connect_disconnected_at',
+  connectOauthState: 'stripe_connect_oauth_state'
 }
 
 const MASKED_PREFIX = '***'
 const DEFAULT_CURRENCY = 'MXN'
+const STRIPE_CONNECT_SCOPE = 'read_write'
+const STRIPE_CONNECT_AUTHORIZE_URL = 'https://connect.stripe.com/oauth/authorize'
+const STRIPE_CONNECT_TOKEN_URL = 'https://connect.stripe.com/oauth/token'
+const STRIPE_CONNECT_DEAUTHORIZE_URL = 'https://connect.stripe.com/oauth/deauthorize'
+const STRIPE_WEBHOOK_EVENTS = [
+  'payment_intent.succeeded',
+  'payment_intent.payment_failed',
+  'payment_intent.canceled',
+  'charge.refunded',
+  'refund.created',
+  'invoice.payment_succeeded',
+  'invoice.payment_failed'
+]
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const STRIPE_PLAN_STATES = {
@@ -37,8 +69,91 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
   'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf'
 ])
 
+let stripeFetchForTest = null
+let stripeFactoryForTest = null
+
+export function setStripeConnectFetchForTest(fetchImpl) {
+  stripeFetchForTest = typeof fetchImpl === 'function' ? fetchImpl : null
+}
+
+export function setStripeFactoryForTest(factory) {
+  stripeFactoryForTest = typeof factory === 'function' ? factory : null
+}
+
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function getEnvValue(names = []) {
+  for (const name of names) {
+    const value = cleanString(process.env[name])
+    if (value) return value
+  }
+  return ''
+}
+
+function getModeEnvNames(mode, suffix) {
+  const normalized = normalizeMode(mode)
+  const upper = normalized.toUpperCase()
+  return [
+    `STRIPE_CONNECT_${upper}_${suffix}`,
+    `STRIPE_CONNECT_${suffix}_${upper}`,
+    `STRIPE_${upper}_CONNECT_${suffix}`,
+    `STRIPE_${upper}_${suffix}`,
+    ...(normalized === 'live'
+      ? [`STRIPE_CONNECT_LIVE_${suffix}`, `STRIPE_LIVE_${suffix}`]
+      : [`STRIPE_CONNECT_TEST_${suffix}`, `STRIPE_TEST_${suffix}`]),
+    `STRIPE_CONNECT_${suffix}`,
+    `STRIPE_${suffix}`
+  ]
+}
+
+function normalizeConnectionType(value) {
+  return value === 'connect' ? 'connect' : 'manual'
+}
+
+function getStripeInstance(secretKey) {
+  return stripeFactoryForTest ? stripeFactoryForTest(secretKey) : new Stripe(secretKey)
+}
+
+function getStripeFetch() {
+  return stripeFetchForTest || fetch
+}
+
+function getStripeConnectPlatformConfig(mode, requirements = {}) {
+  const normalizedMode = normalizeMode(mode)
+  const clientId = getEnvValue(getModeEnvNames(normalizedMode, 'CLIENT_ID'))
+  const secretKey = getEnvValue(getModeEnvNames(normalizedMode, 'SECRET_KEY'))
+  const publishableKey = getEnvValue(getModeEnvNames(normalizedMode, 'PUBLISHABLE_KEY'))
+  const missing = []
+
+  if (requirements.clientId && !clientId) missing.push(`STRIPE_CONNECT_${normalizedMode.toUpperCase()}_CLIENT_ID`)
+  if (requirements.secretKey && !secretKey) missing.push(`STRIPE_CONNECT_${normalizedMode.toUpperCase()}_SECRET_KEY`)
+  if (requirements.publishableKey && !publishableKey) missing.push(`STRIPE_CONNECT_${normalizedMode.toUpperCase()}_PUBLISHABLE_KEY`)
+
+  if (missing.length) {
+    const error = new Error(`Faltan variables de entorno de Stripe Connect: ${missing.join(', ')}.`)
+    error.status = 400
+    error.missing = missing
+    throw error
+  }
+
+  return {
+    mode: normalizedMode,
+    clientId,
+    secretKey,
+    publishableKey,
+    missing: [
+      ...(!clientId ? [`STRIPE_CONNECT_${normalizedMode.toUpperCase()}_CLIENT_ID`] : []),
+      ...(!secretKey ? [`STRIPE_CONNECT_${normalizedMode.toUpperCase()}_SECRET_KEY`] : []),
+      ...(!publishableKey ? [`STRIPE_CONNECT_${normalizedMode.toUpperCase()}_PUBLISHABLE_KEY`] : [])
+    ]
+  }
+}
+
+function getStripeRequestOptions(config = {}) {
+  if (config.connectionType !== 'connect' || !config.connectedAccountId) return undefined
+  return { stripeAccount: config.connectedAccountId }
 }
 
 function timestampPlaceholder() {
@@ -121,6 +236,11 @@ function decryptSecret(value) {
 async function getSecretConfig(key) {
   const value = await getAppConfig(key)
   return value ? decryptSecret(value) : ''
+}
+
+function encryptOptionalSecret(value) {
+  const clean = cleanString(value)
+  return clean ? encrypt(clean) : ''
 }
 
 function assertStripeSecret(secretKey) {
@@ -209,18 +329,11 @@ function buildPaymentUrl(baseUrl, publicPaymentId) {
 }
 
 async function readRawConfig() {
+  const configKeys = Object.values(CONFIG_KEYS)
   const rows = await db.all(
     `SELECT config_key, config_value FROM app_config
-     WHERE config_key IN (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      CONFIG_KEYS.enabled,
-      CONFIG_KEYS.mode,
-      CONFIG_KEYS.publishableKey,
-      CONFIG_KEYS.secretKey,
-      CONFIG_KEYS.webhookSecret,
-      CONFIG_KEYS.defaultCurrency,
-      CONFIG_KEYS.accountLabel
-    ]
+     WHERE config_key IN (${configKeys.map(() => '?').join(', ')})`,
+    configKeys
   )
 
   const values = {}
@@ -232,39 +345,86 @@ async function readRawConfig() {
 
 export async function getStripePaymentConfig({ includeSecrets = false } = {}) {
   const raw = await readRawConfig()
-  const publishableKey = cleanString(raw[CONFIG_KEYS.publishableKey])
+  const mode = normalizeMode(raw[CONFIG_KEYS.mode])
+  const connectionType = normalizeConnectionType(raw[CONFIG_KEYS.connectionType])
+  const platform = getStripeConnectPlatformConfig(mode)
+  const connectedAccountId = cleanString(raw[CONFIG_KEYS.connectAccountId])
+  const publishableKey = connectionType === 'connect'
+    ? cleanString(platform.publishableKey || raw[CONFIG_KEYS.connectPublishableKey] || raw[CONFIG_KEYS.publishableKey])
+    : cleanString(raw[CONFIG_KEYS.publishableKey])
   const secretKey = raw[CONFIG_KEYS.secretKey] ? decryptSecret(raw[CONFIG_KEYS.secretKey]) : ''
   const webhookSecret = raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : ''
-  const mode = normalizeMode(raw[CONFIG_KEYS.mode])
   const enabled = normalizeBoolean(raw[CONFIG_KEYS.enabled], true)
-  const configured = Boolean(enabled && publishableKey && secretKey)
+  const connectReady = Boolean(
+    connectedAccountId &&
+    platform.secretKey &&
+    publishableKey
+  )
+  const manualReady = Boolean(publishableKey && secretKey)
+  const configured = Boolean(enabled && (connectionType === 'connect' ? connectReady : manualReady))
+  const oauthReadyByMode = {
+    test: getStripeConnectPlatformConfig('test').missing.length === 0,
+    live: getStripeConnectPlatformConfig('live').missing.length === 0
+  }
+  const connectAccessToken = raw[CONFIG_KEYS.connectAccessToken] ? decryptSecret(raw[CONFIG_KEYS.connectAccessToken]) : ''
+  const connectRefreshToken = raw[CONFIG_KEYS.connectRefreshToken] ? decryptSecret(raw[CONFIG_KEYS.connectRefreshToken]) : ''
 
   return {
     enabled,
     configured,
+    connectionType,
     mode,
     defaultCurrency: normalizeCurrency(raw[CONFIG_KEYS.defaultCurrency]),
     accountLabel: cleanString(raw[CONFIG_KEYS.accountLabel]),
     publishableKey,
-    hasSecretKey: Boolean(secretKey),
-    secretKeyPreview: maskSecret(secretKey),
+    hasSecretKey: connectionType === 'manual' ? Boolean(secretKey) : Boolean(platform.secretKey),
+    secretKeyPreview: connectionType === 'manual' ? maskSecret(secretKey) : '',
     hasWebhookSecret: Boolean(webhookSecret),
     webhookSecretPreview: maskSecret(webhookSecret),
-    ...(includeSecrets ? { secretKey, webhookSecret } : {})
+    connectedAccountId,
+    connectedAccountPreview: connectedAccountId ? `${connectedAccountId.slice(0, 8)}...${connectedAccountId.slice(-4)}` : '',
+    connectScope: cleanString(raw[CONFIG_KEYS.connectScope]),
+    connectLivemode: normalizeBoolean(raw[CONFIG_KEYS.connectLivemode], mode === 'live'),
+    connectReady,
+    connectOauthReady: oauthReadyByMode[mode],
+    connectOauthReadyByMode: oauthReadyByMode,
+    connectMissingEnv: platform.missing,
+    connectAccountEmail: cleanString(raw[CONFIG_KEYS.connectAccountEmail]),
+    connectChargesEnabled: normalizeBoolean(raw[CONFIG_KEYS.connectChargesEnabled], false),
+    connectPayoutsEnabled: normalizeBoolean(raw[CONFIG_KEYS.connectPayoutsEnabled], false),
+    connectDetailsSubmitted: normalizeBoolean(raw[CONFIG_KEYS.connectDetailsSubmitted], false),
+    connectWebhookEndpointId: cleanString(raw[CONFIG_KEYS.connectWebhookEndpointId]),
+    connectWebhookUrl: cleanString(raw[CONFIG_KEYS.connectWebhookUrl]),
+    connectWebhookStatus: cleanString(raw[CONFIG_KEYS.connectWebhookStatus]),
+    connectWebhookLastError: cleanString(raw[CONFIG_KEYS.connectWebhookLastError]),
+    connectConnectedAt: cleanString(raw[CONFIG_KEYS.connectConnectedAt]),
+    hasConnectAccessToken: Boolean(connectAccessToken),
+    hasConnectRefreshToken: Boolean(connectRefreshToken),
+    ...(includeSecrets
+      ? {
+          secretKey: connectionType === 'connect' ? platform.secretKey : secretKey,
+          webhookSecret,
+          connectAccessToken,
+          connectRefreshToken
+        }
+      : {})
   }
 }
 
 export async function saveStripePaymentConfig(input = {}) {
   const current = await getStripePaymentConfig({ includeSecrets: true })
-  const publishableKey = assertStripePublishableKey(input.publishableKey ?? current.publishableKey)
+  const currentSecretKey = current.connectionType === 'manual' ? current.secretKey : ''
+  const currentWebhookSecret = current.connectionType === 'manual' ? current.webhookSecret : ''
+  const publishableKey = assertStripePublishableKey(input.publishableKey ?? '')
   const nextSecretKey = isMaskedSecret(input.secretKey)
-    ? current.secretKey
-    : assertStripeSecret(input.secretKey ?? current.secretKey)
+    ? currentSecretKey
+    : assertStripeSecret(input.secretKey ?? currentSecretKey)
   const nextWebhookSecret = isMaskedSecret(input.webhookSecret)
-    ? current.webhookSecret
-    : cleanString(input.webhookSecret ?? current.webhookSecret)
+    ? currentWebhookSecret
+    : cleanString(input.webhookSecret ?? currentWebhookSecret)
 
   await setAppConfig(CONFIG_KEYS.enabled, normalizeBoolean(input.enabled, true) ? '1' : '0')
+  await setAppConfig(CONFIG_KEYS.connectionType, 'manual')
   await setAppConfig(CONFIG_KEYS.mode, normalizeMode(input.mode))
   await setAppConfig(CONFIG_KEYS.publishableKey, publishableKey)
   await setAppConfig(CONFIG_KEYS.defaultCurrency, normalizeCurrency(input.defaultCurrency || current.defaultCurrency))
@@ -284,17 +444,17 @@ export async function saveStripePaymentConfig(input = {}) {
 }
 
 export async function deleteStripePaymentConfig() {
+  const current = await getStripePaymentConfig({ includeSecrets: true })
+  if (current.connectionType === 'connect' && current.connectedAccountId) {
+    await disconnectStripeConnectAccount(current).catch((error) => {
+      logger.warn(`No se pudo revocar Stripe Connect antes de borrar configuración: ${error.message}`)
+    })
+  }
+
+  const configKeys = Object.values(CONFIG_KEYS).filter((key) => key !== CONFIG_KEYS.connectOauthState)
   await db.run(
-    `DELETE FROM app_config WHERE config_key IN (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      CONFIG_KEYS.enabled,
-      CONFIG_KEYS.mode,
-      CONFIG_KEYS.publishableKey,
-      CONFIG_KEYS.secretKey,
-      CONFIG_KEYS.webhookSecret,
-      CONFIG_KEYS.defaultCurrency,
-      CONFIG_KEYS.accountLabel
-    ]
+    `DELETE FROM app_config WHERE config_key IN (${configKeys.map(() => '?').join(', ')})`,
+    configKeys
   )
   return getStripePaymentConfig()
 }
@@ -302,29 +462,342 @@ export async function deleteStripePaymentConfig() {
 export async function getStripeClient() {
   const config = await getStripePaymentConfig({ includeSecrets: true })
   if (!config.configured || !config.secretKey) {
-    const error = new Error('Stripe no está configurado todavía.')
+    const detail = config.connectionType === 'connect'
+      ? 'Conecta Stripe y verifica que el webhook automático quede listo.'
+      : 'Guarda las llaves de Stripe primero.'
+    const error = new Error(`Stripe no está configurado todavía. ${detail}`)
     error.status = 400
     throw error
   }
 
   return {
     config,
-    stripe: new Stripe(config.secretKey)
+    stripe: getStripeInstance(config.secretKey),
+    requestOptions: getStripeRequestOptions(config)
   }
 }
 
 export async function testStripePaymentConfig(input = null) {
   const current = await getStripePaymentConfig({ includeSecrets: true })
+  if (!input && current.connectionType === 'connect') {
+    const { stripe, config, requestOptions } = await getStripeClient()
+    const balance = requestOptions
+      ? await stripe.balance.retrieve({}, requestOptions)
+      : await stripe.balance.retrieve()
+    return {
+      ok: true,
+      mode: config.mode,
+      connectionType: 'connect',
+      connectedAccountId: config.connectedAccountId,
+      livemode: Boolean(balance.livemode),
+      available: Array.isArray(balance.available) ? balance.available.length : 0
+    }
+  }
+
   const secretKey = input && !isMaskedSecret(input.secretKey)
     ? cleanString(input.secretKey)
     : current.secretKey
-  const stripe = new Stripe(assertStripeSecret(secretKey))
+  const stripe = getStripeInstance(assertStripeSecret(secretKey))
   const balance = await stripe.balance.retrieve()
   return {
     ok: true,
+    connectionType: 'manual',
     livemode: Boolean(balance.livemode),
     available: Array.isArray(balance.available) ? balance.available.length : 0
   }
+}
+
+function sanitizeStripeReturnPath(value) {
+  const clean = cleanString(value)
+  if (!clean || !clean.startsWith('/settings/payments/stripe')) return '/settings/payments/stripe'
+  return clean.slice(0, 300)
+}
+
+function buildStripeOAuthRedirectUri(baseUrl) {
+  const cleanBaseUrl = cleanString(baseUrl).replace(/\/+$/, '')
+  if (!cleanBaseUrl) {
+    const error = new Error('No se pudo detectar la URL pública para regresar desde Stripe.')
+    error.status = 400
+    throw error
+  }
+  return `${cleanBaseUrl}/api/stripe/connect/callback`
+}
+
+async function callStripeOAuthEndpoint(url, secretKey, params) {
+  const body = new URLSearchParams(params)
+  const response = await getStripeFetch()(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${secretKey}:`).toString('base64')}`,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const error = new Error(data?.error_description || data?.error || 'Stripe no pudo completar OAuth.')
+    error.status = response.status || 400
+    throw error
+  }
+  return data
+}
+
+async function readStripeOAuthState() {
+  return parseJson(await getAppConfig(CONFIG_KEYS.connectOauthState), null)
+}
+
+function mapStripeAccountForConfig(account = {}) {
+  const businessName = cleanString(account.business_profile?.name)
+  const dashboardName = cleanString(account.settings?.dashboard?.display_name)
+  const email = cleanString(account.email)
+  const label = businessName || dashboardName || email || cleanString(account.id) || 'Stripe Connect'
+
+  return {
+    label,
+    email,
+    chargesEnabled: normalizeBoolean(account.charges_enabled, false),
+    payoutsEnabled: normalizeBoolean(account.payouts_enabled, false),
+    detailsSubmitted: normalizeBoolean(account.details_submitted, false)
+  }
+}
+
+async function ensureStripeConnectWebhookEndpoint({ stripe, connectedAccountId, webhookUrl, currentEndpointId = '', currentSecret = '' }) {
+  const cleanUrl = cleanString(webhookUrl)
+  if (!cleanUrl) return { status: 'missing_url', endpointId: '', webhookUrl: '', webhookSecret: currentSecret, error: 'No se detectó URL pública.' }
+
+  try {
+    const requestOptions = { stripeAccount: connectedAccountId }
+    const endpointPayload = {
+      enabled_events: STRIPE_WEBHOOK_EVENTS,
+      description: 'Ristak payments webhook',
+      metadata: {
+        ristak_integration: 'stripe_connect',
+        stripe_account_id: connectedAccountId
+      }
+    }
+
+    if (currentEndpointId) {
+      const endpoint = await stripe.webhookEndpoints.update(
+        currentEndpointId,
+        {
+          url: cleanUrl,
+          ...endpointPayload,
+          disabled: false
+        },
+        requestOptions
+      )
+      return {
+        status: currentSecret ? 'active' : 'needs_secret',
+        endpointId: endpoint.id,
+        webhookUrl: endpoint.url,
+        webhookSecret: currentSecret,
+        error: currentSecret ? '' : 'Stripe no vuelve a mostrar el signing secret de endpoints existentes.'
+      }
+    }
+
+    const created = await stripe.webhookEndpoints.create(
+      {
+        url: cleanUrl,
+        ...endpointPayload
+      },
+      requestOptions
+    )
+
+    return {
+      status: created.secret ? 'active' : 'needs_secret',
+      endpointId: created.id,
+      webhookUrl: created.url,
+      webhookSecret: created.secret || currentSecret,
+      error: created.secret ? '' : 'Stripe creó el endpoint, pero no devolvió signing secret.'
+    }
+  } catch (error) {
+    return {
+      status: 'failed',
+      endpointId: currentEndpointId,
+      webhookUrl: cleanUrl,
+      webhookSecret: currentSecret,
+      error: error.message || 'No se pudo crear el webhook automático.'
+    }
+  }
+}
+
+async function saveStripeConnectConnection({
+  mode,
+  oauthData,
+  account,
+  webhook,
+  defaultCurrency = DEFAULT_CURRENCY
+}) {
+  const normalizedMode = normalizeMode(mode)
+  const accountDetails = mapStripeAccountForConfig(account)
+  const connectedAccountId = cleanString(oauthData.stripe_user_id)
+  const scope = cleanString(oauthData.scope || STRIPE_CONNECT_SCOPE)
+  const livemode = normalizeBoolean(oauthData.livemode, normalizedMode === 'live')
+  const connectPublishableKey = cleanString(oauthData.stripe_publishable_key)
+
+  await setAppConfig(CONFIG_KEYS.enabled, '1')
+  await setAppConfig(CONFIG_KEYS.connectionType, 'connect')
+  await setAppConfig(CONFIG_KEYS.mode, livemode ? 'live' : 'test')
+  await setAppConfig(CONFIG_KEYS.defaultCurrency, normalizeCurrency(defaultCurrency))
+  await setAppConfig(CONFIG_KEYS.accountLabel, accountDetails.label)
+  await setAppConfig(CONFIG_KEYS.publishableKey, getStripeConnectPlatformConfig(livemode ? 'live' : 'test').publishableKey || connectPublishableKey)
+  await setAppConfig(CONFIG_KEYS.connectAccountId, connectedAccountId)
+  await setAppConfig(CONFIG_KEYS.connectScope, scope)
+  await setAppConfig(CONFIG_KEYS.connectLivemode, livemode ? '1' : '0')
+  await setAppConfig(CONFIG_KEYS.connectTokenType, cleanString(oauthData.token_type || 'bearer'))
+  await setAppConfig(CONFIG_KEYS.connectPublishableKey, connectPublishableKey)
+  await setAppConfig(CONFIG_KEYS.connectAccountEmail, accountDetails.email)
+  await setAppConfig(CONFIG_KEYS.connectChargesEnabled, accountDetails.chargesEnabled ? '1' : '0')
+  await setAppConfig(CONFIG_KEYS.connectPayoutsEnabled, accountDetails.payoutsEnabled ? '1' : '0')
+  await setAppConfig(CONFIG_KEYS.connectDetailsSubmitted, accountDetails.detailsSubmitted ? '1' : '0')
+  await setAppConfig(CONFIG_KEYS.connectWebhookEndpointId, cleanString(webhook.endpointId))
+  await setAppConfig(CONFIG_KEYS.connectWebhookUrl, cleanString(webhook.webhookUrl))
+  await setAppConfig(CONFIG_KEYS.connectWebhookStatus, cleanString(webhook.status))
+  await setAppConfig(CONFIG_KEYS.connectWebhookLastError, cleanString(webhook.error))
+  await setAppConfig(CONFIG_KEYS.connectConnectedAt, new Date().toISOString())
+
+  if (oauthData.access_token) {
+    await setAppConfig(CONFIG_KEYS.connectAccessToken, encryptOptionalSecret(oauthData.access_token))
+  }
+  if (oauthData.refresh_token) {
+    await setAppConfig(CONFIG_KEYS.connectRefreshToken, encryptOptionalSecret(oauthData.refresh_token))
+  }
+  if (webhook.webhookSecret) {
+    await setAppConfig(CONFIG_KEYS.webhookSecret, encrypt(webhook.webhookSecret))
+  }
+
+  await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.secretKey])
+  await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.connectDisconnectedAt])
+  await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.connectOauthState])
+
+  return getStripePaymentConfig()
+}
+
+export async function createStripeConnectOAuthUrl({ mode = 'test', baseUrl = '', returnPath = '/settings/payments/stripe' } = {}) {
+  const normalizedMode = normalizeMode(mode)
+  const platform = getStripeConnectPlatformConfig(normalizedMode, {
+    clientId: true,
+    secretKey: true,
+    publishableKey: true
+  })
+  const redirectUri = buildStripeOAuthRedirectUri(baseUrl)
+  const state = `st_${randomBytes(24).toString('base64url')}`
+  const payload = {
+    state,
+    mode: normalizedMode,
+    returnPath: sanitizeStripeReturnPath(returnPath),
+    redirectUri,
+    createdAt: new Date().toISOString()
+  }
+
+  await setAppConfig(CONFIG_KEYS.connectOauthState, JSON.stringify(payload))
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: platform.clientId,
+    scope: STRIPE_CONNECT_SCOPE,
+    state,
+    redirect_uri: redirectUri,
+    'stripe_user[currency]': normalizeCurrency((await getAppConfig(CONFIG_KEYS.defaultCurrency)) || DEFAULT_CURRENCY).toLowerCase()
+  })
+
+  return {
+    url: `${STRIPE_CONNECT_AUTHORIZE_URL}?${params.toString()}`,
+    mode: normalizedMode,
+    redirectUri,
+    scope: STRIPE_CONNECT_SCOPE
+  }
+}
+
+export async function completeStripeConnectOAuth({ code = '', state = '', baseUrl = '' } = {}) {
+  const cleanCode = cleanString(code)
+  const cleanState = cleanString(state)
+  const savedState = await readStripeOAuthState()
+  if (!cleanCode) {
+    const error = new Error('Stripe no regresó un código de autorización.')
+    error.status = 400
+    throw error
+  }
+  if (!savedState?.state || savedState.state !== cleanState) {
+    const error = new Error('La sesión de conexión con Stripe expiró o no coincide.')
+    error.status = 400
+    throw error
+  }
+
+  const createdAt = new Date(savedState.createdAt || 0).getTime()
+  if (!Number.isFinite(createdAt) || Date.now() - createdAt > 15 * 60 * 1000) {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.connectOauthState])
+    const error = new Error('La sesión de conexión con Stripe expiró. Intenta conectar de nuevo.')
+    error.status = 400
+    throw error
+  }
+
+  const requestedMode = normalizeMode(savedState.mode)
+  const platform = getStripeConnectPlatformConfig(requestedMode, {
+    secretKey: true,
+    publishableKey: true
+  })
+  const oauthData = await callStripeOAuthEndpoint(STRIPE_CONNECT_TOKEN_URL, platform.secretKey, {
+    grant_type: 'authorization_code',
+    code: cleanCode
+  })
+  const connectedAccountId = cleanString(oauthData.stripe_user_id)
+  if (!connectedAccountId) {
+    const error = new Error('Stripe no regresó la cuenta conectada.')
+    error.status = 400
+    throw error
+  }
+
+  const finalMode = normalizeBoolean(oauthData.livemode, requestedMode === 'live') ? 'live' : 'test'
+  const finalPlatform = finalMode === requestedMode
+    ? platform
+    : getStripeConnectPlatformConfig(finalMode, { secretKey: true, publishableKey: true })
+  const stripe = getStripeInstance(finalPlatform.secretKey)
+  const account = await stripe.accounts.retrieve(connectedAccountId)
+  const current = await getStripePaymentConfig({ includeSecrets: true })
+  const webhookUrl = `${cleanString(baseUrl || savedState.redirectUri).replace(/\/api\/stripe\/connect\/callback$/, '').replace(/\/+$/, '')}/api/stripe/webhook`
+  const webhook = await ensureStripeConnectWebhookEndpoint({
+    stripe,
+    connectedAccountId,
+    webhookUrl,
+    currentEndpointId: current.connectWebhookEndpointId,
+    currentSecret: current.webhookSecret
+  })
+
+  const config = await saveStripeConnectConnection({
+    mode: finalMode,
+    oauthData,
+    account,
+    webhook,
+    defaultCurrency: await getAppConfig(CONFIG_KEYS.defaultCurrency)
+  })
+
+  return {
+    config,
+    returnPath: savedState.returnPath || '/settings/payments/stripe',
+    webhook
+  }
+}
+
+async function disconnectStripeConnectAccount(config = {}) {
+  const mode = normalizeMode(config.mode)
+  const platform = getStripeConnectPlatformConfig(mode, {
+    clientId: true,
+    secretKey: true
+  })
+  const stripe = getStripeInstance(platform.secretKey)
+  if (config.connectWebhookEndpointId && config.connectedAccountId) {
+    await stripe.webhookEndpoints.del(config.connectWebhookEndpointId, {
+      stripeAccount: config.connectedAccountId
+    }).catch((error) => {
+      logger.warn(`No se pudo borrar webhook Stripe Connect ${config.connectWebhookEndpointId}: ${error.message}`)
+    })
+  }
+
+  await callStripeOAuthEndpoint(STRIPE_CONNECT_DEAUTHORIZE_URL, platform.secretKey, {
+    client_id: platform.clientId,
+    stripe_user_id: config.connectedAccountId
+  })
 }
 
 async function findPaymentByPublicId(publicPaymentId) {
@@ -367,7 +840,8 @@ function mapPublicPayment(row, config, baseUrl = '') {
       phone: row.contact_phone || metadata.contactPhone || ''
     },
     stripePaymentIntentId: row.stripe_payment_intent_id || null,
-    publishableKey: config?.publishableKey || ''
+    publishableKey: config?.publishableKey || '',
+    stripeAccountId: config?.connectionType === 'connect' ? config.connectedAccountId || '' : ''
   }
 }
 
@@ -393,28 +867,31 @@ async function getStripeContact(contactId) {
   )
 }
 
-async function ensureStripeCustomerForContact(stripe, contactId, fallback = {}) {
+async function ensureStripeCustomerForContact(stripe, contactId, fallback = {}, requestOptions = undefined) {
   const contact = await getStripeContact(contactId)
   if (!contact) return null
 
   const existingCustomerId = cleanString(contact.stripe_customer_id)
   if (existingCustomerId) {
     try {
-      await stripe.customers.retrieve(existingCustomerId)
+      await stripe.customers.retrieve(existingCustomerId, requestOptions)
       return existingCustomerId
     } catch (error) {
       if (error?.statusCode !== 404) throw error
     }
   }
 
-  const customer = await stripe.customers.create({
-    name: buildContactName(contact, fallback),
-    email: cleanString(contact.email || fallback.email || fallback.contactEmail) || undefined,
-    phone: cleanString(contact.phone || fallback.phone || fallback.contactPhone) || undefined,
-    metadata: {
-      ristak_contact_id: contact.id
-    }
-  })
+  const customer = await stripe.customers.create(
+    {
+      name: buildContactName(contact, fallback),
+      email: cleanString(contact.email || fallback.email || fallback.contactEmail) || undefined,
+      phone: cleanString(contact.phone || fallback.phone || fallback.contactPhone) || undefined,
+      metadata: {
+        ristak_contact_id: contact.id
+      }
+    },
+    requestOptions
+  )
 
   await db.run(
     `UPDATE contacts
@@ -452,12 +929,12 @@ function mapStripePaymentMethod(row) {
   }
 }
 
-async function upsertStripePaymentMethod({ stripe, contactId, customerId, paymentMethodId, mode, makeDefault = true }) {
+async function upsertStripePaymentMethod({ stripe, contactId, customerId, paymentMethodId, mode, makeDefault = true, requestOptions = undefined }) {
   const cleanPaymentMethodId = cleanString(paymentMethodId)
   const cleanCustomerId = extractStripeObjectId(customerId)
   if (!stripe || !cleanPaymentMethodId || !cleanCustomerId) return null
 
-  const paymentMethod = await stripe.paymentMethods.retrieve(cleanPaymentMethodId)
+  const paymentMethod = await stripe.paymentMethods.retrieve(cleanPaymentMethodId, requestOptions)
   if (paymentMethod?.type !== 'card' || !paymentMethod.card) return null
 
   const existing = await db.get(
@@ -529,7 +1006,7 @@ async function upsertStripePaymentMethod({ stripe, contactId, customerId, paymen
   return db.get('SELECT * FROM stripe_payment_methods WHERE stripe_payment_method_id = ?', [paymentMethod.id])
 }
 
-async function rememberStripePaymentMethodFromIntent(stripe, intent, paymentRow, config) {
+async function rememberStripePaymentMethodFromIntent(stripe, intent, paymentRow, config, requestOptions = undefined) {
   const paymentMethodId = extractStripeObjectId(intent?.payment_method)
   const customerId = extractStripeObjectId(intent?.customer) || cleanString(paymentRow?.stripe_customer_id)
   const contactId = cleanString(paymentRow?.contact_id)
@@ -548,7 +1025,8 @@ async function rememberStripePaymentMethodFromIntent(stripe, intent, paymentRow,
     contactId,
     customerId,
     paymentMethodId,
-    mode: config?.mode
+    mode: config?.mode,
+    requestOptions
   })
 }
 
@@ -565,7 +1043,7 @@ async function resolveStripeCardSetupAmount(inputAmount) {
 }
 
 export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
-  const { stripe, config } = await getStripeClient()
+  const { stripe, config, requestOptions } = await getStripeClient()
   const amount = Number(input.amount)
   if (!Number.isFinite(amount) || amount <= 0) {
     const error = new Error('El monto debe ser mayor a 0.')
@@ -580,7 +1058,7 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
   const paymentUrl = buildPaymentUrl(baseUrl, publicPaymentId)
   const contactId = cleanString(input.contactId) || null
   const stripeCustomerId = contactId
-    ? await ensureStripeCustomerForContact(stripe, contactId, input)
+    ? await ensureStripeCustomerForContact(stripe, contactId, input, requestOptions)
     : null
   const metadata = {
     contactName: cleanString(input.contactName),
@@ -640,7 +1118,7 @@ export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = 
 }
 
 export async function createStripePaymentIntent(publicPaymentId, options = {}) {
-  const { stripe, config } = await getStripeClient()
+  const { stripe, config, requestOptions } = await getStripeClient()
   const row = await findPaymentByPublicId(publicPaymentId)
   if (!row || row.payment_provider !== 'stripe') {
     const error = new Error('Pago no encontrado.')
@@ -660,26 +1138,31 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
         contactName: row.contact_name,
         contactEmail: row.contact_email,
         contactPhone: row.contact_phone
-      })
+      }, requestOptions)
     : cleanString(row.contact_stripe_customer_id)
 
   if (row.stripe_payment_intent_id) {
-    const existing = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id)
+    const existing = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, requestOptions)
     if (['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing'].includes(existing.status)) {
       if (savePaymentMethod && stripeCustomerId && existing.status === 'requires_payment_method') {
-        const updated = await stripe.paymentIntents.update(existing.id, {
-          customer: stripeCustomerId,
-          setup_future_usage: 'off_session',
-          metadata: {
-            ...existing.metadata,
-            save_payment_method: '1',
-            stripe_customer_id: stripeCustomerId,
-            payment_method_authorization: 'public_invoice_payment'
-          }
-        })
+        const updated = await stripe.paymentIntents.update(
+          existing.id,
+          {
+            customer: stripeCustomerId,
+            setup_future_usage: 'off_session',
+            metadata: {
+              ...existing.metadata,
+              save_payment_method: '1',
+              stripe_customer_id: stripeCustomerId,
+              payment_method_authorization: 'public_invoice_payment'
+            }
+          },
+          requestOptions
+        )
         return {
           clientSecret: updated.client_secret,
           publishableKey: config.publishableKey,
+          stripeAccountId: config.connectionType === 'connect' ? config.connectedAccountId : '',
           status: updated.status
         }
       }
@@ -687,6 +1170,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
       return {
         clientSecret: existing.client_secret,
         publishableKey: config.publishableKey,
+        stripeAccountId: config.connectionType === 'connect' ? config.connectedAccountId : '',
         status: existing.status
       }
     }
@@ -709,16 +1193,19 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     ...(paymentPlanMetadata?.trigger ? { ristak_plan_trigger: cleanString(paymentPlanMetadata.trigger) } : {})
   }
 
-  const intent = await stripe.paymentIntents.create({
-    amount: toStripeAmount(row.amount, currency),
-    currency: currency.toLowerCase(),
-    automatic_payment_methods: { enabled: true },
-    ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
-    ...(savePaymentMethod && stripeCustomerId ? { setup_future_usage: 'off_session' } : {}),
-    description: row.title || row.description || 'Pago Ristak',
-    receipt_email: row.contact_email || undefined,
-    metadata
-  })
+  const intent = await stripe.paymentIntents.create(
+    {
+      amount: toStripeAmount(row.amount, currency),
+      currency: currency.toLowerCase(),
+      automatic_payment_methods: { enabled: true },
+      ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
+      ...(savePaymentMethod && stripeCustomerId ? { setup_future_usage: 'off_session' } : {}),
+      description: row.title || row.description || 'Pago Ristak',
+      receipt_email: row.contact_email || undefined,
+      metadata
+    },
+    requestOptions
+  )
 
   await db.run(
     `UPDATE payments
@@ -732,6 +1219,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
   return {
     clientSecret: intent.client_secret,
     publishableKey: config.publishableKey,
+    stripeAccountId: config.connectionType === 'connect' ? config.connectedAccountId : '',
     status: intent.status
   }
 }
@@ -804,7 +1292,13 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
     let savedMethod = null
     try {
       const context = stripeContext || await getStripeClient()
-      savedMethod = await rememberStripePaymentMethodFromIntent(context.stripe, intent, row, context.config)
+      savedMethod = await rememberStripePaymentMethodFromIntent(
+        context.stripe,
+        intent,
+        row,
+        context.config,
+        context.requestOptions
+      )
       await syncStripePlanFromPayment(
         { ...row, status: nextStatus, stripe_payment_intent_id: intent.id },
         savedMethod,
@@ -943,7 +1437,7 @@ async function updatePaymentFromRefundedCharge(charge) {
 }
 
 export async function getStripeSavedPaymentMethods(contactId) {
-  const { stripe, config } = await getStripeClient()
+  const { stripe, config, requestOptions } = await getStripeClient()
   const contact = await getStripeContact(contactId)
   if (!contact) {
     const error = new Error('Contacto no encontrado.')
@@ -955,11 +1449,14 @@ export async function getStripeSavedPaymentMethods(contactId) {
   if (!stripeCustomerId) return []
 
   try {
-    const methods = await stripe.paymentMethods.list({
-      customer: stripeCustomerId,
-      type: 'card',
-      limit: 20
-    })
+    const methods = await stripe.paymentMethods.list(
+      {
+        customer: stripeCustomerId,
+        type: 'card',
+        limit: 20
+      },
+      requestOptions
+    )
 
     for (const method of methods.data || []) {
       await upsertStripePaymentMethod({
@@ -968,7 +1465,8 @@ export async function getStripeSavedPaymentMethods(contactId) {
         customerId: stripeCustomerId,
         paymentMethodId: method.id,
         mode: config.mode,
-        makeDefault: false
+        makeDefault: false,
+        requestOptions
       })
     }
   } catch (error) {
@@ -1099,6 +1597,7 @@ async function createStripePlanPaymentRow({
 async function chargeStripePaymentRowWithSavedMethod({
   stripe,
   config,
+  requestOptions,
   paymentId,
   savedMethod,
   source = 'stripe_payment_plan',
@@ -1123,30 +1622,33 @@ async function chargeStripePaymentRowWithSavedMethod({
   const description = cleanString(row.description || row.title || 'Pago Ristak')
 
   try {
-    const intent = await stripe.paymentIntents.create({
-      amount: toStripeAmount(row.amount, currency),
-      currency: currency.toLowerCase(),
-      customer: savedMethod.stripe_customer_id,
-      payment_method: savedMethod.stripe_payment_method_id,
-      off_session: true,
-      confirm: true,
-      payment_method_types: ['card'],
-      description,
-      receipt_email: cleanString(metadata.contactEmail || savedMethod.contact_email) || undefined,
-      metadata: {
-        ristak_payment_id: row.id,
-        contact_id: row.contact_id || '',
-        stripe_customer_id: savedMethod.stripe_customer_id,
-        stripe_payment_method_id: savedMethod.stripe_payment_method_id,
-        source,
-        ...(planMetadata.flowId ? { ristak_flow_id: cleanString(planMetadata.flowId) } : {}),
-        ...(planMetadata.installmentId ? { ristak_installment_id: cleanString(planMetadata.installmentId) } : {}),
-        ...(planMetadata.sequence !== undefined ? { ristak_installment_sequence: String(planMetadata.sequence) } : {}),
-        ...extraMetadata
-      }
-    })
+    const intent = await stripe.paymentIntents.create(
+      {
+        amount: toStripeAmount(row.amount, currency),
+        currency: currency.toLowerCase(),
+        customer: savedMethod.stripe_customer_id,
+        payment_method: savedMethod.stripe_payment_method_id,
+        off_session: true,
+        confirm: true,
+        payment_method_types: ['card'],
+        description,
+        receipt_email: cleanString(metadata.contactEmail || savedMethod.contact_email) || undefined,
+        metadata: {
+          ristak_payment_id: row.id,
+          contact_id: row.contact_id || '',
+          stripe_customer_id: savedMethod.stripe_customer_id,
+          stripe_payment_method_id: savedMethod.stripe_payment_method_id,
+          source,
+          ...(planMetadata.flowId ? { ristak_flow_id: cleanString(planMetadata.flowId) } : {}),
+          ...(planMetadata.installmentId ? { ristak_installment_id: cleanString(planMetadata.installmentId) } : {}),
+          ...(planMetadata.sequence !== undefined ? { ristak_installment_sequence: String(planMetadata.sequence) } : {}),
+          ...extraMetadata
+        }
+      },
+      requestOptions
+    )
 
-    await updatePaymentFromIntent(intent, { stripe, config })
+    await updatePaymentFromIntent(intent, { stripe, config, requestOptions })
     return db.get('SELECT * FROM payments WHERE id = ?', [paymentId])
   } catch (error) {
     const intent = error?.payment_intent
@@ -1725,7 +2227,7 @@ export async function applyStripePaymentPlanAction(flowId, action) {
 }
 
 export async function createStripeSavedCardPayment(input = {}) {
-  const { stripe, config } = await getStripeClient()
+  const { stripe, config, requestOptions } = await getStripeClient()
   const contactId = cleanString(input.contactId)
   const selectedPaymentMethodId = cleanString(input.paymentMethodId)
   const amount = Number(input.amount)
@@ -1829,6 +2331,7 @@ export async function createStripeSavedCardPayment(input = {}) {
     await chargeStripePaymentRowWithSavedMethod({
       stripe,
       config,
+      requestOptions,
       paymentId: id,
       savedMethod,
       source: 'ristak_saved_card'
@@ -1842,7 +2345,7 @@ export async function createStripeSavedCardPayment(input = {}) {
 }
 
 export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
-  const { stripe, config } = await getStripeClient()
+  const { stripe, config, requestOptions } = await getStripeClient()
   const plan = validateStripePaymentPlanPayload(input)
   plan.cardSetupAmount = await resolveStripeCardSetupAmount(input.cardSetupAmount)
   const savedMethod = plan.paymentMethodId
@@ -1995,6 +2498,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
         await chargeStripePaymentRowWithSavedMethod({
           stripe,
           config,
+          requestOptions,
           paymentId,
           savedMethod,
           source: 'stripe_payment_plan_first_saved_card',
@@ -2156,7 +2660,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
 }
 
 export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
-  const { stripe, config } = await getStripeClient()
+  const { stripe, config, requestOptions } = await getStripeClient()
   const dueDate = todayDateOnly()
   const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
   const firstPaymentRows = await db.all(
@@ -2225,6 +2729,7 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
       const charged = await chargeStripePaymentRowWithSavedMethod({
         stripe,
         config,
+        requestOptions,
         paymentId: row.payment_id,
         savedMethod,
         source: 'stripe_payment_plan_first_scheduled_charge',
@@ -2278,6 +2783,7 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
       const charged = await chargeStripePaymentRowWithSavedMethod({
         stripe,
         config,
+        requestOptions,
         paymentId: row.payment_id,
         savedMethod,
         source: 'stripe_payment_plan_scheduled_charge',
@@ -2307,13 +2813,13 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
 
 export async function refreshStripePaymentFromIntent(paymentIntentId) {
   const context = await getStripeClient()
-  const { stripe } = context
-  const intent = await stripe.paymentIntents.retrieve(paymentIntentId)
+  const { stripe, requestOptions } = context
+  const intent = await stripe.paymentIntents.retrieve(paymentIntentId, requestOptions)
   return updatePaymentFromIntent(intent, context)
 }
 
 export async function handleStripeWebhookEvent(rawBody, signature) {
-  const { stripe, config } = await getStripeClient()
+  const { stripe, config, requestOptions } = await getStripeClient()
   if (!config.webhookSecret) {
     const error = new Error('Configura el webhook secret de Stripe antes de recibir eventos.')
     error.status = 400
@@ -2321,10 +2827,13 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
   }
 
   const event = stripe.webhooks.constructEvent(rawBody, signature, config.webhookSecret)
+  if (config.connectionType === 'connect' && event.account && event.account !== config.connectedAccountId) {
+    return { received: true, ignored: true, type: event.type, account: event.account }
+  }
   const object = event?.data?.object
 
   if (object?.object === 'payment_intent') {
-    await updatePaymentFromIntent(object, { stripe, config })
+    await updatePaymentFromIntent(object, { stripe, config, requestOptions })
   } else if (event.type === 'invoice.payment_succeeded' && object?.object === 'invoice') {
     await updatePaymentFromInvoice(object, 'paid')
   } else if (event.type === 'invoice.payment_failed' && object?.object === 'invoice') {

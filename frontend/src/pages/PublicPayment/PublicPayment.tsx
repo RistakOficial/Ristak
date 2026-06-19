@@ -162,8 +162,9 @@ export const PublicPayment: React.FC = () => {
 
   const stripePromise = useMemo<StripePromise | null>(() => {
     const key = intent?.publishableKey || payment?.publishableKey
-    return key ? loadStripe(key) : null
-  }, [intent?.publishableKey, payment?.publishableKey])
+    const stripeAccount = intent?.stripeAccountId || payment?.stripeAccountId
+    return key ? loadStripe(key, stripeAccount ? { stripeAccount } : undefined) : null
+  }, [intent?.publishableKey, intent?.stripeAccountId, payment?.publishableKey, payment?.stripeAccountId])
 
   const elementsOptions = useMemo<StripeElementsOptions | null>(() => {
     if (!intent?.clientSecret) return null

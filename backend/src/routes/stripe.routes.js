@@ -1,5 +1,6 @@
 import express from 'express'
 import {
+  createStripeConnectUrlView,
   createPublicStripePaymentIntentView,
   createStripePaymentPlanView,
   createStripeSavedCardPaymentView,
@@ -9,6 +10,7 @@ import {
   getStripeConfigView,
   getStripeSavedPaymentMethodsView,
   saveStripeConfigView,
+  stripeConnectCallbackView,
   stripeWebhookView,
   testStripeConfigView
 } from '../controllers/stripePaymentsController.js'
@@ -18,6 +20,7 @@ import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 const router = express.Router()
 
 router.post('/webhook', stripeWebhookView)
+router.get('/connect/callback', stripeConnectCallbackView)
 router.get('/public/payments/:publicPaymentId', getPublicStripePaymentView)
 router.post('/public/payments/:publicPaymentId/intent', createPublicStripePaymentIntentView)
 
@@ -27,6 +30,7 @@ router.get('/config', requireModuleAccess('settings_payments'), getStripeConfigV
 router.post('/config', requireModuleAccess('settings_payments'), saveStripeConfigView)
 router.delete('/config', requireModuleAccess('settings_payments'), deleteStripeConfigView)
 router.post('/config/test', requireModuleAccess('settings_payments'), testStripeConfigView)
+router.post('/connect/url', requireModuleAccess('settings_payments'), createStripeConnectUrlView)
 router.post('/payment-links', requireModuleAccess('payments'), createStripePaymentLinkView)
 router.post('/payment-plans', requireModuleAccess('payments'), createStripePaymentPlanView)
 router.get('/contacts/:contactId/payment-methods', requireModuleAccess('payments'), getStripeSavedPaymentMethodsView)

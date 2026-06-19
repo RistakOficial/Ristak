@@ -2550,6 +2550,112 @@ textarea.input {
   font: inherit;
 }
 
+.stripeConnectPanel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.stripeConnectMain {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.stripeConnectMain h4 {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.stripeConnectMain p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.stripeConnectActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.stripeConnectionSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stripeConnectionSummary > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.stripeConnectionSummary span {
+  color: var(--text-mute);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.stripeConnectionSummary strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stripeWebhookAlert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-ctl);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.stripeWebhookAlert svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--warn);
+}
+
+.stripeManualDetails {
+  display: grid;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.stripeManualDetails > summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stripeManualDetails[open] > summary {
+  margin-bottom: 12px;
+}
+
 @media (max-width: 900px) {
   .headerContent,
   .sectionHeader {
@@ -2570,10 +2676,19 @@ textarea.input {
   .setupSteps,
   .scopesGrid,
   .calendarConfigGrid,
+  .stripeConnectionSummary,
   .stripeWebhookEndpointRow,
   .stripeWebhookEndpointCopy,
   .stripeWebhookEventItem {
     grid-template-columns: 1fr;
+  }
+
+  .stripeConnectMain {
+    flex-direction: column;
+  }
+
+  .stripeConnectActions {
+    justify-content: flex-start;
   }
 
   .inputGroup {

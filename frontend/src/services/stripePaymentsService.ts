@@ -3,6 +3,7 @@ import { apiUrl } from './apiBaseUrl'
 export interface StripePaymentConfig {
   enabled: boolean
   configured: boolean
+  connectionType?: 'manual' | 'connect'
   mode: 'test' | 'live'
   defaultCurrency: string
   accountLabel?: string
@@ -13,6 +14,25 @@ export interface StripePaymentConfig {
   webhookSecretPreview?: string
   webhookEndpointPath?: string
   webhookEndpoints?: StripeWebhookEndpoint[]
+  connectedAccountId?: string
+  connectedAccountPreview?: string
+  connectScope?: string
+  connectLivemode?: boolean
+  connectReady?: boolean
+  connectOauthReady?: boolean
+  connectOauthReadyByMode?: Record<'test' | 'live', boolean>
+  connectMissingEnv?: string[]
+  connectAccountEmail?: string
+  connectChargesEnabled?: boolean
+  connectPayoutsEnabled?: boolean
+  connectDetailsSubmitted?: boolean
+  connectWebhookEndpointId?: string
+  connectWebhookUrl?: string
+  connectWebhookStatus?: string
+  connectWebhookLastError?: string
+  connectConnectedAt?: string
+  hasConnectAccessToken?: boolean
+  hasConnectRefreshToken?: boolean
 }
 
 export interface StripeWebhookEndpoint {
@@ -68,12 +88,21 @@ export interface PublicStripePayment {
   }
   stripePaymentIntentId?: string | null
   publishableKey: string
+  stripeAccountId?: string
 }
 
 export interface StripePaymentIntentResponse {
   clientSecret: string
   publishableKey: string
+  stripeAccountId?: string
   status: string
+}
+
+export interface StripeConnectUrlResponse {
+  url: string
+  mode: 'test' | 'live'
+  redirectUri: string
+  scope: string
 }
 
 export interface StripeSavedPaymentMethod {
@@ -203,8 +232,20 @@ export const stripePaymentsService = {
     return parseApiResponse<StripePaymentConfig>(response)
   },
 
-  async testConfig(payload: SaveStripePaymentConfigPayload): Promise<{ ok: boolean; livemode: boolean; available: number }> {
+  async testConfig(payload?: Partial<SaveStripePaymentConfigPayload>): Promise<{ ok: boolean; livemode: boolean; available: number; connectionType?: string; connectedAccountId?: string }> {
     const response = await fetch(apiUrl('/api/stripe/config/test'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify(payload || {})
+    })
+    return parseApiResponse(response)
+  },
+
+  async createConnectUrl(payload: { mode: 'test' | 'live'; returnPath?: string }): Promise<StripeConnectUrlResponse> {
+    const response = await fetch(apiUrl('/api/stripe/connect/url'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -212,7 +253,7 @@ export const stripePaymentsService = {
       },
       body: JSON.stringify(payload)
     })
-    return parseApiResponse(response)
+    return parseApiResponse<StripeConnectUrlResponse>(response)
   },
 
   async deleteConfig(): Promise<StripePaymentConfig> {

@@ -87,9 +87,15 @@ Opcionales:
 ENCRYPTION_MASTER_KEY=<hex de 32 bytes o más>
 TRACKING_DOMAIN=<dominio personalizado, sin https://>
 META_API_VERSION=<version fija opcional, ej. v25.0>
+STRIPE_CONNECT_TEST_CLIENT_ID=<client_id OAuth de desarrollo>
+STRIPE_CONNECT_TEST_SECRET_KEY=<sk_test_... de la plataforma Connect>
+STRIPE_CONNECT_TEST_PUBLISHABLE_KEY=<pk_test_... de la plataforma Connect>
+STRIPE_CONNECT_LIVE_CLIENT_ID=<client_id OAuth de producción>
+STRIPE_CONNECT_LIVE_SECRET_KEY=<sk_live_... de la plataforma Connect>
+STRIPE_CONNECT_LIVE_PUBLISHABLE_KEY=<pk_live_... de la plataforma Connect>
 ```
 
-Normalmente no necesitas declarar credenciales de HighLevel, Meta Ads o Stripe en Render. La app las guarda desde Settings.
+Normalmente no necesitas declarar credenciales de HighLevel o Meta Ads en Render. Stripe manual se guarda desde Settings, pero Stripe Connect OAuth necesita las variables de plataforma anteriores para generar el login OAuth y cobrar en nombre de la cuenta conectada.
 
 Si defines `META_API_VERSION`, la app queda fijada en esa versión y no hace auto-update de versión Meta. Déjala vacía para que use la DB y las revisiones automáticas.
 
@@ -119,7 +125,7 @@ En **Configuración -> Meta Ads** puedes:
 - Sincronizar ads manualmente.
 - Dejar que el cron actualice datos recientes cada hora.
 
-La app no usa OAuth centralizado. Cada instancia debe usar credenciales propias del usuario.
+Meta Ads no usa OAuth centralizado. Stripe sí puede usar Stripe Connect OAuth: cada instancia guarda la cuenta conectada del usuario, y las llaves de plataforma viven en variables de entorno.
 
 ## Tracking Web
 
