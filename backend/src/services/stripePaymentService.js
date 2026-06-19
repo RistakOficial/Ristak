@@ -1925,6 +1925,23 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
   return db.get('SELECT * FROM payment_plans WHERE id = ?', [cleanFlowId])
 }
 
+export async function refreshStripePaymentPlanMirrors() {
+  const flows = await db.all(
+    `SELECT id
+     FROM payment_flows
+     WHERE payment_provider = 'stripe'
+     ORDER BY updated_at DESC`
+  )
+
+  let refreshed = 0
+  for (const flow of flows || []) {
+    const mirror = await persistStripePaymentPlanMirror(flow.id)
+    if (mirror) refreshed += 1
+  }
+
+  return refreshed
+}
+
 async function activateStripePaymentPlan(flowId, savedMethod, config) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId || !savedMethod) return null

@@ -32,7 +32,7 @@ import {
   syncProductsWithSavedConfig,
   updateLocalProduct
 } from '../services/localProductService.js';
-import { applyStripePaymentPlanAction } from '../services/stripePaymentService.js';
+import { applyStripePaymentPlanAction, refreshStripePaymentPlanMirrors } from '../services/stripePaymentService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -3084,6 +3084,11 @@ export const listInvoiceSchedules = async (req, res) => {
     let offset = Math.max(Number(req.query.offset) || 0, 0);
     const maxPages = singlePage ? 1 : 10;
     const schedules = [];
+
+    await refreshStripePaymentPlanMirrors().catch((error) => {
+      logger.warn(`No se pudieron refrescar espejos locales de planes Stripe: ${error.message}`);
+    });
+
     const localStripePlans = await listLocalInvoiceSchedules({
       activeOnly,
       source: 'stripe'
