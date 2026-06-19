@@ -26,6 +26,8 @@ import {
   previewSiteSessionHandler,
   reorderBlocksHandler,
   restoreBlocksHandler,
+  sitesFontCssHandler,
+  sitesFontFileHandler,
   submitPublicSiteHandler,
   updateBlockHandler,
   updateImportedSiteCodeFilesHandler,
@@ -42,6 +44,8 @@ const router = express.Router()
 
 router.post('/public/submit', submitPublicSiteHandler)
 router.post('/public/meta-event', metaPageEventPublicHandler)
+router.get('/public/fonts.css', sitesFontCssHandler)
+router.get('/public/font-file', sitesFontFileHandler)
 router.get('/public/calendar-preview/:slug', previewCalendarHandler)
 router.get('/public/imported-assets/:siteId/*', importedSiteAssetHandler)
 router.get('/:siteId/preview-session/:token', previewSiteSessionHandler)

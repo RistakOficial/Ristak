@@ -10537,7 +10537,7 @@ function renderImportedNoTrackVideoFromAsset(asset) {
 }
 
 function renderImportedDisabledStreamPreview() {
-  return '<div data-rstk-preview-stream-disabled="true" style="width:100%;min-height:220px;aspect-ratio:16/9;display:grid;place-items:center;background:#000;border:0;border-radius:inherit;color:#fff;font:600 14px system-ui,-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,sans-serif;">Video disponible en el sitio publicado</div>'
+  return '<div data-rstk-preview-stream-disabled="true" style="width:100%;min-height:220px;aspect-ratio:16/9;display:grid;place-items:center;background:#000;border:0;border-radius:inherit;color:#fff;font:600 14px &quot;Inter&quot;,Arial,sans-serif;">Video disponible en el sitio publicado</div>'
 }
 
 async function rewriteImportedBunnyStreamPlayersForNoTrack(html = '') {
@@ -10670,12 +10670,12 @@ function renderSitePopup(site, context = {}) {
     .rstk-site-popup__box{position:relative;width:min(${maxWidth}px,100%);border:${borderWidth}px solid ${escapeHtml(borderColor)};border-radius:${radius}px;background:${escapeHtml(boxBg)};color:${escapeHtml(boxText)};box-shadow:0 28px 80px -34px rgba(2,6,23,.9);padding:${padding}px}
     .rstk-site-popup__content{display:grid;gap:14px}
     .rstk-site-popup__content:empty{min-height:96px}
-    .rstk-site-popup h2{margin:0;color:inherit;font:800 1.35rem/1.15 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
-    .rstk-site-popup p{margin:12px 0 0;color:inherit;opacity:.78;font:500 .96rem/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    .rstk-site-popup__close{position:absolute;top:12px;right:auto;left:12px;min-width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:rgba(255,255,255,.08);color:inherit;padding:0 10px;font:800 14px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}
+    .rstk-site-popup h2{margin:0;color:inherit;font:800 1.35rem/1.15 "Inter",Arial,sans-serif;letter-spacing:0}
+    .rstk-site-popup p{margin:12px 0 0;color:inherit;opacity:.78;font:500 .96rem/1.55 "Inter",Arial,sans-serif}
+    .rstk-site-popup__close{position:absolute;top:12px;right:auto;left:12px;min-width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:rgba(255,255,255,.08);color:inherit;padding:0 10px;font:800 14px/1 "Inter",Arial,sans-serif;cursor:pointer}
     .rstk-site-popup__close span{font-size:22px;line-height:1}
     .rstk-site-popup__close strong{font-size:12px;line-height:1}
-    .rstk-site-popup__action{display:inline-flex;align-items:center;justify-content:center;min-height:44px;margin-top:18px;border:0;border-radius:10px;background:#3b82f6;color:#fff;padding:0 18px;font:800 .92rem/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-decoration:none;cursor:pointer}
+    .rstk-site-popup__action{display:inline-flex;align-items:center;justify-content:center;min-height:44px;margin-top:18px;border:0;border-radius:10px;background:#3b82f6;color:#fff;padding:0 18px;font:800 .92rem/1 "Inter",Arial,sans-serif;text-decoration:none;cursor:pointer}
   </style>
   <div class="rstk-site-popup" data-rstk-site-popup data-trigger="${escapeHtml(trigger)}" data-delay="${escapeHtml(delaySeconds)}" hidden>
     <div class="rstk-site-popup__box" role="dialog" aria-modal="true" ${title ? 'aria-labelledby="rstk-site-popup-title"' : 'aria-label="Pop up"'}>
@@ -10858,7 +10858,7 @@ function buildEmbedSrcDoc(html) {
     <base target="_blank">
     <style>
       * { box-sizing: border-box; }
-      html, body { margin: 0; min-height: 100%; background: transparent; color: #111827; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      html, body { margin: 0; min-height: 100%; background: transparent; color: #111827; font-family: "Inter", Arial, sans-serif; }
       body { padding: 0; overflow-wrap: anywhere; }
       iframe, img, video { max-width: 100%; }
       iframe { border: 0; }
@@ -12806,8 +12806,8 @@ function renderBlockStyleVars(block) {
   const cardBorder = blockSettingPaint(settings, 'cardBorderColor')
   const fieldBg = blockSettingPaint(settings, 'fieldBg')
   const fieldBorder = blockSettingPaint(settings, 'fieldBorder')
-  const fontFamily = cleanString(settings.fontFamily)
-  const buttonFontFamily = cleanString(settings.buttonFontFamily)
+  const fontFamily = normalizeSiteFontFamily(settings.fontFamily)
+  const buttonFontFamily = normalizeSiteFontFamily(settings.buttonFontFamily)
   const textStrokeColor = blockSettingPaint(settings, 'textStrokeColor')
   const blockBackgroundImage = cleanString(settings.blockBackgroundImage)
   const fontSize = blockSettingNumber(settings, 'fontSize', 12, 96)
@@ -12876,8 +12876,8 @@ function renderBlockStyleVars(block) {
   if (cardBorder) vars.push(`--rstk-card-border:${paintFallbackColor(cardBorder, '#dbe3ef')}`)
   if (fieldBg) vars.push(`--rstk-field-bg:${fieldBg}`)
   if (fieldBorder) vars.push(`--rstk-field-border:${paintFallbackColor(fieldBorder, '#dbe3ef')}`)
-  if (fontFamily) vars.push(`--rstk-block-font:${fontFamily.replace(/[;"{}<>]/g, '')}`)
-  if (buttonFontFamily) vars.push(`--rstk-button-font:${buttonFontFamily.replace(/[;"{}<>]/g, '')}`)
+  if (fontFamily) vars.push(`--rstk-block-font:${fontFamily}`)
+  if (buttonFontFamily) vars.push(`--rstk-button-font:${buttonFontFamily}`)
   if (settings.fontStyle === 'italic') vars.push('--rstk-block-font-style:italic')
   if (textDecoration) vars.push(`--rstk-block-text-decoration:${textDecoration}`)
   if (textTransform) vars.push(`--rstk-block-text-transform:${textTransform}`)
@@ -13566,7 +13566,7 @@ function renderFieldBlock(block, _interactive = false, pageId = '', context = {}
   `
 }
 
-const RSTK_SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif"
+const RSTK_SANS = "'Inter', Arial, sans-serif"
 
 const SITE_TEMPLATES = {
   ristak: {
@@ -14112,6 +14112,130 @@ function renderLegalFooter(brand) {
 }
 
 const RSTK_GOOGLE_FONTS_HREF = 'https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Barlow:wght@400;500;600;700;800;900&family=Bebas+Neue&family=Inter:wght@400;500;600;700;800;900&family=Inter+Tight:wght@500;600;700;800;900&family=Lato:wght@400;700;900&family=Libre+Baskerville:wght@400;700&family=Manrope:wght@400;500;600;700;800&family=Merriweather:wght@400;700;900&family=Montserrat:wght@400;500;600;700;800;900&family=Nunito:wght@400;600;700;800;900&family=Open+Sans:wght@400;600;700;800&family=Oswald:wght@400;500;600;700&family=Playfair+Display:wght@400;600;700;800;900&family=Poppins:wght@400;500;600;700;800;900&family=Raleway:wght@400;500;600;700;800;900&family=Roboto:wght@400;500;700;900&family=Work+Sans:wght@400;500;600;700;800;900&display=swap'
+const RSTK_SITE_FONTS_CSS_PATH = '/api/sites/public/fonts.css'
+const RSTK_SITE_FONT_FILE_PATH = '/api/sites/public/font-file'
+const RSTK_FONT_CSS_CACHE_TTL_MS = 12 * 60 * 60 * 1000
+const RSTK_FONT_FILE_CACHE_MAX_ITEMS = 220
+const RSTK_FONT_FAMILIES = [
+  'Archivo',
+  'Barlow',
+  'Bebas Neue',
+  'Inter',
+  'Inter Tight',
+  'Lato',
+  'Libre Baskerville',
+  'Manrope',
+  'Merriweather',
+  'Montserrat',
+  'Nunito',
+  'Open Sans',
+  'Oswald',
+  'Playfair Display',
+  'Poppins',
+  'Raleway',
+  'Roboto',
+  'Work Sans'
+]
+const RSTK_DEFAULT_FONT = "'Inter', Arial, sans-serif"
+const RSTK_DEFAULT_SERIF_FONT = "'Libre Baskerville', Georgia, serif"
+let rstkFontCssCache = { css: '', expiresAt: 0 }
+const rstkFontFileCache = new Map()
+
+function normalizeSiteFontFamily(value) {
+  const font = cleanString(value).replace(/[;"{}<>]/g, '').trim()
+  if (!font) return ''
+
+  const normalized = font.toLowerCase()
+  if (RSTK_FONT_FAMILIES.some((family) => normalized.includes(family.toLowerCase()))) return font
+
+  const plain = normalized.replace(/['"]/g, '')
+  if (plain.includes('georgia') || plain.includes('times new roman') || plain === 'serif') {
+    return RSTK_DEFAULT_SERIF_FONT
+  }
+  if (
+    plain.includes('-apple-system') ||
+    plain.includes('blinkmacsystemfont') ||
+    plain.includes('system-ui') ||
+    plain.includes('segoe ui') ||
+    plain === 'arial' ||
+    plain === 'helvetica' ||
+    plain === 'sans-serif'
+  ) {
+    return RSTK_DEFAULT_FONT
+  }
+
+  return font
+}
+
+function rewriteSitesFontCss(css) {
+  return String(css || '').replace(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/g, (_match, url) => {
+    return `url("${RSTK_SITE_FONT_FILE_PATH}?url=${encodeURIComponent(url)}")`
+  })
+}
+
+export async function getSitesFontCss() {
+  const now = Date.now()
+  if (rstkFontCssCache.css && rstkFontCssCache.expiresAt > now) return rstkFontCssCache.css
+
+  const response = await fetch(RSTK_GOOGLE_FONTS_HREF, {
+    headers: {
+      'user-agent': 'Mozilla/5.0 Ristak Sites Font Loader'
+    }
+  })
+  if (!response.ok) {
+    const error = new Error('No se pudo cargar la hoja de fuentes de Sites')
+    error.status = 502
+    throw error
+  }
+
+  const css = `/* Ristak Sites font stylesheet */\n${rewriteSitesFontCss(await response.text())}`
+  rstkFontCssCache = { css, expiresAt: now + RSTK_FONT_CSS_CACHE_TTL_MS }
+  return css
+}
+
+export async function getSitesFontFile(urlValue) {
+  const rawUrl = cleanString(urlValue)
+  let parsed
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    const error = new Error('URL de fuente inválida')
+    error.status = 400
+    throw error
+  }
+
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'fonts.gstatic.com') {
+    const error = new Error('Fuente no permitida')
+    error.status = 400
+    throw error
+  }
+
+  const cacheKey = parsed.toString()
+  const cached = rstkFontFileCache.get(cacheKey)
+  if (cached) return cached
+
+  const response = await fetch(cacheKey, {
+    headers: {
+      'user-agent': 'Mozilla/5.0 Ristak Sites Font Loader'
+    }
+  })
+  if (!response.ok) {
+    const error = new Error('No se pudo cargar el archivo de fuente')
+    error.status = 502
+    throw error
+  }
+
+  const result = {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type') || 'font/woff2'
+  }
+  if (rstkFontFileCache.size >= RSTK_FONT_FILE_CACHE_MAX_ITEMS) {
+    const oldestKey = rstkFontFileCache.keys().next().value
+    if (oldestKey) rstkFontFileCache.delete(oldestKey)
+  }
+  rstkFontFileCache.set(cacheKey, result)
+  return result
+}
 
 const RSTK_BASE_CSS = `
   *,*::before,*::after{box-sizing:border-box}
@@ -14657,7 +14781,7 @@ function resolveRenderOverrides(template, theme, isLandingType) {
 }
 
 function sanitizeCssFont(value) {
-  return cleanString(value).replace(/[;"{}<>]/g, '')
+  return normalizeSiteFontFamily(value)
 }
 
 function normalizeFormChoiceStyle(value) {
@@ -14728,8 +14852,8 @@ function buildStyleSheet(template, maxWidth, overrides = {}, pageVars = {}) {
   const accent = overrides.accent || v.accent
   const accentStrong = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 86%, #000)` : v.accentStrong
   const ring = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 22%, transparent)` : v.ring
-  const baseFont = template.chrome === 'none' ? `'Inter', ${template.font}` : template.font
-  const display = template.chrome === 'none' ? `'Inter Tight', 'Inter', ${template.font}` : template.font
+  const baseFont = template.font
+  const display = `'Inter Tight', ${template.font}`
   const pageImage = pageVars.pageImage || v.pageImage
   const pageOverlay = pageVars.pageOverlay || 'none'
   const pageBg = pageVars.pageBg || v.pageBg
@@ -15003,7 +15127,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           message = document.createElement('div');
           message.setAttribute('data-rstk-import-message', 'true');
           message.style.marginTop = '12px';
-          message.style.font = '500 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+          message.style.font = '500 14px/1.45 "Inter", Arial, sans-serif';
           form.appendChild(message);
         }
         message.textContent = text;
@@ -15166,7 +15290,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
           message = document.createElement('div');
           message.setAttribute('data-rstk-button-action-message', 'true');
           message.style.marginTop = '12px';
-          message.style.font = '600 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+          message.style.font = '600 14px/1.45 "Inter", Arial, sans-serif';
           host.appendChild(message);
         }
         message.textContent = text;
@@ -15784,9 +15908,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(site.title || site.name)}</title>
   <meta name="description" content="${escapeHtml(site.description || '')}">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="${RSTK_GOOGLE_FONTS_HREF}" rel="stylesheet">
+  <link href="${RSTK_SITE_FONTS_CSS_PATH}" rel="stylesheet">
   <style>${styleSheet}</style>
   ${siteNavHtml ? `<style>${SITE_NAV_STYLES}</style>` : ''}
   ${headerTrackingCode}
@@ -16741,7 +16863,7 @@ export function renderDomainErrorHtml({ host, message }) {
       place-items: center;
       background: #f8fafc;
       color: #111827;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Inter", Arial, sans-serif;
       letter-spacing: 0;
     }
     main {

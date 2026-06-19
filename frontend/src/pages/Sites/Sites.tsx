@@ -177,6 +177,7 @@ import styles from './Sites.module.css'
 import customFieldModalStyles from '../Settings/CustomFields.module.css'
 import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
+import { SITE_FONT_OPTIONS, normalizeSiteFontFamily } from './siteFonts'
 
 type SitesSection = 'landings' | 'forms' | 'leads' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
@@ -832,7 +833,7 @@ const PREVIEW_LOADING_HTML = `<!doctype html>
     <style>
       :root {
         color-scheme: light dark;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family: "Inter", Arial, sans-serif;
         background: #f7f9fc;
         color: #162033;
         --preview-bg: #f7f9fc;
@@ -1155,7 +1156,7 @@ ${IMPORTED_HTML_AI_GUIDE}
     :root {
       color: #111827;
       background: #ffffff;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Inter", Arial, sans-serif;
     }
 
     * {
@@ -1187,7 +1188,7 @@ const DEFAULT_IMPORTED_POPUP_HTML = `<!doctype html>
       place-items: center;
       background: #f8fafc;
       color: #111827;
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Inter", Arial, sans-serif;
     }
     .popup {
       width: min(520px, calc(100vw - 32px));
@@ -1228,28 +1229,18 @@ const DEFAULT_BUTTON_SETTINGS = {
   buttonPaddingX: 28,
   buttonWidth: 0
 }
-const GOOGLE_FONT_OPTIONS = [
-  { label: 'Sistema', value: '' },
-  { label: 'Inter', value: "'Inter', system-ui, sans-serif" },
-  { label: 'Inter Tight', value: "'Inter Tight', 'Inter', system-ui, sans-serif" },
-  { label: 'Roboto', value: "'Roboto', Arial, sans-serif" },
-  { label: 'Open Sans', value: "'Open Sans', Arial, sans-serif" },
-  { label: 'Lato', value: "'Lato', Arial, sans-serif" },
-  { label: 'Montserrat', value: "'Montserrat', Arial, sans-serif" },
-  { label: 'Poppins', value: "'Poppins', Arial, sans-serif" },
-  { label: 'Oswald', value: "'Oswald', Arial, sans-serif" },
-  { label: 'Raleway', value: "'Raleway', Arial, sans-serif" },
-  { label: 'Nunito', value: "'Nunito', Arial, sans-serif" },
-  { label: 'Work Sans', value: "'Work Sans', Arial, sans-serif" },
-  { label: 'Manrope', value: "'Manrope', Arial, sans-serif" },
-  { label: 'Barlow', value: "'Barlow', Arial, sans-serif" },
-  { label: 'Archivo', value: "'Archivo', Arial, sans-serif" },
-  { label: 'Bebas Neue', value: "'Bebas Neue', Impact, sans-serif" },
-  { label: 'Playfair Display', value: "'Playfair Display', Georgia, serif" },
-  { label: 'Merriweather', value: "'Merriweather', Georgia, serif" },
-  { label: 'Libre Baskerville', value: "'Libre Baskerville', Georgia, serif" },
-  { label: 'Georgia', value: "Georgia, 'Times New Roman', serif" }
-]
+const GOOGLE_FONT_OPTIONS = SITE_FONT_OPTIONS
+const SITES_FONT_STYLESHEET_ID = 'rstk-sites-fonts'
+const SITES_FONT_STYLESHEET_HREF = '/api/sites/public/fonts.css'
+const ensureSitesFontStylesheet = () => {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(SITES_FONT_STYLESHEET_ID)) return
+  const link = document.createElement('link')
+  link.id = SITES_FONT_STYLESHEET_ID
+  link.rel = 'stylesheet'
+  link.href = SITES_FONT_STYLESHEET_HREF
+  document.head.appendChild(link)
+}
 const SECTION_BLOCK_TYPE: SiteBlockType = 'section'
 const DEFAULT_SECTION_GAP = 24
 const isTopLevelLandingBlockType = (blockType?: SiteBlockType) =>
@@ -2854,8 +2845,8 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const buttonBorder = getSettingString(settings, 'buttonBorderColor')
   const cardBg = getSettingString(settings, 'cardBg')
   const cardBorder = getSettingString(settings, 'cardBorderColor')
-  const fontFamily = getSettingString(settings, 'fontFamily')
-  const buttonFontFamily = getSettingString(settings, 'buttonFontFamily')
+  const fontFamily = normalizeSiteFontFamily(getSettingString(settings, 'fontFamily'))
+  const buttonFontFamily = normalizeSiteFontFamily(getSettingString(settings, 'buttonFontFamily'))
   const textStrokeColor = getSettingString(settings, 'textStrokeColor')
   const textDecoration = getTextDecorationTokens(settings.textDecoration).join(' ')
   const buttonTextDecoration = getTextDecorationTokens(settings.buttonTextDecoration).join(' ')
@@ -2901,8 +2892,8 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (isCssPaint(buttonBorder)) style['--rstk-button-border'] = paintFallbackColor(normalizeCssPaint(buttonBorder, '#111827'), '#111827')
   if (isCssPaint(cardBg)) style['--rstk-card-bg'] = normalizeCssPaint(cardBg, '#ffffff')
   if (isCssPaint(cardBorder)) style['--rstk-card-border'] = paintFallbackColor(normalizeCssPaint(cardBorder, '#dbe3ef'), '#dbe3ef')
-  if (fontFamily) style['--rstk-block-font'] = fontFamily.replace(/[;"{}<>]/g, '')
-  if (buttonFontFamily) style['--rstk-button-font'] = buttonFontFamily.replace(/[;"{}<>]/g, '')
+  if (fontFamily) style['--rstk-block-font'] = fontFamily
+  if (buttonFontFamily) style['--rstk-button-font'] = buttonFontFamily
   if (settings.fontStyle === 'italic') style['--rstk-block-font-style'] = 'italic'
   if (textDecoration) style['--rstk-block-text-decoration'] = textDecoration
   if (textTransform) style['--rstk-block-text-transform'] = textTransform
@@ -3899,7 +3890,7 @@ const buildEmbedSrcDoc = (html: string) => `<!doctype html>
     <base target="_blank">
     <style>
       * { box-sizing: border-box; }
-      html, body { margin: 0; min-height: 100%; background: transparent; color: #111827; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      html, body { margin: 0; min-height: 100%; background: transparent; color: #111827; font-family: "Inter", Arial, sans-serif; }
       body { padding: 0; overflow-wrap: anywhere; }
       iframe, img, video { max-width: 100%; }
       iframe { border: 0; }
@@ -4994,6 +4985,10 @@ export const Sites: React.FC = () => {
   const pendingBlockOrderScopesRef = useRef<Set<string>>(new Set())
   const pendingImportedCodeDraftsRef = useRef<Map<string, string>>(new Map())
   const savingPendingEditorRef = useRef(false)
+
+  useEffect(() => {
+    ensureSitesFontStylesheet()
+  }, [])
 
   const updateSitesAnalyticsQuery = useCallback((patch: {
     type?: SitesAnalyticsSiteType
@@ -15034,7 +15029,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           background: rgba(15, 17, 23, 0.96) !important;
           color: #f8fafc !important;
           padding: 0 11px !important;
-          font: 800 13px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+          font: 800 13px/1 "Inter", Arial, sans-serif !important;
           box-shadow: 0 18px 46px rgba(0, 0, 0, 0.44) !important;
           cursor: pointer !important;
           color-scheme: dark !important;

@@ -12,6 +12,8 @@ import {
   getRequestHost,
   getImportedSiteBySiteId,
   getImportedSiteAssetResponse,
+  getSitesFontCss,
+  getSitesFontFile,
   getSite,
   getSitesDomainSettings,
   getSitePreview,
@@ -147,6 +149,28 @@ function sendError(res, error, fallback = 'Error procesando solicitud') {
     success: false,
     error: error.message || fallback
   })
+}
+
+export async function sitesFontCssHandler(_req, res) {
+  try {
+    const css = await getSitesFontCss()
+    res.setHeader('Cache-Control', 'public, max-age=43200')
+    res.type('text/css; charset=utf-8').send(css)
+  } catch (error) {
+    logger.error(`Error sirviendo fuentes de Sites: ${error.message}`)
+    sendError(res, error, 'Error sirviendo fuentes de Sites')
+  }
+}
+
+export async function sitesFontFileHandler(req, res) {
+  try {
+    const font = await getSitesFontFile(req.query?.url)
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    res.type(font.contentType || 'font/woff2').send(font.buffer)
+  } catch (error) {
+    logger.error(`Error sirviendo archivo de fuente de Sites: ${error.message}`)
+    sendError(res, error, 'Error sirviendo archivo de fuente')
+  }
 }
 
 export async function getSitesHandler(req, res) {
@@ -748,6 +772,8 @@ export async function publicSiteHostMiddleware(req, res, next) {
       req.path === '/api/health' ||
       req.path === '/api/sites/public/submit' ||
       req.path === '/api/sites/public/meta-event' ||
+      req.path === '/api/sites/public/fonts.css' ||
+      req.path === '/api/sites/public/font-file' ||
       req.path.startsWith('/api/sites/public/calendar-preview/') ||
       req.path.startsWith('/api/sites/public/imported-assets/') ||
       req.path === '/snip.js' ||

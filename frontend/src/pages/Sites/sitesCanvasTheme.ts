@@ -1,5 +1,6 @@
 import type React from 'react'
 import type { PublicSite, SiteTemplateId } from '../../services/sitesService'
+import { normalizeSiteFontFamily } from './siteFonts'
 
 /**
  * WYSIWYG canvas theme.
@@ -11,8 +12,7 @@ import type { PublicSite, SiteTemplateId } from '../../services/sitesService'
  * published page. Keep this in sync with that file.
  */
 
-const RSTK_SANS =
-  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif"
+const RSTK_SANS = "'Inter', Arial, sans-serif"
 
 type TemplateVars = {
   pageBg: string
@@ -414,7 +414,7 @@ const themePaint = (theme: PublicSite['theme'], key: keyof NonNullable<PublicSit
   return typeof value === 'string' && (isCssColor(value) || isCssGradient(value)) ? normalizeCssPaint(value, fallback) : fallback
 }
 
-const sanitizeCssFont = (value?: string) => String(value || '').replace(/[;"{}<>]/g, '').trim()
+const sanitizeCssFont = (value?: string) => normalizeSiteFontFamily(value)
 
 const normalizeFormChoiceStyle = (value: unknown) => {
   const raw = String(value || '').trim()
@@ -465,8 +465,8 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const accent = overrides.accent || v.accent
   const accentStrong = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 86%, #000)` : v.accentStrong
   const ring = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 22%, transparent)` : v.ring
-  const baseFont = template.chrome === 'none' ? `'Inter', ${template.font}` : template.font
-  const display = template.chrome === 'none' ? `'Inter Tight', 'Inter', ${template.font}` : template.font
+  const baseFont = template.font
+  const display = `'Inter Tight', ${template.font}`
 
   const storedPageMaxWidth = Number(theme?.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
