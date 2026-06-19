@@ -137,6 +137,7 @@ export interface StripePaymentPlanPayload {
     frequency?: string
   }>
   paymentMethodId?: string
+  cardSetupAmount?: number
   source?: string
 }
 
@@ -146,6 +147,9 @@ export interface StripePaymentPlanResponse {
   paymentMode: 'test' | 'live'
   firstPaymentLink?: string | null
   firstPaymentPaymentId?: string | null
+  cardSetupLink?: string | null
+  cardSetupPaymentId?: string | null
+  cardSetupAmount?: number
   savedPaymentMethod?: StripeSavedPaymentMethod | null
   scheduledPayments: Array<{
     installmentId: string

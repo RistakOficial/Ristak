@@ -596,7 +596,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   )) || null
   const stripePlanSavedPaymentMethod = selectedSavedPaymentMethod || savedPaymentMethods[0] || null
   const firstPaymentCanAuthorizeStripePlan = firstPaymentEnabled && firstPaymentMethod === 'card'
-  const stripePlanCanBeAuthorized = Boolean(stripePlanSavedPaymentMethod) || firstPaymentCanAuthorizeStripePlan
+  const stripePlanNeedsSetupLink = !stripePlanSavedPaymentMethod && !firstPaymentCanAuthorizeStripePlan
+  const stripePlanCanBeAuthorized = Boolean(stripePlanSavedPaymentMethod) || firstPaymentCanAuthorizeStripePlan || stripePlanNeedsSetupLink
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
   const isEmbedded = variant === 'embedded'
   const renderPaymentSegmentedTabs = ({
@@ -1313,6 +1314,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       frequency: remainingFrequency
     })),
     paymentMethodId: stripePlanSavedPaymentMethod?.stripePaymentMethodId || '',
+    cardSetupAmount,
     source: 'record_payment_modal_stripe_plan'
   })
 
@@ -1620,19 +1622,24 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         return
       }
 
-      if (!stripePlanCanBeAuthorized) {
-        showToast('error', 'Stripe necesita una tarjeta guardada o que el primer pago sea con tarjeta/link.')
-        setStep('options')
-        setLoading(false)
-        return
-      }
-
       try {
         const result = await stripePaymentsService.createPaymentPlan(
           buildStripePaymentPlanPayload(invoicePayload, invoiceSummary)
         )
 
-        if (result.firstPaymentLink) {
+        if (result.cardSetupLink) {
+          const copied = await copyTextToClipboard(result.cardSetupLink)
+          const setupAmount = result.cardSetupAmount || cardSetupAmount
+          const manualFirstPaymentRegistered = firstPaymentEnabled && isOfflineFirstPaymentMethod(firstPaymentMethod)
+          showToast(
+            'success',
+            'Plan de Stripe creado',
+            copied
+              ? `${manualFirstPaymentRegistered ? 'El primer pago quedó registrado. ' : ''}La liga de domiciliación por ${formatCurrency(setupAmount, invoiceSummary.currency)} quedó copiada. El plan se activa cuando el cliente la pague y guarde su tarjeta.`
+              : result.cardSetupLink,
+            copied ? undefined : 9000
+          )
+        } else if (result.firstPaymentLink) {
           const copied = await copyTextToClipboard(result.firstPaymentLink)
           showToast(
             'success',
@@ -2646,7 +2653,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 {stripeConnected
                   ? (savedPaymentMethods.length > 0
                       ? 'Stripe usará la tarjeta guardada para programar y cobrar cada fecha del plan.'
-                      : 'Si el primer pago es con tarjeta/link de Stripe, esa tarjeta quedará guardada y activará los cobros futuros.')
+                      : firstPaymentEnabled && firstPaymentMethod === 'card'
+                        ? 'Si el primer pago es con tarjeta/link de Stripe, esa tarjeta quedará guardada y activará los cobros futuros.'
+                        : `Stripe enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`)
                   : (partialNeedsCardAuthorization
                       ? `GoHighLevel validará si existe una tarjeta guardada. Si no existe, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
                       : 'El primer pago con tarjeta autoriza la tarjeta en GoHighLevel. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.')}
@@ -2709,7 +2718,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ? `Stripe cobrará automáticamente con ${getSavedCardDescription(stripePlanSavedPaymentMethod)}.`
         : firstPaymentEnabled && firstPaymentMethod === 'card'
           ? 'Stripe enviará el primer link; cuando se pague, guardará la tarjeta y activará los cobros futuros.'
-          : 'Stripe necesita una tarjeta guardada o que el primer pago sea con tarjeta/link.'
+          : `Stripe enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}; al pagarse, guardará la tarjeta y activará el plan.`
       const authorizationLabel = paymentOption === 'stripe'
         ? stripeAuthorizationLabel
         : partialNeedsCardAuthorization

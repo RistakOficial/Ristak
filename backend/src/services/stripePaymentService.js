@@ -29,6 +29,7 @@ const STRIPE_PLAN_STATES = {
   CANCELLED: 'cancelled'
 }
 const FIRST_PAYMENT_PLAN_TRIGGERS = new Set(['first_payment', 'first_payment_saved_card'])
+const CARD_SETUP_PLAN_TRIGGERS = new Set(['card_setup', 'card_setup_authorization'])
 const ZERO_DECIMAL_CURRENCIES = new Set([
   'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf',
   'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf'
@@ -160,6 +161,12 @@ function fromStripeAmount(amount, currency) {
   const value = Number(amount || 0)
   const code = normalizeCurrency(currency).toLowerCase()
   return ZERO_DECIMAL_CURRENCIES.has(code) ? value : Math.round(value) / 100
+}
+
+function normalizePositiveAmount(value, fallback = 25) {
+  const amount = Number(value)
+  if (Number.isFinite(amount) && amount > 0) return Math.round(amount * 100) / 100
+  return Math.round(Number(fallback || 25) * 100) / 100
 }
 
 function extractStripeObjectId(value) {
@@ -541,6 +548,18 @@ async function rememberStripePaymentMethodFromIntent(stripe, intent, paymentRow,
     paymentMethodId,
     mode: config?.mode
   })
+}
+
+async function resolveStripeCardSetupAmount(inputAmount) {
+  const parsed = Number(inputAmount)
+  if (Number.isFinite(parsed) && parsed > 0) return normalizePositiveAmount(parsed)
+
+  try {
+    const row = await db.get('SELECT card_setup_amount FROM highlevel_config LIMIT 1')
+    return normalizePositiveAmount(row?.card_setup_amount, 25)
+  } catch {
+    return 25
+  }
 }
 
 export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
@@ -1175,6 +1194,7 @@ function validateStripePaymentPlanPayload(input = {}) {
   const firstPaymentEnabled = normalizeBoolean(firstPayment.enabled, true)
   const firstPaymentAmount = firstPaymentEnabled ? Number(firstPayment.amount || 0) : 0
   const remainingPayments = Array.isArray(input.remainingPayments) ? input.remainingPayments : []
+  const cardSetupAmount = normalizePositiveAmount(input.cardSetupAmount, 25)
 
   if (!cleanString(contact.id)) {
     const error = new Error('Selecciona un contacto.')
@@ -1244,6 +1264,7 @@ function validateStripePaymentPlanPayload(input = {}) {
     },
     remainingPayments: normalizedRemaining,
     remainingFrequency: cleanString(input.remainingFrequency || 'custom') || 'custom',
+    cardSetupAmount,
     lineItems: Array.isArray(input.invoicePayload?.items) ? input.invoicePayload.items : [],
     invoicePayload: input.invoicePayload || {},
     paymentMethodId: cleanString(input.paymentMethodId),
@@ -1324,6 +1345,7 @@ async function syncStripePlanFromPayment(paymentRow, savedMethod, config) {
 
   const trigger = cleanString(plan.trigger)
   const isFirstPlanPayment = FIRST_PAYMENT_PLAN_TRIGGERS.has(trigger) || (!trigger && !plan.installmentId)
+  const isCardSetupPayment = CARD_SETUP_PLAN_TRIGGERS.has(trigger)
 
   if (plan.installmentId) {
     await db.run(
@@ -1359,7 +1381,31 @@ async function syncStripePlanFromPayment(paymentRow, savedMethod, config) {
     )
   }
 
+  if (isCardSetupPayment && paymentRow.status) {
+    const cardSetupStatus = paymentRow.status === 'paid'
+      ? 'paid'
+      : paymentRow.status === 'failed'
+        ? 'failed'
+        : paymentRow.status === 'void'
+          ? 'void'
+          : 'pending'
+
+    await db.run(
+      `UPDATE payment_flows
+       SET card_setup_status = ?,
+           card_setup_invoice_id = COALESCE(card_setup_invoice_id, ?),
+           card_setup_payment_link = COALESCE(card_setup_payment_link, ?),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [cardSetupStatus, paymentRow.id || null, paymentRow.payment_url || null, flowId]
+    )
+  }
+
   if (paymentRow.status === 'paid' && savedMethod && isFirstPlanPayment) {
+    await activateStripePaymentPlan(flowId, savedMethod, config)
+  }
+
+  if (paymentRow.status === 'paid' && savedMethod && isCardSetupPayment) {
     await activateStripePaymentPlan(flowId, savedMethod, config)
   }
 }
@@ -1484,18 +1530,15 @@ export async function createStripeSavedCardPayment(input = {}) {
 export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
   const { stripe, config } = await getStripeClient()
   const plan = validateStripePaymentPlanPayload(input)
+  plan.cardSetupAmount = await resolveStripeCardSetupAmount(input.cardSetupAmount)
   const savedMethod = plan.paymentMethodId
     ? await resolveStripeSavedMethod(plan.contact.id, plan.paymentMethodId, config)
     : await resolveStripeSavedMethod(plan.contact.id, '', config)
   const hasSavedCard = Boolean(savedMethod)
   const firstPaymentIsCard = plan.firstPayment.enabled && ['card', 'payment_link', 'direct_card', 'saved_card'].includes(plan.firstPayment.method)
   const firstPaymentIsOffline = plan.firstPayment.enabled && ['cash', 'bank_transfer', 'transfer', 'deposit', 'manual', 'offline', 'check', 'other'].includes(plan.firstPayment.method)
-
-  if (!hasSavedCard && !firstPaymentIsCard) {
-    const error = new Error('Para activar cobros automáticos con Stripe necesitas una tarjeta guardada o que el primer pago sea con tarjeta/link de Stripe.')
-    error.status = 400
-    throw error
-  }
+  const needsSeparateCardSetup = !hasSavedCard && !firstPaymentIsCard
+  const cardSetupAmount = needsSeparateCardSetup ? plan.cardSetupAmount : (firstPaymentIsCard ? plan.firstPayment.amount : 0)
 
   const flowId = createId('stripe_flow')
   const stateHistory = addPlanState([], hasSavedCard ? STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE : STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION)
@@ -1515,7 +1558,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       payment_provider, stripe_customer_id, stripe_payment_method_id, stripe_payment_method_label,
       current_state, state_history, card_authorized_at,
       installment_plan_created_at, installment_plan_active_at, metadata
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'partial', ?, ?, ?, ?, ?, ?, 1, ?, 0, 'stripe', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'partial', ?, ?, ?, ?, ?, ?, 1, ?, ?, 'stripe', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       flowId,
       plan.contact.id,
@@ -1532,6 +1575,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       plan.firstPayment.method,
       plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard && isDueTodayOrPast(plan.firstPayment.date) ? 'processing' : 'pending') : 'not_required',
       hasSavedCard ? 0 : 1,
+      cardSetupAmount,
       savedMethod?.stripe_customer_id || null,
       savedMethod?.stripe_payment_method_id || null,
       cardLabel || null,
@@ -1544,7 +1588,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
         source: plan.source,
         remainingFrequency: plan.remainingFrequency,
         lineItems: plan.lineItems,
-        firstPaymentLinkRequired: !hasSavedCard && firstPaymentIsCard
+        firstPaymentLinkRequired: !hasSavedCard && firstPaymentIsCard,
+        cardSetupLinkRequired: needsSeparateCardSetup
       })
     ]
   )
@@ -1555,6 +1600,9 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
     paymentMode: config.mode,
     firstPaymentLink: null,
     firstPaymentPaymentId: null,
+    cardSetupLink: null,
+    cardSetupPaymentId: null,
+    cardSetupAmount: needsSeparateCardSetup ? plan.cardSetupAmount : 0,
     savedPaymentMethod: hasSavedCard ? mapStripePaymentMethod(savedMethod) : null,
     scheduledPayments: []
   }
@@ -1685,6 +1733,49 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
     response.firstPaymentLink = firstPaymentLink.paymentUrl
   }
 
+  if (needsSeparateCardSetup) {
+    const setupLink = await createStripePaymentLink({
+      contactId: plan.contact.id,
+      contactName: plan.contact.name,
+      email: plan.contact.email,
+      phone: plan.contact.phone,
+      amount: plan.cardSetupAmount,
+      currency: plan.currency,
+      title: `${plan.title} - domiciliación de tarjeta`,
+      description: `Domiciliación de tarjeta para ${plan.description}`,
+      dueDate: new Date().toISOString().slice(0, 10),
+      source: 'stripe_payment_plan_card_setup',
+      lineItems: [
+        {
+          name: 'Domiciliación de tarjeta',
+          description: `Autorización para cobros automáticos del plan ${plan.title}`,
+          quantity: 1,
+          amount: plan.cardSetupAmount,
+          currency: plan.currency
+        }
+      ],
+      metadata: {
+        paymentPlan: {
+          flowId,
+          trigger: 'card_setup'
+        }
+      }
+    }, { baseUrl })
+
+    await db.run(
+      `UPDATE payment_flows
+       SET card_setup_status = 'pending',
+           card_setup_invoice_id = ?,
+           card_setup_payment_link = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [setupLink.payment?.id || null, setupLink.paymentUrl, flowId]
+    )
+
+    response.cardSetupPaymentId = setupLink.payment?.id || null
+    response.cardSetupLink = setupLink.paymentUrl
+  }
+
   for (const payment of plan.remainingPayments) {
     const installmentId = createId('stripe_installment')
     const status = hasSavedCard ? 'scheduled' : 'waiting_card_authorization'
@@ -1728,7 +1819,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
         hasSavedCard ? 'stripe_saved_card' : 'stripe_pending_card',
         status,
         paymentId,
-        hasSavedCard ? `Programado para cobrarse con ${cardLabel}` : 'Esperando que el primer pago guarde una tarjeta en Stripe.'
+        hasSavedCard ? `Programado para cobrarse con ${cardLabel}` : 'Esperando domiciliación de tarjeta en Stripe.'
       ]
     )
 
