@@ -1,4 +1,5 @@
-import { useCallback, useState, useMemo, useEffect } from 'react'
+import { useCallback, useState, useMemo, useEffect, useRef } from 'react'
+import { CheckCheck, CircleAlert, Loader2, MessageCircle, Send } from 'lucide-react'
 import { Modal, Icon, Badge, Button, CustomSelect, InlineEditableText, TagPicker, type BadgeVariant } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import automationsService, {
@@ -6,6 +7,15 @@ import automationsService, {
   type ContactAutomationActivity,
   type ContactAutomationActivityItem
 } from '@/services/automationsService'
+import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import {
+  whatsappApiService,
+  type ScheduledChatMessage,
+  type WhatsAppApiPhoneNumber,
+  type WhatsAppApiStatus
+} from '@/services/whatsappApiService'
+import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
+import { getContactAvatarUrl, getContactDetailLabel, getContactDisplayName, getContactInitials } from '@/utils/contactAvatar'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
@@ -60,6 +70,11 @@ interface ContactDetail {
   name?: string | null
   email?: string | null
   phone?: string | null
+  profilePhotoUrl?: string | null
+  avatarUrl?: string | null
+  photoUrl?: string | null
+  pictureUrl?: string | null
+  profile_picture_url?: string | null
   created_at: string | Date
   ltv?: number
   purchases?: number
@@ -98,6 +113,21 @@ interface WhatsAppPhoneOption {
   is_default_sender?: boolean
 }
 
+type ContactChatPhoneOption = WhatsAppPhoneOption | WhatsAppApiPhoneNumber
+
+interface ContactChatMessage {
+  id: string
+  text: string
+  subject?: string
+  date: string
+  direction: 'inbound' | 'outbound' | 'system'
+  status?: string
+  errorReason?: string
+  scheduledAt?: string
+  scheduledMessageId?: string
+  transport?: string
+}
+
 interface ContactDetailsModalProps {
   isOpen: boolean
   onClose: () => void
@@ -130,6 +160,176 @@ const getWhatsAppPhoneLabel = (phone: WhatsAppPhoneOption) => {
 
 const getPreferredWhatsAppPhoneNumberId = (contact?: ContactDetail | null) =>
   String(contact?.preferredWhatsAppPhoneNumberId || contact?.preferred_whatsapp_phone_number_id || '')
+
+const getWhatsAppPhoneValue = (phone?: ContactChatPhoneOption | null) =>
+  phone?.display_phone_number || phone?.phone_number || ''
+
+const getContactChatPhoneLabel = (phone?: ContactChatPhoneOption | null) =>
+  phone?.label || phone?.verified_name || getWhatsAppPhoneValue(phone) || 'WhatsApp'
+
+const renderContactAvatar = (contact: ContactDetail | null | undefined, className: string) => {
+  const avatarUrl = getContactAvatarUrl(contact)
+
+  return (
+    <span className={className} aria-hidden="true">
+      {avatarUrl ? <img src={avatarUrl} alt="" /> : getContactInitials(contact)}
+    </span>
+  )
+}
+
+const normalizeBusinessMessageDirection = (value?: unknown): ContactChatMessage['direction'] => {
+  const direction = String(value || '').toLowerCase()
+  return [
+    'outbound',
+    'outgoing',
+    'sent',
+    'business',
+    'api',
+    'app',
+    'business_echo',
+    'smb_echo',
+    'echo',
+    'message_echo'
+  ].includes(direction) ? 'outbound' : 'inbound'
+}
+
+const pickChatTimestamp = (data: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = data[key]
+    if (value === null || value === undefined || value === '') continue
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      const timestamp = value > 1_000_000_000_000 ? value : value * 1000
+      const date = new Date(timestamp)
+      if (!Number.isNaN(date.getTime())) return date.toISOString()
+      continue
+    }
+    const date = new Date(String(value))
+    if (!Number.isNaN(date.getTime())) return date.toISOString()
+  }
+  return ''
+}
+
+const pickChatText = (data: Record<string, unknown>) => {
+  const textKeys = [
+    'message_text',
+    'messageText',
+    'message',
+    'body',
+    'text',
+    'message_body',
+    'messageBody',
+    'content',
+    'caption'
+  ]
+
+  for (const key of textKeys) {
+    const value = data[key]
+    if (value === null || value === undefined || typeof value === 'object') continue
+    const text = String(value).trim()
+    if (text) return text
+  }
+
+  return ''
+}
+
+const getChatMessageTypeLabel = (type = '', fallback = 'Mensaje') => {
+  const normalized = type.toLowerCase()
+  if (normalized.includes('gif')) return 'GIF'
+  if (normalized.includes('image')) return 'Foto'
+  if (normalized.includes('video')) return 'Video'
+  if (normalized.includes('audio') || normalized.includes('voice')) return 'Mensaje de voz'
+  if (normalized.includes('document')) return 'Documento'
+  if (normalized.includes('location')) return 'Ubicacion'
+  if (normalized.includes('reaction')) return 'Reaccion'
+  return fallback
+}
+
+const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatMessage | null => {
+  if (event.type === 'appointment_confirmation') {
+    return {
+      id: String(event.data?.id || event.data?.appointment_id || `appointment-confirmation-${index}`),
+      text: 'Cita confirmada por IA.',
+      date: event.date,
+      direction: 'system',
+      status: 'confirmed'
+    }
+  }
+
+  if (event.type !== 'whatsapp_message' && event.type !== 'meta_message' && event.type !== 'email_message') return null
+  const data = event.data || {}
+  const messageType = String(data.message_type || data.messageType || data.type || '').trim()
+  const subject = String(data.subject || '').trim()
+  const text = pickChatText(data)
+  if (!text && !messageType && !subject) return null
+
+  return {
+    id: String(
+      data.whatsapp_api_message_id ||
+      data.whatsapp_message_id ||
+      data.meta_social_message_id ||
+      data.meta_message_id ||
+      data.email_message_id ||
+      data.smtp_message_id ||
+      data.message_id ||
+      data.messageId ||
+      data.attribution_record_id ||
+      data.id ||
+      `${event.type}-${event.date}-${index}`
+    ),
+    text: text || getChatMessageTypeLabel(messageType),
+    subject,
+    date: pickChatTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date,
+    direction: normalizeBusinessMessageDirection(data.direction || data.message_direction || data.from_type),
+    status: String(data.status || data.message_status || '').trim(),
+    errorReason: String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim(),
+    transport: String(data.transport || data.channel || data.provider || '').trim()
+  }
+}
+
+const getScheduledChatBubble = (message: ScheduledChatMessage): ContactChatMessage | null => {
+  if (!message?.id || !message.text) return null
+  return {
+    id: `scheduled-${message.id}`,
+    text: message.text,
+    date: message.createdAt || message.updatedAt || new Date().toISOString(),
+    direction: 'outbound',
+    status: message.status || 'scheduled',
+    errorReason: message.errorMessage || '',
+    scheduledAt: message.scheduledAt,
+    scheduledMessageId: message.id,
+    transport: message.transport || message.provider
+  }
+}
+
+const getChatDayKey = (date: string, timeZone: string) => {
+  const value = new Date(date)
+  if (Number.isNaN(value.getTime())) return 'unknown'
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
+}
+
+const getChatDayLabel = (date: string, timeZone: string) => {
+  const key = getChatDayKey(date, timeZone)
+  const todayKey = getChatDayKey(new Date().toISOString(), timeZone)
+  const yesterday = new Date()
+  yesterday.setDate(yesterday.getDate() - 1)
+  const yesterdayKey = getChatDayKey(yesterday.toISOString(), timeZone)
+
+  if (key === todayKey) return 'Hoy'
+  if (key === yesterdayKey) return 'Ayer'
+
+  const value = new Date(date)
+  if (Number.isNaN(value.getTime())) return 'Sin fecha'
+  return new Intl.DateTimeFormat('es-MX', { timeZone, day: 'numeric', month: 'short', year: 'numeric' }).format(value).replace('.', '')
+}
+
+const getChatTimeLabel = (date: string, timeZone: string) => {
+  const value = new Date(date)
+  if (Number.isNaN(value.getTime())) return ''
+  return new Intl.DateTimeFormat('es-MX', { timeZone, hour: 'numeric', minute: '2-digit', hour12: true }).format(value)
+}
+
+const isScheduledContactChatMessage = (message: ContactChatMessage) =>
+  String(message.status || '').trim().toLowerCase() === 'scheduled' || Boolean(message.scheduledAt && message.scheduledMessageId)
 
 const toDateTimeLocalInputValue = (date: Date) => {
   const pad = (value: number) => String(value).padStart(2, '0')
@@ -286,7 +486,15 @@ export function ContactDetailsModal({
   onUpdatePreferredWhatsAppPhoneNumber
 }: ContactDetailsModalProps) {
   const [selectedContact, setSelectedContact] = useState<ContactDetail | null>(null)
+  const chatEndRef = useRef<HTMLDivElement | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [chatMessages, setChatMessages] = useState<ContactChatMessage[]>([])
+  const [chatLoading, setChatLoading] = useState(false)
+  const [chatError, setChatError] = useState('')
+  const [chatDraft, setChatDraft] = useState('')
+  const [chatSending, setChatSending] = useState(false)
+  const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
+  const [whatsappStatusLoading, setWhatsappStatusLoading] = useState(false)
   const [paymentsExpanded, setPaymentsExpanded] = useState(false)
   const [refundsExpanded, setRefundsExpanded] = useState(false)
   const [appointmentsExpanded, setAppointmentsExpanded] = useState(false)
@@ -326,6 +534,13 @@ export function ContactDetailsModal({
     } else if (!isOpen) {
       setSelectedContact(null)
       setSearchQuery('')
+      setChatMessages([])
+      setChatLoading(false)
+      setChatError('')
+      setChatDraft('')
+      setChatSending(false)
+      setWhatsappStatus(null)
+      setWhatsappStatusLoading(false)
       setPaymentsExpanded(false)
       setRefundsExpanded(false)
       setAppointmentsExpanded(false)
@@ -359,6 +574,11 @@ export function ContactDetailsModal({
     setAppointmentsExpanded(false)
     setCustomFieldsExpanded(false)
     setAutomationsExpanded(false)
+    setChatMessages([])
+    setChatLoading(false)
+    setChatError('')
+    setChatDraft('')
+    setChatSending(false)
     setCustomFieldDrafts({})
     setSavingCustomField(null)
     setCustomFieldError(null)
@@ -384,6 +604,84 @@ export function ContactDetailsModal({
     if (!selectedContact) return
     setCustomFieldDrafts(buildCustomFieldDrafts(visibleCustomFields))
   }, [selectedContact?.id, visibleCustomFields])
+
+  const loadContactChat = useCallback(async (contactId: string, options: { silent?: boolean } = {}) => {
+    if (!contactId) return
+    const silent = options.silent === true
+    if (!silent) setChatLoading(true)
+    setChatError('')
+
+    try {
+      const [journey, scheduledMessages] = await Promise.all([
+        contactsService.getContactJourney(contactId, { includeBusinessMessages: true }),
+        whatsappApiService.getScheduledMessages(contactId).catch(() => [] as ScheduledChatMessage[])
+      ])
+      const journeyMessages = journey
+        .map(getJourneyChatMessage)
+        .filter((message): message is ContactChatMessage => Boolean(message))
+      const scheduledBubbles = scheduledMessages
+        .map(getScheduledChatBubble)
+        .filter((message): message is ContactChatMessage => Boolean(message))
+
+      setChatMessages([...journeyMessages, ...scheduledBubbles].sort((left, right) => Date.parse(left.date) - Date.parse(right.date)))
+    } catch {
+      if (!silent) {
+        setChatMessages([])
+        setChatError('No se pudo cargar la conversacion.')
+      }
+    } finally {
+      if (!silent) setChatLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    let cancelled = false
+    setWhatsappStatusLoading(true)
+
+    whatsappApiService.getStatus()
+      .then((status) => {
+        if (!cancelled) setWhatsappStatus(status)
+      })
+      .catch(() => {
+        if (!cancelled) setWhatsappStatus(null)
+      })
+      .finally(() => {
+        if (!cancelled) setWhatsappStatusLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen])
+
+  useEffect(() => {
+    const contactId = selectedContact?.id
+    if (!isOpen || !contactId) {
+      setChatMessages([])
+      return
+    }
+
+    void loadContactChat(contactId)
+  }, [isOpen, loadContactChat, selectedContact?.id])
+
+  useEffect(() => {
+    const contactId = selectedContact?.id
+    if (!isOpen || !contactId) return
+
+    return subscribeToChatLiveEvents({
+      onMessage: (event) => {
+        if (!event?.contactId || event.contactId === contactId) {
+          void loadContactChat(contactId, { silent: true })
+        }
+      }
+    })
+  }, [isOpen, loadContactChat, selectedContact?.id])
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ block: 'end' })
+  }, [chatLoading, chatMessages])
 
   const preparedContactSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
   const contactSearchIndexes = useMemo(() => {
@@ -682,6 +980,106 @@ export function ContactDetailsModal({
   const pastAutomationItems = automationActivity?.past || []
   const automationActivityCount = activeAutomationItems.length + pastAutomationItems.length
   const automationInputMin = useMemo(() => toDateTimeLocalInputValue(new Date()), [enrollModalOpen])
+  const availableWhatsAppPhones = useMemo<ContactChatPhoneOption[]>(() => {
+    const statusPhones = whatsappStatus?.phoneNumbers || []
+    return statusPhones.length > 0 ? statusPhones : whatsappPhoneNumbers
+  }, [whatsappPhoneNumbers, whatsappStatus?.phoneNumbers])
+  const selectedBusinessPhone = useMemo<ContactChatPhoneOption | null>(() => {
+    const preferredId = getPreferredWhatsAppPhoneNumberId(selectedContact)
+    if (preferredId) {
+      const preferredPhone = availableWhatsAppPhones.find((phone) => phone.id === preferredId)
+      if (preferredPhone) return preferredPhone
+    }
+
+    return availableWhatsAppPhones.find((phone) => phone.is_default_sender) ||
+      whatsappStatus?.selectedPhone ||
+      availableWhatsAppPhones[0] ||
+      null
+  }, [availableWhatsAppPhones, selectedContact, whatsappStatus?.selectedPhone])
+  const selectedBusinessPhoneValue = getWhatsAppPhoneValue(selectedBusinessPhone) || whatsappStatus?.sender?.phone || ''
+  const chatMessageGroups = useMemo(() => {
+    const groups: Array<{ key: string; label: string; messages: ContactChatMessage[] }> = []
+    chatMessages.forEach((message) => {
+      const key = getChatDayKey(message.date, timezone)
+      const current = groups[groups.length - 1]
+      if (!current || current.key !== key) {
+        groups.push({ key, label: getChatDayLabel(message.date, timezone), messages: [message] })
+        return
+      }
+      current.messages.push(message)
+    })
+    return groups
+  }, [chatMessages, timezone])
+  const chatComposerHint = !selectedContact
+    ? ''
+    : !selectedContact.phone
+    ? 'Este contacto no tiene telefono guardado.'
+    : whatsappStatusLoading
+    ? 'Revisando WhatsApp...'
+    : !whatsappStatus?.connected
+    ? 'Conecta WhatsApp API para responder desde este modal.'
+    : !selectedBusinessPhoneValue
+    ? 'Elige un numero de WhatsApp para responder.'
+    : ''
+  const canSendChatMessage = Boolean(
+    selectedContact?.id &&
+    selectedContact.phone &&
+    whatsappStatus?.connected &&
+    selectedBusinessPhoneValue &&
+    chatDraft.trim() &&
+    !chatSending
+  )
+
+  const sendContactChatMessage = async () => {
+    if (!selectedContact || !canSendChatMessage) return
+
+    const text = chatDraft.trim()
+    const optimisticId = `contact-modal-chat-${Date.now()}`
+    const sentAt = new Date().toISOString()
+    const optimisticMessage: ContactChatMessage = {
+      id: optimisticId,
+      text,
+      date: sentAt,
+      direction: 'outbound',
+      status: 'enviando',
+      transport: 'api'
+    }
+
+    setChatSending(true)
+    setChatDraft('')
+    setChatMessages((current) => [...current, optimisticMessage])
+
+    try {
+      const result = await whatsappApiService.sendText({
+        to: selectedContact.phone || '',
+        from: selectedBusinessPhoneValue,
+        contactId: selectedContact.id,
+        text,
+        externalId: optimisticId,
+        transport: 'api',
+        phoneNumberId: selectedBusinessPhone?.id || undefined
+      })
+
+      setChatMessages((current) => current.map((message) => message.id === optimisticId
+        ? {
+            ...message,
+            status: result.status || 'sent',
+            transport: result.transport || message.transport
+          }
+        : message
+      ))
+      await loadContactChat(selectedContact.id, { silent: true })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Intenta enviar el mensaje otra vez.'
+      setChatMessages((current) => current.map((item) => item.id === optimisticId
+        ? { ...item, status: 'error', errorReason: message }
+        : item
+      ))
+      setChatDraft(text)
+    } finally {
+      setChatSending(false)
+    }
+  }
 
   const describeAutomationActivityItem = (item: ContactAutomationActivityItem) => {
     if (item.kind === 'scheduled') {
@@ -736,12 +1134,125 @@ export function ContactDetailsModal({
     )
   }
 
+  const renderContactChatPanel = () => {
+    if (!selectedContact) return null
+
+    return (
+      <section className={styles.contactChatPanel} aria-label={`Chat con ${getContactDisplayName(selectedContact)}`}>
+        <header className={styles.contactChatHeader}>
+          <div className={styles.contactChatTitle}>
+            {renderContactAvatar(selectedContact, styles.contactChatAvatar)}
+            <div>
+              <h4>Chat</h4>
+              <p>{getContactDetailLabel(selectedContact)}</p>
+            </div>
+          </div>
+          <span className={styles.contactChatRoute}>
+            {selectedBusinessPhone ? getContactChatPhoneLabel(selectedBusinessPhone) : 'WhatsApp'}
+          </span>
+        </header>
+
+        <div className={styles.contactChatMessages}>
+          {chatLoading ? (
+            <div className={styles.contactChatState} role="status" aria-live="polite">
+              <Loader2 size={18} className={styles.spinIcon} aria-hidden="true" />
+            </div>
+          ) : chatError ? (
+            <div className={styles.contactChatState}>
+              <CircleAlert size={18} aria-hidden="true" />
+              <span>{chatError}</span>
+              <Button variant="secondary" size="sm" onClick={() => { void loadContactChat(selectedContact.id) }}>
+                Reintentar
+              </Button>
+            </div>
+          ) : chatMessages.length === 0 ? (
+            <div className={styles.contactChatEmpty}>
+              <MessageCircle size={22} aria-hidden="true" />
+              <strong>Sin mensajes todavía</strong>
+              <span>Escribe abajo para empezar la conversación con este contacto.</span>
+            </div>
+          ) : (
+            chatMessageGroups.map((group) => (
+              <div key={group.key} className={styles.contactChatGroup}>
+                <div className={styles.contactChatDay}>{group.label}</div>
+                {group.messages.map((message) => (
+                  <article
+                    key={message.id}
+                    className={`${styles.contactChatBubble} ${
+                      message.direction === 'outbound'
+                        ? styles.contactChatOutbound
+                        : message.direction === 'system'
+                        ? styles.contactChatSystem
+                        : styles.contactChatInbound
+                    } ${isScheduledContactChatMessage(message) ? styles.contactChatScheduled : ''}`}
+                  >
+                    {message.subject ? <strong className={styles.contactChatSubject}>{message.subject}</strong> : null}
+                    {message.text ? <p>{message.text}</p> : null}
+                    {message.errorReason ? <small className={styles.contactChatError}>{message.errorReason}</small> : null}
+                    {message.scheduledAt ? (
+                      <small className={styles.contactChatScheduledText}>
+                        Programado para {formatLocalDateTime(message.scheduledAt)}
+                      </small>
+                    ) : null}
+                    <small className={styles.contactChatMeta}>
+                      {message.status === 'error' ? <CircleAlert size={12} aria-hidden="true" /> : null}
+                      <span>{getChatTimeLabel(message.date, timezone)}</span>
+                      {message.transport ? <em>{message.transport}</em> : null}
+                      {message.direction === 'outbound' && message.status !== 'error' ? <CheckCheck size={13} aria-hidden="true" /> : null}
+                    </small>
+                  </article>
+                ))}
+              </div>
+            ))
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        <form
+          className={styles.contactChatComposer}
+          data-enter-submit-ignore
+          onSubmit={(event) => {
+            event.preventDefault()
+            void sendContactChatMessage()
+          }}
+        >
+          {chatComposerHint ? <span className={styles.contactChatHint}>{chatComposerHint}</span> : null}
+          <textarea
+            data-ristak-unstyled
+            value={chatDraft}
+            onChange={(event) => setChatDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                if (canSendChatMessage) void sendContactChatMessage()
+              }
+            }}
+            placeholder="Escribe una respuesta..."
+            rows={1}
+            disabled={chatSending}
+          />
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            className={styles.contactChatSendButton}
+            loading={chatSending}
+            disabled={!canSendChatMessage}
+            aria-label="Enviar mensaje"
+          >
+            <Send size={16} />
+          </Button>
+        </form>
+      </section>
+    )
+  }
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       title=""
-      size="lg"
+      size={data.length === 1 ? 'xl' : 'lg'}
       showCloseButton={false}
       flushContent
     >
@@ -772,7 +1283,7 @@ export function ContactDetailsModal({
         </div>
 
         {/* Main content */}
-        <div className={styles.mainContent}>
+        <div className={`${styles.mainContent} ${selectedContact && data.length === 1 ? styles.mainContentWithChat : ''}`}>
           {/* Left panel - Lista de contactos.
               Con un solo contacto no tiene sentido el buscador ni la lista:
               se oculta y la ficha ocupa todo el ancho. */}
@@ -827,9 +1338,7 @@ export function ContactDetailsModal({
                       onClick={() => setSelectedContact(contact)}
                       className={`${styles.contactItem} ${selectedContact?.id === contact.id ? styles.contactItemSelected : ''}`}
                     >
-                      <div className={styles.contactAvatar}>
-                        <Icon name="user" size={16} />
-                      </div>
+                      {renderContactAvatar(contact, styles.contactAvatar)}
 
                       <div className={styles.contactInfo}>
                         <p className={styles.contactName}>
@@ -871,119 +1380,118 @@ export function ContactDetailsModal({
 
           {/* Right panel - Detalles del contacto */}
           {selectedContact && (
-            <div className={styles.rightPanel}>
-              {/* Contact header */}
-              <div className={styles.contactHeader}>
-                <div className={styles.contactHeaderAvatar}>
-                  <Icon name="user" size={20} />
-                </div>
-                <div className={styles.contactHeaderInfo}>
-                  <div className={styles.contactHeaderNameRow}>
-                    <InlineEditableText
-                      className={styles.contactHeaderName}
-                      value={selectedContact.name || ''}
-                      emptyLabel="Sin nombre"
-                      ariaLabel="Editar nombre del contacto"
-                      disabled={!onUpdateContact}
-                      onSave={(value) => saveContactIdentityField('name', value)}
-                    />
-                    {(() => {
-                      const badge = resolveContactBadge(selectedContact)
-                      return badge ? (
-                        <Badge variant={badge.variant} className={styles.contactHeaderBadge}>
-                          {badge.text}
-                        </Badge>
-                      ) : null
-                    })()}
+            <>
+              <div className={`${styles.rightPanel} ${data.length === 1 ? styles.singleContactInfoPanel : ''}`}>
+                {/* Contact header */}
+                <div className={styles.contactHeader}>
+                  {renderContactAvatar(selectedContact, styles.contactHeaderAvatar)}
+                  <div className={styles.contactHeaderInfo}>
+                    <div className={styles.contactHeaderNameRow}>
+                      <InlineEditableText
+                        className={styles.contactHeaderName}
+                        value={selectedContact.name || ''}
+                        emptyLabel="Sin nombre"
+                        ariaLabel="Editar nombre del contacto"
+                        disabled={!onUpdateContact}
+                        onSave={(value) => saveContactIdentityField('name', value)}
+                      />
+                      {(() => {
+                        const badge = resolveContactBadge(selectedContact)
+                        return badge ? (
+                          <Badge variant={badge.variant} className={styles.contactHeaderBadge}>
+                            {badge.text}
+                          </Badge>
+                        ) : null
+                      })()}
+                    </div>
+                    {(selectedContact.email || selectedContact.phone) && (
+                      <div className={styles.contactHeaderMeta}>
+                        {selectedContact.email && (
+                          <InlineEditableText
+                            value={selectedContact.email}
+                            ariaLabel="Editar correo del contacto"
+                            type="email"
+                            inputMode="email"
+                            disabled={!onUpdateContact}
+                            onSave={(value) => saveContactIdentityField('email', value)}
+                          />
+                        )}
+                        {selectedContact.email && selectedContact.phone && (
+                          <span className={styles.metaSeparator}>/</span>
+                        )}
+                        {selectedContact.phone && (
+                          <InlineEditableText
+                            value={selectedContact.phone}
+                            ariaLabel="Editar teléfono del contacto"
+                            type="tel"
+                            inputMode="tel"
+                            disabled={!onUpdateContact}
+                            onSave={(value) => saveContactIdentityField('phone', value)}
+                          />
+                        )}
+                      </div>
+                    )}
                   </div>
-                  {(selectedContact.email || selectedContact.phone) && (
-                    <div className={styles.contactHeaderMeta}>
-                      {selectedContact.email && (
+                </div>
+
+                {/* Contact details */}
+                <div className={styles.contactDetails}>
+                  {/* Información básica */}
+                  <div className={styles.detailSection}>
+                    <h5 className={styles.detailSectionTitle}>
+                      Información de Contacto
+                    </h5>
+                    <div className={styles.detailSectionContent}>
+                      <div className={styles.detailItem}>
+                        <Icon name="mail" size={16} />
                         <InlineEditableText
-                          value={selectedContact.email}
+                          value={selectedContact.email || ''}
+                          emptyLabel="Sin correo"
                           ariaLabel="Editar correo del contacto"
                           type="email"
                           inputMode="email"
                           disabled={!onUpdateContact}
                           onSave={(value) => saveContactIdentityField('email', value)}
                         />
-                      )}
-                      {selectedContact.email && selectedContact.phone && (
-                        <span className={styles.metaSeparator}>/</span>
-                      )}
-                      {selectedContact.phone && (
+                      </div>
+                      <div className={styles.detailItem}>
+                        <Icon name="phone" size={16} />
                         <InlineEditableText
-                          value={selectedContact.phone}
+                          value={selectedContact.phone || ''}
+                          emptyLabel="Sin teléfono"
                           ariaLabel="Editar teléfono del contacto"
                           type="tel"
                           inputMode="tel"
                           disabled={!onUpdateContact}
                           onSave={(value) => saveContactIdentityField('phone', value)}
                         />
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Contact details */}
-              <div className={styles.contactDetails}>
-                {/* Información básica */}
-                <div className={styles.detailSection}>
-                  <h5 className={styles.detailSectionTitle}>
-                    Información de Contacto
-                  </h5>
-                  <div className={styles.detailSectionContent}>
-                    <div className={styles.detailItem}>
-                      <Icon name="mail" size={16} />
-                      <InlineEditableText
-                        value={selectedContact.email || ''}
-                        emptyLabel="Sin correo"
-                        ariaLabel="Editar correo del contacto"
-                        type="email"
-                        inputMode="email"
-                        disabled={!onUpdateContact}
-                        onSave={(value) => saveContactIdentityField('email', value)}
-                      />
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Icon name="phone" size={16} />
-                      <InlineEditableText
-                        value={selectedContact.phone || ''}
-                        emptyLabel="Sin teléfono"
-                        ariaLabel="Editar teléfono del contacto"
-                        type="tel"
-                        inputMode="tel"
-                        disabled={!onUpdateContact}
-                        onSave={(value) => saveContactIdentityField('phone', value)}
-                      />
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Icon name="calendar" size={16} />
-                      <span>{formatLocalDateShort(selectedContact.created_at)}</span>
+                      </div>
+                      <div className={styles.detailItem}>
+                        <Icon name="calendar" size={16} />
+                        <span>{formatLocalDateShort(selectedContact.created_at)}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Etiquetas: la interna (según actividad) + las del usuario como chips */}
-                <div className={styles.detailSection}>
-                  <h5 className={styles.detailSectionTitle}>Etiquetas</h5>
-                  <TagPicker
-                    multiple
-                    selectedIds={selectedContact.tags || []}
-                    onChange={updateContactTags}
-                    lockedTags={(() => {
-                      const badge = resolveContactBadge(selectedContact)
-                      return badge ? [{ id: 'system', name: badge.text }] : []
-                    })()}
-                    allowCreate
-                    disabled={savingTags || !onUpdateTags}
-                    placeholder="Agregar etiqueta…"
-                    aria-label="Etiquetas del contacto"
-                  />
-                  {savingTags && <p className={styles.whatsappPreferenceHint}>Guardando etiquetas...</p>}
-                  {tagsError && <p className={styles.customFieldError}>{tagsError}</p>}
-                </div>
+                  {/* Etiquetas: la interna (según actividad) + las del usuario como chips */}
+                  <div className={styles.detailSection}>
+                    <h5 className={styles.detailSectionTitle}>Etiquetas</h5>
+                    <TagPicker
+                      multiple
+                      selectedIds={selectedContact.tags || []}
+                      onChange={updateContactTags}
+                      lockedTags={(() => {
+                        const badge = resolveContactBadge(selectedContact)
+                        return badge ? [{ id: 'system', name: badge.text }] : []
+                      })()}
+                      allowCreate
+                      disabled={savingTags || !onUpdateTags}
+                      placeholder="Agregar etiqueta…"
+                      aria-label="Etiquetas del contacto"
+                    />
+                    {savingTags && <p className={styles.whatsappPreferenceHint}>Guardando etiquetas...</p>}
+                    {tagsError && <p className={styles.customFieldError}>{tagsError}</p>}
+                  </div>
 
                 {whatsappPhoneNumbers.length > 0 && (
                   <div className={styles.detailSection}>
@@ -1516,7 +2024,9 @@ export function ContactDetailsModal({
                   <ContactJourney contactId={selectedContact.id} />
                 </div>
               </div>
-            </div>
+              </div>
+              {data.length === 1 ? renderContactChatPanel() : null}
+            </>
           )}
         </div>
 

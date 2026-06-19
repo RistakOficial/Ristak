@@ -34,6 +34,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import styles from './Contacts.module.css'
 import { dedupeContacts } from '@/utils/contactDedup'
+import { getContactAvatarUrl, getContactDisplayName, getContactInitials } from '@/utils/contactAvatar'
 import { getContactStageBadge, isAttendedAppointmentStatus } from '@/utils/contactStageBadge'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import {
@@ -283,6 +284,16 @@ const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
 
 const cleanColumnValue = (value: unknown) => String(value ?? '').trim()
 
+const renderContactAvatar = (contact: Contact, className: string) => {
+  const avatarUrl = getContactAvatarUrl(contact)
+
+  return (
+    <span className={className} aria-hidden="true">
+      {avatarUrl ? <img src={avatarUrl} alt="" /> : getContactInitials(contact)}
+    </span>
+  )
+}
+
 const createTagLabelMap = (tags: Array<{ id?: string; name?: string }>) => {
   const labels: Record<string, string> = {}
 
@@ -409,6 +420,11 @@ const mergeContactDetailRecords = (
     if (!merged.name && contact.name) merged.name = contact.name
     if (!merged.email && contact.email) merged.email = contact.email
     if (!merged.phone && contact.phone) merged.phone = contact.phone
+    if (!merged.profilePhotoUrl && contact.profilePhotoUrl) merged.profilePhotoUrl = contact.profilePhotoUrl
+    if (!merged.avatarUrl && contact.avatarUrl) merged.avatarUrl = contact.avatarUrl
+    if (!merged.photoUrl && contact.photoUrl) merged.photoUrl = contact.photoUrl
+    if (!merged.pictureUrl && contact.pictureUrl) merged.pictureUrl = contact.pictureUrl
+    if (!merged.profile_picture_url && contact.profile_picture_url) merged.profile_picture_url = contact.profile_picture_url
     if (!merged.source && contact.source) merged.source = contact.source
     if (!merged.metaAttribution && contact.metaAttribution) merged.metaAttribution = contact.metaAttribution
     if (contact.metaAttribution?.adName) merged.ad_name = contact.metaAttribution.adName
@@ -913,6 +929,11 @@ const ContactsTable: React.FC = () => {
       name: contactData.name,
       email: contactData.email,
       phone: contactData.phone,
+      profilePhotoUrl: contactData.profilePhotoUrl,
+      avatarUrl: contactData.avatarUrl,
+      photoUrl: contactData.photoUrl,
+      pictureUrl: contactData.pictureUrl,
+      profile_picture_url: contactData.profile_picture_url,
       created_at: createdAt,
       ltv: contactData.ltv,
       purchases: contactData.purchases,
@@ -1652,7 +1673,8 @@ const ContactsTable: React.FC = () => {
           className={styles.nameLink}
           onClick={() => openContactModal(item)}
         >
-          {value}
+          {renderContactAvatar(item, styles.contactTableAvatar)}
+          <span className={styles.nameLinkText}>{value || getContactDisplayName(item)}</span>
         </button>
       ),
       sortable: true
