@@ -2009,6 +2009,55 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
   resize: vertical;
 }
 
+.stripeWebhookField {
+  grid-column: 1 / -1;
+}
+
+.stripeWebhookEndpointList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stripeWebhookEndpointRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+}
+
+.stripeWebhookEndpointMeta {
+  min-width: 0;
+}
+
+.stripeWebhookEndpointMeta p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.stripeWebhookEndpointMeta span {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.stripeWebhookEndpointCopy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
 .formGroup,
 .formField,
 .labelField {
@@ -2468,7 +2517,9 @@ textarea.input {
   .labelsGrid,
   .setupSteps,
   .scopesGrid,
-  .calendarConfigGrid {
+  .calendarConfigGrid,
+  .stripeWebhookEndpointRow,
+  .stripeWebhookEndpointCopy {
     grid-template-columns: 1fr;
   }
 

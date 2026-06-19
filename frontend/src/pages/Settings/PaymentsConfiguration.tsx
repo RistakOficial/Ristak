@@ -2,11 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Card, Button, NumberInput } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
-import { ArrowLeft, CheckCircle, Clock, CreditCard, KeyRound, Loader2, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, CheckCircle, Clock, Copy, CreditCard, KeyRound, Loader2, ShieldCheck } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
 import { invalidateIntegrationsStatus } from '@/services/integrationsService'
-import { stripePaymentsService, type StripePaymentConfig } from '@/services/stripePaymentsService'
+import { stripePaymentsService, type StripePaymentConfig, type StripeWebhookEndpoint } from '@/services/stripePaymentsService'
 import styles from './HighLevelIntegration.module.css'
 
 type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip' | 'gigstacK'
@@ -64,6 +64,32 @@ const parsePaymentGatewayRoute = (pathname: string) => {
   const paymentsIndex = segments.indexOf('payments')
   const gateway = paymentsIndex >= 0 ? segments[paymentsIndex + 1] : ''
   return isPaymentGatewayId(gateway) ? gateway : ''
+}
+
+async function copyTextToClipboard(text: string) {
+  if (!text) return false
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // Continúa con fallback por selección.
+    }
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.top = '0'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  const copied = document.execCommand('copy')
+  textarea.remove()
+  return copied
 }
 
 export const PaymentsConfiguration: React.FC = () => {
@@ -142,6 +168,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const selectedGatewayOption = allGatewayOptions.find((gateway) => gateway.id === selectedGateway)
   const showHighLevelSettings = highLevelConnected && selectedGateway === 'highlevel'
   const showStripeSettings = selectedGateway === 'stripe'
+  const stripeWebhookEndpoints = stripeConfig?.webhookEndpoints || []
   const pageTitle = isGatewayDetail && selectedGatewayOption ? selectedGatewayOption.name : 'Pagos'
   const pageSubtitle = isGatewayDetail && selectedGatewayOption
     ? selectedGatewayOption.description
@@ -256,6 +283,16 @@ export const PaymentsConfiguration: React.FC = () => {
     } finally {
       setTestingStripeConfig(false)
     }
+  }
+
+  const handleCopyStripeWebhookEndpoint = async (endpoint: StripeWebhookEndpoint) => {
+    const copied = await copyTextToClipboard(endpoint.url)
+    if (copied) {
+      showToast('success', 'Endpoint copiado', `Copiaste el webhook de ${endpoint.label}.`)
+      return
+    }
+
+    showToast('error', 'No se pudo copiar', endpoint.url)
   }
 
   const handleSelectGateway = (gateway: PaymentGatewayOption) => {
@@ -488,6 +525,41 @@ export const PaymentsConfiguration: React.FC = () => {
                   <p className={styles.hint}>Se guarda cifrada y sólo la usa el backend para crear PaymentIntents.</p>
                 </div>
 
+                <div className={`${styles.formField} ${styles.stripeWebhookField}`}>
+                  <label className={styles.label}>Endpoint URL para Stripe</label>
+                  <div className={styles.stripeWebhookEndpointList}>
+                    {stripeWebhookEndpoints.map((endpoint) => (
+                      <div key={endpoint.url} className={styles.stripeWebhookEndpointRow}>
+                        <div className={styles.stripeWebhookEndpointMeta}>
+                          <p>{endpoint.label}</p>
+                          <span>{endpoint.description}</span>
+                        </div>
+                        <div className={styles.stripeWebhookEndpointCopy}>
+                          <input
+                            type="text"
+                            readOnly
+                            value={endpoint.url}
+                            className={styles.input}
+                            onFocus={(event) => event.target.select()}
+                            aria-label={`Endpoint URL de ${endpoint.label}`}
+                          />
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => handleCopyStripeWebhookEndpoint(endpoint)}
+                          >
+                            <Copy size={16} />
+                            Copiar
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className={styles.hint}>
+                    En Stripe pega una de estas URLs en Developers → Webhooks como Endpoint URL y escucha `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.processing` y `payment_intent.canceled`.
+                  </p>
+                </div>
+
                 <div className={styles.formField}>
                   <label className={styles.label}>Webhook signing secret</label>
                   <input
@@ -499,7 +571,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     autoComplete="new-password"
                     spellCheck={false}
                   />
-                  <p className={styles.hint}>Configura en Stripe un webhook hacia `/api/stripe/webhook` para marcar pagos como pagados automáticamente.</p>
+                  <p className={styles.hint}>Después de crear el endpoint en Stripe, copia aquí el signing secret para validar eventos reales.</p>
                 </div>
               </div>
 

@@ -11,6 +11,15 @@ export interface StripePaymentConfig {
   secretKeyPreview?: string
   hasWebhookSecret: boolean
   webhookSecretPreview?: string
+  webhookEndpointPath?: string
+  webhookEndpoints?: StripeWebhookEndpoint[]
+}
+
+export interface StripeWebhookEndpoint {
+  source: 'render' | 'configured' | 'app_domain' | 'current_request' | string
+  label: string
+  description: string
+  url: string
 }
 
 export interface SaveStripePaymentConfigPayload {
