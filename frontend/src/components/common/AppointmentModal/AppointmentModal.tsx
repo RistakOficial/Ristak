@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { TabList } from '../TabList';
@@ -2057,45 +2056,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       </div>
     </Modal>
 
-    {/* Modal de confirmación de eliminación */}
-    {isClient && showDeleteConfirm && createPortal(
-      <div className={styles.deleteModalOverlay} onClick={() => setShowDeleteConfirm(false)}>
-        <div className={styles.deleteModal} onClick={(e) => e.stopPropagation()}>
-          <div className={styles.deleteModalHeader}>
-            <h2>¿Estás seguro?</h2>
-            <button
-              className={styles.closeButton}
-              onClick={() => setShowDeleteConfirm(false)}
-              disabled={isSaving}
-            >
-              <X size={20} />
-            </button>
-          </div>
-          <p>
-            ¿Deseas eliminar la cita <strong>{formData.title || event?.title || 'Sin título'}</strong>?
-            Esta acción no se puede deshacer.
-          </p>
-          <div className={styles.deleteModalActions}>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setShowDeleteConfirm(false)}
-              disabled={isSaving}
-            >
-              Cancelar
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleConfirmDelete}
-              disabled={isSaving}
-            >
-              {isSaving ? 'Eliminando...' : 'Eliminar'}
-            </Button>
-          </div>
-        </div>
-      </div>,
-      document.body
-    )}
-    </>
-  );
+    <Modal
+      isOpen={isClient && showDeleteConfirm}
+      onClose={() => setShowDeleteConfirm(false)}
+      title="¿Estás seguro?"
+      message={`¿Deseas eliminar la cita ${formData.title || event?.title || 'Sin título'}? Esta acción no se puede deshacer.`}
+      type="confirm"
+      confirmText="Eliminar"
+      cancelText="Cancelar"
+      onConfirm={handleConfirmDelete}
+    />
+  </>
+);
 };

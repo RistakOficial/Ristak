@@ -1021,59 +1021,6 @@
   }
 }
 
-/* Modal de confirmación de eliminación */
-.deleteModalOverlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: var(--z-index-modal);
-}
-
-.deleteModal {
-  background-color: var(--surface-solid, var(--color-background));
-  border-radius: var(--radius-lg);
-  padding: var(--spacing-xl);
-  max-width: 500px;
-  width: 90%;
-}
-
-.deleteModalHeader {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-lg);
-}
-
-.deleteModal h2 {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-  margin: 0;
-}
-
-.deleteModal p {
-  color: var(--color-text-secondary);
-  margin-bottom: var(--spacing-lg);
-  line-height: 1.5;
-}
-
-.deleteModal p strong {
-  color: var(--color-text-primary);
-  font-weight: var(--font-weight-semibold);
-}
-
-.deleteModalActions {
-  display: flex;
-  gap: var(--spacing-md);
-  justify-content: flex-end;
-}
-
 /* Texto de ayuda */
 .helpText {
   font-size: 0.75rem;

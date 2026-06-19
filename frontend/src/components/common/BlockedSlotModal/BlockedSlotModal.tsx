@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { DateTimePicker } from '../DateTimePicker';
@@ -736,40 +735,16 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       </div>
     </Modal>
 
-    {/* Modal de confirmación de eliminación */}
-    {isClient && showDeleteConfirm && createPortal(
-      <div className={styles.deleteModalOverlay} onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          setShowDeleteConfirm(false);
-        }
-      }}>
-        <div className={styles.deleteModal}>
-          <div className={styles.deleteModalHeader}>
-            <h3>Confirmar eliminación</h3>
-          </div>
-          <p>¿Estás seguro de que deseas eliminar este horario bloqueado? Esta acción no se puede deshacer.</p>
-          <div className={styles.deleteModalActions}>
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setShowDeleteConfirm(false)}
-              disabled={isSaving}
-            >
-              Cancelar
-            </Button>
-            <Button
-              variant="danger"
-              size="md"
-              onClick={handleConfirmDelete}
-              disabled={isSaving}
-            >
-              {isSaving ? 'Eliminando...' : 'Eliminar'}
-            </Button>
-          </div>
-        </div>
-      </div>,
-      document.body
-    )}
-    </>
-  );
+    <Modal
+      isOpen={isClient && showDeleteConfirm}
+      onClose={() => setShowDeleteConfirm(false)}
+      title="Confirmar eliminación"
+      message="¿Estás seguro de que deseas eliminar este horario bloqueado? Esta acción no se puede deshacer."
+      type="confirm"
+      confirmText="Eliminar"
+      cancelText="Cancelar"
+      onConfirm={handleConfirmDelete}
+    />
+  </>
+);
 };
