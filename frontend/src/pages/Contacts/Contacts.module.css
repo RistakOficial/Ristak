@@ -131,7 +131,7 @@
 
 .nameLink:hover {
   color: var(--color-text-primary);
-  text-decoration: underline;
+  text-decoration: none;
 }
 
 .contactTableAvatar {
@@ -149,6 +149,14 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   line-height: 1;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.nameLink:hover .contactTableAvatar,
+.nameLink:focus-visible .contactTableAvatar {
+  border-color: var(--accent);
+  box-shadow: 0 3px 0 var(--accent);
+  transform: translateY(-1px);
 }
 
 .contactTableAvatar img {

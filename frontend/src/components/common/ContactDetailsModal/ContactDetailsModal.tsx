@@ -1,5 +1,6 @@
-import { useCallback, useState, useMemo, useEffect, useRef } from 'react'
-import { CheckCheck, CircleAlert, Loader2, MessageCircle, Send } from 'lucide-react'
+import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
+import { CheckCheck, CircleAlert, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
+import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
 import { Modal, Icon, Badge, Button, CustomSelect, InlineEditableText, TagPicker, type BadgeVariant } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import automationsService, {
@@ -8,6 +9,8 @@ import automationsService, {
   type ContactAutomationActivityItem
 } from '@/services/automationsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import { emailService } from '@/services/emailService'
+import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import {
   whatsappApiService,
   type ScheduledChatMessage,
@@ -83,6 +86,9 @@ interface ContactDetail {
   firstAppointmentDate?: string | null
   nextAppointmentDate?: string | null
   source?: string | null
+  attribution_session_source?: string | null
+  whatsappAttributionPlatform?: string | null
+  attribution_medium?: string | null
   ad_name?: string | null
   ad_id?: string | null
   campaign_id?: string | null
@@ -114,6 +120,7 @@ interface WhatsAppPhoneOption {
 }
 
 type ContactChatPhoneOption = WhatsAppPhoneOption | WhatsAppApiPhoneNumber
+type ContactChatComposerChannel = 'whatsapp' | 'email' | 'messenger' | 'instagram' | 'none'
 
 interface ContactChatMessage {
   id: string
@@ -126,6 +133,7 @@ interface ContactChatMessage {
   scheduledAt?: string
   scheduledMessageId?: string
   transport?: string
+  channel?: ContactChatComposerChannel
 }
 
 interface ContactDetailsModalProps {
@@ -166,6 +174,106 @@ const getWhatsAppPhoneValue = (phone?: ContactChatPhoneOption | null) =>
 
 const getContactChatPhoneLabel = (phone?: ContactChatPhoneOption | null) =>
   phone?.label || phone?.verified_name || getWhatsAppPhoneValue(phone) || 'WhatsApp'
+
+const CONTACT_CHAT_CHANNEL_LABELS: Record<ContactChatComposerChannel, string> = {
+  whatsapp: 'WhatsApp',
+  email: 'Correo',
+  messenger: 'Messenger',
+  instagram: 'Instagram',
+  none: 'Sin canal'
+}
+
+const getRecordValue = (record: Record<string, unknown>, key: string) => record[key]
+
+const stringifyChannelProbeValue = (value: unknown): string => {
+  if (value === null || value === undefined) return ''
+  if (Array.isArray(value)) return value.map(stringifyChannelProbeValue).filter(Boolean).join(' ')
+  if (typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).map(stringifyChannelProbeValue).filter(Boolean).join(' ')
+  }
+  return String(value)
+}
+
+const buildChannelProbe = (values: unknown[]) =>
+  values.map(stringifyChannelProbeValue).filter(Boolean).join(' ').toLowerCase()
+
+const inferContactChatChannel = (value?: unknown): ContactChatComposerChannel | '' => {
+  const normalized = buildChannelProbe([value])
+  if (!normalized) return ''
+  if (normalized.includes('instagram') || normalized.includes('ig_direct') || normalized.includes('ig_dm')) return 'instagram'
+  if (normalized.includes('messenger') || normalized.includes('facebook') || normalized.includes('fb_')) return 'messenger'
+  if (normalized.includes('email') || normalized.includes('mail') || normalized.includes('smtp') || normalized.includes('correo')) return 'email'
+  if (normalized.includes('whatsapp') || normalized.includes('wa_') || normalized.includes('waapi') || normalized.includes('ycloud') || normalized.includes('ctwa')) return 'whatsapp'
+  return ''
+}
+
+const getContactDetectedSocialChannels = (contact?: ContactDetail | null, messages: ContactChatMessage[] = []) => {
+  const channels = new Set<ContactChatComposerChannel>()
+  if (!contact) return channels
+
+  const record = contact as unknown as Record<string, unknown>
+  const directProbe = buildChannelProbe([
+    getRecordValue(record, 'lastMessageChannel'),
+    getRecordValue(record, 'lastMessageTransport'),
+    getRecordValue(record, 'lastMessageProvider'),
+    getRecordValue(record, 'conversationChannel'),
+    getRecordValue(record, 'lastChannel'),
+    getRecordValue(record, 'channel'),
+    getRecordValue(record, 'source'),
+    getRecordValue(record, 'attribution_session_source'),
+    getRecordValue(record, 'whatsappAttributionPlatform'),
+    getRecordValue(record, 'attribution_medium'),
+    getRecordValue(record, 'attribution_source'),
+    contact.firstSession?.utm_source,
+    contact.firstSession?.source_platform,
+    contact.firstSession?.placement
+  ])
+
+  const directChannel = inferContactChatChannel(directProbe)
+  if (directChannel) channels.add(directChannel)
+
+  contact.customFields?.forEach((field) => {
+    const fieldChannel = inferContactChatChannel([
+      field.id,
+      field.key,
+      field.fieldKey,
+      field.label,
+      field.name,
+      field.value
+    ])
+    if (fieldChannel) channels.add(fieldChannel)
+  })
+
+  messages.forEach((message) => {
+    const messageChannel = message.channel || inferContactChatChannel([
+      message.transport,
+      message.subject,
+      message.status
+    ])
+    if (messageChannel) channels.add(messageChannel)
+  })
+
+  return channels
+}
+
+const getContactChatChannelFromValue = (value: string): ContactChatComposerChannel => {
+  if (value.startsWith('whatsapp')) return 'whatsapp'
+  if (value === 'email' || value === 'messenger' || value === 'instagram') return value
+  return 'none'
+}
+
+const getHighLevelChannelForContactChat = (channel: ContactChatComposerChannel): HighLevelChatChannel => {
+  if (channel === 'messenger' || channel === 'instagram') return channel
+  return 'whatsapp_api'
+}
+
+const renderContactChatChannelIcon = (channel: ContactChatComposerChannel) => {
+  if (channel === 'whatsapp') return <FaWhatsapp className={styles.contactChatBrandIcon} aria-hidden="true" />
+  if (channel === 'messenger') return <FaFacebookMessenger className={styles.contactChatBrandIcon} aria-hidden="true" />
+  if (channel === 'instagram') return <FaInstagram className={styles.contactChatBrandIcon} aria-hidden="true" />
+  if (channel === 'email') return <Mail size={18} aria-hidden="true" />
+  return <MessageCircle size={18} aria-hidden="true" />
+}
 
 const renderContactAvatar = (contact: ContactDetail | null | undefined, className: string) => {
   const avatarUrl = getContactAvatarUrl(contact)
@@ -261,6 +369,14 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
   const subject = String(data.subject || '').trim()
   const text = pickChatText(data)
   if (!text && !messageType && !subject) return null
+  const inferredChannel = inferContactChatChannel([
+    data.transport,
+    data.channel,
+    data.provider,
+    data.source,
+    data.platform,
+    event.type
+  ]) || (event.type === 'email_message' ? 'email' : event.type === 'whatsapp_message' ? 'whatsapp' : '')
 
   return {
     id: String(
@@ -282,7 +398,8 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
     direction: normalizeBusinessMessageDirection(data.direction || data.message_direction || data.from_type),
     status: String(data.status || data.message_status || '').trim(),
     errorReason: String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim(),
-    transport: String(data.transport || data.channel || data.provider || '').trim()
+    transport: String(data.transport || data.channel || data.provider || inferredChannel || '').trim(),
+    channel: inferredChannel || undefined
   }
 }
 
@@ -492,9 +609,15 @@ export function ContactDetailsModal({
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState('')
   const [chatDraft, setChatDraft] = useState('')
+  const [chatSubject, setChatSubject] = useState('')
+  const [chatChannelValue, setChatChannelValue] = useState('whatsapp')
   const [chatSending, setChatSending] = useState(false)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [whatsappStatusLoading, setWhatsappStatusLoading] = useState(false)
+  const [emailConnected, setEmailConnected] = useState(false)
+  const [emailStatusLoading, setEmailStatusLoading] = useState(false)
+  const [highLevelConnected, setHighLevelConnected] = useState(false)
+  const [highLevelStatusLoading, setHighLevelStatusLoading] = useState(false)
   const [paymentsExpanded, setPaymentsExpanded] = useState(false)
   const [refundsExpanded, setRefundsExpanded] = useState(false)
   const [appointmentsExpanded, setAppointmentsExpanded] = useState(false)
@@ -538,9 +661,15 @@ export function ContactDetailsModal({
       setChatLoading(false)
       setChatError('')
       setChatDraft('')
+      setChatSubject('')
+      setChatChannelValue('whatsapp')
       setChatSending(false)
       setWhatsappStatus(null)
       setWhatsappStatusLoading(false)
+      setEmailConnected(false)
+      setEmailStatusLoading(false)
+      setHighLevelConnected(false)
+      setHighLevelStatusLoading(false)
       setPaymentsExpanded(false)
       setRefundsExpanded(false)
       setAppointmentsExpanded(false)
@@ -578,6 +707,8 @@ export function ContactDetailsModal({
     setChatLoading(false)
     setChatError('')
     setChatDraft('')
+    setChatSubject('')
+    setChatChannelValue('whatsapp')
     setChatSending(false)
     setCustomFieldDrafts({})
     setSavingCustomField(null)
@@ -639,16 +770,25 @@ export function ContactDetailsModal({
 
     let cancelled = false
     setWhatsappStatusLoading(true)
+    setEmailStatusLoading(true)
+    setHighLevelStatusLoading(true)
 
-    whatsappApiService.getStatus()
-      .then((status) => {
-        if (!cancelled) setWhatsappStatus(status)
-      })
-      .catch(() => {
-        if (!cancelled) setWhatsappStatus(null)
+    Promise.all([
+      whatsappApiService.getStatus().catch(() => null),
+      emailService.getStatus().catch(() => null),
+      highLevelService.getConfig().catch(() => ({ configured: false }))
+    ])
+      .then(([status, emailStatus, highLevelConfig]) => {
+        if (cancelled) return
+        setWhatsappStatus(status)
+        setEmailConnected(Boolean(emailStatus?.connected))
+        setHighLevelConnected(Boolean(highLevelConfig?.configured))
       })
       .finally(() => {
-        if (!cancelled) setWhatsappStatusLoading(false)
+        if (cancelled) return
+        setWhatsappStatusLoading(false)
+        setEmailStatusLoading(false)
+        setHighLevelStatusLoading(false)
       })
 
     return () => {
@@ -985,6 +1125,12 @@ export function ContactDetailsModal({
     return statusPhones.length > 0 ? statusPhones : whatsappPhoneNumbers
   }, [whatsappPhoneNumbers, whatsappStatus?.phoneNumbers])
   const selectedBusinessPhone = useMemo<ContactChatPhoneOption | null>(() => {
+    const routePhoneId = chatChannelValue.startsWith('whatsapp:') ? chatChannelValue.slice('whatsapp:'.length) : ''
+    if (routePhoneId) {
+      const routePhone = availableWhatsAppPhones.find((phone) => phone.id === routePhoneId)
+      if (routePhone) return routePhone
+    }
+
     const preferredId = getPreferredWhatsAppPhoneNumberId(selectedContact)
     if (preferredId) {
       const preferredPhone = availableWhatsAppPhones.find((phone) => phone.id === preferredId)
@@ -995,8 +1141,88 @@ export function ContactDetailsModal({
       whatsappStatus?.selectedPhone ||
       availableWhatsAppPhones[0] ||
       null
-  }, [availableWhatsAppPhones, selectedContact, whatsappStatus?.selectedPhone])
+  }, [availableWhatsAppPhones, chatChannelValue, selectedContact, whatsappStatus?.selectedPhone])
   const selectedBusinessPhoneValue = getWhatsAppPhoneValue(selectedBusinessPhone) || whatsappStatus?.sender?.phone || ''
+  const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
+  const detectedContactChannels = useMemo(
+    () => getContactDetectedSocialChannels(selectedContact, chatMessages),
+    [chatMessages, selectedContact]
+  )
+  const selectedChatChannel = getContactChatChannelFromValue(chatChannelValue)
+  const hasDetectedMessenger = detectedContactChannels.has('messenger')
+  const hasDetectedInstagram = detectedContactChannels.has('instagram')
+  const channelStatusLoading = whatsappStatusLoading || emailStatusLoading || highLevelStatusLoading
+  const whatsappApiSourcesAvailable = Boolean(whatsappStatus?.connected && availableWhatsAppPhones.some((phone) => getWhatsAppPhoneValue(phone)))
+  const chatChannelOptions = useMemo<Array<{ value: string; label: string; disabled?: boolean; icon: ReactNode }>>(() => {
+    if (!selectedContact) {
+      return [{ value: 'none', label: CONTACT_CHAT_CHANNEL_LABELS.none, disabled: true, icon: renderContactChatChannelIcon('none') }]
+    }
+
+    const options: Array<{ value: string; label: string; disabled?: boolean; icon: ReactNode }> = []
+    const whatsappDisabled = !selectedContact.phone || (!whatsappApiSourcesAvailable && !highLevelConnected)
+
+    if (selectedContact.phone) {
+      if (availableWhatsAppPhones.length > 0) {
+        availableWhatsAppPhones.forEach((phone) => {
+          const phoneValue = getWhatsAppPhoneValue(phone)
+          options.push({
+            value: `whatsapp:${phone.id}`,
+            label: `${CONTACT_CHAT_CHANNEL_LABELS.whatsapp} · ${getContactChatPhoneLabel(phone)}`,
+            icon: renderContactChatChannelIcon('whatsapp'),
+            disabled: whatsappDisabled || (!phoneValue && !highLevelConnected)
+          })
+        })
+      } else {
+        options.push({
+          value: 'whatsapp',
+          label: CONTACT_CHAT_CHANNEL_LABELS.whatsapp,
+          icon: renderContactChatChannelIcon('whatsapp'),
+          disabled: whatsappDisabled
+        })
+      }
+    }
+
+    if (selectedContact.email) {
+      options.push({
+        value: 'email',
+        label: `${CONTACT_CHAT_CHANNEL_LABELS.email} · ${selectedContact.email}`,
+        icon: renderContactChatChannelIcon('email'),
+        disabled: !emailConnected
+      })
+    }
+
+    if (hasDetectedMessenger) {
+      options.push({
+        value: 'messenger',
+        label: CONTACT_CHAT_CHANNEL_LABELS.messenger,
+        icon: renderContactChatChannelIcon('messenger'),
+        disabled: !highLevelConnected
+      })
+    }
+
+    if (hasDetectedInstagram) {
+      options.push({
+        value: 'instagram',
+        label: CONTACT_CHAT_CHANNEL_LABELS.instagram,
+        icon: renderContactChatChannelIcon('instagram'),
+        disabled: !highLevelConnected
+      })
+    }
+
+    return options.length > 0
+      ? options
+      : [{ value: 'none', label: CONTACT_CHAT_CHANNEL_LABELS.none, disabled: true, icon: renderContactChatChannelIcon('none') }]
+  }, [
+    availableWhatsAppPhones,
+    emailConnected,
+    hasDetectedInstagram,
+    hasDetectedMessenger,
+    highLevelConnected,
+    selectedContact,
+    whatsappApiSourcesAvailable
+  ])
+  const selectedChatChannelOption = chatChannelOptions.find((option) => option.value === chatChannelValue) || chatChannelOptions[0]
+  const selectedChatRouteLabel = selectedChatChannelOption?.label || CONTACT_CHAT_CHANNEL_LABELS[selectedChatChannel]
   const chatMessageGroups = useMemo(() => {
     const groups: Array<{ key: string; label: string; messages: ContactChatMessage[] }> = []
     chatMessages.forEach((message) => {
@@ -1010,64 +1236,159 @@ export function ContactDetailsModal({
     })
     return groups
   }, [chatMessages, timezone])
+  const chatChannelReady = selectedChatChannel === 'email'
+    ? Boolean(selectedContact?.email && emailConnected)
+    : selectedChatChannel === 'whatsapp'
+    ? Boolean(selectedContact?.phone && (whatsappConnected || highLevelConnected))
+    : selectedChatChannel === 'messenger'
+    ? Boolean(hasDetectedMessenger && highLevelConnected)
+    : selectedChatChannel === 'instagram'
+    ? Boolean(hasDetectedInstagram && highLevelConnected)
+    : false
+  const chatHasContent = selectedChatChannel === 'email'
+    ? Boolean(chatSubject.trim() && chatDraft.trim())
+    : Boolean(chatDraft.trim())
   const chatComposerHint = !selectedContact
     ? ''
-    : !selectedContact.phone
+    : channelStatusLoading
+    ? 'Revisando canales disponibles...'
+    : selectedChatChannel === 'none'
+    ? 'Este contacto no tiene telefono, correo ni canal social detectado.'
+    : selectedChatChannel === 'email' && !selectedContact.email
+    ? 'Este contacto no tiene correo guardado.'
+    : selectedChatChannel === 'email' && !emailConnected
+    ? 'Conecta tu correo de envio en Configuracion > Correos.'
+    : selectedChatChannel === 'whatsapp' && !selectedContact.phone
     ? 'Este contacto no tiene telefono guardado.'
-    : whatsappStatusLoading
-    ? 'Revisando WhatsApp...'
-    : !whatsappStatus?.connected
-    ? 'Conecta WhatsApp API para responder desde este modal.'
-    : !selectedBusinessPhoneValue
-    ? 'Elige un numero de WhatsApp para responder.'
+    : selectedChatChannel === 'whatsapp' && whatsappApiSourcesAvailable && !selectedBusinessPhoneValue && !highLevelConnected
+    ? 'Elige una caja de WhatsApp para responder.'
+    : selectedChatChannel === 'whatsapp' && !whatsappApiSourcesAvailable && !highLevelConnected
+    ? 'Conecta WhatsApp API o HighLevel para responder por WhatsApp.'
+    : selectedChatChannel === 'messenger' && !hasDetectedMessenger
+    ? 'Este contacto no tiene Messenger detectado.'
+    : selectedChatChannel === 'instagram' && !hasDetectedInstagram
+    ? 'Este contacto no tiene Instagram detectado.'
+    : (selectedChatChannel === 'messenger' || selectedChatChannel === 'instagram') && !highLevelConnected
+    ? 'Conecta HighLevel para responder por este canal.'
     : ''
   const canSendChatMessage = Boolean(
     selectedContact?.id &&
-    selectedContact.phone &&
-    whatsappStatus?.connected &&
-    selectedBusinessPhoneValue &&
-    chatDraft.trim() &&
+    chatChannelReady &&
+    chatHasContent &&
     !chatSending
   )
+
+  useEffect(() => {
+    if (!isOpen || !selectedContact) return
+    if (chatChannelOptions.some((option) => option.value === chatChannelValue)) return
+
+    const preferredOption =
+      chatChannelOptions.find((option) => option.value.startsWith('whatsapp')) ||
+      chatChannelOptions.find((option) => option.value === 'email') ||
+      chatChannelOptions.find((option) => option.value === 'messenger') ||
+      chatChannelOptions.find((option) => option.value === 'instagram') ||
+      chatChannelOptions[0]
+
+    if (preferredOption) setChatChannelValue(preferredOption.value)
+  }, [chatChannelOptions, chatChannelValue, isOpen, selectedContact])
+
+  const handleContactChatChannelChange = useCallback((value: string) => {
+    setChatChannelValue(value)
+    if (getContactChatChannelFromValue(value) !== 'email') {
+      setChatSubject('')
+    }
+  }, [])
 
   const sendContactChatMessage = async () => {
     if (!selectedContact || !canSendChatMessage) return
 
     const text = chatDraft.trim()
+    const subject = chatSubject.trim()
     const optimisticId = `contact-modal-chat-${Date.now()}`
     const sentAt = new Date().toISOString()
     const optimisticMessage: ContactChatMessage = {
       id: optimisticId,
       text,
+      subject: selectedChatChannel === 'email' ? subject : undefined,
       date: sentAt,
       direction: 'outbound',
       status: 'enviando',
-      transport: 'api'
+      transport: selectedChatChannel === 'whatsapp'
+        ? (whatsappConnected ? 'api' : 'whatsapp_api')
+        : selectedChatChannel,
+      channel: selectedChatChannel
     }
 
     setChatSending(true)
     setChatDraft('')
+    if (selectedChatChannel === 'email') setChatSubject('')
     setChatMessages((current) => [...current, optimisticMessage])
 
     try {
-      const result = await whatsappApiService.sendText({
-        to: selectedContact.phone || '',
-        from: selectedBusinessPhoneValue,
-        contactId: selectedContact.id,
-        text,
-        externalId: optimisticId,
-        transport: 'api',
-        phoneNumberId: selectedBusinessPhone?.id || undefined
-      })
+      if (selectedChatChannel === 'email') {
+        const result = await emailService.send({
+          contactId: selectedContact.id,
+          to: selectedContact.email || '',
+          subject,
+          text,
+          externalId: optimisticId
+        })
 
-      setChatMessages((current) => current.map((message) => message.id === optimisticId
-        ? {
-            ...message,
-            status: result.status || 'sent',
-            transport: result.transport || message.transport
-          }
-        : message
-      ))
+        setChatMessages((current) => current.map((message) => message.id === optimisticId
+          ? {
+              ...message,
+              id: result.localMessageId || message.id,
+              status: result.status || 'sent',
+              transport: 'email',
+              channel: 'email'
+            }
+          : message
+        ))
+      } else if (selectedChatChannel === 'whatsapp' && whatsappConnected && selectedContact.phone) {
+        const result = await whatsappApiService.sendText({
+          to: selectedContact.phone,
+          from: selectedBusinessPhoneValue,
+          contactId: selectedContact.id,
+          text,
+          externalId: optimisticId,
+          transport: 'api',
+          phoneNumberId: selectedBusinessPhone?.id || undefined
+        })
+
+        setChatMessages((current) => current.map((message) => message.id === optimisticId
+          ? {
+              ...message,
+              status: result.status || 'sent',
+              transport: result.transport || message.transport,
+              channel: 'whatsapp'
+            }
+          : message
+        ))
+      } else if (selectedChatChannel === 'whatsapp' || selectedChatChannel === 'messenger' || selectedChatChannel === 'instagram') {
+        const result = await highLevelService.sendConversationMessage({
+          contactId: selectedContact.id,
+          channel: getHighLevelChannelForContactChat(selectedChatChannel),
+          message: text,
+          fromNumber: selectedBusinessPhoneValue || undefined,
+          toNumber: selectedContact.phone || undefined,
+          externalId: optimisticId
+        })
+        const data = result.data || result
+
+        setChatMessages((current) => current.map((message) => message.id === optimisticId
+          ? {
+              ...message,
+              id: data.localMessageId || message.id,
+              status: data.status || 'pending',
+              transport: data.transport || data.channel || message.transport,
+              channel: selectedChatChannel
+            }
+          : message
+        ))
+      } else {
+        throw new Error('Este contacto no tiene un canal disponible para responder.')
+      }
+
       await loadContactChat(selectedContact.id, { silent: true })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Intenta enviar el mensaje otra vez.'
@@ -1076,6 +1397,7 @@ export function ContactDetailsModal({
         : item
       ))
       setChatDraft(text)
+      if (selectedChatChannel === 'email') setChatSubject(subject)
     } finally {
       setChatSending(false)
     }
@@ -1148,7 +1470,7 @@ export function ContactDetailsModal({
             </div>
           </div>
           <span className={styles.contactChatRoute}>
-            {selectedBusinessPhone ? getContactChatPhoneLabel(selectedBusinessPhone) : 'WhatsApp'}
+            {selectedChatRouteLabel}
           </span>
         </header>
 
@@ -1217,6 +1539,27 @@ export function ContactDetailsModal({
           }}
         >
           {chatComposerHint ? <span className={styles.contactChatHint}>{chatComposerHint}</span> : null}
+          {selectedChatChannel === 'email' ? (
+            <input
+              data-ristak-unstyled
+              className={styles.contactChatSubjectInput}
+              value={chatSubject}
+              onChange={(event) => setChatSubject(event.target.value)}
+              placeholder="Asunto"
+              disabled={chatSending}
+            />
+          ) : null}
+          <div className={styles.contactChatChannelSelect}>
+            <CustomSelect
+              value={chatChannelValue}
+              options={chatChannelOptions}
+              onValueChange={handleContactChatChannelChange}
+              portal
+              iconOnly
+              dropdownMinWidth={240}
+              aria-label="Canal de envío"
+            />
+          </div>
           <textarea
             data-ristak-unstyled
             value={chatDraft}
@@ -1227,8 +1570,8 @@ export function ContactDetailsModal({
                 if (canSendChatMessage) void sendContactChatMessage()
               }
             }}
-            placeholder="Escribe una respuesta..."
-            rows={1}
+            placeholder={selectedChatChannel === 'email' ? 'Escribe el correo...' : 'Escribe una respuesta...'}
+            rows={selectedChatChannel === 'email' ? 3 : 1}
             disabled={chatSending}
           />
           <Button

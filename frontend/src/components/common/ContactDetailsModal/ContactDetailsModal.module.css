@@ -744,7 +744,7 @@
 
 .contactChatComposer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
   gap: 0.625rem;
   align-items: end;
   padding: 0.75rem;
@@ -757,6 +757,44 @@
   color: var(--text-mute);
   font-size: 0.75rem;
   line-height: 1.35;
+}
+
+.contactChatSubjectInput {
+  box-sizing: border-box;
+  grid-column: 2 / -1;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  outline: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.contactChatSubjectInput:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.contactChatSubjectInput:disabled {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.contactChatChannelSelect {
+  width: 2.5rem;
+  min-width: 2.5rem;
+}
+
+.contactChatBrandIcon {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: 0 0 auto;
 }
 
 .contactChatComposer textarea {

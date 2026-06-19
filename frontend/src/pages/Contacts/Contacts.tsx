@@ -426,6 +426,10 @@ const mergeContactDetailRecords = (
     if (!merged.pictureUrl && contact.pictureUrl) merged.pictureUrl = contact.pictureUrl
     if (!merged.profile_picture_url && contact.profile_picture_url) merged.profile_picture_url = contact.profile_picture_url
     if (!merged.source && contact.source) merged.source = contact.source
+    if (!merged.attribution_session_source && contact.attribution_session_source) merged.attribution_session_source = contact.attribution_session_source
+    if (!merged.whatsappAttributionPlatform && contact.whatsappAttributionPlatform) merged.whatsappAttributionPlatform = contact.whatsappAttributionPlatform
+    if (!merged.attribution_medium && contact.attribution_medium) merged.attribution_medium = contact.attribution_medium
+    if (!merged.firstSession && contact.firstSession) merged.firstSession = contact.firstSession
     if (!merged.metaAttribution && contact.metaAttribution) merged.metaAttribution = contact.metaAttribution
     if (contact.metaAttribution?.adName) merged.ad_name = contact.metaAttribution.adName
     if (!merged.ad_name && contact.ad_name) merged.ad_name = contact.ad_name
@@ -946,6 +950,11 @@ const ContactsTable: React.FC = () => {
       hasAttendedAppointment: contactData.hasAttendedAppointment,
       status: contactData.status,
       source: contactData.source,
+      attribution_session_source: contactData.attribution_session_source,
+      whatsappAttributionPlatform: contactData.whatsappAttributionPlatform,
+      attribution_medium: contactData.attribution_medium,
+      firstSession: contactData.firstSession || null,
+      metaAttribution: contactData.metaAttribution || null,
       ad_name: contactData.ad_name,
       ad_id: contactData.ad_id,
       preferredWhatsAppPhoneNumberId: contactData.preferredWhatsAppPhoneNumberId || contactData.preferred_whatsapp_phone_number_id || '',
