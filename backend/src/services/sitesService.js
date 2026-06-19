@@ -21,6 +21,7 @@ import {
   getCountryFlagEmoji,
   normalizePhoneForAccount
 } from '../utils/accountLocale.js'
+import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { getAIAgentConfig, requireOpenAIApiKey } from './aiAgentService.js'
 import { prepareContactCustomFieldsForStorage } from './contactCustomFieldDefinitionsService.js'
 import {
@@ -6620,6 +6621,154 @@ async function getSiteTrackingStats(siteId) {
     sessions: Number(row?.tracking_sessions || 0),
     conversions,
     conversionRate: visitors > 0 ? Number(((conversions / visitors) * 100).toFixed(1)) : 0
+  }
+}
+
+function normalizeSitesAnalyticsIds(values = [], maxItems = 500) {
+  if (!Array.isArray(values)) return []
+  const seen = new Set()
+  const ids = []
+
+  for (const value of values) {
+    const id = cleanString(value).slice(0, 180)
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+    if (ids.length >= maxItems) break
+  }
+
+  return ids
+}
+
+async function resolveSitesAnalyticsDateFilters(input = {}) {
+  if (!input.dateFrom && !input.dateTo) return {}
+  const range = await resolveDateRangeWithGHLTimezone({
+    startDate: input.dateFrom || input.dateTo,
+    endDate: input.dateTo || input.dateFrom
+  })
+  return {
+    dateFrom: range.startUtc,
+    dateTo: range.endUtc
+  }
+}
+
+function emptySiteTrackingStats(extra = {}) {
+  return {
+    ...extra,
+    views: 0,
+    visitors: 0,
+    sessions: 0,
+    conversions: 0,
+    conversionRate: 0
+  }
+}
+
+function siteTrackingStatsFromRows(trackingRow = {}, submissionsRow = {}, extra = {}) {
+  const visitors = Number(trackingRow?.tracking_visitors || 0)
+  const trackingConversions = Number(trackingRow?.tracking_conversions || 0)
+  const submissionConversions = Number(submissionsRow?.submissions_count || 0)
+  const conversions = Math.max(trackingConversions, submissionConversions)
+
+  return {
+    ...extra,
+    views: Number(trackingRow?.tracking_views || 0),
+    visitors,
+    sessions: Number(trackingRow?.tracking_sessions || 0),
+    conversions,
+    conversionRate: visitors > 0 ? Number(((conversions / visitors) * 100).toFixed(1)) : 0
+  }
+}
+
+export async function getSitesTrackingSummary(input = {}) {
+  const siteIds = normalizeSitesAnalyticsIds(input.siteIds)
+  const dateFilters = await resolveSitesAnalyticsDateFilters(input)
+  const bySiteId = Object.fromEntries(siteIds.map(siteId => [
+    siteId,
+    emptySiteTrackingStats({ siteId })
+  ]))
+
+  if (!siteIds.length) {
+    return {
+      dateFrom: dateFilters.dateFrom || '',
+      dateTo: dateFilters.dateTo || '',
+      bySiteId
+    }
+  }
+
+  const placeholders = siteIds.map(() => '?').join(',')
+  const trackingDateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND created_at >= ? AND created_at <= ?'
+    : ''
+  const trackingRows = await db.all(`
+    WITH scoped_sessions AS (
+      SELECT
+        site_id as resolved_site_id,
+        visitor_id,
+        session_id,
+        event_name,
+        submission_id
+      FROM sessions
+      WHERE site_id IN (${placeholders})
+        ${trackingDateClause}
+      UNION ALL
+      SELECT
+        form_site_id as resolved_site_id,
+        visitor_id,
+        session_id,
+        event_name,
+        submission_id
+      FROM sessions
+      WHERE form_site_id IN (${placeholders})
+        AND (site_id IS NULL OR site_id != form_site_id)
+        ${trackingDateClause}
+    )
+    SELECT
+      resolved_site_id as site_id,
+      COUNT(CASE WHEN event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
+      COUNT(DISTINCT CASE WHEN visitor_id IS NOT NULL AND visitor_id != '' THEN visitor_id ELSE NULL END) AS tracking_visitors,
+      COUNT(DISTINCT CASE WHEN session_id IS NOT NULL AND session_id != '' THEN session_id ELSE NULL END) AS tracking_sessions,
+      COUNT(DISTINCT CASE WHEN event_name = 'native_site_conversion' AND submission_id IS NOT NULL AND submission_id != '' THEN submission_id ELSE NULL END) AS tracking_conversions
+    FROM scoped_sessions
+    WHERE resolved_site_id IS NOT NULL AND resolved_site_id != ''
+    GROUP BY resolved_site_id
+  `, [
+    ...siteIds,
+    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : []),
+    ...siteIds,
+    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : [])
+  ])
+
+  const submissionDateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND created_at >= ? AND created_at <= ?'
+    : ''
+  const submissionRows = await db.all(`
+    SELECT
+      site_id,
+      COUNT(*) as submissions_count
+    FROM public_site_submissions
+    WHERE site_id IN (${placeholders})
+      ${submissionDateClause}
+    GROUP BY site_id
+  `, [
+    ...siteIds,
+    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : [])
+  ])
+
+  const trackingBySite = new Map(trackingRows.map(row => [cleanString(row.site_id), row]))
+  const submissionsBySite = new Map(submissionRows.map(row => [cleanString(row.site_id), row]))
+
+  for (const siteId of siteIds) {
+    bySiteId[siteId] = siteTrackingStatsFromRows(
+      trackingBySite.get(siteId),
+      submissionsBySite.get(siteId),
+      { siteId }
+    )
+  }
+
+  return {
+    dateFrom: dateFilters.dateFrom || '',
+    dateTo: dateFilters.dateTo || '',
+    bySiteId
   }
 }
 

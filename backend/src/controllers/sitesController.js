@@ -15,6 +15,7 @@ import {
   getSite,
   getSitesDomainSettings,
   getSitePreview,
+  getSitesTrackingSummary,
   isDashboardHost,
   listSites,
   refreshSitesAppDomain,
@@ -43,7 +44,7 @@ import {
   getMediaAssetBunnyStreamAnalytics,
   listMediaAssets
 } from '../services/mediaStorageService.js'
-import { getVideoPlaybackViewers } from '../services/videoTrackingService.js'
+import { getVideoPlaybackAggregate, getVideoPlaybackViewers } from '../services/videoTrackingService.js'
 import { logger } from '../utils/logger.js'
 import { requestHasNoTrack } from '../utils/noTracking.js'
 
@@ -183,6 +184,39 @@ export async function getSitesVideoAssetsHandler(req, res) {
   } catch (error) {
     logger.error(`Error listando videos de sites: ${error.message}`)
     sendError(res, error, 'Error listando videos de sites')
+  }
+}
+
+export async function getSitesAnalyticsSummaryHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const dateFrom = body.dateFrom || body.date_from
+    const dateTo = body.dateTo || body.date_to
+    const [siteTracking, videoTracking] = await Promise.all([
+      getSitesTrackingSummary({
+        siteIds: body.siteIds || body.site_ids || [],
+        dateFrom,
+        dateTo
+      }),
+      getVideoPlaybackAggregate({
+        assetIds: body.videoAssetIds || body.video_asset_ids || [],
+        dateFrom,
+        dateTo
+      })
+    ])
+
+    res.json({
+      success: true,
+      data: {
+        dateFrom: siteTracking.dateFrom || videoTracking.dateFrom || '',
+        dateTo: siteTracking.dateTo || videoTracking.dateTo || '',
+        sites: siteTracking.bySiteId,
+        videos: videoTracking
+      }
+    })
+  } catch (error) {
+    logger.error(`Error obteniendo resumen de analíticas de sites: ${error.message}`)
+    sendError(res, error, 'Error obteniendo resumen de analíticas')
   }
 }
 

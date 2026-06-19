@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
 import {
+  getVideoPlaybackAggregate,
   getVideoPlaybackViewers,
   linkVideoVisitorToContact,
   recordVideoPlaybackEvent
@@ -96,5 +97,92 @@ test('video playback tracking links anonymous playback to contact after registra
     await db.run('DELETE FROM video_playback_events WHERE playback_id = ?', [playbackId]).catch(() => undefined)
     await db.run('DELETE FROM video_playback_sessions WHERE playback_id = ?', [playbackId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('video playback aggregate sums selected assets from first-party tracking', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const visitorId = `visitor_video_aggregate_${suffix}`
+  const sessionId = `session_video_aggregate_${suffix}`
+  const playbackA = `playback_video_aggregate_a_${suffix}`
+  const playbackB = `playback_video_aggregate_b_${suffix}`
+  const assetA = `asset_video_aggregate_a_${suffix}`
+  const assetB = `asset_video_aggregate_b_${suffix}`
+  const siteId = `site_video_aggregate_${suffix}`
+  const baseTs = Date.UTC(2026, 0, 15, 18, 0, 0)
+
+  async function recordPlayback({ playbackId, assetId, position, watchedDelta, offsetMs }) {
+    await recordVideoPlaybackEvent({
+      visitor_id: visitorId,
+      session_id: `${sessionId}_${playbackId}`,
+      event_name: 'video_play',
+      ts: baseTs + offsetMs,
+      data: {
+        event_id: `${playbackId}:play`,
+        playback_id: playbackId,
+        media_asset_id: assetId,
+        stream_video_id: `stream_${assetId}`,
+        site_id: siteId,
+        page_id: 'page_aggregate',
+        block_id: `block_${assetId}`,
+        position_seconds: 0,
+        duration_seconds: 100
+      }
+    })
+
+    await recordVideoPlaybackEvent({
+      visitor_id: visitorId,
+      session_id: `${sessionId}_${playbackId}`,
+      event_name: 'video_progress',
+      ts: baseTs + offsetMs + 5000,
+      data: {
+        event_id: `${playbackId}:progress`,
+        playback_id: playbackId,
+        media_asset_id: assetId,
+        stream_video_id: `stream_${assetId}`,
+        site_id: siteId,
+        page_id: 'page_aggregate',
+        block_id: `block_${assetId}`,
+        position_seconds: position,
+        duration_seconds: 100,
+        watched_delta_seconds: watchedDelta
+      }
+    })
+  }
+
+  try {
+    await recordPlayback({ playbackId: playbackA, assetId: assetA, position: 25, watchedDelta: 10, offsetMs: 0 })
+    await recordPlayback({ playbackId: playbackB, assetId: assetB, position: 50, watchedDelta: 20, offsetMs: 10000 })
+
+    const aggregate = await getVideoPlaybackAggregate({
+      assetIds: [assetA, assetB],
+      dateFrom: '2026-01-15',
+      dateTo: '2026-01-15'
+    })
+
+    assert.equal(aggregate.summary.playbackSessions, 2)
+    assert.equal(aggregate.summary.playedSessions, 2)
+    assert.equal(aggregate.summary.totalViewers, 1)
+    assert.equal(aggregate.summary.plays, 2)
+    assert.equal(aggregate.summary.watchedSeconds, 30)
+    assert.equal(aggregate.summary.averageWatchSeconds, 15)
+    assert.equal(Math.round(aggregate.summary.avgProgressPercent), 38)
+    assert.equal(aggregate.byAssetId[assetA].plays, 1)
+    assert.equal(aggregate.byAssetId[assetA].watchedSeconds, 10)
+    assert.equal(aggregate.byAssetId[assetB].plays, 1)
+    assert.equal(aggregate.byAssetId[assetB].watchedSeconds, 20)
+    assert.equal(aggregate.bySiteId[siteId].plays, 2)
+
+    const filtered = await getVideoPlaybackAggregate({
+      assetIds: [assetA],
+      dateFrom: '2026-01-15',
+      dateTo: '2026-01-15'
+    })
+    assert.equal(filtered.summary.playbackSessions, 1)
+    assert.equal(filtered.summary.watchedSeconds, 10)
+    assert.equal(filtered.byAssetId[assetB], undefined)
+  } finally {
+    await db.run('DELETE FROM video_playback_events WHERE playback_id IN (?, ?)', [playbackA, playbackB]).catch(() => undefined)
+    await db.run('DELETE FROM video_playback_sessions WHERE playback_id IN (?, ?)', [playbackA, playbackB]).catch(() => undefined)
   }
 })

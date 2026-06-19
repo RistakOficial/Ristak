@@ -12,6 +12,7 @@ import {
   getSitesDomainHandler,
   getImportedSiteMappingHandler,
   getSiteHandler,
+  getSitesAnalyticsSummaryHandler,
   getSitesHandler,
   getSitesVideoAnalyticsHandler,
   getSitesVideoAssetsHandler,
@@ -57,6 +58,7 @@ router.post('/domain/verify', verifySitesDomainHandler)
 router.delete('/domain', removeSitesDomainHandler)
 router.post('/domain/app/verify', verifySitesAppDomainHandler)
 router.delete('/domain/app', removeSitesAppDomainHandler)
+router.post('/analytics/summary', getSitesAnalyticsSummaryHandler)
 router.get('/video-assets', getSitesVideoAssetsHandler)
 router.get('/video-analytics/:assetId', getSitesVideoAnalyticsHandler)
 router.get('/video-analytics/:assetId/viewers', getSitesVideoViewersHandler)

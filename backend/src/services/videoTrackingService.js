@@ -679,6 +679,164 @@ function buildPlaybackBreakdown(rows = [], getKey, mapLabel) {
     .slice(0, 8)
 }
 
+function normalizePlaybackIdList(values = [], maxItems = 1000) {
+  if (!Array.isArray(values)) return []
+  const seen = new Set()
+  const ids = []
+
+  for (const value of values) {
+    const id = cleanString(value, 160)
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+    if (ids.length >= maxItems) break
+  }
+
+  return ids
+}
+
+function emptyPlaybackSummary(extra = {}) {
+  return {
+    ...extra,
+    playbackSessions: 0,
+    playedSessions: 0,
+    identifiedContacts: 0,
+    anonymousVisitors: 0,
+    totalViewers: 0,
+    plays: 0,
+    watchedSeconds: 0,
+    avgProgressPercent: 0,
+    averageWatchSeconds: 0,
+    playRatePercent: 0,
+    completions: 0,
+    completionRatePercent: 0,
+    dropOffPercent: 0
+  }
+}
+
+function playbackSummaryFromRow(row = {}, extra = {}) {
+  const playbackSessions = Number(row.playback_sessions || 0)
+  const playedSessions = Number(row.played_sessions || 0)
+  const identifiedContacts = Number(row.identified_contacts || 0)
+  const anonymousVisitors = Number(row.anonymous_visitors || 0)
+  const plays = Number(row.plays || 0)
+  const watchedSeconds = Number(row.watched_seconds || 0)
+  const avgProgressPercent = Number(row.avg_progress_percent || 0)
+  const completions = Number(row.completions || 0)
+  const completionBase = playedSessions || playbackSessions
+
+  return {
+    ...extra,
+    playbackSessions,
+    playedSessions,
+    identifiedContacts,
+    anonymousVisitors,
+    totalViewers: identifiedContacts + anonymousVisitors,
+    plays,
+    watchedSeconds,
+    avgProgressPercent: roundMetric(avgProgressPercent),
+    averageWatchSeconds: playedSessions > 0 ? roundMetric(watchedSeconds / playedSessions) : 0,
+    playRatePercent: playbackSessions > 0 ? roundMetric((playedSessions / playbackSessions) * 100) : 0,
+    completions,
+    completionRatePercent: completionBase > 0 ? roundMetric((completions / completionBase) * 100) : 0,
+    dropOffPercent: roundMetric(100 - clampPercent(avgProgressPercent))
+  }
+}
+
+function buildAggregatePlaybackWhere(assetIds, dateFilters = {}) {
+  const params = []
+  const placeholders = assetIds.map(() => '?').join(',')
+  const conditions = [`vps.media_asset_id IN (${placeholders})`]
+  params.push(...assetIds)
+
+  if (dateFilters.dateFrom && dateFilters.dateTo) {
+    conditions.push('vps.last_event_at >= ? AND vps.last_event_at <= ?')
+    params.push(dateFilters.dateFrom, dateFilters.dateTo)
+  }
+
+  return {
+    where: `WHERE ${conditions.join(' AND ')}`,
+    params
+  }
+}
+
+function playbackAggregateSelect() {
+  return `
+    COUNT(*) as playback_sessions,
+    COALESCE(SUM(CASE WHEN play_count > 0 OR watched_seconds > 0 OR max_progress_percent > 0 OR ended = 1 THEN 1 ELSE 0 END), 0) as played_sessions,
+    COUNT(DISTINCT CASE WHEN contact_id IS NOT NULL AND contact_id != '' THEN contact_id ELSE NULL END) as identified_contacts,
+    COUNT(DISTINCT CASE WHEN contact_id IS NULL OR contact_id = '' THEN visitor_id ELSE NULL END) as anonymous_visitors,
+    COALESCE(SUM(play_count), 0) as plays,
+    COALESCE(SUM(watched_seconds), 0) as watched_seconds,
+    COALESCE(AVG(max_progress_percent), 0) as avg_progress_percent,
+    COALESCE(SUM(CASE WHEN ended = 1 OR max_progress_percent >= 99 THEN 1 ELSE 0 END), 0) as completions
+  `
+}
+
+export async function getVideoPlaybackAggregate(input = {}) {
+  const assetIds = normalizePlaybackIdList(input.assetIds || input.mediaAssetIds)
+  const dateFilters = await resolvePlaybackDateFilters(input)
+  const byAssetId = Object.fromEntries(assetIds.map(assetId => [
+    assetId,
+    emptyPlaybackSummary({ assetId })
+  ]))
+
+  if (!assetIds.length) {
+    return {
+      dateFrom: dateFilters.dateFrom || '',
+      dateTo: dateFilters.dateTo || '',
+      summary: emptyPlaybackSummary(),
+      byAssetId,
+      bySiteId: {}
+    }
+  }
+
+  const { where, params } = buildAggregatePlaybackWhere(assetIds, dateFilters)
+  const summary = await db.get(`
+    SELECT ${playbackAggregateSelect()}
+    FROM video_playback_sessions vps
+    ${where}
+  `, params)
+
+  const assetRows = await db.all(`
+    SELECT
+      vps.media_asset_id as asset_id,
+      ${playbackAggregateSelect()}
+    FROM video_playback_sessions vps
+    ${where}
+    GROUP BY vps.media_asset_id
+  `, params)
+
+  const siteRows = await db.all(`
+    SELECT
+      COALESCE(NULLIF(vps.site_id, ''), 'unknown') as site_id,
+      ${playbackAggregateSelect()}
+    FROM video_playback_sessions vps
+    ${where}
+    GROUP BY COALESCE(NULLIF(vps.site_id, ''), 'unknown')
+  `, params)
+
+  for (const row of assetRows) {
+    const assetId = cleanString(row.asset_id, 160)
+    if (!assetId) continue
+    byAssetId[assetId] = playbackSummaryFromRow(row, { assetId })
+  }
+
+  const bySiteId = Object.fromEntries(siteRows
+    .map(row => {
+      const siteId = cleanString(row.site_id, 160) || 'unknown'
+      return [siteId, playbackSummaryFromRow(row, { siteId })]
+    }))
+
+  return {
+    dateFrom: dateFilters.dateFrom || '',
+    dateTo: dateFilters.dateTo || '',
+    summary: playbackSummaryFromRow(summary),
+    byAssetId,
+    bySiteId
+  }
+}
+
 export async function getVideoPlaybackViewers(input = {}) {
   const dateFilters = await resolvePlaybackDateFilters(input)
   const filters = {

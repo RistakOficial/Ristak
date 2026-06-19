@@ -130,6 +130,7 @@ import {
   landingBlockTypes,
   siteTemplates,
   sitesService,
+  type SitesAnalyticsSummary,
   type PublicSite,
   type SitesAICreationKind,
   type SitesAICreationMessage,
@@ -1645,6 +1646,10 @@ type SitesVideoAggregateRow = {
   sourceSiteId: string
   sourceLabel: string
   streamVideoId: string
+  playbackSessions: number
+  playedSessions: number
+  totalViewers: number
+  completions: number
   views: number
   watchTime: number
   averageWatchTime: number
@@ -1653,13 +1658,15 @@ type SitesVideoAggregateRow = {
 
 const buildSitesVideoAggregateRows = (
   videos: MediaAsset[],
-  sitesById: Map<string, PublicSite>
+  sitesById: Map<string, PublicSite>,
+  aggregateByAssetId: SitesAnalyticsSummary['videos']['byAssetId'] | null = null
 ): SitesVideoAggregateRow[] => (
   videos.map((asset) => {
     const sourceSiteId = getMediaSourceSiteId(asset)
     const sourceLabel = sitesById.get(sourceSiteId)?.name || 'Sin origen'
-    const views = getSiteAnalyticsVideoMetric(asset, 'views')
-    const watchTime = getSiteAnalyticsVideoMetric(asset, 'totalWatchTime')
+    const aggregate = aggregateByAssetId?.[asset.id] || null
+    const views = aggregate ? readSitesNumber(aggregate.plays) : getSiteAnalyticsVideoMetric(asset, 'views')
+    const watchTime = aggregate ? readSitesNumber(aggregate.watchedSeconds) : getSiteAnalyticsVideoMetric(asset, 'totalWatchTime')
     return {
       asset,
       key: asset.id,
@@ -1667,10 +1674,18 @@ const buildSitesVideoAggregateRows = (
       sourceSiteId,
       sourceLabel,
       streamVideoId: getMediaStreamVideoId(asset),
+      playbackSessions: aggregate ? readSitesNumber(aggregate.playbackSessions) : 0,
+      playedSessions: aggregate ? readSitesNumber(aggregate.playedSessions) : views,
+      totalViewers: aggregate ? readSitesNumber(aggregate.totalViewers) : 0,
+      completions: aggregate ? readSitesNumber(aggregate.completions) : 0,
       views,
       watchTime,
-      averageWatchTime: getSiteAnalyticsVideoMetric(asset, 'averageWatchTime') || (views > 0 ? watchTime / views : 0),
-      engagementScore: getSiteAnalyticsVideoMetric(asset, 'engagementScore')
+      averageWatchTime: aggregate
+        ? readSitesNumber(aggregate.averageWatchSeconds)
+        : getSiteAnalyticsVideoMetric(asset, 'averageWatchTime') || (views > 0 ? watchTime / views : 0),
+      engagementScore: aggregate
+        ? readSitesNumber(aggregate.avgProgressPercent)
+        : getSiteAnalyticsVideoMetric(asset, 'engagementScore')
     }
   })
 )
@@ -4920,6 +4935,9 @@ export const Sites: React.FC = () => {
   const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>(routeAnalyticsSiteType)
   const [sitesAnalyticsSiteId, setSitesAnalyticsSiteId] = useState(routeAnalyticsSiteId)
   const [sitesAnalyticsVideoId, setSitesAnalyticsVideoId] = useState(routeAnalyticsVideoId)
+  const [sitesAnalyticsSummary, setSitesAnalyticsSummary] = useState<SitesAnalyticsSummary | null>(null)
+  const [sitesAnalyticsSummaryLoading, setSitesAnalyticsSummaryLoading] = useState(false)
+  const [sitesAnalyticsSummaryError, setSitesAnalyticsSummaryError] = useState('')
   const [sitesVideoAnalytics, setSitesVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
   const [sitesVideoAnalyticsLoading, setSitesVideoAnalyticsLoading] = useState(false)
   const [sitesVideoAnalyticsError, setSitesVideoAnalyticsError] = useState('')
@@ -5102,6 +5120,22 @@ export const Sites: React.FC = () => {
       return analyticsSiteIds.has(sourceSiteId)
     })
   ), [analyticsSiteIds, siteVideoAssets, sitesAnalyticsSiteId, sitesAnalyticsSiteType])
+  const analyticsSummarySiteIds = useMemo(
+    () => analyticsSites.map(site => site.id),
+    [analyticsSites]
+  )
+  const analyticsSummaryVideoAssetIds = useMemo(
+    () => filteredAnalyticsVideos.map(asset => asset.id),
+    [filteredAnalyticsVideos]
+  )
+  const analyticsSummarySiteKey = useMemo(
+    () => analyticsSummarySiteIds.join('|'),
+    [analyticsSummarySiteIds]
+  )
+  const analyticsSummaryVideoKey = useMemo(
+    () => analyticsSummaryVideoAssetIds.join('|'),
+    [analyticsSummaryVideoAssetIds]
+  )
   const selectedAnalyticsVideo = useMemo(() => (
     sitesAnalyticsVideoId
       ? filteredAnalyticsVideos.find(asset => asset.id === sitesAnalyticsVideoId) || null
@@ -5936,6 +5970,48 @@ export const Sites: React.FC = () => {
       void loadSiteVideos()
     }
   }, [section])
+
+  useEffect(() => {
+    if (section !== 'analytics') {
+      setSitesAnalyticsSummary(null)
+      setSitesAnalyticsSummaryError('')
+      setSitesAnalyticsSummaryLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setSitesAnalyticsSummaryLoading(true)
+    setSitesAnalyticsSummary(null)
+    setSitesAnalyticsSummaryError('')
+
+    sitesService.getAnalyticsSummary({
+      siteIds: analyticsSummarySiteIds,
+      videoAssetIds: analyticsSummaryVideoAssetIds,
+      ...getSitesAnalyticsRange(dateRange.start, dateRange.end)
+    })
+      .then((summary) => {
+        if (!cancelled) setSitesAnalyticsSummary(summary)
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSitesAnalyticsSummary(null)
+          setSitesAnalyticsSummaryError(error instanceof Error ? error.message : 'No se pudieron cargar las analíticas')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSitesAnalyticsSummaryLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    analyticsSummarySiteKey,
+    analyticsSummaryVideoKey,
+    dateRange.end,
+    dateRange.start,
+    section
+  ])
 
   useEffect(() => {
     if (section !== 'analytics' || sitesAnalyticsSiteType !== 'videos') {
@@ -8823,10 +8899,12 @@ export const Sites: React.FC = () => {
                 selectedSiteId={sitesAnalyticsSiteId}
                 selectedVideoId={sitesAnalyticsVideoId}
                 selectedVideo={selectedAnalyticsVideo}
+                analyticsSummary={sitesAnalyticsSummary}
                 analytics={sitesVideoAnalytics}
                 loadingVideos={loadingSiteVideos}
-                loadingAnalytics={sitesVideoAnalyticsLoading}
+                loadingAnalytics={sitesAnalyticsSummaryLoading || sitesVideoAnalyticsLoading}
                 analyticsError={sitesVideoAnalyticsError}
+                analyticsSummaryError={sitesAnalyticsSummaryError}
                 startDate={formatDateToISO(dateRange.start)}
                 endDate={formatDateToISO(dateRange.end)}
                 onSiteTypeChange={handleSitesAnalyticsTypeChange}
@@ -26378,10 +26456,12 @@ interface SitesAnalyticsPanelProps {
   selectedSiteId: string
   selectedVideoId: string
   selectedVideo: MediaAsset | null
+  analyticsSummary: SitesAnalyticsSummary | null
   analytics: MediaStreamAnalytics | null
   loadingVideos: boolean
   loadingAnalytics: boolean
   analyticsError: string
+  analyticsSummaryError: string
   startDate: string
   endDate: string
   onSiteTypeChange: (value: SitesAnalyticsSiteType) => void
@@ -26399,10 +26479,12 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   selectedSiteId,
   selectedVideoId,
   selectedVideo,
+  analyticsSummary,
   analytics,
   loadingVideos,
   loadingAnalytics,
   analyticsError,
+  analyticsSummaryError,
   startDate,
   endDate,
   onSiteTypeChange,
@@ -26503,7 +26585,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const siteFilterEmptyLabel = isVideosView ? 'Todos los orígenes' : isFormsView ? 'Todos los formularios' : 'Todos los sitios'
   const siteRows = sites.map(site => ({
     site,
-    stats: getSiteAnalyticsStats(site),
+    stats: analyticsSummary?.sites?.[site.id] || getSiteAnalyticsStats(site),
     videoCount: videos.filter(asset => getMediaSourceSiteId(asset) === site.id).length
   }))
   const totalSiteViews = siteRows.reduce((total, row) => total + row.stats.views, 0)
@@ -26525,23 +26607,33 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     b.stats.conversionRate - a.stats.conversionRate || b.stats.conversions - a.stats.conversions
   )
   const rowsByVideoCount = [...siteRows].filter(row => row.videoCount > 0).sort((a, b) => b.videoCount - a.videoCount)
-  const videoRows = buildSitesVideoAggregateRows(videos, sitesById)
+  const aggregateVideoStats = analyticsSummary?.videos || null
+  const aggregateVideoSummary = aggregateVideoStats?.summary || null
+  const videoRows = buildSitesVideoAggregateRows(videos, sitesById, aggregateVideoStats?.byAssetId || null)
   const videoRowsByViews = [...videoRows].sort((a, b) => b.views - a.views || b.watchTime - a.watchTime)
   const videoRowsByWatchTime = [...videoRows].sort((a, b) => b.watchTime - a.watchTime || b.views - a.views)
   const videoRowsByAverageWatch = [...videoRows].sort((a, b) => b.averageWatchTime - a.averageWatchTime || b.views - a.views)
   const selectedVideoStats = getMediaStreamVideoRecord(selectedVideo)
   const firstPartyTracking = analytics?.firstPartyTracking || null
   const firstPartySummary = firstPartyTracking?.summary || null
-  const totalVideoViews = videos.reduce((total, asset) => total + readSitesNumber(getMediaStreamVideoRecord(asset).views), 0)
-  const totalVideoWatchTime = videos.reduce((total, asset) => total + readSitesNumber(getMediaStreamVideoRecord(asset).totalWatchTime), 0)
+  const totalVideoViews = aggregateVideoSummary
+    ? readSitesNumber(aggregateVideoSummary.plays)
+    : videoRows.reduce((total, row) => total + row.views, 0)
+  const totalVideoWatchTime = aggregateVideoSummary
+    ? readSitesNumber(aggregateVideoSummary.watchedSeconds)
+    : videoRows.reduce((total, row) => total + row.watchTime, 0)
   const selectedVideoMode = Boolean(selectedVideoId && selectedVideo)
   const totalStreamVideos = videoRows.filter(row => row.streamVideoId).length
   const totalVideoOrigins = new Set(videoRows.map(row => row.sourceSiteId).filter(Boolean)).size
-  const aggregateAverageWatchTime = totalVideoViews > 0 ? totalVideoWatchTime / totalVideoViews : 0
+  const aggregateAverageWatchTime = aggregateVideoSummary
+    ? readSitesNumber(aggregateVideoSummary.averageWatchSeconds)
+    : totalVideoViews > 0 ? totalVideoWatchTime / totalVideoViews : 0
   const aggregateEngagementValues = videoRows.map(row => row.engagementScore).filter(value => value > 0)
-  const aggregateEngagementScore = aggregateEngagementValues.length
-    ? aggregateEngagementValues.reduce((total, value) => total + value, 0) / aggregateEngagementValues.length
-    : null
+  const aggregateEngagementScore = aggregateVideoSummary
+    ? readSitesNumber(aggregateVideoSummary.avgProgressPercent)
+    : aggregateEngagementValues.length
+      ? aggregateEngagementValues.reduce((total, value) => total + value, 0) / aggregateEngagementValues.length
+      : null
   const aggregateVideoChart = videoRowsByViews
     .slice(0, 10)
     .reverse()
@@ -26551,8 +26643,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       value2: Math.round((row.watchTime / 60) * 10) / 10
     }))
   const videoViews = selectedVideo ? (firstPartySummary?.plays ?? analytics?.summary.views ?? readSitesNumber(selectedVideoStats.views)) : totalVideoViews
-  const videoLoads = selectedVideo ? (firstPartySummary?.playbackSessions ?? 0) : 0
-  const uniqueVideoViewers = selectedVideo ? (firstPartySummary?.totalViewers ?? 0) : 0
+  const videoLoads = selectedVideo ? (firstPartySummary?.playbackSessions ?? 0) : (aggregateVideoSummary?.playbackSessions ?? videoRows.reduce((total, row) => total + row.playbackSessions, 0))
+  const uniqueVideoViewers = selectedVideo ? (firstPartySummary?.totalViewers ?? 0) : (aggregateVideoSummary?.totalViewers ?? videoRows.reduce((total, row) => total + row.totalViewers, 0))
   const videoWatchTime = selectedVideo ? (firstPartySummary?.watchedSeconds ?? analytics?.summary.watchTime ?? readSitesNumber(selectedVideoStats.totalWatchTime)) : totalVideoWatchTime
   const averageWatchTime = selectedVideo ? (firstPartySummary?.averageWatchSeconds ?? analytics?.summary.averageWatchTime ?? readSitesNumber(selectedVideoStats.averageWatchTime)) : 0
   const engagementScore = selectedVideo ? (firstPartySummary?.avgProgressPercent ?? analytics?.summary.engagementScore ?? null) : null
@@ -26635,6 +26727,16 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   )
 
   const renderEntityAnalytics = () => {
+    if (analyticsSummaryError) {
+      return (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <AlertTriangle size={24} />
+          <strong>No se cargaron las analíticas</strong>
+          <p>{analyticsSummaryError}</p>
+        </div>
+      )
+    }
+
     if (!sites.length) {
       return (
         <div className={styles.sitesAnalyticsEmpty}>
@@ -26719,6 +26821,16 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   }
 
   const renderAggregateVideoAnalytics = () => {
+    if (analyticsSummaryError) {
+      return (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <AlertTriangle size={24} />
+          <strong>No se cargaron los datos de videos</strong>
+          <p>{analyticsSummaryError}</p>
+        </div>
+      )
+    }
+
     if (!videos.length) {
       return (
         <div className={styles.sitesAnalyticsEmpty}>

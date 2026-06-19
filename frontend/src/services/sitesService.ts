@@ -1,6 +1,6 @@
 import apiClient from './apiClient'
 import { apiUrl, getApiBaseUrl } from './apiBaseUrl'
-import type { MediaAsset, MediaStreamAnalytics, MediaStreamAnalyticsInput } from './mediaService'
+import type { FirstPartyVideoTracking, MediaAsset, MediaStreamAnalytics, MediaStreamAnalyticsInput } from './mediaService'
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('auth_token')
@@ -235,6 +235,44 @@ export interface SiteTheme {
     success?: string
     disqualified?: string
   }
+}
+
+export interface SitesTrackingStats {
+  siteId?: string
+  views: number
+  visitors: number
+  sessions: number
+  conversions: number
+  conversionRate: number
+}
+
+export type SitesVideoAnalyticsSummary = FirstPartyVideoTracking['summary']
+
+export interface SitesVideoAnalyticsAggregateItem extends SitesVideoAnalyticsSummary {
+  assetId?: string
+  siteId?: string
+}
+
+export interface SitesVideoAnalyticsAggregate {
+  dateFrom?: string
+  dateTo?: string
+  summary: SitesVideoAnalyticsSummary
+  byAssetId: Record<string, SitesVideoAnalyticsAggregateItem>
+  bySiteId: Record<string, SitesVideoAnalyticsAggregateItem>
+}
+
+export interface SitesAnalyticsSummary {
+  dateFrom?: string
+  dateTo?: string
+  sites: Record<string, SitesTrackingStats>
+  videos: SitesVideoAnalyticsAggregate
+}
+
+export interface SitesAnalyticsSummaryInput {
+  siteIds?: string[]
+  videoAssetIds?: string[]
+  dateFrom?: string
+  dateTo?: string
 }
 
 export interface SiteTemplateMeta {
@@ -769,6 +807,10 @@ export const sitesService = {
 
   listVideoAssets() {
     return apiClient.get<MediaAsset[]>('/sites/video-assets')
+  },
+
+  getAnalyticsSummary(input: SitesAnalyticsSummaryInput) {
+    return apiClient.post<SitesAnalyticsSummary>('/sites/analytics/summary', input)
   },
 
   getVideoAnalytics(assetId: string, input: MediaStreamAnalyticsInput = {}) {
