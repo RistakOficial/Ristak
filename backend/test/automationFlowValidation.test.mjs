@@ -114,6 +114,26 @@ test('el aleatorizador debe sumar 100%', () => {
   assert.deepEqual(validateFlowForPublish(flow), [])
 })
 
+test('publicar valida la configuración del goteo', () => {
+  const drip = {
+    id: 'drip1',
+    type: 'logic-drip',
+    position: { x: 0, y: 0 },
+    config: { batchSize: 0, intervalAmount: 0, intervalUnit: 'seconds' }
+  }
+  const flow = {
+    nodes: [startNode(), drip],
+    edges: [edge('e1', 'start', 'drip1')]
+  }
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('tamaño de lote')))
+  assert.ok(errors.some((message) => message.includes('intervalo')))
+  assert.ok(errors.some((message) => message.includes('minutos, horas o días')))
+
+  drip.config = { batchSize: 100, intervalAmount: 1, intervalUnit: 'minutes' }
+  assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
 test('publicar rechaza canales no soportados (SMS/Email)', () => {
   const smsNode = {
     id: 's1',

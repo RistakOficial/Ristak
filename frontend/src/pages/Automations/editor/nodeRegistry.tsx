@@ -8,6 +8,7 @@ import {
   CalendarClock,
   ClipboardList,
   Clock,
+  Droplet,
   Facebook,
   Filter,
   Hourglass,
@@ -132,7 +133,7 @@ export interface NodeSummaryData {
 }
 
 /** Configuradores con UI propia (más allá del formulario declarativo) */
-export type NodeConfigComponent = 'conditions' | 'wait' | 'goal' | 'whatsapp' | 'message' | 'scheduler'
+export type NodeConfigComponent = 'conditions' | 'wait' | 'drip' | 'goal' | 'whatsapp' | 'message' | 'scheduler'
 
 // ---------------------------------------------------------------------------
 // Bloques de mensaje tipo ManyChat (varios globos dentro de una cajita)
@@ -405,6 +406,8 @@ const DURATION_LABELS: Record<string, [string, string]> = {
   days: ['día', 'días'],
   weeks: ['semana', 'semanas']
 }
+
+const DRIP_INTERVAL_UNITS = new Set(['minutes', 'hours', 'days'])
 
 export const durationLabel = (amount: number, unit: string): string => {
   const [singular, plural] = DURATION_LABELS[unit] || DURATION_LABELS.hours
@@ -2105,6 +2108,46 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     }
   },
   {
+    type: 'logic-drip',
+    kind: 'action',
+    label: 'Goteo',
+    category: 'action-logic',
+    description: 'Pasa contactos al siguiente paso por lotes, a intervalos regulares',
+    icon: Droplet,
+    accent: 'purple',
+    tintedHeader: true,
+    addButtonLabel: 'Configurar goteo',
+    configComponent: 'drip',
+    defaultConfig: () => ({
+      batchSize: 100,
+      intervalAmount: 1,
+      intervalUnit: 'minutes'
+    }),
+    fields: [],
+    outputs: () => SINGLE_OUTPUT,
+    validate: (config) => {
+      const errors: string[] = []
+      const batchSize = Math.floor(Number(config.batchSize) || 0)
+      const intervalAmount = Number(config.intervalAmount) || 0
+      const intervalUnit = str(config.intervalUnit) || 'minutes'
+      if (batchSize <= 0) errors.push('El tamaño del lote debe ser mayor a cero')
+      if (intervalAmount <= 0) errors.push('El intervalo de goteo debe ser mayor a cero')
+      if (!DRIP_INTERVAL_UNITS.has(intervalUnit)) errors.push('El intervalo debe estar en minutos, horas o días')
+      return errors
+    },
+    summary: (config) => {
+      const batchSize = Math.floor(Number(config.batchSize) || 0)
+      const intervalAmount = Number(config.intervalAmount) || 0
+      const intervalUnit = str(config.intervalUnit) || 'minutes'
+      if (batchSize <= 0 || intervalAmount <= 0 || !DRIP_INTERVAL_UNITS.has(intervalUnit)) {
+        return { empty: 'Configura el tamaño del lote y el intervalo' }
+      }
+      return {
+        text: `Pasan ${batchSize} contacto${batchSize === 1 ? '' : 's'} por lote cada ${durationLabel(intervalAmount, intervalUnit)}`
+      }
+    }
+  },
+  {
     type: 'logic-goal',
     kind: 'action',
     label: 'Evento objetivo',
@@ -2671,7 +2714,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
 // ---------------------------------------------------------------------------
 
 // Nodos cuyas salidas son semánticas y no admiten ramas extra del usuario
-const NO_EXTRA_BRANCH_TYPES = new Set(['logic-condition', 'randomizer', 'logic-wait', 'logic-goal', 'extra-comment'])
+const NO_EXTRA_BRANCH_TYPES = new Set(['logic-condition', 'randomizer', 'logic-wait', 'logic-drip', 'logic-goal', 'extra-comment'])
 
 /**
  * Cualquier nodo de acción puede tener hasta 10 ramas: al ensamblar el

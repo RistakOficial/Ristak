@@ -9,6 +9,7 @@ import {
   evaluateConditionNode,
   handleAutomationEvent,
   handleIncomingMessage,
+  processDueResumes,
   processScheduledTriggers,
   processScheduledContactEnrollments,
   enrollContactManually
@@ -541,6 +542,131 @@ test('logic-wait por duración respeta segundos', async () => {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('logic-drip libera por lotes y reanuda cuando vence el intervalo', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_drip_${suffix}`
+  const contactIds = [1, 2, 3].map((index) => `rstk_contact_drip_${index}_${suffix}`)
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-message',
+              type: 'trigger-customer-replied',
+              config: { channel: 'any' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'drip',
+        type: 'logic-drip',
+        label: 'Goteo',
+        config: {
+          batchSize: 2,
+          intervalAmount: 1,
+          intervalUnit: 'minutes'
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-drip', sourceNodeId: 'start', targetNodeId: 'drip' },
+      { id: 'edge-drip-done', sourceNodeId: 'drip', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: {}
+  }
+
+  try {
+    for (const [index, contactId] of contactIds.entries()) {
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          `+1666${Date.now().toString().slice(-7)}${index}`,
+          `drip-${index}-${suffix}@example.com`,
+          `Contacto Goteo ${index + 1}`,
+          'Contacto',
+          '{}'
+        ]
+      )
+    }
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test goteo', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    const before = Date.now()
+    for (const contactId of contactIds) {
+      await handleAutomationEvent('message-received', {
+        contactId,
+        messageText: 'hola',
+        channel: 'whatsapp'
+      })
+    }
+    const after = Date.now()
+
+    const entries = await db.all(
+      'SELECT position, batch_index, scheduled_for FROM automation_drip_entries WHERE automation_id = ? ORDER BY position',
+      [automationId]
+    )
+    assert.deepEqual(entries.map((entry) => Number(entry.position)), [1, 2, 3])
+    assert.deepEqual(entries.map((entry) => Number(entry.batch_index)), [0, 0, 1])
+
+    const firstEnrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactIds[0]]
+    )
+    const secondEnrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactIds[1]]
+    )
+    const thirdEnrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactIds[2]]
+    )
+
+    assert.equal(firstEnrollment.status, 'completed')
+    assert.equal(secondEnrollment.status, 'completed')
+    assert.equal(thirdEnrollment.status, 'waiting')
+    assert.equal(thirdEnrollment.wait_kind, 'drip')
+    assert.equal(thirdEnrollment.current_node_id, 'drip')
+
+    const resumeAt = new Date(thirdEnrollment.resume_at).getTime()
+    assert.ok(resumeAt >= before + 60_000)
+    assert.ok(resumeAt <= after + 61_000)
+
+    await db.run(
+      'UPDATE automation_enrollments SET resume_at = ? WHERE id = ?',
+      [new Date(Date.now() - 1000).toISOString(), thirdEnrollment.id]
+    )
+    await processDueResumes()
+
+    const resumedEnrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [thirdEnrollment.id])
+    assert.equal(resumedEnrollment.status, 'completed')
+    const log = JSON.parse(resumedEnrollment.log)
+    assert.ok(log.some((entry) => entry.label === 'Goteo' && String(entry.detail || '').includes('lote 2')))
+  } finally {
+    await db.run('DELETE FROM automation_drip_entries WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    for (const contactId of contactIds) {
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
   }
 })
 

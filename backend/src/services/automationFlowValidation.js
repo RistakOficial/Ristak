@@ -12,6 +12,7 @@ export const START_NODE_TYPE = 'start'
 const TRIGGER_LINK_WAIT_ACTIONS = new Set(['click_link', 'trigger_link_click', 'trigger-link-click'])
 const REPLY_MESSAGE_WAIT_ACTIONS = new Set(['reply_message', 'reply-message'])
 const SENT_MESSAGE_NODE_TYPES = new Set(['channel-whatsapp', 'channel-messenger', 'channel-instagram'])
+const DRIP_INTERVAL_UNITS = new Set(['minutes', 'hours', 'days'])
 
 // Únicos canales conversacionales soportados (sin SMS ni Email)
 export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram']
@@ -227,6 +228,18 @@ export function validateFlowForPublish(flow) {
   nodes
     .filter((node) => node.type === 'logic-wait')
     .forEach((node) => validateReplyMessageWaitSource({ node, nodes, edges, errors }))
+
+  nodes
+    .filter((node) => node.type === 'logic-drip')
+    .forEach((node) => {
+      const config = isPlainObject(node.config) ? node.config : {}
+      const batchSize = Math.floor(Number(config.batchSize) || 0)
+      const intervalAmount = Number(config.intervalAmount) || 0
+      const intervalUnit = String(config.intervalUnit || 'minutes')
+      if (batchSize <= 0) errors.push('El paso Goteo necesita un tamaño de lote mayor a cero')
+      if (intervalAmount <= 0) errors.push('El paso Goteo necesita un intervalo mayor a cero')
+      if (!DRIP_INTERVAL_UNITS.has(intervalUnit)) errors.push('El paso Goteo debe usar minutos, horas o días')
+    })
 
   // Canales no soportados (SMS, Email…) en cualquier configuración
   const invalidChannels = new Set()

@@ -29,6 +29,7 @@ const SCHEDULE_TRIGGER_WINDOW_MINUTES = 2
 const WAIT_KIND_REPLY = 'reply'
 const WAIT_KIND_BUTTON_REPLY = 'button_reply'
 const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
+const WAIT_KIND_DRIP = 'drip'
 const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 const CONDITION_VARIABLE_FIELD_PREFIX = 'var:'
 
@@ -1430,6 +1431,139 @@ const DURATION_MS = {
   weeks: 7 * 24 * 60 * 60 * 1000
 }
 
+const DRIP_DURATION_MS = {
+  minutes: DURATION_MS.minutes,
+  hours: DURATION_MS.hours,
+  days: DURATION_MS.days
+}
+
+const DRIP_UNIT_LABELS = {
+  minutes: ['minuto', 'minutos'],
+  hours: ['hora', 'horas'],
+  days: ['día', 'días']
+}
+
+function durationLabel(amount, unit) {
+  const [singular, plural] = DRIP_UNIT_LABELS[unit] || DRIP_UNIT_LABELS.minutes
+  return `${amount} ${amount === 1 ? singular : plural}`
+}
+
+function dateToIso(value, fallback = nowIso()) {
+  if (!value) return fallback
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? fallback : date.toISOString()
+}
+
+function isUniqueConstraintError(error) {
+  const code = String(error?.code || '')
+  const message = String(error?.message || '')
+  return code === 'SQLITE_CONSTRAINT' ||
+    code === '23505' ||
+    message.includes('UNIQUE constraint failed') ||
+    message.includes('duplicate key value')
+}
+
+function normalizeDripConfig(config = {}) {
+  const batchSize = Math.max(1, Math.floor(Number(config.batchSize) || 1))
+  const intervalAmount = Math.max(1, Number(config.intervalAmount) || 1)
+  const intervalUnit = DRIP_DURATION_MS[str(config.intervalUnit)] ? str(config.intervalUnit) : 'minutes'
+  return {
+    batchSize,
+    intervalAmount,
+    intervalUnit,
+    intervalMs: intervalAmount * DRIP_DURATION_MS[intervalUnit]
+  }
+}
+
+async function assignDripEntry({ automationId, nodeId, enrollmentId, batchSize, intervalMs }) {
+  if (!automationId || !nodeId || !enrollmentId) {
+    const now = nowIso()
+    return { position: 1, batchIndex: 0, scheduledFor: now }
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      return await db.transaction(async (tx) => {
+        const existing = await tx.get(
+          `SELECT position, batch_index, scheduled_for
+           FROM automation_drip_entries
+           WHERE automation_id = ? AND node_id = ? AND enrollment_id = ?`,
+          [automationId, nodeId, enrollmentId]
+        )
+        if (existing) {
+          return {
+            position: Number(existing.position) || 1,
+            batchIndex: Number(existing.batch_index) || 0,
+            scheduledFor: dateToIso(existing.scheduled_for)
+          }
+        }
+
+        const state = await tx.get(
+          `SELECT MIN(created_at) AS first_created_at, MAX(position) AS last_position
+           FROM automation_drip_entries
+           WHERE automation_id = ? AND node_id = ?`,
+          [automationId, nodeId]
+        )
+        const createdAt = nowIso()
+        const anchor = dateToIso(state?.first_created_at, createdAt)
+        const position = (Number(state?.last_position) || 0) + 1
+        const batchIndex = Math.floor((position - 1) / batchSize)
+        const scheduledFor = new Date(new Date(anchor).getTime() + batchIndex * intervalMs).toISOString()
+
+        await tx.run(
+          `INSERT INTO automation_drip_entries
+             (id, automation_id, node_id, enrollment_id, position, batch_index, scheduled_for, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [makeId('drip'), automationId, nodeId, enrollmentId, position, batchIndex, scheduledFor, createdAt]
+        )
+
+        return { position, batchIndex, scheduledFor }
+      })
+    } catch (error) {
+      if (isUniqueConstraintError(error) && attempt < 4) continue
+      throw error
+    }
+  }
+
+  throw new Error('No se pudo asignar el lote de goteo')
+}
+
+async function executeDripNode(node, enrollment) {
+  const { batchSize, intervalAmount, intervalUnit, intervalMs } = normalizeDripConfig(node.config || {})
+  const assignment = await assignDripEntry({
+    automationId: enrollment?.automationId,
+    nodeId: node.id,
+    enrollmentId: enrollment?.id,
+    batchSize,
+    intervalMs
+  })
+  const batchNumber = assignment.batchIndex + 1
+  const scheduledTime = new Date(assignment.scheduledFor).getTime()
+  const batchDetail = `lote ${batchNumber} (${batchSize} contacto${batchSize === 1 ? '' : 's'} cada ${durationLabel(intervalAmount, intervalUnit)})`
+
+  if (Number.isNaN(scheduledTime) || scheduledTime <= Date.now()) {
+    return {
+      handle: 'out',
+      detail: `Goteo liberado: ${batchDetail}`
+    }
+  }
+
+  return {
+    wait: {
+      kind: WAIT_KIND_DRIP,
+      resumeAt: assignment.scheduledFor,
+      context: {
+        dripNodeId: node.id,
+        dripBatch: batchNumber,
+        dripPosition: assignment.position,
+        dripBatchSize: batchSize,
+        dripScheduledFor: assignment.scheduledFor
+      }
+    },
+    detail: `Goteo programado: ${batchDetail}`
+  }
+}
+
 async function applyTagAction(node, ctx, remove) {
   const tag = str(node.config?.tag)
   if (!tag || !ctx.contact?.id) return `Etiqueta no aplicada (sin ${tag ? 'contacto' : 'etiqueta'})`
@@ -2204,7 +2338,7 @@ async function sendWhatsAppBlocks(node, ctx) {
  *  { wait: {kind, resumeAt}, detail } → pausar la inscripción
  *  { skipped: true, handle }     → paso no soportado, se registra y continúa
  */
-async function executeNode(node, ctx) {
+async function executeNode(node, ctx, enrollment) {
   switch (node.type) {
     case 'channel-whatsapp': {
       const sendResult = await sendWhatsAppBlocks(node, ctx)
@@ -2329,6 +2463,9 @@ async function executeNode(node, ctx) {
       return { skipped: true, handle: 'out', detail: `Espera "${mode}" aún no soportada: continúa` }
     }
 
+    case 'logic-drip':
+      return executeDripNode(node, enrollment)
+
     case 'logic-condition': {
       const result = evaluateConditionNode(node.config, ctx)
       return { handle: result.handle, detail: `Condición evaluada → ${result.label}` }
@@ -2391,7 +2528,7 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
     enrollment.currentNodeId = node.id
     let result
     try {
-      result = await executeNode(node, ctx)
+      result = await executeNode(node, ctx, enrollment)
     } catch (error) {
       addLog(enrollment, { nodeId: node.id, label: nodeLabel(node), status: 'error', detail: error.message })
       enrollment.status = 'exited'
@@ -3190,23 +3327,27 @@ export async function processDueResumes() {
       }
       const wasReplyTimeout = row.wait_kind === WAIT_KIND_REPLY
       const wasTriggerLinkTimeout = row.wait_kind === WAIT_KIND_TRIGGER_LINK_CLICK
+      const wasDripResume = row.wait_kind === WAIT_KIND_DRIP
       const handle = wasReplyTimeout || wasTriggerLinkTimeout ? 'timeout' : 'out'
       const sourceName = str(enrollment.context.waitActionResourceName)
+      const dripBatch = Number(enrollment.context.dripBatch) || 0
       addLog(enrollment, {
         nodeId: row.current_node_id,
-        label: 'Esperar',
+        label: wasDripResume ? 'Goteo' : 'Esperar',
         status: 'ok',
-        detail: wasReplyTimeout
-          ? sourceName ? `No respondió a "${sourceName}" a tiempo` : 'No respondió a tiempo'
-          : wasTriggerLinkTimeout
-            ? 'No hubo clic de disparo a tiempo'
-            : 'Espera terminada'
+        detail: wasDripResume
+          ? dripBatch > 0 ? `Goteo liberado: lote ${dripBatch}` : 'Goteo liberado'
+          : wasReplyTimeout
+            ? sourceName ? `No respondió a "${sourceName}" a tiempo` : 'No respondió a tiempo'
+            : wasTriggerLinkTimeout
+              ? 'No hubo clic de disparo a tiempo'
+              : 'Espera terminada'
       })
       const edge = edgesFrom(automation.flow, row.current_node_id, handle)[0]
       if (edge) await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)
       else {
         enrollment.status = 'completed'
-        addLog(enrollment, { nodeId: row.current_node_id, label: 'Esperar', status: 'ok', detail: 'Fin del flujo' })
+        addLog(enrollment, { nodeId: row.current_node_id, label: wasDripResume ? 'Goteo' : 'Esperar', status: 'ok', detail: 'Fin del flujo' })
         await saveEnrollment(enrollment)
       }
     }

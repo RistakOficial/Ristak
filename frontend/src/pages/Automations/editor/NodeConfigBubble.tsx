@@ -17,6 +17,7 @@ import {
 } from './config/configPrimitives'
 import { AdvancedConditionBuilder } from './config/AdvancedConditionBuilder'
 import { WaitConfigEditor } from './config/WaitConfigEditor'
+import { DripConfigEditor } from './config/DripConfigEditor'
 import { GoalConfigEditor } from './config/GoalConfigEditor'
 import { WhatsAppConfigEditor } from './config/WhatsAppConfigEditor'
 import { MessageBlocksEditor } from './config/MessageBlocksEditor'
@@ -682,6 +683,9 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
         )}
         {definition.configComponent === 'wait' && (
           <WaitConfigEditor config={config} onChange={onChange} messageSources={waitMessageSources} />
+        )}
+        {definition.configComponent === 'drip' && (
+          <DripConfigEditor config={config} onChange={onChange} />
         )}
         {definition.configComponent === 'goal' && <GoalConfigEditor config={config} onChange={onChange} />}
         {definition.configComponent === 'whatsapp' && (

@@ -1518,6 +1518,70 @@
   margin-bottom: 12px;
 }
 
+.dripPreviewPanel {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 18px;
+}
+
+.dripPreviewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dripPreviewTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.dripPreviewHelp {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-mute);
+}
+
+.dripPreviewResult {
+  margin-top: 13px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.dripPreviewNow {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.dripPreviewTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.dripPreviewTable th {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-mute);
+  font: var(--label-font);
+  text-align: left;
+}
+
+.dripPreviewTable td {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.dripPreviewFoot {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--text-mute);
+}
+
 .configWarning {
   display: flex;
   align-items: center;

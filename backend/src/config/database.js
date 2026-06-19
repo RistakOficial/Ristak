@@ -4134,6 +4134,25 @@ async function initTables() {
       await db.run(`ALTER TABLE automation_enrollments ADD COLUMN ${column}`).catch(() => {})
     }
 
+    // Goteo: turno persistente de cada inscripción al pasar por un nodo de lote.
+    // La posición única por automatización+nodo permite calcular lotes estables.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS automation_drip_entries (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        enrollment_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        batch_index INTEGER NOT NULL,
+        scheduled_for DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (automation_id, node_id, enrollment_id),
+        UNIQUE (automation_id, node_id, position)
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_drip_entries_node ON automation_drip_entries(automation_id, node_id, position)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_automation_drip_entries_enrollment ON automation_drip_entries(enrollment_id)')
+
     // Ejecuciones ya tomadas por el disparador programado. La llave única evita
     // que el tick del motor dispare varias veces el mismo horario.
     await db.run(`
