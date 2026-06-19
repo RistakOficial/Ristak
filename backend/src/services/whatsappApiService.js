@@ -1857,10 +1857,14 @@ async function deleteLocalMessageTemplateMirror(template = {}) {
   const language = cleanString(template.language)
   if (!name || !language) return { deleted: 0 }
 
-  const result = await db.run(
-    'DELETE FROM whatsapp_message_templates WHERE name = ? AND language = ?',
-    [name, language]
-  )
+  const result = await db.run(`
+    DELETE FROM whatsapp_message_templates
+    WHERE language = ?
+      AND (
+        ycloud_template_name = ?
+        OR (COALESCE(ycloud_template_name, '') = '' AND name = ?)
+      )
+  `, [language, name, name])
   return { deleted: Number(result?.changes || 0) }
 }
 
@@ -1982,6 +1986,7 @@ async function syncLocalMessageTemplateFromYCloud(template) {
       UPDATE whatsapp_message_templates
       SET
         ycloud_template_id = COALESCE(?, ycloud_template_id),
+        ycloud_template_name = COALESCE(?, ycloud_template_name),
         ycloud_status = ?,
         ycloud_reason = ?,
         ycloud_status_update_event = ?,
@@ -1990,16 +1995,22 @@ async function syncLocalMessageTemplateFromYCloud(template) {
         ycloud_synced_at = CURRENT_TIMESTAMP,
         last_error = NULL,
         updated_at = CURRENT_TIMESTAMP
-      WHERE name = ? AND language = ?
+      WHERE language = ?
+        AND (
+          ycloud_template_name = ?
+          OR (COALESCE(ycloud_template_name, '') = '' AND name = ?)
+        )
     `, [
       template.officialTemplateId || template.id || null,
+      template.name || null,
       template.status || null,
       template.reason || null,
       template.statusUpdateEvent || null,
       template.qualityRating || null,
       safeJson(template.raw),
+      template.language,
       template.name,
-      template.language
+      template.name
     ])
   } catch (error) {
     logger.warn(`No se pudo sincronizar plantilla local ${template.name}/${template.language}: ${error.message}`)

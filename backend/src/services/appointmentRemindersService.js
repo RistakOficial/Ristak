@@ -136,6 +136,7 @@ function mapReminderTemplateRow(row = {}) {
     footerText: cleanString(row.footer_text),
     buttons: parseJson(row.buttons_json, []),
     variableBindings: parseJson(row.variable_bindings_json, { headerText: {}, bodyText: {} }),
+    ycloudTemplateName: cleanString(row.ycloud_template_name) || null,
     ycloudTemplateId: cleanString(row.ycloud_template_id) || null,
     ycloudStatus: normalizeTemplateStatus(row.ycloud_status)
   }
@@ -634,7 +635,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
             response = await sendWhatsAppApiTemplateMessage({
               to: appointment.phone,
               from: sender.fromPhone || undefined,
-              templateName: template.name,
+              templateName: template.ycloudTemplateName || template.name,
               language: template.language,
               ...(components.length ? { components } : {}),
               contactId: appointment.contact_id,

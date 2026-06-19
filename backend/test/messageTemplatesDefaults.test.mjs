@@ -61,6 +61,8 @@ async function snapshotAppConfig(keys = [], callback) {
 
 async function deleteDefaultTemplates() {
   const placeholders = DEFAULT_TEMPLATE_NAMES.map(() => '?').join(', ')
+  const retryLikeClauses = DEFAULT_TEMPLATE_NAMES.map(() => 'name LIKE ?').join(' OR ')
+  const retryLikeParams = DEFAULT_TEMPLATE_NAMES.map((name) => `${name}_r%`)
   const rows = await db.all(`SELECT id FROM whatsapp_message_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
   const ids = rows.map(row => row.id).filter(Boolean)
   if (ids.length) {
@@ -70,7 +72,11 @@ async function deleteDefaultTemplates() {
     )
   }
   await db.run(`DELETE FROM whatsapp_message_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
-  await db.run(`DELETE FROM whatsapp_api_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
+  await db.run(`
+    DELETE FROM whatsapp_api_templates
+    WHERE name IN (${placeholders})
+      ${retryLikeClauses ? `OR ${retryLikeClauses}` : ''}
+  `, [...DEFAULT_TEMPLATE_NAMES, ...retryLikeParams])
   await db.run('DELETE FROM whatsapp_template_folders WHERE id = ?', [DEFAULT_FOLDER_ID])
 }
 
@@ -116,9 +122,10 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
       assert.ok(scheduledTemplate)
       assert.equal(scheduledTemplate.components[0].type, 'HEADER')
-      assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
-      assert.equal(scheduledTemplate.components[0].example.header_text[0], 'viernes, 19 de junio de 2026 9:00')
-      assert.match(scheduledTemplate.components[1].text, /Te llegarán \*varios\* recordatorios/)
+      assert.equal(scheduledTemplate.components[0].text, 'Cita agendada')
+      assert.equal(scheduledTemplate.components[1].text, 'Hola {{1}}, tu cita quedó agendada para {{2}}. Te enviaremos recordatorios relacionados con esta cita.')
+      assert.equal(scheduledTemplate.components[1].example.body_text[0][1], 'viernes, 19 de junio de 2026 9:00')
+      assert.equal(scheduledTemplate.components[2].text, 'Mensaje automático de Ristak')
 
       const bundle = await getMessageTemplateBundle()
       const folder = bundle.folders.find((item) => item.id === DEFAULT_FOLDER_ID)
@@ -129,7 +136,7 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       assert.ok(localTemplate)
       assert.equal(localTemplate.folderId, DEFAULT_FOLDER_ID)
       assert.equal(localTemplate.ycloudStatus, 'PENDING')
-      assert.equal(localTemplate.footerText, 'Esto es un mensaje automático')
+      assert.equal(localTemplate.footerText, 'Mensaje automático de Ristak')
       assert.equal(localTemplate.variableBindings.bodyText['1'].variableKey, 'contact.first_name')
       assert.equal(localTemplate.variableBindings.bodyText['2'].variableKey, 'cita.fecha')
       assert.equal(localTemplate.variableBindings.bodyText['3'].variableKey, 'cita.hora')
@@ -214,9 +221,10 @@ test('repara defaults existentes sin enviar y manda solo los pendientes', async 
       )
 
       const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
-      assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
+      assert.equal(scheduledTemplate.components[0].text, 'Cita agendada')
+      assert.equal(scheduledTemplate.components[1].text, 'Hola {{1}}, tu cita quedó agendada para {{2}}. Te enviaremos recordatorios relacionados con esta cita.')
       const confirmationTemplate = captures.find((capture) => capture.name === 'confirmacion_cita_dia_anterior')
-      assert.equal(confirmationTemplate.components[0].text, 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?')
+      assert.equal(confirmationTemplate.components[0].text, 'Hola {{1}}, tu cita es mañana a las {{2}}. Responde este mensaje para confirmar tu asistencia.')
 
       const bundle = await getMessageTemplateBundle()
       const byName = new Map(bundle.templates.map((template) => [template.name, template]))
@@ -235,6 +243,7 @@ test('recrea una plantilla default atorada en revisión después de seis horas',
   const keys = getWhatsAppApiConfigKeys()
   const wabaId = 'waba_default_templates_retry_test'
   const targetName = 'recordatorio_cita_un_dia_antes'
+  const retryName = `${targetName}_r1`
   const requests = []
 
   await snapshotAppConfig([keys.enabled, keys.apiKey, keys.wabaId], async () => {
@@ -307,16 +316,124 @@ test('recrea una plantilla default atorada en revisión después de seis horas',
           'POST /whatsapp/templates'
         ]
       )
-      assert.equal(requests[1].body.name, targetName)
+      assert.equal(requests[1].body.name, retryName)
+      assert.equal(requests[1].body.components[1].text, 'Hola {{1}}, te recordamos tu cita de mañana {{2}} a las {{3}}. Responde si necesitas hacer algún cambio.')
 
       const row = await db.get(
-        'SELECT ycloud_status, ycloud_template_id, ycloud_review_retry_count, ycloud_review_retry_last_at FROM whatsapp_message_templates WHERE name = ?',
+        'SELECT name, ycloud_template_name, ycloud_status, ycloud_template_id, ycloud_review_retry_count, ycloud_review_retry_last_at FROM whatsapp_message_templates WHERE name = ?',
         [targetName]
       )
+      assert.equal(row.name, targetName)
+      assert.equal(row.ycloud_template_name, retryName)
       assert.equal(row.ycloud_status, 'PENDING')
-      assert.equal(row.ycloud_template_id, `official_retry_${targetName}`)
+      assert.equal(row.ycloud_template_id, `official_retry_${retryName}`)
       assert.equal(row.ycloud_review_retry_count, 1)
       assert.ok(row.ycloud_review_retry_last_at)
+    } finally {
+      setYCloudFetchForTest(null)
+      await deleteDefaultTemplates()
+    }
+  })
+})
+
+test('reintenta una plantilla default rechazada con nombre técnico nuevo sin duplicar la fila local', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const wabaId = 'waba_default_templates_rejected_retry_test'
+  const targetName = 'confirmacion_cita_dia_anterior'
+  const retryName = `${targetName}_r1`
+  const requests = []
+
+  await snapshotAppConfig([keys.enabled, keys.apiKey, keys.wabaId], async () => {
+    await deleteDefaultTemplates()
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.apiKey, encrypt('ycloud_default_templates_rejected_retry_secret'))
+    await setAppConfig(keys.wabaId, wabaId)
+
+    setYCloudFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const path = parsed.pathname.replace(/^\/v2/, '')
+      const method = String(options.method || 'GET').toUpperCase()
+      requests.push({ method, path, body: options.body ? JSON.parse(options.body) : null })
+
+      if (path === `/whatsapp/templates/${wabaId}/${targetName}/es_MX` && method === 'DELETE') {
+        return ycloudJsonResponse({ deleted: true })
+      }
+
+      if (path === '/whatsapp/templates' && method === 'POST') {
+        const body = JSON.parse(options.body || '{}')
+        return ycloudJsonResponse({
+          id: `official_retry_${body.name}`,
+          wabaId: body.wabaId,
+          name: body.name,
+          language: body.language,
+          category: body.category,
+          status: 'PENDING',
+          components: body.components
+        })
+      }
+
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET ycloud_status = 'APPROVED',
+            ycloud_template_id = 'official_' || name,
+            ycloud_template_name = name,
+            ycloud_submitted_at = datetime('now', '-1 hour')
+        WHERE name IN ('cita_programada', 'recordatorio_cita_un_dia_antes')
+      `)
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET ycloud_status = 'REJECTED',
+            ycloud_template_id = ?,
+            ycloud_template_name = ?,
+            ycloud_raw_payload_json = ?,
+            ycloud_submitted_at = datetime('now', '-1 hour'),
+            ycloud_review_retry_count = 0,
+            ycloud_review_retry_last_at = NULL
+        WHERE name = ?
+      `, [
+        `official_old_${targetName}`,
+        targetName,
+        JSON.stringify({ wabaId, name: targetName, language: 'es_MX', status: 'REJECTED' }),
+        targetName
+      ])
+
+      const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
+      const targetResult = result.templates.find((template) => template.name === targetName)
+      assert.equal(result.submitted, 1)
+      assert.equal(targetResult.retried, true)
+      assert.equal(targetResult.reviewRetryCount, 1)
+      assert.deepEqual(
+        requests.map((request) => `${request.method} ${request.path}`),
+        [
+          `DELETE /whatsapp/templates/${wabaId}/${targetName}/es_MX`,
+          'POST /whatsapp/templates'
+        ]
+      )
+      assert.equal(requests[1].body.name, retryName)
+      assert.equal(requests[1].body.components[0].text, 'Hola {{1}}, tu cita es mañana a las {{2}}. Responde este mensaje para confirmar tu asistencia.')
+      assert.equal(requests[1].body.components[1].text, 'Mensaje automático de Ristak')
+
+      const localRows = await db.all(
+        'SELECT name, ycloud_template_name, ycloud_status, ycloud_template_id FROM whatsapp_message_templates WHERE name = ?',
+        [targetName]
+      )
+      assert.equal(localRows.length, 1)
+      assert.equal(localRows[0].ycloud_template_name, retryName)
+      assert.equal(localRows[0].ycloud_status, 'PENDING')
+      assert.equal(localRows[0].ycloud_template_id, `official_retry_${retryName}`)
+
+      const apiTemplate = await db.get(
+        'SELECT name, status FROM whatsapp_api_templates WHERE name = ? AND language = ?',
+        [retryName, 'es_MX']
+      )
+      assert.equal(apiTemplate.name, retryName)
+      assert.equal(apiTemplate.status, 'PENDING')
     } finally {
       setYCloudFetchForTest(null)
       await deleteDefaultTemplates()

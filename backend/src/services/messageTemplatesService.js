@@ -75,29 +75,28 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     status: 'active',
     headerEnabled: true,
     headerType: 'text',
-    headerText: 'Cita programada para {{1}}',
-    bodyText: 'Hola {{1}}.\n\n*🔔 Importante:* Te llegarán *varios* recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!',
-    footerText: '',
+    headerText: 'Cita agendada',
+    bodyText: 'Hola {{1}}, tu cita quedó agendada para {{2}}. Te enviaremos recordatorios relacionados con esta cita.',
+    footerText: 'Mensaje automático de Ristak',
     buttons: [],
     variableExamples: {
       '{{cita.fecha_hora}}': 'viernes, 19 de junio de 2026 9:00',
       '{{contact.first_name}}': 'María'
     },
     variableBindings: {
-      headerText: {
-        1: {
-          variableKey: 'cita.fecha_hora',
-          mergeField: '{{cita.fecha_hora}}',
-          label: 'Fecha y hora de cita',
-          example: 'viernes, 19 de junio de 2026 9:00'
-        }
-      },
+      headerText: {},
       bodyText: {
         1: {
           variableKey: 'contact.first_name',
           mergeField: '{{contact.first_name}}',
           label: 'Primer nombre',
           example: 'María'
+        },
+        2: {
+          variableKey: 'cita.fecha_hora',
+          mergeField: '{{cita.fecha_hora}}',
+          label: 'Fecha y hora de cita',
+          example: 'viernes, 19 de junio de 2026 9:00'
         }
       }
     }
@@ -111,8 +110,8 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerEnabled: true,
     headerType: 'text',
     headerText: 'Recordatorio',
-    bodyText: 'Hola {{1}}, tienes una cita programada para dentro de 1 día, el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄',
-    footerText: 'Esto es un mensaje automático',
+    bodyText: 'Hola {{1}}, te recordamos tu cita de mañana {{2}} a las {{3}}. Responde si necesitas hacer algún cambio.',
+    footerText: 'Mensaje automático de Ristak',
     buttons: [],
     variableExamples: {
       '{{contact.first_name}}': 'María',
@@ -152,8 +151,8 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerEnabled: false,
     headerType: 'none',
     headerText: '',
-    bodyText: 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?',
-    footerText: 'Es necesario RESPONDER para evitar errores en la agenda',
+    bodyText: 'Hola {{1}}, tu cita es mañana a las {{2}}. Responde este mensaje para confirmar tu asistencia.',
+    footerText: 'Mensaje automático de Ristak',
     buttons: [],
     variableExamples: {
       '{{contact.first_name}}': 'María',
@@ -401,6 +400,7 @@ function normalizeTemplatePayload(payload = {}) {
     buttons,
     variableExamples: normalizeVariableExamples(payload.variableExamples),
     variableBindings: normalizeVariableBindings(payload.variableBindings),
+    ycloudTemplateName: normalizeOptionalString(payload.ycloudTemplateName),
     ycloudTemplateId: normalizeOptionalString(payload.ycloudTemplateId),
     ycloudStatus: normalizeOptionalString(payload.ycloudStatus)
   }
@@ -457,6 +457,7 @@ function mapTemplate(row) {
     variables: parseJson(row.variables_json, []),
     variableExamples: parseJson(row.variable_examples_json, {}),
     variableBindings: parseJson(row.variable_bindings_json, { headerText: {}, bodyText: {} }),
+    ycloudTemplateName: row.ycloud_template_name || null,
     ycloudTemplateId: row.ycloud_template_id || null,
     ycloudStatus: row.ycloud_status || null,
     ycloudReason: row.ycloud_reason || null,
@@ -594,6 +595,13 @@ function normalizeYCloudCategory(category) {
   return normalized
 }
 
+function getYCloudTemplateName(template = {}) {
+  const raw = template.ycloudRawPayload && typeof template.ycloudRawPayload === 'object'
+    ? template.ycloudRawPayload
+    : {}
+  return cleanString(template.ycloudTemplateName || raw.name || template.name)
+}
+
 function assertMetaVariableSyntax(text, label) {
   const content = cleanString(text)
   if (!content) return
@@ -670,6 +678,7 @@ const TEMPLATE_REVIEW_LOCK_FIELDS = [
   'buttons',
   'variableExamples',
   'variableBindings',
+  'ycloudTemplateName',
   'ycloudTemplateId',
   'ycloudStatus'
 ]
@@ -754,7 +763,7 @@ function buildYCloudTemplatePayload(template) {
   }
 
   return {
-    name: template.name,
+    name: getYCloudTemplateName(template),
     language: template.language,
     category: normalizeYCloudCategory(template.category),
     components
@@ -832,7 +841,7 @@ function buildWhatsAppApiSnapshot(template) {
     id: officialTemplateId || template.id,
     officialTemplateId,
     wabaId: cleanString(raw.wabaId || raw.waba_id),
-    name: template.name,
+    name: getYCloudTemplateName(template),
     language: template.language,
     category: normalizeYCloudCategory(template.category),
     status: normalizeYCloudTemplateStatus(template.ycloudStatus || template.status),
@@ -843,6 +852,7 @@ function buildWhatsAppApiSnapshot(template) {
     raw: {
       ...raw,
       localTemplateId: template.id,
+      localTemplateName: template.name,
       source: 'ristak_message_template',
       components
     }
@@ -879,6 +889,7 @@ export async function syncLocalMessageTemplateSnapshots({ onlyApproved = false }
 function normalizeYCloudTemplateResponse(record = {}) {
   return {
     officialTemplateId: cleanString(record.officialTemplateId || record.id) || null,
+    name: cleanString(record.name) || null,
     status: normalizeYCloudTemplateStatus(record.status),
     reason: cleanString(record.reason || record.whatsappApiError?.error_user_msg || record.whatsappApiError?.message || record.whatsappApiError?.error_data) || null,
     statusUpdateEvent: normalizeYCloudTemplateStatus(record.statusUpdateEvent),
@@ -903,6 +914,7 @@ async function applyYCloudTemplateResponse(id, record = {}, { submitted = false 
     UPDATE whatsapp_message_templates
     SET
       ycloud_template_id = COALESCE(?, ycloud_template_id),
+      ycloud_template_name = COALESCE(?, ycloud_template_name),
       ycloud_status = COALESCE(?, ycloud_status),
       ycloud_reason = ?,
       ycloud_status_update_event = ?,
@@ -915,6 +927,7 @@ async function applyYCloudTemplateResponse(id, record = {}, { submitted = false 
     WHERE id = ?
   `, [
     normalized.officialTemplateId,
+    normalized.name,
     normalized.status,
     normalized.reason,
     normalized.statusUpdateEvent,
@@ -950,9 +963,9 @@ export async function createMessageTemplate(payload = {}) {
         id, folder_id, name, description, category, language, status,
         header_enabled, header_type, header_text, header_media_url, header_location_json,
         body_text, footer_text, buttons_json, variables_json, variable_examples_json,
-        variable_bindings_json, ycloud_template_id, ycloud_status, created_at, updated_at
+        variable_bindings_json, ycloud_template_name, ycloud_template_id, ycloud_status, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [
       id,
       template.folderId,
@@ -972,6 +985,7 @@ export async function createMessageTemplate(payload = {}) {
       jsonString(template.variables),
       jsonString(template.variableExamples),
       jsonString(template.variableBindings),
+      template.ycloudTemplateName,
       template.ycloudTemplateId,
       template.ycloudStatus
     ])
@@ -1020,6 +1034,7 @@ export async function updateMessageTemplate(id, payload = {}) {
         variables_json = ?,
         variable_examples_json = ?,
         variable_bindings_json = ?,
+        ycloud_template_name = ?,
         ycloud_template_id = ?,
         ycloud_status = ?,
         updated_at = CURRENT_TIMESTAMP
@@ -1042,6 +1057,7 @@ export async function updateMessageTemplate(id, payload = {}) {
       jsonString(template.variables),
       jsonString(template.variableExamples),
       jsonString(template.variableBindings),
+      template.ycloudTemplateName,
       template.ycloudTemplateId,
       template.ycloudStatus,
       id
@@ -1137,9 +1153,19 @@ async function ensureDefaultMessageTemplate(definition, folderId) {
 
 const TEMPLATE_REVIEW_STATES = new Set(['APPROVED', 'PENDING', 'IN_APPEAL', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'])
 const TEMPLATE_RETRYABLE_REVIEW_STATES = new Set(['PENDING', 'IN_APPEAL', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'])
+const TEMPLATE_RETRYABLE_FAILURE_STATES = new Set(['REJECTED'])
 
 function isDefaultAppointmentTemplate(template = {}) {
   return DEFAULT_APPOINTMENT_TEMPLATE_NAMES.has(cleanString(template.name))
+}
+
+function getDefaultAppointmentDefinition(name) {
+  const cleanName = cleanString(name)
+  return DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES.find((definition) => definition.name === cleanName) || null
+}
+
+function buildDefaultAppointmentRetryName(baseName, retryNumber) {
+  return normalizeTemplateName(`${baseName}_r${retryNumber}`)
 }
 
 function parseTimestampMs(value) {
@@ -1162,6 +1188,10 @@ function isStaleDefaultAppointmentReview(template = {}, nowMs = Date.now()) {
   return nowMs - submittedAt >= DEFAULT_APPOINTMENT_REVIEW_RETRY_TIMEOUT_MS
 }
 
+function isRejectedDefaultAppointmentReview(template = {}) {
+  return TEMPLATE_RETRYABLE_FAILURE_STATES.has(normalizeYCloudTemplateStatus(template.ycloudStatus))
+}
+
 function haveDefaultAppointmentPeersAccepted(template = {}, templates = []) {
   const peers = templates.filter((candidate) => (
     candidate.id !== template.id &&
@@ -1180,6 +1210,7 @@ async function upsertDefaultAppointmentReviewRetryAlert(template = {}) {
   const name = cleanString(template.name) || 'plantilla de recordatorio'
   const language = cleanString(template.language) || DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE
   const retryCount = Number(template.ycloudReviewRetryCount || 0)
+  const status = normalizeYCloudTemplateStatus(template.ycloudStatus) || 'sin estado'
 
   await db.run(`
     INSERT INTO whatsapp_api_alerts (
@@ -1199,8 +1230,8 @@ async function upsertDefaultAppointmentReviewRetryAlert(template = {}) {
   `, [
     id,
     alertType,
-    'Plantilla de recordatorio atorada en revisión',
-    `Meta dejó ${name} (${language}) en revisión después de ${retryCount} reintentos automáticos. Ristak ya no la recreará para evitar un ciclo; espera la notificación de Meta o revisa la plantilla manualmente.`,
+    'Plantilla de recordatorio requiere revisión',
+    `Meta dejó ${name} (${language}) en estado ${status} después de ${retryCount} reintentos automáticos. Ristak ya no la recreará para evitar un ciclo; espera la notificación de Meta o revisa la plantilla manualmente.`,
     entityType,
     entityId,
     jsonString({
@@ -1231,15 +1262,47 @@ async function resolveDefaultAppointmentReviewRetryAlert(template = {}) {
 }
 
 async function retryDefaultAppointmentTemplateReview(template = {}) {
+  const retryNumber = Number(template.ycloudReviewRetryCount || 0) + 1
+  const definition = getDefaultAppointmentDefinition(template.name)
+  if (!definition) {
+    throw new Error('No se encontró la definición base de esta plantilla de recordatorio.')
+  }
+  const retryName = buildDefaultAppointmentRetryName(definition.name, retryNumber)
   const deleteResult = await deleteWhatsAppApiTemplate({
     wabaId: getTemplateWabaId(template),
-    name: template.name,
+    name: getYCloudTemplateName(template),
     language: template.language
+  })
+  const retryTemplate = normalizeTemplatePayload({
+    ...definition,
+    folderId: template.folderId,
+    language: template.language || definition.language,
+    ycloudTemplateName: retryName,
+    ycloudTemplateId: null,
+    ycloudStatus: null
   })
 
   await db.run(`
     UPDATE whatsapp_message_templates
     SET
+      folder_id = ?,
+      name = ?,
+      description = ?,
+      category = ?,
+      language = ?,
+      status = ?,
+      header_enabled = ?,
+      header_type = ?,
+      header_text = ?,
+      header_media_url = ?,
+      header_location_json = ?,
+      body_text = ?,
+      footer_text = ?,
+      buttons_json = ?,
+      variables_json = ?,
+      variable_examples_json = ?,
+      variable_bindings_json = ?,
+      ycloud_template_name = ?,
       ycloud_template_id = NULL,
       ycloud_status = NULL,
       ycloud_reason = NULL,
@@ -1253,7 +1316,27 @@ async function retryDefaultAppointmentTemplateReview(template = {}) {
       last_error = NULL,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [template.id])
+  `, [
+    retryTemplate.folderId,
+    retryTemplate.name,
+    retryTemplate.description,
+    retryTemplate.category,
+    retryTemplate.language,
+    retryTemplate.status,
+    retryTemplate.headerEnabled ? 1 : 0,
+    retryTemplate.headerType,
+    retryTemplate.headerText,
+    retryTemplate.headerMediaUrl,
+    jsonString(retryTemplate.headerLocation),
+    retryTemplate.bodyText,
+    retryTemplate.footerText,
+    jsonString(retryTemplate.buttons),
+    jsonString(retryTemplate.variables),
+    jsonString(retryTemplate.variableExamples),
+    jsonString(retryTemplate.variableBindings),
+    retryTemplate.ycloudTemplateName,
+    template.id
+  ])
 
   const result = await submitMessageTemplateToYCloud(template.id)
   await resolveDefaultAppointmentReviewRetryAlert(result.template)
@@ -1307,8 +1390,13 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
     } else if (
       submitToYCloud &&
       isDefaultAppointmentTemplate(template) &&
-      isStaleDefaultAppointmentReview(template) &&
-      haveDefaultAppointmentPeersAccepted(template, templates)
+      (
+        isRejectedDefaultAppointmentReview(template) ||
+        (
+          isStaleDefaultAppointmentReview(template) &&
+          haveDefaultAppointmentPeersAccepted(template, templates)
+        )
+      )
     ) {
       const retryCount = Number(template.ycloudReviewRetryCount || 0)
       if (retryCount >= DEFAULT_APPOINTMENT_REVIEW_MAX_RETRIES) {
@@ -1430,7 +1518,7 @@ export async function sendMessageTemplateTest(id, payload = {}) {
     const response = await sendWhatsAppApiTemplateMessage({
       to,
       from: payload.from,
-      templateName: template.name,
+      templateName: getYCloudTemplateName(template),
       language: template.language,
       components: buildSendComponentsFromTemplate(template),
       externalId: payload.externalId
@@ -1473,7 +1561,7 @@ export async function deleteMessageTemplate(id) {
     try {
       ycloud = await deleteWhatsAppApiTemplate({
         wabaId: getTemplateWabaId(template),
-        name: template.name,
+        name: getYCloudTemplateName(template),
         language: template.language
       })
     } catch (error) {
@@ -1484,7 +1572,7 @@ export async function deleteMessageTemplate(id) {
 
   const snapshot = ycloud?.snapshot || await deleteWhatsAppApiTemplateSnapshot({
     wabaId: getTemplateWabaId(template),
-    name: template.name,
+    name: getYCloudTemplateName(template),
     language: template.language,
     ids: [template.id, template.ycloudTemplateId]
   })

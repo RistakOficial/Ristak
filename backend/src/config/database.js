@@ -1621,6 +1621,7 @@ async function initTables() {
         variables_json TEXT,
         variable_examples_json TEXT,
         variable_bindings_json TEXT,
+        ycloud_template_name TEXT,
         ycloud_template_id TEXT,
         ycloud_status TEXT,
         ycloud_reason TEXT,
@@ -1640,6 +1641,7 @@ async function initTables() {
 
     for (const [columnName, columnType] of [
       ['variable_bindings_json', 'TEXT'],
+      ['ycloud_template_name', 'TEXT'],
       ['ycloud_reason', 'TEXT'],
       ['ycloud_status_update_event', 'TEXT'],
       ['ycloud_quality_rating', 'TEXT'],
