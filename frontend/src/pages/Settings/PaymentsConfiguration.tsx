@@ -68,8 +68,8 @@ const STRIPE_WEBHOOK_EVENTS = [
     description: 'Cuando un intento de pago de invoice se completa.'
   },
   {
-    name: 'refund.created',
-    description: 'Cuando se crea un reembolso.'
+    name: 'charge.refunded',
+    description: 'Cuando un cargo se reembolsa, incluso si el reembolso es parcial.'
   }
 ]
 

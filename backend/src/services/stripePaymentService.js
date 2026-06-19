@@ -564,9 +564,7 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
   return nextStatus
 }
 
-async function updatePaymentFromRefund(refund) {
-  const paymentIntentId = extractStripeObjectId(refund?.payment_intent)
-  const chargeId = extractStripeObjectId(refund?.charge)
+async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLabel }) {
   const filters = []
   const params = []
 
@@ -601,11 +599,27 @@ async function updatePaymentFromRefund(refund) {
 
   if (payment.contact_id) {
     updateSingleContactStats(payment.contact_id).catch((error) => {
-      logger.warn(`No se pudieron actualizar stats del contacto por refund Stripe ${payment.id}: ${error.message}`)
+      logger.warn(`No se pudieron actualizar stats del contacto por ${sourceLabel} Stripe ${payment.id}: ${error.message}`)
     })
   }
 
   return 'refunded'
+}
+
+async function updatePaymentFromRefund(refund) {
+  return markStripePaymentAsRefunded({
+    paymentIntentId: extractStripeObjectId(refund?.payment_intent),
+    chargeId: extractStripeObjectId(refund?.charge),
+    sourceLabel: 'refund'
+  })
+}
+
+async function updatePaymentFromRefundedCharge(charge) {
+  return markStripePaymentAsRefunded({
+    paymentIntentId: extractStripeObjectId(charge?.payment_intent),
+    chargeId: extractStripeObjectId(charge?.id),
+    sourceLabel: 'charge.refunded'
+  })
 }
 
 export async function refreshStripePaymentFromIntent(paymentIntentId) {
@@ -631,6 +645,8 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
     await updatePaymentFromInvoice(object, 'paid')
   } else if (event.type === 'invoice.payment_failed' && object?.object === 'invoice') {
     await updatePaymentFromInvoice(object, 'failed')
+  } else if (event.type === 'charge.refunded' && object?.object === 'charge') {
+    await updatePaymentFromRefundedCharge(object)
   } else if (event.type === 'refund.created' && object?.object === 'refund') {
     await updatePaymentFromRefund(object)
   }
