@@ -15832,6 +15832,29 @@
   background: var(--design-panel-bg, var(--color-background-secondary));
 }
 
+.pageFrame .containerFocused .sitesShellFocused .inspectorStickyTop {
+  border-bottom-color: var(--sites-editor-section-border);
+  background: inherit;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .inspectorStickyTop .panelHeader span {
+  background: transparent;
+  color: var(--color-text-tertiary);
+  padding-inline: 0;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .inspectorTabList {
+  border-color: var(--sites-editor-border);
+  background: transparent;
+  box-shadow: none;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .inspectorTabList :global([data-ristak-tablist-tab][data-active='true']) {
+  border-color: var(--sites-editor-border-strong);
+  background: var(--sites-editor-control-bg);
+  box-shadow: none;
+}
+
 .pageFrame .containerFocused .sitesShellFocused .propertiesBody {
   gap: 0;
   padding: 14px 12px 24px;
