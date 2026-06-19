@@ -6826,6 +6826,7 @@ export async function sendWhatsAppApiInteractiveMessage({
   urlButton,
   externalId,
   transport = 'api',
+  allowQrFallback = true,
   contactId,
   userId,
   publicBaseUrl,
@@ -6881,7 +6882,7 @@ export async function sendWhatsAppApiInteractiveMessage({
     fromPhone,
     phoneNumberId
   })
-  if (fallbackDecision.shouldFallback) {
+  if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendTextViaQrFallback({
       phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
       fromPhone,
@@ -6915,7 +6916,7 @@ export async function sendWhatsAppApiInteractiveMessage({
       phoneNumberId,
       error
     })
-    if (retryDecision.shouldFallback) {
+    if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio interactivo API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendTextViaQrFallback({
         phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
@@ -7199,6 +7200,7 @@ export async function sendWhatsAppApiTextMessage({
   from,
   externalId,
   transport = 'api',
+  allowQrFallback = true,
   contactId,
   userId,
   publicBaseUrl,
@@ -7247,7 +7249,7 @@ export async function sendWhatsAppApiTextMessage({
     fromPhone,
     phoneNumberId
   })
-  if (fallbackDecision.shouldFallback) {
+  if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendTextViaQrFallback({
       phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
       fromPhone,
@@ -7279,7 +7281,7 @@ export async function sendWhatsAppApiTextMessage({
       phoneNumberId,
       error
     })
-    if (retryDecision.shouldFallback) {
+    if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendTextViaQrFallback({
         phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
@@ -7327,6 +7329,7 @@ export async function sendWhatsAppApiImageMessage({
   caption,
   externalId,
   transport = 'api',
+  allowQrFallback = true,
   contactId,
   userId,
   extraVariables,
@@ -7405,7 +7408,7 @@ export async function sendWhatsAppApiImageMessage({
     fromPhone,
     phoneNumberId
   })
-  if (fallbackDecision.shouldFallback) {
+  if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendImageViaQrFallback({
       phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
       fromPhone,
@@ -7434,7 +7437,7 @@ export async function sendWhatsAppApiImageMessage({
       phoneNumberId,
       error
     })
-    if (retryDecision.shouldFallback) {
+    if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de foto API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendImageViaQrFallback({
         phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
@@ -7491,6 +7494,7 @@ export async function sendWhatsAppApiDocumentMessage({
   caption,
   externalId,
   transport = 'api',
+  allowQrFallback = true,
   contactId,
   userId,
   extraVariables,
@@ -7570,7 +7574,7 @@ export async function sendWhatsAppApiDocumentMessage({
     fromPhone,
     phoneNumberId
   })
-  if (fallbackDecision.shouldFallback) {
+  if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendDocumentViaQrFallback({
       phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
       fromPhone,
@@ -7602,7 +7606,7 @@ export async function sendWhatsAppApiDocumentMessage({
       phoneNumberId,
       error
     })
-    if (retryDecision.shouldFallback) {
+    if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de documento API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendDocumentViaQrFallback({
         phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
@@ -7665,6 +7669,7 @@ export async function sendWhatsAppApiAudioMessage({
   durationMs,
   voice,
   transport = 'api',
+  allowQrFallback = true,
   contactId,
   phoneNumberId
 } = {}) {
@@ -7735,7 +7740,7 @@ export async function sendWhatsAppApiAudioMessage({
     fromPhone,
     phoneNumberId
   })
-  if (fallbackDecision.shouldFallback) {
+  if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendAudioViaQrFallback({
       phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
       fromPhone,
@@ -7768,7 +7773,7 @@ export async function sendWhatsAppApiAudioMessage({
       phoneNumberId,
       error
     })
-    if (retryDecision.shouldFallback) {
+    if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de audio API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendAudioViaQrFallback({
         phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,

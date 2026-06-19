@@ -2073,7 +2073,7 @@ async function applyContactUserAction(node, ctx) {
 
 /** Envía un bloque adjunto: si es un archivo subido a Ristak se manda como
     data URL (el servicio de WhatsApp lo publica); si es URL externa, directo */
-async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport = 'api', ctx }) {
+async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport = 'api', allowQrFallback = true, ctx }) {
   const {
     sendWhatsAppApiImageMessage,
     sendWhatsAppApiAudioMessage,
@@ -2106,9 +2106,9 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
   }
 
   if (block.type === 'image') {
-    await sendWhatsAppApiImageMessage({ to, from: fromPhone, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport })
+    return sendWhatsAppApiImageMessage({ to, from: fromPhone, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback })
   } else if (block.type === 'audio') {
-    await sendWhatsAppApiAudioMessage({
+    return sendWhatsAppApiAudioMessage({
       to,
       from: fromPhone,
       audioDataUrl: dataUrl || undefined,
@@ -2116,11 +2116,12 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
       // Nota de voz de WhatsApp (ogg/opus) salvo que el usuario lo apague
       voice: block.voiceNote !== false,
       phoneNumberId,
-      transport
+      transport,
+      allowQrFallback
     })
   } else {
     // video y archivo se envían como documento (conserva calidad y nombre)
-    await sendWhatsAppApiDocumentMessage({
+    return sendWhatsAppApiDocumentMessage({
       to,
       from: fromPhone,
       documentDataUrl: dataUrl || undefined,
@@ -2130,7 +2131,8 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
       caption,
       contactId: ctx.contact?.id,
       phoneNumberId,
-      transport
+      transport,
+      allowQrFallback
     })
   }
 }
@@ -2172,6 +2174,58 @@ async function resolveAutomationQrSender(preferredPhoneNumberId) {
   }
 }
 
+function shouldRetryWhatsAppAutomationViaQr(error) {
+  const message = cleanString(error?.message)
+  if (!message) return false
+  const normalized = message
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
+  return (
+    normalized.includes('whatsapp_api no esta conectado') ||
+    normalized.includes('whatsapp api no esta conectado') ||
+    normalized.includes('falta el numero emisor') ||
+    normalized.includes('restricc') ||
+    normalized.includes('bloque') ||
+    normalized.includes('quality') ||
+    normalized.includes('messaging limit') ||
+    normalized.includes('customer service window') ||
+    normalized.includes('outside the 24') ||
+    normalized.includes('24 horas') ||
+    /\b(470|131021|131026|131047)\b/.test(normalized)
+  )
+}
+
+function whatsappTransportFromResult(result) {
+  const transport = typeof result === 'string' ? result : result?.transport
+  return cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+}
+
+function whatsappTransportLabel(transports = []) {
+  const unique = [...new Set(transports.map(whatsappTransportFromResult))]
+  if (unique.length === 1) return unique[0] === 'qr' ? 'QR' : 'WhatsApp API'
+  if (unique.includes('api') && unique.includes('qr')) return 'WhatsApp API y QR'
+  return 'WhatsApp API'
+}
+
+async function sendWhatsAppAutomationMessage({ send, allowQrFallback, phoneNumberId, fromPhone, description }) {
+  try {
+    return await send({ phoneNumberId, fromPhone, transport: 'api', allowQrFallback })
+  } catch (error) {
+    if (!allowQrFallback || !shouldRetryWhatsAppAutomationViaQr(error)) throw error
+
+    const qrSender = await resolveAutomationQrSender(phoneNumberId)
+    logger.warn(`[Automatizaciones] WhatsApp API no disponible; usando QR como respaldo para ${description || 'mensaje'}: ${error.message}`)
+    return send({
+      phoneNumberId: qrSender.phoneNumberId,
+      fromPhone: qrSender.fromPhone,
+      transport: 'qr',
+      allowQrFallback: true
+    })
+  }
+}
+
 async function sendWhatsAppBlocks(node, ctx) {
   const {
     sendWhatsAppApiInteractiveMessage,
@@ -2190,18 +2244,11 @@ async function sendWhatsAppBlocks(node, ctx) {
     phoneNumberId = ctx.businessPhoneNumberId
   }
 
-  const sendViaQr = str(config.messageType) !== 'template' && (
+  const allowQrFallback = str(config.messageType) !== 'template' && (
     config.sendViaQr === true ||
     str(config.transport).toLowerCase() === 'qr'
   )
-  const transport = sendViaQr ? 'qr' : 'api'
   let fromPhone
-
-  if (sendViaQr) {
-    const qrSender = await resolveAutomationQrSender(phoneNumberId)
-    phoneNumberId = qrSender.phoneNumberId
-    fromPhone = qrSender.fromPhone
-  }
 
   if (str(config.messageType) === 'template') {
     const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
@@ -2286,6 +2333,7 @@ async function sendWhatsAppBlocks(node, ctx) {
   const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
   let sent = 0
   const notes = []
+  const transports = []
   for (const block of blocks) {
     if (block.type === 'text') {
       const text = renderTemplate(str(block.compiledText), ctx, { preserveUnknown: true }).trim()
@@ -2301,34 +2349,65 @@ async function sendWhatsAppBlocks(node, ctx) {
       }
 
       if (branchButtons.length) {
-        await sendWhatsAppApiInteractiveMessage({
-          to,
-          from: fromPhone,
-          body: text,
-          buttons: branchButtons.map(button => ({ id: button.id, title: button.label })),
-          contactId: ctx.contact?.id,
+        const response = await sendWhatsAppAutomationMessage({
+          allowQrFallback,
           phoneNumberId,
-          transport
+          fromPhone,
+          description: 'botones de WhatsApp',
+          send: ({ phoneNumberId: nextPhoneNumberId, fromPhone: nextFromPhone, transport, allowQrFallback: nextAllowQrFallback }) => sendWhatsAppApiInteractiveMessage({
+            to,
+            from: nextFromPhone,
+            body: text,
+            buttons: branchButtons.map(button => ({ id: button.id, title: button.label })),
+            contactId: ctx.contact?.id,
+            phoneNumberId: nextPhoneNumberId,
+            transport,
+            allowQrFallback: nextAllowQrFallback
+          })
         })
+        transports.push(whatsappTransportFromResult(response))
         sent += 1
         return {
-          detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}${sendViaQr ? ' por QR' : ''}; esperando botón`,
+          detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''} por ${whatsappTransportLabel(transports)}; esperando botón`,
           waitForButtons: branchButtons.map(button => ({ id: button.id, label: button.label }))
         }
       }
 
       if (urlButtons.length) {
-        await sendWhatsAppApiInteractiveMessage({
-          to,
-          from: fromPhone,
-          body: text,
-          urlButton: { title: urlButtons[0].label, url: urlButtons[0].url },
-          contactId: ctx.contact?.id,
+        const response = await sendWhatsAppAutomationMessage({
+          allowQrFallback,
           phoneNumberId,
-          transport
+          fromPhone,
+          description: 'botón de URL de WhatsApp',
+          send: ({ phoneNumberId: nextPhoneNumberId, fromPhone: nextFromPhone, transport, allowQrFallback: nextAllowQrFallback }) => sendWhatsAppApiInteractiveMessage({
+            to,
+            from: nextFromPhone,
+            body: text,
+            urlButton: { title: urlButtons[0].label, url: urlButtons[0].url },
+            contactId: ctx.contact?.id,
+            phoneNumberId: nextPhoneNumberId,
+            transport,
+            allowQrFallback: nextAllowQrFallback
+          })
         })
+        transports.push(whatsappTransportFromResult(response))
       } else {
-        await sendWhatsAppApiTextMessage({ to, from: fromPhone, text, contactId: ctx.contact?.id, phoneNumberId, transport })
+        const response = await sendWhatsAppAutomationMessage({
+          allowQrFallback,
+          phoneNumberId,
+          fromPhone,
+          description: 'mensaje de texto de WhatsApp',
+          send: ({ phoneNumberId: nextPhoneNumberId, fromPhone: nextFromPhone, transport, allowQrFallback: nextAllowQrFallback }) => sendWhatsAppApiTextMessage({
+            to,
+            from: nextFromPhone,
+            text,
+            contactId: ctx.contact?.id,
+            phoneNumberId: nextPhoneNumberId,
+            transport,
+            allowQrFallback: nextAllowQrFallback
+          })
+        })
+        transports.push(whatsappTransportFromResult(response))
       }
       sent += 1
     } else if (block.type === 'delay') {
@@ -2338,7 +2417,22 @@ async function sendWhatsAppBlocks(node, ctx) {
       )
       if (seconds > 0) await sleep(seconds * 1000)
     } else if (['image', 'video', 'audio', 'file'].includes(block.type) && str(block.url)) {
-      await sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport, ctx })
+      const response = await sendWhatsAppAutomationMessage({
+        allowQrFallback,
+        phoneNumberId,
+        fromPhone,
+        description: `adjunto de WhatsApp (${block.type})`,
+        send: ({ phoneNumberId: nextPhoneNumberId, fromPhone: nextFromPhone, transport, allowQrFallback: nextAllowQrFallback }) => sendMediaBlock({
+          block,
+          to,
+          phoneNumberId: nextPhoneNumberId,
+          fromPhone: nextFromPhone,
+          transport,
+          allowQrFallback: nextAllowQrFallback,
+          ctx
+        })
+      })
+      transports.push(whatsappTransportFromResult(response))
       sent += 1
     } else {
       notes.push(`adjunto "${block.type}" sin archivo: omitido`)
@@ -2346,7 +2440,7 @@ async function sendWhatsAppBlocks(node, ctx) {
   }
   if (sent === 0) throw new Error('El mensaje está vacío: configura al menos un globo de texto')
   return {
-    detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}${sendViaQr ? ' por QR' : ''}${notes.length ? ` (${notes.join(', ')})` : ''}`
+    detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''} por ${whatsappTransportLabel(transports)}${notes.length ? ` (${notes.join(', ')})` : ''}`
   }
 }
 

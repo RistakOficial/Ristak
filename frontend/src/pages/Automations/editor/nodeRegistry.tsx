@@ -1434,9 +1434,15 @@ const CHANNEL_NODES: NodeDefinition[] = [
       const blocks = messageBlocks.filter((block) => block.type === 'text').length
       const firstTemplate = messageBlocks.find((block) => block.type === 'template')
       const templateLabel = str(config.templateName) || str(firstTemplate?.templateName) || str(firstTemplate?.templateId)
-      const qrLabel = !isTemplate && (config.sendViaQr === true || str(config.transport) === 'qr') ? ' · QR' : ''
+      const countLabel = !isTemplate && blocks > 1 ? ` · ${blocks} mensajes` : ''
+      let methodLabel = ' · API'
+      if (isTemplate) {
+        methodLabel = ' · Plantilla · API'
+      } else if (config.sendViaQr === true || str(config.transport) === 'qr') {
+        methodLabel = ' · API + QR respaldo'
+      }
       return {
-        text: `${senderLabels[str(config.sender)] || 'Número principal'}${isTemplate ? ' · Plantilla' : blocks > 1 ? ` · ${blocks} mensajes` : ''}${qrLabel}`,
+        text: `${senderLabels[str(config.sender)] || 'Número principal'}${countLabel}${methodLabel}`,
         box: isTemplate ? templateLabel || undefined : firstTextBlock(config) || undefined,
         empty: 'Configura el mensaje de WhatsApp'
       }

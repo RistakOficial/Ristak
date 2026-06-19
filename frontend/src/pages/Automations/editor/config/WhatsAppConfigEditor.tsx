@@ -37,7 +37,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const set = (patch: Config) => onChange({ ...config, ...patch })
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
-  const sendViaQr = config.sendViaQr === true || str(config.transport) === 'qr'
+  const allowQrFallback = config.sendViaQr === true || str(config.transport) === 'qr'
   const [hasQrConnected, setHasQrConnected] = useState(false)
 
   useEffect(() => {
@@ -106,10 +106,10 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
     set({ messageType: next })
   }
 
-  const setSendViaQr = (checked: boolean) => {
+  const setAllowQrFallback = (checked: boolean) => {
     set({
       sendViaQr: checked,
-      transport: checked ? 'qr' : 'api'
+      transport: 'api'
     })
   }
 
@@ -167,12 +167,12 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
 
         {messageType === 'text' && (
           <>
-            {(hasQrConnected || sendViaQr) && (
+            {(hasQrConnected || allowQrFallback) && (
               <div className={styles.qrModeBox}>
                 <Toggle
-                  checked={sendViaQr}
-                  onChange={setSendViaQr}
-                  label="Activar QR"
+                  checked={allowQrFallback}
+                  onChange={setAllowQrFallback}
+                  label="Permitir QR"
                 />
                 <div className={styles.qrModeCopy}>
                   <div className={styles.qrModeTitle}>
@@ -182,19 +182,19 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
                     >
                       <ShieldAlert size={16} aria-hidden="true" />
                     </span>
-                    Enviar mensajes normales por QR
+                    Usar QR si WhatsApp API no está disponible
                   </div>
                   <span className={styles.configHelp}>
-                    Usa un número conectado por QR en lugar de WhatsApp API para estos mensajes. Actívalo sólo si aceptas el riesgo de bloqueo del número.
+                    Primero se intenta WhatsApp API. Si la API no está disponible o Meta restringe el envío, se usa un número conectado por QR como respaldo.
                   </span>
                 </div>
               </div>
             )}
 
-            {sendViaQr && !hasQrConnected && (
+            {allowQrFallback && !hasQrConnected && (
               <div className={styles.configWarning}>
                 <AlertTriangle size={12} />
-                Esta automatización tiene QR activado, pero ahora no hay ningún número conectado por QR.
+                Esta automatización permite respaldo por QR, pero ahora no hay ningún número conectado por QR.
               </div>
             )}
 

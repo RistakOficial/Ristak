@@ -377,7 +377,7 @@ test('automatización de WhatsApp queda esperando botón y continúa por la sali
   })
 })
 
-test('automatización de texto por QR no usa WhatsApp API cuando QR no está conectado', async () => {
+test('automatización con respaldo QR usa WhatsApp API primero cuando está disponible', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const suffix = randomUUID()
     const contactId = `contact_qr_mode_${suffix}`
@@ -438,10 +438,13 @@ test('automatización de texto por QR no usa WhatsApp API cuando QR no está con
         'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
         [automationId, contactId]
       )
-      assert.equal(captures.length, 0)
-      assert.equal(enrollment.status, 'exited')
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'text')
+      assert.equal(captures[0].text.body, 'Hola por QR')
+      assert.equal(enrollment.status, 'completed')
       const log = JSON.parse(enrollment.log)
-      assert.equal(log.some(entry => String(entry.detail || '').includes('conectado por QR')), true)
+      assert.equal(log.some(entry => String(entry.detail || '').includes('WhatsApp API')), true)
+      assert.equal(log.some(entry => String(entry.detail || '').includes('conectado por QR')), false)
     } finally {
       await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
       await db.run('DELETE FROM automations WHERE id = ?', [automationId])
