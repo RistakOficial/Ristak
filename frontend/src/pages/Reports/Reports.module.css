@@ -237,11 +237,12 @@
 .metricsCategoryCard {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
-  background: var(--design-table-bg, var(--color-surface));
-  border: 1px solid var(--design-table-border, var(--color-border));
-  border-radius: var(--design-card-radius, var(--radius-lg));
-  padding: var(--spacing-lg);
+  gap: var(--spacing-sm);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   overflow: visible;
   position: relative;
   min-height: 0;
@@ -251,7 +252,7 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: var(--spacing-sm);
   height: 100%;
   min-height: 0;
 }
@@ -285,6 +286,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .metricsLoading {
@@ -331,29 +337,31 @@
   flex: 0 0 auto;
   overflow-x: auto;
   margin: 0;
-  background: var(--design-table-bg, transparent);
-  border: 1px solid var(--design-table-border, var(--color-border-subtle));
-  border-radius: var(--design-table-radius, var(--radius-md));
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
 }
 
 .metricsTable {
   width: 100%;
+  min-width: 420px;
   border-collapse: collapse;
   border-spacing: 0;
-  background: var(--design-table-bg, transparent);
+  background: transparent;
 }
 
 .metricsTable thead th {
   text-align: left;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  font-size: var(--font-size-xs);
+  padding: 11px var(--spacing-sm);
+  font-size: 11px;
   font-weight: var(--font-weight-semibold);
-  font-family: var(--design-table-header-font, inherit);
-  text-transform: uppercase;
-  letter-spacing: var(--design-table-header-spacing, 0.08em);
-  color: var(--color-text-tertiary);
-  background: var(--design-table-head-bg, transparent);
-  border-bottom: 1px solid var(--design-table-border, var(--color-border-subtle));
+  font-family: var(--label-font);
+  text-transform: var(--label-transform);
+  letter-spacing: var(--label-spacing);
+  color: var(--text-mute);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
 }
 
 .metricsTable thead th:last-child {
@@ -373,31 +381,29 @@
 }
 
 .metricsRow td {
-  padding: var(--spacing-sm);
-  font-size: var(--font-size-sm);
-  border-bottom: 1px solid var(--design-table-border, var(--color-border-subtle));
+  padding: 12px var(--spacing-sm);
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  transition: background 0.12s ease;
 }
 
-.metricsRow:last-child td {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.metricsRow:first-child td {
-  padding-top: var(--spacing-sm);
+.metricsRow:hover td {
+  background: var(--surface-2);
 }
 
 .metricsLabelCell {
-  color: var(--color-text-secondary);
+  color: var(--text-dim);
   font-weight: var(--font-weight-medium);
 }
 
 .metricsValueCell {
   text-align: right;
-  color: var(--color-text-primary);
-  font-weight: var(--font-weight-bold);
+  color: var(--text);
+  font-family: var(--num-font);
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
-  font-size: var(--font-size-base);
+  font-size: 13px;
 }
 
 .metricsChartWrapper {
@@ -407,10 +413,10 @@
   min-height: clamp(260px, 34vh, 380px);
   min-width: 0;
   margin-top: 0;
-  padding: var(--spacing-md);
-  border-top: 1px solid var(--design-table-border, var(--color-border-subtle));
-  background: var(--design-chart-panel-bg, transparent);
-  border-radius: var(--design-table-radius, var(--radius-md));
+  padding: var(--spacing-md) 0 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  border-radius: 0;
   overflow: visible;
   position: relative;
 }
