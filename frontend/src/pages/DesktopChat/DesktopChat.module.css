@@ -46,6 +46,7 @@
 }
 
 .inboxPanel {
+  overflow: hidden;
   border-right: 1px solid var(--chat-border);
 }
 
@@ -154,8 +155,13 @@
 }
 
 .chatSearchField {
-  margin: 14px 14px 10px;
+  --chat-panel-gutter: 14px;
+
   flex: 0 0 auto;
+  width: calc(100% - var(--chat-panel-gutter) - var(--chat-panel-gutter));
+  max-width: calc(100% - var(--chat-panel-gutter) - var(--chat-panel-gutter));
+  margin: 14px var(--chat-panel-gutter) 10px;
+  box-sizing: border-box;
 }
 
 .sectionTitleRow button,
@@ -175,9 +181,11 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   padding: 12px 14px;
   border-bottom: 1px solid var(--chat-border);
-  overflow: visible;
+  overflow: hidden;
 }
 
 .filterRow button,
@@ -198,8 +206,17 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   height: 30px;
   padding: 0 10px;
+  overflow: hidden;
+}
+
+.filterRow button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .filterRow button:hover,
@@ -227,9 +244,12 @@
 .filterPanel {
   display: grid;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
   padding: 12px 14px 14px;
   border-bottom: 1px solid var(--chat-border);
   background: color-mix(in srgb, var(--chat-soft) 64%, transparent);
+  overflow: hidden;
 }
 
 .filterPanelHeader {
@@ -237,12 +257,17 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .filterPanelHeader strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-weight: 740;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .filterPanelHeader button {
@@ -260,6 +285,7 @@
 .filterGrid {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .filterGroup {
@@ -280,12 +306,19 @@
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
-  overflow: visible;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .filterChipWrap button {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
   min-height: 28px;
   padding: 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chatSelectionBar {
