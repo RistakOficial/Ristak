@@ -2631,11 +2631,15 @@ async function getBalanceFromDb() {
 }
 
 function mapTemplateRow(row = {}) {
+  const officialName = cleanString(row.name)
+  const displayName = cleanString(row.display_name) || officialName
   return {
     id: row.id,
     official_template_id: row.official_template_id,
     waba_id: row.waba_id,
-    name: row.name,
+    name: displayName,
+    official_name: officialName,
+    local_template_id: row.local_template_id || null,
     language: row.language,
     category: row.category,
     sub_category: row.sub_category,
@@ -2659,32 +2663,78 @@ async function getTemplatesFromDb({ status, limit = 100 } = {}) {
   const where = []
 
   if (status) {
-    where.push('status = ?')
+    where.push('t.status = ?')
     params.push(cleanString(status).toUpperCase())
   }
 
   params.push(Math.max(1, Math.min(Number(limit) || 100, 200)))
 
   const rows = await db.all(`
-    SELECT id, official_template_id, waba_id, name, language, category,
-      sub_category, previous_category, message_send_ttl_seconds, status,
-      quality_rating, reason, status_update_event, disable_date, components_json,
-      ycloud_create_time, ycloud_update_time, created_at, updated_at
-    FROM whatsapp_api_templates
+    SELECT
+      t.id,
+      t.official_template_id,
+      t.waba_id,
+      t.name,
+      COALESCE(NULLIF(mt.name, ''), t.name) AS display_name,
+      mt.id AS local_template_id,
+      mt.ycloud_template_name AS local_ycloud_template_name,
+      t.language,
+      t.category,
+      t.sub_category,
+      t.previous_category,
+      t.message_send_ttl_seconds,
+      t.status,
+      t.quality_rating,
+      t.reason,
+      t.status_update_event,
+      t.disable_date,
+      t.components_json,
+      t.ycloud_create_time,
+      t.ycloud_update_time,
+      t.created_at,
+      t.updated_at
+    FROM whatsapp_api_templates t
+    LEFT JOIN whatsapp_message_templates mt
+      ON mt.language = t.language
+      AND (
+        mt.ycloud_template_id = t.id
+        OR mt.ycloud_template_id = t.official_template_id
+        OR mt.ycloud_template_name = t.name
+        OR mt.name = t.name
+      )
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY
-      CASE status
+      CASE
+        WHEN mt.id IS NOT NULL AND (
+          t.name = mt.ycloud_template_name
+          OR (COALESCE(mt.ycloud_template_name, '') = '' AND t.name = mt.name)
+        ) THEN 0
+        WHEN mt.id IS NOT NULL THEN 1
+        ELSE 2
+      END,
+      CASE t.status
         WHEN 'APPROVED' THEN 0
         WHEN 'PENDING' THEN 1
         WHEN 'IN_APPEAL' THEN 2
         ELSE 3
       END,
-      updated_at DESC,
-      name ASC
+      t.updated_at DESC,
+      t.name ASC
     LIMIT ?
   `, params)
 
-  return rows.map(mapTemplateRow)
+  const seen = new Set()
+  const deduped = []
+  for (const row of rows) {
+    const key = row.local_template_id
+      ? `local:${row.local_template_id}`
+      : `remote:${row.waba_id}|${row.name}|${row.language}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(row)
+  }
+
+  return deduped.map(mapTemplateRow)
 }
 
 async function getActiveAlertsFromDb({ limit = 20 } = {}) {

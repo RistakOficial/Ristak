@@ -354,6 +354,70 @@ test('catálogo de plantillas WhatsApp refleja plantillas locales aprobadas', as
   })
 })
 
+test('catálogo WhatsApp oculta nombres técnicos de reintento y no duplica plantillas locales', async () => {
+  const suffix = Date.now()
+  const keys = getWhatsAppApiConfigKeys()
+  const templateId = `tmpl_retry_catalog_${suffix}`
+  const officialBaseId = `official_retry_catalog_base_${suffix}`
+  const officialRetryId = `official_retry_catalog_retry_${suffix}`
+  const templateName = `recordatorio_retry_catalog_${suffix}`
+  const retryName = `${templateName}_r1`
+  const wabaId = 'waba_catalog_retry_alias_test'
+  const components = [
+    { type: 'BODY', text: 'Hola {{1}}, confirma tu cita.' },
+    { type: 'FOOTER', text: 'Mensaje automático de Ristak' }
+  ]
+
+  await withAppConfigValue(keys.wabaId, wabaId, async () => {
+    try {
+      await db.run(`
+        INSERT INTO whatsapp_message_templates (
+          id, name, description, category, language, status,
+          header_enabled, header_type, body_text, footer_text, buttons_json,
+          variables_json, variable_examples_json, variable_bindings_json,
+          ycloud_template_name, ycloud_template_id, ycloud_status, ycloud_raw_payload_json,
+          created_at, updated_at
+        ) VALUES (?, ?, '', 'utility', 'es_MX', 'active', 0, 'none', ?, ?, '[]', ?, ?, ?, ?, ?, 'APPROVED', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        templateId,
+        templateName,
+        'Hola {{1}}, confirma tu cita.',
+        'Mensaje automático de Ristak',
+        JSON.stringify(['{{1}}']),
+        JSON.stringify({ '{{1}}': 'Ana' }),
+        JSON.stringify({ bodyText: { 1: { variableKey: 'contact.first_name', mergeField: '{{contact.first_name}}', label: 'Nombre', example: 'Ana' } } }),
+        retryName,
+        officialRetryId,
+        JSON.stringify({ id: officialRetryId, name: retryName, status: 'APPROVED' })
+      ])
+
+      await db.run(`
+        INSERT INTO whatsapp_api_templates (
+          id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json, updated_at
+        ) VALUES (?, ?, ?, ?, 'es_MX', 'APPROVED', ?, '{}', datetime('now', '-1 hour'))
+      `, [officialBaseId, officialBaseId, wabaId, templateName, JSON.stringify(components)])
+
+      await db.run(`
+        INSERT INTO whatsapp_api_templates (
+          id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json, updated_at
+        ) VALUES (?, ?, ?, ?, 'es_MX', 'APPROVED', ?, '{}', CURRENT_TIMESTAMP)
+      `, [officialRetryId, officialRetryId, wabaId, retryName, JSON.stringify(components)])
+
+      const catalog = await listAutomationWhatsAppTemplatesCatalog()
+      const matches = catalog.items.filter((template) => template.name === templateName && template.language === 'es_MX')
+
+      assert.equal(matches.length, 1)
+      assert.equal(matches[0].id, officialRetryId)
+      assert.equal(matches[0].name, templateName)
+      assert.equal(matches[0].official_name, retryName)
+      assert.ok(!catalog.items.some((template) => String(template.name).includes('_r1')))
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_templates WHERE waba_id = ? AND name IN (?, ?)', [wabaId, templateName, retryName])
+      await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [templateId])
+    }
+  })
+})
+
 test('catálogo de formularios para automatizaciones incluye normales, embebidos e importados', async () => {
   const suffix = Date.now()
   const formSiteId = `site_form_catalog_${suffix}`
