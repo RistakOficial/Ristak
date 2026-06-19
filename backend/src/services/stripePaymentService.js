@@ -17,6 +17,7 @@ const CONFIG_KEYS = {
 
 const MASKED_PREFIX = '***'
 const DEFAULT_CURRENCY = 'MXN'
+const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
 const ZERO_DECIMAL_CURRENCIES = new Set([
   'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf',
   'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf'
@@ -24,6 +25,10 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function timestampPlaceholder() {
+  return isPostgresRuntime ? '?::timestamp' : '?'
 }
 
 function normalizeCurrency(value) {
@@ -480,8 +485,8 @@ async function updatePaymentFromIntent(intent) {
          reference = COALESCE(?, reference),
          stripe_payment_intent_id = ?,
          stripe_charge_id = COALESCE(?, stripe_charge_id),
-         paid_at = COALESCE(?, paid_at),
-         date = CASE WHEN ? IS NOT NULL THEN ? ELSE date END,
+         paid_at = COALESCE(${timestampPlaceholder()}, paid_at),
+         date = COALESCE(${timestampPlaceholder()}, date),
          updated_at = CURRENT_TIMESTAMP
      WHERE ${whereColumn} = ?`,
     [
@@ -491,7 +496,6 @@ async function updatePaymentFromIntent(intent) {
       intent.id,
       intent.id,
       latestChargeId,
-      paidAt,
       paidAt,
       paidAt,
       whereValue
@@ -537,8 +541,8 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
          payment_provider = 'stripe',
          reference = COALESCE(?, reference),
          stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
-         paid_at = COALESCE(?, paid_at),
-         date = CASE WHEN ? IS NOT NULL THEN ? ELSE date END,
+         paid_at = COALESCE(${timestampPlaceholder()}, paid_at),
+         date = COALESCE(${timestampPlaceholder()}, date),
          updated_at = CURRENT_TIMESTAMP
      WHERE ${whereColumn} = ?`,
     [
@@ -547,7 +551,6 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
       nextStatus,
       reference,
       paymentIntentId || null,
-      paidAt,
       paidAt,
       paidAt,
       whereValue
