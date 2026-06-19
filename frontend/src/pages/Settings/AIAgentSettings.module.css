@@ -1159,28 +1159,31 @@
 
 .conversationalDirectoryHeader {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
   gap: 18px;
   padding-bottom: 20px;
   border-bottom: 1px solid var(--border);
 }
 
+.conversationalDirectoryTitleGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .conversationalDirectoryHeader h2 {
   margin: 0;
   color: var(--text);
-  font-size: clamp(28px, 3vw, 40px);
-  font-weight: 800;
-  line-height: 1.1;
+  font-size: clamp(24px, 2.2vw, 32px);
+  font-weight: 650;
+  line-height: 1.15;
   overflow-wrap: anywhere;
 }
 
-.conversationalDirectoryControls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  width: 100%;
-  min-width: 0;
+.conversationalDirectoryTitleGroup > button {
+  flex: 0 0 auto;
 }
 
 .agentDirectoryGrid {
@@ -1731,21 +1734,22 @@
 
 @media (max-width: 640px) {
   .conversationalDirectoryHeader {
+    align-items: stretch;
+    flex-direction: column;
     gap: 14px;
     padding-bottom: 16px;
   }
 
   .conversationalDirectoryHeader h2 {
-    font-size: 28px;
+    font-size: 24px;
   }
 
-  .conversationalDirectoryControls {
-    align-items: stretch;
-    flex-direction: column;
+  .conversationalDirectoryTitleGroup {
+    flex-wrap: wrap;
   }
 
-  .conversationalDirectoryControls button {
-    justify-content: center;
+  .conversationalDirectoryTitleGroup > button {
+    width: 100%;
   }
 
   .agentDirectoryGrid {

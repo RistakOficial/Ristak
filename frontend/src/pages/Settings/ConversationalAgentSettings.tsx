@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Bot, ChevronDown, FileText, Image as ImageIcon, KeyRound, Pause, Play, Plus, RotateCcw, Trash2, Video, X } from 'lucide-react'
+import { AgentRobot } from '@/components/ai'
 import { Badge, Button, Card, CustomSelect, Modal, NumberInput, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
@@ -3130,8 +3131,9 @@ export const ConversationalAgentSettings: React.FC = () => {
   return (
     <div className={`${styles.container} ${styles.conversationalDirectoryPage}`}>
       <div className={styles.conversationalDirectoryHeader}>
-        <h2>Agente conversacional</h2>
-        <div className={styles.conversationalDirectoryControls}>
+        <div className={styles.conversationalDirectoryTitleGroup}>
+          <AgentRobot size={48} active label="Agente conversacional" />
+          <h2>Agente conversacional</h2>
           <Button
             onClick={handleCreateAgent}
             loading={creating}
@@ -3141,54 +3143,54 @@ export const ConversationalAgentSettings: React.FC = () => {
             <Plus size={16} />
             Nuevo agente
           </Button>
-          <div className={styles.aiProviderDropdown}>
-            <Button
-              variant="secondary"
-              size="sm"
-              className={styles.aiProviderManagerToggle}
-              onClick={() => setAIProvidersExpanded((current) => !current)}
-              aria-expanded={aiProvidersExpanded}
-              aria-controls="conversational-ai-provider-list"
-              aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
-            >
-              Modelos de IA disponibles
-              <ChevronDown
-                size={15}
-                className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
-              />
-            </Button>
-            {aiProvidersExpanded && (
-              <div id="conversational-ai-provider-list" className={`${styles.aiProviderManagerList} ${styles.aiProviderDropdownMenu}`}>
-                {conversationalAIProviderOptions.map((provider) => {
-                  const status = getProviderStatus(aiProviders, provider.id)
-                  const connected = Boolean(status?.connected)
-                  const canDelete = Boolean(status?.canDelete && connected)
-                  return (
-                    <div key={provider.id} className={styles.aiProviderManagerRow}>
-                      <div className={styles.aiProviderManagerCopy}>
-                        <strong>{provider.label}</strong>
-                        <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
-                      </div>
-                      <Badge variant={connected ? 'success' : 'neutral'}>
-                        {connected ? 'Conectado' : 'Toca para conectar'}
-                      </Badge>
-                      {canDelete ? (
-                        <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
-                          <Trash2 size={15} />
-                          Eliminar
-                        </Button>
-                      ) : (
-                        <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
-                          <KeyRound size={15} />
-                          {connected ? 'Administrar' : 'Conectar'}
-                        </Button>
-                      )}
+        </div>
+        <div className={styles.aiProviderDropdown}>
+          <Button
+            variant="secondary"
+            size="sm"
+            className={styles.aiProviderManagerToggle}
+            onClick={() => setAIProvidersExpanded((current) => !current)}
+            aria-expanded={aiProvidersExpanded}
+            aria-controls="conversational-ai-provider-list"
+            aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
+          >
+            Modelos de IA disponibles
+            <ChevronDown
+              size={15}
+              className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
+            />
+          </Button>
+          {aiProvidersExpanded && (
+            <div id="conversational-ai-provider-list" className={`${styles.aiProviderManagerList} ${styles.aiProviderDropdownMenu}`}>
+              {conversationalAIProviderOptions.map((provider) => {
+                const status = getProviderStatus(aiProviders, provider.id)
+                const connected = Boolean(status?.connected)
+                const canDelete = Boolean(status?.canDelete && connected)
+                return (
+                  <div key={provider.id} className={styles.aiProviderManagerRow}>
+                    <div className={styles.aiProviderManagerCopy}>
+                      <strong>{provider.label}</strong>
+                      <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
                     </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+                    <Badge variant={connected ? 'success' : 'neutral'}>
+                      {connected ? 'Conectado' : 'Toca para conectar'}
+                    </Badge>
+                    {canDelete ? (
+                      <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
+                        <Trash2 size={15} />
+                        Eliminar
+                      </Button>
+                    ) : (
+                      <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
+                        <KeyRound size={15} />
+                        {connected ? 'Administrar' : 'Conectar'}
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
 
