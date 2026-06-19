@@ -9,7 +9,6 @@ import {
   type DragEndEvent
 } from '@dnd-kit/core'
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import {
   AlignLeft,
   Clock,
@@ -259,11 +258,12 @@ const SortableBlock: React.FC<{
   children: React.ReactNode
 }> = ({ id, onRemove, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const translate = transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 5 : undefined }}
-      className={isDragging ? styles.blockDragging : undefined}
+      style={{ transform: translate, transition, zIndex: isDragging ? 5 : undefined }}
+      className={`${styles.blockSortableItem} ${isDragging ? styles.blockDragging : ''}`}
     >
       <div className={styles.blockSortWrap}>
         <span className={styles.blockHoverActions}>

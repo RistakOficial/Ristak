@@ -3606,8 +3606,16 @@
   box-shadow: 0 6px 16px -8px rgba(15, 23, 42, 0.4);
 }
 
+.blockSortableItem {
+  position: relative;
+  width: 100%;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
 .blockSortWrap {
   position: relative;
+  width: 100%;
 }
 
 .blockSortWrap:hover .blockHoverActions {
