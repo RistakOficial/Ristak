@@ -1519,6 +1519,32 @@ function getBusinessPhoneValue(phone?: WhatsAppApiPhoneNumber | null) {
   return phone?.display_phone_number || phone?.phone_number || ''
 }
 
+function getBusinessPhoneLabel(phone?: WhatsAppApiPhoneNumber | null) {
+  return phone?.label || phone?.verified_name || phone?.display_phone_number || phone?.phone_number || 'WhatsApp'
+}
+
+function getComposerBusinessPhone(status?: WhatsAppApiStatus | null, contact?: DesktopChatContact | null): WhatsAppApiPhoneNumber | null {
+  const phones = status?.phoneNumbers || []
+  const preferredId = contact?.preferredWhatsAppPhoneNumberId || contact?.preferred_whatsapp_phone_number_id || ''
+  if (preferredId) {
+    const preferred = phones.find((phone) => phone.id === preferredId)
+    if (preferred) return preferred
+  }
+  if (contact?.lastBusinessPhoneNumberId) {
+    const lastById = phones.find((phone) => phone.id === contact.lastBusinessPhoneNumberId)
+    if (lastById) return lastById
+  }
+  if (contact?.lastBusinessPhone) {
+    const lastByPhone = phones.find((phone) => (
+      phoneValueMatches(phone.phone_number, contact.lastBusinessPhone) ||
+      phoneValueMatches(phone.display_phone_number, contact.lastBusinessPhone) ||
+      phoneValueMatches(phone.qr_connected_phone, contact.lastBusinessPhone)
+    ))
+    if (lastByPhone) return lastByPhone
+  }
+  return getSelectedBusinessPhone(status)
+}
+
 function normalizePhoneProbe(value?: string | null) {
   return String(value || '').replace(/\D/g, '')
 }
@@ -1633,6 +1659,7 @@ export const DesktopChat: React.FC = () => {
 
   const [composerText, setComposerText] = useState('')
   const [composerChannel, setComposerChannel] = useState<ComposerChannel>('whatsapp')
+  const [composerBusinessPhoneId, setComposerBusinessPhoneId] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [composerMenuOpen, setComposerMenuOpen] = useState(false)
@@ -1689,18 +1716,33 @@ export const DesktopChat: React.FC = () => {
     () => chats.find((contact) => contact.id === activeContactId) || null,
     [activeContactId, chats]
   )
-  const selectedBusinessPhone = useMemo(() => getSelectedBusinessPhone(whatsappStatus), [whatsappStatus])
+  const businessPhones = useMemo(() => whatsappStatus?.phoneNumbers || [], [whatsappStatus?.phoneNumbers])
+  const defaultComposerBusinessPhone = useMemo(() => getComposerBusinessPhone(whatsappStatus, activeContact), [activeContact, whatsappStatus])
+  const selectedBusinessPhone = useMemo(() => (
+    businessPhones.find((phone) => phone.id === composerBusinessPhoneId) ||
+    defaultComposerBusinessPhone ||
+    null
+  ), [businessPhones, composerBusinessPhoneId, defaultComposerBusinessPhone])
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
   const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
   useEffect(() => {
     if (!activeContact) {
       setComposerChannel('whatsapp')
+      setComposerBusinessPhoneId('')
       setEmailSubject('')
       return
     }
     setComposerChannel(getDefaultComposerChannel(activeContact))
+    setComposerBusinessPhoneId(defaultComposerBusinessPhone?.id || '')
     setEmailSubject('')
-  }, [activeContact?.id])
+  }, [activeContact?.id, defaultComposerBusinessPhone?.id])
+  useEffect(() => {
+    setComposerBusinessPhoneId((current) => {
+      if (!activeContact || !businessPhones.length) return ''
+      if (current && businessPhones.some((phone) => phone.id === current)) return current
+      return defaultComposerBusinessPhone?.id || ''
+    })
+  }, [activeContact, businessPhones, defaultComposerBusinessPhone?.id])
   const filteredTemplates = useMemo(() => {
     const query = templateSearch.trim().toLowerCase()
     if (!query) return templates
@@ -1939,24 +1981,36 @@ export const DesktopChat: React.FC = () => {
   const isEmailComposer = composerChannel === 'email'
   const hasDetectedMessenger = detectedComposerChannel === 'messenger'
   const hasDetectedInstagram = detectedComposerChannel === 'instagram'
-  const composerChannelOptions = COMPOSER_CHANNEL_OPTIONS.map((option) => {
+  const whatsappComposerPhones = businessPhones.length
+    ? businessPhones
+    : selectedBusinessPhone
+    ? [selectedBusinessPhone]
+    : []
+  const whatsappApiSourcesAvailable = Boolean(whatsappStatus?.connected && whatsappComposerPhones.some((phone) => getBusinessPhoneValue(phone)))
+  const composerChannelOptions = COMPOSER_CHANNEL_OPTIONS.flatMap((option) => {
     if (option.value === 'whatsapp') {
-      return {
-        ...option,
-        disabled: !activeContact?.phone || (!whatsappConnected && !highLevelConnected)
-      }
+      const whatsappDisabled = !activeContact?.phone || (!whatsappApiSourcesAvailable && !highLevelConnected)
+      if (whatsappComposerPhones.length === 0) return [{ ...option, disabled: whatsappDisabled }]
+      return whatsappComposerPhones.map((phone) => ({
+        value: `whatsapp:${phone.id}`,
+        label: `${option.label} · ${getBusinessPhoneLabel(phone)}`,
+        disabled: whatsappDisabled || !getBusinessPhoneValue(phone)
+      }))
     }
     if (option.value === 'email') {
-      return {
+      return [{
         ...option,
         disabled: !activeContact?.email || !emailConnected
-      }
+      }]
     }
-    return {
+    return [{
       ...option,
       disabled: !highLevelConnected || (option.value === 'messenger' ? !hasDetectedMessenger : !hasDetectedInstagram)
-    }
+    }]
   })
+  const composerRouteValue = composerChannel === 'whatsapp' && selectedBusinessPhone?.id
+    ? `whatsapp:${selectedBusinessPhone.id}`
+    : composerChannel
   const composerChannelReady = isEmailComposer
     ? Boolean(activeContact?.email && emailConnected)
     : composerChannel === 'whatsapp'
@@ -1970,7 +2024,9 @@ export const DesktopChat: React.FC = () => {
     ? 'Conecta tu correo de envío en Configuración > Correos.'
     : composerChannel === 'whatsapp' && !activeContact.phone
     ? 'Este contacto no tiene teléfono guardado.'
-    : composerChannel === 'whatsapp' && !whatsappConnected && !highLevelConnected
+    : composerChannel === 'whatsapp' && whatsappApiSourcesAvailable && !selectedBusinessPhoneValue && !highLevelConnected
+    ? 'Elige una caja de WhatsApp para responder.'
+    : composerChannel === 'whatsapp' && !whatsappApiSourcesAvailable && !highLevelConnected
     ? 'Conecta WhatsApp API o HighLevel para responder por WhatsApp.'
     : (composerChannel === 'messenger' || composerChannel === 'instagram') && !highLevelConnected
     ? 'Conecta HighLevel para responder por este canal.'
@@ -2546,6 +2602,10 @@ export const DesktopChat: React.FC = () => {
   const handleComposerChannelChange = useCallback((value: string) => {
     const nextChannel = normalizeComposerChannel(value)
     setComposerChannel(nextChannel)
+    if (nextChannel === 'whatsapp') {
+      const nextBusinessPhoneId = value.startsWith('whatsapp:') ? value.slice('whatsapp:'.length) : ''
+      if (nextBusinessPhoneId) setComposerBusinessPhoneId(nextBusinessPhoneId)
+    }
     setComposerMenuOpen(false)
     closeTemplatePanel()
     closeComposerAgentMenu()
@@ -4747,59 +4807,18 @@ export const DesktopChat: React.FC = () => {
 	                  </button>
 	                  {renderComposerAgentMenu()}
 	                </div>
-	                <div className={styles.composerChannelSelect}>
-	                  <CustomSelect
-	                    value={composerChannel}
-	                    options={composerChannelOptions}
-	                    onValueChange={handleComposerChannelChange}
-	                    aria-label="Canal de envío"
-	                  />
-	                </div>
-	                {!isEmailComposer ? (
-	                  <div ref={composerMenuRef} className={styles.composerActionWrap}>
-	                    <button
-	                      type="button"
-	                      className={styles.composerPlusButton}
-	                      onClick={() => {
-	                        closeComposerAgentMenu()
-	                        closeTemplatePanel()
-	                        setComposerMenuOpen((current) => !current)
-	                      }}
-	                      aria-label="Abrir opciones de adjuntos"
-	                      aria-expanded={composerMenuOpen || templatePanelOpen}
-	                    >
-	                      <Plus size={20} />
-	                    </button>
-	                    {composerMenuOpen ? (
-	                      <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
-	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
-	                          <FileText size={16} />
-	                          <span>Plantillas</span>
-	                        </button>
-	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
-	                          <ImageIcon size={16} />
-	                          <span>Fotos</span>
-	                        </button>
-	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
-	                          <FileText size={16} />
-	                          <span>Documentos</span>
-	                        </button>
-	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
-	                          <MapPin size={16} />
-	                          <span>Ubicación</span>
-	                        </button>
-	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
-	                          <Banknote size={16} />
-	                          <span>CLABE</span>
-	                        </button>
-	                      </div>
-	                    ) : null}
-	                    {renderTemplatePanel()}
-	                  </div>
-	                ) : null}
-	                <div className={styles.composerTextField}>
-	                  {isEmailComposer ? (
-	                    <input
+		                <div className={styles.composerChannelSelect}>
+		                  <CustomSelect
+		                    value={composerRouteValue}
+		                    options={composerChannelOptions}
+		                    onValueChange={handleComposerChannelChange}
+		                    portal
+		                    aria-label="Canal de envío"
+		                  />
+		                </div>
+		                <div className={styles.composerTextField}>
+		                  {isEmailComposer ? (
+		                    <input
 	                      data-ristak-unstyled
 	                      className={styles.emailSubjectInput}
 	                      value={emailSubject}
@@ -4838,11 +4857,53 @@ export const DesktopChat: React.FC = () => {
 	                      title="Programar mensaje"
 	                    >
 	                      <Clock size={16} />
-	                    </button>
-	                  ) : null}
-	                </div>
-	                {!isEmailComposer ? (
-	                  <button
+		                    </button>
+		                  ) : null}
+		                </div>
+		                {!isEmailComposer ? (
+		                  <div ref={composerMenuRef} className={styles.composerActionWrap}>
+		                    <button
+		                      type="button"
+		                      className={styles.composerPlusButton}
+		                      onClick={() => {
+		                        closeComposerAgentMenu()
+		                        closeTemplatePanel()
+		                        setComposerMenuOpen((current) => !current)
+		                      }}
+		                      aria-label="Abrir opciones de adjuntos"
+		                      aria-expanded={composerMenuOpen || templatePanelOpen}
+		                    >
+		                      <Plus size={20} />
+		                    </button>
+		                    {composerMenuOpen ? (
+		                      <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
+		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
+		                          <FileText size={16} />
+		                          <span>Plantillas</span>
+		                        </button>
+		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
+		                          <ImageIcon size={16} />
+		                          <span>Fotos</span>
+		                        </button>
+		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
+		                          <FileText size={16} />
+		                          <span>Documentos</span>
+		                        </button>
+		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
+		                          <MapPin size={16} />
+		                          <span>Ubicación</span>
+		                        </button>
+		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
+		                          <Banknote size={16} />
+		                          <span>CLABE</span>
+		                        </button>
+		                      </div>
+		                    ) : null}
+		                    {renderTemplatePanel()}
+		                  </div>
+		                ) : null}
+		                {!isEmailComposer ? (
+		                  <button
 	                    type="button"
 	                    className={styles.micButton}
 	                    onClick={handleVoiceButtonClick}

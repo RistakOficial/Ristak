@@ -1239,7 +1239,7 @@
 .composer {
   position: relative;
   display: grid;
-  grid-template-columns: 40px minmax(118px, 150px) 40px minmax(0, 1fr) 36px 40px;
+  grid-template-columns: 40px minmax(150px, 220px) minmax(0, 1fr) 40px 36px 40px;
   gap: 8px;
   align-items: center;
   padding: 10px 12px;
@@ -1248,7 +1248,7 @@
 }
 
 .composer[data-email-mode='true'] {
-  grid-template-columns: 40px minmax(118px, 150px) minmax(0, 1fr) 40px;
+  grid-template-columns: 40px minmax(150px, 220px) minmax(0, 1fr) 40px;
   align-items: end;
 }
 
@@ -1557,15 +1557,15 @@
 .composerMenu {
   position: absolute;
   bottom: calc(100% + 10px);
-  left: 0;
+  right: 0;
   z-index: var(--z-index-popover);
   display: grid;
   width: 190px;
   padding: 6px;
   border: 1px solid var(--chat-border);
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   background: var(--surface-solid, var(--surface));
-  box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.45);
+  box-shadow: var(--shadow-pop);
 }
 
 .composerMenu button {
@@ -1587,7 +1587,7 @@
 .templatePanel {
   position: absolute;
   bottom: calc(100% + 10px);
-  left: 0;
+  right: 0;
   z-index: var(--z-index-popover);
   display: grid;
   gap: 10px;
@@ -2728,13 +2728,13 @@
     border-bottom: 1px solid var(--chat-border);
   }
 
-	  .composer {
-	    grid-template-columns: 34px minmax(104px, 126px) 36px minmax(0, 1fr) 28px 40px;
-	  }
+  .composer {
+    grid-template-columns: 34px minmax(128px, 160px) minmax(0, 1fr) 36px 28px 40px;
+  }
 
-	  .composer[data-email-mode='true'] {
-	    grid-template-columns: 34px minmax(104px, 126px) minmax(0, 1fr) 40px;
-	  }
+  .composer[data-email-mode='true'] {
+    grid-template-columns: 34px minmax(128px, 160px) minmax(0, 1fr) 40px;
+  }
 
   .messageBubble {
     max-width: 90%;
