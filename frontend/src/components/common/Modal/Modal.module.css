@@ -279,7 +279,7 @@
 }
 
 .typeToConfirmLabel {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text-secondary);
 }
 
@@ -291,8 +291,8 @@
 
 .typeToConfirmInput {
   width: 100%;
-  padding: 10px 12px;
-  font-size: 14px;
+  padding: 11px 14px;
+  font-size: 15px;
   color: var(--color-text-primary);
   background: var(--color-background-secondary);
   border: 1px solid var(--color-border);
@@ -575,8 +575,8 @@
 .modal.confirm,
 .modal.alert,
 .modal.info {
-  width: min(92vw, 460px);
-  max-width: 460px;
+  width: min(92vw, 520px);
+  max-width: 520px;
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-pop);
 }
@@ -600,7 +600,7 @@
 .modal.confirm .title,
 .modal.alert .title,
 .modal.info .title {
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1.35;
 }
 
@@ -615,14 +615,14 @@
 .modal.confirm .content,
 .modal.alert .content,
 .modal.info .content {
-  padding: 10px 24px 0;
-  max-height: min(58vh, 360px);
+  padding: 12px 24px 0;
+  max-height: min(62vh, 420px);
 }
 
 .modal.confirm .message,
 .modal.alert .message,
 .modal.info .message {
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.55;
 }
 

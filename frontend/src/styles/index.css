@@ -2960,29 +2960,29 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   @keyframes rk-ovfade { from { opacity: 0; } to { opacity: 1; } }
   [data-modal] { background: var(--modal-surface-bg, var(--surface-solid, var(--surface, var(--color-background-primary)))); border: 1px solid var(--border-strong); border-radius: var(--radius-card); box-shadow: var(--modal-shadow, var(--shadow-pop)); width: 100%; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; animation: rk-modalin 0.2s cubic-bezier(0.4,0,0.2,1) both; }
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
-    --modal-density-control-height: 40px;
-    --modal-density-control-padding-x: var(--design-control-padding-x, 12px);
-    --modal-density-control-font-size: 14px;
-    --modal-density-label-font-size: 13px;
-    --modal-density-helper-font-size: 12.5px;
-    --modal-density-title-font-size: 17px;
-    --modal-density-section-title-font-size: 14.5px;
+    --modal-density-control-height: 44px;
+    --modal-density-control-padding-x: 14px;
+    --modal-density-control-font-size: 15px;
+    --modal-density-label-font-size: 14px;
+    --modal-density-helper-font-size: 13px;
+    --modal-density-title-font-size: 18px;
+    --modal-density-section-title-font-size: 15px;
     --modal-density-header-padding-x: 32px;
     --modal-density-header-padding-y: 24px;
     --modal-density-content-padding-x: 32px;
     --modal-density-content-padding-y: 24px;
     --modal-density-footer-padding-x: 32px;
     --modal-density-footer-padding-y: 20px;
-    --modal-density-form-gap: 14px;
+    --modal-density-form-gap: 16px;
     --modal-density-field-gap: 8px;
-    --modal-density-grid-gap: 12px;
+    --modal-density-grid-gap: 14px;
     --modal-density-card-padding: 12px;
-    --modal-density-button-height: 38px;
-    --modal-density-button-height-sm: 32px;
+    --modal-density-button-height: 40px;
+    --modal-density-button-height-sm: 34px;
     --modal-density-button-padding-x: 16px;
     --modal-density-button-padding-x-sm: 12px;
-    --modal-density-button-font-size-sm: 12.5px;
-    --modal-density-dropdown-item-height: 36px;
+    --modal-density-button-font-size-sm: 13px;
+    --modal-density-dropdown-item-height: 38px;
     --modal-density-table-cell-padding: var(--spacing-md);
     --modal-density-segment-height: 32px;
     --modal-density-segment-padding-y: 0.375rem;
@@ -3177,7 +3177,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
 
   /* Compactar modales solo cuando el espacio real aprieta. Evita disparadores
      por altura sola: una ventana amplia no debe verse mini solo por ser baja. */
-  @media (max-width: 1180px), (max-width: 1366px) and (max-height: 820px) {
+  @media (max-width: 1080px), (max-width: 1366px) and (max-height: 700px) {
     body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
       --modal-density-control-height: 34px;
       --modal-density-control-padding-x: 10px;
@@ -3228,7 +3228,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     }
   }
 
-  @media (max-width: 900px), (max-width: 1180px) and (max-height: 760px), (max-width: 1366px) and (max-height: 680px) {
+  @media (max-width: 900px), (max-width: 1080px) and (max-height: 620px) {
     body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
       --modal-density-control-height: 30px;
       --modal-density-control-padding-x: 9px;
@@ -3904,7 +3904,7 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) .dashb
   }
 }
 
-@media (max-width: 1180px), (max-width: 1366px) and (max-height: 820px) {
+@media (max-width: 1080px), (max-width: 1366px) and (max-height: 700px) {
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
     --font-size-xs: 0.7rem;
     --font-size-sm: 0.8125rem;
