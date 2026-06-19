@@ -296,7 +296,7 @@
   display: grid;
   place-items: center;
   border: 0;
-  background: linear-gradient(180deg, transparent, rgba(0,0,0,.12));
+  background: transparent;
   color: var(--rstk-video-play-color, #fff);
   cursor: pointer;
 }
@@ -309,7 +309,7 @@
   border-radius: var(--rstk-video-play-radius, 8px);
   background: var(--rstk-video-player-color, rgba(0,0,0,.52));
   color: var(--rstk-video-play-color, #fff);
-  box-shadow: 0 16px 38px rgba(0,0,0,.28);
+  box-shadow: none;
   transition: opacity .18s ease, transform .18s ease;
 }
 .rstkCanvas .rstk-video-play-shape-round .rstk-video-play-dot { border-radius: var(--rstk-video-play-radius, 999px); }
@@ -340,7 +340,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, #020617 72%, transparent);
   color: var(--rstk-video-sound-color, var(--rstk-video-play-color, #fff));
-  box-shadow: 0 18px 44px rgba(0,0,0,.34);
+  box-shadow: none;
   padding: 0 12px;
   pointer-events: none;
   backdrop-filter: blur(14px);
@@ -391,9 +391,26 @@
   border-radius: 999px;
   background: var(--rstk-video-player-color, rgba(0,0,0,.52));
   color: var(--rstk-video-play-color, #fff);
-  box-shadow: 0 18px 42px rgba(0,0,0,.28);
+  box-shadow: none;
+  opacity: 1;
   padding: 7px;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition: opacity .2s ease, transform .2s ease;
   backdrop-filter: blur(14px);
+}
+.rstkCanvas .rstk-video-controls-hidden .rstk-video-control-bar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+}
+.rstkCanvas .rstk-video-controls-hidden .rstk-video-control-bar:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.rstkCanvas .rstk-video-custom-controls.rstk-video-is-playing.rstk-video-controls-hidden video {
+  cursor: none;
 }
 .rstkCanvas .rstk-video-control-button {
   width: 30px;

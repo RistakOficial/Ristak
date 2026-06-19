@@ -17358,7 +17358,7 @@
   border-radius: var(--video-settings-play-radius, 8px);
   background: var(--video-settings-play-bg, var(--accent));
   color: var(--video-settings-play-color, var(--on-accent));
-  box-shadow: var(--shadow-xs);
+  box-shadow: none;
 }
 
 .videoElementPlayRound {

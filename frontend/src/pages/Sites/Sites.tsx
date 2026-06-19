@@ -668,12 +668,15 @@ const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
 const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0,0,0,.52)'
 const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
+const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
 const LEGACY_VIDEO_PLAY_SIZE = 82
 const LEGACY_VIDEO_PLAY_ICON_SIZE = 32
 const LEGACY_VIDEO_PLAY_RADIUS = 999
 const DEFAULT_VIDEO_PLAY_SIZE = 160
 const DEFAULT_VIDEO_PLAY_ICON_SIZE = 95
 const DEFAULT_VIDEO_PLAY_RADIUS = 8
+const VIDEO_CONTROLS_IDLE_MS = 2600
+const VIDEO_CONTROLS_LEAVE_IDLE_MS = 650
 const VIDEO_PLAY_SIZE_MIN = 56
 const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
@@ -2009,6 +2012,16 @@ const parseCssColor = (value: string, fallback = '#000000') => {
     a: match[4] === undefined ? 1 : Number(match[4])
   }
 }
+
+const isTransparentCssColorValue = (value?: string) => {
+  const raw = String(value || '').trim()
+  if (!raw || raw.toLowerCase() === 'transparent') return true
+  if (!isCssColor(raw)) return false
+  return parseCssColor(raw).a <= 0
+}
+
+const visibleVideoBorderColor = (value?: string) =>
+  isTransparentCssColorValue(value) ? DEFAULT_VIDEO_BORDER_FALLBACK : String(value)
 
 function rgbToHex(r: number, g: number, b: number) {
   return `#${[r, g, b].map(channel => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, '0')).join('')}`
@@ -19551,7 +19564,7 @@ const VideoSettingsElementPreview: React.FC<{
   const playIconStyle = getVideoPlayIconStyle(settings)
   const frameRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
   const frameBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
-  const frameBorderColor = getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT
+  const frameBorderColor = visibleVideoBorderColor(getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT)
   const frameBorderWidth = `${getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}px`
   const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
@@ -19676,7 +19689,19 @@ const VideoPlayerSettingsControls: React.FC<{
         </label>
         <div className={styles.twoColumn}>
           <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
-          <ColorField label="Borde del video" value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBorderColor: value })} onCommit={onSave} />
+          <ColorField
+            label="Borde del video"
+            value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT}
+            allowGradient={false}
+            onChange={(value) => {
+              const patch: Record<string, unknown> = { videoPlayerBorderColor: value }
+              if (!isTransparentCssColorValue(value) && getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12) === 0) {
+                patch.videoPlayerBorderWidth = 1
+              }
+              onPatchSettings(patch)
+            }}
+            onCommit={onSave}
+          />
         </div>
         <div className={styles.twoColumn}>
           <VideoDimensionSliderField
@@ -23568,6 +23593,7 @@ const VideoPlayerPreview: React.FC<{
   const [isPreviewLooping, setIsPreviewLooping] = useState(false)
   const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
   const [progress, setProgress] = useState(0)
+  const [controlsVisible, setControlsVisible] = useState(true)
   const controlsMode = getVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
@@ -23589,7 +23615,7 @@ const VideoPlayerPreview: React.FC<{
   const fit = getSettingString(settings, 'videoFit') || 'cover'
   const playerBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
   const playerRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
-  const playerBorderColor = getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT
+  const playerBorderColor = visibleVideoBorderColor(getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT)
   const playerBorderWidth = `${getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}px`
   const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
@@ -23605,13 +23631,41 @@ const VideoPlayerPreview: React.FC<{
   const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
   const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
   const shouldLetEditorSelect = editable && !selected
+  const controlsHideTimerRef = useRef<number | null>(null)
   const showOverlayLayer = showOverlay && (!isPlaying || isPreviewLooping)
   const showSoundNotice = showOverlayLayer && soundHint && !hasStartedPlayback
+  const clearControlsHideTimer = useCallback(() => {
+    if (!controlsHideTimerRef.current) return
+    window.clearTimeout(controlsHideTimerRef.current)
+    controlsHideTimerRef.current = null
+  }, [])
+  const hideControlsAfter = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
+    clearControlsHideTimer()
+    if (!showCustomControlBar || !isPlaying) return
+    controlsHideTimerRef.current = window.setTimeout(() => {
+      setControlsVisible(false)
+      controlsHideTimerRef.current = null
+    }, delay)
+  }, [clearControlsHideTimer, isPlaying, showCustomControlBar])
+  const showControlsTemporarily = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
+    if (!showCustomControlBar) return
+    setControlsVisible(true)
+    hideControlsAfter(delay)
+  }, [hideControlsAfter, showCustomControlBar])
+  const handlePlayerActivity = useCallback(() => {
+    if (shouldLetEditorSelect) return
+    showControlsTemporarily()
+  }, [shouldLetEditorSelect, showControlsTemporarily])
+  const handlePlayerLeave = useCallback(() => {
+    if (shouldLetEditorSelect) return
+    hideControlsAfter(VIDEO_CONTROLS_LEAVE_IDLE_MS)
+  }, [hideControlsAfter, shouldLetEditorSelect])
   const className = [
     'rstk-video',
     'rstk-video-player',
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
+    showCustomControlBar ? (controlsVisible ? 'rstk-video-controls-visible' : 'rstk-video-controls-hidden') : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
     isPlaying ? 'rstk-video-is-playing' : '',
     isPreviewLooping ? 'rstk-video-is-previewing' : '',
@@ -23623,6 +23677,18 @@ const VideoPlayerPreview: React.FC<{
   useEffect(() => {
     hasStartedPlaybackRef.current = hasStartedPlayback
   }, [hasStartedPlayback])
+
+  useEffect(() => () => clearControlsHideTimer(), [clearControlsHideTimer])
+
+  useEffect(() => {
+    if (!showCustomControlBar) {
+      clearControlsHideTimer()
+      setControlsVisible(true)
+      return
+    }
+    setControlsVisible(true)
+    hideControlsAfter()
+  }, [clearControlsHideTimer, hideControlsAfter, showCustomControlBar])
 
   const getActivePreviewRange = useCallback(() => {
     const duration = videoRef.current?.duration
@@ -23775,6 +23841,7 @@ const VideoPlayerPreview: React.FC<{
     if (!video) return
     stopPreviewLoop()
     markUserPlaybackStarted()
+    showControlsTemporarily()
     if (unmute) {
       video.muted = false
       if (video.volume === 0) video.volume = 1
@@ -23798,6 +23865,7 @@ const VideoPlayerPreview: React.FC<{
       void playVideo(unmute)
     } else {
       video.pause()
+      setControlsVisible(true)
       syncVideoState()
     }
   }
@@ -23806,6 +23874,7 @@ const VideoPlayerPreview: React.FC<{
     if (shouldLetEditorSelect) return
     event.preventDefault()
     event.stopPropagation()
+    showControlsTemporarily()
     togglePlayback(true)
   }
 
@@ -23813,6 +23882,11 @@ const VideoPlayerPreview: React.FC<{
     if (!showOverlay || showNativeControls || shouldLetEditorSelect) return
     event.preventDefault()
     event.stopPropagation()
+    if (showCustomControlBar && isPlaying && !controlsVisible) {
+      showControlsTemporarily()
+      return
+    }
+    showControlsTemporarily()
     togglePlayback(false)
   }
 
@@ -23820,6 +23894,7 @@ const VideoPlayerPreview: React.FC<{
     if (shouldLetEditorSelect) return
     event.preventDefault()
     event.stopPropagation()
+    showControlsTemporarily()
     togglePlayback(false)
   }
 
@@ -23827,6 +23902,7 @@ const VideoPlayerPreview: React.FC<{
     if (shouldLetEditorSelect) return
     event.preventDefault()
     event.stopPropagation()
+    showControlsTemporarily()
     const video = videoRef.current
     if (!video) return
     const shouldUnmute = video.muted || video.volume === 0
@@ -23837,6 +23913,7 @@ const VideoPlayerPreview: React.FC<{
 
   const handleSpeedChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     event.stopPropagation()
+    showControlsTemporarily()
     const nextSpeed = Number(event.target.value)
     const video = videoRef.current
     if (!Number.isFinite(nextSpeed)) return
@@ -23863,6 +23940,12 @@ const VideoPlayerPreview: React.FC<{
         ['--rstk-video-sound-color' as string]: soundColor,
         ['--rstk-video-sound-cycle' as string]: soundNoticeCycle
       } as React.CSSProperties}
+      onPointerEnter={handlePlayerActivity}
+      onPointerMove={handlePlayerActivity}
+      onPointerLeave={handlePlayerLeave}
+      onTouchStart={handlePlayerActivity}
+      onFocusCapture={handlePlayerActivity}
+      onBlurCapture={handlePlayerLeave}
     >
       <video
         ref={videoRef}
