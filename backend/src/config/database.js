@@ -4401,7 +4401,9 @@ async function initTables() {
         smart_start TEXT DEFAULT '09:00',
         smart_end TEXT DEFAULT '21:00',
         smart_overflow TEXT DEFAULT 'before',
+        no_confirm_action TEXT DEFAULT 'no_action',
         confirmation_success_action TEXT DEFAULT 'chat_card',
+        bypass_automations INTEGER DEFAULT 0,
         position INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

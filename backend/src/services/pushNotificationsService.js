@@ -22,6 +22,11 @@ const APNS_PRIVATE_KEY_FILE = process.env.APNS_PRIVATE_KEY_FILE || ''
 const APNS_ENV = String(process.env.APNS_ENV || process.env.NODE_ENV || 'production').toLowerCase()
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
+let appNotificationPayloadSenderForTest = null
+
+export function setAppNotificationPayloadSenderForTest(sender) {
+  appNotificationPayloadSenderForTest = typeof sender === 'function' ? sender : null
+}
 
 async function resolveWebPushKeys() {
   const envPublicKey = String(ENV_VAPID_PUBLIC_KEY || '').trim()
@@ -778,6 +783,10 @@ async function sendMobileNotificationRows(rows = [], payload = {}) {
 }
 
 export async function sendAppNotificationPayload(payload = {}, { calendarId = '' } = {}) {
+  if (appNotificationPayloadSenderForTest) {
+    return appNotificationPayloadSenderForTest(payload, { calendarId })
+  }
+
   if (!pushConfigured && !nativePushConfigured) {
     return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'not_configured' }
   }

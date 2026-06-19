@@ -5,6 +5,12 @@ import { getOpenAIApiKey } from '../services/aiAgentService.js'
 
 export const APPOINTMENT_CONFIRMATION_MODEL = CHEAPEST_OPENAI_MODEL
 
+let confirmationClassifierForTest = null
+
+export function setAppointmentConfirmationClassifierForTest(classifier) {
+  confirmationClassifierForTest = typeof classifier === 'function' ? classifier : null
+}
+
 // Prompt interno que clasifica la respuesta acumulada del contacto.
 const CLASSIFICATION_INSTRUCTIONS = `Eres un clasificador especializado en analizar respuestas a mensajes de confirmación de cita.
 
@@ -60,6 +66,10 @@ Responde ÚNICAMENTE con JSON sin markdown, exactamente así:
  */
 export async function classifyConfirmationResponse({ accumulatedMessages = [] } = {}) {
   if (!accumulatedMessages.length) return null
+
+  if (confirmationClassifierForTest) {
+    return confirmationClassifierForTest({ accumulatedMessages })
+  }
 
   const apiKey = await getOpenAIApiKey()
   if (!apiKey) {
