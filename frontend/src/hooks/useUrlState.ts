@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   formatUrlDate,
   parseUrlDate,
   parseUrlFiltersParam,
-  sameUrlDate,
   setSearchParam,
   stringifyUrlFiltersParam,
   type UrlFilterState
@@ -85,31 +84,49 @@ export const useUrlDateRangeSync = ({
   const [searchParams, setSearchParams] = useSearchParams()
   const routeStart = searchParams.get(fromParam)
   const routeEnd = searchParams.get(toParam)
+  const routeRangeKey = routeStart && routeEnd ? `${routeStart}|${routeEnd}` : ''
+  const dateRangeKey = useMemo(() => {
+    const start = formatUrlDate(dateRange.start)
+    const end = formatUrlDate(dateRange.end)
+    return start && end ? `${start}|${end}` : ''
+  }, [dateRange.end, dateRange.start])
+  const latestDateRangeKeyRef = useRef(dateRangeKey)
+  const pendingRouteRangeRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!enabled) return
+    latestDateRangeKeyRef.current = dateRangeKey
+  }, [dateRangeKey])
+
+  useEffect(() => {
+    if (!enabled) {
+      pendingRouteRangeRef.current = null
+      return
+    }
 
     const start = parseUrlDate(routeStart)
     const end = parseUrlDate(routeEnd)
 
-    if (!start || !end) return
-    if (sameUrlDate(dateRange.start, routeStart) && sameUrlDate(dateRange.end, routeEnd)) return
+    if (!start || !end) {
+      pendingRouteRangeRef.current = null
+      return
+    }
+    if (routeRangeKey === latestDateRangeKeyRef.current) {
+      pendingRouteRangeRef.current = null
+      return
+    }
 
+    pendingRouteRangeRef.current = routeRangeKey
     setDateRange({ start, end, preset: 'custom' })
-  }, [dateRange.end, dateRange.start, enabled, routeEnd, routeStart, setDateRange])
+  }, [enabled, routeEnd, routeRangeKey, routeStart, setDateRange])
 
   useEffect(() => {
     if (!enabled) return
+    if (!dateRangeKey) return
 
-    const urlStart = parseUrlDate(routeStart)
-    const urlEnd = parseUrlDate(routeEnd)
-
-    if (
-      urlStart &&
-      urlEnd &&
-      (!sameUrlDate(dateRange.start, routeStart) || !sameUrlDate(dateRange.end, routeEnd))
-    ) {
-      return
+    // Let a newly visited URL hydrate state once, then allow user changes to win.
+    if (pendingRouteRangeRef.current) {
+      if (pendingRouteRangeRef.current !== dateRangeKey) return
+      pendingRouteRangeRef.current = null
     }
 
     const nextStart = formatUrlDate(dateRange.start)
