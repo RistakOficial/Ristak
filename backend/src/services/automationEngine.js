@@ -2444,6 +2444,37 @@ async function sendWhatsAppBlocks(node, ctx) {
   }
 }
 
+async function sendEmailAutomationMessage(node, ctx) {
+  const { sendEmailToContact } = await import('./emailService.js')
+  const config = node.config || {}
+  const subject = renderTemplate(str(config.subject), ctx, { preserveUnknown: true }).trim()
+  const body = renderTemplate(str(config.body || config.message), ctx, { preserveUnknown: true }).trim()
+  const to = renderTemplate(str(config.toEmail || config.to), ctx, { preserveUnknown: true }).trim()
+
+  if (!subject) throw new Error('El correo necesita asunto')
+  if (!body) throw new Error('El correo necesita contenido')
+
+  const result = await sendEmailToContact({
+    contactId: ctx.contact?.id,
+    to,
+    subject,
+    text: body,
+    externalId: makeId('automation_email')
+  })
+
+  return {
+    detail: `Correo enviado a ${result.to || ctx.contact?.email || 'el contacto'}`,
+    result,
+    output: {
+      id_mensaje: result.localMessageId || result.messageId || '',
+      estado: result.status || 'sent',
+      correo_destino: result.to || ctx.contact?.email || '',
+      asunto: subject,
+      fecha_envio: result.sentAt || nowIso()
+    }
+  }
+}
+
 /**
  * Ejecuta un nodo. Devuelve:
  *  { handle, detail }            → continuar por esa salida
@@ -2484,6 +2515,16 @@ async function executeNode(node, ctx, enrollment) {
         detail,
         output,
         outputBaseId: 'enviar_whatsapp'
+      }
+    }
+
+    case 'channel-email': {
+      const sendResult = await sendEmailAutomationMessage(node, ctx)
+      return {
+        handle: 'out',
+        detail: sendResult.detail,
+        output: sendResult.output,
+        outputBaseId: 'enviar_correo'
       }
     }
 

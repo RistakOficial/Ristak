@@ -1,6 +1,7 @@
+import crypto from 'node:crypto'
 import { promises as dns } from 'node:dns'
 import nodemailer from 'nodemailer'
-import { getAppConfig, setAppConfig } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { clearEmailIntegrationCredentials } from './integrationCredentialsCleanupService.js'
@@ -16,6 +17,9 @@ const SMTP_SECURITY_TYPES = new Set(['starttls', 'ssl', 'none'])
 const SIGNATURE_HTML_LIMIT = 70000
 const SIGNATURE_TEXT_LIMIT = 8000
 const SIGNATURE_IMAGE_LIMIT = 2 * 1024 * 1024
+const EMAIL_SUBJECT_LIMIT = 998
+const EMAIL_TEXT_LIMIT = 120000
+const EMAIL_HTML_LIMIT = 240000
 const ALLOWED_SIGNATURE_TAGS = new Set([
   'a',
   'b',
@@ -187,6 +191,15 @@ function escapeAttribute(value) {
   return escapeHtml(value).replace(/`/g, '&#96;')
 }
 
+function textToEmailHtml(value) {
+  return cleanString(value)
+    .split(/\n{2,}/)
+    .map(paragraph => paragraph.split(/\n/).map(escapeHtml).join('<br>'))
+    .filter(Boolean)
+    .map(paragraph => `<p>${paragraph}</p>`)
+    .join('')
+}
+
 function decodeHtmlEntities(value) {
   return cleanString(value)
     .replace(/&nbsp;/gi, ' ')
@@ -231,6 +244,12 @@ function getEmailDomain(email) {
   const value = cleanString(email).toLowerCase()
   const atIndex = value.lastIndexOf('@')
   return atIndex >= 0 ? normalizeHostname(value.slice(atIndex + 1)) : ''
+}
+
+function buildEmailMessageId(externalId) {
+  const normalized = cleanString(externalId)
+  if (/^[A-Za-z0-9:_-]{1,140}$/.test(normalized)) return normalized
+  return `email_${crypto.randomUUID()}`
 }
 
 function sanitizeMxRecords(records = []) {
@@ -635,6 +654,61 @@ async function sendMailWithTransporter(transporter, config, message) {
   }
 }
 
+async function getContactEmailRecipient(contactId, fallbackTo) {
+  const cleanContactId = cleanString(contactId)
+  const fallbackRecipient = cleanString(fallbackTo).toLowerCase()
+  if (!cleanContactId) return { contact: null, recipient: fallbackRecipient }
+
+  const contact = await db.get('SELECT id, email, full_name, first_name, last_name FROM contacts WHERE id = ?', [cleanContactId])
+  if (!contact) throw httpError(404, 'Contacto no encontrado')
+
+  return {
+    contact,
+    recipient: cleanString(contact.email).toLowerCase() || fallbackRecipient
+  }
+}
+
+async function saveEmailMessageRow(row) {
+  await db.run(`
+    INSERT INTO email_messages (
+      id, contact_id, direction, status, to_email, from_email, reply_to,
+      subject, message_text, html_body, smtp_message_id, error_message,
+      message_timestamp, raw_payload_json, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      contact_id = excluded.contact_id,
+      direction = excluded.direction,
+      status = excluded.status,
+      to_email = excluded.to_email,
+      from_email = excluded.from_email,
+      reply_to = excluded.reply_to,
+      subject = excluded.subject,
+      message_text = excluded.message_text,
+      html_body = excluded.html_body,
+      smtp_message_id = excluded.smtp_message_id,
+      error_message = excluded.error_message,
+      message_timestamp = excluded.message_timestamp,
+      raw_payload_json = excluded.raw_payload_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    row.id,
+    row.contactId || null,
+    row.direction || 'outbound',
+    row.status || 'sending',
+    row.toEmail || '',
+    row.fromEmail || '',
+    row.replyTo || '',
+    row.subject || '',
+    row.text || '',
+    row.html || '',
+    row.smtpMessageId || '',
+    row.errorMessage || '',
+    row.messageTimestamp || new Date().toISOString(),
+    row.rawPayloadJson || null
+  ])
+}
+
 async function sendConnectionTestEmail(transporter, config, testTo) {
   const recipient = cleanString(testTo).toLowerCase() || config.fromEmail || config.username
   if (!EMAIL_PATTERN.test(recipient)) throw httpError(400, 'El correo de prueba no es válido')
@@ -897,6 +971,105 @@ export async function sendEmail({ to, subject, text, html, replyTo } = {}) {
     const friendly = friendlySmtpError(error, config.host)
     await setAppConfig(EMAIL_CONFIG_KEY, { ...config, lastError: friendly })
     throw httpError(502, friendly)
+  }
+}
+
+export async function sendEmailToContact({
+  contactId,
+  to,
+  subject,
+  text,
+  html,
+  replyTo,
+  externalId
+} = {}) {
+  const config = await readStoredConfig()
+  const password = await readStoredPassword()
+  if (!config?.connected || !config?.host || !config?.username || !password) {
+    throw httpError(409, 'El correo no está conectado. Configúralo en Configuración > Correos')
+  }
+
+  const { recipient } = await getContactEmailRecipient(contactId, to)
+  if (!EMAIL_PATTERN.test(recipient)) throw httpError(400, 'El contacto no tiene un correo válido')
+
+  const cleanSubject = limitString(subject, EMAIL_SUBJECT_LIMIT)
+  const cleanText = limitString(text, EMAIL_TEXT_LIMIT)
+  const cleanHtml = limitString(html || textToEmailHtml(cleanText), EMAIL_HTML_LIMIT)
+  const cleanReplyTo = cleanString(replyTo).toLowerCase()
+  if (!cleanSubject) throw httpError(400, 'El correo necesita un asunto')
+  if (!cleanText && !cleanHtml) throw httpError(400, 'El correo necesita contenido')
+  if (cleanReplyTo && !EMAIL_PATTERN.test(cleanReplyTo)) throw httpError(400, 'El correo de respuestas no es válido')
+
+  const localMessageId = buildEmailMessageId(externalId)
+  const timestamp = new Date().toISOString()
+  const fromEmail = config.fromEmail || config.username || ''
+  const rawBase = {
+    provider: 'smtp',
+    connectedProvider: config.providerId || config.provider || 'smtp',
+    senderName: config.fromName || ''
+  }
+
+  await saveEmailMessageRow({
+    id: localMessageId,
+    contactId,
+    status: 'sending',
+    toEmail: recipient,
+    fromEmail,
+    replyTo: cleanReplyTo || config.replyTo || '',
+    subject: cleanSubject,
+    text: cleanText,
+    html: cleanHtml,
+    messageTimestamp: timestamp,
+    rawPayloadJson: JSON.stringify(rawBase)
+  })
+
+  try {
+    const result = await sendEmail({
+      to: recipient,
+      subject: cleanSubject,
+      text: cleanText,
+      html: cleanHtml,
+      replyTo: cleanReplyTo || undefined
+    })
+    await saveEmailMessageRow({
+      id: localMessageId,
+      contactId,
+      status: 'sent',
+      toEmail: recipient,
+      fromEmail,
+      replyTo: cleanReplyTo || config.replyTo || '',
+      subject: cleanSubject,
+      text: cleanText,
+      html: cleanHtml,
+      smtpMessageId: result.messageId || '',
+      messageTimestamp: timestamp,
+      rawPayloadJson: JSON.stringify({ ...rawBase, result })
+    })
+    return {
+      ...result,
+      localMessageId,
+      status: 'sent',
+      to: recipient,
+      subject: cleanSubject,
+      sentAt: timestamp
+    }
+  } catch (error) {
+    await saveEmailMessageRow({
+      id: localMessageId,
+      contactId,
+      status: 'error',
+      toEmail: recipient,
+      fromEmail,
+      replyTo: cleanReplyTo || config.replyTo || '',
+      subject: cleanSubject,
+      text: cleanText,
+      html: cleanHtml,
+      errorMessage: error.message,
+      messageTimestamp: timestamp,
+      rawPayloadJson: JSON.stringify({ ...rawBase, error: error.message })
+    })
+    error.localMessageId = localMessageId
+    throw error
   }
 }
 

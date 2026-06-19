@@ -8,6 +8,7 @@ import {
   getEmailSignature,
   saveEmailSignature,
   sendEmail,
+  sendEmailToContact,
   setEmailMxResolverForTest,
   setEmailTransportFactoryForTest
 } from '../src/services/emailService.js'
@@ -208,6 +209,69 @@ test('agrega la firma guardada al enviar correos', async () => {
     } finally {
       setEmailTransportFactoryForTest(null)
       setEmailMxResolverForTest(null)
+    }
+  })
+})
+
+test('sendEmailToContact envía correo y guarda el mensaje en el historial del contacto', async () => {
+  await initializeMasterKey()
+
+  await snapshotAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY, EMAIL_SIGNATURE_CONFIG_KEY], async () => {
+    const suffix = Date.now().toString(36)
+    const contactId = `rstk_contact_email_history_${suffix}`
+    const sentMessages = []
+
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => {
+        sentMessages.push(message)
+        return {
+          messageId: `smtp-${sentMessages.length}`,
+          accepted: [message.to],
+          rejected: []
+        }
+      }
+    }))
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (id, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?)`,
+        [contactId, `cliente-${suffix}@example.com`, 'Cliente Email', 'Cliente', '{}']
+      )
+      await connectEmail({
+        fromEmail: 'ventas@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo'
+      })
+
+      const result = await sendEmailToContact({
+        contactId,
+        subject: 'Seguimiento',
+        text: 'Hola, te comparto la información.',
+        externalId: `email_test_${suffix}`
+      })
+
+      assert.equal(result.status, 'sent')
+      assert.equal(result.localMessageId, `email_test_${suffix}`)
+      assert.equal(sentMessages.length, 2)
+      assert.equal(sentMessages[1].to, `cliente-${suffix}@example.com`)
+
+      const stored = await db.get('SELECT * FROM email_messages WHERE id = ?', [`email_test_${suffix}`])
+      assert.equal(stored.contact_id, contactId)
+      assert.equal(stored.status, 'sent')
+      assert.equal(stored.to_email, `cliente-${suffix}@example.com`)
+      assert.equal(stored.subject, 'Seguimiento')
+      assert.equal(stored.message_text, 'Hola, te comparto la información.')
+      assert.equal(stored.smtp_message_id, 'smtp-2')
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+      await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
     }
   })
 })

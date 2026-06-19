@@ -1565,6 +1565,27 @@ export const getChatContacts = async (req, res) => {
         FROM meta_social_messages
         WHERE contact_id IS NOT NULL
         ` : ''}
+        ${includeMetaSocialMessages ? `
+        UNION ALL
+        SELECT
+          contact_id,
+          'email:' || id AS message_row_id,
+          CASE
+            WHEN COALESCE(subject, '') != '' AND COALESCE(message_text, '') != '' THEN subject || ' · ' || message_text
+            WHEN COALESCE(subject, '') != '' THEN subject
+            ELSE COALESCE(message_text, '')
+          END AS message_text,
+          'email' AS message_type,
+          direction,
+          NULL AS business_phone,
+          NULL AS business_phone_number_id,
+          'smtp' AS transport,
+          COALESCE(message_timestamp, created_at) AS message_date,
+          created_at,
+          'email' AS message_channel
+        FROM email_messages
+        WHERE contact_id IS NOT NULL
+        ` : ''}
     `
 
     const rows = await db.all(`
@@ -3597,11 +3618,12 @@ export const getContactJourney = async (req, res) => {
     // pueden pedir includeBusinessMessages=true para reconstruir conversación completa,
     // pero los timelines de atribución no deben contar mensajes salientes del negocio.
     const isStoredChatMessageEvent = (event) => Boolean(
-      event?.data?.whatsapp_api_message_id ||
-      event?.data?.whatsapp_message_id ||
-      event?.data?.message_type ||
-      event?.data?.direction ||
-      event?.data?.transport
+	      event?.data?.whatsapp_api_message_id ||
+	      event?.data?.whatsapp_message_id ||
+	      event?.data?.email_message_id ||
+	      event?.data?.message_type ||
+	      event?.data?.direction ||
+	      event?.data?.transport
     )
 
     const addWhatsAppJourneyEvents = (events) => {
@@ -3861,7 +3883,7 @@ export const getContactJourney = async (req, res) => {
       [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS]
     )
 
-    metaSocialMessages.forEach(msg => {
+	    metaSocialMessages.forEach(msg => {
       if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
 
       const platform = cleanString(msg.platform)
@@ -3893,9 +3915,58 @@ export const getContactJourney = async (req, res) => {
           transport: platform === 'instagram' ? 'instagram' : 'messenger'
         }
       })
-    })
+	    })
 
-    // 3. Contacto creado
+	    const emailMessages = await db.all(
+	      `SELECT
+	          id AS email_message_id,
+	          contact_id,
+	          direction,
+	          status,
+	          to_email,
+	          from_email,
+	          reply_to,
+	          subject,
+	          message_text,
+	          html_body,
+	          smtp_message_id,
+	          error_message,
+	          message_timestamp,
+	          created_at
+	       FROM email_messages
+	       WHERE contact_id = ?
+	         AND (
+	           ? = 1
+	           OR LOWER(COALESCE(direction, 'outbound')) NOT IN (${outboundMessageDirectionPlaceholders})
+	         )
+	       ORDER BY COALESCE(message_timestamp, created_at) ASC`,
+	      [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS]
+	    )
+
+	    emailMessages.forEach(msg => {
+	      journey.push({
+	        type: 'email_message',
+	        date: msg.message_timestamp || msg.created_at,
+	        data: {
+	          source: 'Correo',
+	          email_message_id: msg.email_message_id,
+	          smtp_message_id: msg.smtp_message_id || null,
+	          message_type: 'email',
+	          message_text: msg.message_text || '',
+	          html_body: msg.html_body || '',
+	          subject: msg.subject || '',
+	          to_email: msg.to_email || '',
+	          from_email: msg.from_email || '',
+	          reply_to: msg.reply_to || '',
+	          direction: msg.direction || 'outbound',
+	          status: msg.status || null,
+	          error_message: msg.error_message || null,
+	          transport: 'email'
+	        }
+	      })
+	    })
+
+	    // 3. Contacto creado
     const originEvidence = resolveContactJourneyOrigin({ contact, sessions, whatsappEvents: enrichedWhatsAppJourneyEvents })
     const webConversionData = originEvidence.webData
     const adAttributedWhatsAppEvent = originEvidence.whatsappEvent || enrichedWhatsAppJourneyEvents.find(event => event?.data?.is_ad_attributed)

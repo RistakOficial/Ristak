@@ -2589,6 +2589,28 @@ async function initTables() {
       )
     `)
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS email_messages (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT,
+        direction TEXT DEFAULT 'outbound',
+        status TEXT,
+        to_email TEXT,
+        from_email TEXT,
+        reply_to TEXT,
+        subject TEXT,
+        message_text TEXT,
+        html_body TEXT,
+        smtp_message_id TEXT,
+        error_message TEXT,
+        message_timestamp DATETIME,
+        raw_payload_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
     for (const [columnName, columnType] of [
       ['provider', "TEXT DEFAULT 'ycloud'"],
       ['origin', 'TEXT'],
@@ -3265,6 +3287,10 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_created ON meta_social_messages(created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_meta_id ON meta_social_messages(meta_message_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_events_status ON meta_social_webhook_events(processed_status, created_at)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_email_messages_contact ON email_messages(contact_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_email_messages_contact_date ON email_messages(contact_id, message_timestamp, created_at)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_email_messages_created ON email_messages(created_at)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_email_messages_status ON email_messages(status, created_at)')
 
       try {
         await db.run('ALTER TABLE meta_social_messages ADD COLUMN status TEXT')

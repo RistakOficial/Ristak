@@ -5,6 +5,7 @@ import {
   getEmailSignature,
   getEmailStatus,
   saveEmailSignature,
+  sendEmailToContact,
   sendTestEmail
 } from '../services/emailService.js'
 import { logger } from '../utils/logger.js'
@@ -56,6 +57,16 @@ export async function sendTestEmailView(req, res) {
   } catch (error) {
     logger.error(`Error enviando correo de prueba: ${error.message}`)
     sendError(res, error, 'Error enviando el correo de prueba')
+  }
+}
+
+export async function sendEmailView(req, res) {
+  try {
+    const data = await sendEmailToContact(req.body || {})
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando correo: ${error.message}`)
+    sendError(res, error, 'Error enviando el correo')
   }
 }
 

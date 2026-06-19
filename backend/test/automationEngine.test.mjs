@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
+import { initializeMasterKey } from '../src/utils/encryption.js'
 import {
   renderTemplate,
   filtersMatch,
@@ -14,7 +15,16 @@ import {
   processScheduledContactEnrollments,
   enrollContactManually
 } from '../src/services/automationEngine.js'
+import {
+  connectEmail,
+  setEmailMxResolverForTest,
+  setEmailTransportFactoryForTest
+} from '../src/services/emailService.js'
 import { captureQrChatMessage, getWhatsAppApiConfigKeys } from '../src/services/whatsappApiService.js'
+
+const EMAIL_CONFIG_KEY = 'email_smtp_config'
+const EMAIL_PASSWORD_KEY = 'email_smtp_password'
+const EMAIL_SIGNATURE_CONFIG_KEY = 'email_signature_config'
 
 const ctx = {
   contact: {
@@ -545,6 +555,132 @@ test('disparador de mensaje de WhatsApp inscribe al contacto cuando llega un men
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
   }
+})
+
+test('acción de correo en automatizaciones envía email al contacto y registra salida', async () => {
+  await initializeMasterKey()
+
+  const suffix = randomUUID()
+  const contactId = `rstk_contact_email_action_${suffix}`
+  const automationId = `automation_email_action_${suffix}`
+  const sentMessages = []
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-whatsapp',
+              type: 'trigger-whatsapp-message',
+              config: { keywords: ['correo'], match: 'contains' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'email',
+        type: 'channel-email',
+        label: 'Correo',
+        config: {
+          toEmail: '{{contact.email}}',
+          subject: 'Hola {{contact.first_name}}',
+          body: 'Te escribo por correo sobre: {{conversation.last_message}}'
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-email', sourceNodeId: 'start', targetNodeId: 'email' },
+      { id: 'edge-email-done', sourceNodeId: 'email', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: {}
+  }
+
+  await withAppConfigValues({
+    [EMAIL_CONFIG_KEY]: null,
+    [EMAIL_PASSWORD_KEY]: null,
+    [EMAIL_SIGNATURE_CONFIG_KEY]: null
+  }, async () => {
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => {
+        sentMessages.push(message)
+        return {
+          messageId: `automation-smtp-${sentMessages.length}`,
+          accepted: [message.to],
+          rejected: []
+        }
+      }
+    }))
+
+    try {
+      await connectEmail({
+        fromEmail: 'ventas@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo'
+      })
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          `+1555${Date.now().toString().slice(-8)}`,
+          `email-action-${suffix}@example.com`,
+          'María Correo',
+          'María',
+          '{}'
+        ]
+      )
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, 'Test enviar correo', JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      await handleAutomationEvent('message-received', {
+        contactId,
+        messageText: 'quiero correo con detalles',
+        channel: 'WhatsApp API'
+      })
+
+      const emailMessage = await db.get(
+        'SELECT * FROM email_messages WHERE contact_id = ? AND subject = ?',
+        [contactId, 'Hola María']
+      )
+      assert.ok(emailMessage)
+      assert.equal(emailMessage.status, 'sent')
+      assert.equal(emailMessage.to_email, `email-action-${suffix}@example.com`)
+      assert.match(emailMessage.message_text, /quiero correo con detalles/)
+      assert.equal(sentMessages.length, 2)
+
+      const enrollment = await db.get(
+        'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, contactId]
+      )
+      assert.ok(enrollment)
+      assert.equal(enrollment.status, 'completed')
+      const log = JSON.parse(enrollment.log)
+      assert.ok(log.some((entry) => String(entry.detail || '').includes('Correo enviado')))
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+      await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId])
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
+  })
 })
 
 test('mensaje entrante por QR dispara automatizaciones de WhatsApp', async () => {

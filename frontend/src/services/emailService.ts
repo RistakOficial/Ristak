@@ -75,6 +75,24 @@ export interface EmailTestResult {
   rejected: string[]
 }
 
+export interface EmailSendPayload {
+  contactId?: string
+  to?: string
+  subject: string
+  text: string
+  html?: string
+  replyTo?: string
+  externalId?: string
+}
+
+export interface EmailSendResult extends EmailTestResult {
+  localMessageId?: string
+  status?: string
+  to?: string
+  subject?: string
+  sentAt?: string
+}
+
 export interface EmailSignatureConfig {
   enabled: boolean
   html: string
@@ -88,6 +106,7 @@ export const emailService = {
   getStatus: () => apiClient.get<EmailStatus>('/email/status'),
   detect: (email: string) => apiClient.post<EmailProviderDetection>('/email/detect', { email }),
   connect: (payload: EmailConnectPayload) => apiClient.post<EmailStatus>('/email/connect', payload),
+  send: (payload: EmailSendPayload) => apiClient.post<EmailSendResult>('/email/send', payload),
   sendTest: (to: string) => apiClient.post<EmailTestResult>('/email/test', { to }),
   getSignature: () => apiClient.get<EmailSignatureConfig>('/email/signature'),
   saveSignature: (payload: EmailSignatureConfig) => apiClient.post<EmailSignatureConfig>('/email/signature', payload),

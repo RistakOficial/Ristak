@@ -876,6 +876,16 @@
   line-height: 1.45;
 }
 
+.emailMessageSubject {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .messageInbound {
   align-self: flex-start;
 }
@@ -1280,7 +1290,7 @@
 .composer {
   position: relative;
   display: grid;
-  grid-template-columns: 40px 40px minmax(0, 1fr) 36px 40px;
+  grid-template-columns: 40px minmax(118px, 150px) 40px minmax(0, 1fr) 36px 40px;
   gap: 8px;
   align-items: center;
   padding: 10px 12px;
@@ -1288,9 +1298,19 @@
   background: var(--color-background-primary);
 }
 
+.composer[data-email-mode='true'] {
+  grid-template-columns: 40px minmax(118px, 150px) minmax(0, 1fr) 40px;
+  align-items: end;
+}
+
 .composerTextField {
   position: relative;
   min-width: 0;
+}
+
+.composer[data-email-mode='true'] .composerTextField {
+  display: grid;
+  gap: 6px;
 }
 
 .composer textarea {
@@ -1313,6 +1333,43 @@
 
 .composerTextField textarea {
   padding-right: 48px;
+}
+
+.composer[data-email-mode='true'] .composerTextField textarea {
+  min-height: 76px;
+  max-height: 150px;
+  padding-right: 12px;
+  border-radius: var(--radius-ctl);
+}
+
+.emailSubjectInput {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--design-control-border);
+  border-radius: var(--radius-ctl);
+  outline: 0;
+  background: var(--design-control-bg);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  line-height: 1.2;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+}
+
+.emailSubjectInput::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.emailSubjectInput:focus {
+  border-color: var(--ristak-focus-border);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.emailSubjectInput:disabled {
+  cursor: default;
+  opacity: 0.72;
 }
 
 .composer textarea:disabled {
@@ -1339,6 +1396,13 @@
   gap: 8px;
   overflow-x: auto;
   padding: 0 0 2px;
+}
+
+.composerChannelHint {
+  grid-column: 1 / -1;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
 }
 
 .draftAttachment {
@@ -1446,6 +1510,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
+}
+
+.composerChannelSelect {
   min-width: 0;
 }
 
@@ -2762,9 +2830,13 @@
     border-bottom: 1px solid var(--chat-border);
   }
 
-  .composer {
-    grid-template-columns: 34px 40px minmax(0, 1fr) 28px 40px;
-  }
+	  .composer {
+	    grid-template-columns: 34px minmax(104px, 126px) 36px minmax(0, 1fr) 28px 40px;
+	  }
+
+	  .composer[data-email-mode='true'] {
+	    grid-template-columns: 34px minmax(104px, 126px) minmax(0, 1fr) 40px;
+	  }
 
   .messageBubble {
     max-width: 90%;

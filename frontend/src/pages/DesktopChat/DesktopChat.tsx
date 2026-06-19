@@ -61,6 +61,7 @@ import { calendarsService, type Calendar, type CalendarEvent } from '@/services/
 import { conversationalAgentService, type ConversationAgentState, type ConversationStateAction, type ConversationalAgentDef } from '@/services/conversationalAgentService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { subscribeToChatLiveEvents, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
+import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import {
   messageTemplatesService,
@@ -93,6 +94,7 @@ type BulkChatConfirmAction = 'archive' | 'remove'
 type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta'
 type SchedulePeriod = 'AM' | 'PM'
 type TemplatePanelMode = 'choice' | 'select' | 'create'
+type ComposerChannel = 'whatsapp' | 'messenger' | 'instagram' | 'email'
 
 interface ContactChannelBadge {
   kind: ContactChannelBadgeKind
@@ -140,6 +142,7 @@ interface ChatListCacheSnapshot {
 interface DesktopChatMessage {
   id: string
   text: string
+  subject?: string
   date: string
   direction: 'inbound' | 'outbound' | 'system'
   status?: string
@@ -336,6 +339,12 @@ const HIGHLEVEL_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
   messenger: 'Messenger',
   instagram: 'Instagram'
 }
+const COMPOSER_CHANNEL_OPTIONS: Array<{ value: ComposerChannel; label: string }> = [
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'messenger', label: 'Messenger' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'email', label: 'Correo' }
+]
 
 const AGENT_SIGNAL_LABELS: Record<string, string> = {
   ready_for_human: 'Listo para humano',
@@ -1277,12 +1286,13 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     }
   }
 
-  if (event.type !== 'whatsapp_message' && event.type !== 'meta_message') return null
+  if (event.type !== 'whatsapp_message' && event.type !== 'meta_message' && event.type !== 'email_message') return null
   const data = event.data || {}
   const attachment = getJourneyMediaAttachment(event)
   const text = cleanAttachmentMessageText(pickMessageText(data), attachment)
   const messageType = String(data.message_type || data.messageType || data.type || '').trim()
-  if (!text && !attachment && !messageType) return null
+  const subject = String(data.subject || '').trim()
+  if (!text && !attachment && !messageType && !subject) return null
   const direction = normalizeWhatsAppBusinessDirection(data.direction || data.message_direction || data.from_type)
   const date = pickMessageTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date
   const fallbackText = attachment
@@ -1294,6 +1304,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
       data.whatsapp_message_id ||
       data.meta_social_message_id ||
       data.meta_message_id ||
+      data.email_message_id ||
+      data.smtp_message_id ||
       data.message_id ||
       data.messageId ||
       data.attribution_record_id ||
@@ -1301,6 +1313,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
       `${event.type}-${event.date}-${index}`
     ),
     text: text || fallbackText,
+    subject,
     date,
     direction,
     status: String(data.status || data.message_status || '').trim(),
@@ -1473,6 +1486,29 @@ function normalizeHighLevelChannel(value?: string | null): HighLevelChatChannel 
   return 'whatsapp_api'
 }
 
+function normalizeComposerChannel(value?: string | null): ComposerChannel {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (normalized.includes('instagram')) return 'instagram'
+  if (normalized.includes('messenger') || normalized.includes('facebook')) return 'messenger'
+  if (normalized.includes('email') || normalized.includes('correo') || normalized.includes('mail') || normalized === 'smtp') return 'email'
+  return 'whatsapp'
+}
+
+function getDefaultComposerChannel(contact?: DesktopChatContact | null): ComposerChannel {
+  if (!contact) return 'whatsapp'
+  const inferred = normalizeComposerChannel(contact.lastMessageChannel || contact.lastMessageTransport || '')
+  if (inferred === 'email' && contact.email) return 'email'
+  if (inferred === 'messenger' || inferred === 'instagram') return inferred
+  if (contact.phone) return 'whatsapp'
+  if (contact.email) return 'email'
+  return inferred
+}
+
+function getHighLevelChannelForComposer(channel: ComposerChannel): HighLevelChatChannel {
+  if (channel === 'messenger' || channel === 'instagram') return channel
+  return 'whatsapp_api'
+}
+
 function getSelectedBusinessPhone(status?: WhatsAppApiStatus | null): WhatsAppApiPhoneNumber | null {
   const phones = status?.phoneNumbers || []
   return status?.selectedPhone || phones.find((phone) => phone.is_default_sender) || phones[0] || null
@@ -1515,6 +1551,7 @@ function getMessageBusinessPhone(message: DesktopChatMessage, status?: WhatsAppA
 }
 
 function getMessageTransportLabel(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
+  if (String(message.transport || '').trim().toLowerCase() === 'email' || message.subject) return 'Email'
   const phone = getMessageBusinessPhone(message, status)
   const dualConnection = Boolean(phone && isPhoneApiEnabled(phone, status) && isPhoneQrConnected(phone))
   if (!dualConnection) return ''
@@ -1594,6 +1631,8 @@ export const DesktopChat: React.FC = () => {
   const [infoPanelView, setInfoPanelView] = useState<InfoPanelView>('summary')
 
   const [composerText, setComposerText] = useState('')
+  const [composerChannel, setComposerChannel] = useState<ComposerChannel>('whatsapp')
+  const [emailSubject, setEmailSubject] = useState('')
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [composerMenuOpen, setComposerMenuOpen] = useState(false)
   const [templatePanelOpen, setTemplatePanelOpen] = useState(false)
@@ -1624,6 +1663,7 @@ export const DesktopChat: React.FC = () => {
   const [messageAudioProgress, setMessageAudioProgress] = useState<Record<string, { currentTime: number; duration: number }>>({})
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [highLevelConnected, setHighLevelConnected] = useState(false)
+  const [emailConnected, setEmailConnected] = useState(false)
   const [conversationAgentEnabled, setConversationAgentEnabled] = useState(false)
   const [conversationAgentState, setConversationAgentState] = useState<ConversationAgentState | null>(null)
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>({})
@@ -1651,6 +1691,15 @@ export const DesktopChat: React.FC = () => {
   const selectedBusinessPhone = useMemo(() => getSelectedBusinessPhone(whatsappStatus), [whatsappStatus])
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
   const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
+  useEffect(() => {
+    if (!activeContact) {
+      setComposerChannel('whatsapp')
+      setEmailSubject('')
+      return
+    }
+    setComposerChannel(getDefaultComposerChannel(activeContact))
+    setEmailSubject('')
+  }, [activeContact?.id])
   const filteredTemplates = useMemo(() => {
     const query = templateSearch.trim().toLowerCase()
     if (!query) return templates
@@ -1884,9 +1933,51 @@ export const DesktopChat: React.FC = () => {
     })
     return groups
   }, [messages, timezone])
-  const activeConversationChannel = normalizeHighLevelChannel(activeContact?.lastMessageChannel || messages[messages.length - 1]?.transport || '')
-  const hasComposerContent = Boolean(composerText.trim()) || draftAttachments.length > 0 || Boolean(voiceDraft)
-  const canSend = Boolean(activeContact && hasComposerContent && composerStatus === 'idle' && !voiceRecording && !voiceProcessing)
+  const detectedComposerChannel = normalizeComposerChannel(activeContact?.lastMessageChannel || activeContact?.lastMessageTransport || messages[messages.length - 1]?.transport || '')
+  const activeConversationChannel = getHighLevelChannelForComposer(composerChannel)
+  const isEmailComposer = composerChannel === 'email'
+  const hasDetectedMessenger = detectedComposerChannel === 'messenger'
+  const hasDetectedInstagram = detectedComposerChannel === 'instagram'
+  const composerChannelOptions = COMPOSER_CHANNEL_OPTIONS.map((option) => {
+    if (option.value === 'whatsapp') {
+      return {
+        ...option,
+        disabled: !activeContact?.phone || (!whatsappConnected && !highLevelConnected)
+      }
+    }
+    if (option.value === 'email') {
+      return {
+        ...option,
+        disabled: !activeContact?.email || !emailConnected
+      }
+    }
+    return {
+      ...option,
+      disabled: !highLevelConnected || (option.value === 'messenger' ? !hasDetectedMessenger : !hasDetectedInstagram)
+    }
+  })
+  const composerChannelReady = isEmailComposer
+    ? Boolean(activeContact?.email && emailConnected)
+    : composerChannel === 'whatsapp'
+    ? Boolean(activeContact?.phone && (whatsappConnected || highLevelConnected))
+    : Boolean(highLevelConnected && (composerChannel === 'messenger' ? hasDetectedMessenger : hasDetectedInstagram))
+  const composerChannelHint = !activeContact
+    ? ''
+    : isEmailComposer && !activeContact.email
+    ? 'Este contacto no tiene correo guardado.'
+    : isEmailComposer && !emailConnected
+    ? 'Conecta tu correo de envío en Configuración > Correos.'
+    : composerChannel === 'whatsapp' && !activeContact.phone
+    ? 'Este contacto no tiene teléfono guardado.'
+    : composerChannel === 'whatsapp' && !whatsappConnected && !highLevelConnected
+    ? 'Conecta WhatsApp API o HighLevel para responder por WhatsApp.'
+    : (composerChannel === 'messenger' || composerChannel === 'instagram') && !highLevelConnected
+    ? 'Conecta HighLevel para responder por este canal.'
+    : ''
+  const hasComposerContent = isEmailComposer
+    ? Boolean(emailSubject.trim() && composerText.trim())
+    : Boolean(composerText.trim()) || draftAttachments.length > 0 || Boolean(voiceDraft)
+  const canSend = Boolean(activeContact && composerChannelReady && hasComposerContent && composerStatus === 'idle' && !voiceRecording && !voiceProcessing)
   const conversationAgentActive = conversationAgentEnabled && conversationAgentState?.status === 'active'
   const activeAgentDef = useMemo(
     () => agentDefs.find((agent) => agent.id === conversationAgentState?.agentId) || null,
@@ -2036,9 +2127,10 @@ export const DesktopChat: React.FC = () => {
   const loadSupportData = useCallback(async () => {
     setCalendarsLoading(true)
     try {
-      const [status, highLevelConfig, calendarList, conversationalConfig, agentList] = await Promise.all([
+      const [status, highLevelConfig, emailStatus, calendarList, conversationalConfig, agentList] = await Promise.all([
         whatsappApiService.getStatus().catch(() => null),
         highLevelService.getConfig().catch(() => ({ configured: false })),
+        emailService.getStatus().catch(() => null),
         calendarsService.getCalendars(locationId, accessToken).catch(() => []),
         conversationalAgentService.getConfig().catch(() => null),
         conversationalAgentService.listAgents().catch(() => [] as ConversationalAgentDef[])
@@ -2046,6 +2138,7 @@ export const DesktopChat: React.FC = () => {
       const stateList = await conversationalAgentService.listStates().catch(() => [] as ConversationAgentState[])
       setWhatsappStatus(status)
       setHighLevelConnected(Boolean(highLevelConfig?.configured))
+      setEmailConnected(Boolean(emailStatus?.connected))
       setConversationAgentEnabled(Boolean(conversationalConfig?.enabled))
       setAgentStates(mapAgentStatesByContactId(stateList))
       setAgentDefs(agentList)
@@ -2449,6 +2542,19 @@ export const DesktopChat: React.FC = () => {
     setTemplatePanelOpen(false)
   }, [])
 
+  const handleComposerChannelChange = useCallback((value: string) => {
+    const nextChannel = normalizeComposerChannel(value)
+    setComposerChannel(nextChannel)
+    setComposerMenuOpen(false)
+    closeTemplatePanel()
+    closeComposerAgentMenu()
+    if (nextChannel === 'email') {
+      setDraftAttachments([])
+      setVoiceDraft(null)
+      setVoiceElapsedMs(0)
+    }
+  }, [closeComposerAgentMenu, closeTemplatePanel])
+
   const handleOpenTemplatePanel = useCallback(() => {
     setComposerMenuOpen(false)
     closeComposerAgentMenu()
@@ -2691,13 +2797,18 @@ export const DesktopChat: React.FC = () => {
     setScheduleError('')
   }, [schedulingMessage])
 
-  const handleOpenScheduleModal = useCallback(() => {
-    if (!activeContact) return
-    setComposerMenuOpen(false)
-    closeTemplatePanel()
-    closeComposerAgentMenu()
+	  const handleOpenScheduleModal = useCallback(() => {
+	    if (!activeContact) return
+	    setComposerMenuOpen(false)
+	    closeTemplatePanel()
+	    closeComposerAgentMenu()
 
-    if (!composerText.trim()) {
+	    if (composerChannel === 'email') {
+	      showToast('warning', 'Correo al momento', 'Por ahora los correos se envían al momento desde el chat.')
+	      return
+	    }
+
+	    if (!composerText.trim()) {
       showToast('warning', 'Escribe el mensaje', 'Primero escribe el texto que quieres programar.')
       return
     }
@@ -2711,7 +2822,7 @@ export const DesktopChat: React.FC = () => {
     setScheduleError('')
     setScheduleEditingMessageId(null)
     setScheduleOpen(true)
-  }, [activeContact, closeComposerAgentMenu, closeTemplatePanel, composerText, draftAttachments.length, showToast, voiceDraft])
+	  }, [activeContact, closeComposerAgentMenu, closeTemplatePanel, composerChannel, composerText, draftAttachments.length, showToast, voiceDraft])
 
   const handleScheduleDraftChange = useCallback((patch: Partial<ScheduleDraft>) => {
     setScheduleDraft((current) => ({ ...current, ...patch }))
@@ -3213,13 +3324,111 @@ export const DesktopChat: React.FC = () => {
     setArchivedViewOpen(false)
   }, [])
 
-  const handleSendMessage = async (textOverride?: string) => {
-    const text = (textOverride || composerText).trim()
-    const attachmentsToSend = textOverride ? [] : draftAttachments
-    const voiceToSend = textOverride ? null : voiceDraft
-    if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
+	  const handleSendMessage = async (textOverride?: string) => {
+	    const text = (textOverride || composerText).trim()
+	    const attachmentsToSend = textOverride ? [] : draftAttachments
+	    const voiceToSend = textOverride ? null : voiceDraft
+	    if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
 
-    if (voiceToSend) {
+	    if (isEmailComposer) {
+	      const subject = emailSubject.trim()
+	      const recipient = activeContact.email?.trim() || ''
+	      if (!recipient) {
+	        showToast('error', 'Falta el correo', 'Guarda el correo del contacto antes de enviarle un email.')
+	        return
+	      }
+	      if (!emailConnected) {
+	        showToast('warning', 'Correo no conectado', 'Conecta tu correo de envío en Configuración > Correos.')
+	        return
+	      }
+	      if (!subject) {
+	        showToast('warning', 'Falta el asunto', 'Escribe el asunto del correo.')
+	        return
+	      }
+	      if (!text) {
+	        showToast('warning', 'Falta el mensaje', 'Escribe el cuerpo del correo.')
+	        return
+	      }
+	      if (attachmentsToSend.length > 0 || voiceToSend) {
+	        showToast('warning', 'Solo texto por ahora', 'El correo desde el chat se envía con asunto y cuerpo.')
+	        return
+	      }
+
+	      const optimisticId = `desktop-email-${Date.now()}`
+	      const sentAt = new Date().toISOString()
+	      const optimisticMessage: DesktopChatMessage = {
+	        id: optimisticId,
+	        text,
+	        subject,
+	        date: sentAt,
+	        direction: 'outbound',
+	        status: 'enviando',
+	        transport: 'email'
+	      }
+
+	      setComposerStatus('sending')
+	      if (!textOverride) {
+	        setComposerText('')
+	        setEmailSubject('')
+	      }
+	      setComposerMenuOpen(false)
+	      setMessages((current) => [...current, optimisticMessage])
+	      setChats((current) => {
+	        const next = current.map((contact) => (
+	          contact.id === activeContact.id
+	            ? {
+	                ...contact,
+	                lastMessageText: `${subject} · ${text}`,
+	                lastMessageDate: sentAt,
+	                lastMessageDirection: 'outbound',
+	                lastMessageChannel: 'email',
+	                lastMessageTransport: 'email',
+	                messageCount: Number(contact.messageCount || 0) + 1
+	              }
+	            : contact
+	        ))
+	        writeCachedChatList(next)
+	        return next
+	      })
+
+	      try {
+	        const result = await emailService.send({
+	          contactId: activeContact.id,
+	          to: recipient,
+	          subject,
+	          text,
+	          externalId: optimisticId
+	        })
+	        setMessages((current) => current.map((message) => message.id === optimisticId
+	          ? {
+	              ...message,
+	              id: result.localMessageId || message.id,
+	              status: result.status || 'sent',
+	              transport: 'email'
+	            }
+	          : message
+	        ))
+	        await Promise.all([
+	          loadConversation(activeContact.id),
+	          loadChats({ silent: true })
+	        ])
+	      } catch (error: any) {
+	        const message = error?.message || 'Intenta enviar el correo otra vez.'
+	        setMessages((current) => current.map((item) => (
+	          item.id === optimisticId ? { ...item, status: 'error', errorReason: message } : item
+	        )))
+	        if (!textOverride) {
+	          setComposerText(text)
+	          setEmailSubject(subject)
+	        }
+	        showToast('error', 'No se envió el correo', message)
+	      } finally {
+	        setComposerStatus('idle')
+	      }
+	      return
+	    }
+
+	    if (voiceToSend) {
       if (!activeContact.phone) {
         showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
         return
@@ -4467,8 +4676,9 @@ export const DesktopChat: React.FC = () => {
                           key={message.id}
                           className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''}`}
                         >
-                          {renderAttachment(message)}
-                          {message.text ? <p>{message.text}</p> : null}
+	                          {renderAttachment(message)}
+	                          {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
+	                          {message.text ? <p>{message.text}</p> : null}
                           {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
                           {message.errorReason ? <small className={styles.errorText}>{message.errorReason}</small> : null}
                           {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
@@ -4482,10 +4692,11 @@ export const DesktopChat: React.FC = () => {
                 <div ref={messagesEndRef} />
               </div>
 
-              <form
-                className={styles.composer}
-                data-chat-composer="true"
-                data-enter-submit-ignore
+	              <form
+	                className={styles.composer}
+	                data-email-mode={isEmailComposer ? 'true' : undefined}
+	                data-chat-composer="true"
+	                data-enter-submit-ignore
                 onSubmit={(event) => {
                   event.preventDefault()
                   void handleSendMessage()
@@ -4525,9 +4736,12 @@ export const DesktopChat: React.FC = () => {
                     ))}
                   </div>
                 ) : null}
-                {renderVoiceWave()}
-                {renderVoiceDraft()}
-                <div className={styles.agentComposerWrap}>
+	                {renderVoiceWave()}
+	                {renderVoiceDraft()}
+	                {composerChannelHint ? (
+	                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
+	                ) : null}
+	                <div className={styles.agentComposerWrap}>
                   <button
                     type="button"
                     className={styles.agentComposerButton}
@@ -4540,53 +4754,73 @@ export const DesktopChat: React.FC = () => {
                     title={conversationAgentActive ? 'Agente conversacional activo' : 'Asignar agente conversacional'}
                   >
                     {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
-                  </button>
-                  {renderComposerAgentMenu()}
-                </div>
-                <div ref={composerMenuRef} className={styles.composerActionWrap}>
-                  <button
-                    type="button"
-                    className={styles.composerPlusButton}
-                    onClick={() => {
-                      closeComposerAgentMenu()
-                      closeTemplatePanel()
-                      setComposerMenuOpen((current) => !current)
-                    }}
-                    aria-label="Abrir opciones de adjuntos"
-                    aria-expanded={composerMenuOpen || templatePanelOpen}
-                  >
-                    <Plus size={20} />
-                  </button>
-                  {composerMenuOpen ? (
-                    <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
-                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
-                        <FileText size={16} />
-                        <span>Plantillas</span>
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
-                        <ImageIcon size={16} />
-                        <span>Fotos</span>
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
-                        <FileText size={16} />
-                        <span>Documentos</span>
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
-                        <MapPin size={16} />
-                        <span>Ubicación</span>
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
-                        <Banknote size={16} />
-                        <span>CLABE</span>
-                      </button>
-                    </div>
-                  ) : null}
-                  {renderTemplatePanel()}
-                </div>
-                <div className={styles.composerTextField}>
-                  <textarea
-                    data-ristak-unstyled
-                    value={composerText}
+	                  </button>
+	                  {renderComposerAgentMenu()}
+	                </div>
+	                <div className={styles.composerChannelSelect}>
+	                  <CustomSelect
+	                    value={composerChannel}
+	                    options={composerChannelOptions}
+	                    onValueChange={handleComposerChannelChange}
+	                    aria-label="Canal de envío"
+	                  />
+	                </div>
+	                {!isEmailComposer ? (
+	                  <div ref={composerMenuRef} className={styles.composerActionWrap}>
+	                    <button
+	                      type="button"
+	                      className={styles.composerPlusButton}
+	                      onClick={() => {
+	                        closeComposerAgentMenu()
+	                        closeTemplatePanel()
+	                        setComposerMenuOpen((current) => !current)
+	                      }}
+	                      aria-label="Abrir opciones de adjuntos"
+	                      aria-expanded={composerMenuOpen || templatePanelOpen}
+	                    >
+	                      <Plus size={20} />
+	                    </button>
+	                    {composerMenuOpen ? (
+	                      <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
+	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
+	                          <FileText size={16} />
+	                          <span>Plantillas</span>
+	                        </button>
+	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
+	                          <ImageIcon size={16} />
+	                          <span>Fotos</span>
+	                        </button>
+	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
+	                          <FileText size={16} />
+	                          <span>Documentos</span>
+	                        </button>
+	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
+	                          <MapPin size={16} />
+	                          <span>Ubicación</span>
+	                        </button>
+	                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
+	                          <Banknote size={16} />
+	                          <span>CLABE</span>
+	                        </button>
+	                      </div>
+	                    ) : null}
+	                    {renderTemplatePanel()}
+	                  </div>
+	                ) : null}
+	                <div className={styles.composerTextField}>
+	                  {isEmailComposer ? (
+	                    <input
+	                      data-ristak-unstyled
+	                      className={styles.emailSubjectInput}
+	                      value={emailSubject}
+	                      onChange={(event) => setEmailSubject(event.target.value)}
+	                      placeholder="Asunto"
+	                      disabled={!activeContact || composerStatus === 'sending'}
+	                    />
+	                  ) : null}
+	                  <textarea
+	                    data-ristak-unstyled
+	                    value={composerText}
                     onChange={(event) => setComposerText(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -4595,36 +4829,40 @@ export const DesktopChat: React.FC = () => {
                         if (canSend) void handleSendMessage()
                       }
                     }}
-                    placeholder={voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
-                    rows={1}
+	                    placeholder={isEmailComposer ? 'Escribe el correo...' : voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
+	                    rows={isEmailComposer ? 3 : 1}
                     onFocus={() => {
                       setComposerMenuOpen(false)
                       closeTemplatePanel()
                       closeComposerAgentMenu()
                     }}
-                    disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
-                  />
-                  <button
-                    type="button"
-                    className={styles.scheduleComposerButton}
-                    onClick={handleOpenScheduleModal}
-                    disabled={!activeContact || composerStatus === 'sending' || voiceRecording || voiceProcessing || Boolean(voiceDraft)}
-                    aria-label="Programar mensaje"
-                    title="Programar mensaje"
-                  >
-                    <Clock size={16} />
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  className={styles.micButton}
-                  onClick={handleVoiceButtonClick}
-                  disabled={composerStatus === 'sending' || voiceProcessing || Boolean(voiceDraft)}
-                  aria-label={voiceRecording ? 'Terminar grabación' : voiceDraft ? 'Audio listo' : 'Grabar audio'}
-                  data-recording={voiceRecording ? 'true' : undefined}
-                >
-                  {voiceProcessing ? <Loader2 size={18} className={styles.spin} /> : voiceRecording ? <Square size={16} /> : <Mic size={18} />}
-                </button>
+	                    disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
+	                  />
+	                  {!isEmailComposer ? (
+	                    <button
+	                      type="button"
+	                      className={styles.scheduleComposerButton}
+	                      onClick={handleOpenScheduleModal}
+	                      disabled={!activeContact || composerStatus === 'sending' || voiceRecording || voiceProcessing || Boolean(voiceDraft)}
+	                      aria-label="Programar mensaje"
+	                      title="Programar mensaje"
+	                    >
+	                      <Clock size={16} />
+	                    </button>
+	                  ) : null}
+	                </div>
+	                {!isEmailComposer ? (
+	                  <button
+	                    type="button"
+	                    className={styles.micButton}
+	                    onClick={handleVoiceButtonClick}
+	                    disabled={composerStatus === 'sending' || voiceProcessing || Boolean(voiceDraft)}
+	                    aria-label={voiceRecording ? 'Terminar grabación' : voiceDraft ? 'Audio listo' : 'Grabar audio'}
+	                    data-recording={voiceRecording ? 'true' : undefined}
+	                  >
+	                    {voiceProcessing ? <Loader2 size={18} className={styles.spin} /> : voiceRecording ? <Square size={16} /> : <Mic size={18} />}
+	                  </button>
+	                ) : null}
                 <button type="submit" className={styles.sendButton} disabled={!canSend} aria-label="Enviar mensaje">
                   {composerStatus === 'sending' ? <Loader2 size={18} className={styles.spin} /> : <ArrowUp size={18} />}
                 </button>

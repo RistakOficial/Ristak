@@ -21,6 +21,7 @@ import { DripConfigEditor } from './config/DripConfigEditor'
 import { GoalConfigEditor } from './config/GoalConfigEditor'
 import { WhatsAppConfigEditor } from './config/WhatsAppConfigEditor'
 import { MessageBlocksEditor } from './config/MessageBlocksEditor'
+import { EmailConfigEditor } from './config/EmailConfigEditor'
 import { TriggerFiltersEditor } from './config/TriggerFiltersEditor'
 import { SchedulerConfigEditor } from './config/SchedulerConfigEditor'
 import type { TriggerFilter } from './crmFields'
@@ -701,6 +702,7 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             />
           </>
         )}
+        {definition.configComponent === 'email' && <EmailConfigEditor config={config} onChange={onChange} />}
         {definition.configComponent === 'scheduler' && (
           <SchedulerConfigEditor config={config} onChange={onChange} />
         )}

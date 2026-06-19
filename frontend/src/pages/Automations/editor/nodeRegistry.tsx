@@ -55,8 +55,8 @@ import {
 // declarativo (o componente de configuración propio), validación, resumen,
 // CTA contextual y salidas (handles).
 //
-// Canales conversacionales soportados para acciones: WhatsApp, Messenger e
-// Instagram Direct. El correo existe como disparador entrante separado.
+// Canales conversacionales soportados para acciones: WhatsApp, Messenger,
+// Instagram Direct y correo saliente.
 // ---------------------------------------------------------------------------
 
 export type NodeKind = 'trigger' | 'action'
@@ -134,7 +134,7 @@ export interface NodeSummaryData {
 }
 
 /** Configuradores con UI propia (más allá del formulario declarativo) */
-export type NodeConfigComponent = 'conditions' | 'wait' | 'drip' | 'goal' | 'whatsapp' | 'message' | 'scheduler'
+export type NodeConfigComponent = 'conditions' | 'wait' | 'drip' | 'goal' | 'whatsapp' | 'message' | 'email' | 'scheduler'
 
 // ---------------------------------------------------------------------------
 // Bloques de mensaje tipo ManyChat (varios globos dentro de una cajita)
@@ -567,6 +567,14 @@ const WHATSAPP_SEND_FIELDS: VariableSchemaField[] = [
   field('ID del mensaje', 'id_mensaje'),
   field('Estado', 'estado'),
   field('Número destino', 'numero_destino'),
+  field('Fecha de envío', 'fecha_envio')
+]
+
+const EMAIL_SEND_FIELDS: VariableSchemaField[] = [
+  field('ID del mensaje', 'id_mensaje'),
+  field('Estado', 'estado'),
+  field('Correo destino', 'correo_destino'),
+  field('Asunto', 'asunto'),
   field('Fecha de envío', 'fecha_envio')
 ]
 
@@ -1358,8 +1366,8 @@ function channelMessageNode({
 }
 
 const CHANNEL_NODES: NodeDefinition[] = [
-  {
-    type: 'channel-whatsapp',
+	  {
+	    type: 'channel-whatsapp',
     kind: 'action',
     label: 'WhatsApp',
     brand: 'WhatsApp',
@@ -1432,11 +1440,51 @@ const CHANNEL_NODES: NodeDefinition[] = [
         text: `${senderLabels[str(config.sender)] || 'Número principal'}${countLabel}${methodLabel}`,
         box: isTemplate ? templateLabel || undefined : firstTextBlock(config) || undefined,
         empty: 'Configura el mensaje de WhatsApp'
-      }
-    }
-  },
-  channelMessageNode({
-    type: 'channel-messenger',
+	      }
+	    }
+	  },
+	  {
+	    type: 'channel-email',
+	    kind: 'action',
+	    label: 'Correo',
+	    brand: 'Email',
+	    category: 'action-content',
+	    description: 'Envía un correo al contacto',
+	    icon: Mail,
+	    accent: 'purple',
+	    addButtonLabel: 'Agregar correo',
+	    allowedChannels: ['email'],
+	    configComponent: 'email',
+	    supportsVariables: true,
+	    defaultConfig: () => ({
+	      toEmail: '{{contact.email}}',
+	      subject: '',
+	      body: ''
+	    }),
+	    fields: [],
+	    outputs: () => SINGLE_OUTPUT,
+	    variableOutput: () => ({
+	      baseId: 'enviar_correo',
+	      baseLabel: 'Enviar correo',
+	      fields: EMAIL_SEND_FIELDS
+	    }),
+	    validate: (config) => {
+	      const errors: string[] = []
+	      if (!str(config.toEmail)) errors.push('Define el correo destino')
+	      if (!str(config.subject).trim()) errors.push('Escribe el asunto del correo')
+	      if (!str(config.body).trim()) errors.push('Escribe el mensaje del correo')
+	      return errors
+	    },
+	    summary: (config) => ({
+	      text: str(config.toEmail) && str(config.toEmail) !== '{{contact.email}}'
+	        ? `Para ${str(config.toEmail)}`
+	        : 'Al correo del contacto',
+	      box: str(config.subject) || str(config.body) || undefined,
+	      empty: 'Configura asunto y mensaje'
+	    })
+	  },
+	  channelMessageNode({
+	    type: 'channel-messenger',
     label: 'Messenger',
     brand: 'Messenger',
     icon: MessengerIcon,
