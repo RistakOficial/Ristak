@@ -68,13 +68,6 @@ export function ContactPhoneSelector({
             data-primary={isPrimary ? 'true' : undefined}
           >
             <div className={styles.phoneMain}>
-              <span
-                className={styles.phoneStatusIcon}
-                data-primary={isPrimary ? 'true' : undefined}
-                aria-hidden="true"
-              >
-                {isPrimary ? <Star size={13} fill="currentColor" /> : null}
-              </span>
               {isPrimary && onSavePrimaryPhone ? (
                 <InlineEditableText
                   value={phone}
@@ -89,6 +82,15 @@ export function ContactPhoneSelector({
               ) : (
                 <span className={styles.phoneText}>{phone}</span>
               )}
+              {isPrimary ? (
+                <span
+                  className={styles.phoneStatusIcon}
+                  data-primary="true"
+                  aria-hidden="true"
+                >
+                  <Star size={13} fill="currentColor" />
+                </span>
+              ) : null}
             </div>
 
             <div className={styles.phoneActions}>
