@@ -1594,10 +1594,9 @@ export const Appointments: React.FC = () => {
               <Button
                 variant="primary"
                 onClick={openCreateModal}
-                size="sm"
+                leftIcon={<Plus size={16} />}
               >
-                <Plus size={16} />
-                <span className={styles.buttonText}>Programar</span>
+                Programar
               </Button>
               {/* DESACTIVADO TEMPORALMENTE - Blocked Slots
               <Button

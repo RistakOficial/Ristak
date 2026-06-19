@@ -564,17 +564,7 @@
   flex-shrink: 0; /* Evitar que se compriman */
 }
 
-/* Texto de botones - Responsive: ocultar en pantallas muy pequeñas */
-.buttonText {
-  display: inline;
-  margin-left: 0.25rem;
-}
-
 @media (max-width: 1200px) {
-  .buttonText {
-    display: none; /* Solo mostrar iconos en pantallas pequeñas */
-  }
-
   .viewBarActions {
     gap: 0.375rem; /* Reducir aún más el espacio */
   }
