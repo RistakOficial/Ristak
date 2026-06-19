@@ -19333,6 +19333,66 @@ const VideoPreviewRangeControl: React.FC<{
   )
 }
 
+const VideoPlayerSettingsMiniPreview: React.FC<{ settings: Record<string, unknown> }> = ({ settings }) => {
+  const controlsMode = getVideoControlsMode(settings)
+  const showCustomControls = controlsMode === 'clean'
+  const showControlBar = showCustomControls && settings.videoControlBar === true
+  const showSoundHint = showCustomControls && settings.videoSoundHint !== false
+  const playShape = getVideoPlayShape(settings)
+  const playIconStyle = getVideoPlayIconStyle(settings)
+  const frameRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
+  const frameBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
+  const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
+  const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
+  const playRadius = `${getVideoPlayRadiusValue(settings, playShape)}px`
+  const playBorderColor = getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT
+  const playBorderWidth = `${getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}px`
+  const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
+
+  return (
+    <div
+      className={styles.videoSettingsPreview}
+      style={{
+        ['--video-settings-frame-bg' as string]: frameBackground,
+        ['--video-settings-frame-radius' as string]: frameRadius,
+        ['--video-settings-play-bg' as string]: playerColor,
+        ['--video-settings-play-color' as string]: playColor,
+        ['--video-settings-play-radius' as string]: playRadius,
+        ['--video-settings-play-border-color' as string]: playBorderColor,
+        ['--video-settings-play-border-width' as string]: playBorderWidth,
+        ['--video-settings-sound-color' as string]: soundColor
+      } as React.CSSProperties}
+    >
+      <div className={styles.videoSettingsPreviewHeader}>
+        <span>Vista rápida</span>
+        <strong>{showCustomControls ? 'Reproductor personalizado' : controlsMode === 'native' ? 'Navegador' : 'Sin controles'}</strong>
+      </div>
+      <div className={styles.videoSettingsPreviewFrame}>
+        <span className={styles.videoSettingsPreviewTag}>Marco del video</span>
+        {showCustomControls && (
+          <span className={`${styles.videoSettingsPreviewPlay} ${playShape === 'round' ? styles.videoSettingsPreviewPlayRound : ''}`}>
+            <VideoPlayGlyph iconStyle={playIconStyle} size={22} />
+            <small>Play</small>
+          </span>
+        )}
+        {showSoundHint && (
+          <span className={styles.videoSettingsPreviewSound}>
+            <Volume2 size={13} />
+            <small>Bocina</small>
+          </span>
+        )}
+        {showControlBar && (
+          <span className={styles.videoSettingsPreviewBar}>
+            <i />
+            <small>Barra del reproductor</small>
+            <b>1x</b>
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const VideoPlayerSettingsControls: React.FC<{
   settings: Record<string, unknown>
   mediaUrl?: string
@@ -19374,35 +19434,29 @@ const VideoPlayerSettingsControls: React.FC<{
 
   return (
     <div className={styles.videoSettingsBox}>
-      <div className={styles.panelSubheader}>Reproductor</div>
-      <label className={styles.field}>
-        <span>Estilo del reproductor</span>
-        <CustomSelect
-          value={controlsMode}
-          onChange={(event) => {
-            const nextMode = isVideoControlsMode(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROLS_MODE
-            onPatchSettings({
-              videoControlsMode: nextMode,
-              videoControls: nextMode === 'native'
-            })
-          }}
-          onBlur={onSave}
-        >
-          {videoControlsModeOptions.map(option => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </CustomSelect>
-      </label>
+      <VideoPlayerSettingsMiniPreview settings={settings} />
 
-      <div className={styles.twoColumn}>
+      <section className={styles.videoSettingsSection}>
+        <div className={styles.videoSettingsSectionHeader}>
+          <span>Video</span>
+          <strong>Marco y ajuste</strong>
+        </div>
         <label className={styles.field}>
-          <span>Velocidad inicial</span>
+          <span>Estilo del reproductor</span>
           <CustomSelect
-            value={String(getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4))}
-            onChange={(event) => onPatchSettings({ videoDefaultSpeed: Number(event.target.value) })}
+            value={controlsMode}
+            onChange={(event) => {
+              const nextMode = isVideoControlsMode(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROLS_MODE
+              onPatchSettings({
+                videoControlsMode: nextMode,
+                videoControls: nextMode === 'native'
+              })
+            }}
             onBlur={onSave}
           >
-            {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            {videoControlsModeOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </CustomSelect>
         </label>
         <label className={styles.field}>
@@ -19413,78 +19467,92 @@ const VideoPlayerSettingsControls: React.FC<{
             <option value="fill">Estirar</option>
           </CustomSelect>
         </label>
-      </div>
-
-      <div className={styles.panelSubheader}>Marco del video</div>
-      <div className={styles.twoColumn}>
-        <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
-        <ColorField label="Borde del video" value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBorderColor: value })} onCommit={onSave} />
-      </div>
-      <div className={styles.twoColumn}>
-        <DimensionField
-          label="Radio del video"
-          value={getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}
-          min={0}
-          max={80}
-          onChange={(value) => onPatchSettings({ videoPlayerRadius: value })}
-          onCommit={onSave}
-        />
-        <DimensionField
-          label="Borde del video"
-          value={getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}
-          min={0}
-          max={12}
-          onChange={(value) => onPatchSettings({ videoPlayerBorderWidth: value })}
-          onCommit={onSave}
-        />
-      </div>
-
-      <div className={styles.twoColumn}>
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={settings.videoPreviewEnabled !== false}
-            onChange={(event) => {
-              onPatchSettings({ videoPreviewEnabled: event.target.checked })
-              window.setTimeout(onSave, 0)
-            }}
+        <div className={styles.twoColumn}>
+          <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
+          <ColorField label="Borde del video" value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBorderColor: value })} onCommit={onSave} />
+        </div>
+        <div className={styles.twoColumn}>
+          <DimensionField
+            label="Radio del video"
+            value={getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}
+            min={0}
+            max={80}
+            onChange={(value) => onPatchSettings({ videoPlayerRadius: value })}
+            onCommit={onSave}
           />
-          <span>Preview de primeros segundos</span>
-        </label>
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={Boolean(settings.videoAutoplay)}
-            onChange={(event) => {
-              onPatchSettings({ videoAutoplay: event.target.checked, videoMuted: event.target.checked ? true : settings.videoMuted })
-              window.setTimeout(onSave, 0)
-            }}
+          <DimensionField
+            label="Borde del video"
+            value={getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}
+            min={0}
+            max={12}
+            onChange={(value) => onPatchSettings({ videoPlayerBorderWidth: value })}
+            onCommit={onSave}
           />
-          <span>Autoplay</span>
-        </label>
-      </div>
+        </div>
+      </section>
 
-      {settings.videoPreviewEnabled !== false && (
-        <VideoPreviewRangeControl
-          settings={settings}
-          durationSeconds={metadataDuration}
-          onPatchSettings={onPatchSettings}
-          onSave={onSave}
-        />
-      )}
+      <section className={styles.videoSettingsSection}>
+        <div className={styles.videoSettingsSectionHeader}>
+          <span>Reproducción</span>
+          <strong>Inicio y preview</strong>
+        </div>
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Velocidad inicial</span>
+            <CustomSelect
+              value={String(getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4))}
+              onChange={(event) => onPatchSettings({ videoDefaultSpeed: Number(event.target.value) })}
+              onBlur={onSave}
+            >
+              {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </CustomSelect>
+          </label>
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={Boolean(settings.videoAutoplay)}
+              onChange={(event) => {
+                onPatchSettings({ videoAutoplay: event.target.checked, videoMuted: event.target.checked ? true : settings.videoMuted })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Autoplay</span>
+          </label>
+        </div>
+        <div className={styles.twoColumn}>
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={settings.videoPreviewEnabled !== false}
+              onChange={(event) => {
+                onPatchSettings({ videoPreviewEnabled: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Preview de primeros segundos</span>
+          </label>
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={settings.videoMuted !== false}
+              onChange={(event) => {
+                onPatchSettings({ videoMuted: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Iniciar silenciado</span>
+          </label>
+        </div>
 
-      <div className={styles.twoColumn}>
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={settings.videoMuted !== false}
-            onChange={(event) => {
-              onPatchSettings({ videoMuted: event.target.checked })
-              window.setTimeout(onSave, 0)
-            }}
+        {settings.videoPreviewEnabled !== false && (
+          <VideoPreviewRangeControl
+            settings={settings}
+            durationSeconds={metadataDuration}
+            onPatchSettings={onPatchSettings}
+            onSave={onSave}
           />
-          <span>Iniciar silenciado</span>
-        </label>
+        )}
+
         <label className={styles.checkboxLabel}>
           <input
             type="checkbox"
@@ -19496,37 +19564,40 @@ const VideoPlayerSettingsControls: React.FC<{
           />
           <span>Repetir video</span>
         </label>
-      </div>
+      </section>
 
       {showCustomControls && (
         <>
-          <div className={styles.panelSubheader}>Controles personalizados</div>
-          <div className={styles.twoColumn}>
-            <label className={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={showCustomControlBar}
-                onChange={(event) => {
-                  onPatchSettings({ videoControlBar: event.target.checked })
-                  window.setTimeout(onSave, 0)
-                }}
-              />
-              <span>Barra del reproductor</span>
-            </label>
-            <label className={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={settings.videoControlVolume !== false}
-                disabled={!showCustomControlBar}
-                onChange={(event) => {
-                  onPatchSettings({ videoControlVolume: event.target.checked })
-                  window.setTimeout(onSave, 0)
-                }}
-              />
-              <span>Volumen</span>
-            </label>
-          </div>
-          <div className={styles.twoColumn}>
+          <section className={styles.videoSettingsSection}>
+            <div className={styles.videoSettingsSectionHeader}>
+              <span>Barra</span>
+              <strong>Controles inferiores</strong>
+            </div>
+            <div className={styles.twoColumn}>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={showCustomControlBar}
+                  onChange={(event) => {
+                    onPatchSettings({ videoControlBar: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Barra del reproductor</span>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.videoControlVolume !== false}
+                  disabled={!showCustomControlBar}
+                  onChange={(event) => {
+                    onPatchSettings({ videoControlVolume: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Volumen</span>
+              </label>
+            </div>
             <label className={styles.checkboxLabel}>
               <input
                 type="checkbox"
@@ -19539,6 +19610,13 @@ const VideoPlayerSettingsControls: React.FC<{
               />
               <span>Velocidad</span>
             </label>
+          </section>
+
+          <section className={styles.videoSettingsSection}>
+            <div className={styles.videoSettingsSectionHeader}>
+              <span>Botón play</span>
+              <strong>Forma, color y tamaño</strong>
+            </div>
             <label className={styles.field}>
               <span>Tipo de play</span>
               <CustomSelect
@@ -19554,97 +19632,114 @@ const VideoPlayerSettingsControls: React.FC<{
                 ))}
               </CustomSelect>
             </label>
-          </div>
-          <div className={styles.twoColumn}>
-            <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
-            <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
-          </div>
-          <div className={styles.twoColumn}>
-            <ColorField label="Borde del play" value={getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayBorderColor: value })} onCommit={onSave} />
-            <ColorField label="Bocina" value={getSettingString(settings, 'videoSoundColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoSoundColor: value })} onCommit={onSave} />
-          </div>
-          <div className={styles.twoColumn}>
-            <DimensionField
-              label="Tamaño del play"
-              value={getVideoPlaySizeValue(settings)}
-              min={VIDEO_PLAY_SIZE_MIN}
-              max={VIDEO_PLAY_SIZE_MAX}
-              onChange={(value) => onPatchSettings({ videoPlaySize: value, videoPlayShape: getVideoPlayShape(settings) })}
-              onCommit={onSave}
-            />
-            <label className={styles.field}>
-              <span>Forma del play</span>
-              <CustomSelect
-                value={getVideoPlayShape(settings)}
-                onChange={(event) => {
-                  const nextShape = isVideoPlayShape(event.target.value) ? event.target.value : DEFAULT_VIDEO_PLAY_SHAPE
-                  onPatchSettings({
-                    videoPlayShape: nextShape,
-                    videoPlayRadius: nextShape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
-                  })
-                }}
-                onBlur={onSave}
-              >
-                {videoPlayShapeOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-            </label>
-          </div>
-          <div className={styles.twoColumn}>
-            <DimensionField
-              label="Ícono play"
-              value={getVideoPlayIconSizeValue(settings)}
-              min={VIDEO_PLAY_ICON_SIZE_MIN}
-              max={VIDEO_PLAY_ICON_SIZE_MAX}
-              onChange={(value) => onPatchSettings({ videoPlayIconSize: value, videoPlayShape: getVideoPlayShape(settings) })}
-              onCommit={onSave}
-            />
-            <DimensionField
-              label="Borde del play"
-              value={getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}
-              min={0}
-              max={10}
-              onChange={(value) => onPatchSettings({ videoPlayBorderWidth: value })}
-              onCommit={onSave}
-            />
-          </div>
-          <label className={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={settings.videoSoundHint !== false}
-              onChange={(event) => {
-                onPatchSettings({ videoSoundHint: event.target.checked })
-                window.setTimeout(onSave, 0)
-              }}
-            />
-            <span>Mostrar bocina animada</span>
-          </label>
-          {settings.videoSoundHint !== false && (
             <div className={styles.twoColumn}>
               <label className={styles.field}>
-                <span>Texto bocina (opcional)</span>
-                <input
-                  value={getVideoSoundNoticeText(settings)}
-                  placeholder={DEFAULT_VIDEO_SOUND_NOTICE_TEXT}
-                  onChange={(event) => onPatchSettings({ videoSoundNoticeText: event.target.value })}
-                  onBlur={onSave}
-                />
-              </label>
-              <label className={styles.field}>
-                <span>Ocultar bocina</span>
+                <span>Forma del play</span>
                 <CustomSelect
-                  value={String(soundNoticeHideAfter)}
-                  onChange={(event) => onPatchSettings({ videoSoundNoticeHideAfter: Number(event.target.value) })}
+                  value={getVideoPlayShape(settings)}
+                  onChange={(event) => {
+                    const nextShape = isVideoPlayShape(event.target.value) ? event.target.value : DEFAULT_VIDEO_PLAY_SHAPE
+                    onPatchSettings({
+                      videoPlayShape: nextShape,
+                      videoPlayRadius: nextShape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
+                    })
+                  }}
                   onBlur={onSave}
                 >
-                  {videoSoundNoticeDurationOptions.map(option => (
+                  {videoPlayShapeOptions.map(option => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </CustomSelect>
               </label>
+              <DimensionField
+                label="Radio del player"
+                value={getVideoPlayRadiusValue(settings, getVideoPlayShape(settings))}
+                min={0}
+                max={LEGACY_VIDEO_PLAY_RADIUS}
+                onChange={(value) => onPatchSettings({ videoPlayRadius: value, videoPlayShape: getVideoPlayShape(settings) })}
+                onCommit={onSave}
+              />
             </div>
-          )}
+            <div className={styles.twoColumn}>
+              <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
+              <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
+            </div>
+            <div className={styles.twoColumn}>
+              <ColorField label="Borde del play" value={getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayBorderColor: value })} onCommit={onSave} />
+              <DimensionField
+                label="Borde del play"
+                value={getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}
+                min={0}
+                max={10}
+                onChange={(value) => onPatchSettings({ videoPlayBorderWidth: value })}
+                onCommit={onSave}
+              />
+            </div>
+            <div className={styles.twoColumn}>
+              <DimensionField
+                label="Tamaño del play"
+                value={getVideoPlaySizeValue(settings)}
+                min={VIDEO_PLAY_SIZE_MIN}
+                max={VIDEO_PLAY_SIZE_MAX}
+                onChange={(value) => onPatchSettings({ videoPlaySize: value, videoPlayShape: getVideoPlayShape(settings) })}
+                onCommit={onSave}
+              />
+              <DimensionField
+                label="Ícono play"
+                value={getVideoPlayIconSizeValue(settings)}
+                min={VIDEO_PLAY_ICON_SIZE_MIN}
+                max={VIDEO_PLAY_ICON_SIZE_MAX}
+                onChange={(value) => onPatchSettings({ videoPlayIconSize: value, videoPlayShape: getVideoPlayShape(settings) })}
+                onCommit={onSave}
+              />
+            </div>
+          </section>
+
+          <section className={styles.videoSettingsSection}>
+            <div className={styles.videoSettingsSectionHeader}>
+              <span>Bocina</span>
+              <strong>Aviso de sonido</strong>
+            </div>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={settings.videoSoundHint !== false}
+                onChange={(event) => {
+                  onPatchSettings({ videoSoundHint: event.target.checked })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Mostrar bocina animada</span>
+            </label>
+            {settings.videoSoundHint !== false && (
+              <>
+                <ColorField label="Color de bocina" value={getSettingString(settings, 'videoSoundColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoSoundColor: value })} onCommit={onSave} />
+                <div className={styles.twoColumn}>
+                  <label className={styles.field}>
+                    <span>Texto bocina (opcional)</span>
+                    <input
+                      value={getVideoSoundNoticeText(settings)}
+                      placeholder={DEFAULT_VIDEO_SOUND_NOTICE_TEXT}
+                      onChange={(event) => onPatchSettings({ videoSoundNoticeText: event.target.value })}
+                      onBlur={onSave}
+                    />
+                  </label>
+                  <label className={styles.field}>
+                    <span>Ocultar bocina</span>
+                    <CustomSelect
+                      value={String(soundNoticeHideAfter)}
+                      onChange={(event) => onPatchSettings({ videoSoundNoticeHideAfter: Number(event.target.value) })}
+                      onBlur={onSave}
+                    >
+                      {videoSoundNoticeDurationOptions.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                  </label>
+                </div>
+              </>
+            )}
+          </section>
         </>
       )}
     </div>
