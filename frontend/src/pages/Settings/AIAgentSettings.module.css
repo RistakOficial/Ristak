@@ -1153,54 +1153,34 @@
 /* Agente conversacional: contenedores de agentes                      */
 /* ------------------------------------------------------------------ */
 
-.agentDirectoryStats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 136px), 1fr));
-  align-items: stretch;
-  gap: 10px;
-  margin-top: 18px;
+.conversationalDirectoryPage {
+  gap: 20px;
 }
 
-.conversationalDirectoryTitle {
+.conversationalDirectoryHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.conversationalDirectoryHeader h2 {
   margin: 0;
-  max-width: 880px;
   color: var(--text);
-  font-size: clamp(24px, 2.2vw, 34px);
+  font-size: clamp(28px, 3vw, 40px);
   font-weight: 800;
-  line-height: 1.12;
+  line-height: 1.1;
   overflow-wrap: anywhere;
 }
 
-.agentDirectoryStats > div {
-  display: grid;
-  gap: 3px;
-  min-width: 136px;
-  padding: 11px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: rgba(148, 163, 184, 0.06);
-}
-
-.agentDirectoryStatError {
-  border-color: var(--neg) !important;
-  background: var(--neg-soft) !important;
-}
-
-.agentDirectoryStatError span {
-  color: var(--color-status-error);
-}
-
-.agentDirectoryStats span {
-  color: var(--color-text-primary);
-  font-size: 17px;
-  font-weight: 800;
-  line-height: 1.1;
-}
-
-.agentDirectoryStats small {
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  font-weight: 550;
+.conversationalDirectoryControls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
 }
 
 .agentDirectoryGrid {
@@ -1750,16 +1730,30 @@
 }
 
 @media (max-width: 640px) {
+  .conversationalDirectoryHeader {
+    gap: 14px;
+    padding-bottom: 16px;
+  }
+
+  .conversationalDirectoryHeader h2 {
+    font-size: 28px;
+  }
+
+  .conversationalDirectoryControls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .conversationalDirectoryControls button {
+    justify-content: center;
+  }
+
   .agentDirectoryGrid {
     grid-template-columns: 1fr;
   }
 
   .agentDirectoryCard {
     min-height: 188px;
-  }
-
-  .agentDirectoryStats > div {
-    min-width: 0;
   }
 
   .agentDetailTopbar,

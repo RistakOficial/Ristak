@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, FileText, Image as ImageIcon, KeyRound, MessageCircle, Pause, Play, Plus, RotateCcw, Trash2, Video, X } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronDown, FileText, Image as ImageIcon, KeyRound, Pause, Play, Plus, RotateCcw, Trash2, Video, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, Modal, NumberInput, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
@@ -916,16 +916,6 @@ function getBusinessPromptBlockerText(status?: ConversationalBusinessPromptStatu
     return 'Vuelve a guardar la descripción del negocio para regenerar la estrategia interna.'
   }
   return 'Ristak está preparando el prompt interno. Espera a que quede listo antes de publicar.'
-}
-
-function getConversationalBusinessTitle(status?: ConversationalBusinessPromptStatus | null) {
-  const cleanBusinessName = String(status?.businessName || '').trim()
-  if (cleanBusinessName) return cleanBusinessName
-
-  const cleanIndustry = String(status?.industry || '').trim()
-  if (cleanIndustry) return cleanIndustry
-
-  return 'sin descripción del negocio'
 }
 
 interface QuestionSelectOption<T extends string> {
@@ -3025,14 +3015,7 @@ export const ConversationalAgentSettings: React.FC = () => {
 
   const systemStrategy = config?.systemClosingStrategy || ''
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) || null : null
-  const activeAgentsCount = agents.filter((agent) => agent.enabled).length
   const metricsByAgentId = new Map((metrics?.byAgent || []).map((item) => [item.agentId, item]))
-  const assignedConversations = metrics?.assignedConversations ?? 0
-  const busyAgents = metrics?.agentsWithAssignedConversations ?? 0
-  const completedConversations = metrics?.completedConversations ?? 0
-  const errorEvents = metrics?.errorEvents ?? 0
-  const successRate = metrics?.successRate ?? 0
-  const businessTitle = getConversationalBusinessTitle(businessPromptStatus)
   const providerModalOption = providerModalId ? getConversationalAIProviderOption(providerModalId) : null
   const renderProviderModal = () => (
     <Modal
@@ -3145,116 +3128,69 @@ export const ConversationalAgentSettings: React.FC = () => {
   }
 
   return (
-    <div className={styles.container}>
-      <Card padding="md" className={styles.conversationSettingsCard}>
-        <div className={styles.header}>
-          <div className={styles.headerLeft}>
-            <div className={styles.iconBox}>
-              <MessageCircle size={22} />
-            </div>
-            <div>
-              <h2 className={styles.conversationalDirectoryTitle}>Agente conversacional - {businessTitle}</h2>
-              <p className={styles.description}>
-                Crea agentes separados, cada uno con su modelo, objetivo y reglas de atención.
-              </p>
-            </div>
-          </div>
-          <div className={styles.headerActions}>
-            <div className={styles.aiProviderDropdown}>
-              <Button
-                variant="secondary"
-                size="sm"
-                className={styles.aiProviderManagerToggle}
-                onClick={() => setAIProvidersExpanded((current) => !current)}
-                aria-expanded={aiProvidersExpanded}
-                aria-controls="conversational-ai-provider-list"
-                aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
-              >
-                Modelos de IA disponibles
-                <ChevronDown
-                  size={15}
-                  className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
-                />
-              </Button>
-              {aiProvidersExpanded && (
-                <div id="conversational-ai-provider-list" className={`${styles.aiProviderManagerList} ${styles.aiProviderDropdownMenu}`}>
-                  {conversationalAIProviderOptions.map((provider) => {
-                    const status = getProviderStatus(aiProviders, provider.id)
-                    const connected = Boolean(status?.connected)
-                    const canDelete = Boolean(status?.canDelete && connected)
-                    return (
-                      <div key={provider.id} className={styles.aiProviderManagerRow}>
-                        <div className={styles.aiProviderManagerCopy}>
-                          <strong>{provider.label}</strong>
-                          <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
-                        </div>
-                        <Badge variant={connected ? 'success' : 'neutral'}>
-                          {connected ? 'Conectado' : 'Toca para conectar'}
-                        </Badge>
-                        {canDelete ? (
-                          <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
-                            <Trash2 size={15} />
-                            Eliminar
-                          </Button>
-                        ) : (
-                          <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
-                            <KeyRound size={15} />
-                            {connected ? 'Administrar' : 'Conectar'}
-                          </Button>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
+    <div className={`${styles.container} ${styles.conversationalDirectoryPage}`}>
+      <div className={styles.conversationalDirectoryHeader}>
+        <h2>Agente conversacional</h2>
+        <div className={styles.conversationalDirectoryControls}>
+          <Button
+            onClick={handleCreateAgent}
+            loading={creating}
+            disabled={loading || creating || !businessPromptReady}
+            title={!businessPromptReady ? promptBlockerText : undefined}
+          >
+            <Plus size={16} />
+            Nuevo agente
+          </Button>
+          <div className={styles.aiProviderDropdown}>
             <Button
-              onClick={handleCreateAgent}
-              loading={creating}
-              disabled={loading || creating || !businessPromptReady}
-              title={!businessPromptReady ? promptBlockerText : undefined}
+              variant="secondary"
+              size="sm"
+              className={styles.aiProviderManagerToggle}
+              onClick={() => setAIProvidersExpanded((current) => !current)}
+              aria-expanded={aiProvidersExpanded}
+              aria-controls="conversational-ai-provider-list"
+              aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
             >
-              <Plus size={16} />
-              Nuevo agente
+              Modelos de IA disponibles
+              <ChevronDown
+                size={15}
+                className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
+              />
             </Button>
+            {aiProvidersExpanded && (
+              <div id="conversational-ai-provider-list" className={`${styles.aiProviderManagerList} ${styles.aiProviderDropdownMenu}`}>
+                {conversationalAIProviderOptions.map((provider) => {
+                  const status = getProviderStatus(aiProviders, provider.id)
+                  const connected = Boolean(status?.connected)
+                  const canDelete = Boolean(status?.canDelete && connected)
+                  return (
+                    <div key={provider.id} className={styles.aiProviderManagerRow}>
+                      <div className={styles.aiProviderManagerCopy}>
+                        <strong>{provider.label}</strong>
+                        <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
+                      </div>
+                      <Badge variant={connected ? 'success' : 'neutral'}>
+                        {connected ? 'Conectado' : 'Toca para conectar'}
+                      </Badge>
+                      {canDelete ? (
+                        <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
+                          <Trash2 size={15} />
+                          Eliminar
+                        </Button>
+                      ) : (
+                        <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
+                          <KeyRound size={15} />
+                          {connected ? 'Administrar' : 'Conectar'}
+                        </Button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
-
-        <div className={styles.agentDirectoryStats}>
-          <div>
-            <span>{agents.length}</span>
-            <small>{agents.length === 1 ? 'agente creado' : 'agentes creados'}</small>
-          </div>
-          <div>
-            <span>{activeAgentsCount}</span>
-            <small>{activeAgentsCount === 1 ? 'activo' : 'activos'}</small>
-          </div>
-          <div>
-            <span>{assignedConversations}</span>
-            <small>chats atendiendo</small>
-          </div>
-          <div>
-            <span>{busyAgents}</span>
-            <small>agentes ocupados</small>
-          </div>
-          <div>
-            <span>{completedConversations}</span>
-            <small>objetivos cumplidos</small>
-          </div>
-          <div>
-            <span>{successRate}%</span>
-            <small>tasa de éxito</small>
-          </div>
-          <div className={errorEvents > 0 ? styles.agentDirectoryStatError : undefined}>
-            <span>{errorEvents}</span>
-            <small>errores registrados</small>
-          </div>
-          <div>
-            <span>{config?.enabled ? 'Listo' : 'Omitido'}</span>
-            <small>seguridad general</small>
-          </div>
-        </div>
-      </Card>
+      </div>
 
       {loading && (
         <Card>
