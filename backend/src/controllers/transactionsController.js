@@ -5,6 +5,7 @@ import { buildTransactionStats, buildTransactionSummary } from '../services/anal
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { syncAllInvoices, syncLocalPaymentsToHighLevel } from '../services/invoicesSyncService.js'
+import { refreshStripePaymentFromIntent } from '../services/stripePaymentService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerWhatsappFirstPurchaseEvent } from '../services/metaWhatsappEventsService.js'
@@ -14,6 +15,8 @@ import { findContactByPhoneCandidates } from '../services/contactIdentityService
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
+const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
+const MAX_STRIPE_LIST_REFRESHES = 25
 const VALID_TRANSACTION_STATUSES = new Set([
   'draft',
   'sent',
@@ -76,6 +79,46 @@ const splitName = (name = '') => {
 }
 
 const normalizePaymentMode = (mode) => mode === 'test' ? 'test' : 'live'
+
+const shouldRefreshStripeTransaction = (transaction = {}) => {
+  if (!transaction?.stripe_payment_intent_id) return false
+  const provider = cleanString(transaction.payment_provider || transaction.payment_method).toLowerCase()
+  if (provider !== 'stripe') return false
+
+  const status = normalizeStatus(transaction.status || 'pending')
+  return !CLOSED_PAYMENT_STATUSES.has(status)
+}
+
+async function refreshStripeTransactionsForRows(rows = []) {
+  const intentIds = []
+  const seen = new Set()
+
+  for (const row of rows || []) {
+    if (!shouldRefreshStripeTransaction(row)) continue
+
+    const intentId = cleanString(row.stripe_payment_intent_id)
+    if (!intentId || seen.has(intentId)) continue
+
+    seen.add(intentId)
+    intentIds.push(intentId)
+
+    if (intentIds.length >= MAX_STRIPE_LIST_REFRESHES) break
+  }
+
+  if (!intentIds.length) return false
+
+  let refreshed = false
+  for (const intentId of intentIds) {
+    try {
+      const nextStatus = await refreshStripePaymentFromIntent(intentId)
+      refreshed = Boolean(nextStatus) || refreshed
+    } catch (error) {
+      logger.warn(`No se pudo reconciliar pago Stripe ${intentId}: ${error.message}`)
+    }
+  }
+
+  return refreshed
+}
 
 async function findExistingContactForPayment({ contactId, email, phone }) {
   if (contactId) {
@@ -577,7 +620,11 @@ export const getTransactions = async (req, res) => {
       LIMIT ? OFFSET ?
     `
 
-    const transactions = await db.all(transactionsQuery, [...params, limitNumber, offset])
+    let transactions = await db.all(transactionsQuery, [...params, limitNumber, offset])
+
+    if (await refreshStripeTransactionsForRows(transactions)) {
+      transactions = await db.all(transactionsQuery, [...params, limitNumber, offset])
+    }
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedTransactions = transactions.map(mapTransactionRow)
@@ -628,7 +675,7 @@ export const getTransactionById = async (req, res) => {
       conditions.push(`(p.contact_id IS NULL OR ${hiddenCondition})`)
     }
 
-    const transaction = await db.get(
+    let transaction = await db.get(
       `SELECT
         p.*,
         c.full_name as contact_name,
@@ -642,6 +689,23 @@ export const getTransactionById = async (req, res) => {
       WHERE ${conditions.join(' AND ')}`,
       [id]
     )
+
+    if (transaction && await refreshStripeTransactionsForRows([transaction])) {
+      transaction = await db.get(
+        `SELECT
+          p.*,
+          c.full_name as contact_name,
+          c.email as contact_email,
+          c.phone as contact_phone,
+          c.source as contact_source,
+          c.attribution_ad_name,
+          c.attribution_ad_id
+        FROM payments p
+        LEFT JOIN contacts c ON p.contact_id = c.id
+        WHERE ${conditions.join(' AND ')}`,
+        [id]
+      )
+    }
 
     if (!transaction) {
       return res.status(404).json({
