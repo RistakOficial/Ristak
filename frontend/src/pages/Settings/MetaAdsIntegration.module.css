@@ -72,7 +72,7 @@
   padding: 0 10px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -189,7 +189,7 @@
   display: block;
   color: var(--color-text-tertiary);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -224,7 +224,7 @@
   margin: 0;
   color: var(--color-text-primary);
   font-size: 15px;
-  font-weight: 820;
+  font-weight: 700;
   line-height: 1.25;
 }
 
@@ -288,7 +288,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 500;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -321,7 +321,7 @@
   color: var(--color-text-secondary);
   background: rgba(148, 163, 184, 0.07);
   font-size: 11px;
-  font-weight: 780;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -365,7 +365,7 @@
   margin: 0;
   color: var(--color-text-primary);
   font-size: 15px;
-  font-weight: 780;
+  font-weight: 700;
   line-height: 1.25;
 }
 
@@ -405,7 +405,7 @@
   color: var(--color-text-primary);
   background: rgba(148, 163, 184, 0.08);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -467,7 +467,7 @@
   color: var(--color-text-tertiary);
   background: rgba(148, 163, 184, 0.08);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .progressDone .progressDot {
@@ -529,7 +529,7 @@
 .stepEyebrow {
   color: var(--color-primary);
   font-size: 11px;
-  font-weight: 820;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -538,7 +538,7 @@
   margin: 0;
   color: var(--color-text-primary);
   font-size: 26px;
-  font-weight: 820;
+  font-weight: 700;
   line-height: 1.2;
 }
 
@@ -573,7 +573,7 @@
   color: var(--color-text-primary);
   background: rgba(148, 163, 184, 0.055);
   font-size: 13px;
-  font-weight: 620;
+  font-weight: 500;
   text-decoration: none;
 }
 
@@ -629,7 +629,7 @@
   color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.08);
   font-size: 11px;
-  font-weight: 820;
+  font-weight: 600;
 }
 
 .guideCopy {
@@ -642,7 +642,7 @@
 .guideCopy strong {
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 680;
+  font-weight: 500;
   line-height: 1.25;
 }
 
@@ -687,7 +687,7 @@
   background: rgba(148, 163, 184, 0.065);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
-  font-weight: 660;
+  font-weight: 500;
 }
 
 .formGroup {
@@ -914,14 +914,14 @@
   gap: 8px;
   color: var(--color-primary);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .railPrimaryValue {
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 820;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -943,7 +943,7 @@
 .railMeta span {
   color: var(--color-text-tertiary);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -1019,7 +1019,7 @@
   color: var(--color-status-warning);
   background: rgba(245, 158, 11, 0.08);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }

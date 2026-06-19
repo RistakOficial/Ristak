@@ -1531,7 +1531,7 @@ export const Dashboard: React.FC = () => {
   const renderInsightItem = (item: ChartInsightItem) => (
     <div key={item.id} className="flex items-start justify-between gap-4 border-b border-[rgba(148,163,184,0.12)] py-3 last:border-b-0">
       <div className="min-w-0">
-        <p className="m-0 truncate text-sm font-semibold text-[var(--color-text-primary)]">{item.title}</p>
+        <p className="m-0 truncate text-sm font-medium text-[var(--color-text-primary)]">{item.title}</p>
         {item.subtitle && (
           <p className="mt-1 truncate text-xs text-[var(--color-text-tertiary)]">{item.subtitle}</p>
         )}
@@ -1773,7 +1773,7 @@ export const Dashboard: React.FC = () => {
                     return (
                     <div key={transaction.id} className="flex items-center justify-between gap-4 py-3">
                       <div className="min-w-0">
-                        <p className="m-0 truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                        <p className="m-0 truncate text-sm font-medium text-[var(--color-text-primary)]">
                           {transaction.contactName || transaction.email || 'Cliente sin nombre'}
                         </p>
                         <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
@@ -1823,7 +1823,7 @@ export const Dashboard: React.FC = () => {
                     return (
                     <div key={appointment.id} className="flex items-start justify-between gap-4 py-3">
                       <div className="min-w-0">
-                        <p className="m-0 truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                        <p className="m-0 truncate text-sm font-medium text-[var(--color-text-primary)]">
                           {getAppointmentTitle(appointment)}
                         </p>
                         <p className="mt-1 flex items-center gap-1 text-xs text-[var(--color-text-tertiary)]">
@@ -1867,7 +1867,7 @@ export const Dashboard: React.FC = () => {
                   {recentContacts.map((contact) => (
                     <div key={contact.id} className="flex items-center justify-between gap-4 py-3">
                       <div className="min-w-0">
-                        <p className="m-0 truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                        <p className="m-0 truncate text-sm font-medium text-[var(--color-text-primary)]">
                           {getContactName(contact)}
                         </p>
                         <p className="mt-1 truncate text-xs text-[var(--color-text-tertiary)]">
@@ -1879,7 +1879,7 @@ export const Dashboard: React.FC = () => {
                           {formatDate(getContactCreatedAt(contact), { includeYear: true })}
                         </span>
                         {contact.ltv > 0 && (
-                          <span className="text-xs font-semibold text-[var(--color-text-secondary)]">
+                          <span className="text-xs font-medium text-[var(--color-text-secondary)]">
                             {formatCurrency(contact.ltv)}
                           </span>
                         )}

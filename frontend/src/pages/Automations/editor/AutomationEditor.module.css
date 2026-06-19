@@ -629,7 +629,7 @@
   background: transparent;
   color: rgb(var(--node-accent, 59, 130, 246));
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -780,7 +780,7 @@
 .triggerChipTitle {
   display: block;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
   line-height: 1.3;
 }
@@ -830,7 +830,7 @@
   background: transparent;
   color: rgb(59, 130, 246);
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -1077,7 +1077,7 @@
 
 .pickerSectionTitle {
   font-size: 12.5px;
-  font-weight: 750;
+  font-weight: 600;
   text-transform: none;
   color: var(--color-text-primary);
   padding: 0 2px 7px;
@@ -1130,7 +1130,7 @@
   flex: 1;
   min-width: 0;
   font-size: 14.5px;
-  font-weight: 650;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -1183,7 +1183,7 @@
 
 .configLabel {
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 500;
   color: var(--color-text-secondary);
 }
 
@@ -1268,7 +1268,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   padding: 8px 12px;
   cursor: pointer;
 }
@@ -1622,7 +1622,7 @@
   gap: 7px;
   color: var(--text);
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.3;
 }
 
@@ -1682,7 +1682,7 @@
   display: flex;
   align-items: center;
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
   line-height: 1.3;
 }
@@ -1703,7 +1703,7 @@
   background: transparent;
   color: var(--color-text-tertiary);
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   padding: 4px 6px;
   margin: -2px 0 8px -6px;
@@ -1734,7 +1734,7 @@
 
 .conditionRuleTitle {
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--color-text-tertiary);
   letter-spacing: 0;
 }
@@ -1757,7 +1757,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   padding: 6px 0;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
@@ -1819,7 +1819,7 @@
 .schedulerModeButton strong {
   color: var(--color-text-primary);
   font-size: 14.5px;
-  font-weight: 750;
+  font-weight: 500;
 }
 
 .schedulerModeButton small {
@@ -1857,7 +1857,7 @@
   min-width: 0;
   color: var(--color-text-primary);
   font-size: 14.5px;
-  font-weight: 750;
+  font-weight: 700;
   text-transform: capitalize;
 }
 
@@ -1898,7 +1898,7 @@
   text-align: center;
   color: var(--color-text-tertiary);
   font-size: 11px;
-  font-weight: 750;
+  font-weight: 500;
 }
 
 .schedulerDateButton {
@@ -1912,7 +1912,7 @@
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   font-size: 13.5px;
-  font-weight: 700;
+  font-weight: 500;
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
@@ -1944,7 +1944,7 @@
   background: var(--color-background-primary);
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 500;
   min-height: 40px;
   cursor: pointer;
 }
@@ -2035,7 +2035,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   cursor: pointer;
   padding: 6px 0;
   margin: 2px 0 8px;
@@ -2065,7 +2065,7 @@
   min-width: 0;
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .filterConnectorSelect {
@@ -2091,7 +2091,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   min-height: 30px;
   padding: 0 11px;
   border-radius: 8px;
@@ -2302,7 +2302,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 8px;
@@ -2337,7 +2337,7 @@
   gap: 6px;
   padding: 4px 14px 8px;
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--color-text-tertiary);
 }
 
@@ -2427,7 +2427,7 @@
 .leftNavItemActive {
   background: rgba(var(--color-primary-rgb), 0.14);
   color: var(--color-text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .leftNavItemName {
@@ -2663,7 +2663,7 @@
   flex: 1;
   min-width: 0;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 
@@ -2785,7 +2785,7 @@
   display: flex;
   align-items: center;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--color-text-primary);
 }
 
@@ -2823,7 +2823,7 @@
 
 .multiToolbarCount {
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--color-text-secondary);
   padding: 0 6px;
 }
@@ -2944,7 +2944,7 @@
   background: var(--color-background-secondary);
   color: rgb(var(--node-accent, 59, 130, 246));
   font-size: 10.5px;
-  font-weight: 600;
+  font-weight: 500;
   padding: 2px 8px;
 }
 
@@ -2960,7 +2960,7 @@
   background: rgba(16, 185, 129, 0.07);
   color: rgb(16, 185, 129);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   padding: 5px 8px;
   cursor: pointer;
 }
@@ -3295,7 +3295,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
@@ -3420,7 +3420,7 @@
   background: transparent;
   color: var(--color-text-tertiary);
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: 500;
   padding: 4px 9px;
   cursor: pointer;
   white-space: nowrap;
@@ -3544,7 +3544,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -3672,7 +3672,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 13.5px;
-  font-weight: 600;
+  font-weight: 500;
   padding: 8px 16px;
   cursor: pointer;
 }
@@ -3737,7 +3737,7 @@
 .contentBlockTitle {
   display: block;
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 500;
   color: var(--color-text-primary);
   line-height: 1.3;
 }
@@ -3791,7 +3791,7 @@
   width: 100%;
   height: 30px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--color-text-tertiary);
 }
 
@@ -3934,7 +3934,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -4033,7 +4033,7 @@
   background: rgba(16, 185, 129, 0.06);
   color: rgb(5, 150, 105);
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -4063,7 +4063,7 @@
 
 .delayPopoverLabel {
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-secondary);
   margin-bottom: 6px;
 }
@@ -4109,7 +4109,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -4214,7 +4214,7 @@
   border-radius: 8px;
   background: rgba(148, 163, 184, 0.14);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-secondary);
 }
 
@@ -4250,7 +4250,7 @@
   border: 1px solid rgba(16, 185, 129, 0.3);
   color: rgb(5, 150, 105);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .templateVarChip {
@@ -4261,7 +4261,7 @@
   background: rgba(var(--color-primary-rgb), 0.12);
   color: rgb(var(--color-primary-rgb));
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .templatePreviewLoading {

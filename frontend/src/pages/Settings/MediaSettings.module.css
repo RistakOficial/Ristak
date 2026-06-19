@@ -42,14 +42,14 @@
 .usageSummary span {
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   text-transform: uppercase;
 }
 
 .usageSummary strong {
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 760;
+  font-weight: 600;
 }
 
 .usageSummary small,
@@ -89,7 +89,7 @@
 .usageNumbers strong {
   color: var(--color-text-primary);
   font-size: 15px;
-  font-weight: 780;
+  font-weight: 600;
 }
 
 .videoAnalyticsPanel {
@@ -110,7 +110,7 @@
   margin: 6px 0 0;
   color: var(--color-text-primary);
   font-size: 18px;
-  font-weight: 780;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
@@ -127,7 +127,7 @@
   gap: 7px;
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 760;
+  font-weight: 600;
   text-transform: uppercase;
 }
 
@@ -165,7 +165,7 @@
   overflow: hidden;
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 680;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -174,7 +174,7 @@
   grid-column: 1 / -1;
   color: var(--color-text-primary);
   font-size: 20px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
@@ -206,14 +206,14 @@
 .videoChartTitle span {
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 760;
+  font-weight: 500;
   text-transform: uppercase;
 }
 
 .videoChartTitle strong {
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 780;
+  font-weight: 600;
 }
 
 .videoChartEmpty,
@@ -238,7 +238,7 @@
 .videoAnalyticsEmpty strong {
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 780;
+  font-weight: 500;
 }
 
 .videoAnalyticsEmpty p {
@@ -295,7 +295,7 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -303,7 +303,7 @@
 .videoCountryList strong {
   color: var(--color-text-primary);
   font-size: 13px;
-  font-weight: 780;
+  font-weight: 600;
 }
 
 .videoCountryList small {
@@ -589,7 +589,7 @@
   margin: 0;
   color: var(--color-text-primary);
   font-size: 18px;
-  font-weight: 720;
+  font-weight: 700;
   line-height: 1.2;
 }
 
@@ -995,7 +995,7 @@
   overflow-wrap: anywhere;
   color: var(--color-text-primary);
   font-size: 16px;
-  font-weight: 720;
+  font-weight: 600;
   line-height: 1.25;
 }
 
@@ -1073,6 +1073,7 @@
 .errorState strong {
   color: var(--color-text-primary);
   font-size: 14px;
+  font-weight: 500;
 }
 
 .previewEmpty p,

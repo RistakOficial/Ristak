@@ -75,7 +75,7 @@
 .manualReportToggleTitle {
   color: var(--color-text-primary);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .manualReportToggleState {
@@ -269,7 +269,7 @@ body.dark .costChip:hover {
 
 .costName {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
   margin: 0 0 var(--spacing-sm) 0;
 }
@@ -563,7 +563,7 @@ body.dark .iconWrapper {
 
 .manualReportToggleTitle {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .manualReportToggleState {
@@ -645,7 +645,7 @@ body.dark .iconWrapper {
 
 .costName {
   font-size: 14px;
-  font-weight: 750;
+  font-weight: 500;
 }
 
 .costValue {
