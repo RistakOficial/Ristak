@@ -411,60 +411,6 @@
   font-weight: 600;
 }
 
-.signatureAiRow {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.signaturePromptRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: end;
-}
-
-.compactField {
-  display: grid;
-  min-width: 0;
-  gap: 6px;
-}
-
-.compactField > span {
-  color: var(--text-dim);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.compactField input {
-  min-width: 0;
-  min-height: 42px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  outline: none;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  padding: 0 12px;
-}
-
-.compactField input:focus {
-  border-color: var(--accent);
-  box-shadow: var(--ristak-focus-ring);
-}
-
-.compactField input::placeholder {
-  color: var(--text-mute);
-}
-
-.signaturePromptActions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .hiddenFileInput {
   display: none;
 }
@@ -507,6 +453,43 @@
   min-width: 32px;
   height: 32px;
   padding: 0;
+}
+
+.signatureAiInline {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-mute);
+  padding: 10px;
+}
+
+.signatureAiInline textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 96px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+  padding: 9px 10px;
+}
+
+.signatureAiInline textarea:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.signatureAiInline textarea::placeholder {
+  color: var(--text-mute);
 }
 
 .signatureEditor {
@@ -640,17 +623,8 @@
 
 @media (max-width: 1120px) {
   .connectContent,
-  .connectedLayout,
-  .signatureAiRow {
+  .connectedLayout {
     grid-template-columns: 1fr;
-  }
-
-  .signaturePromptRow {
-    grid-template-columns: 1fr;
-  }
-
-  .signaturePromptActions {
-    justify-content: flex-start;
   }
 }
 
@@ -685,10 +659,22 @@
     flex-direction: column;
   }
 
-  .signaturePromptActions,
   .signatureSaveGroup {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .signatureAiInline {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .signatureAiInline > svg {
+    display: none;
+  }
+
+  .signatureAiInline button {
+    justify-self: start;
   }
 
   .toolbarSelect {

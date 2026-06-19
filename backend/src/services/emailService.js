@@ -865,6 +865,7 @@ export async function generateEmailSignature(payload = {}, { userId } = {}) {
       brandVoice: limitString(agentConfig?.brand_voice, 400),
       extraInstructions: instructions
     }),
+    'Los datos completos de la firma pueden venir mezclados en extraInstructions; extrae de ahí nombre, cargo, teléfono, sitio web, ubicación, horarios, tono, texto legal y preferencias visuales.',
     includeImage
       ? 'Incluye una imagen pequeña en la firma usando <img src="{{SIGNATURE_IMAGE}}" ...>.'
       : 'No incluyas imagen si no hay datos visuales.',

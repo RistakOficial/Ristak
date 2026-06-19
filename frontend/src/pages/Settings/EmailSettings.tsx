@@ -34,6 +34,7 @@ import {
 } from 'lucide-react'
 import { Badge, Button, CustomSelect, PageHeader, Switch } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { aiAgentService, type AIAgentConfigStatus } from '@/services/aiAgentService'
 import {
   EmailProviderDetection,
   EmailSignatureConfig,
@@ -96,18 +97,10 @@ function getSecurityLabel(value?: string | null) {
   return 'STARTTLS'
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
 export const EmailSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const signatureEditorRef = useRef<HTMLDivElement>(null)
+  const signatureHtmlRef = useRef(EMPTY_SIGNATURE_HTML)
   const signatureImageInputRef = useRef<HTMLInputElement>(null)
   const [status, setStatus] = useState<EmailStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -136,15 +129,11 @@ export const EmailSettings: React.FC = () => {
 
   const [signature, setSignature] = useState<EmailSignatureConfig | null>(null)
   const [signatureEnabled, setSignatureEnabled] = useState(false)
-  const [signatureHtml, setSignatureHtml] = useState(EMPTY_SIGNATURE_HTML)
   const [includeBeforeQuotedText, setIncludeBeforeQuotedText] = useState(true)
   const [savingSignature, setSavingSignature] = useState(false)
   const [generatingSignature, setGeneratingSignature] = useState(false)
-  const [signatureRole, setSignatureRole] = useState('')
-  const [signaturePhone, setSignaturePhone] = useState('')
-  const [signatureWebsite, setSignatureWebsite] = useState('')
-  const [signatureCompany, setSignatureCompany] = useState('')
-  const [signatureInstructions, setSignatureInstructions] = useState('')
+  const [aiSignaturePrompt, setAiSignaturePrompt] = useState('')
+  const [aiSignatureAvailable, setAiSignatureAvailable] = useState(false)
   const [signatureImageDataUrl, setSignatureImageDataUrl] = useState('')
   const [signatureFontFamily, setSignatureFontFamily] = useState(FONT_FAMILY_OPTIONS[0].value)
   const [signatureFontSize, setSignatureFontSize] = useState(FONT_SIZE_OPTIONS[1].value)
@@ -197,7 +186,7 @@ export const EmailSettings: React.FC = () => {
 
   const setSignatureEditorHtml = (html: string) => {
     const nextHtml = html.trim() || EMPTY_SIGNATURE_HTML
-    setSignatureHtml(nextHtml)
+    signatureHtmlRef.current = nextHtml
     window.requestAnimationFrame(() => {
       if (signatureEditorRef.current && signatureEditorRef.current.innerHTML !== nextHtml) {
         signatureEditorRef.current.innerHTML = nextHtml
@@ -212,19 +201,25 @@ export const EmailSettings: React.FC = () => {
     setSignatureEditorHtml(nextSignature.html || EMPTY_SIGNATURE_HTML)
   }
 
+  const applyAIAgentStatus = (nextStatus: AIAgentConfigStatus | null | undefined) => {
+    setAiSignatureAvailable(Boolean(nextStatus?.configured && !nextStatus?.needsReconnect))
+  }
+
   useEffect(() => {
     let cancelled = false
 
     const bootstrap = async () => {
       try {
-        const [nextStatus, nextSignature] = await Promise.all([
+        const [nextStatus, nextSignature, nextAIAgentStatus] = await Promise.all([
           emailService.getStatus(),
-          emailService.getSignature()
+          emailService.getSignature(),
+          aiAgentService.getConfig().catch(() => null)
         ])
         if (cancelled) return
         setStatus(nextStatus)
         applyStatusToForm(nextStatus)
         applySignatureToForm(nextSignature)
+        applyAIAgentStatus(nextAIAgentStatus)
       } catch (error) {
         if (!cancelled) {
           showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo leer la configuración de correo')
@@ -238,6 +233,25 @@ export const EmailSettings: React.FC = () => {
 
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (loading || !signatureEditorRef.current) return
+    const nextHtml = signatureHtmlRef.current
+    if (signatureEditorRef.current.innerHTML !== nextHtml) {
+      signatureEditorRef.current.innerHTML = nextHtml
+    }
+  }, [loading])
+
+  useEffect(() => {
+    const handleAIAgentConfigChange = (event: Event) => {
+      applyAIAgentStatus((event as CustomEvent<AIAgentConfigStatus>).detail)
+    }
+
+    window.addEventListener('ai-agent-config-changed', handleAIAgentConfigChange)
+    return () => {
+      window.removeEventListener('ai-agent-config-changed', handleAIAgentConfigChange)
     }
   }, [])
 
@@ -362,7 +376,7 @@ export const EmailSettings: React.FC = () => {
   }
 
   const syncSignatureFromEditor = () => {
-    setSignatureHtml(signatureEditorRef.current?.innerHTML || EMPTY_SIGNATURE_HTML)
+    signatureHtmlRef.current = signatureEditorRef.current?.innerHTML || EMPTY_SIGNATURE_HTML
   }
 
   const focusSignatureEditor = () => {
@@ -461,12 +475,14 @@ export const EmailSettings: React.FC = () => {
   }
 
   const generateSignatureWithAI = async () => {
-    const senderEmail = fromEmailValue || status?.sender.fromEmail || ''
-    const senderName = fromName.trim() || status?.sender.fromName || ''
-    if (!senderEmail && !senderName) {
-      showToast('warning', 'Faltan datos', 'Escribe al menos el nombre o correo del remitente antes de generar la firma')
+    const prompt = aiSignaturePrompt.trim()
+    if (!prompt) {
+      showToast('warning', 'Faltan instrucciones', 'Pega en la caja de IA los datos y estilo que quieres para tu firma')
       return
     }
+
+    const senderEmail = fromEmailValue || status?.sender.fromEmail || ''
+    const senderName = fromName.trim() || status?.sender.fromName || ''
 
     setGeneratingSignature(true)
     try {
@@ -474,11 +490,7 @@ export const EmailSettings: React.FC = () => {
         senderName,
         senderEmail,
         replyTo: replyToValue || status?.sender.replyTo || '',
-        role: signatureRole.trim(),
-        company: signatureCompany.trim(),
-        phone: signaturePhone.trim(),
-        website: signatureWebsite.trim(),
-        instructions: signatureInstructions.trim(),
+        instructions: prompt,
         includeImage: Boolean(signatureImageDataUrl),
         imageDataUrl: signatureImageDataUrl || undefined,
         includeBeforeQuotedText
@@ -498,7 +510,7 @@ export const EmailSettings: React.FC = () => {
   }
 
   const saveSignature = async () => {
-    const html = signatureEditorRef.current?.innerHTML || signatureHtml
+    const html = signatureEditorRef.current?.innerHTML || signatureHtmlRef.current
     setSavingSignature(true)
     try {
       const nextSignature = await emailService.saveSignature({
@@ -513,18 +525,6 @@ export const EmailSettings: React.FC = () => {
     } finally {
       setSavingSignature(false)
     }
-  }
-
-  const buildSignatureSeed = () => {
-    const senderName = fromName.trim() || status?.sender.fromName || 'Tu nombre'
-    const senderEmail = fromEmailValue || status?.sender.fromEmail || ''
-    const role = signatureRole.trim()
-    const website = signatureWebsite.trim()
-    const phone = signaturePhone.trim()
-    return [
-      `<p><strong>${escapeHtml(senderName)}</strong>${role ? `<br>${escapeHtml(role)}` : ''}${website ? ` | <a href="${escapeHtml(website)}">${escapeHtml(website.replace(/^https?:\/\//i, ''))}</a>` : ''}</p>`,
-      `<p>${phone ? `<strong>T:</strong> ${escapeHtml(phone)}<br>` : ''}${senderEmail ? `<strong>E:</strong> <a href="mailto:${escapeHtml(senderEmail)}">${escapeHtml(senderEmail)}</a>` : ''}</p>`
-    ].join('')
   }
 
   const renderDetectionStatus = () => {
@@ -909,73 +909,6 @@ export const EmailSettings: React.FC = () => {
         </label>
       </div>
 
-      <div className={styles.signatureAiRow}>
-        <label className={styles.compactField}>
-          <span>Cargo</span>
-          <input
-            value={signatureRole}
-            onChange={(event) => setSignatureRole(event.target.value)}
-            placeholder="Asesor en marketing"
-          />
-        </label>
-        <label className={styles.compactField}>
-          <span>Empresa</span>
-          <input
-            value={signatureCompany}
-            onChange={(event) => setSignatureCompany(event.target.value)}
-            placeholder="Ristak"
-          />
-        </label>
-        <label className={styles.compactField}>
-          <span>Teléfono</span>
-          <input
-            value={signaturePhone}
-            onChange={(event) => setSignaturePhone(event.target.value)}
-            placeholder="+52 656 782 5555"
-          />
-        </label>
-        <label className={styles.compactField}>
-          <span>Sitio web</span>
-          <input
-            value={signatureWebsite}
-            onChange={(event) => setSignatureWebsite(event.target.value)}
-            placeholder="https://tusitio.com"
-          />
-        </label>
-      </div>
-
-      <div className={styles.signaturePromptRow}>
-        <label className={styles.compactField}>
-          <span>Instrucciones para IA</span>
-          <input
-            value={signatureInstructions}
-            onChange={(event) => setSignatureInstructions(event.target.value)}
-            placeholder="Hazla elegante, compacta, con tono profesional..."
-          />
-        </label>
-        <div className={styles.signaturePromptActions}>
-          <Button type="button" variant="secondary" onClick={() => setSignatureEditorHtml(buildSignatureSeed())}>
-            <Pencil size={16} />
-            Crear base
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => signatureImageInputRef.current?.click()}>
-            <Image size={16} />
-            Subir imagen
-          </Button>
-          <Button type="button" onClick={generateSignatureWithAI} loading={generatingSignature}>
-            <Sparkles size={16} />
-            Generar con IA
-          </Button>
-          <input
-            ref={signatureImageInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            className={styles.hiddenFileInput}
-            onChange={handleSignatureImageUpload}
-          />
-        </div>
-      </div>
-
       <div className={styles.signatureEditorShell}>
         <div className={styles.signatureToolbar} aria-label="Herramientas de formato de firma">
           <CustomSelect
@@ -1058,7 +991,35 @@ export const EmailSettings: React.FC = () => {
           <Button type="button" variant="ghost" size="sm" className={styles.toolButton} title="Rehacer" onClick={() => runEditorCommand('redo')}>
             <Redo2 size={16} />
           </Button>
+          <input
+            ref={signatureImageInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            className={styles.hiddenFileInput}
+            onChange={handleSignatureImageUpload}
+          />
         </div>
+        {aiSignatureAvailable && (
+          <div className={styles.signatureAiInline}>
+            <Sparkles size={16} aria-hidden="true" />
+            <textarea
+              value={aiSignaturePrompt}
+              onChange={(event) => setAiSignaturePrompt(event.target.value)}
+              placeholder="IA: pega aquí todo de una vez: nombre, cargo, teléfono, web, horario, estilo, colores, texto legal..."
+              rows={2}
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={generateSignatureWithAI}
+              loading={generatingSignature}
+              disabled={!aiSignaturePrompt.trim()}
+            >
+              Generar
+            </Button>
+          </div>
+        )}
         <div
           ref={signatureEditorRef}
           className={styles.signatureEditor}
@@ -1066,7 +1027,6 @@ export const EmailSettings: React.FC = () => {
           suppressContentEditableWarning
           onInput={syncSignatureFromEditor}
           onBlur={syncSignatureFromEditor}
-          dangerouslySetInnerHTML={{ __html: signatureHtml }}
         />
       </div>
 
