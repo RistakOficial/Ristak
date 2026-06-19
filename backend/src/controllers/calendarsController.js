@@ -485,7 +485,8 @@ export async function syncGoogleCalendarIntegration(req, res) {
         startTime: req.body?.startTime || req.body?.start_time,
         endTime: req.body?.endTime || req.body?.end_time
       });
-      const syncedEventsCount = Number(inboundResult.saved || 0) + Number(syncResult.synced || 0);
+      const deletedEventsCount = Number(inboundResult.deleted || 0);
+      const syncedEventsCount = Number(inboundResult.saved || 0) + Number(syncResult.synced || 0) + deletedEventsCount;
       const linkedCalendarsCount = Number(inboundResult.linkedCalendars || syncResult.linkedCalendars || 0);
       const status = centralGoogleStatus(await getCentralGoogleCalendarStatus());
       return res.json({
@@ -494,7 +495,7 @@ export async function syncGoogleCalendarIntegration(req, res) {
           ...status,
           lastSyncAt: new Date().toISOString(),
           lastSyncStatus: syncResult.failed > 0 ? 'warning' : 'success',
-          lastSyncMessage: `${syncedEventsCount} cita(s) sincronizadas con Google Calendar${syncResult.failed > 0 ? `; ${syncResult.failed} quedaron pendientes` : ''}`,
+          lastSyncMessage: `${syncedEventsCount} cita(s) sincronizadas con Google Calendar${deletedEventsCount ? ` (${deletedEventsCount} eliminada(s) en Ristak)` : ''}${syncResult.failed > 0 ? `; ${syncResult.failed} quedaron pendientes` : ''}`,
           syncedCalendarsCount: linkedCalendarsCount,
           syncedEventsCount
         }

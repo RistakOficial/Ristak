@@ -503,7 +503,7 @@ export async function syncGoogleCalendarsToLocal({ config = null } = {}) {
   }
 }
 
-export async function listGoogleEvents({ timeMin, timeMax, calendarId = null, config = null } = {}) {
+export async function listGoogleEvents({ timeMin, timeMax, calendarId = null, config = null, showDeleted = false } = {}) {
   const activeConfig = config || await getGoogleCalendarConfig({ includeCredentials: true })
   if (!activeConfig) return []
 
@@ -512,7 +512,7 @@ export async function listGoogleEvents({ timeMin, timeMax, calendarId = null, co
   const params = new URLSearchParams({
     singleEvents: 'true',
     orderBy: 'startTime',
-    showDeleted: 'false',
+    showDeleted: showDeleted ? 'true' : 'false',
     maxResults: '2500'
   })
 
@@ -595,6 +595,24 @@ function googleEventToAppointment(event = {}, { calendarId, locationId = null } 
   }
 }
 
+async function deleteLocalAppointmentForCancelledGoogleEvent(event = {}) {
+  const privateProps = event.extendedProperties?.private || {}
+  const candidateIds = [
+    cleanString(privateProps.ristakAppointmentId),
+    cleanString(event.id)
+  ].filter(Boolean)
+
+  for (const candidateId of [...new Set(candidateIds)]) {
+    const existing = await localCalendarService.getLocalAppointment(candidateId).catch(() => null)
+    if (existing?.id) {
+      await localCalendarService.deleteLocalAppointment(existing.id)
+      return true
+    }
+  }
+
+  return false
+}
+
 function googleCalendarIdFromLocalCalendar(calendar = {}) {
   calendar = calendar || {}
   return cleanString(calendar.googleCalendarId || calendar.rawJson?.googleCalendarId || calendar.raw_json?.googleCalendarId)
@@ -652,22 +670,34 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
 
   const range = normalizeGoogleEventTimeRange({ startTime, endTime })
   let saved = 0
+  let deleted = 0
   for (const target of targets) {
     const events = centralMode
       ? await listCentralGoogleCalendarEvents({
         googleCalendarId: target.googleCalendarId,
         timeMin: range.timeMin,
-        timeMax: range.timeMax
+        timeMax: range.timeMax,
+        showDeleted: true
       })
       : await listGoogleEvents({
         timeMin: range.timeMin,
         timeMax: range.timeMax,
         calendarId: target.googleCalendarId,
-        config: activeConfig
+        config: activeConfig,
+        showDeleted: true
       })
 
     for (const event of events) {
-      if (!event?.id || !event.start) continue
+      if (!event?.id) continue
+
+      if (mapGoogleEventStatus(event) === 'cancelled') {
+        if (await deleteLocalAppointmentForCancelledGoogleEvent(event)) {
+          deleted += 1
+        }
+        continue
+      }
+
+      if (!event.start) continue
 
       const appointment = googleEventToAppointment(event, {
         calendarId: target.localCalendarId
@@ -694,7 +724,7 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
     }
   }
 
-  return { enabled: true, saved, linkedCalendars: targets.length }
+  return { enabled: true, saved, deleted, linkedCalendars: targets.length }
 }
 
 export async function syncGoogleIntegrationNow({ startTime = null, endTime = null } = {}) {
@@ -718,15 +748,16 @@ export async function syncGoogleIntegrationNow({ startTime = null, endTime = nul
     const outboundResult = await syncLocalAppointmentsToGoogle()
     const linkedCalendars = Number(eventsResult.linkedCalendars || outboundResult.linkedCalendars || 0)
     const syncedEvents = Number(eventsResult.saved || 0) + Number(outboundResult.synced || 0)
+    const deletedEvents = Number(eventsResult.deleted || 0)
     const failedEvents = Number(outboundResult.failed || 0)
 
     const updatedConfig = {
       ...existing,
       lastSyncAt: new Date().toISOString(),
       lastSyncStatus: 'success',
-      lastSyncMessage: `${linkedCalendars} calendario(s) vinculado(s) y ${syncedEvents} cita(s) sincronizada(s)${failedEvents ? `; ${failedEvents} pendiente(s) por error` : ''}`,
+      lastSyncMessage: `${linkedCalendars} calendario(s) vinculado(s), ${syncedEvents} cita(s) sincronizada(s)${deletedEvents ? ` y ${deletedEvents} eliminada(s)` : ''}${failedEvents ? `; ${failedEvents} pendiente(s) por error` : ''}`,
       syncedCalendarsCount: linkedCalendars,
-      syncedEventsCount: syncedEvents
+      syncedEventsCount: syncedEvents + deletedEvents
     }
     await persistConfig(updatedConfig)
 
@@ -734,7 +765,8 @@ export async function syncGoogleIntegrationNow({ startTime = null, endTime = nul
       ...publicConfig(updatedConfig),
       sync: {
         calendars: linkedCalendars,
-        events: syncedEvents,
+        events: syncedEvents + deletedEvents,
+        deleted: deletedEvents,
         availableCalendars: availableCalendars.length,
         failed: failedEvents
       }

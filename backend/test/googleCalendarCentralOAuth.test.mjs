@@ -76,6 +76,10 @@ async function startLicenseServer(requests) {
             summary: 'Cita importada desde Google',
             start: { dateTime: '2026-06-17T18:00:00.000Z', timeZone: 'America/Mexico_City' },
             end: { dateTime: '2026-06-17T19:00:00.000Z', timeZone: 'America/Mexico_City' }
+          },
+          {
+            id: 'evt_google_cancelled',
+            status: 'cancelled'
           }
         ]
       })
@@ -253,6 +257,7 @@ test('OAuth central crea, edita y elimina eventos de Google Calendar sin guardar
     assert.equal(requests[2].body.google_event_id, 'evt_google_created')
     assert.equal(requests[3].path, '/api/license/google-calendar/events/list')
     assert.equal(requests[3].body.time_min, '2026-06-17T00:00:00.000Z')
+    assert.equal(requests[3].body.show_deleted, true)
 
     const finalAppointment = await localCalendarService.getLocalAppointment(appointmentId)
     assert.equal(finalAppointment.googleEventId, null)
@@ -260,6 +265,74 @@ test('OAuth central crea, edita y elimina eventos de Google Calendar sin guardar
   } finally {
     if (db) {
       await db.run('DELETE FROM appointments WHERE google_event_id = ?', ['evt_google_imported']).catch(() => undefined)
+      await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    }
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('OAuth central elimina en Ristak los eventos cancelados desde Google Calendar', async () => {
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const { server, baseUrl } = await startLicenseServer(requests)
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_google_delete_${suffix}`
+  const appointmentId = `rstk_appt_google_delete_${suffix}`
+  let db = null
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.OWNER_EMAIL = 'dueno@clinica.test'
+
+    ;({ db } = await import('../src/config/database.js'))
+    const localCalendarService = await import('../src/services/localCalendarService.js')
+    const googleCalendarService = await import('../src/services/googleCalendarService.js')
+
+    await localCalendarService.createLocalCalendar({
+      id: calendarId,
+      name: 'Valoraciones con delete',
+      googleCalendarId: 'ventas@test.com',
+      accessRole: 'owner',
+      googleCalendarSummary: 'Ventas',
+      googleCalendarTimeZone: 'America/Mexico_City'
+    })
+
+    await localCalendarService.createLocalAppointment({
+      id: appointmentId,
+      calendarId,
+      googleEventId: 'evt_google_cancelled',
+      title: 'Cita borrada en Google',
+      startTime: '2026-06-18T18:00:00.000Z',
+      endTime: '2026-06-18T19:00:00.000Z'
+    }, { syncStatus: 'synced' })
+
+    const result = await googleCalendarService.syncGoogleEventsToLocal({
+      startTime: '2026-06-17T00:00:00.000Z',
+      endTime: '2026-06-19T00:00:00.000Z',
+      calendarId
+    })
+
+    assert.equal(result.saved, 1)
+    assert.equal(result.deleted, 1)
+    assert.equal(result.linkedCalendars, 1)
+
+    const deletedAppointment = await localCalendarService.getLocalAppointment(appointmentId)
+    assert.equal(deletedAppointment, null)
+
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].path, '/api/license/google-calendar/events/list')
+    assert.equal(requests[0].body.show_deleted, true)
+  } finally {
+    if (db) {
+      await db.run('DELETE FROM appointments WHERE google_event_id IN (?, ?)', ['evt_google_imported', 'evt_google_cancelled']).catch(() => undefined)
       await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
       await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
     }
@@ -361,6 +434,7 @@ test('OAuth central importa eventos despues de ligar un calendario Ristak a Goog
     assert.equal(requests[0].path, '/api/license/google-calendar/calendars')
     assert.equal(requests[1].path, '/api/license/google-calendar/events/list')
     assert.equal(requests[1].body.google_calendar_id, 'ventas@test.com')
+    assert.equal(requests[1].body.show_deleted, true)
   } finally {
     if (db) {
       await db.run('DELETE FROM appointments WHERE google_event_id = ?', ['evt_google_imported']).catch(() => undefined)
