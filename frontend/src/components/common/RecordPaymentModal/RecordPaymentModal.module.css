@@ -685,7 +685,7 @@
 .installmentHead,
 .installmentRow {
   display: grid;
-  grid-template-columns: 34px 70px minmax(60px, 1fr) 150px minmax(86px, auto) 36px;
+  grid-template-columns: 34px minmax(72px, 1fr) 150px minmax(86px, auto) 36px;
   gap: 8px;
   align-items: center;
 }

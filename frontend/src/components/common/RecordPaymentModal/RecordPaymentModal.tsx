@@ -62,13 +62,8 @@ type InvoiceSendMethod = 'email' | 'sms' | 'both'
 type PaymentSegmentedOption = { value: string; label: string }
 
 const INSTALLMENT_VALUE_TYPE_OPTIONS = [
-  { value: 'percentage', label: 'Porcentaje' },
-  { value: 'amount', label: 'Monto fijo' }
-]
-
-const INSTALLMENT_SHORT_TYPE_OPTIONS = [
-  { value: 'percentage', label: '%' },
-  { value: 'amount', label: '$' }
+  { value: 'amount', label: 'Monto fijo' },
+  { value: 'percentage', label: 'Porcentaje' }
 ]
 
 const FIRST_PAYMENT_METHOD_OPTIONS = [
@@ -299,14 +294,14 @@ const defaultPartialInstallments = (): InstallmentDraft[] => {
   return [
     {
       id: createInstallmentId(),
-      type: 'percentage',
-      value: '50',
+      type: 'amount',
+      value: '0',
       dueDate: toDateInputValue(addMonths(today, 1))
     },
     {
       id: createInstallmentId(),
-      type: 'percentage',
-      value: '50',
+      type: 'amount',
+      value: '0',
       dueDate: toDateInputValue(addMonths(today, 2))
     }
   ]
@@ -333,7 +328,7 @@ const resolvePartialAmount = (type: InstallmentValueType, value: string, totalAm
     : parsedValue
 }
 
-const formatPercentValue = (value: number) => {
+const formatInstallmentValue = (value: number) => {
   const rounded = Math.round(value * 100) / 100
   return String(rounded).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
 }
@@ -367,6 +362,45 @@ const getRemainingPercentages = (
 
     return normalizeAmount(base)
   })
+}
+
+const getRemainingFixedAmounts = (
+  count: number,
+  firstEnabled: boolean,
+  firstType: InstallmentValueType,
+  firstValue: string,
+  total: number
+) => {
+  if (count <= 0) return []
+
+  const firstAmount = firstEnabled
+    ? resolvePartialAmount(firstType, firstValue, total)
+    : 0
+  const remainingAmount = Math.max(0, normalizeAmount(total - firstAmount))
+  const base = Math.floor((remainingAmount / count) * 100) / 100
+
+  return Array.from({ length: count }, (_, index) => {
+    if (index === count - 1) {
+      return normalizeAmount(remainingAmount - base * (count - 1))
+    }
+
+    return normalizeAmount(base)
+  })
+}
+
+const getRemainingDistributedValues = (
+  count: number,
+  valueType: InstallmentValueType,
+  firstEnabled: boolean,
+  firstType: InstallmentValueType,
+  firstValue: string,
+  total: number
+) => {
+  const values = valueType === 'percentage'
+    ? getRemainingPercentages(count, firstEnabled, firstType, firstValue, total)
+    : getRemainingFixedAmounts(count, firstEnabled, firstType, firstValue, total)
+
+  return values.map(formatInstallmentValue)
 }
 
 const isOfflineFirstPaymentMethod = (method: FirstPaymentMethod) => (
@@ -407,11 +441,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   // Partial payments
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
   const [firstPaymentEnabled, setFirstPaymentEnabled] = useState(false)
-  const [firstPaymentType, setFirstPaymentType] = useState<InstallmentValueType>('percentage')
-  const [firstPaymentValue, setFirstPaymentValue] = useState('40')
+  const [firstPaymentType, setFirstPaymentType] = useState<InstallmentValueType>('amount')
+  const [firstPaymentValue, setFirstPaymentValue] = useState('')
   const [firstPaymentDate, setFirstPaymentDate] = useState(toDateInputValue(new Date()))
   const [firstPaymentMethod, setFirstPaymentMethod] = useState<FirstPaymentMethod>('')
   const [remainingAutomatic, setRemainingAutomatic] = useState(true)
+  const [remainingValueType, setRemainingValueType] = useState<InstallmentValueType>('amount')
   const [remainingFrequency, setRemainingFrequency] = useState<RemainingFrequency>('monthly')
   const [remainingInstallments, setRemainingInstallments] = useState<InstallmentDraft[]>(defaultPartialInstallments)
   const [autoDistributeRemaining, setAutoDistributeRemaining] = useState(true)
@@ -521,14 +556,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const firstPaymentAmount = firstPaymentEnabled
     ? resolvePartialAmount(firstPaymentType, firstPaymentValue, totalAmount)
     : 0
+  const effectiveRemainingValueType = firstPaymentEnabled ? firstPaymentType : remainingValueType
   const resolvedRemainingInstallments = useMemo(() => {
     return remainingInstallments.map((installment, index) => ({
       ...installment,
+      type: effectiveRemainingValueType,
       sequence: index + 1,
-      amount: resolvePartialAmount(installment.type, installment.value, totalAmount),
-      percentage: installment.type === 'percentage' ? normalizeAmount(installment.value) : null
+      amount: resolvePartialAmount(effectiveRemainingValueType, installment.value, totalAmount),
+      percentage: effectiveRemainingValueType === 'percentage' ? normalizeAmount(installment.value) : null
     }))
-  }, [remainingInstallments, totalAmount])
+  }, [effectiveRemainingValueType, remainingInstallments, totalAmount])
   const remainingTotalAmount = normalizeAmount(
     resolvedRemainingInstallments.reduce((sum, installment) => sum + installment.amount, 0)
   )
@@ -642,11 +679,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setIncludeIVA(false)
     setPaymentMode(initialPaymentMode)
     setFirstPaymentEnabled(false)
-    setFirstPaymentType('percentage')
-    setFirstPaymentValue('40')
+    setFirstPaymentType('amount')
+    setFirstPaymentValue('')
     setFirstPaymentDate(toDateInputValue(new Date()))
     setFirstPaymentMethod('')
     setRemainingAutomatic(true)
+    setRemainingValueType('amount')
     setRemainingFrequency('monthly')
     setRemainingInstallments(defaultPartialInstallments())
     setAutoDistributeRemaining(true)
@@ -954,8 +992,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (activePaymentMode !== 'partial' || !autoDistributeRemaining) return
 
     setRemainingInstallments(prev => {
-      const percentages = getRemainingPercentages(
+      const distributedValues = getRemainingDistributedValues(
         prev.length,
+        effectiveRemainingValueType,
         firstPaymentEnabled,
         firstPaymentType,
         firstPaymentValue,
@@ -964,8 +1003,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       return prev.map((installment, index) => ({
         ...installment,
-        type: 'percentage',
-        value: formatPercentValue(percentages[index] || 0)
+        type: effectiveRemainingValueType,
+        value: distributedValues[index] || '0'
       }))
     })
   }, [
@@ -973,6 +1012,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     firstPaymentEnabled,
     firstPaymentType,
     firstPaymentValue,
+    effectiveRemainingValueType,
     activePaymentMode,
     remainingInstallments.length,
     totalAmount
@@ -1201,7 +1241,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ...prev,
         {
           id: createInstallmentId(),
-          type: 'percentage',
+          type: effectiveRemainingValueType,
           value: '0',
           dueDate: getNextDueDate(firstPaymentDate, remainingFrequency === 'custom' ? 'monthly' : remainingFrequency, nextIndex)
         }
@@ -2392,7 +2432,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       })}
                     </div>
                     <div className={styles.manualField}>
-                      <label>{firstPaymentType === 'percentage' ? 'Porcentaje' : 'Monto'}</label>
+                      <label>{firstPaymentType === 'percentage' ? 'Porcentaje' : 'Monto fijo'}</label>
                       <div className={styles.amountInput}>
                         {firstPaymentType === 'percentage'
                           ? <Percent size={16} className={styles.dollarIcon} />
@@ -2464,6 +2504,20 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
               <div className={styles.planStepBody}>
                 <div className={styles.fieldGrid}>
+                  {!firstPaymentEnabled && (
+                    <div className={styles.manualField}>
+                      <label>Tipo de valor</label>
+                      {renderPaymentSelect({
+                        value: remainingValueType,
+                        onChange: (value) => {
+                          setRemainingValueType(value as InstallmentValueType)
+                          setAutoDistributeRemaining(true)
+                        },
+                        options: INSTALLMENT_VALUE_TYPE_OPTIONS,
+                        title: 'Tipo de valor'
+                      })}
+                    </div>
+                  )}
                   <div className={styles.manualField}>
                     <label>Frecuencia de cobro</label>
                     {renderPaymentSelect({
@@ -2481,14 +2535,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
                 <p className={styles.planHint}>
                   {remainingFrequency === 'custom'
-                    ? 'Ajusta el monto y la fecha de cada pago. El valor en % o $ se aplica sobre el total.'
+                    ? `Ajusta ${effectiveRemainingValueType === 'percentage' ? 'el porcentaje' : 'el monto fijo'} y la fecha de cada pago.`
                     : 'Las fechas se calculan automáticamente. Cambia a “Personalizada” para editarlas a mano.'}
                 </p>
 
                 <div className={styles.installmentTable}>
                   <div className={styles.installmentHead}>
                     <span>#</span>
-                    <span>Tipo</span>
                     <span>Valor</span>
                     <span>Fecha de cobro</span>
                     <span className={styles.alignRight}>Monto</span>
@@ -2500,16 +2553,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       <div key={installment.id} className={styles.installmentRow}>
                         <div className={styles.installmentSeq}>{installment.sequence}</div>
                         <label className={styles.installmentCell}>
-                          <span className={styles.cellLabel}>Tipo</span>
-                          {renderPaymentSelect({
-                            value: installment.type,
-                            onChange: (value) => updateRemainingInstallment(installment.id, { type: value as InstallmentValueType }),
-                            options: INSTALLMENT_SHORT_TYPE_OPTIONS,
-                            title: `Tipo de parcialidad ${installment.sequence}`
-                          })}
-                        </label>
-                        <label className={styles.installmentCell}>
-                          <span className={styles.cellLabel}>Valor</span>
+                          <span className={styles.cellLabel}>{effectiveRemainingValueType === 'percentage' ? 'Porcentaje' : 'Monto fijo'}</span>
                           <NumberInput
                             step="0.01"
                             min="0"
