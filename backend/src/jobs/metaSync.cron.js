@@ -10,8 +10,8 @@ import { logger } from '../utils/logger.js'
 export function startMetaSyncCron() {
   logger.info('Iniciando cron job de Meta Ads (cada hora)')
 
-  // Ejecutar cada hora (minuto 7) para evitar choque con otros cron jobs pesados
-  cron.schedule('7 * * * *', async () => {
+  // Ejecutar cada hora en punto.
+  cron.schedule('0 * * * *', async () => {
     logger.info('Ejecutando actualización automática de Meta Ads...')
     try {
       const result = await updateRecentAds()
@@ -40,5 +40,5 @@ export function startMetaSyncCron() {
     }
   })
 
-  logger.success('Cron job de Meta Ads configurado')
+  logger.success('Cron job de Meta Ads configurado (cada hora en punto)')
 }
