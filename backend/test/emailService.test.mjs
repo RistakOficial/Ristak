@@ -5,12 +5,16 @@ import { decrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   connectEmail,
   detectEmailProvider,
+  getEmailSignature,
+  saveEmailSignature,
+  sendEmail,
   setEmailMxResolverForTest,
   setEmailTransportFactoryForTest
 } from '../src/services/emailService.js'
 
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
+const EMAIL_SIGNATURE_CONFIG_KEY = 'email_signature_config'
 
 async function snapshotAppConfig(keys = [], callback) {
   const uniqueKeys = [...new Set(keys)]
@@ -126,6 +130,81 @@ test('conecta correo con datos simples, prueba envío y guarda password cifrado'
       const encryptedPassword = await getAppConfig(EMAIL_PASSWORD_KEY)
       assert.notEqual(encryptedPassword, 'app-password-demo')
       assert.equal(decrypt(encryptedPassword), 'app-password-demo')
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+    }
+  })
+})
+
+test('guarda firma saneada para correos salientes', async () => {
+  await snapshotAppConfig([EMAIL_SIGNATURE_CONFIG_KEY], async () => {
+    const signature = await saveEmailSignature({
+      enabled: true,
+      includeBeforeQuotedText: true,
+      html: '<p><strong>Raúl</strong><script>alert(1)</script><a href="javascript:alert(1)" onclick="bad()">link</a></p>'
+    })
+
+    assert.equal(signature.enabled, true)
+    assert.equal(signature.includeBeforeQuotedText, true)
+    assert.match(signature.html, /<strong>Raúl<\/strong>/)
+    assert.doesNotMatch(signature.html, /script/i)
+    assert.doesNotMatch(signature.html, /javascript/i)
+    assert.doesNotMatch(signature.html, /onclick/i)
+
+    const stored = await getEmailSignature()
+    assert.equal(stored.enabled, true)
+    assert.match(stored.text, /Raúl/)
+  })
+})
+
+test('agrega la firma guardada al enviar correos', async () => {
+  await initializeMasterKey()
+
+  await snapshotAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY, EMAIL_SIGNATURE_CONFIG_KEY], async () => {
+    const sentMessages = []
+
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => {
+        sentMessages.push(message)
+        return {
+          messageId: `message-${sentMessages.length}`,
+          accepted: [message.to],
+          rejected: []
+        }
+      }
+    }))
+
+    try {
+      await connectEmail({
+        fromEmail: 'ventas@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo'
+      })
+      await saveEmailSignature({
+        enabled: true,
+        includeBeforeQuotedText: true,
+        html: '<div><strong>Raúl Gómez</strong><br><a href="mailto:raul@example.com">raul@example.com</a></div>'
+      })
+
+      await sendEmail({
+        to: 'cliente@example.com',
+        subject: 'Hola',
+        text: 'Mensaje principal',
+        html: '<p>Mensaje principal</p><blockquote>Texto citado</blockquote>'
+      })
+
+      assert.equal(sentMessages.length, 2)
+      const outgoing = sentMessages[1]
+      assert.match(outgoing.html, /data-ristak-email-signature/)
+      assert.match(outgoing.html, /Raúl Gómez/)
+      assert.ok(outgoing.html.indexOf('Raúl Gómez') < outgoing.html.indexOf('<blockquote>Texto citado</blockquote>'))
+      assert.match(outgoing.text, /Mensaje principal/)
+      assert.match(outgoing.text, /Raúl Gómez/)
     } finally {
       setEmailTransportFactoryForTest(null)
       setEmailMxResolverForTest(null)

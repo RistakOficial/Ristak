@@ -2,15 +2,22 @@ import {
   connectEmail,
   detectEmailProvider,
   disconnectEmail,
+  generateEmailSignature,
+  getEmailSignature,
   getEmailStatus,
+  saveEmailSignature,
   sendTestEmail
 } from '../services/emailService.js'
 import { logger } from '../utils/logger.js'
 
 function sendError(res, error, fallback) {
-  res.status(error.status || 500).json({
+  const status = error.status || error.statusCode || 500
+  res.status(status).json({
     success: false,
-    error: error.status ? error.message : fallback
+    error: status < 500 ? error.message : fallback,
+    ...(error.code ? { code: error.code } : {}),
+    ...(error.needsOpenAIConfig ? { needsOpenAIConfig: true } : {}),
+    ...(error.needsReconnect ? { needsReconnect: true } : {})
   })
 }
 
@@ -51,6 +58,38 @@ export async function sendTestEmailView(req, res) {
   } catch (error) {
     logger.error(`Error enviando correo de prueba: ${error.message}`)
     sendError(res, error, 'Error enviando el correo de prueba')
+  }
+}
+
+export async function getEmailSignatureView(req, res) {
+  try {
+    const data = await getEmailSignature()
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error obteniendo firma de correo: ${error.message}`)
+    sendError(res, error, 'Error obteniendo la firma de correo')
+  }
+}
+
+export async function saveEmailSignatureView(req, res) {
+  try {
+    const data = await saveEmailSignature(req.body || {})
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error guardando firma de correo: ${error.message}`)
+    sendError(res, error, 'Error guardando la firma de correo')
+  }
+}
+
+export async function generateEmailSignatureView(req, res) {
+  try {
+    const data = await generateEmailSignature(req.body || {}, {
+      userId: req.user?.userId || req.user?.id || null
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error generando firma con IA: ${error.message}`)
+    sendError(res, error, 'Error generando la firma con IA')
   }
 }
 

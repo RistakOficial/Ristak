@@ -3,7 +3,10 @@ import {
   connectEmailView,
   detectEmailProviderView,
   disconnectEmailView,
+  generateEmailSignatureView,
+  getEmailSignatureView,
   getEmailStatusView,
+  saveEmailSignatureView,
   sendTestEmailView
 } from '../controllers/emailController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
@@ -16,6 +19,9 @@ router.get('/status', getEmailStatusView)
 router.post('/detect', detectEmailProviderView)
 router.post('/connect', connectEmailView)
 router.post('/test', sendTestEmailView)
+router.get('/signature', getEmailSignatureView)
+router.post('/signature', saveEmailSignatureView)
+router.post('/signature/generate', generateEmailSignatureView)
 router.post('/disconnect', disconnectEmailView)
 
 export default router

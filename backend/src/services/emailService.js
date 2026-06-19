@@ -3,15 +3,83 @@ import nodemailer from 'nodemailer'
 import { getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
+import { getAIAgentConfig, requireOpenAIApiKey } from './aiAgentService.js'
 import { clearEmailIntegrationCredentials } from './integrationCredentialsCleanupService.js'
 
 // Configuración del remitente de correo de la cuenta.
 // El password SMTP se guarda cifrado en una llave separada de app_config.
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
+const EMAIL_SIGNATURE_CONFIG_KEY = 'email_signature_config'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const SMTP_SECURITY_TYPES = new Set(['starttls', 'ssl', 'none'])
+const SIGNATURE_HTML_LIMIT = 70000
+const SIGNATURE_TEXT_LIMIT = 8000
+const SIGNATURE_IMAGE_LIMIT = 2 * 1024 * 1024
+const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
+const DEFAULT_SIGNATURE_MODEL = 'gpt-4.1-mini'
+const ALLOWED_SIGNATURE_TAGS = new Set([
+  'a',
+  'b',
+  'blockquote',
+  'br',
+  'div',
+  'em',
+  'hr',
+  'i',
+  'img',
+  'li',
+  'ol',
+  'p',
+  's',
+  'span',
+  'strong',
+  'sub',
+  'sup',
+  'table',
+  'tbody',
+  'td',
+  'tr',
+  'u',
+  'ul'
+])
+const VOID_SIGNATURE_TAGS = new Set(['br', 'hr', 'img'])
+const ALLOWED_SIGNATURE_STYLE_PROPS = new Set([
+  'background-color',
+  'border',
+  'border-bottom',
+  'border-left',
+  'border-radius',
+  'border-right',
+  'border-top',
+  'color',
+  'display',
+  'font-family',
+  'font-size',
+  'font-style',
+  'font-weight',
+  'height',
+  'line-height',
+  'margin',
+  'margin-bottom',
+  'margin-left',
+  'margin-right',
+  'margin-top',
+  'max-width',
+  'min-width',
+  'object-fit',
+  'padding',
+  'padding-bottom',
+  'padding-left',
+  'padding-right',
+  'padding-top',
+  'text-align',
+  'text-decoration',
+  'vertical-align',
+  'white-space',
+  'width'
+])
 
 const EMAIL_PROVIDER_DEFINITIONS = [
   {
@@ -99,6 +167,43 @@ let emailMxResolver = (domain) => dns.resolveMx(domain)
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
+}
+
+function limitString(value, maxLength) {
+  const normalized = cleanString(value)
+  return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized
+}
+
+function escapeHtml(value) {
+  return cleanString(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replace(/`/g, '&#96;')
+}
+
+function decodeHtmlEntities(value) {
+  return cleanString(value)
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+}
+
+function toBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
+  const normalized = cleanString(value).toLowerCase()
+  if (['true', '1', 'yes', 'si', 'sí'].includes(normalized)) return true
+  if (['false', '0', 'no'].includes(normalized)) return false
+  return fallback
 }
 
 function maskUsername(username) {
@@ -239,6 +344,288 @@ async function readStoredPassword() {
   } catch (error) {
     logger.error(`No se pudo desencriptar el password SMTP: ${error.message}`)
     return ''
+  }
+}
+
+async function readStoredSignatureConfig() {
+  const raw = await getAppConfig(EMAIL_SIGNATURE_CONFIG_KEY)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function isSafeSignatureUrl(value, type = 'href') {
+  const url = cleanString(value)
+  if (!url) return false
+  if (/[\u0000-\u001f<>"`]/.test(url)) return false
+  if (type === 'src' && /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(url)) {
+    return url.length <= SIGNATURE_IMAGE_LIMIT
+  }
+  if (type === 'href' && /^(mailto:|tel:|#)/i.test(url)) return true
+  return /^https?:\/\//i.test(url)
+}
+
+function sanitizeSignatureStyle(value) {
+  const style = cleanString(value)
+  if (!style) return ''
+
+  return style
+    .split(';')
+    .map(rule => rule.trim())
+    .filter(Boolean)
+    .map(rule => {
+      const separatorIndex = rule.indexOf(':')
+      if (separatorIndex <= 0) return ''
+      const property = rule.slice(0, separatorIndex).trim().toLowerCase()
+      const propertyValue = rule.slice(separatorIndex + 1).trim()
+      if (!ALLOWED_SIGNATURE_STYLE_PROPS.has(property)) return ''
+      if (!propertyValue || /url\s*\(|expression\s*\(|javascript:|@import|[{}<>]/i.test(propertyValue)) return ''
+      return `${property}: ${propertyValue}`
+    })
+    .filter(Boolean)
+    .join('; ')
+}
+
+function sanitizeSignatureAttributes(tagName, rawAttributes = '') {
+  const attrs = []
+  const attrPattern = /([a-z0-9:-]+)(?:\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/gi
+  let match = null
+
+  while ((match = attrPattern.exec(rawAttributes)) !== null) {
+    const name = cleanString(match[1]).toLowerCase()
+    const value = cleanString(match[3] ?? match[4] ?? match[5] ?? '')
+    if (!name || name.startsWith('on')) continue
+
+    if (name === 'style') {
+      const style = sanitizeSignatureStyle(value)
+      if (style) attrs.push(`style="${escapeAttribute(style)}"`)
+      continue
+    }
+
+    if (tagName === 'a' && name === 'href' && isSafeSignatureUrl(value, 'href')) {
+      attrs.push(`href="${escapeAttribute(value)}"`)
+      attrs.push('target="_blank"')
+      attrs.push('rel="noreferrer"')
+      continue
+    }
+
+    if (tagName === 'img' && name === 'src' && isSafeSignatureUrl(value, 'src')) {
+      attrs.push(`src="${escapeAttribute(value)}"`)
+      continue
+    }
+
+    if (tagName === 'img' && name === 'alt') {
+      attrs.push(`alt="${escapeAttribute(value).slice(0, 160)}"`)
+      continue
+    }
+
+    if (tagName === 'img' && ['width', 'height'].includes(name)) {
+      const numericValue = Math.max(1, Math.min(Number(value) || 0, 800))
+      if (numericValue) attrs.push(`${name}="${numericValue}"`)
+      continue
+    }
+
+    if (name === 'title') {
+      attrs.push(`title="${escapeAttribute(value).slice(0, 160)}"`)
+    }
+  }
+
+  return attrs.length ? ` ${[...new Set(attrs)].join(' ')}` : ''
+}
+
+function sanitizeEmailSignatureHtml(html) {
+  let value = limitString(html, SIGNATURE_HTML_LIMIT)
+  if (!value) return ''
+
+  value = value
+    .replace(/\0/g, '')
+    .replace(/<\s*(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|base)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+    .replace(/<\s*\/?\s*(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|base)[^>]*>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*("([^"]*)"|'([^']*)'|[^\s>]+)/gi, '')
+    .replace(/\s+(href|src)\s*=\s*("|\')?\s*javascript:[^'">\s]*(\2)?/gi, '')
+
+  value = value.replace(/<\/?([a-z0-9-]+)(\s[^>]*)?>/gi, (match, tagName, rawAttributes = '') => {
+    const normalizedTag = cleanString(tagName).toLowerCase()
+    if (!ALLOWED_SIGNATURE_TAGS.has(normalizedTag)) return ''
+
+    const isClosing = /^<\s*\//.test(match)
+    if (isClosing) return VOID_SIGNATURE_TAGS.has(normalizedTag) ? '' : `</${normalizedTag}>`
+
+    const attributes = sanitizeSignatureAttributes(normalizedTag, rawAttributes)
+    return VOID_SIGNATURE_TAGS.has(normalizedTag)
+      ? `<${normalizedTag}${attributes}>`
+      : `<${normalizedTag}${attributes}>`
+  })
+
+  return value.trim()
+}
+
+function signatureHtmlToText(html) {
+  return limitString(
+    decodeHtmlEntities(
+      cleanString(html)
+        .replace(/<\s*br\s*\/?>/gi, '\n')
+        .replace(/<\s*hr\s*\/?>/gi, '\n---\n')
+        .replace(/<\s*\/\s*(p|div|tr|li|blockquote)\s*>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+    ),
+    SIGNATURE_TEXT_LIMIT
+  )
+}
+
+function normalizeEmailSignatureConfig(payload = {}, previous = null) {
+  const html = sanitizeEmailSignatureHtml(payload.html ?? payload.signatureHtml ?? previous?.html ?? '')
+  const text = limitString(
+    cleanString(payload.text ?? payload.plainText) || signatureHtmlToText(html),
+    SIGNATURE_TEXT_LIMIT
+  )
+
+  return {
+    enabled: toBoolean(payload.enabled, previous?.enabled || false),
+    html,
+    text,
+    includeBeforeQuotedText: toBoolean(
+      payload.includeBeforeQuotedText,
+      previous?.includeBeforeQuotedText ?? true
+    ),
+    updatedAt: payload.updatedAt || previous?.updatedAt || null
+  }
+}
+
+function buildDefaultSignature({ senderName, senderEmail, role, phone, website } = {}) {
+  const rows = [
+    senderName ? `<strong>${escapeHtml(senderName)}</strong>` : '',
+    role ? escapeHtml(role) : '',
+    phone ? `T: ${escapeHtml(phone)}` : '',
+    senderEmail ? `<a href="mailto:${escapeAttribute(senderEmail)}">${escapeHtml(senderEmail)}</a>` : '',
+    website ? `<a href="${escapeAttribute(website)}">${escapeHtml(website.replace(/^https?:\/\//i, ''))}</a>` : ''
+  ].filter(Boolean)
+
+  return `
+    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.45;">
+      <p style="margin: 0 0 6px;">${rows.join('<br>')}</p>
+    </div>
+  `
+}
+
+function buildSignatureHtml(signature) {
+  if (!signature?.enabled || !cleanString(signature.html)) return ''
+  return `<div data-ristak-email-signature="true" style="margin-top: 18px;">${signature.html}</div>`
+}
+
+function insertSignatureBeforeQuotedHtml(html, signatureHtml) {
+  const original = cleanString(html)
+  if (!original || !signatureHtml) return original
+
+  const quotedMatch = original.match(/<(blockquote|div)[^>]*(gmail_quote|moz-cite-prefix|yahoo_quoted|protonmail_quote|data-quoted|class=["'][^"']*quote[^"']*)[^>]*>/i)
+  if (quotedMatch?.index && quotedMatch.index > 0) {
+    return `${original.slice(0, quotedMatch.index)}${signatureHtml}${original.slice(quotedMatch.index)}`
+  }
+
+  const blockquoteIndex = original.search(/<blockquote\b/i)
+  if (blockquoteIndex > 0) {
+    return `${original.slice(0, blockquoteIndex)}${signatureHtml}${original.slice(blockquoteIndex)}`
+  }
+
+  return `${original}${signatureHtml}`
+}
+
+function applySignatureToMessage(message, signature) {
+  const signatureHtml = buildSignatureHtml(signature)
+  if (!signatureHtml) return message
+
+  const baseHtml = cleanString(message.html)
+  const baseText = cleanString(message.text)
+  const signatureText = cleanString(signature.text) || signatureHtmlToText(signature.html)
+
+  return {
+    ...message,
+    html: baseHtml
+      ? (signature.includeBeforeQuotedText ? insertSignatureBeforeQuotedHtml(baseHtml, signatureHtml) : `${baseHtml}${signatureHtml}`)
+      : undefined,
+    text: baseText && signatureText ? `${baseText}\n\n-- \n${signatureText}` : (message.text || undefined)
+  }
+}
+
+function extractOpenAIText(data) {
+  if (typeof data?.output_text === 'string') return data.output_text
+  const output = Array.isArray(data?.output) ? data.output : []
+  return output
+    .flatMap(item => Array.isArray(item?.content) ? item.content : [])
+    .map(part => part?.text || part?.output_text || '')
+    .filter(Boolean)
+    .join('\n')
+    .trim()
+}
+
+function parseJsonObject(text) {
+  const raw = cleanString(text)
+  if (!raw) return null
+
+  try {
+    return JSON.parse(raw)
+  } catch {
+    const start = raw.indexOf('{')
+    const end = raw.lastIndexOf('}')
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(raw.slice(start, end + 1))
+      } catch {
+        return null
+      }
+    }
+  }
+
+  return null
+}
+
+async function callOpenAIForSignature({ apiKey, model, prompt }) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 45000)
+
+  try {
+    const response = await fetch(OPENAI_RESPONSES_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: cleanString(model) || DEFAULT_SIGNATURE_MODEL,
+        instructions: [
+          'Eres un diseñador de firmas de correo para negocios.',
+          'Responde únicamente JSON válido con la forma {"html":"...","plainText":"..."};',
+          'No uses Markdown. No uses scripts, formularios, iframes ni CSS externo.',
+          'Usa HTML compacto con estilos inline compatibles con clientes de correo.',
+          'Si se te pide imagen, usa exactamente {{SIGNATURE_IMAGE}} como src de una etiqueta img.'
+        ].join(' '),
+        input: prompt,
+        max_output_tokens: 1100
+      })
+    })
+
+    let data = null
+    try {
+      data = await response.json()
+    } catch {
+      data = null
+    }
+
+    if (!response.ok) {
+      const message = data?.error?.message || 'La IA no pudo generar la firma'
+      throw httpError(response.status === 401 ? 409 : 502, message)
+    }
+
+    const text = extractOpenAIText(data)
+    if (!text) throw httpError(502, 'La IA respondió sin contenido utilizable')
+    return text
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -431,6 +818,81 @@ export async function getEmailStatus() {
   }
 }
 
+export async function getEmailSignature() {
+  const signature = await readStoredSignatureConfig()
+  return normalizeEmailSignatureConfig(signature || {})
+}
+
+export async function saveEmailSignature(payload = {}) {
+  const previous = await readStoredSignatureConfig()
+  const signature = {
+    ...normalizeEmailSignatureConfig(payload, previous),
+    updatedAt: new Date().toISOString()
+  }
+  await setAppConfig(EMAIL_SIGNATURE_CONFIG_KEY, signature)
+  return signature
+}
+
+export async function generateEmailSignature(payload = {}, { userId } = {}) {
+  const apiKey = await requireOpenAIApiKey()
+  const agentConfig = await getAIAgentConfig({ userId })
+
+  const senderName = limitString(payload.senderName || payload.fromName, 120)
+  const senderEmail = limitString(payload.senderEmail || payload.fromEmail, 180).toLowerCase()
+  const role = limitString(payload.role || payload.title, 140)
+  const company = limitString(payload.company || payload.businessName, 140)
+  const phone = limitString(payload.phone, 80)
+  const website = limitString(payload.website, 240)
+  const replyTo = limitString(payload.replyTo, 180).toLowerCase()
+  const instructions = limitString(payload.instructions || payload.prompt, 700)
+  const imageDataUrl = isSafeSignatureUrl(payload.imageDataUrl, 'src') ? cleanString(payload.imageDataUrl) : ''
+  const includeImage = toBoolean(payload.includeImage, Boolean(imageDataUrl))
+
+  const prompt = [
+    'Crea una firma de correo profesional para Ristak.',
+    'Debe verse limpia, premium, compacta y lista para pegar en clientes de correo.',
+    'Datos del remitente:',
+    JSON.stringify({
+      senderName,
+      senderEmail,
+      replyTo,
+      role,
+      company,
+      phone,
+      website,
+      includeImage,
+      businessContext: limitString(agentConfig?.business_context, 700),
+      brandVoice: limitString(agentConfig?.brand_voice, 400),
+      extraInstructions: instructions
+    }),
+    includeImage
+      ? 'Incluye una imagen pequeña en la firma usando <img src="{{SIGNATURE_IMAGE}}" ...>.'
+      : 'No incluyas imagen si no hay datos visuales.',
+    'Evita claims largos, colores chillones y layouts enormes. Incluye texto legal corto solo si lo piden las instrucciones.'
+  ].join('\n')
+
+  const rawText = await callOpenAIForSignature({
+    apiKey,
+    model: agentConfig?.model || DEFAULT_SIGNATURE_MODEL,
+    prompt
+  })
+
+  const parsed = parseJsonObject(rawText)
+  const fallbackHtml = buildDefaultSignature({ senderName, senderEmail, role, phone, website })
+  const generatedHtml = cleanString(parsed?.html || rawText || fallbackHtml)
+    .replace(/\{\{SIGNATURE_IMAGE\}\}/g, imageDataUrl)
+  const html = sanitizeEmailSignatureHtml(generatedHtml)
+  const text = limitString(cleanString(parsed?.plainText) || signatureHtmlToText(html), SIGNATURE_TEXT_LIMIT)
+
+  return {
+    enabled: true,
+    html: html || sanitizeEmailSignatureHtml(fallbackHtml.replace(/\{\{SIGNATURE_IMAGE\}\}/g, imageDataUrl)),
+    text,
+    includeBeforeQuotedText: toBoolean(payload.includeBeforeQuotedText, true),
+    generatedAt: new Date().toISOString()
+  }
+}
+
 /**
  * Guarda y verifica la conexión SMTP. Hace transporter.verify() contra el
  * servidor antes de marcarla como conectada, para que "conectado" siempre
@@ -572,15 +1034,17 @@ export async function sendEmail({ to, subject, text, html, replyTo } = {}) {
   if (!cleanString(text) && !cleanString(html)) throw httpError(400, 'El correo necesita contenido')
 
   const transporter = await getTransporter(config, password)
+  const signature = await readStoredSignatureConfig()
+  const signedMessage = applySignatureToMessage({
+    to: recipient,
+    subject,
+    text,
+    html,
+    replyTo
+  }, signature)
 
   try {
-    const result = await sendMailWithTransporter(transporter, config, {
-      to: recipient,
-      subject,
-      text,
-      html,
-      replyTo
-    })
+    const result = await sendMailWithTransporter(transporter, config, signedMessage)
     return result
   } catch (error) {
     logger.error(`Error enviando correo a ${recipient}: ${error.message}`)
