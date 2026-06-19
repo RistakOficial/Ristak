@@ -2561,14 +2561,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                         <div className={styles.installmentSeq}>{installment.sequence}</div>
                         <label className={styles.installmentCell}>
                           <span className={styles.cellLabel}>{effectiveRemainingValueType === 'percentage' ? 'Porcentaje' : 'Monto fijo'}</span>
-                          <NumberInput
-                            step="0.01"
-                            min="0"
-                            value={installment.value}
-                            onChange={(e) => updateRemainingInstallment(installment.id, { value: e.target.value })}
-                            className={styles.input}
-                            aria-label={`Valor de parcialidad ${installment.sequence}`}
-                          />
+                          <div className={styles.amountInput}>
+                            {effectiveRemainingValueType === 'percentage'
+                              ? <Percent size={16} className={styles.dollarIcon} />
+                              : <DollarSign size={16} className={styles.dollarIcon} />}
+                            <NumberInput
+                              step="0.01"
+                              min="0"
+                              value={installment.value}
+                              onChange={(e) => updateRemainingInstallment(installment.id, { value: e.target.value })}
+                              className={styles.input}
+                              aria-label={`${effectiveRemainingValueType === 'percentage' ? 'Porcentaje' : 'Monto fijo'} de parcialidad ${installment.sequence}`}
+                            />
+                          </div>
                         </label>
                         <label className={`${styles.installmentCell} ${styles.installmentDate}`}>
                           <span className={styles.cellLabel}>Fecha de cobro</span>
