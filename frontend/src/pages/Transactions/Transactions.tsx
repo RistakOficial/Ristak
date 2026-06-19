@@ -776,6 +776,26 @@ export const Transactions: React.FC = () => {
     setStripePlanFirstPaymentDraft(prev => prev && !prev.locked ? { ...prev, ...updates } : prev)
   }
 
+  const removeStripeFirstPaymentDraft = () => {
+    setStripePlanFirstPaymentDraft(prev => prev && !prev.locked ? null : prev)
+  }
+
+  const addStripeFirstPaymentDraft = () => {
+    if (stripePlanFirstPaymentDraft) return
+
+    setStripePlanFirstPaymentDraft({
+      localId: 'stripe_first_payment',
+      id: 'stripe_first_payment',
+      label: 'Primer pago',
+      amount: '',
+      dueDate: toDateInputValue(paymentPlanModal.plan?.startDate || paymentPlanModal.plan?.nextRunAt),
+      method: 'stripe_auto',
+      status: 'pending',
+      paymentId: null,
+      locked: false
+    })
+  }
+
   const updateStripeInstallmentDraft = (localId: string, updates: Partial<StripePlanPaymentDraft>) => {
     setStripePlanInstallmentDrafts(prev => prev.map(installment => (
       installment.localId === localId && !installment.locked
@@ -851,11 +871,19 @@ export const Transactions: React.FC = () => {
       }
 
       if (stripePlanFirstPaymentDraft) {
+        const firstPaymentAmount = Number(stripePlanFirstPaymentDraft.amount)
+        if (!Number.isFinite(firstPaymentAmount) || firstPaymentAmount <= 0) {
+          showToast('error', 'Monto inválido', 'El primer pago debe tener un monto mayor a cero o quitarse del plan.')
+          return
+        }
+
         payload.firstPayment = {
-          amount: Number(stripePlanFirstPaymentDraft.amount),
+          amount: firstPaymentAmount,
           dueDate: stripePlanFirstPaymentDraft.dueDate,
           method: stripePlanFirstPaymentDraft.method || 'stripe_auto'
         }
+      } else if (Number(schedule.firstPayment?.amount || 0) > 0) {
+        payload.firstPayment = null
       }
 
       setPaymentPlanModal(prev => ({ ...prev, saving: true }))
@@ -2033,7 +2061,8 @@ export const Transactions: React.FC = () => {
 
           {stripePlanFirstPaymentDraft && renderStripePaymentDraftRow(stripePlanFirstPaymentDraft, 0, {
             kind: 'first',
-            onUpdate: updateStripeFirstPaymentDraft
+            onUpdate: updateStripeFirstPaymentDraft,
+            onRemove: removeStripeFirstPaymentDraft
           })}
 
           {stripePlanInstallmentDrafts.map((draft, index) => renderStripePaymentDraftRow(draft, index, {
@@ -2048,6 +2077,12 @@ export const Transactions: React.FC = () => {
         </div>
 
         <div className={styles.stripePlanAddRow}>
+          {!stripePlanFirstPaymentDraft && (
+            <Button type="button" variant="secondary" size="sm" onClick={addStripeFirstPaymentDraft}>
+              <Plus size={16} />
+              Agregar primer pago
+            </Button>
+          )}
           <Button type="button" variant="secondary" size="sm" onClick={addStripeInstallmentDraft}>
             <Plus size={16} />
             Agregar pago

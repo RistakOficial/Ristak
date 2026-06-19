@@ -553,6 +553,7 @@
 
 .stripePlanAddRow {
   display: flex;
+  gap: var(--spacing-sm);
   justify-content: flex-end;
 }
 

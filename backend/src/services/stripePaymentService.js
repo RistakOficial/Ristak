@@ -1929,6 +1929,30 @@ function normalizePlanEditablePaymentMethod(value, hasSavedCard) {
   }
 }
 
+function normalizePlanEditableFirstPaymentMethod(value, hasSavedCard) {
+  const method = cleanString(value).toLowerCase()
+  if (AUTOMATIC_PLAN_PAYMENT_METHODS.has(method)) {
+    return {
+      flowMethod: hasSavedCard ? 'saved_card' : 'payment_link',
+      paymentMethod: hasSavedCard ? 'stripe_saved_card' : 'stripe_pending_card',
+      flowStatus: hasSavedCard ? 'scheduled' : 'pending'
+    }
+  }
+
+  if (!MANUAL_PLAN_PAYMENT_METHODS.has(method)) {
+    const error = new Error('Forma de cobro inválida para el primer pago.')
+    error.status = 400
+    throw error
+  }
+
+  const normalizedManualMethod = method === 'transfer' ? 'bank_transfer' : method === 'offline' ? 'other' : method
+  return {
+    flowMethod: normalizedManualMethod,
+    paymentMethod: normalizedManualMethod,
+    flowStatus: 'pending'
+  }
+}
+
 function resolveEditableInstallmentStatus({ currentStatus, automatic, flowHasSavedCard, flowState }) {
   const normalizedStatus = cleanString(currentStatus).toLowerCase()
   if (LOCKED_PLAN_PAYMENT_STATUSES.has(normalizedStatus)) return normalizedStatus
@@ -2297,41 +2321,136 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
     }
   }
 
-  const firstPayment = input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
+  const hasFirstPaymentInput = Object.prototype.hasOwnProperty.call(input, 'firstPayment')
+  const firstPayment = hasFirstPaymentInput && input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
   let firstPaymentAmount = Number(flow.first_payment_amount || 0)
   let firstPaymentDate = flow.first_payment_date || null
   let firstPaymentMethod = flow.first_payment_method || null
   const firstPaymentStatus = cleanString(flow.first_payment_status).toLowerCase()
   const firstPaymentLocked = LOCKED_PLAN_PAYMENT_STATUSES.has(firstPaymentStatus) || ['registered', 'paid'].includes(firstPaymentStatus)
 
-  if (firstPayment && !firstPaymentLocked && Number(flow.first_payment_amount || 0) > 0) {
-    firstPaymentAmount = normalizePlanEditableAmount(firstPayment.amount, 'monto del primer pago')
-    firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate)
-    firstPaymentMethod = cleanString(firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'card')
+  if (hasFirstPaymentInput && !firstPaymentLocked) {
+    const firstPaymentInputAmount = firstPayment
+      ? normalizePlanEditableAmount(firstPayment.amount, 'monto del primer pago')
+      : 0
+    const shouldRemoveFirstPayment = !firstPayment || firstPayment.remove === true || firstPaymentInputAmount <= 0
 
-    await db.run(
-      `UPDATE payment_flows
-       SET first_payment_amount = ?,
-           first_payment_value = ?,
-           first_payment_date = ?,
-           first_payment_method = ?,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [firstPaymentAmount, firstPaymentAmount, firstPaymentDate, firstPaymentMethod, cleanFlowId]
-    )
+    if (shouldRemoveFirstPayment) {
+      firstPaymentAmount = 0
+      firstPaymentDate = null
+      firstPaymentMethod = null
 
-    if (flow.first_payment_invoice_id) {
       await db.run(
-        `UPDATE payments
-         SET amount = ?,
-             payment_method = ?,
-             date = COALESCE(?, date),
-             due_date = COALESCE(?, due_date),
+        `UPDATE payment_flows
+         SET first_payment_amount = 0,
+             first_payment_value = 0,
+             first_payment_date = NULL,
+             first_payment_method = NULL,
+             first_payment_status = NULL,
+             first_payment_invoice_id = NULL,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
-           AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
-        [firstPaymentAmount, firstPaymentMethod, firstPaymentDate, firstPaymentDate, flow.first_payment_invoice_id]
+           AND LOWER(COALESCE(first_payment_status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+        [cleanFlowId]
       )
+
+      if (flow.first_payment_invoice_id) {
+        await db.run(
+          `UPDATE payments
+           SET status = 'deleted',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?
+             AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+          [flow.first_payment_invoice_id]
+        )
+      }
+    } else {
+      firstPaymentAmount = firstPaymentInputAmount
+      firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate)
+      const normalizedFirstPaymentMethod = normalizePlanEditableFirstPaymentMethod(
+        firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'stripe_auto',
+        hasSavedCard
+      )
+      firstPaymentMethod = normalizedFirstPaymentMethod.flowMethod
+      const nextFirstPaymentStatus = firstPaymentStatus && firstPaymentStatus !== 'not_required'
+        ? firstPaymentStatus
+        : normalizedFirstPaymentMethod.flowStatus
+      let firstPaymentPaymentId = flow.first_payment_invoice_id || null
+
+      if (!firstPaymentPaymentId) {
+        firstPaymentPaymentId = await createStripePlanPaymentRow({
+          contact: {
+            id: flow.contact_id,
+            name: flow.contact_name,
+            email: flow.contact_email,
+            phone: flow.contact_phone
+          },
+          amount: firstPaymentAmount,
+          currency: flow.currency || DEFAULT_CURRENCY,
+          status: nextFirstPaymentStatus,
+          paymentMethod: normalizedFirstPaymentMethod.paymentMethod,
+          title: `${nextConcept} - primer pago`,
+          description: `${nextConcept} - primer pago`,
+          dueDate: firstPaymentDate,
+          metadata: {
+            stripeMode: metadata.stripeMode || metadata.paymentMode || 'test',
+            source: hasSavedCard ? 'stripe_payment_plan_first_saved_card' : 'stripe_payment_plan_first_link',
+            contactName: flow.contact_name,
+            contactEmail: flow.contact_email,
+            contactPhone: flow.contact_phone,
+            paymentPlan: {
+              flowId: cleanFlowId,
+              trigger: hasSavedCard ? 'first_payment_saved_card' : 'first_payment'
+            }
+          }
+        })
+      }
+
+      await db.run(
+        `UPDATE payment_flows
+         SET first_payment_amount = ?,
+             first_payment_value = ?,
+             first_payment_date = ?,
+             first_payment_method = ?,
+             first_payment_status = ?,
+             first_payment_invoice_id = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          firstPaymentAmount,
+          firstPaymentAmount,
+          firstPaymentDate,
+          firstPaymentMethod,
+          nextFirstPaymentStatus,
+          firstPaymentPaymentId,
+          cleanFlowId
+        ]
+      )
+
+      if (firstPaymentPaymentId) {
+        await db.run(
+          `UPDATE payments
+           SET amount = ?,
+               payment_method = ?,
+               status = CASE
+                 WHEN payments.status IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success') THEN payments.status
+                 ELSE ?
+               END,
+               date = COALESCE(?, date),
+               due_date = COALESCE(?, due_date),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?
+             AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+          [
+            firstPaymentAmount,
+            normalizedFirstPaymentMethod.paymentMethod,
+            nextFirstPaymentStatus,
+            firstPaymentDate,
+            firstPaymentDate,
+            firstPaymentPaymentId
+          ]
+        )
+      }
     }
   }
 

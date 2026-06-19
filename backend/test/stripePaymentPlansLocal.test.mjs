@@ -27,7 +27,7 @@ async function cleanup(ids) {
   await db.run('DELETE FROM payment_plans WHERE id = ?', [ids.flowId]).catch(() => undefined)
   await db.run('DELETE FROM installment_payments WHERE flow_id = ?', [ids.flowId]).catch(() => undefined)
   await db.run('DELETE FROM payment_flows WHERE id = ?', [ids.flowId]).catch(() => undefined)
-  await db.run('DELETE FROM payments WHERE id IN (?, ?)', [ids.cardSetupPaymentId, ids.installmentPaymentId]).catch(() => undefined)
+  await db.run('DELETE FROM payments WHERE id IN (?, ?, ?)', [ids.cardSetupPaymentId, ids.firstPaymentId, ids.installmentPaymentId]).catch(() => undefined)
   await db.run('DELETE FROM payments WHERE metadata_json LIKE ?', [`%${ids.flowId}%`]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [ids.contactId]).catch(() => undefined)
 }
@@ -38,6 +38,7 @@ async function seedStripePlan() {
     contactId: `contact_stripe_plan_${suffix}`,
     flowId: `stripe_flow_${suffix}`,
     cardSetupPaymentId: `stripe_payment_setup_${suffix}`,
+    firstPaymentId: `stripe_first_payment_${suffix}`,
     installmentId: `stripe_installment_${suffix}`,
     installmentPaymentId: `stripe_plan_payment_${suffix}`
   }
@@ -236,6 +237,135 @@ test('edita calendario de pagos de un plan Stripe local', async () => {
     assert.equal(installments[1].amount, 250)
     assert.equal(installments[1].payment_method, 'bank_transfer')
     assert.equal(installments[1].automatic, 0)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('permite sumar un primer pago pendiente a un plan Stripe local', async () => {
+  const ids = await seedStripePlan()
+
+  try {
+    const res = createResponse()
+    await updateInvoiceSchedule({
+      params: { scheduleId: ids.flowId },
+      body: {
+        payload: {
+          name: 'Plan local Stripe con primer pago',
+          remainingFrequency: 'monthly',
+          firstPayment: {
+            amount: 125,
+            dueDate: '2098-12-01',
+            method: 'stripe_auto'
+          },
+          installments: [
+            {
+              id: ids.installmentId,
+              amount: 975,
+              dueDate: '2099-01-01',
+              method: 'stripe_auto'
+            }
+          ]
+        }
+      }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+    assert.equal(res.payload.data.total, 1100)
+
+    const flow = await db.get(
+      `SELECT total_amount, first_payment_amount, first_payment_method, first_payment_status, first_payment_invoice_id
+       FROM payment_flows
+       WHERE id = ?`,
+      [ids.flowId]
+    )
+    const firstPayment = await db.get('SELECT amount, status, payment_method FROM payments WHERE id = ?', [flow.first_payment_invoice_id])
+
+    assert.equal(flow.total_amount, 1100)
+    assert.equal(flow.first_payment_amount, 125)
+    assert.equal(flow.first_payment_method, 'payment_link')
+    assert.equal(flow.first_payment_status, 'pending')
+    assert.ok(flow.first_payment_invoice_id)
+    assert.equal(firstPayment.amount, 125)
+    assert.equal(firstPayment.status, 'pending')
+    assert.equal(firstPayment.payment_method, 'stripe_pending_card')
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('permite restar pagos pendientes de un plan Stripe local', async () => {
+  const ids = await seedStripePlan()
+
+  try {
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, title, description, metadata_json, date, created_at, updated_at
+      ) VALUES (?, ?, 100, 'MXN', 'pending', 'stripe', 'test', 'stripe', ?, ?, ?, '2098-12-01', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        ids.firstPaymentId,
+        ids.contactId,
+        'Plan local Stripe - primer pago',
+        'Plan local Stripe - primer pago',
+        JSON.stringify({
+          source: 'stripe_payment_plan_first_link',
+          paymentPlan: {
+            flowId: ids.flowId,
+            trigger: 'first_payment'
+          }
+        })
+      ]
+    )
+
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_amount = 100,
+           first_payment_value = 100,
+           first_payment_date = '2098-12-01',
+           first_payment_method = 'card',
+           first_payment_status = 'pending',
+           first_payment_invoice_id = ?,
+           total_amount = 1075
+       WHERE id = ?`,
+      [ids.firstPaymentId, ids.flowId]
+    )
+
+    const res = createResponse()
+    await updateInvoiceSchedule({
+      params: { scheduleId: ids.flowId },
+      body: {
+        payload: {
+          name: 'Plan local Stripe reducido',
+          remainingFrequency: 'monthly',
+          firstPayment: null,
+          installments: []
+        }
+      }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+    assert.equal(res.payload.data.total, 0)
+
+    const flow = await db.get(
+      `SELECT total_amount, first_payment_amount, first_payment_invoice_id, first_payment_status
+       FROM payment_flows
+       WHERE id = ?`,
+      [ids.flowId]
+    )
+    const firstPayment = await db.get('SELECT status FROM payments WHERE id = ?', [ids.firstPaymentId])
+    const installment = await db.get('SELECT status FROM installment_payments WHERE id = ?', [ids.installmentId])
+    const linkedInstallmentPayment = await db.get('SELECT status FROM payments WHERE id = ?', [ids.installmentPaymentId])
+
+    assert.equal(flow.total_amount, 0)
+    assert.equal(flow.first_payment_amount, 0)
+    assert.equal(flow.first_payment_invoice_id, null)
+    assert.equal(flow.first_payment_status, null)
+    assert.equal(firstPayment.status, 'deleted')
+    assert.equal(installment.status, 'deleted')
+    assert.equal(linkedInstallmentPayment.status, 'deleted')
   } finally {
     await cleanup(ids)
   }
