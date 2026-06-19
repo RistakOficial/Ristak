@@ -4388,6 +4388,8 @@ export const DesktopChat: React.FC = () => {
 
               <form
                 className={styles.composer}
+                data-chat-composer="true"
+                data-enter-submit-ignore
                 onSubmit={(event) => {
                   event.preventDefault()
                   void handleSendMessage()
@@ -4493,6 +4495,7 @@ export const DesktopChat: React.FC = () => {
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                         event.preventDefault()
+                        event.stopPropagation()
                         if (canSend) void handleSendMessage()
                       }
                     }}

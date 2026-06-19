@@ -79,6 +79,7 @@ interface PhoneChatPreviewComposerProps {
   value?: string
   placeholder?: string
   disabled?: boolean
+  controlsDisabled?: boolean
   sendDisabled?: boolean
   hasDraftContent?: boolean
   onChange?: (value: string) => void
@@ -188,6 +189,7 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
   value = '',
   placeholder = 'Mensaje',
   disabled = false,
+  controlsDisabled = false,
   sendDisabled = false,
   hasDraftContent = false,
   onChange,
@@ -202,6 +204,7 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
 }) => {
   const hasContent = Boolean(value.trim())
   const shouldSend = hasContent || hasDraftContent
+  const actionsDisabled = disabled || controlsDisabled
 
   if (voicePanel) {
     return (
@@ -212,13 +215,13 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
   }
 
   return (
-    <div className={`${styles.composer} ${shouldSend ? styles.composerHasContent : ''} ${recording ? styles.composerRecording : ''}`}>
+    <div className={`${styles.composer} ${shouldSend ? styles.composerHasContent : ''} ${recording ? styles.composerRecording : ''}`} data-chat-composer="true" data-enter-submit-ignore>
       <button
         type="button"
         className={styles.composerPlus}
         aria-label="Abrir adjuntos"
         onClick={onAttach}
-        disabled={disabled || !onAttach}
+        disabled={actionsDisabled || !onAttach}
       >
         <Plus size={24} />
       </button>
@@ -230,7 +233,12 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
           value={value}
           placeholder={placeholder}
           onChange={(event) => onChange?.(event.target.value)}
-          onKeyDown={onKeyDown}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.stopPropagation()
+            }
+            onKeyDown?.(event)
+          }}
           disabled={disabled}
           aria-label={placeholder}
         />
@@ -240,7 +248,7 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
           aria-label="Emojis"
           aria-pressed={emojiOpen}
           onClick={onEmoji}
-          disabled={disabled || !onEmoji}
+          disabled={actionsDisabled || !onEmoji}
         >
           <Smile size={17} />
         </button>
@@ -249,7 +257,7 @@ export const PhoneChatPreviewComposer: React.FC<PhoneChatPreviewComposerProps> =
         type="button"
         className={styles.composerSendButton}
         onClick={shouldSend ? onSend : onVoice}
-        disabled={disabled || (shouldSend ? sendDisabled : !onVoice)}
+        disabled={actionsDisabled || (shouldSend ? sendDisabled : !onVoice)}
         aria-label={shouldSend ? 'Enviar mensaje' : recording ? 'Detener nota de voz' : 'Mensaje de voz'}
       >
         {shouldSend ? <Send size={17} /> : <Mic size={18} />}

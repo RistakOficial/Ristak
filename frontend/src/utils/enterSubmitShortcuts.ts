@@ -65,6 +65,12 @@ const IGNORE_SELECTOR = [
   '[data-no-enter-submit]'
 ].join(',')
 
+const CHAT_COMPOSER_SELECTOR = [
+  '[data-chat-composer]',
+  '[data-phone-chat-composer="true"]',
+  '[data-ai-agent-composer="true"]'
+].join(',')
+
 type ClickableAction = HTMLButtonElement | HTMLInputElement
 type TextEntryElement = HTMLInputElement | HTMLTextAreaElement
 
@@ -215,6 +221,7 @@ function handleEnterSubmitShortcut(event: KeyboardEvent) {
   const target = getEventElement(event)
   if (!target) return
   if (target.closest(IGNORE_SELECTOR)) return
+  if (target.closest(CHAT_COMPOSER_SELECTOR)) return
   if (target.closest('[contenteditable="true"]')) return
   if (!isTextEntryElement(target)) return
   if (document.activeElement !== target) return

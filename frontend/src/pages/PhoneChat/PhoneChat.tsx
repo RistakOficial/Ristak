@@ -8187,7 +8187,7 @@ export const PhoneChat: React.FC = () => {
               ))}
             </div>
           )}
-          <div className={`${styles.composer} ${cameraShareCaption.trim() || cameraShareSelectedContacts.length > 0 ? styles.composerHasContent : ''} ${styles.cameraShareComposer}`}>
+          <div className={`${styles.composer} ${cameraShareCaption.trim() || cameraShareSelectedContacts.length > 0 ? styles.composerHasContent : ''} ${styles.cameraShareComposer}`} data-chat-composer="true">
             <div className={styles.messageInputWrap}>
               <div
                 ref={cameraShareCaptionRef}
@@ -8206,6 +8206,7 @@ export const PhoneChat: React.FC = () => {
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault()
+                    event.stopPropagation()
                     handleSendCameraSharePhoto()
                   }
                 }}
@@ -9403,17 +9404,17 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderAIAgentComposer = () => (
-    <div className={styles.aiComposer}>
+    <div className={styles.aiComposer} data-ai-agent-composer="true">
       <textarea
         value={aiMessageText}
         onChange={(event) => setAiMessageText(event.target.value)}
         placeholder="Escribe al agente"
         aria-label="Mensaje para el agente de inteligencia artificial"
         rows={1}
-        disabled={aiSending}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault()
+            event.stopPropagation()
             handleSendAIAgentMessage()
           }
         }}
@@ -12843,6 +12844,7 @@ export const PhoneChat: React.FC = () => {
                               onKeyDown={(event) => {
                                 if (event.key === 'Enter' && !event.shiftKey) {
                                   event.preventDefault()
+                                  event.stopPropagation()
                                   handleSendMessage()
                                 }
                               }}

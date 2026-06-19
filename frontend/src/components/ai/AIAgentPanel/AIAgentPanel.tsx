@@ -2398,6 +2398,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
+      event.stopPropagation()
       sendMessage()
     }
   }
@@ -2735,7 +2736,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                     </button>
                   </div>
                 ) : (
-                  <div className={textComposerClassName} data-ristak-unstyled>
+                  <div className={textComposerClassName} data-ristak-unstyled data-ai-agent-composer="true">
                     {attachments.length > 0 && renderAttachmentList(attachments, {
                       removable: true,
                       onRemove: removeAttachment
@@ -2767,6 +2768,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                       placeholder={nextOnboardingQuestion ? 'Responde para guardar contexto...' : 'Pregunta algo del negocio...'}
                       onChange={(event) => setInput(event.target.value)}
                       onKeyDown={handleKeyDown}
+                      data-enter-submit-ignore
                       disabled={savingConfig}
                       rows={1}
                     />

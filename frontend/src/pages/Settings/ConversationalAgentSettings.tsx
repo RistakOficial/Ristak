@@ -2663,7 +2663,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   inputRef={testComposerInputRef}
                   value={testInput}
                   placeholder={testPracticeExpired ? 'Prueba expirada. Reinicia el chat.' : 'Ejemplo: Hola, quiero agendar'}
-                  disabled={testPracticeExpired || testing}
+                  disabled={testPracticeExpired}
+                  controlsDisabled={testing}
                   sendDisabled={testPracticeExpired || testing || (!testInput.trim() && testAttachments.length === 0)}
                   hasDraftContent={testAttachments.length > 0}
                   onChange={setTestInput}
@@ -2693,6 +2694,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && !event.shiftKey) {
                       event.preventDefault()
+                      event.stopPropagation()
                       handleSendTestMessage()
                     }
                   }}
