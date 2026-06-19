@@ -264,6 +264,7 @@ export interface ScheduledChatMessage {
   createdAt?: string
   updatedAt?: string
   sentAt?: string
+  routingReason?: string
 }
 
 export interface ScheduleChatMessagePayload {
@@ -326,6 +327,7 @@ export interface WhatsAppApiSendResponse {
   fallback?: boolean
   fallbackFrom?: string
   fallbackReason?: string
+  routingReason?: string
   audio?: {
     link?: string
     url?: string
@@ -382,6 +384,11 @@ export interface WhatsAppQrConnectPayload {
   acceptedRisk: boolean
 }
 
+export interface WhatsAppQrPhoneNumberPayload {
+  phoneNumber: string
+  label?: string
+}
+
 export const whatsappApiService = {
   getStatus: () => apiClient.get<WhatsAppApiStatus>('/whatsapp-api/status'),
   getMetaBusinessAccount: () => apiClient.get<WhatsAppMetaBusinessAccountResponse>('/whatsapp-api/meta/business-account'),
@@ -406,6 +413,7 @@ export const whatsappApiService = {
   getQr: (phoneNumberId?: string) => apiClient.get<WhatsAppQrSession | WhatsAppQrSession[]>('/whatsapp-api/qr', {
     params: phoneNumberId ? { phoneNumberId } : undefined
   }),
+  createQrPhoneNumber: (payload: WhatsAppQrPhoneNumberPayload) => apiClient.post<WhatsAppApiPhoneNumber>('/whatsapp-api/qr/phone-numbers', payload),
   connectQr: (payload: WhatsAppQrConnectPayload) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/connect', payload),
   disconnectQr: (phoneNumberId: string) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/disconnect', { phoneNumberId }),
   getTemplates: (status?: string) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {

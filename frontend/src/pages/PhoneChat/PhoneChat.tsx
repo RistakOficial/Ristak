@@ -600,6 +600,7 @@ interface ChatMessage {
   businessPhone?: string
   businessPhoneNumberId?: string
   transport?: 'api' | 'qr' | string
+  routingReason?: string
   attachment?: {
     type: ChatAttachmentType
     dataUrl?: string
@@ -1794,6 +1795,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     businessPhone: String(event.data?.business_phone || ''),
     businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
     transport: String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api')),
+    routingReason: String(event.data?.routing_reason || event.data?.routingReason || event.data?.fallbackReason || ''),
     attachment
   }
 }
@@ -1939,11 +1941,40 @@ function getAvatarChannelBadgeClass(kind: ContactChannelBadgeKind) {
   return styles.avatarChannelBadgeWhatsapp
 }
 
-function getMessageTransportBadge(transport?: string | null) {
-  const raw = String(transport || '').trim().toLowerCase()
-  if (raw === 'qr') return 'QR'
-  if (raw === 'api') return ''
+function isBusinessPhoneApiEnabled(phone?: WhatsAppApiStatus['phoneNumbers'][number] | null, status?: WhatsAppApiStatus | null) {
+  return Boolean(status?.connected) && Number(phone?.api_send_enabled ?? 1) !== 0
+}
+
+function getMessageBusinessPhone(message: ChatMessage, status?: WhatsAppApiStatus | null) {
+  const phones = status?.phoneNumbers || []
+  if (message.businessPhoneNumberId) {
+    const byId = phones.find((phone) => phone.id === message.businessPhoneNumberId)
+    if (byId) return byId
+  }
+  return phones.find((phone) => (
+    phoneLooksSame(phone.phone_number, message.businessPhone) ||
+    phoneLooksSame(phone.display_phone_number, message.businessPhone) ||
+    phoneLooksSame(phone.qr_connected_phone, message.businessPhone)
+  )) || null
+}
+
+function getMessageTransportBadge(message: ChatMessage, status?: WhatsAppApiStatus | null) {
+  const raw = String(message.transport || '').trim().toLowerCase()
+  const phone = getMessageBusinessPhone(message, status)
+  const dualConnection = Boolean(phone && isBusinessPhoneApiEnabled(phone, status) && isBusinessPhoneQrReady(phone))
+  if (dualConnection && raw === 'qr') return 'QR'
+  if (dualConnection && (raw === 'api' || raw === 'whatsapp_api')) return 'API'
+  if (raw === 'qr' || raw === 'api' || raw === 'whatsapp_api') return ''
   return getHighLevelChatChannelLabel(raw)
+}
+
+function getMessageRoutingNote(message: ChatMessage, status?: WhatsAppApiStatus | null) {
+  if (message.direction !== 'outbound') return ''
+  const label = getMessageTransportBadge(message, status)
+  const reason = String(message.routingReason || '').trim()
+  const cleanReason = reason === 'Capturado desde la sesión de WhatsApp Web.' ? '' : reason
+  if (label && cleanReason) return `${label} · ${cleanReason}`
+  return label || cleanReason
 }
 
 function inferHighLevelChatChannel(contact?: ChatContact | null, messages: ChatMessage[] = []): HighLevelChatChannel {
@@ -6708,7 +6739,7 @@ export const PhoneChat: React.FC = () => {
       })
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
-          ? { ...message, status: 'sent', errorReason: '', transport: result.transport || message.transport }
+          ? { ...message, status: 'sent', errorReason: '', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
           : message
       )))
       showToast(
@@ -7187,6 +7218,7 @@ export const PhoneChat: React.FC = () => {
         const responseAudioUrl = resultData.audio?.link || resultData.audio?.url || resultData.localMedia?.publicUrl || ''
         const responseAudioMimeType = resultData.audio?.mimeType || resultData.localMedia?.mimeType || ''
         const responseAudioDurationMs = Number(resultData.audio?.durationMs || 0) || voiceToSend?.durationMs
+        const routingData = resultData as { routingReason?: string; fallbackReason?: string }
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
             ? {
@@ -7194,6 +7226,7 @@ export const PhoneChat: React.FC = () => {
                 id: resultData.localMessageId || message.id,
                 status: resultStatus,
                 transport: resultData.transport || message.transport,
+                routingReason: routingData.routingReason || routingData.fallbackReason || message.routingReason,
                 attachment: message.attachment?.type === 'audio'
                   ? {
                       ...message.attachment,
@@ -7370,6 +7403,7 @@ export const PhoneChat: React.FC = () => {
                 ...message,
                 status: result.status || 'sent',
                 transport: result.transport || message.transport,
+                routingReason: result.routingReason || result.fallbackReason || message.routingReason,
                 attachment: message.attachment?.type === 'audio'
                   ? {
                       ...message.attachment,
@@ -7419,6 +7453,7 @@ export const PhoneChat: React.FC = () => {
                   ...message,
                   status: result?.status || 'sent',
                   transport: result?.transport || message.transport,
+                  routingReason: result?.routingReason || result?.fallbackReason || message.routingReason,
                   attachment: message.attachment
                     ? {
                         ...message.attachment,
@@ -7443,7 +7478,7 @@ export const PhoneChat: React.FC = () => {
         })
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
-            ? { ...message, status: result.status || 'sent', transport: result.transport || message.transport }
+            ? { ...message, status: result.status || 'sent', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
             : message
         )))
       }
@@ -8378,7 +8413,7 @@ export const PhoneChat: React.FC = () => {
     const pending = message.direction === 'outbound' && !failed && !scheduled && isMessagePending(message)
     const receiptStatus = getMessageReceiptStatus(message)
     const receiptLabel = getMessageReceiptLabel(receiptStatus)
-    const transportBadge = options?.showTransport === false ? '' : getMessageTransportBadge(message.transport)
+    const transportBadge = options?.showTransport === false ? '' : getMessageTransportBadge(message, whatsappStatus)
 
     return (
       <span className={className}>
@@ -9212,6 +9247,9 @@ export const PhoneChat: React.FC = () => {
                       <span className={styles.messageStarBadge} aria-label="Mensaje destacado">
                         <Star size={12} fill="currentColor" />
                       </span>
+                    )}
+                    {!isAudioMessage && getMessageRoutingNote(message, whatsappStatus) && (
+                      <small className={styles.messageRoutingNote}>{getMessageRoutingNote(message, whatsappStatus)}</small>
                     )}
                     {!isAudioMessage && renderMessageMeta(message)}
                     </div>

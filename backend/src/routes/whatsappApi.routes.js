@@ -4,6 +4,7 @@ import {
   completeMetaDirectConnectionView,
   connectWhatsAppApiView,
   connectWhatsAppQrView,
+  createWhatsAppQrPhoneNumberView,
   disconnectWhatsAppApiView,
   disconnectMetaDirectConnectionView,
   disconnectWhatsAppQrView,
@@ -60,6 +61,7 @@ router.post('/refresh', refreshWhatsAppApiView)
 router.post('/disconnect', disconnectWhatsAppApiView)
 router.post('/reset', resetWhatsAppApiCredentialsView)
 router.get('/qr', getWhatsAppQrView)
+router.post('/qr/phone-numbers', createWhatsAppQrPhoneNumberView)
 router.post('/qr/connect', connectWhatsAppQrView)
 router.post('/qr/disconnect', disconnectWhatsAppQrView)
 router.get('/messages/scheduled', listScheduledChatMessagesView)

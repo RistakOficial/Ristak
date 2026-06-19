@@ -152,6 +152,7 @@ interface DesktopChatMessage {
   businessPhone?: string
   businessPhoneNumberId?: string
   transport?: string
+  routingReason?: string
   attachment?: {
     type: ChatAttachmentType
     url?: string
@@ -1280,6 +1281,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     businessPhone: String(data.business_phone || data.businessPhone || data.from || '').trim(),
     businessPhoneNumberId: String(data.business_phone_number_id || data.businessPhoneNumberId || '').trim(),
     transport: String(data.transport || data.channel || data.provider || '').trim(),
+    routingReason: String(data.routing_reason || data.routingReason || data.fallbackReason || '').trim(),
     attachment
   }
 }
@@ -1297,7 +1299,8 @@ function getScheduledChatMessageBubble(message: ScheduledChatMessage): DesktopCh
     scheduledMessageId: message.id,
     businessPhone: message.fromPhone || '',
     businessPhoneNumberId: message.businessPhoneNumberId || '',
-    transport: message.transport || message.provider
+    transport: message.transport || message.provider,
+    routingReason: message.routingReason || ''
   }
 }
 
@@ -1447,6 +1450,58 @@ function getSelectedBusinessPhone(status?: WhatsAppApiStatus | null): WhatsAppAp
 
 function getBusinessPhoneValue(phone?: WhatsAppApiPhoneNumber | null) {
   return phone?.display_phone_number || phone?.phone_number || ''
+}
+
+function normalizePhoneProbe(value?: string | null) {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function phoneValueMatches(left?: string | null, right?: string | null) {
+  const leftDigits = normalizePhoneProbe(left)
+  const rightDigits = normalizePhoneProbe(right)
+  if (!leftDigits || !rightDigits) return false
+  return leftDigits === rightDigits || leftDigits.endsWith(rightDigits) || rightDigits.endsWith(leftDigits)
+}
+
+function isPhoneQrConnected(phone?: WhatsAppApiPhoneNumber | null) {
+  return String(phone?.qr_status || '').trim().toLowerCase() === 'connected' || Boolean(phone?.qr_send_enabled && phone?.qr_connected_phone)
+}
+
+function isPhoneApiEnabled(phone?: WhatsAppApiPhoneNumber | null, status?: WhatsAppApiStatus | null) {
+  return Boolean(status?.connected) && Number(phone?.api_send_enabled ?? 1) !== 0
+}
+
+function getMessageBusinessPhone(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
+  const phones = status?.phoneNumbers || []
+  if (message.businessPhoneNumberId) {
+    const byId = phones.find((phone) => phone.id === message.businessPhoneNumberId)
+    if (byId) return byId
+  }
+  return phones.find((phone) => (
+    phoneValueMatches(phone.phone_number, message.businessPhone) ||
+    phoneValueMatches(phone.display_phone_number, message.businessPhone) ||
+    phoneValueMatches(phone.qr_connected_phone, message.businessPhone)
+  )) || null
+}
+
+function getMessageTransportLabel(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
+  const phone = getMessageBusinessPhone(message, status)
+  const dualConnection = Boolean(phone && isPhoneApiEnabled(phone, status) && isPhoneQrConnected(phone))
+  if (!dualConnection) return ''
+
+  const transport = String(message.transport || '').trim().toLowerCase()
+  if (transport === 'qr') return 'QR'
+  if (transport === 'api' || transport === 'whatsapp_api') return 'API'
+  return ''
+}
+
+function getMessageRoutingNote(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
+  if (message.direction !== 'outbound') return ''
+  const label = getMessageTransportLabel(message, status)
+  const reason = String(message.routingReason || '').trim()
+  const cleanReason = reason === 'Capturado desde la sesión de WhatsApp Web.' ? '' : reason
+  if (label && cleanReason) return `${label} · ${cleanReason}`
+  return label || cleanReason
 }
 
 function getDefaultAppointmentRange(timeZone: string) {
@@ -2457,7 +2512,7 @@ export const DesktopChat: React.FC = () => {
       })
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
-          ? { ...message, status: 'sent', errorReason: '', transport: result.transport || message.transport }
+          ? { ...message, status: 'sent', errorReason: '', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
           : message
       )))
       showToast(
@@ -3249,6 +3304,7 @@ export const DesktopChat: React.FC = () => {
               ...message,
               status: result.status || 'sent',
               transport: result.transport || message.transport,
+              routingReason: result.routingReason || result.fallbackReason || message.routingReason,
               attachment: message.attachment
                 ? {
                     ...message.attachment,
@@ -3298,6 +3354,7 @@ export const DesktopChat: React.FC = () => {
                   ...message,
                   status: result?.status || 'sent',
                   transport: result?.transport || message.transport,
+                  routingReason: result?.routingReason || result?.fallbackReason || message.routingReason,
                   attachment: message.attachment
                     ? {
                         ...message.attachment,
@@ -3320,7 +3377,12 @@ export const DesktopChat: React.FC = () => {
           transport: 'api',
           phoneNumberId: selectedBusinessPhone?.id || undefined
         })
-        setMessages((current) => current.map((message) => message.id === optimisticId ? { ...message, status: result.status || 'sent', transport: result.transport || message.transport } : message))
+        setMessages((current) => current.map((message) => message.id === optimisticId ? {
+          ...message,
+          status: result.status || 'sent',
+          transport: result.transport || message.transport,
+          routingReason: result.routingReason || result.fallbackReason || message.routingReason
+        } : message))
       } else if (highLevelConnected) {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
@@ -4368,19 +4430,23 @@ export const DesktopChat: React.FC = () => {
                 ) : messageGroups.map((group) => (
                   <div key={group.key} className={styles.messageGroup}>
                     <div className={styles.dayDivider}>{group.label}</div>
-                    {group.messages.map((message) => (
-                      <article
-                        key={message.id}
-                        className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''}`}
-                      >
-                        {renderAttachment(message)}
-                        {message.text ? <p>{message.text}</p> : null}
-                        {message.errorReason ? <small className={styles.errorText}>{message.errorReason}</small> : null}
-                        {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
-                        {renderScheduledMessageActions(message)}
-                        {renderMessageMeta(message)}
-                      </article>
-                    ))}
+                    {group.messages.map((message) => {
+                      const routingNote = getMessageRoutingNote(message, whatsappStatus)
+                      return (
+                        <article
+                          key={message.id}
+                          className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''}`}
+                        >
+                          {renderAttachment(message)}
+                          {message.text ? <p>{message.text}</p> : null}
+                          {routingNote ? <small className={styles.messageRoutingNote}>{routingNote}</small> : null}
+                          {message.errorReason ? <small className={styles.errorText}>{message.errorReason}</small> : null}
+                          {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
+                          {renderScheduledMessageActions(message)}
+                          {renderMessageMeta(message)}
+                        </article>
+                      )
+                    })}
                   </div>
                 ))}
                 <div ref={messagesEndRef} />

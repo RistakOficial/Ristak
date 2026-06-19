@@ -2,12 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
+  ArrowLeft,
   Cloud,
   ExternalLink,
   FileText,
   Hash as HashIcon,
   KeyRound,
   Link2,
+  Plus,
   QrCode,
   RefreshCw,
   Search,
@@ -35,6 +37,7 @@ type BusinessProfile = {
 type ConnectedSection = 'numbers' | 'templates' | 'alerts'
 type PhoneFilter = 'all' | 'main' | 'qr' | 'attention'
 type AlertFilter = 'all' | 'critical' | 'warning' | 'info'
+type ConnectionChoice = 'api' | 'qr'
 const phoneFilters: PhoneFilter[] = ['all', 'main', 'qr', 'attention']
 const alertFilters: AlertFilter[] = ['all', 'critical', 'warning', 'info']
 const isPhoneFilter = (value?: string | null): value is PhoneFilter => phoneFilters.includes(value as PhoneFilter)
@@ -157,13 +160,20 @@ export const WhatsAppSettings: React.FC = () => {
   const [qrConnectingPhoneId, setQrConnectingPhoneId] = useState('')
   const [qrDisconnectingPhoneId, setQrDisconnectingPhoneId] = useState('')
   const [qrConsentPhone, setQrConsentPhone] = useState<WhatsAppApiPhoneNumber | null>(null)
+  const [connectionChoice, setConnectionChoice] = useState<ConnectionChoice | null>(null)
+  const [addNumberModalOpen, setAddNumberModalOpen] = useState(false)
+  const [addNumberChoice, setAddNumberChoice] = useState<ConnectionChoice | null>(null)
+  const [qrStandalonePhone, setQrStandalonePhone] = useState('')
+  const [qrStandaloneLabel, setQrStandaloneLabel] = useState('')
+  const [qrCreatingPhone, setQrCreatingPhone] = useState(false)
   // El modal de QR tiene dos pasos: primero el aviso de riesgo y, al aceptar,
   // el código QR en grande dentro del mismo modal.
   const [qrModalView, setQrModalView] = useState<'consent' | 'qr'>('consent')
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
-  const [metaConnecting, setMetaConnecting] = useState(false)
 
   const apiConnected = Boolean(apiStatus?.connected)
+  const hasWhatsAppNumbers = Boolean(apiStatus?.phoneNumbers?.length)
+  const hasAnyWhatsAppConnection = apiConnected || hasWhatsAppNumbers
 
   useEffect(() => {
     setActiveSection(current => current === routeSection ? current : routeSection)
@@ -335,6 +345,60 @@ export const WhatsAppSettings: React.FC = () => {
     }
   }
 
+  const refreshWhatsAppStatus = async () => {
+    if (apiConnected) {
+      await refreshApi()
+      return
+    }
+
+    setApiRefreshing(true)
+    try {
+      await loadApiStatus()
+      showToast('success', 'Actualizado', 'Se actualizó el estado de WhatsApp')
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo actualizar WhatsApp')
+    } finally {
+      setApiRefreshing(false)
+    }
+  }
+
+  const openAddNumberModal = () => {
+    setAddNumberChoice(null)
+    setQrStandalonePhone('')
+    setQrStandaloneLabel('')
+    setAddNumberModalOpen(true)
+  }
+
+  const openQrConsentAfterCreate = async (phone: WhatsAppApiPhoneNumber) => {
+    const nextStatus = await loadApiStatus()
+    const hydratedPhone = nextStatus.phoneNumbers.find(item => item.id === phone.id) || phone
+    setSelectedPhoneId(hydratedPhone.id)
+    setQrModalView('consent')
+    setQrConsentPhone(hydratedPhone)
+  }
+
+  const createQrNumber = async (event?: React.FormEvent) => {
+    event?.preventDefault()
+    if (!qrStandalonePhone.trim() || qrCreatingPhone) return
+
+    setQrCreatingPhone(true)
+    try {
+      const phone = await whatsappApiService.createQrPhoneNumber({
+        phoneNumber: qrStandalonePhone.trim(),
+        label: qrStandaloneLabel.trim() || undefined
+      })
+      setAddNumberModalOpen(false)
+      setConnectionChoice(null)
+      setQrStandalonePhone('')
+      setQrStandaloneLabel('')
+      await openQrConsentAfterCreate(phone)
+    } catch (error) {
+      showToast('error', 'No se pudo preparar QR', error instanceof Error ? error.message : 'Intenta con otro número.')
+    } finally {
+      setQrCreatingPhone(false)
+    }
+  }
+
   const makePhoneDefault = async (phone: WhatsAppApiPhoneNumber) => {
     if (!phone.id || defaultingPhoneId) return
 
@@ -425,18 +489,6 @@ export const WhatsAppSettings: React.FC = () => {
       'Desconectar',
       'Cancelar'
     )
-  }
-
-  const connectMetaDirect = async () => {
-    if (metaConnecting) return
-    setMetaConnecting(true)
-    try {
-      const response = await whatsappApiService.getMetaConnectUrl()
-      window.location.assign(response.url)
-    } catch (error) {
-      showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Intenta nuevamente')
-      setMetaConnecting(false)
-    }
   }
 
   const connectionAlerts = useMemo(() => {
@@ -553,13 +605,154 @@ export const WhatsAppSettings: React.FC = () => {
     </div>
   )
 
+  const renderConnectionBack = (onBack: () => void) => (
+    <button type="button" className={styles.backButton} onClick={onBack}>
+      <ArrowLeft size={15} />
+      Volver
+    </button>
+  )
+
+  const renderConnectionChooser = (onSelect: (choice: ConnectionChoice) => void) => (
+    <div className={styles.connectionPicker}>
+      <button type="button" className={styles.connectionCard} onClick={() => onSelect('api')}>
+        <Cloud size={22} />
+        <strong>WhatsApp API</strong>
+        <span>Conexión oficial para plantillas, revisión de Meta y envío estable.</span>
+      </button>
+      <button type="button" className={styles.connectionCard} onClick={() => onSelect('qr')}>
+        <QrCode size={22} />
+        <strong>Mediante QR</strong>
+        <span>Conecta un número por WhatsApp Web para uso manual o respaldo.</span>
+      </button>
+    </div>
+  )
+
+  const renderQrNumberForm = () => (
+    <form className={styles.qrStandaloneForm} onSubmit={createQrNumber}>
+      <label className={styles.fieldLabel}>
+        <span>Número de WhatsApp</span>
+        <div className={styles.inputWrap} data-ristak-unstyled>
+          <SiWhatsapp size={17} />
+          <input
+            value={qrStandalonePhone}
+            onChange={(event) => setQrStandalonePhone(event.target.value)}
+            placeholder="+52 656 123 4567"
+            autoComplete="tel"
+          />
+        </div>
+      </label>
+      <label className={styles.fieldLabel}>
+        <span>Nombre interno</span>
+        <div className={styles.inputWrap} data-ristak-unstyled>
+          <HashIcon size={17} />
+          <input
+            value={qrStandaloneLabel}
+            onChange={(event) => setQrStandaloneLabel(event.target.value)}
+            placeholder="Recepción, ventas, soporte..."
+          />
+        </div>
+      </label>
+      <Button type="submit" loading={qrCreatingPhone} disabled={!qrStandalonePhone.trim()}>
+        <QrCode size={17} />
+        Conectar mediante QR
+      </Button>
+    </form>
+  )
+
+  const renderApiConnectionOptions = () => (
+    <div className={styles.connectionOptions}>
+      <section className={styles.connectionOption}>
+        <p className={styles.connectionOptionTitle}>Conectar con Meta</p>
+        <Button
+          type="button"
+          variant="secondary"
+          className={styles.metaConnectButtonDisabled}
+          disabled
+        >
+          <Link2 size={17} />
+          Próximamente
+        </Button>
+      </section>
+
+      <div className={styles.connectionDivider} aria-hidden="true">
+        <span>O</span>
+      </div>
+
+      <section className={styles.connectionOption}>
+        <p className={styles.connectionOptionTitle}>Ingresa usando YCloud</p>
+        {renderApiForm()}
+      </section>
+    </div>
+  )
+
+  const renderAddNumberContent = () => {
+    if (!addNumberChoice) {
+      return (
+        <div className={styles.qrConsentBody}>
+          <p>Elige cómo quieres agregar este número de WhatsApp a Ristak.</p>
+          {renderConnectionChooser(setAddNumberChoice)}
+        </div>
+      )
+    }
+
+    if (addNumberChoice === 'api') {
+      return (
+        <div className={styles.qrConsentBody}>
+          {renderConnectionBack(() => setAddNumberChoice(null))}
+          <p>La conexión directa de otro número por Meta estará disponible pronto.</p>
+          <Button type="button" variant="secondary" className={styles.metaConnectButtonDisabled} disabled>
+            <Link2 size={17} />
+            Próximamente
+          </Button>
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.qrConsentBody}>
+        {renderConnectionBack(() => setAddNumberChoice(null))}
+        <p>Agrega el número y después escanea el QR desde WhatsApp en ese mismo celular.</p>
+        {renderQrNumberForm()}
+      </div>
+    )
+  }
+
   const renderConnectStage = () => {
     if (apiLoading) {
       return <div className={`${styles.skeletonBlock} ${styles.skeletonStage}`} />
     }
 
+    if (!connectionChoice) {
+      return (
+        <section className={styles.connectPanel}>
+          <div className={styles.connectCopy}>
+            <p className={styles.eyebrow}>Conexión</p>
+            <h3>Elige cómo conectar WhatsApp</h3>
+            <span>Conecta por WhatsApp API para plantillas oficiales o mediante QR para una sesión de WhatsApp Web.</span>
+          </div>
+          {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
+          {renderConnectionChooser(setConnectionChoice)}
+        </section>
+      )
+    }
+
+    if (connectionChoice === 'qr') {
+      return (
+        <section className={styles.connectPanel}>
+          {renderConnectionBack(() => setConnectionChoice(null))}
+          <div className={styles.connectCopy}>
+            <p className={styles.eyebrow}>Mediante QR</p>
+            <h3>Conecta un número por QR</h3>
+            <span>Ristak validará que el QR escaneado sea de este mismo número antes de activarlo.</span>
+          </div>
+          {renderQrNumberForm()}
+        </section>
+      )
+    }
+
     return (
       <section className={styles.connectPanel}>
+        {renderConnectionBack(() => setConnectionChoice(null))}
         <div className={styles.connectCopy}>
           <p className={styles.eyebrow}>Conexión</p>
           <h3>Conecta WhatsApp Business</h3>
@@ -568,30 +761,7 @@ export const WhatsAppSettings: React.FC = () => {
         {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
         <div className={styles.connectContent}>
           {renderYCloudGuide()}
-          <div className={styles.connectionOptions}>
-            <section className={styles.connectionOption}>
-              <p className={styles.connectionOptionTitle}>Conéctate directo desde Meta</p>
-              <Button
-                type="button"
-                variant="primary"
-                loading={metaConnecting}
-                className={styles.metaConnectButton}
-                onClick={connectMetaDirect}
-              >
-                <Link2 size={17} />
-                Conectar WhatsApp
-              </Button>
-            </section>
-
-            <div className={styles.connectionDivider} aria-hidden="true">
-              <span>O</span>
-            </div>
-
-            <section className={styles.connectionOption}>
-              <p className={styles.connectionOptionTitle}>Ingresa usando YCloud</p>
-              {renderApiForm()}
-            </section>
-          </div>
+          {renderApiConnectionOptions()}
         </div>
       </section>
     )
@@ -614,10 +784,11 @@ export const WhatsAppSettings: React.FC = () => {
         phone.display_phone_number === apiStatus.sender.phone
       const qrPending = ['starting', 'qr_pending', 'restarting', 'reconnecting'].includes(String(qrStatus).toLowerCase())
       const qrConnected = String(qrStatus).toLowerCase() === 'connected'
+      const apiEnabled = apiConnected && Number(phone.api_send_enabled ?? 1) !== 0
       const displayName = phone.verified_name || phoneProfile?.verifiedName || phoneProfile?.businessName || phoneProfile?.name || 'Sin nombre'
       const needsAttention = Boolean(qrError) || ['RED', 'FLAGGED', 'RESTRICTED'].includes(String(phone.quality_rating || '').toUpperCase())
 
-      return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, needsAttention }
+      return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, apiEnabled, needsAttention }
     })
     const query = phoneSearch.trim().toLowerCase()
     const filteredPhones = enrichedPhones.filter((row) => {
@@ -681,18 +852,26 @@ export const WhatsAppSettings: React.FC = () => {
                   Configuración de pago
                 </a>
               )}
-              <Button variant="outline" onClick={refreshApi} loading={apiRefreshing}>
+              <Button variant="outline" onClick={openAddNumberModal}>
+                <Plus size={16} />
+                Agregar número
+              </Button>
+              <Button variant="outline" onClick={refreshWhatsAppStatus} loading={apiRefreshing}>
                 <RefreshCw size={16} />
                 Sincronizar
               </Button>
-              <a className={styles.externalButton} href={YCLOUD_CONSOLE_URL} target="_blank" rel="noopener noreferrer">
-                <ExternalLink size={15} />
-                Abrir API
-              </a>
-              <Button variant="danger" onClick={confirmApiDisconnect} loading={apiDisconnecting}>
-                <Unplug size={16} />
-                Desconectar
-              </Button>
+              {apiConnected && (
+                <>
+                  <a className={styles.externalButton} href={YCLOUD_CONSOLE_URL} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink size={15} />
+                    Abrir API
+                  </a>
+                  <Button variant="danger" onClick={confirmApiDisconnect} loading={apiDisconnecting}>
+                    <Unplug size={16} />
+                    Desconectar
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
@@ -703,6 +882,7 @@ export const WhatsAppSettings: React.FC = () => {
                   <tr>
                     <th>Número</th>
                     <th>Nombre</th>
+                    <th>Categoría</th>
                     <th>API</th>
                     <th>QR opcional</th>
                     <th>Calidad</th>
@@ -712,7 +892,7 @@ export const WhatsAppSettings: React.FC = () => {
                 </thead>
                 <tbody>
                   {filteredPhones.map((row) => {
-                    const { phone, qrPending, qrConnected, qrError, qrStatus, displayName, isSender } = row
+                    const { phone, qrPending, qrConnected, qrError, qrStatus, displayName, isSender, apiEnabled } = row
 
                     return (
                       <React.Fragment key={phone.id}>
@@ -722,7 +902,14 @@ export const WhatsAppSettings: React.FC = () => {
                             <span>{phone.id}</span>
                           </td>
                           <td>{displayName}</td>
-                          <td><Badge variant="success">{isSender ? 'Principal' : 'Oficial'}</Badge></td>
+                          <td>
+                            <div className={styles.categoryCell}>
+                              {apiEnabled && <Badge variant="success">WhatsApp API</Badge>}
+                              {qrConnected && <Badge variant="info">QR</Badge>}
+                              {!apiEnabled && !qrConnected && <Badge variant="neutral">Pendiente</Badge>}
+                            </div>
+                          </td>
+                          <td><Badge variant={apiEnabled ? 'success' : 'neutral'}>{apiEnabled ? (isSender ? 'Principal' : 'Oficial') : 'No conectado'}</Badge></td>
                           <td>
                             <div className={styles.qrCell}>
                               <span className={`${styles.statusPill} ${getQrStatusClass(qrStatus)}`}>{getQrStatusLabel(qrStatus)}</span>
@@ -763,7 +950,7 @@ export const WhatsAppSettings: React.FC = () => {
                         </tr>
                         {qrError ? (
                           <tr className={styles.detailRow}>
-                            <td colSpan={7}>
+                            <td colSpan={8}>
                               <p className={styles.errorText}>{qrError}</p>
                             </td>
                           </tr>
@@ -920,8 +1107,8 @@ export const WhatsAppSettings: React.FC = () => {
       <PageHeader
         eyebrow="Sistema"
         title="WhatsApp"
-        subtitle="Conexión oficial por API para números, alertas y plantillas."
-        actions={apiConnected ? (
+        subtitle="Conexiones por WhatsApp API o mediante QR para números, alertas y plantillas."
+        actions={hasAnyWhatsAppConnection ? (
           <div className={styles.headerActions} role="group" aria-label="Secciones de WhatsApp">
             <button
               type="button"
@@ -931,30 +1118,50 @@ export const WhatsAppSettings: React.FC = () => {
               <SiWhatsapp size={15} />
               Números
             </button>
-            <button
-              type="button"
-              className={`${styles.headerActionButton} ${activeSection === 'templates' ? styles.headerActionActive : ''}`}
-              onClick={() => selectSection('templates')}
-            >
-              <FileText size={15} />
-              Plantillas
-            </button>
-            <button
-              type="button"
-              className={`${styles.headerActionButton} ${activeSection === 'alerts' ? styles.headerActionActive : ''}`}
-              onClick={() => selectSection('alerts')}
-            >
-              <AlertTriangle size={15} />
-              Alertas
-              {connectionAlertGroups.length > 0 && <b>{connectionAlertGroups.length}</b>}
-            </button>
+            {apiConnected && (
+              <>
+                <button
+                  type="button"
+                  className={`${styles.headerActionButton} ${activeSection === 'templates' ? styles.headerActionActive : ''}`}
+                  onClick={() => selectSection('templates')}
+                >
+                  <FileText size={15} />
+                  Plantillas
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.headerActionButton} ${activeSection === 'alerts' ? styles.headerActionActive : ''}`}
+                  onClick={() => selectSection('alerts')}
+                >
+                  <AlertTriangle size={15} />
+                  Alertas
+                  {connectionAlertGroups.length > 0 && <b>{connectionAlertGroups.length}</b>}
+                </button>
+              </>
+            )}
           </div>
         ) : null}
       />
 
       <div className={styles.stage}>
-        {!apiConnected ? renderConnectStage() : activeSection === 'templates' ? renderTemplatesStage() : activeSection === 'alerts' ? renderAlertsStage() : renderNumbersStage()}
+        {!hasAnyWhatsAppConnection
+          ? renderConnectStage()
+          : activeSection === 'templates' && apiConnected
+            ? renderTemplatesStage()
+            : activeSection === 'alerts' && apiConnected
+              ? renderAlertsStage()
+              : renderNumbersStage()}
       </div>
+
+      <Modal
+        isOpen={addNumberModalOpen}
+        onClose={() => setAddNumberModalOpen(false)}
+        title="Agregar número de WhatsApp"
+        type="custom"
+        size="md"
+      >
+        {renderAddNumberContent()}
+      </Modal>
 
       {(() => {
         const qrModalSession = qrConsentPhone ? qrSessionsByPhoneId.get(qrConsentPhone.id) : null

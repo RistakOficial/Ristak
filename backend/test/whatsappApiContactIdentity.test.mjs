@@ -207,6 +207,105 @@ test('webhook saliente respeta contactId existente aunque el teléfono todavía 
   }
 })
 
+test('webhook fallido repetido conserva el globo respaldado por QR', async () => {
+  const id = randomUUID()
+  const phone = `+52995${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000001'
+  const contactId = `rstk_contact_test_${id}`
+  const messageId = `ycloud_qr_fallback_${id}`
+  const eventId = `evt_qr_fallback_repeat_${id}`
+  const messageAt = '2024-05-07T08:09:10.000Z'
+  const fallbackReason = 'Message failed to send because more than 24 hours have passed since the customer last replied to this number.'
+  const rawPayload = JSON.stringify({
+    fallbackFrom: 'api',
+    fallbackTransport: 'qr',
+    fallbackReason,
+    whatsappMessage: { id: `qr_${id}`, status: 'sent' }
+  })
+
+  await cleanup({ contactId, messageId, phone, eventId })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'Cliente QR',
+      'Cliente',
+      'WhatsApp_API',
+      messageAt,
+      messageAt
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+        business_phone, transport, routing_reason, direction, message_type,
+        message_text, status, raw_payload_json, message_timestamp, created_at, updated_at
+      ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, 'qr', ?, 'outbound', 'text', ?, 'sent', ?, ?, ?, ?)
+    `, [
+      messageId,
+      messageId,
+      contactId,
+      phone,
+      businessPhone,
+      phone,
+      businessPhone,
+      fallbackReason,
+      'Hola, seguimos aquí',
+      rawPayload,
+      messageAt,
+      messageAt,
+      messageAt
+    ])
+
+    const payload = {
+      id: eventId,
+      type: 'whatsapp.message.updated',
+      apiVersion: 'v2',
+      createTime: messageAt,
+      whatsappMessage: {
+        id: messageId,
+        from: businessPhone,
+        to: phone,
+        sendTime: messageAt,
+        status: 'failed',
+        type: 'text',
+        text: { body: 'Hola, seguimos aquí' },
+        error: {
+          code: '131047',
+          message: fallbackReason
+        }
+      }
+    }
+
+    await processYCloudWhatsAppWebhook({
+      payload,
+      rawBody: JSON.stringify(payload),
+      signatureHeader: '',
+      endpointId: ''
+    })
+
+    const message = await db.get(`
+      SELECT transport, routing_reason, status, error_code, error_message, raw_payload_json
+      FROM whatsapp_api_messages
+      WHERE id = ?
+    `, [messageId])
+
+    assert.equal(message.transport, 'qr')
+    assert.equal(message.routing_reason, fallbackReason)
+    assert.equal(message.status, 'sent')
+    assert.equal(message.error_code, null)
+    assert.equal(message.error_message, null)
+    assert.equal(message.raw_payload_json, rawPayload)
+  } finally {
+    await cleanup({ contactId, messageId, phone, eventId })
+  }
+})
+
 test('historial smb de YCloud infiere entrantes y salientes por teléfonos conocidos', async () => {
   const id = randomUUID()
   const phone = `+52990${Date.now().toString().slice(-7)}`

@@ -1,6 +1,7 @@
 import {
   connectWhatsAppQrForPhone,
   connectWhatsAppApi,
+  createWhatsAppQrPhoneNumber,
   completeMetaDirectConnection,
   createMetaDirectConnectUrl,
   disconnectMetaDirectConnection,
@@ -391,6 +392,22 @@ export async function connectWhatsAppQrView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo conectar el QR de WhatsApp'
+    })
+  }
+}
+
+export async function createWhatsAppQrPhoneNumberView(req, res) {
+  try {
+    const data = await createWhatsAppQrPhoneNumber({
+      phoneNumber: req.body?.phoneNumber,
+      label: req.body?.label
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error creando número WhatsApp QR: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo crear el número QR de WhatsApp'
     })
   }
 }

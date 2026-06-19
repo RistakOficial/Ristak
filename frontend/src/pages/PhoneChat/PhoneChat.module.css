@@ -4080,6 +4080,19 @@
   color: var(--phone-chat-outbound-meta);
 }
 
+.messageRoutingNote {
+  display: block;
+  align-self: flex-end;
+  max-width: 100%;
+  margin: 5px 0 0;
+  color: var(--phone-chat-outbound-meta);
+  font-size: 11px;
+  font-weight: 540;
+  line-height: 1.35;
+  opacity: 0.82;
+  white-space: normal;
+}
+
 .messageReceipt {
   display: inline-flex;
   align-items: center;
