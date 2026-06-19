@@ -11,6 +11,7 @@ import {
 } from './appointmentsMerge.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
+import { getVisitorIdentityExpression } from './trackingService.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
 const ACTIVE_PAYMENT_STATUSES = new Set(SUCCESS_PAYMENT_STATUSES)
@@ -1254,7 +1255,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const visitorsQuery = `
       SELECT
         ${visitorsGroupExpr} as period,
-        COUNT(DISTINCT visitor_id) as visitors
+        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as visitors
       FROM sessions
       ${visitorsWhere}
       GROUP BY period
@@ -1284,7 +1285,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const visitorsQuery = `
       SELECT
         ${visitorsGroupExpr} as period,
-        COUNT(DISTINCT s.visitor_id) as visitors
+        COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as visitors
       FROM sessions s
       INNER JOIN contacts c ON c.id = s.contact_id
       ${visitorsWhere}

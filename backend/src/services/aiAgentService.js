@@ -18,6 +18,7 @@ import {
 } from '../utils/searchText.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { DateTime } from 'luxon'
+import { getVisitorIdentityExpression } from './trackingService.js'
 import {
   addHighLevelEndpointQueryDefaults,
   compactHighLevelEndpoint,
@@ -13894,7 +13895,7 @@ async function buildHistoricalResearchQueries(runtimeContext) {
           SELECT
             ${sessionMonth} AS month,
             COUNT(*) AS sesiones,
-            COUNT(DISTINCT s.visitor_id) AS visitantes,
+            COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) AS visitantes,
             COUNT(DISTINCT s.contact_id) AS contactos_identificados
           FROM sessions s
           WHERE s.started_at IS NOT NULL
@@ -15523,7 +15524,7 @@ async function getTrafficInRange(range) {
   const row = await db.get(`
     SELECT
       COUNT(*) AS sessions,
-      COUNT(DISTINCT visitor_id) AS visitors,
+      COUNT(DISTINCT ${getVisitorIdentityExpression()}) AS visitors,
       COUNT(DISTINCT contact_id) AS identified_contacts
     FROM sessions
     WHERE started_at >= ? AND started_at <= ?
@@ -17118,7 +17119,7 @@ async function buildDatabaseContext() {
   const sessions = await safeGet(`
     SELECT
       COUNT(*) AS sessions_30d,
-      COUNT(DISTINCT visitor_id) AS visitors_30d,
+      COUNT(DISTINCT ${getVisitorIdentityExpression()}) AS visitors_30d,
       COUNT(DISTINCT contact_id) AS tracked_contacts_30d
     FROM sessions
     WHERE started_at >= ?
@@ -17222,7 +17223,7 @@ async function buildDatabaseContext() {
     SELECT
       COALESCE(NULLIF(channel, ''), NULLIF(source_platform, ''), 'Sin canal') AS channel,
       COUNT(*) AS sessions,
-      COUNT(DISTINCT visitor_id) AS visitors
+      COUNT(DISTINCT ${getVisitorIdentityExpression()}) AS visitors
     FROM sessions
     WHERE started_at >= ?
     GROUP BY channel, source_platform

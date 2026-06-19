@@ -106,3 +106,65 @@ test('sites analytics summary respects selected site ids and date range', async 
     await db.run('DELETE FROM public_sites WHERE id IN (?, ?)', [siteId, formId]).catch(() => undefined)
   }
 })
+
+test('sites analytics summary deduplicates visitors by contact identity', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const siteId = `site_identity_${suffix}`
+  const inRange = '2026-02-12T18:00:00.000Z'
+  const contactId = `contact_identity_${suffix}`
+
+  try {
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [siteId, 'Landing identidad', `landing-identity-${suffix}`, 'landing_page', 'published']
+    )
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        contact_id,
+        event_name,
+        started_at,
+        created_at,
+        site_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [`session_${suffix}_a`, `visitor_${suffix}_old`, contactId, 'native_site_view', inRange, inRange, siteId])
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        contact_id,
+        event_name,
+        started_at,
+        created_at,
+        site_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [`session_${suffix}_b`, `visitor_${suffix}_new`, contactId, 'page_view', inRange, inRange, siteId])
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        event_name,
+        started_at,
+        created_at,
+        site_id
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `, [`session_${suffix}_anonymous`, `visitor_${suffix}_anonymous`, 'native_site_view', inRange, inRange, siteId])
+
+    const summary = await getSitesTrackingSummary({
+      siteIds: [siteId],
+      dateFrom: '2026-02-12',
+      dateTo: '2026-02-12'
+    })
+
+    assert.equal(summary.bySiteId[siteId].views, 3)
+    assert.equal(summary.bySiteId[siteId].visitors, 2)
+    assert.equal(summary.bySiteId[siteId].sessions, 3)
+  } finally {
+    await db.run('DELETE FROM sessions WHERE session_id LIKE ?', [`session_${suffix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id = ?', [siteId]).catch(() => undefined)
+  }
+})

@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger.js'
-import { createSession, getRecentSessions, linkVisitorToContact, getSessionsByDateRange, getSessionMetricsByDateRange } from '../services/trackingService.js'
+import { createSession, getRecentSessions, getVisitorIdentityExpression, linkVisitorToContact, getSessionsByDateRange, getSessionMetricsByDateRange } from '../services/trackingService.js'
 import { recordVideoPlaybackEvent } from '../services/videoTrackingService.js'
 import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
@@ -11,7 +11,7 @@ import { getNoTrackReason } from '../utils/noTracking.js'
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
-const TRACKING_SNIPPET_VERSION = '9' // Incrementar cuando cambies el código del snippet
+const TRACKING_SNIPPET_VERSION = '10' // Incrementar cuando cambies el código del snippet
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
   .map(status => `'${String(status).replace(/'/g, "''")}'`)
   .join(', ')
@@ -238,6 +238,9 @@ export async function servePixel(req, res) {
   var ENDPOINT = '${ENDPOINT}';
   var lastTrackedUrl = window.location.href;
   var pageViewTimer = null;
+  var VISITOR_COOKIE_NAME = 'ristak_vid';
+  var SESSION_COOKIE_NAME = 'ristak_sid';
+  var VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
   function valueMeansNoTrack(value, trackingParam) {
     if (value === null || typeof value === 'undefined') return false;
@@ -305,18 +308,71 @@ export async function servePixel(req, res) {
     }
   }
 
+  function normalizeIdentityValue(value) {
+    var cleaned = String(value || '').trim();
+    return /^[A-Za-z0-9_-]{8,120}$/.test(cleaned) ? cleaned : '';
+  }
+
+  function readCookie(name) {
+    try {
+      var pairs = document.cookie ? document.cookie.split(';') : [];
+      for (var i = 0; i < pairs.length; i++) {
+        var pair = pairs[i].trim();
+        var separator = pair.indexOf('=');
+        var key = separator >= 0 ? pair.slice(0, separator) : pair;
+        if (key === name) {
+          return decodeURIComponent(separator >= 0 ? pair.slice(separator + 1) : '');
+        }
+      }
+    } catch (e) {
+      // Ignore cookie errors
+    }
+    return '';
+  }
+
+  function writeCookie(name, value, maxAgeSeconds) {
+    try {
+      if (!value) return;
+      var attrs = '; path=/; SameSite=Lax';
+      if (maxAgeSeconds) attrs += '; max-age=' + maxAgeSeconds;
+      if (window.location && window.location.protocol === 'https:') attrs += '; Secure';
+      document.cookie = name + '=' + encodeURIComponent(value) + attrs;
+    } catch (e) {
+      // Ignore cookie errors
+    }
+  }
+
+  function getUrlVisitorId() {
+    try {
+      var params = new URLSearchParams(window.location.search || '');
+      return normalizeIdentityValue(params.get('rkvi_id') || params.get('ristak_vid') || params.get('rstk_vid'));
+    } catch (e) {
+      return '';
+    }
+  }
+
   // Obtener o crear visitor_id (persistente entre sesiones)
   function getVisitorId() {
     try {
       var localData = getLocalData();
-      if (!localData.visitor_id) {
-        localData.visitor_id = generateId(); // ID corto tipo HighLevel
-        localData.first_visit = new Date().toISOString();
-        setLocalData(localData);
+      var storedVisitorId = normalizeIdentityValue(localData.visitor_id);
+      var cookieVisitorId = normalizeIdentityValue(readCookie(VISITOR_COOKIE_NAME));
+      var urlVisitorId = getUrlVisitorId();
+      var visitorId = storedVisitorId || cookieVisitorId || urlVisitorId || generateId(); // ID corto tipo HighLevel
+
+      if (localData.visitor_id !== visitorId) {
+        localData.visitor_id = visitorId;
       }
-      return localData.visitor_id;
+      if (!localData.first_visit) {
+        localData.first_visit = new Date().toISOString();
+      }
+      setLocalData(localData);
+      writeCookie(VISITOR_COOKIE_NAME, visitorId, VISITOR_COOKIE_MAX_AGE);
+      return visitorId;
     } catch (e) {
-      return generateId(); // Fallback también usa ID corto
+      var fallbackVisitorId = normalizeIdentityValue(readCookie(VISITOR_COOKIE_NAME)) || getUrlVisitorId() || generateId();
+      writeCookie(VISITOR_COOKIE_NAME, fallbackVisitorId, VISITOR_COOKIE_MAX_AGE);
+      return fallbackVisitorId; // Fallback también usa ID corto
     }
   }
 
@@ -324,15 +380,20 @@ export async function servePixel(req, res) {
   function getSessionId() {
     try {
       var sessionData = getSessionData();
-      if (!sessionData.session_id) {
-        sessionData.session_id = generateUUID();
+      var storedSessionId = normalizeIdentityValue(sessionData.session_id);
+      var cookieSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME));
+      if (!storedSessionId) {
+        sessionData.session_id = cookieSessionId || generateUUID();
         sessionData.session_start = Date.now();
-        sessionData.first_pv = true;
-        setSessionData(sessionData);
+        sessionData.first_pv = !cookieSessionId;
       }
+      setSessionData(sessionData);
+      writeCookie(SESSION_COOKIE_NAME, sessionData.session_id);
       return sessionData.session_id;
     } catch (e) {
-      return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      var fallbackSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME)) || 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      writeCookie(SESSION_COOKIE_NAME, fallbackSessionId);
+      return fallbackSessionId;
     }
   }
 
@@ -709,7 +770,7 @@ export async function servePixel(req, res) {
       var params = currentURL.searchParams;
 
       // Solo agregar si no existe ya
-      if (!params.has('rkvi_id')) {
+      if (!params.has('rkvi_id') || !normalizeIdentityValue(params.get('rkvi_id'))) {
         var visitorId = getVisitorId();
         params.set('rkvi_id', visitorId);
 
@@ -1532,7 +1593,7 @@ export async function getVisitorsByAd(req, res) {
     const query = `
       SELECT
         ad_id,
-        COUNT(DISTINCT visitor_id) as unique_visitors,
+        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as unique_visitors,
         COUNT(*) as total_pageviews
       FROM sessions
       WHERE ad_id IS NOT NULL
@@ -1621,7 +1682,7 @@ export async function getVisitorsByPeriod(req, res) {
       ? `
         SELECT
           ${groupExpression} as period,
-          COUNT(DISTINCT s.visitor_id) as unique_visitors
+          COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as unique_visitors
         FROM sessions s
         INNER JOIN contacts c ON c.id = s.contact_id
         WHERE ${conditions.join(' AND ')}
@@ -1631,7 +1692,7 @@ export async function getVisitorsByPeriod(req, res) {
       : `
         SELECT
           ${groupExpression} as period,
-          COUNT(DISTINCT s.visitor_id) as unique_visitors
+          COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as unique_visitors
         FROM sessions s
         WHERE ${conditions.join(' AND ')}
         GROUP BY period
@@ -1728,43 +1789,56 @@ export async function getVisitorsList(req, res) {
       }
     }
 
-    // Query PostgreSQL: obtener visitantes únicos con sus datos de sesión
+    const visitorIdentityExpression = getVisitorIdentityExpression('s')
+
+    // Obtener visitantes únicos con sus datos de sesión más recientes
     const query = `
-      SELECT DISTINCT ON (s.visitor_id)
-        s.visitor_id,
-        s.session_id,
-        s.contact_id,
-        s.created_at,
-        s.page_url,
-        s.referrer_url,
-        s.utm_source,
-        s.utm_medium,
-        s.utm_campaign,
-        s.utm_term,
-        s.utm_content,
-        s.gclid,
-        s.fbclid,
-        s.device_type,
-        s.browser,
-        s.os,
-        s.language,
-        s.ad_id,
-        s.ad_name,
-        c.full_name as contact_name,
-        c.email as contact_email,
-        c.phone as contact_phone,
-        c.total_paid as contact_ltv,
-        c.purchases_count as contact_purchases,
-        CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
-      FROM sessions s
-      LEFT JOIN contacts c ON s.contact_id = c.id
-      LEFT JOIN (
-        SELECT DISTINCT contact_id
-        FROM appointments
-        WHERE contact_id IS NOT NULL
-      ) a ON a.contact_id = c.id
-      WHERE ${conditions.join(' AND ')}
-      ORDER BY s.visitor_id, s.created_at DESC
+      WITH ranked_visitors AS (
+        SELECT
+          ${visitorIdentityExpression} as visitor_key,
+          s.visitor_id,
+          s.session_id,
+          s.contact_id,
+          s.created_at,
+          s.page_url,
+          s.referrer_url,
+          s.utm_source,
+          s.utm_medium,
+          s.utm_campaign,
+          s.utm_term,
+          s.utm_content,
+          s.gclid,
+          s.fbclid,
+          s.device_type,
+          s.browser,
+          s.os,
+          s.language,
+          s.ad_id,
+          s.ad_name,
+          c.full_name as contact_name,
+          c.email as contact_email,
+          c.phone as contact_phone,
+          c.total_paid as contact_ltv,
+          c.purchases_count as contact_purchases,
+          CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db,
+          ROW_NUMBER() OVER (
+            PARTITION BY ${visitorIdentityExpression}
+            ORDER BY s.created_at DESC
+          ) as visitor_rank
+        FROM sessions s
+        LEFT JOIN contacts c ON s.contact_id = c.id
+        LEFT JOIN (
+          SELECT DISTINCT contact_id
+          FROM appointments
+          WHERE contact_id IS NOT NULL
+        ) a ON a.contact_id = c.id
+        WHERE ${conditions.join(' AND ')}
+      )
+      SELECT *
+      FROM ranked_visitors
+      WHERE visitor_rank = 1
+        AND visitor_key IS NOT NULL
+      ORDER BY created_at DESC
     `
 
     const visitors = await db.all(query, params)

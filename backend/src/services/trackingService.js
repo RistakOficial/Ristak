@@ -37,6 +37,18 @@ function validPaymentPredicate(alias = 'p') {
   `
 }
 
+export function getVisitorIdentityExpression(alias = '') {
+  const prefix = alias ? `${alias}.` : ''
+  return `
+    CASE
+      WHEN ${prefix}contact_id IS NOT NULL AND ${prefix}contact_id != '' THEN 'contact:' || ${prefix}contact_id
+      WHEN ${prefix}visitor_id IS NOT NULL AND ${prefix}visitor_id != '' THEN 'visitor:' || ${prefix}visitor_id
+      WHEN ${prefix}session_id IS NOT NULL AND ${prefix}session_id != '' THEN 'session:' || ${prefix}session_id
+      ELSE NULL
+    END
+  `
+}
+
 /**
  * Decodifica un valor UTM (convierte + a espacios y decodifica URL encoding)
  */
@@ -618,7 +630,9 @@ export async function getSessionMetricsByDateRange(startDate, endDate) {
 
     const query = `
       WITH view_sessions AS (
-        SELECT visitor_id, session_id
+        SELECT
+          ${getVisitorIdentityExpression()} AS visitor_key,
+          session_id
         FROM sessions
         WHERE started_at >= ?
           AND started_at <= ?
@@ -626,15 +640,15 @@ export async function getSessionMetricsByDateRange(startDate, endDate) {
       )
       SELECT
         (SELECT COUNT(*) FROM view_sessions) as page_views,
-        (SELECT COUNT(DISTINCT visitor_id) FROM view_sessions) as unique_visitors,
+        (SELECT COUNT(DISTINCT visitor_key) FROM view_sessions) as unique_visitors,
         (SELECT COUNT(DISTINCT session_id) FROM view_sessions) as unique_sessions,
         (
           SELECT COUNT(*)
           FROM (
-            SELECT visitor_id
+            SELECT visitor_key
             FROM view_sessions
-            WHERE visitor_id IS NOT NULL AND visitor_id != ''
-            GROUP BY visitor_id
+            WHERE visitor_key IS NOT NULL AND visitor_key != ''
+            GROUP BY visitor_key
             HAVING COUNT(DISTINCT session_id) > 1
           ) returning_visitors
         ) as returning_users

@@ -32,6 +32,7 @@ import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
 import { getMetaWebhookVerifyToken } from '../services/metaSocialMessagingService.js';
 import { clearMetaIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
+import { getVisitorIdentityExpression } from '../services/trackingService.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -1918,7 +1919,7 @@ export const getVisitorsOverTime = async (req, res) => {
     // Query para obtener visitantes únicos por fecha desde sessions
     const visitorsQuery = `SELECT
         ${startedDay} as day,
-        COUNT(DISTINCT visitor_id) as visitors
+        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as visitors
        FROM sessions
        WHERE ad_id IS NOT NULL
          AND ad_id != ''
@@ -2008,7 +2009,7 @@ export const getFunnelMetrics = async (req, res) => {
     // Query para visitantes únicos CON ad_id (columna correcta en sessions)
     const visitorsQuery = `SELECT
         ${startedDay} as day,
-        COUNT(DISTINCT visitor_id) as visitors
+        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as visitors
        FROM sessions
        WHERE ad_id IS NOT NULL
          AND ad_id != ''

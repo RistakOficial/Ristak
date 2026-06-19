@@ -337,6 +337,19 @@ test('preview render suppresses custom tracking code without changing live track
   assert.doesNotMatch(liveHtml, /video\.mp4\?no_track=1/)
 })
 
+test('live site tracking persists visitor identity with first-party cookies', async () => {
+  const liveHtml = await renderPublicSiteHtml(baseSite({}), {
+    pageId: 'page-1',
+    trackingEnabled: true,
+    preview: false
+  })
+
+  assert.match(liveHtml, /ristak_vid/)
+  assert.match(liveHtml, /ristak_sid/)
+  assert.match(liveHtml, /SameSite=Lax/)
+  assert.match(liveHtml, /rkvi_id/)
+})
+
 test('video player treats Ristak media file routes as playable video sources', async () => {
   const html = await renderPublicSiteHtml(baseSite({
     mediaUrl: '/media/assets/media_video_123/file',

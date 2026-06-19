@@ -34,7 +34,7 @@ import {
   findMediaAssetsByPublicUrls
 } from './mediaStorageService.js'
 import { getMetaConfig } from './metaAdsService.js'
-import { createSession, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
+import { createSession, getVisitorIdentityExpression, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
 
 export const SITE_TYPES = new Set(['standard_form', 'interactive_form', 'landing_page'])
 export const SITE_STATUSES = new Set(['draft', 'published', 'archived'])
@@ -6568,11 +6568,9 @@ export async function listSites() {
           AND ts.event_name IN ('native_site_view', 'session_start', 'page_view')
       ) AS tracking_views,
       (
-        SELECT COUNT(DISTINCT ts.visitor_id)
+        SELECT COUNT(DISTINCT ${getVisitorIdentityExpression('ts')})
         FROM sessions ts
         WHERE (ts.site_id = s.id OR ts.form_site_id = s.id)
-          AND ts.visitor_id IS NOT NULL
-          AND ts.visitor_id != ''
       ) AS tracking_visitors,
       (
         SELECT COUNT(DISTINCT ts.session_id)
@@ -6605,7 +6603,7 @@ async function getSiteTrackingStats(siteId) {
   const row = await db.get(`
     SELECT
       COUNT(CASE WHEN event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
-      COUNT(DISTINCT visitor_id) AS tracking_visitors,
+      COUNT(DISTINCT ${getVisitorIdentityExpression()}) AS tracking_visitors,
       COUNT(DISTINCT session_id) AS tracking_sessions,
       COUNT(DISTINCT CASE WHEN event_name = 'native_site_conversion' THEN submission_id END) AS tracking_conversions
     FROM sessions
@@ -6703,6 +6701,7 @@ export async function getSitesTrackingSummary(input = {}) {
     WITH scoped_sessions AS (
       SELECT
         site_id as resolved_site_id,
+        contact_id,
         visitor_id,
         session_id,
         event_name,
@@ -6713,6 +6712,7 @@ export async function getSitesTrackingSummary(input = {}) {
       UNION ALL
       SELECT
         form_site_id as resolved_site_id,
+        contact_id,
         visitor_id,
         session_id,
         event_name,
@@ -6725,7 +6725,7 @@ export async function getSitesTrackingSummary(input = {}) {
     SELECT
       resolved_site_id as site_id,
       COUNT(CASE WHEN event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
-      COUNT(DISTINCT CASE WHEN visitor_id IS NOT NULL AND visitor_id != '' THEN visitor_id ELSE NULL END) AS tracking_visitors,
+      COUNT(DISTINCT ${getVisitorIdentityExpression()}) AS tracking_visitors,
       COUNT(DISTINCT CASE WHEN session_id IS NOT NULL AND session_id != '' THEN session_id ELSE NULL END) AS tracking_sessions,
       COUNT(DISTINCT CASE WHEN event_name = 'native_site_conversion' AND submission_id IS NOT NULL AND submission_id != '' THEN submission_id ELSE NULL END) AS tracking_conversions
     FROM scoped_sessions
@@ -11706,6 +11706,9 @@ function buildNativeSiteTrackingScript(context) {
     (() => {
       const RSTK_CONTEXT = ${scriptJson(context)};
       const ENDPOINT = '/collect';
+      const VISITOR_COOKIE_NAME = 'ristak_vid';
+      const SESSION_COOKIE_NAME = 'ristak_sid';
+      const VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
       const valueMeansNoTrack = (value, trackingParam = false) => {
         if (value === null || typeof value === 'undefined') return false;
         const normalized = String(value).trim().toLowerCase();
@@ -11743,6 +11746,45 @@ function buildNativeSiteTrackingScript(context) {
         } catch (_) {}
       };
 
+      const normalizeIdentityValue = (value) => {
+        const cleaned = String(value || '').trim();
+        return /^[A-Za-z0-9_-]{8,120}$/.test(cleaned) ? cleaned : '';
+      };
+
+      const readCookie = (name) => {
+        try {
+          const pairs = document.cookie ? document.cookie.split(';') : [];
+          for (const pair of pairs) {
+            const trimmed = pair.trim();
+            const separator = trimmed.indexOf('=');
+            const key = separator >= 0 ? trimmed.slice(0, separator) : trimmed;
+            if (key === name) {
+              return decodeURIComponent(separator >= 0 ? trimmed.slice(separator + 1) : '');
+            }
+          }
+        } catch (_) {}
+        return '';
+      };
+
+      const writeCookie = (name, value, maxAgeSeconds) => {
+        try {
+          if (!value) return;
+          let attrs = '; path=/; SameSite=Lax';
+          if (maxAgeSeconds) attrs += '; max-age=' + maxAgeSeconds;
+          if (window.location && window.location.protocol === 'https:') attrs += '; Secure';
+          document.cookie = name + '=' + encodeURIComponent(value) + attrs;
+        } catch (_) {}
+      };
+
+      const getUrlVisitorId = () => {
+        try {
+          const params = new URLSearchParams(window.location.search || '');
+          return normalizeIdentityValue(params.get('rkvi_id') || params.get('ristak_vid') || params.get('rstk_vid'));
+        } catch (_) {
+          return '';
+        }
+      };
+
       const generateId = () => {
         const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
         let id = '';
@@ -11763,21 +11805,32 @@ function buildNativeSiteTrackingScript(context) {
 
       const getVisitorId = () => {
         const data = readJson(localStorage, 'ristak');
-        if (!data.visitor_id) {
-          data.visitor_id = generateId();
-          data.first_visit = new Date().toISOString();
-          writeJson(localStorage, 'ristak', data);
+        const storedVisitorId = normalizeIdentityValue(data.visitor_id);
+        const cookieVisitorId = normalizeIdentityValue(readCookie(VISITOR_COOKIE_NAME));
+        const urlVisitorId = getUrlVisitorId();
+        const visitorId = storedVisitorId || cookieVisitorId || urlVisitorId || generateId();
+        if (data.visitor_id !== visitorId) {
+          data.visitor_id = visitorId;
         }
-        return data.visitor_id;
+        if (!data.first_visit) {
+          data.first_visit = new Date().toISOString();
+        }
+        writeJson(localStorage, 'ristak', data);
+        writeCookie(VISITOR_COOKIE_NAME, visitorId, VISITOR_COOKIE_MAX_AGE);
+        return visitorId;
       };
 
       const getSessionId = () => {
         const data = readJson(sessionStorage, 'ristak');
-        if (!data.session_id) {
-          data.session_id = generateSessionId();
+        const storedSessionId = normalizeIdentityValue(data.session_id);
+        const cookieSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME));
+        if (!storedSessionId) {
+          data.session_id = cookieSessionId || generateSessionId();
           data.session_start = Date.now();
-          writeJson(sessionStorage, 'ristak', data);
+          data.first_pv = !cookieSessionId;
         }
+        writeJson(sessionStorage, 'ristak', data);
+        writeCookie(SESSION_COOKIE_NAME, data.session_id);
         return data.session_id;
       };
 
@@ -11951,6 +12004,9 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
       const NO_TRACK_VALUES = ['', '1', 'true', 'yes', 'y', 'on', 'preview', 'editor', 'test', 'no_track', 'notrack', 'disabled', 'disable', 'off'];
       const milestones = [10, 25, 50, 75, 90, 100];
       let playerJsLoader = null;
+      const VISITOR_COOKIE_NAME = 'ristak_vid';
+      const SESSION_COOKIE_NAME = 'ristak_sid';
+      const VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
       const clean = value => String(value || '').trim();
       const num = value => {
@@ -11997,6 +12053,44 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           return {};
         }
       };
+      const writeJson = (storage, key, value) => {
+        try {
+          storage.setItem(key, JSON.stringify(value));
+        } catch (_) {}
+      };
+      const normalizeIdentityValue = value => {
+        const cleaned = String(value || '').trim();
+        return /^[A-Za-z0-9_-]{8,120}$/.test(cleaned) ? cleaned : '';
+      };
+      const readCookie = name => {
+        try {
+          const pairs = document.cookie ? document.cookie.split(';') : [];
+          for (const pair of pairs) {
+            const trimmed = pair.trim();
+            const separator = trimmed.indexOf('=');
+            const key = separator >= 0 ? trimmed.slice(0, separator) : trimmed;
+            if (key === name) return decodeURIComponent(separator >= 0 ? trimmed.slice(separator + 1) : '');
+          }
+        } catch (_) {}
+        return '';
+      };
+      const writeCookie = (name, value, maxAgeSeconds) => {
+        try {
+          if (!value) return;
+          let attrs = '; path=/; SameSite=Lax';
+          if (maxAgeSeconds) attrs += '; max-age=' + maxAgeSeconds;
+          if (window.location && window.location.protocol === 'https:') attrs += '; Secure';
+          document.cookie = name + '=' + encodeURIComponent(value) + attrs;
+        } catch (_) {}
+      };
+      const getUrlVisitorId = () => {
+        try {
+          const params = new URLSearchParams(window.location.search || '');
+          return normalizeIdentityValue(params.get('rkvi_id') || params.get('ristak_vid') || params.get('rstk_vid'));
+        } catch (_) {
+          return '';
+        }
+      };
       const generateShortId = () => {
         const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
         let id = '';
@@ -12006,18 +12100,30 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
       const getFallbackIdentity = () => {
         const local = readJson(localStorage, 'ristak');
         const session = readJson(sessionStorage, 'ristak');
-        if (!local.visitor_id) {
-          local.visitor_id = generateShortId();
+        const storedVisitorId = normalizeIdentityValue(local.visitor_id);
+        const cookieVisitorId = normalizeIdentityValue(readCookie(VISITOR_COOKIE_NAME));
+        const urlVisitorId = getUrlVisitorId();
+        const visitorId = storedVisitorId || cookieVisitorId || urlVisitorId || generateShortId();
+        if (local.visitor_id !== visitorId) {
+          local.visitor_id = visitorId;
+        }
+        if (!local.first_visit) {
           local.first_visit = new Date().toISOString();
-          try { localStorage.setItem('ristak', JSON.stringify(local)); } catch (_) {}
         }
-        if (!session.session_id) {
-          session.session_id = makeId();
+        writeJson(localStorage, 'ristak', local);
+        writeCookie(VISITOR_COOKIE_NAME, visitorId, VISITOR_COOKIE_MAX_AGE);
+
+        const storedSessionId = normalizeIdentityValue(session.session_id);
+        const cookieSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME));
+        if (!storedSessionId) {
+          session.session_id = cookieSessionId || makeId();
           session.session_start = Date.now();
-          try { sessionStorage.setItem('ristak', JSON.stringify(session)); } catch (_) {}
+          session.first_pv = !cookieSessionId;
         }
+        writeJson(sessionStorage, 'ristak', session);
+        writeCookie(SESSION_COOKIE_NAME, session.session_id);
         return {
-          visitorId: local.visitor_id,
+          visitorId,
           sessionId: session.session_id,
           contactId: local.contact_id || null
         };

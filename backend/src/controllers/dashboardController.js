@@ -11,6 +11,7 @@ import { getContactsWithAppointmentsHybrid, getContactsWithShowedAppointmentsHyb
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES, successfulPaymentStatusCondition } from '../utils/paymentMode.js';
 import { getStorageStatus as getDatabaseStorageStatus } from '../services/notificationsService.js';
+import { getVisitorIdentityExpression } from '../services/trackingService.js';
 
 const isPostgres = Boolean(process.env.DATABASE_URL);
 
@@ -596,7 +597,7 @@ export const getVisitorsData = async (req, res) => {
     const query = `
       SELECT
         ${dateExpression} as periodo,
-        COUNT(DISTINCT visitor_id) as total
+        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as total
       FROM sessions
       WHERE started_at >= $1 AND started_at <= $2
       GROUP BY periodo
@@ -1312,7 +1313,7 @@ export const getFunnelData = async (req, res) => {
     if (!useContactAttribution) {
       // Vista "Todos": Todos los visitantes en el rango de fechas
       const visitorsQuery = `
-        SELECT COUNT(DISTINCT visitor_id) as count
+        SELECT COUNT(DISTINCT ${getVisitorIdentityExpression()}) as count
         FROM sessions
         WHERE started_at >= $1 AND started_at <= $2
       `
@@ -1324,7 +1325,7 @@ export const getFunnelData = async (req, res) => {
       // Vista "Último toque": Solo visitantes que SE CONVIRTIERON en contacto
       // Agrupa por fecha de creación del contacto
       const visitorsQuery = `
-        SELECT COUNT(DISTINCT s.visitor_id) as count
+        SELECT COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as count
         FROM sessions s
         INNER JOIN contacts c ON c.id = s.contact_id
         WHERE c.created_at >= $1 AND c.created_at <= $2

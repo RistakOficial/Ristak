@@ -19,6 +19,28 @@ function cleanString(value, maxLength = 500) {
   return cleaned ? cleaned.slice(0, maxLength) : null
 }
 
+function visitorIdentityExpression(alias = '') {
+  const prefix = alias ? `${alias}.` : ''
+  return `
+    CASE
+      WHEN ${prefix}contact_id IS NOT NULL AND ${prefix}contact_id != '' THEN 'contact:' || ${prefix}contact_id
+      WHEN ${prefix}visitor_id IS NOT NULL AND ${prefix}visitor_id != '' THEN 'visitor:' || ${prefix}visitor_id
+      WHEN ${prefix}session_id IS NOT NULL AND ${prefix}session_id != '' THEN 'session:' || ${prefix}session_id
+      ELSE NULL
+    END
+  `
+}
+
+function anonymousVisitorIdentityExpression(alias = '') {
+  const prefix = alias ? `${alias}.` : ''
+  return `
+    CASE
+      WHEN ${prefix}contact_id IS NULL OR ${prefix}contact_id = '' THEN ${visitorIdentityExpression(alias)}
+      ELSE NULL
+    END
+  `
+}
+
 function numberOrNull(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number : null
@@ -765,7 +787,7 @@ function playbackAggregateSelect() {
     COUNT(*) as playback_sessions,
     COALESCE(SUM(CASE WHEN play_count > 0 OR watched_seconds > 0 OR max_progress_percent > 0 OR ended = 1 THEN 1 ELSE 0 END), 0) as played_sessions,
     COUNT(DISTINCT CASE WHEN contact_id IS NOT NULL AND contact_id != '' THEN contact_id ELSE NULL END) as identified_contacts,
-    COUNT(DISTINCT CASE WHEN contact_id IS NULL OR contact_id = '' THEN visitor_id ELSE NULL END) as anonymous_visitors,
+    COUNT(DISTINCT ${anonymousVisitorIdentityExpression()}) as anonymous_visitors,
     COALESCE(SUM(play_count), 0) as plays,
     COALESCE(SUM(watched_seconds), 0) as watched_seconds,
     COALESCE(AVG(max_progress_percent), 0) as avg_progress_percent,
@@ -854,8 +876,8 @@ export async function getVideoPlaybackViewers(input = {}) {
     SELECT
       COUNT(*) as playback_sessions,
       COALESCE(SUM(CASE WHEN play_count > 0 OR watched_seconds > 0 OR max_progress_percent > 0 OR ended = 1 THEN 1 ELSE 0 END), 0) as played_sessions,
-      COUNT(DISTINCT contact_id) as identified_contacts,
-      COUNT(DISTINCT CASE WHEN contact_id IS NULL OR contact_id = '' THEN visitor_id ELSE NULL END) as anonymous_visitors,
+      COUNT(DISTINCT CASE WHEN contact_id IS NOT NULL AND contact_id != '' THEN contact_id ELSE NULL END) as identified_contacts,
+      COUNT(DISTINCT ${anonymousVisitorIdentityExpression()}) as anonymous_visitors,
       COALESCE(SUM(play_count), 0) as plays,
       COALESCE(SUM(watched_seconds), 0) as watched_seconds,
       COALESCE(AVG(max_progress_percent), 0) as avg_progress_percent,
