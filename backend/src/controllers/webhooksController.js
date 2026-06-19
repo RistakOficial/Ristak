@@ -32,6 +32,9 @@ import {
   buildInvoiceReferenceCandidates,
   normalizeInvoiceReference
 } from '../utils/invoiceIdentity.js';
+import {
+  completeConversationalAgentSalePaymentFromInvoice
+} from '../services/conversationalAgentService.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -946,6 +949,18 @@ export const handlePaymentWebhook = async (req, res) => {
         amount,
         currency,
         paymentMode
+      });
+
+      await completeConversationalAgentSalePaymentFromInvoice({
+        contactId,
+        invoiceId: effectiveInvoiceId || invoiceId || '',
+        paymentId,
+        amount,
+        currency,
+        status,
+        reference
+      }).catch(error => {
+        logger.warn(`No se pudo completar venta del agente conversacional para invoice ${effectiveInvoiceId || invoiceId || paymentId}: ${error.message}`);
       });
     }
 

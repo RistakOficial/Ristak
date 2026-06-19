@@ -186,6 +186,8 @@ const SUCCESS_ACTION_TEXTS = {
 - Usa list_products para verificar producto y valor real antes de hablar de precio.
 - Confirma concepto, monto, moneda y canal de envío.
 - Sólo después de confirmación explícita ejecuta create_payment_link.
+- create_payment_link sólo manda el link; NO digas que la venta quedó pagada ni cumplida por mandar el enlace.
+- La venta se confirma cuando Ristak recibe el pago real del invoice o cuando el negocio valida un comprobante correcto.
 - Si no puedes crear el link, manda a humano con send_to_human y resume el motivo.`,
   send_goal_url: `Cuando la persona esté lista para avanzar por enlace:
 - Confirma que sí quiere continuar por enlace.
@@ -1515,7 +1517,7 @@ function getSalesPaymentMode(config = {}) {
 }
 
 function actionSupportsDeposit(config = {}) {
-  const actionSupportsDeposit = ['book_appointment', 'ready_for_human', 'ready_to_buy'].includes(config.successAction)
+  const actionSupportsDeposit = ['book_appointment', 'ready_for_human', 'ready_to_buy', 'send_goal_url', 'send_trigger_link'].includes(config.successAction)
   if (!actionSupportsDeposit) return false
   if (config.objective === 'ventas') return getSalesPaymentMode(config) === 'deposit'
   return (
@@ -1550,7 +1552,11 @@ function buildDepositRequirementSection(config = {}, accountLocale = {}) {
     ? 'agendar la cita'
     : config.successAction === 'ready_to_buy'
       ? 'crear o mandar el link de pago'
-      : 'pasar la conversación al equipo como objetivo cumplido'
+      : config.successAction === 'send_goal_url'
+        ? 'mandar el enlace configurado'
+        : config.successAction === 'send_trigger_link'
+          ? 'mandar el enlace de disparo'
+          : 'pasar la conversación al equipo como objetivo cumplido'
   const paymentLabel = config.objective === 'ventas' ? 'pago solicitado' : 'anticipo'
   const sectionTitle = config.objective === 'ventas'
     ? 'Pago solicitado antes de concretar la venta'
@@ -1637,7 +1643,8 @@ function buildGoalWorkflowSection(config = {}, accountLocale = {}) {
 - Este agente puede enviar link de pago por IA.
 - ${productLine}
 - Verifica el valor real con list_products antes de confirmar precio.
-- Pide confirmación explícita del cobro y canal; luego ejecuta create_payment_link.`)
+- Pide confirmación explícita del cobro y canal; luego ejecuta create_payment_link.
+- En venta completa, mandar el link NO concreta la venta. La venta sólo queda concretada cuando Ristak confirme el pago real del invoice o el equipo valide un comprobante correcto.`)
     } else {
       sections.push(`## Flujo de cobro configurado
 - Este agente NO manda links de pago por su cuenta.

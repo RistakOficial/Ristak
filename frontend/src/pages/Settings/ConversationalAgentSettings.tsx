@@ -77,13 +77,13 @@ const objectiveOptions: Array<{ value: ConversationalObjective; label: string; d
 ]
 
 const successActionLabels: Record<ConversationalSuccessAction, { label: string; description: string }> = {
-  book_appointment: { label: 'Que la agende la IA', description: 'La IA concreta el agendamiento sólo cuando tiene día, hora y calendario reales.' },
-  ready_for_human: { label: 'Que lo cierre un humano', description: 'El bot detecta intención real, saca el chat del bot y avisa al equipo.' },
-  ready_to_buy: { label: 'Que la IA mande link de pago', description: 'La IA concreta el avance creando el link cuando la persona ya aceptó pagar.' },
+  book_appointment: { label: 'Que la cita quede agendada', description: 'El agendamiento se confirma sólo cuando ya hay día, hora y calendario reales.' },
+  ready_for_human: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' },
+  ready_to_buy: { label: 'Que se confirme el pago', description: 'La venta se confirma cuando el pago real queda validado.' },
   send_goal_url: { label: 'Mandar enlace confirmado', description: 'Manda un enlace y espera confirmación. Ejemplo: link de agenda o de compra.' },
   send_trigger_link: { label: 'Mandar enlace y detenerse', description: 'Manda un enlace y se detiene cuando lo tocan. Ejemplo: link de WhatsApp, formulario o página.' },
-  internal_signal: { label: 'Que lo cierre un humano', description: 'El bot detecta intención real, saca el chat del bot y avisa al equipo.' },
-  none: { label: 'Que lo cierre un humano', description: 'El bot detecta intención real, saca el chat del bot y avisa al equipo.' }
+  internal_signal: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' },
+  none: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' }
 }
 
 const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
@@ -299,7 +299,14 @@ function getWorkflowSalesPaymentMode(workflow: {
   return workflow.deposit?.enabled ? 'deposit' : 'full_payment'
 }
 
-function getSuccessActionInfo(action: ConversationalSuccessAction, objective: ConversationalObjective) {
+function getSuccessActionInfo(
+  action: ConversationalSuccessAction,
+  objective: ConversationalObjective,
+  workflow?: AgentGoalWorkflowConfig
+) {
+  const salesPaymentMode = workflow ? getWorkflowSalesPaymentMode(workflow) : 'full_payment'
+  const requiresAppointmentDeposit = objective === 'citas' && Boolean(workflow?.deposit?.enabled)
+
   if (action === 'send_trigger_link') {
     return {
       label: 'Mandar enlace y detenerse',
@@ -309,14 +316,18 @@ function getSuccessActionInfo(action: ConversationalSuccessAction, objective: Co
   if (action === 'ready_for_human') {
     if (objective === 'citas') {
       return {
-        label: 'Que un humano confirme la cita',
-        description: 'La IA detecta que ya quiere agendar y pasa el chat al equipo para concretar.'
+        label: requiresAppointmentDeposit ? 'Que un humano valide el anticipo y confirme la cita' : 'Que un humano confirme la cita',
+        description: requiresAppointmentDeposit
+          ? 'La IA pide comprobante del anticipo y pasa el chat cuando el equipo debe validar y confirmar.'
+          : 'La IA detecta que ya quiere agendar y pasa el chat al equipo para concretar.'
       }
     }
     if (objective === 'ventas') {
       return {
-        label: 'Que un humano cierre la venta',
-        description: 'La IA detecta intención de compra y pasa el chat al equipo para cerrar.'
+        label: salesPaymentMode === 'deposit' ? 'Que un humano valide el anticipo y cierre la venta' : 'Que un humano confirme la venta',
+        description: salesPaymentMode === 'deposit'
+          ? 'La IA pide comprobante del anticipo y pasa el chat para que el equipo valide y cierre.'
+          : 'La IA detecta intención de compra y pasa el chat al equipo para confirmar el pago.'
       }
     }
     if (objective === 'datos') {
@@ -332,17 +343,37 @@ function getSuccessActionInfo(action: ConversationalSuccessAction, objective: Co
       }
     }
   }
+  if (action === 'book_appointment') {
+    return {
+      label: requiresAppointmentDeposit ? 'Que se valide el anticipo y la cita quede agendada' : 'Que la cita quede agendada',
+      description: requiresAppointmentDeposit
+        ? 'La IA sólo agenda después de recibir comprobante del anticipo y confirmar un horario real.'
+        : 'La IA confirma horario real y agenda la cita en el calendario.'
+    }
+  }
+  if (action === 'ready_to_buy' && objective === 'ventas') {
+    return {
+      label: salesPaymentMode === 'deposit' ? 'Que se valide el comprobante del anticipo' : 'Que se confirme el pago completo',
+      description: salesPaymentMode === 'deposit'
+        ? 'La venta avanza cuando el contacto manda comprobante y el monto coincide con el anticipo configurado.'
+        : 'La venta se concreta cuando el pago real queda confirmado o el comprobante coincide con el valor del producto.'
+    }
+  }
   if (action !== 'send_goal_url') return successActionLabels[action] || successActionLabels.ready_for_human
   if (objective === 'citas') {
     return {
-      label: 'Que agende por enlace',
-      description: 'La meta se confirma cuando el enlace devuelve la cita real.'
+      label: requiresAppointmentDeposit ? 'Que se valide el anticipo y el enlace confirme la cita' : 'Que el enlace confirme la cita',
+      description: requiresAppointmentDeposit
+        ? 'La IA manda el enlace sólo después del comprobante; la meta se confirma cuando el enlace devuelve la cita real.'
+        : 'La meta se confirma cuando el enlace devuelve la cita real.'
     }
   }
   if (objective === 'ventas') {
     return {
-      label: 'Que compre por enlace',
-      description: 'La meta se confirma cuando el enlace devuelve la compra o pago real.'
+      label: salesPaymentMode === 'deposit' ? 'Que se valide el anticipo y el enlace confirme la compra' : 'Que el enlace confirme el pago',
+      description: salesPaymentMode === 'deposit'
+        ? 'La IA manda el enlace sólo después del comprobante; la meta se confirma cuando llega la compra o pago real.'
+        : 'La meta se confirma cuando el enlace devuelve la compra o pago real.'
     }
   }
   return successActionLabels.send_goal_url
@@ -356,9 +387,8 @@ function getObjectiveCompletionLabel(objective: ConversationalObjective) {
   return 'el objetivo'
 }
 
-function actionCanRequireDeposit(objective: ConversationalObjective, action: ConversationalSuccessAction) {
-  return (objective === 'citas' || objective === 'ventas') &&
-    (action === 'book_appointment' || action === 'ready_for_human' || action === 'ready_to_buy')
+function objectiveCanConfigurePaymentRequirement(objective: ConversationalObjective) {
+  return objective === 'citas' || objective === 'ventas'
 }
 
 const systemReplyDeliveryDefaults: Pick<
@@ -1179,7 +1209,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
   const allowedActions = actionsByObjective[agent.objective] || actionsByObjective.custom
   const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
-  const selectedActionInfo = getSuccessActionInfo(agent.successAction, agent.objective)
   const selectedProviderId = getKnownConversationalAIProvider(agent.aiProvider)
   const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
   const selectedProviderStatus = getProviderStatus(aiProviders, selectedProviderId)
@@ -1219,7 +1248,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const goalWorkflow = getAgentGoalWorkflow(agent)
   const deposit = goalWorkflow.deposit
   const completion = goalWorkflow.completion
-  const depositConfigAvailable = actionCanRequireDeposit(agent.objective, agent.successAction)
+  const selectedActionInfo = getSuccessActionInfo(agent.successAction, agent.objective, goalWorkflow)
+  const paymentRequirementConfigAvailable = objectiveCanConfigurePaymentRequirement(agent.objective)
   const completionMode = completion.mode === 'assign_user' ? 'assign_user' : 'notify_only'
   const selectedCompletionUser = teamUsers.find((user) => user.id === completion.userId) || null
   const teamUserOptions = [
@@ -1243,9 +1273,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const salesPaymentMode = getWorkflowSalesPaymentMode(goalWorkflow)
   const depositEnabledForForm = agent.objective === 'ventas' ? salesPaymentMode === 'deposit' : deposit.enabled
   const depositHelper = agent.objective === 'ventas'
-    ? (agent.successAction === 'ready_to_buy'
-        ? 'La IA sólo avanzará cuando reciba comprobante y el pago solicitado coincida con este valor. Se usa la moneda configurada en la cuenta.'
-        : 'La IA validará el comprobante y después pasará el chat al humano. Se usa la moneda configurada en la cuenta.')
+    ? 'El agente sólo avanzará cuando reciba comprobante y el pago solicitado coincida con este valor. Se usa la moneda configurada en la cuenta.'
     : 'El agente sólo avanzará cuando reciba comprobante y el anticipo coincida con este valor. Se usa la moneda configurada en la cuenta.'
   const selectedTriggerLink = triggerLinks.find((link) => link.id === goalWorkflow.triggerLink.triggerLinkId) || null
   const triggerLinkOptions = [
@@ -1435,11 +1463,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     if (successAction === 'send_trigger_link') {
       nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
         triggerLink: getTriggerLinkWorkflow(selectedTriggerLink || triggerLinks[0] || null)
-      })
-    }
-    if (!actionCanRequireDeposit(agent.objective, successAction)) {
-      nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
-        deposit: { ...goalWorkflow.deposit, enabled: false }
       })
     }
     if (nextGoalWorkflow) patch.goalWorkflow = nextGoalWorkflow
@@ -2222,17 +2245,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 options={objectiveOptions.map((option) => ({ value: option.value, label: option.label }))}
                 selectLabel="Objetivo del agente"
                 onChange={(objective) => handleObjectiveChange(objective as ConversationalObjective)}
-              />
-
-              <QuestionSelectRow
-                question={`¿Qué acción confirma que se concretó ${getObjectiveCompletionLabel(agent.objective)}?`}
-                helper={selectedActionInfo.description}
-                value={agent.successAction}
-                options={allowedActions.map((action) => ({ value: action, label: getSuccessActionInfo(action, agent.objective).label }))}
-                selectLabel="Acción que confirma el objetivo"
-                onChange={(action) => handleSuccessActionChange(action as ConversationalSuccessAction)}
               >
-                {depositConfigAvailable && (
+                {paymentRequirementConfigAvailable && (
                   <div className={styles.depositConfigBlock}>
                     <div className={styles.inlineFields}>
                       {agent.objective === 'ventas' ? (
@@ -2335,6 +2349,15 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   </div>
                 )}
               </QuestionSelectRow>
+
+              <QuestionSelectRow
+                question={`¿Qué acción confirma que se concretó ${getObjectiveCompletionLabel(agent.objective)}?`}
+                helper={selectedActionInfo.description}
+                value={agent.successAction}
+                options={allowedActions.map((action) => ({ value: action, label: getSuccessActionInfo(action, agent.objective, goalWorkflow).label }))}
+                selectLabel="Acción que confirma el objetivo"
+                onChange={(action) => handleSuccessActionChange(action as ConversationalSuccessAction)}
+              />
 
               <QuestionSelectRow
                 question="Al momento de cumplir el objetivo, ¿qué quieres que suceda?"

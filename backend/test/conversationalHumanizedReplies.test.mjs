@@ -6,6 +6,7 @@ import { CHEAPEST_OPENAI_MODEL } from '../src/config/openAIModels.js'
 import { APPOINTMENT_CONFIRMATION_MODEL } from '../src/agents/appointmentConfirmationAgent.js'
 import {
   buildConversationalAgentMetrics,
+  completeConversationalAgentSalePaymentFromInvoice,
   completeConversationGoalLinkFromWebhook,
   createConversationalAgent,
   createConversationGoalLink,
@@ -21,6 +22,7 @@ import {
   normalizeAgentGoalWorkflow,
   normalizeAgentReplyDelivery,
   normalizeConversationalSuccessAction,
+  recordConversationalAgentEvent,
   shouldMigrateLegacyConversationalAgentConfig,
   updateConversationalAgent
 } from '../src/services/conversationalAgentService.js'
@@ -383,6 +385,56 @@ test('modo solicitar anticipo en venta bloquea hasta comprobante y usa moneda de
   assert.equal(ctx.actions[0]?.type, 'mark_ready_to_advance')
 })
 
+test('anticipo configurado desde la meta también bloquea enlace de venta hasta comprobante', async () => {
+  const ctx = {
+    contactId: 'test_sales_deposit_goal_url_contact',
+    dryRun: true,
+    actions: [],
+    accountLocale: { currency: 'USD' },
+    config: {
+      objective: 'ventas',
+      successAction: 'send_goal_url',
+      goalWorkflow: {
+        sales: {
+          paymentMode: 'deposit',
+          url: 'https://checkout.test/pedido',
+          trackingParam: 'pedido_ref'
+        },
+        deposit: {
+          enabled: true,
+          mode: 'fixed',
+          amount: 250,
+          currency: ''
+        }
+      }
+    }
+  }
+  const sendGoalUrlTool = createConversationalTools(ctx).find((item) => item.name === 'send_goal_url')
+  assert.ok(sendGoalUrlTool)
+
+  const blocked = await sendGoalUrlTool.invoke(null, JSON.stringify({
+    intencionDetectada: 'Quiere comprar',
+    resumen: 'Aceptó pagar anticipo antes del checkout',
+    confirm: true
+  }))
+
+  assert.equal(blocked.ok, false)
+  assert.match(blocked.error, /Falta validar el pago solicitado \(250 USD\)/)
+  assert.equal(ctx.actions.length, 0)
+
+  const allowed = await sendGoalUrlTool.invoke(null, JSON.stringify({
+    intencionDetectada: 'Quiere comprar',
+    resumen: 'Mandó comprobante válido',
+    confirm: true,
+    comprobanteValidado: true
+  }))
+
+  assert.equal(allowed.ok, true)
+  assert.equal(allowed.simulated, true)
+  assert.match(allowed.sentUrl, /goal_simulado/)
+  assert.equal(ctx.actions[0]?.type, 'send_goal_url')
+})
+
 test('acción final del agente asigna el contacto al usuario configurado', async () => {
   const contactId = 'test_completion_assign_contact'
 
@@ -627,6 +679,90 @@ test('confirmacion automatica de pedido valida producto antes de cerrar venta', 
     assert.match(state.signal_summary, /purchase_123/)
   } finally {
     await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('pago exitoso de link creado por agente completa la venta conversacional', async () => {
+  const contactId = 'test_agent_payment_invoice_contact'
+  let agent = null
+
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, custom_fields, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215550000044', 'agent-payment@test.local', 'Agent Payment Test', JSON.stringify({}), 'test']
+    )
+
+    agent = await createConversationalAgent({
+      name: 'Agente venta completa',
+      objective: 'ventas',
+      successAction: 'ready_to_buy',
+      goalWorkflow: {
+        sales: {
+          owner: 'ai',
+          paymentMode: 'full_payment'
+        },
+        completion: {
+          mode: 'assign_user',
+          userId: 'user_completion_1',
+          userName: 'Ana Ventas'
+        }
+      }
+    })
+
+    await db.run(
+      'INSERT OR REPLACE INTO conversational_agent_state (contact_id, status, agent_id, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+      [contactId, 'active', agent.id]
+    )
+
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: agent.id,
+        invoiceId: 'invoice_agent_123',
+        amount: 1200,
+        currency: 'USD',
+        paymentMode: 'full_payment'
+      }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      invoiceId: 'invoice_agent_123',
+      amount: 1200,
+      currency: 'USD',
+      status: 'paid',
+      reference: 'Invoice #123'
+    })
+
+    assert.equal(result.matched, true)
+    assert.equal(result.signal, 'purchase_completed')
+    assert.equal(result.agentId, agent.id)
+
+    const state = await getConversationState(contactId)
+    assert.equal(state.status, 'completed')
+    assert.equal(state.signal, 'purchase_completed')
+    assert.match(state.signalSummary, /invoice_agent_123/)
+
+    const event = await db.get(
+      "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'payment_link_goal_completed' ORDER BY created_at DESC LIMIT 1",
+      [contactId]
+    )
+    assert.ok(event?.detail_json)
+    assert.match(event.detail_json, /invoice_agent_123/)
+
+    const row = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+    const customFields = JSON.parse(row.custom_fields || '{}')
+    assert.equal(customFields.assignedUser, 'user_completion_1')
+  } finally {
+    if (agent?.id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)

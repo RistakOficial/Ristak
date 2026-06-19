@@ -1230,6 +1230,97 @@ export async function completeConversationGoalLinkFromWebhook(payload = {}) {
   })
 }
 
+export async function completeConversationalAgentSalePaymentFromInvoice({
+  contactId = '',
+  invoiceId = '',
+  paymentId = '',
+  amount = null,
+  currency = '',
+  status = '',
+  reference = ''
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const invoiceCandidates = [...new Set([
+    String(invoiceId || '').trim(),
+    String(paymentId || '').trim()
+  ].filter(Boolean))]
+
+  if (!cleanContactId || !invoiceCandidates.length) {
+    return { matched: false, reason: 'missing_contact_or_invoice' }
+  }
+
+  const rows = await db.all(
+    `SELECT contact_id, detail_json
+     FROM conversational_agent_events
+     WHERE contact_id = ? AND event_type = 'payment_link_created'
+     ORDER BY created_at DESC
+     LIMIT 80`,
+    [cleanContactId]
+  )
+
+  let matchedDetail = null
+  for (const row of rows) {
+    const detail = parseJsonField(row.detail_json, {})
+    const storedInvoiceId = String(detail.invoiceId || detail.invoice_id || '').trim()
+    if (storedInvoiceId && invoiceCandidates.includes(storedInvoiceId)) {
+      matchedDetail = detail
+      break
+    }
+  }
+
+  if (!matchedDetail) return { matched: false, reason: 'invoice_not_created_by_conversational_agent' }
+
+  const state = await getConversationState(cleanContactId)
+  const agentId = matchedDetail.agentId || state?.agentId || null
+  const agent = agentId ? await getConversationalAgent(agentId).catch(() => null) : null
+  const cleanCurrency = String(currency || matchedDetail.currency || '').trim().toUpperCase()
+  const paidAmount = Number(amount ?? matchedDetail.amount)
+  const cleanInvoiceId = invoiceCandidates[0]
+  const summary = Number.isFinite(paidAmount) && paidAmount > 0
+    ? `Invoice ${cleanInvoiceId} · ${paidAmount} ${cleanCurrency || ''}`.trim()
+    : `Invoice ${cleanInvoiceId}`
+  const reason = 'Pago confirmado del link enviado por el agente'
+
+  await setConversationSignal(cleanContactId, 'purchase_completed', {
+    reason,
+    summary,
+    status: 'completed'
+  })
+
+  if (agent) {
+    await applyAgentCompletionAction(agent, cleanContactId)
+    await applyAgentSuccessExtras(agent, cleanContactId)
+  }
+
+  await notifyConversationalCompletion({
+    contactId: cleanContactId,
+    reason,
+    summary,
+    signal: 'purchase_completed'
+  })
+
+  await recordConversationalAgentEvent({
+    contactId: cleanContactId,
+    eventType: 'payment_link_goal_completed',
+    detail: {
+      agentId: agent?.id || agentId || null,
+      invoiceId: cleanInvoiceId,
+      paymentId: paymentId || null,
+      amount: Number.isFinite(paidAmount) ? paidAmount : null,
+      currency: cleanCurrency || null,
+      status: status || null,
+      reference: reference || null
+    }
+  })
+
+  return {
+    matched: true,
+    signal: 'purchase_completed',
+    agentId: agent?.id || agentId || null,
+    invoiceId: cleanInvoiceId
+  }
+}
+
 function clampDelayValue(value, unit, fallback) {
   const max = unit === 'minutes' ? 60 : MAX_RESPONSE_DELAY_SECONDS
   const numeric = Number(value)

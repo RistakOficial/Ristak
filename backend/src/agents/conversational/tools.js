@@ -61,7 +61,7 @@ function getSalesPaymentMode(config = {}) {
 
 function getDepositRequirement(config = {}) {
   const deposit = config.goalWorkflow?.deposit || {}
-  const actionSupportsDeposit = ['book_appointment', 'ready_for_human', 'ready_to_buy'].includes(config.successAction)
+  const actionSupportsDeposit = ['book_appointment', 'ready_for_human', 'ready_to_buy', 'send_goal_url', 'send_trigger_link'].includes(config.successAction)
   if (!actionSupportsDeposit) return null
   if (config.objective === 'ventas') {
     return getSalesPaymentMode(config) === 'deposit' ? { ...deposit, enabled: true } : null
@@ -582,23 +582,19 @@ export function createConversationalTools(ctx) {
           channels: buildPaymentChannels(channel),
           source: 'conversational_agent'
         })
-        await setConversationSignal(ctx.contactId, 'ready_to_buy', {
-          reason: 'Link de pago enviado por el agente',
-          summary: `${concept} · ${result.amount} ${result.currency}`,
-          status: 'completed'
-        })
-        await applyAgentCompletionAction(config, ctx.contactId)
-        await notifyHumanPriority(ctx, {
-          reason: 'Link de pago enviado por el agente',
-          summary: `${concept} · ${result.amount} ${result.currency}`,
-          signal: 'ready_to_buy'
-        })
         await recordConversationalAgentEvent({
           contactId: ctx.contactId,
           eventType: 'payment_link_created',
-          detail: { invoiceId: result.invoiceId, amount: result.amount, currency: result.currency, channel }
+          detail: {
+            agentId: config.id || ctx.agentId || null,
+            invoiceId: result.invoiceId,
+            amount: result.amount,
+            currency: result.currency,
+            channel,
+            paymentMode: getSalesPaymentMode(config),
+            status: result.status
+          }
         })
-        await applyAgentSuccessExtras(config, ctx.contactId)
         return {
           ok: true,
           invoiceId: result.invoiceId,
@@ -606,7 +602,8 @@ export function createConversationalTools(ctx) {
           sendMethod: result.sendMethod,
           amount: result.amount,
           currency: result.currency,
-          status: result.status
+          status: result.status,
+          note: 'Link enviado. La venta sigue pendiente hasta que Ristak confirme el pago real del invoice.'
         }
       } catch (error) {
         await recordConversationalAgentEvent({
@@ -625,12 +622,16 @@ export function createConversationalTools(ctx) {
     parameters: z.object({
       intencionDetectada: z.string().describe('Qué quiere lograr la persona, por ejemplo agendar valoración o completar compra'),
       resumen: z.string().describe('Resumen breve del contexto útil para auditoría interna'),
-      confirm: z.boolean().describe('true sólo cuando la persona ya aceptó avanzar por enlace')
+      confirm: z.boolean().describe('true sólo cuando la persona ya aceptó avanzar por enlace'),
+      comprobanteValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió pago previo y el contacto ya mandó comprobante válido'),
+      anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
     }),
-    execute: async ({ intencionDetectada, resumen, confirm }) => {
+    execute: async ({ intencionDetectada, resumen, confirm, comprobanteValidado, anticipoValidado }) => {
       if (!confirm) {
         return { ok: false, error: 'Falta confirmación explícita. Primero confirma que la persona quiere avanzar por enlace.' }
       }
+      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
+      if (depositError) return depositError
 
       const goalConfig = getConfiguredGoalUrl(config)
       const targetUrl = goalConfig.url || ''
@@ -683,12 +684,16 @@ export function createConversationalTools(ctx) {
     parameters: z.object({
       intencionDetectada: z.string().describe('Qué quiere lograr la persona antes de recibir el enlace'),
       resumen: z.string().describe('Resumen breve del contexto útil para el humano'),
-      confirm: z.boolean().describe('true sólo cuando la persona ya aceptó avanzar con ese enlace')
+      confirm: z.boolean().describe('true sólo cuando la persona ya aceptó avanzar con ese enlace'),
+      comprobanteValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió pago previo y el contacto ya mandó comprobante válido'),
+      anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
     }),
-    execute: async ({ intencionDetectada, resumen, confirm }) => {
+    execute: async ({ intencionDetectada, resumen, confirm, comprobanteValidado, anticipoValidado }) => {
       if (!confirm) {
         return { ok: false, error: 'Falta confirmación explícita. Primero confirma que la persona quiere avanzar con ese enlace.' }
       }
+      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
+      if (depositError) return depositError
 
       const configuredLink = getConfiguredTriggerLink(config)
       const triggerLinkId = configuredLink.triggerLinkId || ''
