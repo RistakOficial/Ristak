@@ -759,11 +759,35 @@
   line-height: 1.35;
 }
 
-.contactChatSubjectInput {
+.contactEmailComposer {
+  display: grid;
+  gap: 0.625rem;
+  padding: 0.75rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.contactEmailHeaderRow {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr);
+  gap: 0.625rem;
+  align-items: end;
+}
+
+.contactEmailSubjectField {
+  display: grid;
+  min-width: 0;
+  gap: 0.375rem;
+  color: var(--text-mute);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.contactEmailSubjectInput {
   box-sizing: border-box;
-  grid-column: 2 / -1;
   width: 100%;
-  min-height: 2.25rem;
+  min-height: 2.5rem;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
@@ -776,14 +800,52 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
-.contactChatSubjectInput:focus {
+.contactEmailSubjectInput:focus {
   border-color: var(--accent);
   box-shadow: var(--ristak-focus-ring);
 }
 
-.contactChatSubjectInput:disabled {
+.contactEmailSubjectInput:disabled {
   opacity: 0.72;
   cursor: default;
+}
+
+.contactEmailEditor {
+  min-width: 0;
+}
+
+.contactEmailEditorBody {
+  min-height: clamp(11rem, 24vh, 18rem);
+  max-height: min(34vh, 22rem);
+}
+
+.contactEmailFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.contactEmailSignatureToggle {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0.5rem;
+  color: var(--text-mute);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.contactEmailSignatureToggle span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.contactEmailSendButton[data-btn] {
+  flex: 0 0 auto;
+  min-height: 2.5rem;
 }
 
 .contactChatChannelSelect {
@@ -832,6 +894,17 @@
   min-height: 2.5rem;
   padding: 0;
   border-radius: 50%;
+}
+
+@media (max-width: 640px) {
+  .contactEmailFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .contactEmailSendButton[data-btn] {
+    width: 100%;
+  }
 }
 
 @media (min-width: 1920px) {

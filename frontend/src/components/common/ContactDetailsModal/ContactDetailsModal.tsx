@@ -1,7 +1,23 @@
 import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { CheckCheck, CircleAlert, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
 import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
-import { Modal, Icon, Badge, Button, CustomSelect, ContactPhoneSelector, InlineEditableText, TagPicker, type BadgeVariant } from '@/components/common'
+import {
+  Modal,
+  Icon,
+  Badge,
+  Button,
+  ContactPhoneSelector,
+  CustomSelect,
+  EmailRichTextEditor,
+  InlineEditableText,
+  Switch,
+  TagPicker,
+  emailHtmlToPlainText,
+  plainTextToEmailHtml,
+  sanitizeEmailRichHtmlForEditor,
+  type BadgeVariant,
+  type EmailRichTextVariable
+} from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import automationsService, {
   type AutomationSummary,
@@ -223,6 +239,13 @@ const CONTACT_CHAT_CHANNEL_LABELS: Record<ContactChatComposerChannel, string> = 
   instagram: 'Instagram',
   none: 'Sin canal'
 }
+
+const CONTACT_EMAIL_VARIABLES: EmailRichTextVariable[] = [
+  { value: 'contact.name', label: 'Nombre del contacto' },
+  { value: 'contact.email', label: 'Correo del contacto' },
+  { value: 'contact.phone', label: 'Telefono del contacto' },
+  { value: 'business.name', label: 'Nombre del negocio' }
+]
 
 const getRecordValue = (record: Record<string, unknown>, key: string) => record[key]
 
@@ -651,6 +674,8 @@ export function ContactDetailsModal({
   const [chatError, setChatError] = useState('')
   const [chatDraft, setChatDraft] = useState('')
   const [chatSubject, setChatSubject] = useState('')
+  const [chatEmailHtml, setChatEmailHtml] = useState('')
+  const [chatEmailIncludeSignature, setChatEmailIncludeSignature] = useState(true)
   const [chatChannelValue, setChatChannelValue] = useState('whatsapp')
   const [chatSending, setChatSending] = useState(false)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
@@ -704,6 +729,8 @@ export function ContactDetailsModal({
       setChatError('')
       setChatDraft('')
       setChatSubject('')
+      setChatEmailHtml('')
+      setChatEmailIncludeSignature(true)
       setChatChannelValue('whatsapp')
       setChatSending(false)
       setWhatsappStatus(null)
@@ -751,6 +778,8 @@ export function ContactDetailsModal({
     setChatError('')
     setChatDraft('')
     setChatSubject('')
+    setChatEmailHtml('')
+    setChatEmailIncludeSignature(true)
     setChatChannelValue('whatsapp')
     setChatSending(false)
     setCustomFieldDrafts({})
@@ -1207,6 +1236,10 @@ export function ContactDetailsModal({
     [chatMessages, selectedContact]
   )
   const selectedChatChannel = getContactChatChannelFromValue(chatChannelValue)
+  const chatEmailPlainText = useMemo(
+    () => selectedChatChannel === 'email' ? emailHtmlToPlainText(chatEmailHtml) : '',
+    [chatEmailHtml, selectedChatChannel]
+  )
   const hasDetectedMessenger = detectedContactChannels.has('messenger')
   const hasDetectedInstagram = detectedContactChannels.has('instagram')
   const channelStatusLoading = whatsappStatusLoading || emailStatusLoading || highLevelStatusLoading
@@ -1305,7 +1338,7 @@ export function ContactDetailsModal({
     ? Boolean(hasDetectedInstagram && highLevelConnected)
     : false
   const chatHasContent = selectedChatChannel === 'email'
-    ? Boolean(chatSubject.trim() && chatDraft.trim())
+    ? Boolean(chatSubject.trim() && chatEmailPlainText.trim())
     : Boolean(chatDraft.trim())
   const chatComposerHint = !selectedContact
     ? ''
@@ -1351,17 +1384,34 @@ export function ContactDetailsModal({
     if (preferredOption) setChatChannelValue(preferredOption.value)
   }, [chatChannelOptions, chatChannelValue, isOpen, selectedContact])
 
+  useEffect(() => {
+    if (selectedChatChannel !== 'email' || chatEmailHtml.trim() || !chatDraft.trim()) return
+    setChatEmailHtml(plainTextToEmailHtml(chatDraft))
+  }, [chatDraft, chatEmailHtml, selectedChatChannel])
+
   const handleContactChatChannelChange = useCallback((value: string) => {
-    setChatChannelValue(value)
-    if (getContactChatChannelFromValue(value) !== 'email') {
+    const currentChannel = getContactChatChannelFromValue(chatChannelValue)
+    const nextChannel = getContactChatChannelFromValue(value)
+
+    if (nextChannel === 'email' && currentChannel !== 'email' && !chatEmailHtml.trim() && chatDraft.trim()) {
+      setChatEmailHtml(plainTextToEmailHtml(chatDraft))
+    }
+
+    if (currentChannel === 'email' && nextChannel !== 'email') {
+      const emailText = emailHtmlToPlainText(chatEmailHtml)
+      if (emailText && !chatDraft.trim()) setChatDraft(emailText)
       setChatSubject('')
     }
-  }, [])
+
+    setChatChannelValue(value)
+  }, [chatChannelValue, chatDraft, chatEmailHtml])
 
   const sendContactChatMessage = async () => {
     if (!selectedContact || !canSendChatMessage) return
 
-    const text = chatDraft.trim()
+    const isEmailChannel = selectedChatChannel === 'email'
+    const cleanEmailHtml = isEmailChannel ? sanitizeEmailRichHtmlForEditor(chatEmailHtml) : ''
+    const text = isEmailChannel ? emailHtmlToPlainText(cleanEmailHtml) : chatDraft.trim()
     const subject = chatSubject.trim()
     const optimisticId = `contact-modal-chat-${Date.now()}`
     const sentAt = new Date().toISOString()
@@ -1380,16 +1430,21 @@ export function ContactDetailsModal({
 
     setChatSending(true)
     setChatDraft('')
-    if (selectedChatChannel === 'email') setChatSubject('')
+    if (isEmailChannel) {
+      setChatSubject('')
+      setChatEmailHtml('')
+    }
     setChatMessages((current) => [...current, optimisticMessage])
 
     try {
-      if (selectedChatChannel === 'email') {
+      if (isEmailChannel) {
         const result = await emailService.send({
           contactId: selectedContact.id,
           to: selectedContact.email || '',
           subject,
           text,
+          html: cleanEmailHtml,
+          includeSignature: chatEmailIncludeSignature,
           externalId: optimisticId
         })
 
@@ -1455,8 +1510,12 @@ export function ContactDetailsModal({
         ? { ...item, status: 'error', errorReason: message }
         : item
       ))
-      setChatDraft(text)
-      if (selectedChatChannel === 'email') setChatSubject(subject)
+      if (isEmailChannel) {
+        setChatSubject(subject)
+        setChatEmailHtml(cleanEmailHtml || plainTextToEmailHtml(text))
+      } else {
+        setChatDraft(text)
+      }
     } finally {
       setChatSending(false)
     }
@@ -1590,7 +1649,7 @@ export function ContactDetailsModal({
         </div>
 
         <form
-          className={styles.contactChatComposer}
+          className={selectedChatChannel === 'email' ? styles.contactEmailComposer : styles.contactChatComposer}
           data-enter-submit-ignore
           onSubmit={(event) => {
             event.preventDefault()
@@ -1599,51 +1658,110 @@ export function ContactDetailsModal({
         >
           {chatComposerHint ? <span className={styles.contactChatHint}>{chatComposerHint}</span> : null}
           {selectedChatChannel === 'email' ? (
-            <input
-              data-ristak-unstyled
-              className={styles.contactChatSubjectInput}
-              value={chatSubject}
-              onChange={(event) => setChatSubject(event.target.value)}
-              placeholder="Asunto"
-              disabled={chatSending}
-            />
-          ) : null}
-          <div className={styles.contactChatChannelSelect}>
-            <CustomSelect
-              value={chatChannelValue}
-              options={chatChannelOptions}
-              onValueChange={handleContactChatChannelChange}
-              portal
-              iconOnly
-              dropdownMinWidth={240}
-              aria-label="Canal de envío"
-            />
-          </div>
-          <textarea
-            data-ristak-unstyled
-            value={chatDraft}
-            onChange={(event) => setChatDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault()
-                if (canSendChatMessage) void sendContactChatMessage()
-              }
-            }}
-            placeholder={selectedChatChannel === 'email' ? 'Escribe el correo...' : 'Escribe una respuesta...'}
-            rows={selectedChatChannel === 'email' ? 3 : 1}
-            disabled={chatSending}
-          />
-          <Button
-            type="submit"
-            variant="primary"
-            size="sm"
-            className={styles.contactChatSendButton}
-            loading={chatSending}
-            disabled={!canSendChatMessage}
-            aria-label="Enviar mensaje"
-          >
-            <Send size={16} />
-          </Button>
+            <>
+              <div className={styles.contactEmailHeaderRow}>
+                <div className={styles.contactChatChannelSelect}>
+                  <CustomSelect
+                    value={chatChannelValue}
+                    options={chatChannelOptions}
+                    onValueChange={handleContactChatChannelChange}
+                    portal
+                    iconOnly
+                    dropdownMinWidth={240}
+                    aria-label="Canal de envio"
+                  />
+                </div>
+                <label className={styles.contactEmailSubjectField}>
+                  <span>Asunto</span>
+                  <input
+                    data-ristak-unstyled
+                    className={styles.contactEmailSubjectInput}
+                    value={chatSubject}
+                    onChange={(event) => setChatSubject(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.preventDefault()
+                    }}
+                    placeholder="Asunto del correo"
+                    disabled={chatSending}
+                  />
+                </label>
+              </div>
+
+              <EmailRichTextEditor
+                value={chatEmailHtml}
+                onChange={setChatEmailHtml}
+                className={styles.contactEmailEditor}
+                editorClassName={styles.contactEmailEditorBody}
+                density="regular"
+                variables={CONTACT_EMAIL_VARIABLES}
+                placeholder="Escribe el correo..."
+                codePlaceholder="<table><tr><td>Contenido del correo...</td></tr></table>"
+              />
+
+              <div className={styles.contactEmailFooter}>
+                <label className={styles.contactEmailSignatureToggle}>
+                  <Switch
+                    checked={chatEmailIncludeSignature}
+                    onChange={setChatEmailIncludeSignature}
+                    disabled={chatSending}
+                    aria-label="Agregar firma guardada al enviar"
+                  />
+                  <span>Agregar la firma guardada al enviar</span>
+                </label>
+
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  className={styles.contactEmailSendButton}
+                  loading={chatSending}
+                  disabled={!canSendChatMessage}
+                >
+                  <Send size={16} />
+                  Enviar
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className={styles.contactChatChannelSelect}>
+                <CustomSelect
+                  value={chatChannelValue}
+                  options={chatChannelOptions}
+                  onValueChange={handleContactChatChannelChange}
+                  portal
+                  iconOnly
+                  dropdownMinWidth={240}
+                  aria-label="Canal de envio"
+                />
+              </div>
+              <textarea
+                data-ristak-unstyled
+                value={chatDraft}
+                onChange={(event) => setChatDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault()
+                    if (canSendChatMessage) void sendContactChatMessage()
+                  }
+                }}
+                placeholder="Escribe una respuesta..."
+                rows={1}
+                disabled={chatSending}
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                size="sm"
+                className={styles.contactChatSendButton}
+                loading={chatSending}
+                disabled={!canSendChatMessage}
+                aria-label="Enviar mensaje"
+              >
+                <Send size={16} />
+              </Button>
+            </>
+          )}
         </form>
       </section>
     )
