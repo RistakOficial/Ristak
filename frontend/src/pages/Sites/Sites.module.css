@@ -13623,6 +13623,59 @@
   line-height: 1.35;
 }
 
+.librarySettingsModalContent {
+  max-height: min(70dvh, 720px);
+  overflow-y: auto;
+}
+
+.librarySettingsModalPanel {
+  min-width: 0;
+  display: grid;
+  gap: 0;
+}
+
+.librarySettingsModalPanel .editorSettingsSection:first-of-type {
+  border-top: 0;
+}
+
+.librarySettingsModalIntro {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.librarySettingsModalIntro span {
+  color: var(--text-mute);
+  font-family: var(--label-font);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.librarySettingsModalIntro strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.librarySettingsLoading {
+  min-height: 180px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .metaConversionToolbar {
   height: var(--editor-control-h, 44px);
   flex: 0 0 auto;

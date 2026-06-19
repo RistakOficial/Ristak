@@ -98,6 +98,7 @@ import {
   Button,
   DateRangePicker,
   Loading,
+  Modal,
   NumberInput,
   CustomSelect,
   TabList,
@@ -4946,6 +4947,12 @@ export const Sites: React.FC = () => {
   const [saveStatusNow, setSaveStatusNow] = useState(() => Date.now())
   const [seoModalOpen, setSeoModalOpen] = useState(false)
   const [headerModalOpen, setHeaderModalOpen] = useState(false)
+  const [librarySettingsModalOpen, setLibrarySettingsModalOpen] = useState(false)
+  const [librarySettingsSite, setLibrarySettingsSite] = useState<PublicSite | null>(null)
+  const [librarySettingsLoading, setLibrarySettingsLoading] = useState(false)
+  const [librarySettingsSaving, setLibrarySettingsSaving] = useState(false)
+  const [librarySettingsSeoOpen, setLibrarySettingsSeoOpen] = useState(false)
+  const [librarySettingsHeaderOpen, setLibrarySettingsHeaderOpen] = useState(false)
   const [pendingImportSiteType, setPendingImportSiteType] = useState<SiteType>('landing_page')
   const [importReview, setImportReview] = useState<ImportReviewState | null>(null)
   const [selectedImportData, setSelectedImportData] = useState<ImportedSiteImport | null>(null)
@@ -4956,6 +4963,7 @@ export const Sites: React.FC = () => {
   const [loadingImportData, setLoadingImportData] = useState(false)
   const [savingImportMapping, setSavingImportMapping] = useState(false)
   const selectedSiteRef = useRef<PublicSite | null>(null)
+  const librarySettingsSiteRef = useRef<PublicSite | null>(null)
   const pendingAIGenerationSiteRef = useRef<PublicSite | null>(null)
   const completedAIGenerationRedirectRef = useRef<CompletedAIGenerationRedirect>(null)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -5026,6 +5034,10 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     selectedSiteRef.current = selectedSite
   }, [selectedSite])
+
+  useEffect(() => {
+    librarySettingsSiteRef.current = librarySettingsSite
+  }, [librarySettingsSite])
 
   useEffect(() => {
     setImportedCodeDrafts({})
@@ -5171,6 +5183,12 @@ export const Sites: React.FC = () => {
     [selectedSite]
   )
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
+  const librarySettingsPages = useMemo(
+    () => hasEditablePages(librarySettingsSite) ? normalizeFunnelPages(librarySettingsSite) : [],
+    [librarySettingsSite]
+  )
+  const librarySettingsActivePage = librarySettingsPages[0] || null
+  const librarySettingsSeoIssues = librarySettingsSite ? getSeoValidationState(librarySettingsSite).totalIssues : 0
   const canvasBlocks = useMemo(
     () => hasEditablePages(selectedSite) && activePage
       ? blocks.filter(block => !isPopupBlock(block) && (isGlobalHeaderBlock(block) || getBlockPageId(block, pages) === activePage.id))
@@ -6272,6 +6290,81 @@ export const Sites: React.FC = () => {
     setSelectedSite(normalizedSite)
     setSelectedBlockId(current => normalizedSite.blocks?.some(block => block.id === current) || isEditorSurfaceSelection(current) ? current : '')
     setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+  }
+
+  const syncLibrarySettingsSite = (site: PublicSite) => {
+    const normalizedSite = normalizeSiteForEditor(site)
+    librarySettingsSiteRef.current = normalizedSite
+    setLibrarySettingsSite(normalizedSite)
+    setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+    if (selectedSiteRef.current?.id === normalizedSite.id) {
+      selectedSiteRef.current = normalizedSite
+      setSelectedSite(normalizedSite)
+    }
+    return normalizedSite
+  }
+
+  const patchLibrarySettingsSite = (patch: Partial<PublicSite>) => {
+    const current = librarySettingsSiteRef.current
+    if (!current) return
+    if (!editorPatchHasChanges(current as unknown as Record<string, unknown>, patch as Record<string, unknown>)) return
+    const next = normalizeSiteForEditor({ ...current, ...patch })
+    librarySettingsSiteRef.current = next
+    setLibrarySettingsSite(next)
+  }
+
+  const patchLibrarySettingsTheme = (patch: Partial<SiteTheme>) => {
+    const current = librarySettingsSiteRef.current
+    if (!current) return
+    const currentTheme = (current.theme || {}) as Record<string, unknown>
+    if (!editorPatchHasChanges(currentTheme, patch as Record<string, unknown>)) return
+    const next = normalizeSiteForEditor({ ...current, theme: { ...(current.theme || {}), ...patch } })
+    librarySettingsSiteRef.current = next
+    setLibrarySettingsSite(next)
+  }
+
+  const saveLibrarySettingsSite = async () => {
+    const siteToSave = librarySettingsSiteRef.current
+    if (!siteToSave) return
+
+    setLibrarySettingsSaving(true)
+    try {
+      const site = await sitesService.updateSite(siteToSave.id, {
+        name: siteToSave.name,
+        slug: normalizeRouteInput(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
+        siteType: siteToSave.siteType,
+        status: siteToSave.status,
+        title: getPublicTitleForSave(siteToSave),
+        description: siteToSave.description,
+        theme: siteToSave.theme,
+        metaCapiEnabled: siteToSave.metaCapiEnabled,
+        metaEventName: siteToSave.metaEventName
+      })
+      syncLibrarySettingsSite(site)
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron guardar los ajustes')
+    } finally {
+      setLibrarySettingsSaving(false)
+    }
+  }
+
+  const openLibrarySettings = async (site: PublicSite) => {
+    const initialSite = syncLibrarySettingsSite(site)
+    setLibrarySettingsModalOpen(true)
+    setLibrarySettingsSeoOpen(false)
+    setLibrarySettingsHeaderOpen(false)
+    setLibrarySettingsLoading(true)
+
+    try {
+      const hydratedSite = normalizeSiteForEditor(await sitesService.getSite(site.id))
+      if (librarySettingsSiteRef.current?.id === initialSite.id) {
+        syncLibrarySettingsSite(hydratedSite)
+      }
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar todos los ajustes')
+    } finally {
+      setLibrarySettingsLoading(false)
+    }
   }
 
   const pushEditorHistory = (entry: EditorHistoryEntry) => {
@@ -8846,6 +8939,70 @@ export const Sites: React.FC = () => {
           />
         )}
 
+        {librarySettingsSite && (
+          <Modal
+            isOpen={librarySettingsModalOpen}
+            onClose={() => setLibrarySettingsModalOpen(false)}
+            title="Más ajustes"
+            size="lg"
+            contentClassName={styles.librarySettingsModalContent}
+          >
+            <div className={styles.librarySettingsModalPanel} aria-busy={librarySettingsLoading || librarySettingsSaving}>
+              <div className={styles.librarySettingsModalIntro}>
+                <span>{getSiteTypeLabel(librarySettingsSite)}</span>
+                <strong>{librarySettingsSite.name}</strong>
+              </div>
+              {librarySettingsLoading ? (
+                <div className={styles.librarySettingsLoading}>
+                  <RefreshCw size={16} className={styles.previewSpin} />
+                  <span>Cargando ajustes...</span>
+                </div>
+              ) : (
+                <SiteSettingsPanelContent
+                  site={librarySettingsSite}
+                  pages={librarySettingsPages}
+                  activePage={librarySettingsActivePage}
+                  domainConfig={domainConfig}
+                  seoIssues={librarySettingsSeoIssues}
+                  metaPixelConnected={metaPixelConnected}
+                  disabled={librarySettingsLoading}
+                  canEditHeader={hasEditablePages(librarySettingsSite)}
+                  routeValue={getRouteEditorValue(librarySettingsSite)}
+                  routePlaceholder={librarySettingsSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
+                  onRouteChange={(value) => patchLibrarySettingsSite({ slug: normalizeRouteEditorInput(value, domainConfig) })}
+                  onPatchSite={patchLibrarySettingsSite}
+                  onPatchTheme={patchLibrarySettingsTheme}
+                  onSaveSite={saveLibrarySettingsSite}
+                  onOpenSeo={() => setLibrarySettingsSeoOpen(true)}
+                  onOpenHeader={() => setLibrarySettingsHeaderOpen(true)}
+                  onBeforeOpenNested={() => setLibrarySettingsModalOpen(false)}
+                />
+              )}
+            </div>
+          </Modal>
+        )}
+
+        {librarySettingsSite && librarySettingsSeoOpen && (
+          <SeoOptimizationModal
+            site={librarySettingsSite}
+            onClose={() => setLibrarySettingsSeoOpen(false)}
+            onPatchSite={patchLibrarySettingsSite}
+            onPatchTheme={patchLibrarySettingsTheme}
+            onSave={() => { void saveLibrarySettingsSite() }}
+          />
+        )}
+
+        {librarySettingsSite && hasEditablePages(librarySettingsSite) && librarySettingsHeaderOpen && (
+          <HeaderToolbarModal
+            site={librarySettingsSite}
+            pages={librarySettingsPages}
+            activePage={librarySettingsActivePage}
+            onClose={() => setLibrarySettingsHeaderOpen(false)}
+            onPatchTheme={patchLibrarySettingsTheme}
+            onSaveSite={saveLibrarySettingsSite}
+          />
+        )}
+
         {aiCreationModal && (
           <SitesAICreationModal
             state={aiCreationModal}
@@ -8943,6 +9100,7 @@ export const Sites: React.FC = () => {
                 onEdit={selectSite}
                 onPreview={(site) => void handlePreviewLibrarySite(site)}
                 onUpdateRoute={handleUpdateLibraryRoute}
+                onOpenSettings={(site) => { void openLibrarySettings(site) }}
                 onDelete={(site) => void handleDeleteSite(site)}
                 domainConfig={domainConfig}
               />
@@ -17598,6 +17756,7 @@ interface SitesLibraryPanelProps {
   onEdit: (siteId: string) => void
   onPreview: (site: PublicSite) => void
   onUpdateRoute: (site: PublicSite, slug: string) => Promise<void>
+  onOpenSettings: (site: PublicSite) => void
   onDelete: (site: PublicSite) => void
 }
 
@@ -17690,6 +17849,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   onEdit,
   onPreview,
   onUpdateRoute,
+  onOpenSettings,
   onDelete
 }) => {
   const isLandingLibrary = section === 'landings'
@@ -17802,7 +17962,11 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); startRouteEdit(site) }}>
                         <Settings2 size={15} />
-                        Cambiar ruta
+                        Editar ruta
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onOpenSettings(site) }}>
+                        <Settings2 size={15} />
+                        Más ajustes
                       </DropdownMenuItem>
                       <DropdownMenuItem className={styles.pageMenuDanger} onSelect={(event) => { event.stopPropagation(); onDelete(site) }}>
                         <Trash2 size={15} />
@@ -20705,6 +20869,133 @@ const MetaPageConversionSettingsPanel: React.FC<{
   )
 }
 
+const SiteSettingsPanelContent: React.FC<{
+  site: PublicSite
+  pages: SitePage[]
+  activePage: SitePage | null
+  domainConfig: SitesDomainConfig
+  seoIssues: number
+  metaPixelConnected: boolean
+  disabled?: boolean
+  canEditHeader: boolean
+  routeValue: string
+  routePlaceholder: string
+  onRouteChange: (value: string) => void
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void | Promise<void>
+  onOpenSeo: () => void
+  onOpenHeader: () => void
+  onBeforeOpenNested?: () => void
+}> = ({
+  site,
+  pages,
+  activePage,
+  domainConfig,
+  seoIssues,
+  metaPixelConnected,
+  disabled,
+  canEditHeader,
+  routeValue,
+  routePlaceholder,
+  onRouteChange,
+  onPatchSite,
+  onPatchTheme,
+  onSaveSite,
+  onOpenSeo,
+  onOpenHeader,
+  onBeforeOpenNested
+}) => {
+  const publicDomain = getPublicDomainPreview(domainConfig)
+  const routePreview = `${publicDomain}/${routeValue || routePlaceholder}`
+
+  const openNestedPanel = (callback: () => void) => {
+    onBeforeOpenNested?.()
+    callback()
+  }
+
+  return (
+    <>
+      <section className={styles.editorSettingsSection}>
+        <div className={styles.editorSettingsSectionHeader}>
+          <span className={styles.editorSettingsSectionIcon}><Link2 size={15} /></span>
+          <div>
+            <strong>Ruta pública</strong>
+            <small>Edita la dirección de esta página</small>
+          </div>
+        </div>
+        <label className={styles.editorSettingsRouteField}>
+          <span>{publicDomain}/</span>
+          <input
+            value={routeValue}
+            aria-label="Ruta pública"
+            placeholder={routePlaceholder}
+            disabled={disabled}
+            onChange={(event) => onRouteChange(event.target.value)}
+            onBlur={() => { void onSaveSite() }}
+          />
+        </label>
+        <div className={styles.editorSettingsRoutePreview}>
+          <ExternalLink size={13} />
+          <span>{routePreview}</span>
+        </div>
+      </section>
+
+      {canEditHeader && (
+        <section className={styles.editorSettingsSection}>
+          <div className={styles.editorSettingsSectionHeader}>
+            <span className={styles.editorSettingsSectionIcon}><PanelTop size={15} /></span>
+            <div>
+              <strong>Headers</strong>
+              <small>Código global y código de esta página</small>
+            </div>
+            <button type="button" onClick={() => openNestedPanel(onOpenHeader)}>
+              Editar
+            </button>
+          </div>
+        </section>
+      )}
+
+      <section className={styles.editorSettingsSection}>
+        {metaPixelConnected && isLanding(site) && activePage ? (
+          <MetaPageConversionSettingsPanel
+            site={site}
+            pages={pages}
+            activePage={activePage}
+            disabled={disabled}
+            onPatchSite={onPatchSite}
+            onPatchTheme={onPatchTheme}
+            onSaveSite={onSaveSite}
+          />
+        ) : (
+          <div className={styles.editorSettingsMetaRow}>
+            <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
+              <MetaBrandMark size={18} />
+            </span>
+            <div>
+              <strong>Meta Pixel + CAPI</strong>
+              <small>{metaPixelConnected ? 'No disponible para esta vista' : 'Conecta Meta en Configuración'}</small>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className={styles.editorSettingsSection}>
+        <div className={styles.editorSettingsSectionHeader}>
+          <span className={styles.editorSettingsSectionIcon}><Search size={15} /></span>
+          <div>
+            <strong>SEO</strong>
+            <small>{seoIssues ? `${seoIssues} pendientes detectados` : 'SEO completo'}</small>
+          </div>
+          <button type="button" onClick={() => openNestedPanel(onOpenSeo)}>
+            Revisar
+          </button>
+        </div>
+      </section>
+    </>
+  )
+}
+
 const EditorSettingsDropdown: React.FC<{
   site: PublicSite
   pages: SitePage[]
@@ -20722,28 +21013,10 @@ const EditorSettingsDropdown: React.FC<{
   onSaveSite: () => void | Promise<void>
   onOpenSeo: () => void
   onOpenHeader: () => void
-}> = ({
-  site,
-  pages,
-  activePage,
-  domainConfig,
-  seoIssues,
-  metaPixelConnected,
-  disabled,
-  canEditHeader,
-  routeValue,
-  routePlaceholder,
-  onRouteChange,
-  onPatchSite,
-  onPatchTheme,
-  onSaveSite,
-  onOpenSeo,
-  onOpenHeader
-}) => {
+}> = (props) => {
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
-  const publicDomain = getPublicDomainPreview(domainConfig)
-  const routePreview = `${publicDomain}/${routeValue || routePlaceholder}`
+  const { disabled, seoIssues } = props
 
   useEffect(() => {
     if (!open) return
@@ -20765,11 +21038,6 @@ const EditorSettingsDropdown: React.FC<{
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [open])
-
-  const openNestedPanel = (callback: () => void) => {
-    setOpen(false)
-    callback()
-  }
 
   return (
     <div ref={dropdownRef} className={styles.editorSettingsDropdown}>
@@ -20793,82 +21061,10 @@ const EditorSettingsDropdown: React.FC<{
 
       {open && (
         <div className={styles.editorSettingsPanel} data-ristak-dropdown-panel>
-          <section className={styles.editorSettingsSection}>
-            <div className={styles.editorSettingsSectionHeader}>
-              <span className={styles.editorSettingsSectionIcon}><Link2 size={15} /></span>
-              <div>
-                <strong>Ruta pública</strong>
-                <small>Edita la dirección de esta página</small>
-              </div>
-            </div>
-            <label className={styles.editorSettingsRouteField}>
-              <span>{publicDomain}/</span>
-              <input
-                value={routeValue}
-                aria-label="Ruta pública"
-                placeholder={routePlaceholder}
-                disabled={disabled}
-                onChange={(event) => onRouteChange(event.target.value)}
-                onBlur={() => { void onSaveSite() }}
-              />
-            </label>
-            <div className={styles.editorSettingsRoutePreview}>
-              <ExternalLink size={13} />
-              <span>{routePreview}</span>
-            </div>
-          </section>
-
-          {canEditHeader && (
-            <section className={styles.editorSettingsSection}>
-              <div className={styles.editorSettingsSectionHeader}>
-                <span className={styles.editorSettingsSectionIcon}><PanelTop size={15} /></span>
-                <div>
-                  <strong>Headers</strong>
-                  <small>Código global y código de esta página</small>
-                </div>
-                <button type="button" onClick={() => openNestedPanel(onOpenHeader)}>
-                  Editar
-                </button>
-              </div>
-            </section>
-          )}
-
-          <section className={styles.editorSettingsSection}>
-            {metaPixelConnected && isLanding(site) && activePage ? (
-              <MetaPageConversionSettingsPanel
-                site={site}
-                pages={pages}
-                activePage={activePage}
-                disabled={disabled}
-                onPatchSite={onPatchSite}
-                onPatchTheme={onPatchTheme}
-                onSaveSite={onSaveSite}
-              />
-            ) : (
-              <div className={styles.editorSettingsMetaRow}>
-                <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
-                  <MetaBrandMark size={18} />
-                </span>
-                <div>
-                  <strong>Meta Pixel + CAPI</strong>
-                  <small>{metaPixelConnected ? 'No disponible para esta vista' : 'Conecta Meta en Configuración'}</small>
-                </div>
-              </div>
-            )}
-          </section>
-
-          <section className={styles.editorSettingsSection}>
-            <div className={styles.editorSettingsSectionHeader}>
-              <span className={styles.editorSettingsSectionIcon}><Search size={15} /></span>
-              <div>
-                <strong>SEO</strong>
-                <small>{seoIssues ? `${seoIssues} pendientes detectados` : 'SEO completo'}</small>
-              </div>
-              <button type="button" onClick={() => openNestedPanel(onOpenSeo)}>
-                Revisar
-              </button>
-            </div>
-          </section>
+          <SiteSettingsPanelContent
+            {...props}
+            onBeforeOpenNested={() => setOpen(false)}
+          />
         </div>
       )}
     </div>
