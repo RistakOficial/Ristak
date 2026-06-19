@@ -29,11 +29,13 @@ const ACTION_WORDS = new Set([
   'finalizar',
   'generar',
   'guardar',
+  'importar',
   'iniciar',
   'listo',
   'mandar',
   'programar',
   'publicar',
+  'reconectar',
   'reintentar',
   'siguiente',
   'subir'
@@ -46,9 +48,14 @@ const NON_ACTION_WORDS = new Set([
   'cancelar',
   'cerrar',
   'descartar',
+  'desactivar',
+  'desconectar',
+  'desinstalar',
   'eliminar',
   'limpiar',
   'quitar',
+  'remover',
+  'revocar',
   'volver'
 ])
 
@@ -59,6 +66,7 @@ const IGNORE_SELECTOR = [
 ].join(',')
 
 type ClickableAction = HTMLButtonElement | HTMLInputElement
+type TextEntryElement = HTMLInputElement | HTMLTextAreaElement
 
 declare global {
   interface Window {
@@ -91,6 +99,14 @@ function isTextInput(element: HTMLElement): element is HTMLInputElement {
   if (!(element instanceof HTMLInputElement)) return false
   if (element.disabled || element.readOnly) return false
   return TEXT_INPUT_TYPES.has(element.type)
+}
+
+function isTextEntryElement(element: HTMLElement): element is TextEntryElement {
+  if (element instanceof HTMLTextAreaElement) {
+    return !element.disabled && !element.readOnly
+  }
+
+  return isTextInput(element)
 }
 
 function isSearchLikeInput(input: HTMLInputElement) {
@@ -158,7 +174,7 @@ function findActionInScope(scope: HTMLElement) {
   return best.element
 }
 
-function findLocalAction(input: HTMLInputElement) {
+function findLocalAction(input: TextEntryElement) {
   let scope = input.parentElement
   let depth = 0
 
@@ -174,35 +190,48 @@ function findLocalAction(input: HTMLInputElement) {
   return dialog ? findActionInScope(dialog) : null
 }
 
-function submitForm(form: HTMLFormElement) {
-  if (typeof form.requestSubmit === 'function') {
+function submitForm(form: HTMLFormElement, submitter?: ClickableAction | null) {
+  if (submitter instanceof HTMLButtonElement || submitter instanceof HTMLInputElement) {
+    submitter.click()
+    return
+  }
+
+  if (form.matches('[data-enter-submit], [data-enter-submit-primary]') && typeof form.requestSubmit === 'function') {
     form.requestSubmit()
     return
   }
 
-  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  if (form.matches('[data-enter-submit], [data-enter-submit-primary]')) {
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  }
 }
 
 function handleEnterSubmitShortcut(event: KeyboardEvent) {
   if (event.defaultPrevented) return
   if (event.key !== 'Enter') return
-  if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return
+  if (event.altKey || event.ctrlKey || event.metaKey) return
   if (event.isComposing) return
 
   const target = getEventElement(event)
   if (!target) return
   if (target.closest(IGNORE_SELECTOR)) return
   if (target.closest('[contenteditable="true"]')) return
-  if (!isTextInput(target)) return
+  if (!isTextEntryElement(target)) return
   if (document.activeElement !== target) return
 
+  if (target instanceof HTMLTextAreaElement && event.shiftKey) return
+  if (event.shiftKey) return
+
   if (target.form) {
+    const action = findActionInScope(target.form)
+    if (!action && !target.form.matches('[data-enter-submit], [data-enter-submit-primary]')) return
+
     event.preventDefault()
-    submitForm(target.form)
+    submitForm(target.form, action)
     return
   }
 
-  if (isSearchLikeInput(target)) return
+  if (target instanceof HTMLInputElement && isSearchLikeInput(target)) return
 
   const action = findLocalAction(target)
   if (action) {
