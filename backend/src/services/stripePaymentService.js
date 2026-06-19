@@ -597,7 +597,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     throw error
   }
 
-  const savePaymentMethod = normalizeBoolean(options.savePaymentMethod, false)
+  const savePaymentMethod = normalizeBoolean(options.savePaymentMethod, true)
   const stripeCustomerId = row.contact_id
     ? await ensureStripeCustomerForContact(stripe, row.contact_id, {
         contactName: row.contact_name,
@@ -616,7 +616,8 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
           metadata: {
             ...existing.metadata,
             save_payment_method: '1',
-            stripe_customer_id: stripeCustomerId
+            stripe_customer_id: stripeCustomerId,
+            payment_method_authorization: 'public_invoice_payment'
           }
         })
         return {
@@ -640,7 +641,8 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     public_payment_id: publicPaymentId,
     contact_id: row.contact_id || '',
     stripe_customer_id: stripeCustomerId || '',
-    save_payment_method: savePaymentMethod && stripeCustomerId ? '1' : '0'
+    save_payment_method: savePaymentMethod && stripeCustomerId ? '1' : '0',
+    payment_method_authorization: savePaymentMethod && stripeCustomerId ? 'public_invoice_payment' : ''
   }
 
   const intent = await stripe.paymentIntents.create({

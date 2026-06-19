@@ -114,6 +114,15 @@ const PublicPaymentForm: React.FC<{
         </p>
       )}
 
+      {payment.contact?.id && (
+        <p className={styles.cardAuthorizationNotice}>
+          <ShieldCheck size={16} />
+          <span>
+            Al pagar este invoice autorizas que esta tarjeta quede resguardada en Stripe para futuros cargos acordados con este negocio.
+          </span>
+        </p>
+      )}
+
       <div className={styles.actions}>
         <button
           type="submit"
@@ -145,12 +154,11 @@ export const PublicPayment: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [startingPayment, setStartingPayment] = useState(false)
   const [error, setError] = useState('')
-  const [savePaymentMethod, setSavePaymentMethod] = useState(false)
 
   const status = getStatusCopy(payment?.status || '')
   const isPaid = Boolean(payment && ['paid', 'succeeded', 'completed'].includes(payment.status.toLowerCase()))
   const isClosed = Boolean(payment && ['void', 'refunded', 'deleted'].includes(payment.status.toLowerCase()))
-  const canSavePaymentMethod = Boolean(payment?.contact?.id)
+  const shouldSavePaymentMethod = Boolean(payment?.contact?.id)
 
   const stripePromise = useMemo<StripePromise | null>(() => {
     const key = intent?.publishableKey || payment?.publishableKey
@@ -202,7 +210,7 @@ export const PublicPayment: React.FC = () => {
     setError('')
     try {
       const nextIntent = await stripePaymentsService.createPublicPaymentIntent(payment.publicPaymentId, {
-        savePaymentMethod: canSavePaymentMethod && savePaymentMethod
+        savePaymentMethod: shouldSavePaymentMethod
       })
       setIntent(nextIntent)
     } catch (intentError: any) {
@@ -334,17 +342,13 @@ export const PublicPayment: React.FC = () => {
                   <ShieldCheck size={16} />
                   <span>Stripe abrirá el campo seguro de tarjeta cuando inicies el pago.</span>
                 </p>
-                {canSavePaymentMethod && (
-                  <label className={styles.saveMethodConsent}>
-                    <input
-                      type="checkbox"
-                      checked={savePaymentMethod}
-                      onChange={(event) => setSavePaymentMethod(event.target.checked)}
-                    />
+                {shouldSavePaymentMethod && (
+                  <p className={styles.cardAuthorizationNotice}>
+                    <ShieldCheck size={16} />
                     <span>
-                      Guardar esta tarjeta en Stripe para futuros cargos autorizados con Ristak.
+                      Al iniciar y completar este pago, Stripe guardará la tarjeta para que el negocio pueda cobrar futuros pagos que acuerdes.
                     </span>
-                  </label>
+                  </p>
                 )}
                 <div className={styles.actions}>
                   <button
