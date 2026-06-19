@@ -557,6 +557,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const selectedSavedPaymentMethod = savedPaymentMethods.find((method) => (
     method.stripePaymentMethodId === selectedSavedPaymentMethodId || method.id === selectedSavedPaymentMethodId
   )) || null
+  const stripePlanSavedPaymentMethod = selectedSavedPaymentMethod || savedPaymentMethods[0] || null
+  const firstPaymentCanAuthorizeStripePlan = firstPaymentEnabled && firstPaymentMethod === 'card'
+  const stripePlanCanBeAuthorized = Boolean(stripePlanSavedPaymentMethod) || firstPaymentCanAuthorizeStripePlan
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
   const isEmbedded = variant === 'embedded'
   const renderPaymentSegmentedTabs = ({
@@ -717,6 +720,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setPaymentOption('manual')
     }
   }, [highLevelConnected, stripeConnected])
+
+  useEffect(() => {
+    if (isOpen && stripeConnected && activePaymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod) {
+      setFirstPaymentMethod('card')
+    }
+  }, [isOpen, stripeConnected, activePaymentMode, firstPaymentEnabled, firstPaymentMethod])
 
   useEffect(() => {
     let cancelled = false
@@ -1263,7 +1272,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       dueDate: installment.dueDate,
       frequency: remainingFrequency
     })),
-    paymentMethodId: selectedSavedPaymentMethod?.stripePaymentMethodId || '',
+    paymentMethodId: stripePlanSavedPaymentMethod?.stripePaymentMethodId || '',
     source: 'record_payment_modal_stripe_plan'
   })
 
@@ -1571,9 +1580,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         return
       }
 
-      const hasSavedCard = Boolean(selectedSavedPaymentMethod)
-      const firstPaymentCanAuthorizeCard = firstPaymentEnabled && firstPaymentMethod === 'card'
-      if (!hasSavedCard && !firstPaymentCanAuthorizeCard) {
+      if (!stripePlanCanBeAuthorized) {
         showToast('error', 'Stripe necesita una tarjeta guardada o que el primer pago sea con tarjeta/link.')
         setStep('options')
         setLoading(false)
@@ -2654,9 +2661,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (!invoiceSummary) return null
 
     if (paymentMode === 'partial') {
-      const stripePlanCard = selectedSavedPaymentMethod || savedPaymentMethods[0] || null
-      const stripeAuthorizationLabel = stripePlanCard
-        ? `Stripe cobrará automáticamente con ${getSavedCardDescription(stripePlanCard)}.`
+      const stripeAuthorizationLabel = stripePlanSavedPaymentMethod
+        ? `Stripe cobrará automáticamente con ${getSavedCardDescription(stripePlanSavedPaymentMethod)}.`
         : firstPaymentEnabled && firstPaymentMethod === 'card'
           ? 'Stripe enviará el primer link; cuando se pague, guardará la tarjeta y activará los cobros futuros.'
           : 'Stripe necesita una tarjeta guardada o que el primer pago sea con tarjeta/link.'
@@ -3039,8 +3045,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const lacksSavedCard = paymentOption === 'stripe_saved_card' && !selectedSavedPaymentMethodId
       const lacksStripePlanAuthorization = paymentOption === 'stripe' &&
         activePaymentMode === 'partial' &&
-        !selectedSavedPaymentMethodId &&
-        !(firstPaymentEnabled && firstPaymentMethod === 'card')
+        !stripePlanCanBeAuthorized
       const confirmLabel = paymentOption === 'stripe_saved_card'
         ? 'Cobrar tarjeta'
         : paymentOption === 'stripe' && activePaymentMode === 'partial'
