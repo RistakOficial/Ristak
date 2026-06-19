@@ -1,0 +1,45 @@
+import { processDueStripePaymentPlanCharges } from '../services/stripePaymentService.js'
+import { logger } from '../utils/logger.js'
+
+const STRIPE_PAYMENT_PLANS_INTERVAL_MS = 60 * 1000
+
+let started = false
+let running = false
+
+async function runStripePaymentPlans(source = 'interval') {
+  if (running) return
+  running = true
+
+  try {
+    const results = await processDueStripePaymentPlanCharges()
+    const charged = results.filter((result) => result.charged).length
+    const failed = results.filter((result) => result.error).length
+
+    if (charged || failed) {
+      logger.info(`[Stripe Planes] ${source}: ${charged} cobrados, ${failed} con error`)
+    }
+  } catch (error) {
+    const message = String(error?.message || '')
+    if (!/Stripe no está configurado/i.test(message)) {
+      logger.error(`[Stripe Planes] Error revisando cobros programados: ${message}`)
+    }
+  } finally {
+    running = false
+  }
+}
+
+export function startStripePaymentPlansCron() {
+  if (started) return
+  started = true
+
+  logger.info('Iniciando cola de planes de pago Stripe')
+  setInterval(() => {
+    runStripePaymentPlans().catch((error) => {
+      logger.error(`[Stripe Planes] Error no manejado: ${error.message}`)
+    })
+  }, STRIPE_PAYMENT_PLANS_INTERVAL_MS)
+
+  runStripePaymentPlans('startup').catch((error) => {
+    logger.error(`[Stripe Planes] Error inicial: ${error.message}`)
+  })
+}

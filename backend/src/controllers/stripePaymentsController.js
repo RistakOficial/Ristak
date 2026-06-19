@@ -1,4 +1,5 @@
 import {
+  createStripePaymentPlan,
   createStripeSavedCardPayment,
   createStripePaymentIntent,
   createStripePaymentLink,
@@ -167,6 +168,18 @@ export async function createStripePaymentLinkView(req, res) {
   } catch (error) {
     logger.error(`Error creando link de pago Stripe: ${error.message}`)
     sendStripeError(res, error, 'No se pudo crear el link de pago con Stripe')
+  }
+}
+
+export async function createStripePaymentPlanView(req, res) {
+  try {
+    const result = await createStripePaymentPlan(req.body || {}, {
+      baseUrl: getRequestBaseUrl(req)
+    })
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error creando plan de pagos Stripe: ${error.message}`)
+    sendStripeError(res, error, 'No se pudo crear el plan de pagos con Stripe')
   }
 }
 

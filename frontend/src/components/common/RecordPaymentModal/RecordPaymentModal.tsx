@@ -709,19 +709,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
-  // En modo local (sin HighLevel) forzamos pago único. Si Stripe está configurado,
-  // puede seguir creando links públicos; si no, queda registro manual.
+  // En modo local completo (sin HighLevel ni Stripe) forzamos pago único manual.
+  // Stripe sí puede manejar links y planes de parcialidades desde Ristak.
   useEffect(() => {
-    if (!highLevelConnected) {
+    if (!highLevelConnected && !stripeConnected) {
       setPaymentMode('single')
-      setPaymentOption(stripeConnected ? 'stripe' : 'manual')
+      setPaymentOption('manual')
     }
   }, [highLevelConnected, stripeConnected])
 
   useEffect(() => {
     let cancelled = false
 
-    if (!isOpen || !stripeConnected || !selectedContact?.id || activePaymentMode !== 'single') {
+    if (!isOpen || !stripeConnected || !selectedContact?.id) {
       setSavedPaymentMethods([])
       setSelectedSavedPaymentMethodId('')
       if (paymentOption === 'stripe_saved_card') {
@@ -760,7 +760,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     return () => {
       cancelled = true
     }
-  }, [isOpen, stripeConnected, selectedContact?.id, activePaymentMode, paymentOption])
+  }, [isOpen, stripeConnected, selectedContact?.id, paymentOption])
 
   useEffect(() => {
     if (!isOpen) {
@@ -1235,6 +1235,38 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     channels
   })
 
+  const buildStripePaymentPlanPayload = (payload: Record<string, any>, summary: InvoiceSummary) => ({
+    contact: {
+      id: selectedContact?.id || '',
+      name: summary.contactName || selectedContact?.name || '',
+      email: selectedContact?.email || summary.contactEmail || '',
+      phone: selectedContact?.phone || ''
+    },
+    totalAmount: summary.amount,
+    currency: summary.currency,
+    description: summary.description,
+    title: payload.title || payload.name || DEFAULT_INVOICE_TITLE,
+    invoicePayload: payload,
+    firstPayment: {
+      enabled: firstPaymentEnabled,
+      amount: firstPaymentAmount,
+      date: firstPaymentDate,
+      method: firstPaymentEnabled ? firstPaymentMethod || 'card' : 'none'
+    },
+    remainingFrequency,
+    remainingPayments: resolvedRemainingInstallments.map(installment => ({
+      sequence: installment.sequence,
+      type: installment.type,
+      value: normalizeAmount(installment.value),
+      amount: installment.amount,
+      percentage: installment.percentage,
+      dueDate: installment.dueDate,
+      frequency: remainingFrequency
+    })),
+    paymentMethodId: selectedSavedPaymentMethod?.stripePaymentMethodId || '',
+    source: 'record_payment_modal_stripe_plan'
+  })
+
   const submitPartialFlow = async (
     payload: Record<string, any>,
     summary: InvoiceSummary,
@@ -1453,7 +1485,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setInvoiceSummary(summary)
 
       if (activePaymentMode === 'partial') {
-        setPaymentOption('send')
+        setPaymentOption(stripeConnected ? 'stripe' : 'send')
         setStep('options')
         return
       }
@@ -1524,6 +1556,57 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         onClose()
       } catch (stripeError: any) {
         showToast('error', 'No se pudo cobrar la tarjeta', stripeError.message || 'Revisa la tarjeta guardada o envía un link de Stripe.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
+    if (paymentOption === 'stripe' && paymentMode === 'partial') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      const hasSavedCard = Boolean(selectedSavedPaymentMethod)
+      const firstPaymentCanAuthorizeCard = firstPaymentEnabled && firstPaymentMethod === 'card'
+      if (!hasSavedCard && !firstPaymentCanAuthorizeCard) {
+        showToast('error', 'Stripe necesita una tarjeta guardada o que el primer pago sea con tarjeta/link.')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await stripePaymentsService.createPaymentPlan(
+          buildStripePaymentPlanPayload(invoicePayload, invoiceSummary)
+        )
+
+        if (result.firstPaymentLink) {
+          const copied = await copyTextToClipboard(result.firstPaymentLink)
+          showToast(
+            'success',
+            'Plan de Stripe creado',
+            copied
+              ? 'El primer link quedó copiado. Cuando el cliente pague, la tarjeta queda guardada y los siguientes cobros se activan.'
+              : result.firstPaymentLink,
+            copied ? undefined : 9000
+          )
+        } else {
+          showToast(
+            'success',
+            'Plan de Stripe creado',
+            `${result.scheduledPayments.length} cobros quedaron programados con tarjeta guardada.`
+          )
+        }
+
+        onSuccess?.()
+        onClose()
+      } catch (stripePlanError: any) {
+        showToast('error', 'No se pudo crear el plan con Stripe', stripePlanError.message || 'Revisa la tarjeta guardada o manda primer pago por link.')
         setStep('options')
       } finally {
         setLoading(false)
@@ -2524,9 +2607,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <div className={styles.authorizationNotice}>
               <ShieldCheck size={16} />
               <span>
-                {partialNeedsCardAuthorization
-                  ? `GoHighLevel validará si existe una tarjeta guardada. Si no existe, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
-                  : 'El primer pago con tarjeta autoriza la tarjeta en GoHighLevel. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.'}
+                {stripeConnected
+                  ? (savedPaymentMethods.length > 0
+                      ? 'Stripe usará la tarjeta guardada para programar y cobrar cada fecha del plan.'
+                      : 'Si el primer pago es con tarjeta/link de Stripe, esa tarjeta quedará guardada y activará los cobros futuros.')
+                  : (partialNeedsCardAuthorization
+                      ? `GoHighLevel validará si existe una tarjeta guardada. Si no existe, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
+                      : 'El primer pago con tarjeta autoriza la tarjeta en GoHighLevel. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.')}
               </span>
             </div>
           </div>
@@ -2567,9 +2654,17 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (!invoiceSummary) return null
 
     if (paymentMode === 'partial') {
-      const authorizationLabel = partialNeedsCardAuthorization
-        ? `GoHighLevel usará tarjeta guardada si existe; si no, enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}.`
-        : 'El primer pago con tarjeta funcionará como autorización.'
+      const stripePlanCard = selectedSavedPaymentMethod || savedPaymentMethods[0] || null
+      const stripeAuthorizationLabel = stripePlanCard
+        ? `Stripe cobrará automáticamente con ${getSavedCardDescription(stripePlanCard)}.`
+        : firstPaymentEnabled && firstPaymentMethod === 'card'
+          ? 'Stripe enviará el primer link; cuando se pague, guardará la tarjeta y activará los cobros futuros.'
+          : 'Stripe necesita una tarjeta guardada o que el primer pago sea con tarjeta/link.'
+      const authorizationLabel = paymentOption === 'stripe'
+        ? stripeAuthorizationLabel
+        : partialNeedsCardAuthorization
+          ? `GoHighLevel usará tarjeta guardada si existe; si no, enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}.`
+          : 'El primer pago con tarjeta funcionará como autorización.'
 
       return (
         <div className={styles.optionsContent}>
@@ -2606,47 +2701,83 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           </div>
 
           <div className={styles.paymentOptions}>
-            <div
-              className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
-              onClick={() => setPaymentOption('send')}
-            >
-              <div className={styles.optionInfo}>
-                <div className={styles.optionIcon}>
-                  <Send size={18} />
-                </div>
-                <div>
-                  <p>Enviar enlace por</p>
-                  <span>
-                    {(!selectedContact?.email && !selectedContact?.phone) ? (
-                      <span style={{ color: 'var(--color-status-error)' }}>Sin email ni teléfono</span>
-                    ) : (
-                      'Usa los canales del contacto'
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              {paymentOption === 'send' && (
-                <div className={styles.optionAction}>
-                  <Check size={18} className={styles.optionCheck} />
-                  <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
-                    {sendMethodOptions.length === 0 ? (
-                      <div className={styles.noOptionsMessage}>
-                        <AlertCircle size={14} />
-                        <span>El contacto no tiene email ni teléfono</span>
-                      </div>
-                    ) : (
-                      <CustomSelect
-                        value={sendMethod}
-                        onValueChange={(value) => setSendMethod(value as SendMethod)}
-                        options={sendMethodOptions}
-                        portal
-                      />
-                    )}
+            {stripeConnected && (
+              <button
+                type="button"
+                className={`${styles.optionButton} ${paymentOption === 'stripe' ? styles.optionButtonActive : ''}`}
+                onClick={() => setPaymentOption('stripe')}
+              >
+                <div className={styles.optionInfo}>
+                  <div className={styles.optionIcon}>
+                    <CreditCard size={18} />
+                  </div>
+                  <div>
+                    <p>Programar con Stripe</p>
+                    <span>{stripeAuthorizationLabel}</span>
                   </div>
                 </div>
-              )}
-            </div>
+
+                {paymentOption === 'stripe' && (
+                  <div className={styles.optionAction}>
+                    <Check size={18} className={styles.optionCheck} />
+                    {savedPaymentMethods.length > 1 && (
+                      <div className={styles.savedCardSelector} onClick={(e) => e.stopPropagation()}>
+                        <CustomSelect
+                          value={selectedSavedPaymentMethodId}
+                          onValueChange={setSelectedSavedPaymentMethodId}
+                          options={savedPaymentMethodOptions}
+                          portal
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </button>
+            )}
+
+            {highLevelConnected && (
+              <div
+                className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
+                onClick={() => setPaymentOption('send')}
+              >
+                <div className={styles.optionInfo}>
+                  <div className={styles.optionIcon}>
+                    <Send size={18} />
+                  </div>
+                  <div>
+                    <p>Enviar enlace por</p>
+                    <span>
+                      {(!selectedContact?.email && !selectedContact?.phone) ? (
+                        <span style={{ color: 'var(--color-status-error)' }}>Sin email ni teléfono</span>
+                      ) : (
+                        'Usa los canales del contacto'
+                      )}
+                    </span>
+                  </div>
+                </div>
+
+                {paymentOption === 'send' && (
+                  <div className={styles.optionAction}>
+                    <Check size={18} className={styles.optionCheck} />
+                    <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
+                      {sendMethodOptions.length === 0 ? (
+                        <div className={styles.noOptionsMessage}>
+                          <AlertCircle size={14} />
+                          <span>El contacto no tiene email ni teléfono</span>
+                        </div>
+                      ) : (
+                        <CustomSelect
+                          value={sendMethod}
+                          onValueChange={(value) => setSendMethod(value as SendMethod)}
+                          options={sendMethodOptions}
+                          portal
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )
@@ -2906,8 +3037,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const requiresDeliveryChannel = paymentOption === 'send'
       const lacksDeliveryChannel = requiresDeliveryChannel && !selectedContact?.email && !selectedContact?.phone
       const lacksSavedCard = paymentOption === 'stripe_saved_card' && !selectedSavedPaymentMethodId
+      const lacksStripePlanAuthorization = paymentOption === 'stripe' &&
+        activePaymentMode === 'partial' &&
+        !selectedSavedPaymentMethodId &&
+        !(firstPaymentEnabled && firstPaymentMethod === 'card')
       const confirmLabel = paymentOption === 'stripe_saved_card'
         ? 'Cobrar tarjeta'
+        : paymentOption === 'stripe' && activePaymentMode === 'partial'
+          ? 'Crear plan Stripe'
         : paymentOption === 'stripe'
         ? 'Crear link Stripe'
         : paymentOption === 'send'
@@ -2932,13 +3069,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               disabled={
                 loading ||
                 lacksDeliveryChannel ||
-                lacksSavedCard
+                lacksSavedCard ||
+                lacksStripePlanAuthorization
               }
               title={
                 lacksDeliveryChannel
                   ? 'El contacto no tiene email ni teléfono para enviar el enlace'
                   : lacksSavedCard
                     ? 'Selecciona una tarjeta guardada'
+                  : lacksStripePlanAuthorization
+                    ? 'Usa una tarjeta guardada o marca el primer pago como tarjeta/link'
                   : undefined
               }
             >
@@ -2962,6 +3102,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               <div className={styles.tooltipInfo}>
                 <AlertCircle size={14} />
                 <span>Selecciona una tarjeta guardada</span>
+              </div>
+            )}
+            {lacksStripePlanAuthorization && (
+              <div className={styles.tooltipInfo}>
+                <AlertCircle size={14} />
+                <span>Usa tarjeta guardada o primer pago con tarjeta/link</span>
               </div>
             )}
           </div>

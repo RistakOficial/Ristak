@@ -20,6 +20,7 @@ const MAX_STRIPE_LIST_REFRESHES = 25
 const VALID_TRANSACTION_STATUSES = new Set([
   'draft',
   'sent',
+  'scheduled',
   'paid',
   'pending',
   'overdue',

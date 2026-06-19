@@ -2970,6 +2970,10 @@ async function initTables() {
         ghl_payment_provider_type TEXT,
         ghl_payment_provider_account TEXT,
         ghl_payment_live_mode INTEGER,
+        payment_provider TEXT DEFAULT 'highlevel',
+        stripe_customer_id TEXT,
+        stripe_payment_method_id TEXT,
+        stripe_payment_method_label TEXT,
         current_state TEXT NOT NULL,
         state_history TEXT,
         card_authorized_at DATETIME,
@@ -2998,9 +3002,11 @@ async function initTables() {
         payment_method TEXT,
         automatic INTEGER DEFAULT 0,
         status TEXT NOT NULL,
+        payment_id TEXT,
         ghl_invoice_id TEXT,
         ghl_schedule_id TEXT,
         ghl_schedule_status TEXT,
+        stripe_payment_intent_id TEXT,
         notes TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -3399,7 +3405,11 @@ async function initTables() {
         ['ghl_card_authorization_invoice_id', 'TEXT'],
         ['ghl_payment_provider_type', 'TEXT'],
         ['ghl_payment_provider_account', 'TEXT'],
-        ['ghl_payment_live_mode', 'INTEGER']
+        ['ghl_payment_live_mode', 'INTEGER'],
+        ['payment_provider', 'TEXT DEFAULT \'highlevel\''],
+        ['stripe_customer_id', 'TEXT'],
+        ['stripe_payment_method_id', 'TEXT'],
+        ['stripe_payment_method_label', 'TEXT']
       ]
 
       for (const [column, type] of paymentFlowColumns) {
@@ -3429,6 +3439,30 @@ async function initTables() {
       }
 
       try {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_provider_state ON payment_flows(payment_provider, current_state)')
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
+          throw err
+        }
+      }
+
+      try {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_stripe_method ON payment_flows(stripe_payment_method_id)')
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
+          throw err
+        }
+      }
+
+      try {
+        await db.run('ALTER TABLE installment_payments ADD COLUMN payment_id TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
         await db.run('ALTER TABLE installment_payments ADD COLUMN ghl_schedule_id TEXT')
       } catch (err) {
         if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
@@ -3445,9 +3479,33 @@ async function initTables() {
       }
 
       try {
+        await db.run('ALTER TABLE installment_payments ADD COLUMN stripe_payment_intent_id TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
         await db.run('ALTER TABLE installment_payments ADD COLUMN notes TEXT')
       } catch (err) {
         if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_payment ON installment_payments(payment_id)')
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
+          throw err
+        }
+      }
+
+      try {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_stripe_intent ON installment_payments(stripe_payment_intent_id)')
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err
         }
       }

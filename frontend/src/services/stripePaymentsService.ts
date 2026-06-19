@@ -108,6 +108,56 @@ export interface StripeSavedCardPaymentPayload {
   lineItems?: Array<Record<string, unknown>>
 }
 
+export interface StripePaymentPlanPayload {
+  contact: {
+    id: string
+    name?: string
+    email?: string
+    phone?: string
+  }
+  totalAmount: number
+  currency: string
+  description?: string
+  title?: string
+  invoicePayload?: Record<string, unknown>
+  firstPayment: {
+    enabled: boolean
+    amount: number
+    date?: string
+    method?: string
+  }
+  remainingFrequency?: string
+  remainingPayments: Array<{
+    sequence: number
+    type?: string
+    value?: number
+    amount: number
+    percentage?: number | null
+    dueDate: string
+    frequency?: string
+  }>
+  paymentMethodId?: string
+  source?: string
+}
+
+export interface StripePaymentPlanResponse {
+  flowId: string
+  currentState: string
+  paymentMode: 'test' | 'live'
+  firstPaymentLink?: string | null
+  firstPaymentPaymentId?: string | null
+  savedPaymentMethod?: StripeSavedPaymentMethod | null
+  scheduledPayments: Array<{
+    installmentId: string
+    paymentId: string
+    sequence: number
+    amount: number
+    currency: string
+    dueDate: string
+    status: string
+  }>
+}
+
 export interface CreatePublicPaymentIntentPayload {
   savePaymentMethod?: boolean
 }
@@ -179,6 +229,18 @@ export const stripePaymentsService = {
       body: JSON.stringify(payload)
     })
     return parseApiResponse(response)
+  },
+
+  async createPaymentPlan(payload: StripePaymentPlanPayload): Promise<StripePaymentPlanResponse> {
+    const response = await fetch(apiUrl('/api/stripe/payment-plans'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify(payload)
+    })
+    return parseApiResponse<StripePaymentPlanResponse>(response)
   },
 
   async getPublicPayment(publicPaymentId: string, sync = false): Promise<PublicStripePayment> {

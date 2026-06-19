@@ -18,6 +18,17 @@ const CONFIG_KEYS = {
 const MASKED_PREFIX = '***'
 const DEFAULT_CURRENCY = 'MXN'
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
+const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
+const STRIPE_PLAN_STATES = {
+  DRAFT: 'draft',
+  FIRST_PAYMENT_PENDING: 'first_payment_pending',
+  WAITING_CARD_AUTHORIZATION: 'waiting_card_authorization',
+  CARD_AUTHORIZED: 'card_authorized',
+  INSTALLMENT_PLAN_CREATED: 'installment_plan_created',
+  INSTALLMENT_PLAN_ACTIVE: 'installment_plan_active',
+  CANCELLED: 'cancelled'
+}
+const FIRST_PAYMENT_PLAN_TRIGGERS = new Set(['first_payment', 'first_payment_saved_card'])
 const ZERO_DECIMAL_CURRENCIES = new Set([
   'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf',
   'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf'
@@ -44,6 +55,30 @@ function normalizeBoolean(value, fallback = true) {
   if (value === undefined || value === null || value === '') return fallback
   if (typeof value === 'boolean') return value
   return !['0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase())
+}
+
+function normalizeDateOnly(value) {
+  if (!value) return new Date().toISOString().slice(0, 10)
+  const text = String(value).trim()
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (match) return match[1]
+
+  const date = new Date(text)
+  if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10)
+  return new Date().toISOString().slice(0, 10)
+}
+
+function todayDateOnly() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: DEFAULT_PAYMENT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date())
+}
+
+function isDueTodayOrPast(value) {
+  return normalizeDateOnly(value) <= todayDateOnly()
 }
 
 function isMaskedSecret(value) {
@@ -532,7 +567,8 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
     contactPhone: cleanString(input.phone),
     stripeCustomerId: stripeCustomerId || '',
     source: cleanString(input.source || 'ristak'),
-    lineItems: Array.isArray(input.lineItems) ? input.lineItems : []
+    lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
+    ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {})
   }
 
   await db.run(
@@ -636,13 +672,20 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
   }
 
   const currency = normalizeCurrency(row.currency || config.defaultCurrency)
+  const rowMetadata = parseJson(row.metadata_json, {})
+  const paymentPlanMetadata = rowMetadata.paymentPlan && typeof rowMetadata.paymentPlan === 'object'
+    ? rowMetadata.paymentPlan
+    : null
   const metadata = {
     ristak_payment_id: row.id,
     public_payment_id: publicPaymentId,
     contact_id: row.contact_id || '',
     stripe_customer_id: stripeCustomerId || '',
     save_payment_method: savePaymentMethod && stripeCustomerId ? '1' : '0',
-    payment_method_authorization: savePaymentMethod && stripeCustomerId ? 'public_invoice_payment' : ''
+    payment_method_authorization: savePaymentMethod && stripeCustomerId ? 'public_invoice_payment' : '',
+    ...(paymentPlanMetadata?.flowId ? { ristak_flow_id: cleanString(paymentPlanMetadata.flowId) } : {}),
+    ...(paymentPlanMetadata?.installmentId ? { ristak_installment_id: cleanString(paymentPlanMetadata.installmentId) } : {}),
+    ...(paymentPlanMetadata?.trigger ? { ristak_plan_trigger: cleanString(paymentPlanMetadata.trigger) } : {})
   }
 
   const intent = await stripe.paymentIntents.create({
@@ -701,6 +744,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
          status = ?,
          payment_method = CASE
            WHEN payment_method = 'stripe_saved_card' THEN payment_method
+           WHEN payment_method = 'stripe_scheduled_card' THEN payment_method
            ELSE 'stripe'
          END,
          payment_provider = 'stripe',
@@ -725,7 +769,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
   )
 
   const row = await db.get(
-    `SELECT p.contact_id, c.stripe_customer_id
+    `SELECT p.*, c.stripe_customer_id
      FROM payments p
      LEFT JOIN contacts c ON c.id = p.contact_id
      WHERE p.${whereColumn} = ?`,
@@ -736,11 +780,28 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
       logger.warn(`No se pudieron actualizar stats del contacto por pago Stripe ${whereValue}: ${error.message}`)
     })
 
+    let savedMethod = null
     try {
       const context = stripeContext || await getStripeClient()
-      await rememberStripePaymentMethodFromIntent(context.stripe, intent, row, context.config)
+      savedMethod = await rememberStripePaymentMethodFromIntent(context.stripe, intent, row, context.config)
+      await syncStripePlanFromPayment(
+        { ...row, status: nextStatus, stripe_payment_intent_id: intent.id },
+        savedMethod,
+        context.config
+      )
     } catch (error) {
       logger.warn(`No se pudo guardar la tarjeta Stripe del pago ${whereValue}: ${error.message}`)
+    }
+  } else if (row?.contact_id) {
+    try {
+      const context = stripeContext || await getStripeClient()
+      await syncStripePlanFromPayment(
+        { ...row, status: nextStatus, stripe_payment_intent_id: intent.id },
+        null,
+        context.config
+      )
+    } catch (error) {
+      logger.warn(`No se pudo sincronizar el plan Stripe del pago ${whereValue}: ${error.message}`)
     }
   }
 
@@ -924,6 +985,385 @@ function mapSavedCardPayment(row) {
   }
 }
 
+function addPlanState(history, state) {
+  const parsed = Array.isArray(history) ? history : parseJson(history, [])
+  if (parsed.some((entry) => entry?.state === state)) return parsed
+  return [
+    ...parsed,
+    {
+      state,
+      at: new Date().toISOString()
+    }
+  ]
+}
+
+function getSavedCardLabelFromRow(method = {}) {
+  const brand = cleanString(method.brand).toUpperCase() || 'Tarjeta'
+  const last4 = cleanString(method.last4) || '----'
+  return `${brand} •••• ${last4}`
+}
+
+async function resolveStripeSavedMethod(contactId, paymentMethodId, config) {
+  const cleanContactId = cleanString(contactId)
+  const cleanPaymentMethodId = cleanString(paymentMethodId)
+  if (!cleanContactId) return null
+
+  let query = `
+    SELECT spm.*, c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone
+    FROM stripe_payment_methods spm
+    LEFT JOIN contacts c ON c.id = spm.contact_id
+    WHERE spm.contact_id = ?
+      AND spm.mode = ?`
+  const params = [cleanContactId, config.mode]
+
+  if (cleanPaymentMethodId) {
+    query += ' AND (spm.id = ? OR spm.stripe_payment_method_id = ?)'
+    params.push(cleanPaymentMethodId, cleanPaymentMethodId)
+  }
+
+  query += ' ORDER BY spm.is_default DESC, spm.updated_at DESC LIMIT 1'
+  let method = await db.get(query, params)
+
+  if (!method) {
+    await getStripeSavedPaymentMethods(cleanContactId)
+    method = await db.get(query, params)
+  }
+
+  return method || null
+}
+
+async function createStripePlanPaymentRow({
+  contact,
+  amount,
+  currency,
+  status,
+  paymentMethod,
+  title,
+  description,
+  dueDate,
+  metadata,
+  provider = 'stripe'
+}) {
+  const id = createId('stripe_plan_payment')
+  const date = dueDate || new Date().toISOString()
+
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, date, due_date, sent_at,
+      metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      id,
+      contact.id,
+      Math.round(Number(amount || 0) * 100) / 100,
+      currency,
+      status,
+      paymentMethod,
+      provider === 'stripe' ? metadata?.stripeMode || 'test' : 'live',
+      provider,
+      null,
+      title,
+      description,
+      date,
+      dueDate || null,
+      status === 'sent' ? new Date().toISOString() : null,
+      JSON.stringify(metadata || {})
+    ]
+  )
+
+  return id
+}
+
+async function chargeStripePaymentRowWithSavedMethod({
+  stripe,
+  config,
+  paymentId,
+  savedMethod,
+  source = 'stripe_payment_plan',
+  extraMetadata = {}
+}) {
+  const row = await db.get('SELECT * FROM payments WHERE id = ?', [paymentId])
+  if (!row) {
+    const error = new Error('No encontramos el pago programado.')
+    error.status = 404
+    throw error
+  }
+
+  if (row.status === 'paid') {
+    return row
+  }
+
+  const currency = normalizeCurrency(row.currency || config.defaultCurrency)
+  const metadata = parseJson(row.metadata_json, {})
+  const planMetadata = metadata.paymentPlan && typeof metadata.paymentPlan === 'object'
+    ? metadata.paymentPlan
+    : {}
+  const description = cleanString(row.description || row.title || 'Pago Ristak')
+
+  try {
+    const intent = await stripe.paymentIntents.create({
+      amount: toStripeAmount(row.amount, currency),
+      currency: currency.toLowerCase(),
+      customer: savedMethod.stripe_customer_id,
+      payment_method: savedMethod.stripe_payment_method_id,
+      off_session: true,
+      confirm: true,
+      payment_method_types: ['card'],
+      description,
+      receipt_email: cleanString(metadata.contactEmail || savedMethod.contact_email) || undefined,
+      metadata: {
+        ristak_payment_id: row.id,
+        contact_id: row.contact_id || '',
+        stripe_customer_id: savedMethod.stripe_customer_id,
+        stripe_payment_method_id: savedMethod.stripe_payment_method_id,
+        source,
+        ...(planMetadata.flowId ? { ristak_flow_id: cleanString(planMetadata.flowId) } : {}),
+        ...(planMetadata.installmentId ? { ristak_installment_id: cleanString(planMetadata.installmentId) } : {}),
+        ...(planMetadata.sequence !== undefined ? { ristak_installment_sequence: String(planMetadata.sequence) } : {}),
+        ...extraMetadata
+      }
+    })
+
+    await updatePaymentFromIntent(intent, { stripe, config })
+    return db.get('SELECT * FROM payments WHERE id = ?', [paymentId])
+  } catch (error) {
+    const intent = error?.payment_intent
+    const failedStatus = intent?.status === 'requires_action' ? 'pending' : 'failed'
+    await db.run(
+      `UPDATE payments
+       SET status = ?,
+           reference = COALESCE(?, reference),
+           stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [failedStatus, intent?.id || null, intent?.id || null, row.id]
+    )
+
+    if (planMetadata.installmentId) {
+      await db.run(
+        `UPDATE installment_payments
+         SET status = ?,
+             stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
+             notes = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          intent?.status === 'requires_action' ? 'requires_action' : 'failed',
+          intent?.id || null,
+          error?.message || 'Stripe no pudo procesar el cobro programado.',
+          planMetadata.installmentId
+        ]
+      )
+    }
+
+    if (error?.code === 'authentication_required' || intent?.status === 'requires_action') {
+      const authError = new Error('La tarjeta requiere autenticación del cliente. Envíale un link de Stripe para que confirme el pago.')
+      authError.status = 402
+      throw authError
+    }
+
+    throw error
+  }
+}
+
+function validateStripePaymentPlanPayload(input = {}) {
+  const contact = input.contact || {}
+  const totalAmount = Number(input.totalAmount || input.amount)
+  const currency = normalizeCurrency(input.currency || DEFAULT_CURRENCY)
+  const firstPayment = input.firstPayment || {}
+  const firstPaymentEnabled = normalizeBoolean(firstPayment.enabled, true)
+  const firstPaymentAmount = firstPaymentEnabled ? Number(firstPayment.amount || 0) : 0
+  const remainingPayments = Array.isArray(input.remainingPayments) ? input.remainingPayments : []
+
+  if (!cleanString(contact.id)) {
+    const error = new Error('Selecciona un contacto.')
+    error.status = 400
+    throw error
+  }
+
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    const error = new Error('El total del plan debe ser mayor a 0.')
+    error.status = 400
+    throw error
+  }
+
+  if (firstPaymentEnabled && (!Number.isFinite(firstPaymentAmount) || firstPaymentAmount <= 0)) {
+    const error = new Error('Configura un primer pago mayor a 0.')
+    error.status = 400
+    throw error
+  }
+
+  if (!remainingPayments.length) {
+    const error = new Error('Agrega al menos un pago futuro.')
+    error.status = 400
+    throw error
+  }
+
+  const normalizedRemaining = remainingPayments.map((payment, index) => {
+    const amount = Number(payment.amount || 0)
+    if (!Number.isFinite(amount) || amount <= 0 || !payment.dueDate) {
+      const error = new Error('Todos los pagos futuros necesitan monto y fecha.')
+      error.status = 400
+      throw error
+    }
+
+    return {
+      sequence: Number(payment.sequence || index + 1),
+      amount: Math.round(amount * 100) / 100,
+      percentage: payment.percentage ?? null,
+      dueDate: normalizeDateOnly(payment.dueDate),
+      frequency: cleanString(payment.frequency || input.remainingFrequency || 'custom') || 'custom'
+    }
+  })
+
+  const remainingTotal = normalizedRemaining.reduce((sum, payment) => sum + payment.amount, 0)
+  const planTotal = Math.round((remainingTotal + firstPaymentAmount) * 100) / 100
+  if (Math.abs(planTotal - totalAmount) > 0.5) {
+    const error = new Error(`Las parcialidades suman ${planTotal.toFixed(2)} ${currency}, pero el total es ${totalAmount.toFixed(2)} ${currency}.`)
+    error.status = 400
+    throw error
+  }
+
+  return {
+    contact: {
+      id: cleanString(contact.id),
+      name: cleanString(contact.name || contact.fullName || contact.contactName),
+      email: cleanString(contact.email),
+      phone: cleanString(contact.phone)
+    },
+    totalAmount: Math.round(totalAmount * 100) / 100,
+    currency,
+    description: cleanString(input.description || input.concept || 'Plan de pagos'),
+    title: cleanString(input.title || input.invoicePayload?.title || input.invoicePayload?.name || 'Plan de pagos'),
+    firstPayment: {
+      enabled: firstPaymentEnabled,
+      amount: Math.round(firstPaymentAmount * 100) / 100,
+      date: firstPaymentEnabled ? normalizeDateOnly(firstPayment.date) : null,
+      method: firstPaymentEnabled ? cleanString(firstPayment.method || 'card') : 'none'
+    },
+    remainingPayments: normalizedRemaining,
+    remainingFrequency: cleanString(input.remainingFrequency || 'custom') || 'custom',
+    lineItems: Array.isArray(input.invoicePayload?.items) ? input.invoicePayload.items : [],
+    invoicePayload: input.invoicePayload || {},
+    paymentMethodId: cleanString(input.paymentMethodId),
+    source: cleanString(input.source || 'record_payment_modal_stripe_plan')
+  }
+}
+
+async function activateStripePaymentPlan(flowId, savedMethod, config) {
+  const cleanFlowId = cleanString(flowId)
+  if (!cleanFlowId || !savedMethod) return null
+
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  if (!flow || flow.payment_provider !== 'stripe') return null
+
+  const stateHistory = addPlanState(addPlanState(flow.state_history, STRIPE_PLAN_STATES.CARD_AUTHORIZED), STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE)
+  const now = new Date().toISOString()
+
+  await db.run(
+    `UPDATE payment_flows
+     SET current_state = ?,
+         stripe_customer_id = COALESCE(?, stripe_customer_id),
+         stripe_payment_method_id = COALESCE(?, stripe_payment_method_id),
+         stripe_payment_method_label = COALESCE(?, stripe_payment_method_label),
+         card_authorized_at = COALESCE(card_authorized_at, ?),
+         installment_plan_created_at = COALESCE(installment_plan_created_at, ?),
+         installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
+         state_history = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE,
+      savedMethod.stripe_customer_id,
+      savedMethod.stripe_payment_method_id,
+      getSavedCardLabelFromRow(savedMethod),
+      now,
+      now,
+      now,
+      JSON.stringify(stateHistory),
+      cleanFlowId
+    ]
+  )
+
+  await db.run(
+    `UPDATE installment_payments
+     SET status = 'scheduled',
+         payment_method = 'stripe_saved_card',
+         updated_at = CURRENT_TIMESTAMP
+     WHERE flow_id = ?
+       AND automatic = 1
+       AND status IN ('waiting_card_authorization', 'pending_card', 'pending')`,
+    [cleanFlowId]
+  )
+
+  await db.run(
+    `UPDATE payments
+     SET status = 'scheduled',
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id IN (
+       SELECT payment_id
+       FROM installment_payments
+       WHERE flow_id = ?
+         AND payment_id IS NOT NULL
+     )
+       AND status IN ('pending', 'waiting_card_authorization')`,
+    [cleanFlowId]
+  )
+
+  return db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+}
+
+async function syncStripePlanFromPayment(paymentRow, savedMethod, config) {
+  const metadata = parseJson(paymentRow?.metadata_json, {})
+  const plan = metadata.paymentPlan && typeof metadata.paymentPlan === 'object'
+    ? metadata.paymentPlan
+    : {}
+  const flowId = cleanString(plan.flowId)
+  if (!flowId) return
+
+  const trigger = cleanString(plan.trigger)
+  const isFirstPlanPayment = FIRST_PAYMENT_PLAN_TRIGGERS.has(trigger) || (!trigger && !plan.installmentId)
+
+  if (plan.installmentId) {
+    await db.run(
+      `UPDATE installment_payments
+       SET status = ?,
+           stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        paymentRow.status === 'paid' ? 'paid' : paymentRow.status || 'pending',
+        paymentRow.stripe_payment_intent_id || null,
+        plan.installmentId
+      ]
+    )
+  }
+
+  if (isFirstPlanPayment && paymentRow.status) {
+    const firstPaymentStatus = paymentRow.status === 'paid'
+      ? 'paid'
+      : paymentRow.status === 'failed'
+        ? 'failed'
+        : paymentRow.status === 'void'
+          ? 'void'
+          : 'pending'
+
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_status = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND first_payment_invoice_id = ?`,
+      [firstPaymentStatus, flowId, paymentRow.id]
+    )
+  }
+
+  if (paymentRow.status === 'paid' && savedMethod && isFirstPlanPayment) {
+    await activateStripePaymentPlan(flowId, savedMethod, config)
+  }
+}
+
 export async function createStripeSavedCardPayment(input = {}) {
   const { stripe, config } = await getStripeClient()
   const contactId = cleanString(input.contactId)
@@ -1026,50 +1466,434 @@ export async function createStripeSavedCardPayment(input = {}) {
   )
 
   try {
-    const intent = await stripe.paymentIntents.create({
-      amount: toStripeAmount(amount, currency),
-      currency: currency.toLowerCase(),
-      customer: savedMethod.stripe_customer_id,
-      payment_method: savedMethod.stripe_payment_method_id,
-      off_session: true,
-      confirm: true,
-      payment_method_types: ['card'],
-      description,
-      receipt_email: cleanString(input.email || savedMethod.contact_email) || undefined,
-      metadata: {
-        ristak_payment_id: id,
-        contact_id: contactId,
-        stripe_customer_id: savedMethod.stripe_customer_id,
-        stripe_payment_method_id: savedMethod.stripe_payment_method_id,
-        source: 'ristak_saved_card'
-      }
+    await chargeStripePaymentRowWithSavedMethod({
+      stripe,
+      config,
+      paymentId: id,
+      savedMethod,
+      source: 'ristak_saved_card'
     })
-
-    await updatePaymentFromIntent(intent, { stripe, config })
   } catch (error) {
-    const intent = error?.payment_intent
-    const failedStatus = intent?.status === 'requires_action' ? 'pending' : 'failed'
-    await db.run(
-      `UPDATE payments
-       SET status = ?,
-           reference = COALESCE(?, reference),
-           stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [failedStatus, intent?.id || null, intent?.id || null, id]
-    )
-
-    if (error?.code === 'authentication_required' || intent?.status === 'requires_action') {
-      const authError = new Error('La tarjeta requiere autenticación del cliente. Envíale un link de Stripe para que confirme el pago.')
-      authError.status = 402
-      throw authError
-    }
-
     throw error
   }
 
   const row = await db.get('SELECT * FROM payments WHERE id = ?', [id])
   return { payment: mapSavedCardPayment(row) }
+}
+
+export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
+  const { stripe, config } = await getStripeClient()
+  const plan = validateStripePaymentPlanPayload(input)
+  const savedMethod = plan.paymentMethodId
+    ? await resolveStripeSavedMethod(plan.contact.id, plan.paymentMethodId, config)
+    : await resolveStripeSavedMethod(plan.contact.id, '', config)
+  const hasSavedCard = Boolean(savedMethod)
+  const firstPaymentIsCard = plan.firstPayment.enabled && ['card', 'payment_link', 'direct_card', 'saved_card'].includes(plan.firstPayment.method)
+  const firstPaymentIsOffline = plan.firstPayment.enabled && ['cash', 'bank_transfer', 'transfer', 'deposit', 'manual', 'offline', 'check', 'other'].includes(plan.firstPayment.method)
+
+  if (!hasSavedCard && !firstPaymentIsCard) {
+    const error = new Error('Para activar cobros automáticos con Stripe necesitas una tarjeta guardada o que el primer pago sea con tarjeta/link de Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  const flowId = createId('stripe_flow')
+  const stateHistory = addPlanState([], hasSavedCard ? STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE : STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION)
+  const flowState = hasSavedCard
+    ? STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE
+    : STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION
+  const now = new Date().toISOString()
+  const cardLabel = hasSavedCard ? getSavedCardLabelFromRow(savedMethod) : ''
+
+  await db.run(
+    `INSERT INTO payment_flows (
+      id, contact_id, contact_name, contact_email, contact_phone,
+      total_amount, currency, concept, payment_type,
+      first_payment_amount, first_payment_type, first_payment_value,
+      first_payment_date, first_payment_method, first_payment_status,
+      remaining_automatic, card_setup_required, card_setup_amount,
+      payment_provider, stripe_customer_id, stripe_payment_method_id, stripe_payment_method_label,
+      current_state, state_history, card_authorized_at,
+      installment_plan_created_at, installment_plan_active_at, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'partial', ?, ?, ?, ?, ?, ?, 1, ?, 0, 'stripe', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      flowId,
+      plan.contact.id,
+      plan.contact.name || null,
+      plan.contact.email || null,
+      plan.contact.phone || null,
+      plan.totalAmount,
+      plan.currency,
+      plan.description,
+      plan.firstPayment.amount,
+      plan.firstPayment.enabled ? 'amount' : 'none',
+      plan.firstPayment.amount,
+      plan.firstPayment.date,
+      plan.firstPayment.method,
+      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard && isDueTodayOrPast(plan.firstPayment.date) ? 'processing' : 'pending') : 'not_required',
+      hasSavedCard ? 0 : 1,
+      savedMethod?.stripe_customer_id || null,
+      savedMethod?.stripe_payment_method_id || null,
+      cardLabel || null,
+      flowState,
+      JSON.stringify(stateHistory),
+      hasSavedCard ? now : null,
+      hasSavedCard ? now : null,
+      hasSavedCard ? now : null,
+      JSON.stringify({
+        source: plan.source,
+        remainingFrequency: plan.remainingFrequency,
+        lineItems: plan.lineItems,
+        firstPaymentLinkRequired: !hasSavedCard && firstPaymentIsCard
+      })
+    ]
+  )
+
+  const response = {
+    flowId,
+    currentState: flowState,
+    paymentMode: config.mode,
+    firstPaymentLink: null,
+    firstPaymentPaymentId: null,
+    savedPaymentMethod: hasSavedCard ? mapStripePaymentMethod(savedMethod) : null,
+    scheduledPayments: []
+  }
+
+  if (plan.firstPayment.enabled && firstPaymentIsOffline) {
+    const paymentId = await createStripePlanPaymentRow({
+      contact: plan.contact,
+      amount: plan.firstPayment.amount,
+      currency: plan.currency,
+      status: 'paid',
+      paymentMethod: plan.firstPayment.method,
+      provider: 'manual',
+      title: `${plan.title} - primer pago`,
+      description: `${plan.description} - primer pago`,
+      dueDate: plan.firstPayment.date,
+      metadata: {
+        source: 'stripe_payment_plan_first_offline',
+        contactName: plan.contact.name,
+        contactEmail: plan.contact.email,
+        contactPhone: plan.contact.phone,
+        paymentPlan: {
+          flowId,
+          trigger: 'first_payment_offline'
+        }
+      }
+    })
+
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_status = 'registered',
+           first_payment_invoice_id = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [paymentId, flowId]
+    )
+    response.firstPaymentPaymentId = paymentId
+    updateSingleContactStats(plan.contact.id).catch((error) => {
+      logger.warn(`No se pudieron actualizar stats del contacto por primer pago ${paymentId}: ${error.message}`)
+    })
+  }
+
+  if (plan.firstPayment.enabled && firstPaymentIsCard && hasSavedCard) {
+    const paymentId = await createStripePlanPaymentRow({
+      contact: plan.contact,
+      amount: plan.firstPayment.amount,
+      currency: plan.currency,
+      status: isDueTodayOrPast(plan.firstPayment.date) ? 'pending' : 'scheduled',
+      paymentMethod: 'stripe_saved_card',
+      title: `${plan.title} - primer pago`,
+      description: `${plan.description} - primer pago`,
+      dueDate: plan.firstPayment.date,
+      metadata: {
+        stripeMode: config.mode,
+        source: 'stripe_payment_plan_first_saved_card',
+        contactName: plan.contact.name,
+        contactEmail: plan.contact.email,
+        contactPhone: plan.contact.phone,
+        paymentPlan: {
+          flowId,
+          trigger: 'first_payment_saved_card'
+        }
+      }
+    })
+
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_invoice_id = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [paymentId, flowId]
+    )
+    response.firstPaymentPaymentId = paymentId
+
+    if (isDueTodayOrPast(plan.firstPayment.date)) {
+      try {
+        await chargeStripePaymentRowWithSavedMethod({
+          stripe,
+          config,
+          paymentId,
+          savedMethod,
+          source: 'stripe_payment_plan_first_saved_card',
+          extraMetadata: { ristak_flow_id: flowId, ristak_plan_trigger: 'first_payment_saved_card' }
+        })
+      } catch (error) {
+        await db.run(
+          `UPDATE payment_flows
+           SET first_payment_status = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [error.status === 402 ? 'requires_action' : 'failed', flowId]
+        )
+        throw error
+      }
+    }
+  }
+
+  if (plan.firstPayment.enabled && firstPaymentIsCard && !hasSavedCard) {
+    const firstPaymentLink = await createStripePaymentLink({
+      contactId: plan.contact.id,
+      contactName: plan.contact.name,
+      email: plan.contact.email,
+      phone: plan.contact.phone,
+      amount: plan.firstPayment.amount,
+      currency: plan.currency,
+      title: `${plan.title} - primer pago`,
+      description: `${plan.description} - primer pago`,
+      dueDate: plan.firstPayment.date,
+      source: 'stripe_payment_plan_first_link',
+      lineItems: plan.lineItems,
+      metadata: {
+        paymentPlan: {
+          flowId,
+          trigger: 'first_payment'
+        }
+      }
+    }, { baseUrl })
+
+    await db.run(
+      `UPDATE payment_flows
+       SET first_payment_invoice_id = ?,
+           card_setup_payment_link = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [firstPaymentLink.payment?.id || null, firstPaymentLink.paymentUrl, flowId]
+    )
+
+    response.firstPaymentPaymentId = firstPaymentLink.payment?.id || null
+    response.firstPaymentLink = firstPaymentLink.paymentUrl
+  }
+
+  for (const payment of plan.remainingPayments) {
+    const installmentId = createId('stripe_installment')
+    const status = hasSavedCard ? 'scheduled' : 'waiting_card_authorization'
+    const paymentId = await createStripePlanPaymentRow({
+      contact: plan.contact,
+      amount: payment.amount,
+      currency: plan.currency,
+      status: hasSavedCard ? 'scheduled' : 'pending',
+      paymentMethod: 'stripe_scheduled_card',
+      title: `${plan.title} - pago ${payment.sequence}`,
+      description: `${plan.description} - pago ${payment.sequence}`,
+      dueDate: payment.dueDate,
+      metadata: {
+        stripeMode: config.mode,
+        source: 'stripe_payment_plan_installment',
+        contactName: plan.contact.name,
+        contactEmail: plan.contact.email,
+        contactPhone: plan.contact.phone,
+        paymentPlan: {
+          flowId,
+          installmentId,
+          sequence: payment.sequence,
+          trigger: 'scheduled_installment'
+        }
+      }
+    })
+
+    await db.run(
+      `INSERT INTO installment_payments (
+        id, flow_id, sequence, amount, percentage, due_date, frequency,
+        payment_method, automatic, status, payment_id, notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        installmentId,
+        flowId,
+        payment.sequence,
+        payment.amount,
+        payment.percentage,
+        payment.dueDate,
+        payment.frequency,
+        hasSavedCard ? 'stripe_saved_card' : 'stripe_pending_card',
+        status,
+        paymentId,
+        hasSavedCard ? `Programado para cobrarse con ${cardLabel}` : 'Esperando que el primer pago guarde una tarjeta en Stripe.'
+      ]
+    )
+
+    response.scheduledPayments.push({
+      installmentId,
+      paymentId,
+      sequence: payment.sequence,
+      amount: payment.amount,
+      currency: plan.currency,
+      dueDate: payment.dueDate,
+      status
+    })
+  }
+
+  return response
+}
+
+export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
+  const { stripe, config } = await getStripeClient()
+  const dueDate = todayDateOnly()
+  const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
+  const firstPaymentRows = await db.all(
+    `SELECT
+       f.id AS flow_id,
+       f.contact_id,
+       f.first_payment_invoice_id AS payment_id,
+       f.stripe_payment_method_id,
+       p.status AS payment_status
+     FROM payment_flows f
+     JOIN payments p ON p.id = f.first_payment_invoice_id
+     WHERE f.payment_provider = 'stripe'
+       AND f.current_state = ?
+       AND f.first_payment_invoice_id IS NOT NULL
+       AND f.first_payment_status IN ('pending', 'scheduled')
+       AND f.first_payment_method IN ('card', 'payment_link', 'direct_card', 'saved_card')
+       AND f.stripe_payment_method_id IS NOT NULL
+       AND substr(COALESCE(f.first_payment_date, p.due_date, p.date), 1, 10) <= ?
+       AND p.status IN ('pending', 'scheduled')
+     ORDER BY COALESCE(f.first_payment_date, p.due_date, p.date) ASC
+     LIMIT ?`,
+    [STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueDate, normalizedLimit]
+  )
+  const rows = await db.all(
+    `SELECT
+       i.id AS installment_id,
+       i.payment_id,
+       i.amount AS installment_amount,
+       i.due_date,
+       i.status AS installment_status,
+       f.id AS flow_id,
+       f.contact_id,
+       f.stripe_payment_method_id,
+       f.stripe_customer_id,
+       p.status AS payment_status
+     FROM installment_payments i
+     JOIN payment_flows f ON f.id = i.flow_id
+     LEFT JOIN payments p ON p.id = i.payment_id
+     WHERE f.payment_provider = 'stripe'
+       AND f.current_state = ?
+       AND i.automatic = 1
+       AND i.status = 'scheduled'
+       AND i.payment_id IS NOT NULL
+       AND substr(i.due_date, 1, 10) <= ?
+     ORDER BY i.due_date ASC, i.sequence ASC
+     LIMIT ?`,
+    [STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueDate, normalizedLimit]
+  )
+
+  const results = []
+  for (const row of firstPaymentRows || []) {
+    try {
+      const savedMethod = await resolveStripeSavedMethod(row.contact_id, row.stripe_payment_method_id, config)
+      if (!savedMethod) {
+        throw new Error('No encontramos la tarjeta guardada para el primer pago programado.')
+      }
+
+      await db.run(
+        `UPDATE payment_flows
+         SET first_payment_status = 'processing',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [row.flow_id]
+      )
+
+      const charged = await chargeStripePaymentRowWithSavedMethod({
+        stripe,
+        config,
+        paymentId: row.payment_id,
+        savedMethod,
+        source: 'stripe_payment_plan_first_scheduled_charge',
+        extraMetadata: {
+          ristak_flow_id: row.flow_id,
+          ristak_plan_trigger: 'first_payment_saved_card'
+        }
+      })
+
+      results.push({ flowId: row.flow_id, paymentId: row.payment_id, firstPayment: true, charged: charged?.status === 'paid', status: charged?.status })
+    } catch (error) {
+      logger.error(`[Stripe Planes] Error cobrando primer pago programado ${row.payment_id}: ${error.message}`)
+      await db.run(
+        `UPDATE payment_flows
+         SET first_payment_status = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [error.status === 402 ? 'requires_action' : 'failed', row.flow_id]
+      )
+      results.push({ flowId: row.flow_id, paymentId: row.payment_id, firstPayment: true, error: error.message })
+    }
+  }
+
+  for (const row of rows || []) {
+    if (row.payment_status === 'paid') {
+      await db.run(
+        `UPDATE installment_payments
+         SET status = 'paid',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [row.installment_id]
+      )
+      results.push({ installmentId: row.installment_id, paymentId: row.payment_id, skipped: true, reason: 'already_paid' })
+      continue
+    }
+
+    try {
+      const savedMethod = await resolveStripeSavedMethod(row.contact_id, row.stripe_payment_method_id, config)
+      if (!savedMethod) {
+        throw new Error('No encontramos la tarjeta guardada para este plan.')
+      }
+
+      await db.run(
+        `UPDATE installment_payments
+         SET status = 'processing',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [row.installment_id]
+      )
+
+      const charged = await chargeStripePaymentRowWithSavedMethod({
+        stripe,
+        config,
+        paymentId: row.payment_id,
+        savedMethod,
+        source: 'stripe_payment_plan_scheduled_charge',
+        extraMetadata: {
+          ristak_flow_id: row.flow_id,
+          ristak_installment_id: row.installment_id
+        }
+      })
+
+      results.push({ installmentId: row.installment_id, paymentId: row.payment_id, charged: charged?.status === 'paid', status: charged?.status })
+    } catch (error) {
+      logger.error(`[Stripe Planes] Error cobrando parcialidad ${row.installment_id}: ${error.message}`)
+      await db.run(
+        `UPDATE installment_payments
+         SET status = ?,
+             notes = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [error.status === 402 ? 'requires_action' : 'failed', error.message, row.installment_id]
+      )
+      results.push({ installmentId: row.installment_id, paymentId: row.payment_id, error: error.message })
+    }
+  }
+
+  return results
 }
 
 export async function refreshStripePaymentFromIntent(paymentIntentId) {

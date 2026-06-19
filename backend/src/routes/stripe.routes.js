@@ -1,6 +1,7 @@
 import express from 'express'
 import {
   createPublicStripePaymentIntentView,
+  createStripePaymentPlanView,
   createStripeSavedCardPaymentView,
   createStripePaymentLinkView,
   deleteStripeConfigView,
@@ -27,6 +28,7 @@ router.post('/config', requireModuleAccess('settings_payments'), saveStripeConfi
 router.delete('/config', requireModuleAccess('settings_payments'), deleteStripeConfigView)
 router.post('/config/test', requireModuleAccess('settings_payments'), testStripeConfigView)
 router.post('/payment-links', requireModuleAccess('payments'), createStripePaymentLinkView)
+router.post('/payment-plans', requireModuleAccess('payments'), createStripePaymentPlanView)
 router.get('/contacts/:contactId/payment-methods', requireModuleAccess('payments'), getStripeSavedPaymentMethodsView)
 router.post('/saved-card-payments', requireModuleAccess('payments'), createStripeSavedCardPaymentView)
 
