@@ -589,6 +589,8 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
           options={FONT_FAMILY_OPTIONS}
           onValueChange={applyFontFamily}
           className={styles.toolbarSelect}
+          portal
+          dropdownMinWidth={180}
           aria-label="Fuente"
         />
         <CustomSelect
@@ -596,6 +598,8 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
           options={FONT_SIZE_OPTIONS}
           onValueChange={applyFontSize}
           className={styles.toolbarSelectSmall}
+          portal
+          dropdownMinWidth={112}
           aria-label="Tamaño"
         />
         <CustomSelect
@@ -603,6 +607,8 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
           options={LINE_HEIGHT_OPTIONS}
           onValueChange={applyLineHeight}
           className={styles.toolbarSelectSmall}
+          portal
+          dropdownMinWidth={112}
           aria-label="Interlineado"
         />
         <CustomSelect
@@ -610,6 +616,8 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
           options={BLOCK_OPTIONS}
           onValueChange={applyBlock}
           className={styles.toolbarSelect}
+          portal
+          dropdownMinWidth={180}
           aria-label="Bloque"
         />
         {variableOptions.length > 0 && (
@@ -621,6 +629,8 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
               onValueChange={insertVariable}
               className={styles.variableSelect}
               placeholder="Variables"
+              portal
+              dropdownMinWidth={220}
               aria-label="Insertar variable"
             />
           </>

@@ -1,4 +1,5 @@
 .shell {
+  --email-toolbar-control-height: 40px;
   display: grid;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -7,13 +8,26 @@
 }
 
 .toolbar {
+  --app-button-height-sm: var(--email-toolbar-control-height);
+  --app-button-padding-x-sm: 0;
+  --app-button-font-size-sm: 13px;
+  --modal-density-button-height-sm: var(--email-toolbar-control-height);
+  --modal-density-button-padding-x-sm: 0;
+  --modal-density-button-font-size-sm: 13px;
+  --modal-density-control-height: var(--email-toolbar-control-height);
+  --modal-density-control-font-size: 14px;
+  --modal-density-control-padding-x: 12px;
+  --modal-density-dropdown-item-height: 40px;
+  --ristak-dropdown-trigger-height: var(--email-toolbar-control-height);
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  min-height: calc(var(--email-toolbar-control-height) + 18px);
+  gap: 8px;
   overflow-x: auto;
   border-bottom: 1px solid var(--border);
-  padding: 8px;
+  padding: 9px 10px;
+  scrollbar-gutter: stable;
 }
 
 .toolbarSelect {
@@ -30,22 +44,24 @@
 
 .toolbarDivider {
   width: 1px;
-  height: 22px;
+  height: 26px;
   flex: 0 0 auto;
   background: var(--border);
 }
 
-.toolButton {
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
+.toolButton[data-btn] {
+  width: var(--email-toolbar-control-height);
+  min-width: var(--email-toolbar-control-height);
+  height: var(--email-toolbar-control-height);
+  min-height: var(--email-toolbar-control-height);
+  flex: 0 0 var(--email-toolbar-control-height);
   color: var(--text);
   padding: 0;
 }
 
-.toolButton svg {
-  width: 18px;
-  height: 18px;
+.toolButton[data-btn] svg {
+  width: 20px;
+  height: 20px;
   stroke-width: 2.25;
 }
 
