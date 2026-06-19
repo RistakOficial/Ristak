@@ -60,12 +60,12 @@ const TAX_GATEWAYS: PaymentGatewayOption[] = [
 const paymentGatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercado-libre', 'clip', 'gigstacK']
 const STRIPE_WEBHOOK_EVENTS = [
   {
-    name: 'invoice.payment_failed',
-    description: 'Cuando un intento de pago de invoice falla.'
+    name: 'payment_intent.succeeded',
+    description: 'Cuando el pago con tarjeta de la página pública se completa.'
   },
   {
-    name: 'invoice.payment_succeeded',
-    description: 'Cuando un intento de pago de invoice se completa.'
+    name: 'payment_intent.payment_failed',
+    description: 'Cuando Stripe rechaza o falla el intento de pago.'
   },
   {
     name: 'charge.refunded',
@@ -581,7 +581,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     ))}
                   </div>
                   <p className={styles.hint}>
-                    En Stripe pega una de estas URLs en Developers → Webhooks como Endpoint URL.
+                    En Stripe pega una de estas URLs en Developers → Webhooks como Endpoint URL. La página pública de Ristak cobra con PaymentIntent, aunque visualmente use una plantilla de invoice.
                   </p>
                   <div className={styles.stripeWebhookEventsBlock}>
                     <div className={styles.stripeWebhookEventsHeader}>
