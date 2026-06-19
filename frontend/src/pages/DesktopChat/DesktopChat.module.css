@@ -1313,8 +1313,11 @@
 }
 
 .composer[data-email-mode='true'] {
-  grid-template-columns: 40px 40px minmax(0, 1fr) 40px;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
 }
 
 .composerTextField {
@@ -1322,9 +1325,26 @@
   min-width: 0;
 }
 
-.composer[data-email-mode='true'] .composerTextField {
+.emailComposerHeaderRow {
   display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.emailComposerChannelSelect {
+  width: 40px;
+  min-width: 40px;
+}
+
+.emailSubjectField {
+  display: grid;
+  min-width: 0;
   gap: 6px;
+  color: var(--text-mute);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .composer textarea {
@@ -1349,41 +1369,73 @@
   padding-right: 48px;
 }
 
-.composer[data-email-mode='true'] .composerTextField textarea {
-  min-height: 76px;
-  max-height: 150px;
-  padding-right: 12px;
-  border-radius: var(--radius-ctl);
-}
-
 .emailSubjectInput {
   display: block;
   box-sizing: border-box;
   width: 100%;
-  min-height: 36px;
-  padding: 0 12px;
-  border: 1px solid var(--design-control-border);
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
   outline: 0;
-  background: var(--design-control-bg);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  line-height: 1.2;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.35;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
 }
 
 .emailSubjectInput::placeholder {
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
 }
 
 .emailSubjectInput:focus {
-  border-color: var(--ristak-focus-border);
+  border-color: var(--accent);
   box-shadow: var(--ristak-focus-ring);
 }
 
 .emailSubjectInput:disabled {
   cursor: default;
   opacity: 0.72;
+}
+
+.emailEditor {
+  min-width: 0;
+}
+
+.emailEditorBody {
+  min-height: clamp(176px, 24vh, 288px);
+  max-height: min(34vh, 352px);
+}
+
+.emailFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.emailSignatureToggle {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.emailSignatureToggle span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.emailSendButton[data-btn] {
+  flex: 0 0 auto;
+  min-height: 40px;
 }
 
 .composer textarea:disabled {
@@ -2807,7 +2859,7 @@
   }
 
   .composer[data-email-mode='true'] {
-    grid-template-columns: 34px 38px minmax(0, 1fr) 40px;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .messageBubble {
@@ -2824,5 +2876,16 @@
 
   .chatSelectionCount {
     margin-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .emailFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .emailSendButton[data-btn] {
+    width: 100%;
   }
 }

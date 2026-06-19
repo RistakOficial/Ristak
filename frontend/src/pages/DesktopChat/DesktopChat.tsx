@@ -25,6 +25,7 @@ import {
   Play,
   Plus,
   Search,
+  Send,
   ListFilter,
   Square,
   Tag,
@@ -46,12 +47,18 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  EmailRichTextEditor,
   Icon,
   InlineEditableText,
   Modal,
   RecordPaymentModal,
   SearchField,
-  TagPicker
+  Switch,
+  TagPicker,
+  emailHtmlToPlainText,
+  plainTextToEmailHtml,
+  sanitizeEmailRichHtmlForEditor,
+  type EmailRichTextVariable
 } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import { AgentRobot } from '@/components/ai'
@@ -350,6 +357,13 @@ const COMPOSER_CHANNEL_OPTIONS: Array<{ value: ComposerChannel; label: string }>
   { value: 'messenger', label: 'Messenger' },
   { value: 'instagram', label: 'Instagram' },
   { value: 'email', label: 'Correo' }
+]
+
+const DESKTOP_EMAIL_VARIABLES: EmailRichTextVariable[] = [
+  { value: 'contact.name', label: 'Nombre del contacto' },
+  { value: 'contact.email', label: 'Correo del contacto' },
+  { value: 'contact.phone', label: 'Telefono del contacto' },
+  { value: 'business.name', label: 'Nombre del negocio' }
 ]
 
 const AGENT_SIGNAL_LABELS: Record<string, string> = {
@@ -1723,6 +1737,8 @@ export const DesktopChat: React.FC = () => {
   const [composerChannel, setComposerChannel] = useState<ComposerChannel>('whatsapp')
   const [composerBusinessPhoneId, setComposerBusinessPhoneId] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
+  const [emailBodyHtml, setEmailBodyHtml] = useState('')
+  const [emailIncludeSignature, setEmailIncludeSignature] = useState(true)
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [composerMenuOpen, setComposerMenuOpen] = useState(false)
   const [templatePanelOpen, setTemplatePanelOpen] = useState(false)
@@ -1796,11 +1812,15 @@ export const DesktopChat: React.FC = () => {
       setComposerChannel('whatsapp')
       setComposerBusinessPhoneId('')
       setEmailSubject('')
+      setEmailBodyHtml('')
+      setEmailIncludeSignature(true)
       return
     }
     setComposerChannel(getDefaultComposerChannel(activeContact))
     setComposerBusinessPhoneId(defaultComposerBusinessPhone?.id || '')
     setEmailSubject('')
+    setEmailBodyHtml('')
+    setEmailIncludeSignature(true)
   }, [activeContact?.id, defaultComposerBusinessPhone?.id])
   useEffect(() => {
     setComposerBusinessPhoneId((current) => {
@@ -2051,6 +2071,10 @@ export const DesktopChat: React.FC = () => {
   const detectedComposerChannel = normalizeComposerChannel(activeContact?.lastMessageChannel || activeContact?.lastMessageTransport || messages[messages.length - 1]?.transport || '')
   const activeConversationChannel = getHighLevelChannelForComposer(composerChannel)
   const isEmailComposer = composerChannel === 'email'
+  const emailPlainText = useMemo(
+    () => isEmailComposer ? emailHtmlToPlainText(emailBodyHtml) : '',
+    [emailBodyHtml, isEmailComposer]
+  )
   const hasDetectedMessenger = detectedComposerChannel === 'messenger'
   const hasDetectedInstagram = detectedComposerChannel === 'instagram'
   const whatsappComposerPhones = businessPhones.length
@@ -2107,9 +2131,13 @@ export const DesktopChat: React.FC = () => {
     ? 'Conecta HighLevel para responder por este canal.'
     : ''
   const hasComposerContent = isEmailComposer
-    ? Boolean(emailSubject.trim() && composerText.trim())
+    ? Boolean(emailSubject.trim() && emailPlainText.trim())
     : Boolean(composerText.trim()) || draftAttachments.length > 0 || Boolean(voiceDraft)
   const canSend = Boolean(activeContact && composerChannelReady && hasComposerContent && composerStatus === 'idle' && !voiceRecording && !voiceProcessing)
+  useEffect(() => {
+    if (!isEmailComposer || emailBodyHtml.trim() || !composerText.trim()) return
+    setEmailBodyHtml(plainTextToEmailHtml(composerText))
+  }, [composerText, emailBodyHtml, isEmailComposer])
   const conversationAgentActive = conversationAgentEnabled && conversationAgentState?.status === 'active'
   const activeAgentDef = useMemo(
     () => agentDefs.find((agent) => agent.id === conversationAgentState?.agentId) || null,
@@ -2676,6 +2704,14 @@ export const DesktopChat: React.FC = () => {
 
   const handleComposerChannelChange = useCallback((value: string) => {
     const nextChannel = normalizeComposerChannel(value)
+    if (nextChannel === 'email' && composerChannel !== 'email' && !emailBodyHtml.trim() && composerText.trim()) {
+      setEmailBodyHtml(plainTextToEmailHtml(composerText))
+    }
+    if (composerChannel === 'email' && nextChannel !== 'email') {
+      const nextText = emailHtmlToPlainText(emailBodyHtml)
+      if (nextText && !composerText.trim()) setComposerText(nextText)
+      setEmailSubject('')
+    }
     setComposerChannel(nextChannel)
     if (nextChannel === 'whatsapp') {
       const nextBusinessPhoneId = value.startsWith('whatsapp:') ? value.slice('whatsapp:'.length) : ''
@@ -2689,7 +2725,7 @@ export const DesktopChat: React.FC = () => {
       setVoiceDraft(null)
       setVoiceElapsedMs(0)
     }
-  }, [closeComposerAgentMenu, closeTemplatePanel])
+  }, [closeComposerAgentMenu, closeTemplatePanel, composerChannel, composerText, emailBodyHtml])
 
   const handleOpenTemplatePanel = useCallback(() => {
     setComposerMenuOpen(false)
@@ -3577,16 +3613,19 @@ export const DesktopChat: React.FC = () => {
   }, [])
 
 	  const handleSendMessage = async (textOverride?: string) => {
-	    const text = (textOverride || composerText).trim()
-	    const attachmentsToSend = textOverride ? [] : draftAttachments
-	    const voiceToSend = textOverride ? null : voiceDraft
-	    if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
+		    const isEmailMessage = isEmailComposer
+		    const cleanEmailHtml = isEmailMessage ? sanitizeEmailRichHtmlForEditor(emailBodyHtml) : ''
+		    const text = isEmailMessage ? emailHtmlToPlainText(cleanEmailHtml) : (textOverride || composerText).trim()
+		    const attachmentsToSend = textOverride || isEmailMessage ? [] : draftAttachments
+		    const voiceToSend = textOverride || isEmailMessage ? null : voiceDraft
+		    if (!activeContact) return
+		    if (!isEmailMessage && !text && attachmentsToSend.length === 0 && !voiceToSend) return
 
-	    if (isEmailComposer) {
-	      const subject = emailSubject.trim()
-	      const recipient = activeContact.email?.trim() || ''
-	      if (!recipient) {
-	        showToast('error', 'Falta el correo', 'Guarda el correo del contacto antes de enviarle un email.')
+		    if (isEmailMessage) {
+		      const subject = emailSubject.trim()
+		      const recipient = activeContact.email?.trim() || ''
+		      if (!recipient) {
+		        showToast('error', 'Falta el correo', 'Guarda el correo del contacto antes de enviarle un email.')
 	        return
 	      }
 	      if (!emailConnected) {
@@ -3597,17 +3636,13 @@ export const DesktopChat: React.FC = () => {
 	        showToast('warning', 'Falta el asunto', 'Escribe el asunto del correo.')
 	        return
 	      }
-	      if (!text) {
-	        showToast('warning', 'Falta el mensaje', 'Escribe el cuerpo del correo.')
-	        return
-	      }
-	      if (attachmentsToSend.length > 0 || voiceToSend) {
-	        showToast('warning', 'Solo texto por ahora', 'El correo desde el chat se envía con asunto y cuerpo.')
-	        return
-	      }
+		      if (!text) {
+		        showToast('warning', 'Falta el mensaje', 'Escribe el cuerpo del correo.')
+		        return
+		      }
 
-	      const optimisticId = `desktop-email-${Date.now()}`
-	      const sentAt = new Date().toISOString()
+		      const optimisticId = `desktop-email-${Date.now()}`
+		      const sentAt = new Date().toISOString()
 	      const optimisticMessage: DesktopChatMessage = {
 	        id: optimisticId,
 	        text,
@@ -3618,12 +3653,13 @@ export const DesktopChat: React.FC = () => {
 	        transport: 'email'
 	      }
 
-	      setComposerStatus('sending')
-	      if (!textOverride) {
-	        setComposerText('')
-	        setEmailSubject('')
-	      }
-	      setComposerMenuOpen(false)
+		      setComposerStatus('sending')
+		      if (!textOverride) {
+		        setComposerText('')
+		        setEmailSubject('')
+		        setEmailBodyHtml('')
+		      }
+		      setComposerMenuOpen(false)
 	      setMessages((current) => [...current, optimisticMessage])
 	      setChats((current) => {
 	        const next = current.map((contact) => (
@@ -3646,11 +3682,13 @@ export const DesktopChat: React.FC = () => {
 	      try {
 	        const result = await emailService.send({
 	          contactId: activeContact.id,
-	          to: recipient,
-	          subject,
-	          text,
-	          externalId: optimisticId
-	        })
+		          to: recipient,
+		          subject,
+		          text,
+		          html: cleanEmailHtml,
+		          includeSignature: emailIncludeSignature,
+		          externalId: optimisticId
+		        })
 	        setMessages((current) => current.map((message) => message.id === optimisticId
 	          ? {
 	              ...message,
@@ -3669,10 +3707,11 @@ export const DesktopChat: React.FC = () => {
 	        setMessages((current) => current.map((item) => (
 	          item.id === optimisticId ? { ...item, status: 'error', errorReason: message } : item
 	        )))
-	        if (!textOverride) {
-	          setComposerText(text)
-	          setEmailSubject(subject)
-	        }
+		        if (!textOverride) {
+		          setComposerText(text)
+		          setEmailSubject(subject)
+		          setEmailBodyHtml(cleanEmailHtml || plainTextToEmailHtml(text))
+		        }
 	        showToast('error', 'No se envió el correo', message)
 	      } finally {
 	        setComposerStatus('idle')
@@ -5060,10 +5099,10 @@ export const DesktopChat: React.FC = () => {
                   onChange={handleDocumentSelected}
                   tabIndex={-1}
                 />
-                {draftAttachments.length > 0 ? (
-                  <div className={styles.draftAttachmentList}>
-                    {draftAttachments.map((attachment) => (
-                      <div key={attachment.id} className={styles.draftAttachment}>
+	                {!isEmailComposer && draftAttachments.length > 0 ? (
+	                  <div className={styles.draftAttachmentList}>
+	                    {draftAttachments.map((attachment) => (
+	                      <div key={attachment.id} className={styles.draftAttachment}>
                         <span className={styles.draftAttachmentIcon}>
                           {attachment.kind === 'image' ? <ImageIcon size={16} /> : <FileText size={16} />}
                         </span>
@@ -5075,142 +5114,196 @@ export const DesktopChat: React.FC = () => {
                           <Trash2 size={14} />
                         </button>
                       </div>
-                    ))}
-                  </div>
-                ) : null}
-                {renderVoiceWave()}
-                {renderVoiceDraft()}
-                {composerChannelHint ? (
-                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
-                ) : null}
-                <div className={styles.agentComposerWrap}>
-                  <button
-                    type="button"
-                    className={styles.agentComposerButton}
-                    data-active={conversationAgentActive ? 'true' : undefined}
-                    data-enabled={conversationAgentEnabled ? 'true' : undefined}
-                    onClick={handleOpenComposerAgentMenu}
-                    disabled={!activeContact || conversationAgentBusy}
-                    aria-label={conversationAgentActive ? 'Abrir acciones del agente conversacional' : 'Asignar agente conversacional'}
-                    aria-expanded={agentComposerMenuOpen}
-                    title={conversationAgentActive ? 'Agente conversacional activo' : 'Asignar agente conversacional'}
-                  >
-                    {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
-                  </button>
-                  {renderComposerAgentMenu()}
-                </div>
-                <div className={styles.composerChannelSelect}>
-                  <CustomSelect
-                    value={composerRouteValue}
-                    options={composerChannelOptions}
-                    onValueChange={handleComposerChannelChange}
-                    portal
-                    iconOnly
-                    dropdownMinWidth={240}
-                    aria-label="Canal de envío"
-                  />
-                </div>
-                <div className={styles.composerTextField}>
-                  {isEmailComposer ? (
-                    <input
-                      data-ristak-unstyled
-                      className={styles.emailSubjectInput}
-                      value={emailSubject}
-                      onChange={(event) => setEmailSubject(event.target.value)}
-                      placeholder="Asunto"
-                      disabled={!activeContact || composerStatus === 'sending'}
-                    />
-                  ) : null}
-                  <textarea
-                    data-ristak-unstyled
-                    value={composerText}
-                    onChange={(event) => setComposerText(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        if (canSend) void handleSendMessage()
-                      }
-                    }}
-                    placeholder={isEmailComposer ? 'Escribe el correo...' : voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
-                    rows={isEmailComposer ? 3 : 1}
-                    onFocus={() => {
-                      setComposerMenuOpen(false)
-                      closeTemplatePanel()
-                      closeComposerAgentMenu()
-                    }}
-                    disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
-                  />
-                  {!isEmailComposer ? (
-                    <button
-                      type="button"
-                      className={styles.scheduleComposerButton}
-                      onClick={handleOpenScheduleModal}
-                      disabled={!activeContact || composerStatus === 'sending' || voiceRecording || voiceProcessing || Boolean(voiceDraft)}
-                      aria-label="Programar mensaje"
-                      title="Programar mensaje"
-                    >
-                      <Clock size={16} />
-                    </button>
-                  ) : null}
-                </div>
-                {!isEmailComposer ? (
-                  <div ref={composerMenuRef} className={styles.composerActionWrap}>
-                    <button
-                      type="button"
-                      className={styles.composerPlusButton}
-                      onClick={() => {
-                        closeComposerAgentMenu()
-                        closeTemplatePanel()
-                        setComposerMenuOpen((current) => !current)
-                      }}
-                      aria-label="Abrir opciones de adjuntos"
-                      aria-expanded={composerMenuOpen || templatePanelOpen}
-                    >
-                      <Plus size={20} />
-                    </button>
-                    {composerMenuOpen ? (
-                      <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
-                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
-                          <FileText size={16} />
-                          <span>Plantillas</span>
-                        </button>
-                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
-                          <ImageIcon size={16} />
-                          <span>Fotos</span>
-                        </button>
-                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
-                          <FileText size={16} />
-                          <span>Documentos</span>
-                        </button>
-                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
-                          <MapPin size={16} />
-                          <span>Ubicación</span>
-                        </button>
-                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
-                          <Banknote size={16} />
-                          <span>CLABE</span>
-                        </button>
-                      </div>
-                    ) : null}
-                    {renderTemplatePanel()}
-                  </div>
-                ) : null}
-                {!isEmailComposer ? (
-                  <button
-                    type="button"
-                    className={styles.micButton}
-                    onClick={handleVoiceButtonClick}
-	                    disabled={composerStatus === 'sending' || voiceProcessing || Boolean(voiceDraft)}
-	                    aria-label={voiceRecording ? 'Terminar grabación' : voiceDraft ? 'Audio listo' : 'Grabar audio'}
-	                    data-recording={voiceRecording ? 'true' : undefined}
-                  >
-                    {voiceProcessing ? <Loader2 size={18} className={styles.spin} /> : voiceRecording ? <Square size={16} /> : <Mic size={18} />}
-                  </button>
-                ) : null}
-                <button type="submit" className={styles.sendButton} disabled={!canSend} aria-label="Enviar mensaje">
-                  {composerStatus === 'sending' ? <Loader2 size={18} className={styles.spin} /> : <ArrowUp size={18} />}
-                </button>
+	                    ))}
+	                  </div>
+	                ) : null}
+	                {!isEmailComposer ? renderVoiceWave() : null}
+	                {!isEmailComposer ? renderVoiceDraft() : null}
+	                {composerChannelHint ? (
+	                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
+	                ) : null}
+	                {isEmailComposer ? (
+	                  <>
+	                    <div className={styles.emailComposerHeaderRow}>
+	                      <div className={styles.emailComposerChannelSelect}>
+	                        <CustomSelect
+	                          value={composerRouteValue}
+	                          options={composerChannelOptions}
+	                          onValueChange={handleComposerChannelChange}
+	                          portal
+	                          dropdownPlacement="top"
+	                          iconOnly
+	                          dropdownMinWidth={240}
+	                          aria-label="Canal de envío"
+	                        />
+	                      </div>
+	                      <label className={styles.emailSubjectField}>
+	                        <span>Asunto</span>
+	                        <input
+	                          data-ristak-unstyled
+	                          className={styles.emailSubjectInput}
+	                          value={emailSubject}
+	                          onChange={(event) => setEmailSubject(event.target.value)}
+	                          onKeyDown={(event) => {
+	                            if (event.key === 'Enter') event.preventDefault()
+	                          }}
+	                          placeholder="Asunto del correo"
+	                          disabled={!activeContact || composerStatus === 'sending'}
+	                        />
+	                      </label>
+	                    </div>
+
+	                    <EmailRichTextEditor
+	                      value={emailBodyHtml}
+	                      onChange={setEmailBodyHtml}
+	                      className={styles.emailEditor}
+	                      editorClassName={styles.emailEditorBody}
+	                      density="regular"
+	                      variables={DESKTOP_EMAIL_VARIABLES}
+	                      placeholder="Escribe el correo..."
+	                      codePlaceholder="<table><tr><td>Contenido del correo...</td></tr></table>"
+	                    />
+
+	                    <div className={styles.emailFooter}>
+	                      <label className={styles.emailSignatureToggle}>
+	                        <Switch
+	                          checked={emailIncludeSignature}
+	                          onChange={setEmailIncludeSignature}
+	                          disabled={composerStatus === 'sending'}
+	                          aria-label="Agregar firma guardada al enviar"
+	                        />
+	                        <span>Agregar la firma guardada al enviar</span>
+	                      </label>
+
+	                      <Button
+	                        type="submit"
+	                        variant="primary"
+	                        size="sm"
+	                        className={styles.emailSendButton}
+	                        loading={composerStatus === 'sending'}
+	                        disabled={!canSend}
+	                      >
+	                        <Send size={16} />
+	                        Enviar
+	                      </Button>
+	                    </div>
+	                  </>
+	                ) : (
+	                  <>
+	                    <div className={styles.agentComposerWrap}>
+	                      <button
+	                        type="button"
+	                        className={styles.agentComposerButton}
+	                        data-active={conversationAgentActive ? 'true' : undefined}
+	                        data-enabled={conversationAgentEnabled ? 'true' : undefined}
+	                        onClick={handleOpenComposerAgentMenu}
+	                        disabled={!activeContact || conversationAgentBusy}
+	                        aria-label={conversationAgentActive ? 'Abrir acciones del agente conversacional' : 'Asignar agente conversacional'}
+	                        aria-expanded={agentComposerMenuOpen}
+	                        title={conversationAgentActive ? 'Agente conversacional activo' : 'Asignar agente conversacional'}
+	                      >
+	                        {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
+	                      </button>
+	                      {renderComposerAgentMenu()}
+	                    </div>
+	                    <div className={styles.composerChannelSelect}>
+	                      <CustomSelect
+	                        value={composerRouteValue}
+	                        options={composerChannelOptions}
+	                        onValueChange={handleComposerChannelChange}
+	                        portal
+	                        iconOnly
+	                        dropdownMinWidth={240}
+	                        aria-label="Canal de envío"
+	                      />
+	                    </div>
+	                    <div className={styles.composerTextField}>
+	                      <textarea
+	                        data-ristak-unstyled
+	                        value={composerText}
+	                        onChange={(event) => setComposerText(event.target.value)}
+	                        onKeyDown={(event) => {
+	                          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+	                            event.preventDefault()
+	                            event.stopPropagation()
+	                            if (canSend) void handleSendMessage()
+	                          }
+	                        }}
+	                        placeholder={voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
+	                        rows={1}
+	                        onFocus={() => {
+	                          setComposerMenuOpen(false)
+	                          closeTemplatePanel()
+	                          closeComposerAgentMenu()
+	                        }}
+	                        disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
+	                      />
+	                      <button
+	                        type="button"
+	                        className={styles.scheduleComposerButton}
+	                        onClick={handleOpenScheduleModal}
+	                        disabled={!activeContact || composerStatus === 'sending' || voiceRecording || voiceProcessing || Boolean(voiceDraft)}
+	                        aria-label="Programar mensaje"
+	                        title="Programar mensaje"
+	                      >
+	                        <Clock size={16} />
+	                      </button>
+	                    </div>
+	                    <div ref={composerMenuRef} className={styles.composerActionWrap}>
+	                      <button
+	                        type="button"
+	                        className={styles.composerPlusButton}
+	                        onClick={() => {
+	                          closeComposerAgentMenu()
+	                          closeTemplatePanel()
+	                          setComposerMenuOpen((current) => !current)
+	                        }}
+	                        aria-label="Abrir opciones de adjuntos"
+	                        aria-expanded={composerMenuOpen || templatePanelOpen}
+	                      >
+	                        <Plus size={20} />
+	                      </button>
+	                      {composerMenuOpen ? (
+	                        <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
+	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
+	                            <FileText size={16} />
+	                            <span>Plantillas</span>
+	                          </button>
+	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
+	                            <ImageIcon size={16} />
+	                            <span>Fotos</span>
+	                          </button>
+	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
+	                            <FileText size={16} />
+	                            <span>Documentos</span>
+	                          </button>
+	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
+	                            <MapPin size={16} />
+	                            <span>Ubicación</span>
+	                          </button>
+	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
+	                            <Banknote size={16} />
+	                            <span>CLABE</span>
+	                          </button>
+	                        </div>
+	                      ) : null}
+	                      {renderTemplatePanel()}
+	                    </div>
+	                    <button
+	                      type="button"
+	                      className={styles.micButton}
+	                      onClick={handleVoiceButtonClick}
+	                      disabled={composerStatus === 'sending' || voiceProcessing || Boolean(voiceDraft)}
+	                      aria-label={voiceRecording ? 'Terminar grabación' : voiceDraft ? 'Audio listo' : 'Grabar audio'}
+	                      data-recording={voiceRecording ? 'true' : undefined}
+	                    >
+	                      {voiceProcessing ? <Loader2 size={18} className={styles.spin} /> : voiceRecording ? <Square size={16} /> : <Mic size={18} />}
+	                    </button>
+	                    <button type="submit" className={styles.sendButton} disabled={!canSend} aria-label="Enviar mensaje">
+	                      {composerStatus === 'sending' ? <Loader2 size={18} className={styles.spin} /> : <ArrowUp size={18} />}
+	                    </button>
+	                  </>
+	                )}
               </form>
             </>
           ) : (
