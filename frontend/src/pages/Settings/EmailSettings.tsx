@@ -1,21 +1,35 @@
 import React, { useEffect, useState } from 'react'
 import {
   AtSign,
+  CheckCircle2,
+  ChevronDown,
   KeyRound,
   Mail,
   Pencil,
   Send,
   Server,
   ShieldCheck,
+  SlidersHorizontal,
   Unplug,
   User
 } from 'lucide-react'
-import { Badge, Button, PageHeader } from '@/components/common'
+import { Badge, Button, CustomSelect, PageHeader } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import { EmailStatus, emailService } from '@/services/emailService'
+import {
+  EmailProviderDetection,
+  EmailSmtpSecurity,
+  EmailStatus,
+  emailService
+} from '@/services/emailService'
 import styles from './EmailSettings.module.css'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+const SECURITY_OPTIONS = [
+  { value: 'starttls', label: 'STARTTLS' },
+  { value: 'ssl', label: 'SSL/TLS' },
+  { value: 'none', label: 'Sin cifrado' }
+]
 
 function formatDateTime(value?: string | null) {
   if (!value) return 'Sin registro'
@@ -26,6 +40,12 @@ function formatDateTime(value?: string | null) {
   }
 }
 
+function getSecurityLabel(value?: string | null) {
+  if (value === 'ssl') return 'SSL/TLS'
+  if (value === 'none') return 'Sin cifrado'
+  return 'STARTTLS'
+}
+
 export const EmailSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [status, setStatus] = useState<EmailStatus | null>(null)
@@ -34,27 +54,67 @@ export const EmailSettings: React.FC = () => {
   const [connecting, setConnecting] = useState(false)
   const [testing, setTesting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [advancedDirty, setAdvancedDirty] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
 
-  const [host, setHost] = useState('')
-  const [port, setPort] = useState('587')
-  const [username, setUsername] = useState('')
+  const [fromEmail, setFromEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fromName, setFromName] = useState('')
-  const [fromEmail, setFromEmail] = useState('')
   const [replyTo, setReplyTo] = useState('')
   const [testTo, setTestTo] = useState('')
 
+  const [host, setHost] = useState('')
+  const [port, setPort] = useState('587')
+  const [security, setSecurity] = useState<EmailSmtpSecurity>('starttls')
+  const [username, setUsername] = useState('')
+
+  const [detection, setDetection] = useState<EmailProviderDetection | null>(null)
+  const [detecting, setDetecting] = useState(false)
+  const [detectionError, setDetectionError] = useState('')
+
   const connected = Boolean(status?.connected)
+  const fromEmailValue = fromEmail.trim().toLowerCase()
+  const replyToValue = replyTo.trim().toLowerCase()
+  const hasStoredCredentials = Boolean(status?.smtp.hasPassword)
+  const canReuseStoredPassword = Boolean(
+    connected &&
+    hasStoredCredentials &&
+    status?.sender.fromEmail?.toLowerCase() === fromEmailValue
+  )
+  const usesAdvancedSmtp = advancedOpen || advancedDirty
+  const validPort = Number.isInteger(Number(port)) && Number(port) > 0 && Number(port) <= 65535
+  const advancedValid = !usesAdvancedSmtp || Boolean(host.trim() && validPort && (username.trim() || fromEmailValue))
+  const canSubmit = Boolean(
+    EMAIL_PATTERN.test(fromEmailValue) &&
+    fromName.trim() &&
+    (password.trim() || canReuseStoredPassword) &&
+    (!replyToValue || EMAIL_PATTERN.test(replyToValue)) &&
+    advancedValid
+  )
 
   const applyStatusToForm = (nextStatus: EmailStatus) => {
-    setHost(nextStatus.smtp.host)
-    setPort(String(nextStatus.smtp.port || 587))
     setFromName(nextStatus.sender.fromName)
     setFromEmail(nextStatus.sender.fromEmail)
     setReplyTo(nextStatus.sender.replyTo)
-    // Usuario y password se quedan vacíos mientras la conexión sigue activa.
+    setHost(nextStatus.smtp.host)
+    setPort(String(nextStatus.smtp.port || 587))
+    setSecurity(nextStatus.smtp.security || 'starttls')
     setUsername('')
     setPassword('')
+    setTestTo(nextStatus.sender.fromEmail || '')
+    setDetection(null)
+    setDetectionError('')
+    setAdvancedDirty(false)
+    setAdvancedOpen(false)
+    setDetailsOpen(false)
+  }
+
+  const applyDetectionToAdvanced = (nextDetection: EmailProviderDetection) => {
+    setHost(nextDetection.smtp.host)
+    setPort(String(nextDetection.smtp.port || 587))
+    setSecurity(nextDetection.smtp.security || 'starttls')
+    setUsername(nextDetection.smtp.username || nextDetection.email)
   }
 
   useEffect(() => {
@@ -82,14 +142,47 @@ export const EmailSettings: React.FC = () => {
     }
   }, [])
 
-  const hasStoredCredentials = Boolean(status?.smtp.hasPassword)
-  const canSubmit = Boolean(
-    host.trim() &&
-    port.trim() &&
-    (username.trim() || status?.smtp.usernameMasked) &&
-    (password.trim() || hasStoredCredentials) &&
-    EMAIL_PATTERN.test(fromEmail.trim() || username.trim())
-  )
+  useEffect(() => {
+    if (connected && !editing) return
+
+    const email = fromEmail.trim().toLowerCase()
+    setDetection(null)
+    setDetectionError('')
+
+    if (!EMAIL_PATTERN.test(email)) {
+      setDetecting(false)
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      setDetecting(true)
+      try {
+        const nextDetection = await emailService.detect(email)
+        if (cancelled) return
+        setDetection(nextDetection)
+        setDetectionError('')
+        if (!advancedDirty) {
+          applyDetectionToAdvanced(nextDetection)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDetectionError(error instanceof Error ? error.message : 'No se pudo detectar el proveedor')
+        }
+      } finally {
+        if (!cancelled) setDetecting(false)
+      }
+    }, 450)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [fromEmail, connected, editing, advancedDirty])
+
+  const markAdvancedDirty = () => {
+    setAdvancedDirty(true)
+  }
 
   const connectEmail = async (event?: React.FormEvent) => {
     event?.preventDefault()
@@ -97,21 +190,29 @@ export const EmailSettings: React.FC = () => {
 
     setConnecting(true)
     try {
+      const smtp = usesAdvancedSmtp
+        ? {
+            host: host.trim(),
+            port: Number(port),
+            security,
+            username: username.trim() || fromEmailValue
+          }
+        : undefined
+
       const nextStatus = await emailService.connect({
-        host: host.trim(),
-        port: Number(port),
-        username: username.trim(),
+        fromEmail: fromEmailValue,
         password: password.trim() || undefined,
         fromName: fromName.trim(),
-        fromEmail: fromEmail.trim(),
-        replyTo: replyTo.trim()
+        replyTo: replyToValue,
+        testTo: fromEmailValue,
+        smtp
       })
       setStatus(nextStatus)
       applyStatusToForm(nextStatus)
       setEditing(false)
-      showToast('success', 'Correo conectado', 'Ristak verificó la conexión SMTP y ya puede enviar correos')
+      showToast('success', 'Correo conectado', `Se guardó cifrado y enviamos una prueba a ${fromEmailValue}`)
     } catch (error) {
-      showToast('error', 'No se pudo conectar', error instanceof Error ? error.message : 'Revisa los datos SMTP e intenta de nuevo')
+      showToast('error', 'No se pudo conectar', error instanceof Error ? error.message : 'Revisa el correo y el app password e intenta de nuevo')
     } finally {
       setConnecting(false)
     }
@@ -141,7 +242,7 @@ export const EmailSettings: React.FC = () => {
   const confirmDisconnect = () => {
     showConfirm(
       'Desconectar correo',
-      'Se eliminarán las credenciales SMTP locales. Para reconectar tendrás que pegar usuario y app password otra vez.',
+      'Se eliminarán las credenciales locales. Para reconectar tendrás que pegar el app password otra vez.',
       async () => {
         setDisconnecting(true)
         try {
@@ -161,8 +262,43 @@ export const EmailSettings: React.FC = () => {
     )
   }
 
-  const renderForm = () => (
-    <form className={styles.connectForm} onSubmit={connectEmail}>
+  const renderDetectionStatus = () => {
+    if (detecting) {
+      return (
+        <div className={styles.detectStatus}>
+          <span className={styles.detectIcon} aria-hidden="true" />
+          <div>
+            <strong>Detectando proveedor</strong>
+            <p>Revisando dominio y registros MX.</p>
+          </div>
+        </div>
+      )
+    }
+
+    if (detection) {
+      return (
+        <div className={styles.detectStatus} data-state="success">
+          <CheckCircle2 size={18} />
+          <div>
+            <strong>{detection.provider.label}</strong>
+            <p>{detection.mx.found ? 'Dominio revisado y configuración lista.' : 'Dominio revisado; si no conecta, usa Avanzado.'}</p>
+          </div>
+          <Badge variant={detection.provider.confidence === 'high' ? 'success' : 'warning'} className={styles.inlineBadge}>
+            {detection.provider.detectedBy === 'mx' ? 'MX' : 'Dominio'}
+          </Badge>
+        </div>
+      )
+    }
+
+    if (detectionError) {
+      return <p className={styles.errorText}>{detectionError}</p>
+    }
+
+    return null
+  }
+
+  const renderAdvancedFields = () => (
+    <div className={styles.advancedFields}>
       <div className={styles.formRow}>
         <label className={styles.fieldLabel}>
           <span>Servidor SMTP</span>
@@ -170,8 +306,11 @@ export const EmailSettings: React.FC = () => {
             <Server size={17} />
             <input
               value={host}
-              onChange={(event) => setHost(event.target.value)}
-              placeholder="smtp.gmail.com"
+              onChange={(event) => {
+                markAdvancedDirty()
+                setHost(event.target.value)
+              }}
+              placeholder="smtp.tudominio.com"
               autoComplete="off"
             />
           </div>
@@ -181,7 +320,10 @@ export const EmailSettings: React.FC = () => {
           <div className={styles.inputWrap} data-ristak-unstyled>
             <input
               value={port}
-              onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ''))}
+              onChange={(event) => {
+                markAdvancedDirty()
+                setPort(event.target.value.replace(/[^0-9]/g, ''))
+              }}
               placeholder="587"
               inputMode="numeric"
               autoComplete="off"
@@ -192,26 +334,60 @@ export const EmailSettings: React.FC = () => {
 
       <div className={styles.formRow}>
         <label className={styles.fieldLabel}>
+          <span>Seguridad</span>
+          <CustomSelect
+            value={security}
+            options={SECURITY_OPTIONS}
+            onValueChange={(value) => {
+              markAdvancedDirty()
+              setSecurity(value as EmailSmtpSecurity)
+            }}
+          />
+        </label>
+        <label className={styles.fieldLabel}>
           <span>Usuario SMTP</span>
           <div className={styles.inputWrap} data-ristak-unstyled>
             <User size={17} />
             <input
               value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder={status?.smtp.usernameMasked || 'tucorreo@tudominio.com'}
+              onChange={(event) => {
+                markAdvancedDirty()
+                setUsername(event.target.value)
+              }}
+              placeholder={status?.smtp.usernameMasked || fromEmailValue || 'usuario@dominio.com'}
               autoComplete="off"
             />
           </div>
         </label>
+      </div>
+    </div>
+  )
+
+  const renderForm = () => (
+    <form className={styles.connectForm} onSubmit={connectEmail}>
+      <div className={styles.formRow}>
         <label className={styles.fieldLabel}>
-          <span>Password o app password</span>
+          <span>Correo de envío</span>
+          <div className={styles.inputWrap} data-ristak-unstyled>
+            <AtSign size={17} />
+            <input
+              type="email"
+              value={fromEmail}
+              onChange={(event) => setFromEmail(event.target.value)}
+              placeholder="hola@tudominio.com"
+              autoComplete="email"
+            />
+          </div>
+        </label>
+        <label className={styles.fieldLabel}>
+          <span>Contraseña o app password</span>
           <div className={styles.inputWrap} data-ristak-unstyled>
             <KeyRound size={17} />
             <input
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder={hasStoredCredentials ? 'Password guardado' : 'Pega tu app password'}
+              placeholder={canReuseStoredPassword ? 'Password guardado' : 'Pega tu app password'}
               autoComplete="new-password"
             />
           </div>
@@ -227,36 +403,40 @@ export const EmailSettings: React.FC = () => {
               value={fromName}
               onChange={(event) => setFromName(event.target.value)}
               placeholder="Mi Negocio"
-              autoComplete="off"
+              autoComplete="organization"
             />
           </div>
         </label>
         <label className={styles.fieldLabel}>
-          <span>Correo del remitente</span>
+          <span>Correo para respuestas (opcional)</span>
           <div className={styles.inputWrap} data-ristak-unstyled>
-            <AtSign size={17} />
+            <Mail size={17} />
             <input
-              value={fromEmail}
-              onChange={(event) => setFromEmail(event.target.value)}
-              placeholder="hola@tudominio.com"
-              autoComplete="off"
+              type="email"
+              value={replyTo}
+              onChange={(event) => setReplyTo(event.target.value)}
+              placeholder="respuestas@tudominio.com"
+              autoComplete="email"
             />
           </div>
         </label>
       </div>
 
-      <label className={styles.fieldLabel}>
-        <span>Correo para respuestas (opcional)</span>
-        <div className={styles.inputWrap} data-ristak-unstyled>
-          <Mail size={17} />
-          <input
-            value={replyTo}
-            onChange={(event) => setReplyTo(event.target.value)}
-            placeholder="respuestas@tudominio.com"
-            autoComplete="off"
-          />
-        </div>
-      </label>
+      {renderDetectionStatus()}
+
+      <div className={styles.advancedBlock}>
+        <Button
+          type="button"
+          variant="ghost"
+          className={styles.advancedToggle}
+          onClick={() => setAdvancedOpen(value => !value)}
+        >
+          <SlidersHorizontal size={16} />
+          Configuración avanzada
+          <ChevronDown size={16} className={advancedOpen ? styles.chevronOpen : ''} />
+        </Button>
+        {advancedOpen && renderAdvancedFields()}
+      </div>
 
       <div className={styles.formActions}>
         <Button type="submit" loading={connecting} disabled={!canSubmit}>
@@ -277,30 +457,27 @@ export const EmailSettings: React.FC = () => {
 
   const renderGuide = () => (
     <div className={styles.tutorial}>
-      <div className={styles.tutorialHeader}>
-        <span>Guia rapida</span>
-        <strong>Conecta el correo de tu cuenta</strong>
-      </div>
+      <p className={styles.eyebrow}>Conectar mi correo</p>
       <ol className={styles.tutorialSteps}>
         <li>
           <span>1</span>
           <div>
-            <strong>Consigue tus datos SMTP</strong>
-            <p>En Gmail usa smtp.gmail.com con un app password. En Outlook, GoDaddy u otros, búscalos como "datos SMTP".</p>
+            <strong>Escribe tu correo</strong>
+            <p>Ristak detecta el proveedor con el dominio y los MX.</p>
           </div>
         </li>
         <li>
           <span>2</span>
           <div>
-            <strong>Pega los datos aquí</strong>
-            <p>Ristak verifica la conexión con tu servidor antes de guardarla.</p>
+            <strong>Pega el app password</strong>
+            <p>La contraseña se usa para probar la conexión y se guarda cifrada.</p>
           </div>
         </li>
         <li>
           <span>3</span>
           <div>
-            <strong>Envía un correo de prueba</strong>
-            <p>Al conectar podrás mandarte una prueba para confirmar que todo llega bien.</p>
+            <strong>Recibe la prueba</strong>
+            <p>Al conectar, Ristak envía un correo de prueba automáticamente.</p>
           </div>
         </li>
       </ol>
@@ -310,9 +487,9 @@ export const EmailSettings: React.FC = () => {
   const renderConnectStage = () => (
     <section className={styles.connectPanel}>
       <div className={styles.connectCopy}>
-        <p className={styles.eyebrow}>Conexión</p>
-        <h3>Conecta el correo de tu cuenta</h3>
-        <span>Configura el remitente que Ristak usará para enviar correos a tus contactos.</span>
+        <p className={styles.eyebrow}>Correo de salida</p>
+        <h3>Conecta tu correo sin tocar SMTP</h3>
+        <span>Ristak detecta el proveedor y prepara la conexión por debajo.</span>
       </div>
       {status?.lastError && <p className={styles.errorText}>{status.lastError}</p>}
       <div className={styles.connectContent}>
@@ -329,9 +506,9 @@ export const EmailSettings: React.FC = () => {
       return (
         <section className={styles.connectPanel}>
           <div className={styles.connectCopy}>
-            <p className={styles.eyebrow}>Conexión</p>
-            <h3>Actualizar datos SMTP</h3>
-            <span>Cambia el servidor, las credenciales o el remitente. Ristak verificará la conexión antes de guardar.</span>
+            <p className={styles.eyebrow}>Conexión activa</p>
+            <h3>Actualizar correo de envío</h3>
+            <span>Cambia el remitente o pega un app password nuevo. Ristak volverá a probar todo antes de guardar.</span>
           </div>
           <div className={styles.connectContent}>
             {renderGuide()}
@@ -352,7 +529,7 @@ export const EmailSettings: React.FC = () => {
                 <span>{status.sender.fromEmail}</span>
               </div>
             </div>
-            <Badge variant="success">
+            <Badge variant="success" className={styles.inlineBadge}>
               <ShieldCheck size={14} />
               Conectado
             </Badge>
@@ -360,12 +537,8 @@ export const EmailSettings: React.FC = () => {
 
           <dl className={styles.summaryList}>
             <div>
-              <dt>Servidor SMTP</dt>
-              <dd>{status.smtp.host}:{status.smtp.port}</dd>
-            </div>
-            <div>
-              <dt>Usuario</dt>
-              <dd>{status.smtp.usernameMasked || 'Sin usuario'}</dd>
+              <dt>Proveedor</dt>
+              <dd>{status.providerLabel || 'SMTP del dominio'}</dd>
             </div>
             <div>
               <dt>Respuestas a</dt>
@@ -380,6 +553,35 @@ export const EmailSettings: React.FC = () => {
               <dd>{formatDateTime(status.timestamps.lastTestAt)}</dd>
             </div>
           </dl>
+
+          <div className={styles.detailsBlock}>
+            <Button
+              type="button"
+              variant="ghost"
+              className={styles.advancedToggle}
+              onClick={() => setDetailsOpen(value => !value)}
+            >
+              <SlidersHorizontal size={16} />
+              Detalles avanzados
+              <ChevronDown size={16} className={detailsOpen ? styles.chevronOpen : ''} />
+            </Button>
+            {detailsOpen && (
+              <dl className={styles.advancedSummary}>
+                <div>
+                  <dt>Servidor</dt>
+                  <dd>{status.smtp.host}:{status.smtp.port}</dd>
+                </div>
+                <div>
+                  <dt>Seguridad</dt>
+                  <dd>{getSecurityLabel(status.smtp.security)}</dd>
+                </div>
+                <div>
+                  <dt>Usuario</dt>
+                  <dd>{status.smtp.usernameMasked || 'Sin usuario'}</dd>
+                </div>
+              </dl>
+            )}
+          </div>
 
           <div className={styles.summaryActions}>
             <Button variant="outline" onClick={() => setEditing(true)}>
@@ -396,17 +598,18 @@ export const EmailSettings: React.FC = () => {
         <section className={styles.testCard}>
           <div className={styles.testCopy}>
             <p className={styles.eyebrow}>Prueba</p>
-            <h3>Envía un correo de prueba</h3>
-            <span>Confirma que tus correos llegan bien antes de usarlos con tus contactos.</span>
+            <h3>Enviar otra prueba</h3>
+            <span>Usa esto cuando quieras confirmar la entrega a otro correo.</span>
           </div>
           <form className={styles.testForm} onSubmit={sendTest}>
             <div className={styles.inputWrap} data-ristak-unstyled>
               <AtSign size={17} />
               <input
+                type="email"
                 value={testTo}
                 onChange={(event) => setTestTo(event.target.value)}
                 placeholder="tucorreo@tudominio.com"
-                autoComplete="off"
+                autoComplete="email"
               />
             </div>
             <Button type="submit" loading={testing} disabled={!testTo.trim()}>
@@ -440,7 +643,7 @@ export const EmailSettings: React.FC = () => {
       <PageHeader
         eyebrow="Sistema"
         title="Correos"
-        subtitle="Configura el remitente que usará tu cuenta para enviar correos."
+        subtitle="Conecta el remitente que usará tu cuenta para enviar correos."
       />
 
       <div className={styles.stage}>

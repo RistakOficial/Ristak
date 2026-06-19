@@ -1,5 +1,6 @@
 import {
   connectEmail,
+  detectEmailProvider,
   disconnectEmail,
   getEmailStatus,
   sendTestEmail
@@ -30,6 +31,16 @@ export async function connectEmailView(req, res) {
   } catch (error) {
     logger.error(`Error conectando correo: ${error.message}`)
     sendError(res, error, 'Error conectando el correo')
+  }
+}
+
+export async function detectEmailProviderView(req, res) {
+  try {
+    const data = await detectEmailProvider(req.body || {})
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error detectando proveedor de correo: ${error.message}`)
+    sendError(res, error, 'Error detectando el proveedor de correo')
   }
 }
 

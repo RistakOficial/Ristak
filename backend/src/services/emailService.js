@@ -1,3 +1,4 @@
+import { promises as dns } from 'node:dns'
 import nodemailer from 'nodemailer'
 import { getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
@@ -10,10 +11,90 @@ const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const SMTP_SECURITY_TYPES = new Set(['starttls', 'ssl', 'none'])
+
+const EMAIL_PROVIDER_DEFINITIONS = [
+  {
+    id: 'google',
+    label: 'Google Gmail / Workspace',
+    domainPatterns: [/^(gmail|googlemail)\.com$/i],
+    mxPatterns: [/google\.com$/i, /googlemail\.com$/i],
+    smtp: { host: 'smtp.gmail.com', port: 587, security: 'starttls' }
+  },
+  {
+    id: 'microsoft',
+    label: 'Microsoft 365 / Outlook',
+    domainPatterns: [/^(outlook|hotmail|live|msn)\.com$/i],
+    mxPatterns: [/protection\.outlook\.com$/i, /outlook\.com$/i],
+    smtp: { host: 'smtp.office365.com', port: 587, security: 'starttls' }
+  },
+  {
+    id: 'yahoo',
+    label: 'Yahoo Mail',
+    domainPatterns: [/^(yahoo|ymail|rocketmail)\.com$/i],
+    mxPatterns: [/yahoodns\.net$/i, /yahoo\.com$/i],
+    smtp: { host: 'smtp.mail.yahoo.com', port: 465, security: 'ssl' }
+  },
+  {
+    id: 'icloud',
+    label: 'iCloud Mail',
+    domainPatterns: [/^(icloud|me|mac)\.com$/i],
+    mxPatterns: [/mail\.icloud\.com$/i],
+    smtp: { host: 'smtp.mail.me.com', port: 587, security: 'starttls' }
+  },
+  {
+    id: 'zoho',
+    label: 'Zoho Mail',
+    domainPatterns: [/^zoho\.[a-z.]+$/i],
+    mxPatterns: [/zoho\.[a-z.]+$/i, /zohomail\.[a-z.]+$/i],
+    smtp: { host: 'smtp.zoho.com', port: 465, security: 'ssl' }
+  },
+  {
+    id: 'godaddy',
+    label: 'GoDaddy / Microsoft email',
+    mxPatterns: [/secureserver\.net$/i],
+    smtp: { host: 'smtpout.secureserver.net', port: 465, security: 'ssl' }
+  },
+  {
+    id: 'titan',
+    label: 'Titan Email',
+    mxPatterns: [/titan\.email$/i],
+    smtp: { host: 'smtp.titan.email', port: 465, security: 'ssl' }
+  },
+  {
+    id: 'privateemail',
+    label: 'Namecheap Private Email',
+    mxPatterns: [/privateemail\.com$/i],
+    smtp: { host: 'mail.privateemail.com', port: 465, security: 'ssl' }
+  },
+  {
+    id: 'fastmail',
+    label: 'Fastmail',
+    domainPatterns: [/^fastmail\.[a-z.]+$/i],
+    mxPatterns: [/messagingengine\.com$/i],
+    smtp: { host: 'smtp.fastmail.com', port: 465, security: 'ssl' }
+  },
+  {
+    id: 'aol',
+    label: 'AOL Mail',
+    domainPatterns: [/^aol\.com$/i],
+    mxPatterns: [/aol\.com$/i],
+    smtp: { host: 'smtp.aol.com', port: 465, security: 'ssl' }
+  },
+  {
+    id: 'yandex',
+    label: 'Yandex Mail',
+    domainPatterns: [/^yandex\.[a-z.]+$/i],
+    mxPatterns: [/yandex\.[a-z.]+$/i],
+    smtp: { host: 'smtp.yandex.com', port: 465, security: 'ssl' }
+  }
+]
 
 // Transporter cacheado: se invalida cuando cambia la configuración guardada.
 let cachedTransporter = null
 let cachedTransporterSignature = ''
+let smtpTransportFactory = (options) => nodemailer.createTransport(options)
+let emailMxResolver = (domain) => dns.resolveMx(domain)
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -29,6 +110,115 @@ function maskUsername(username) {
   }
   const visible = user.slice(0, 2)
   return `${visible}${'*'.repeat(Math.max(user.length - 2, 2))}@${domain}`
+}
+
+function normalizeHostname(value) {
+  return cleanString(value).toLowerCase().replace(/\.$/, '')
+}
+
+function normalizeSecurity(value, port) {
+  const security = cleanString(value).toLowerCase()
+  if (SMTP_SECURITY_TYPES.has(security)) return security
+  return Number(port) === 465 ? 'ssl' : 'starttls'
+}
+
+function getEmailDomain(email) {
+  const value = cleanString(email).toLowerCase()
+  const atIndex = value.lastIndexOf('@')
+  return atIndex >= 0 ? normalizeHostname(value.slice(atIndex + 1)) : ''
+}
+
+function sanitizeMxRecords(records = []) {
+  return records
+    .map(record => ({
+      exchange: normalizeHostname(record?.exchange),
+      priority: Number.isFinite(Number(record?.priority)) ? Number(record.priority) : 0
+    }))
+    .filter(record => record.exchange)
+    .sort((a, b) => a.priority - b.priority || a.exchange.localeCompare(b.exchange))
+}
+
+async function resolveMxRecords(domain) {
+  try {
+    const records = await emailMxResolver(domain)
+    return { records: sanitizeMxRecords(records), error: null }
+  } catch (error) {
+    return {
+      records: [],
+      error: cleanString(error?.code || error?.message) || 'MX_LOOKUP_FAILED'
+    }
+  }
+}
+
+function providerMatchesDomain(provider, domain) {
+  return (provider.domainPatterns || []).some(pattern => pattern.test(domain))
+}
+
+function providerMatchesMx(provider, mxRecords) {
+  return mxRecords.some(record =>
+    (provider.mxPatterns || []).some(pattern => pattern.test(record.exchange))
+  )
+}
+
+function findKnownProvider(domain, mxRecords) {
+  const mx = EMAIL_PROVIDER_DEFINITIONS.find(provider => providerMatchesMx(provider, mxRecords))
+  if (mx) return { provider: mx, detectedBy: 'mx' }
+
+  const direct = EMAIL_PROVIDER_DEFINITIONS.find(provider => providerMatchesDomain(provider, domain))
+  if (direct) return { provider: direct, detectedBy: 'domain' }
+
+  return null
+}
+
+function buildFallbackProvider(domain, mxRecords) {
+  const domainMx = mxRecords.find(record =>
+    record.exchange === `mail.${domain}` || record.exchange.endsWith(`.${domain}`)
+  )
+  const firstMailMx = mxRecords.find(record => record.exchange.startsWith('mail.'))
+  const host = domainMx?.exchange || firstMailMx?.exchange || `smtp.${domain}`
+
+  return {
+    id: 'custom_smtp',
+    label: 'SMTP del dominio',
+    detectedBy: mxRecords.length ? 'mx' : 'domain',
+    smtp: { host, port: 587, security: 'starttls' }
+  }
+}
+
+function buildDetectionResponse({ email, domain, mxRecords, mxError, match }) {
+  const provider = match
+    ? {
+        id: match.provider.id,
+        label: match.provider.label,
+        detectedBy: match.detectedBy,
+        confidence: 'high'
+      }
+    : {
+        id: 'custom_smtp',
+        label: 'SMTP del dominio',
+        detectedBy: mxRecords.length ? 'mx' : 'domain',
+        confidence: 'medium'
+      }
+  const smtp = match?.provider.smtp || buildFallbackProvider(domain, mxRecords).smtp
+
+  return {
+    email,
+    domain,
+    provider,
+    smtp: {
+      host: smtp.host,
+      port: Number(smtp.port) || 587,
+      security: normalizeSecurity(smtp.security, smtp.port),
+      username: email,
+      usernameMasked: maskUsername(email)
+    },
+    mx: {
+      checked: true,
+      found: mxRecords.length > 0,
+      records: mxRecords,
+      error: mxError
+    }
+  }
 }
 
 async function readStoredConfig() {
@@ -66,7 +256,7 @@ function friendlySmtpError(error, host) {
 
   if (code === 'EDNS' || code === 'ENOTFOUND' || /ENOTFOUND/i.test(error?.message || '')) {
     const suggestion = /smpt/i.test(host) ? ` ¿Quisiste decir "${host.replace(/smpt/gi, 'smtp')}"?` : ''
-    return `El servidor "${host}" no existe. Revisa que esté bien escrito (por ejemplo smtp.gmail.com).${suggestion}`
+    return `El servidor "${host}" no existe. Ristak no pudo alcanzarlo; abre Avanzado si tu proveedor usa otro servidor.${suggestion}`
   }
 
   if (code === 'EAUTH' || responseCode === 535 || responseCode === 534) {
@@ -82,11 +272,13 @@ function friendlySmtpError(error, host) {
 
 function buildTransporter(config, password) {
   const port = Number(config.port) || 587
-  return nodemailer.createTransport({
+  const security = normalizeSecurity(config.security, port)
+  return smtpTransportFactory({
     host: config.host,
     port,
-    // 465 usa SSL implícito; el resto negocia STARTTLS.
-    secure: port === 465,
+    secure: security === 'ssl',
+    requireTLS: security === 'starttls',
+    ignoreTLS: security === 'none',
     auth: {
       user: config.username,
       pass: password
@@ -95,7 +287,7 @@ function buildTransporter(config, password) {
 }
 
 async function getTransporter(config, password) {
-  const signature = JSON.stringify([config.host, config.port, config.username, password])
+  const signature = JSON.stringify([config.host, config.port, config.security, config.username, password])
   if (!cachedTransporter || cachedTransporterSignature !== signature) {
     cachedTransporter = buildTransporter(config, password)
     cachedTransporterSignature = signature
@@ -106,6 +298,96 @@ async function getTransporter(config, password) {
 function invalidateTransporter() {
   cachedTransporter = null
   cachedTransporterSignature = ''
+}
+
+function formatFromAddress(config) {
+  const fromEmail = config.fromEmail || config.username
+  const fromName = cleanString(config.fromName).replace(/"/g, '\\"')
+  return fromName ? `"${fromName}" <${fromEmail}>` : fromEmail
+}
+
+function buildConnectionTestMessage(config, to) {
+  return {
+    from: formatFromAddress(config),
+    to,
+    subject: 'Correo de prueba de Ristak',
+    text: 'Tu cuenta de correo quedó conectada a Ristak. Este envío confirma que la conexión funciona.',
+    html: `
+      <div style="font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">
+        <h2 style="margin: 0 0 12px;">Tu correo está conectado</h2>
+        <p style="margin: 0 0 8px; line-height: 1.5;">
+          Este es un envío de prueba desde <strong>Ristak</strong> usando
+          <strong>${config.fromEmail || config.username}</strong>.
+        </p>
+        <p style="margin: 0; font-size: 13px;">Si recibiste este correo, la configuración funciona correctamente.</p>
+      </div>
+    `
+  }
+}
+
+async function sendMailWithTransporter(transporter, config, message) {
+  const result = await transporter.sendMail({
+    from: message.from || formatFromAddress(config),
+    to: message.to,
+    subject: cleanString(message.subject),
+    text: cleanString(message.text) || undefined,
+    html: cleanString(message.html) || undefined,
+    replyTo: cleanString(message.replyTo) || config.replyTo || undefined
+  })
+
+  return {
+    messageId: result.messageId || null,
+    accepted: result.accepted || [],
+    rejected: result.rejected || []
+  }
+}
+
+async function sendConnectionTestEmail(transporter, config, testTo) {
+  const recipient = cleanString(testTo).toLowerCase() || config.fromEmail || config.username
+  if (!EMAIL_PATTERN.test(recipient)) throw httpError(400, 'El correo de prueba no es válido')
+
+  const result = await sendMailWithTransporter(
+    transporter,
+    config,
+    buildConnectionTestMessage(config, recipient)
+  )
+
+  if (result.rejected.length && !result.accepted.length) {
+    throw httpError(400, `El servidor conectó, pero rechazó el correo de prueba para ${recipient}`)
+  }
+
+  return result
+}
+
+export function setEmailTransportFactoryForTest(factory) {
+  smtpTransportFactory = typeof factory === 'function'
+    ? factory
+    : (options) => nodemailer.createTransport(options)
+  invalidateTransporter()
+}
+
+export function setEmailMxResolverForTest(resolver) {
+  emailMxResolver = typeof resolver === 'function'
+    ? resolver
+    : (domain) => dns.resolveMx(domain)
+}
+
+export async function detectEmailProvider(payload = {}) {
+  const email = cleanString(payload.email || payload.fromEmail).toLowerCase()
+  if (!EMAIL_PATTERN.test(email)) throw httpError(400, 'Escribe un correo de envío válido')
+
+  const domain = getEmailDomain(email)
+  if (!domain) throw httpError(400, 'No se pudo leer el dominio del correo')
+
+  const { records, error } = await resolveMxRecords(domain)
+  const match = findKnownProvider(domain, records)
+  return buildDetectionResponse({
+    email,
+    domain,
+    mxRecords: records,
+    mxError: error,
+    match
+  })
 }
 
 export async function getEmailStatus() {
@@ -123,12 +405,14 @@ export async function getEmailStatus() {
   const connected = Boolean(configured && config?.connected)
 
   return {
-    provider: 'smtp',
+    provider: config?.providerId || 'smtp',
+    providerLabel: config?.providerLabel || (connected ? 'SMTP' : ''),
     connected,
     configured,
     smtp: {
       host: config?.host || '',
       port: Number(config?.port) || 587,
+      security: normalizeSecurity(config?.security, config?.port),
       usernameMasked: maskUsername(config?.username),
       hasPassword
     },
@@ -159,34 +443,93 @@ export async function connectEmail(payload = {}) {
     previous = null
     invalidateTransporter()
   }
-  const canReuseStoredCredentials = previous?.connected === true
 
-  const host = cleanString(payload.host) || (canReuseStoredCredentials ? previous?.host : '') || ''
-  const port = Number(payload.port) || (canReuseStoredCredentials ? Number(previous?.port) : 0) || 587
-  const username = cleanString(payload.username) || (canReuseStoredCredentials ? previous?.username : '') || ''
-  const fromEmail = cleanString(payload.fromEmail).toLowerCase() ||
-    (canReuseStoredCredentials ? previous?.fromEmail : '') ||
-    username.toLowerCase()
+  const smtpPayload = payload.smtp && typeof payload.smtp === 'object' ? payload.smtp : {}
+  const requestedFromEmail = cleanString(payload.fromEmail).toLowerCase()
+  const requestedUsername = cleanString(smtpPayload.username || payload.username).toLowerCase()
+  const previousFromEmail = cleanString(previous?.fromEmail).toLowerCase()
+  const previousUsername = cleanString(previous?.username).toLowerCase()
+  const canReuseStoredCredentials = previous?.connected === true &&
+    (!requestedFromEmail || requestedFromEmail === previousFromEmail) &&
+    (!requestedUsername || requestedUsername === previousUsername)
+
+  const fromEmail = requestedFromEmail ||
+    (canReuseStoredCredentials ? previousFromEmail : '') ||
+    requestedUsername
   const fromName = cleanString(payload.fromName) || (canReuseStoredCredentials ? previous?.fromName : '') || ''
   const replyTo = cleanString(payload.replyTo).toLowerCase()
 
-  if (!host) throw httpError(400, 'Escribe el servidor SMTP (por ejemplo smtp.gmail.com)')
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw httpError(400, 'El puerto SMTP no es válido')
-  if (!username) throw httpError(400, 'Escribe el usuario SMTP (normalmente es tu correo)')
   if (!EMAIL_PATTERN.test(fromEmail)) throw httpError(400, 'El correo del remitente no es válido')
   if (replyTo && !EMAIL_PATTERN.test(replyTo)) throw httpError(400, 'El correo de respuestas no es válido')
 
   const newPassword = cleanString(payload.password)
   const password = newPassword || (canReuseStoredCredentials ? await readStoredPassword() : '')
   if (!password) throw httpError(400, 'Escribe el password o app password SMTP')
+  if (!fromName) throw httpError(400, 'Escribe el nombre del remitente')
 
-  const candidate = { host, port, username, fromEmail, fromName, replyTo }
+  const hasAdvancedSmtp = Boolean(
+    cleanString(smtpPayload.host || payload.host) ||
+    cleanString(smtpPayload.username || payload.username) ||
+    smtpPayload.port ||
+    payload.port ||
+    cleanString(smtpPayload.security || payload.security)
+  )
+
+  let detection = null
+  let host = ''
+  let port = 587
+  let security = 'starttls'
+  let username = ''
+  let providerId = 'custom_smtp'
+  let providerLabel = 'SMTP del dominio'
+
+  if (hasAdvancedSmtp) {
+    host = normalizeHostname(smtpPayload.host || payload.host)
+    port = Number(smtpPayload.port || payload.port) || 587
+    security = normalizeSecurity(smtpPayload.security || payload.security, port)
+    username = cleanString(smtpPayload.username || payload.username) || fromEmail
+    providerId = cleanString(payload.providerId) || 'custom_smtp'
+    providerLabel = cleanString(payload.providerLabel) || 'SMTP manual'
+  } else if (canReuseStoredCredentials && previous?.host) {
+    host = normalizeHostname(previous.host)
+    port = Number(previous.port) || 587
+    security = normalizeSecurity(previous.security, port)
+    username = previous.username || fromEmail
+    providerId = previous.providerId || 'custom_smtp'
+    providerLabel = previous.providerLabel || 'SMTP'
+  } else {
+    detection = await detectEmailProvider({ email: fromEmail })
+    host = detection.smtp.host
+    port = Number(detection.smtp.port) || 587
+    security = normalizeSecurity(detection.smtp.security, port)
+    username = detection.smtp.username || fromEmail
+    providerId = detection.provider.id
+    providerLabel = detection.provider.label
+  }
+
+  if (!host) throw httpError(400, 'No se pudo detectar el servidor de correo. Abre Avanzado y escríbelo manualmente.')
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw httpError(400, 'El puerto SMTP no es válido')
+  if (!username) throw httpError(400, 'No se pudo definir el usuario SMTP')
+
+  const candidate = {
+    host,
+    port,
+    security,
+    username,
+    fromEmail,
+    fromName,
+    replyTo,
+    providerId,
+    providerLabel
+  }
   const transporter = buildTransporter(candidate, password)
 
   try {
     await transporter.verify()
+    await sendConnectionTestEmail(transporter, candidate, payload.testTo)
   } catch (error) {
     logger.warn(`Verificación SMTP fallida para ${host}: ${error.message}`)
+    if (error.status) throw error
     throw httpError(400, friendlySmtpError(error, host))
   }
 
@@ -200,12 +543,14 @@ export async function connectEmail(payload = {}) {
     connectedAt: previous?.connectedAt || now,
     lastVerifiedAt: now,
     disconnectedAt: null,
-    lastTestAt: previous?.lastTestAt || null,
+    lastTestAt: now,
+    detectedDomain: detection?.domain || getEmailDomain(fromEmail),
+    mxRecords: detection?.mx?.records || previous?.mxRecords || [],
     lastError: null
   })
   invalidateTransporter()
 
-  logger.info(`Correo conectado por SMTP (${host}:${port}) como ${maskUsername(username)}`)
+  logger.info(`Correo conectado por SMTP (${host}:${port}) como ${maskUsername(username)} con ${providerLabel}`)
   return getEmailStatus()
 }
 
@@ -227,24 +572,16 @@ export async function sendEmail({ to, subject, text, html, replyTo } = {}) {
   if (!cleanString(text) && !cleanString(html)) throw httpError(400, 'El correo necesita contenido')
 
   const transporter = await getTransporter(config, password)
-  const fromEmail = config.fromEmail || config.username
-  const from = config.fromName ? `"${config.fromName}" <${fromEmail}>` : fromEmail
 
   try {
-    const result = await transporter.sendMail({
-      from,
+    const result = await sendMailWithTransporter(transporter, config, {
       to: recipient,
-      subject: cleanString(subject),
-      text: cleanString(text) || undefined,
-      html: cleanString(html) || undefined,
-      replyTo: cleanString(replyTo) || config.replyTo || undefined
+      subject,
+      text,
+      html,
+      replyTo
     })
-
-    return {
-      messageId: result.messageId || null,
-      accepted: result.accepted || [],
-      rejected: result.rejected || []
-    }
+    return result
   } catch (error) {
     logger.error(`Error enviando correo a ${recipient}: ${error.message}`)
     const friendly = friendlySmtpError(error, config.host)
