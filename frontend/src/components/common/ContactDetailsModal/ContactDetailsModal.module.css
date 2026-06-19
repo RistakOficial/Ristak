@@ -523,6 +523,26 @@
   padding: 1rem 1.25rem;
 }
 
+.singleContactInfoPanel .contactDetails {
+  display: flex;
+  flex-direction: column;
+}
+
+.singleContactInfoPanel .detailSection {
+  margin-bottom: 0;
+  padding: 0.875rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.singleContactInfoPanel .detailSection:first-child {
+  padding-top: 0;
+}
+
+.singleContactInfoPanel .detailSection:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
 .contactChatPanel {
   display: flex;
   flex: 1 1 auto;
@@ -992,6 +1012,42 @@
   color: var(--color-text-tertiary);
   font-size: 0.75rem;
   line-height: 1.35;
+}
+
+.whatsappPreferenceRouteSummary {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.whatsappPreferenceRouteSummary span {
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.whatsappPreferenceRouteSummary strong {
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.contactTagPicker {
+  display: inline-block;
+  width: fit-content;
+  min-width: 11rem;
+  max-width: 100%;
 }
 
 .whatsappPreferenceSelect {

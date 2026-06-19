@@ -126,6 +126,12 @@ interface ContactDetail {
   phoneNumbers?: ContactPhoneNumber[]
   preferredWhatsAppPhoneNumberId?: string | null
   preferred_whatsapp_phone_number_id?: string | null
+  lastBusinessPhone?: string | null
+  lastBusinessPhoneNumberId?: string | null
+  lastInboundBusinessPhone?: string | null
+  lastInboundBusinessPhoneNumberId?: string | null
+  firstInboundBusinessPhone?: string | null
+  firstInboundBusinessPhoneNumberId?: string | null
 }
 
 interface WhatsAppPhoneOption {
@@ -150,6 +156,8 @@ interface ContactChatMessage {
   errorReason?: string
   scheduledAt?: string
   scheduledMessageId?: string
+  businessPhone?: string
+  businessPhoneNumberId?: string
   transport?: string
   channel?: ContactChatComposerChannel
 }
@@ -217,7 +225,7 @@ const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
 const getCustomFieldLabel = (field: ContactCustomField, index: number) =>
   field.label || field.name || field.key || field.fieldKey || field.id || `Campo personalizado ${index + 1}`
 
-const getWhatsAppPhoneLabel = (phone: WhatsAppPhoneOption) => {
+const getWhatsAppPhoneLabel = (phone: ContactChatPhoneOption) => {
   const number = phone.display_phone_number || phone.phone_number || phone.id
   const name = phone.label || phone.verified_name || ''
   return name && name !== number ? `${name} · ${number}` : number
@@ -231,6 +239,44 @@ const getWhatsAppPhoneValue = (phone?: ContactChatPhoneOption | null) =>
 
 const getContactChatPhoneLabel = (phone?: ContactChatPhoneOption | null) =>
   phone?.label || phone?.verified_name || getWhatsAppPhoneValue(phone) || 'WhatsApp'
+
+const normalizePhoneProbe = (value?: string | null) =>
+  String(value || '').replace(/\D/g, '')
+
+const phoneValueMatches = (left?: string | null, right?: string | null) => {
+  const leftDigits = normalizePhoneProbe(left)
+  const rightDigits = normalizePhoneProbe(right)
+  if (!leftDigits || !rightDigits) return false
+  return leftDigits === rightDigits || leftDigits.endsWith(rightDigits) || rightDigits.endsWith(leftDigits)
+}
+
+const findContactChatPhoneByRoute = (
+  phones: ContactChatPhoneOption[],
+  phoneNumberId?: string | null,
+  businessPhone?: string | null
+): ContactChatPhoneOption | null => {
+  const cleanPhoneNumberId = String(phoneNumberId || '').trim()
+  const cleanBusinessPhone = String(businessPhone || '').trim()
+  if (cleanPhoneNumberId) {
+    const byId = phones.find((phone) => phone.id === cleanPhoneNumberId)
+    if (byId) return byId
+  }
+  if (cleanBusinessPhone) {
+    const byPhone = phones.find((phone) => (
+      phoneValueMatches(phone.phone_number, cleanBusinessPhone) ||
+      phoneValueMatches(phone.display_phone_number, cleanBusinessPhone) ||
+      phoneValueMatches((phone as WhatsAppApiPhoneNumber).qr_connected_phone, cleanBusinessPhone)
+    ))
+    if (byPhone) return byPhone
+  }
+  if (!cleanBusinessPhone && !cleanPhoneNumberId) return null
+  return {
+    id: cleanPhoneNumberId || cleanBusinessPhone,
+    label: 'Número recibido',
+    phone_number: cleanBusinessPhone || cleanPhoneNumberId,
+    display_phone_number: cleanBusinessPhone || cleanPhoneNumberId
+  }
+}
 
 const CONTACT_CHAT_CHANNEL_LABELS: Record<ContactChatComposerChannel, string> = {
   whatsapp: 'WhatsApp',
@@ -462,6 +508,8 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
     direction: normalizeBusinessMessageDirection(data.direction || data.message_direction || data.from_type),
     status: String(data.status || data.message_status || '').trim(),
     errorReason: String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim(),
+    businessPhone: String(data.business_phone || data.businessPhone || data.from_phone || data.fromPhone || data.to_phone || data.toPhone || '').trim(),
+    businessPhoneNumberId: String(data.business_phone_number_id || data.businessPhoneNumberId || data.phone_number_id || data.phoneNumberId || '').trim(),
     transport: String(data.transport || data.channel || data.provider || inferredChannel || '').trim(),
     channel: inferredChannel || undefined
   }
@@ -478,6 +526,8 @@ const getScheduledChatBubble = (message: ScheduledChatMessage): ContactChatMessa
     errorReason: message.errorMessage || '',
     scheduledAt: message.scheduledAt,
     scheduledMessageId: message.id,
+    businessPhone: message.fromPhone || '',
+    businessPhoneNumberId: message.businessPhoneNumberId || '',
     transport: message.transport || message.provider
   }
 }
@@ -1211,6 +1261,34 @@ export function ContactDetailsModal({
     const statusPhones = whatsappStatus?.phoneNumbers || []
     return statusPhones.length > 0 ? statusPhones : whatsappPhoneNumbers
   }, [whatsappPhoneNumbers, whatsappStatus?.phoneNumbers])
+  const whatsappPreferenceOptions = whatsappPhoneNumbers.length > 0 ? whatsappPhoneNumbers : availableWhatsAppPhones
+  const preferredWhatsAppPhoneNumberId = getPreferredWhatsAppPhoneNumberId(selectedContact)
+  const automaticWhatsAppRoutePhone = useMemo<ContactChatPhoneOption | null>(() => {
+    const routedMessage = [...chatMessages]
+      .reverse()
+      .find((message) => (
+        message.channel === 'whatsapp' &&
+        message.direction !== 'outbound' &&
+        Boolean(message.businessPhoneNumberId || message.businessPhone)
+      ))
+    const routePhoneNumberId = String(
+      routedMessage?.businessPhoneNumberId ||
+      selectedContact?.lastInboundBusinessPhoneNumberId ||
+      selectedContact?.lastBusinessPhoneNumberId ||
+      ''
+    ).trim()
+    const routeBusinessPhone = String(
+      routedMessage?.businessPhone ||
+      selectedContact?.lastInboundBusinessPhone ||
+      selectedContact?.lastBusinessPhone ||
+      ''
+    ).trim()
+    return findContactChatPhoneByRoute(
+      [...availableWhatsAppPhones, ...whatsappPhoneNumbers],
+      routePhoneNumberId,
+      routeBusinessPhone
+    )
+  }, [availableWhatsAppPhones, chatMessages, selectedContact, whatsappPhoneNumbers])
   const selectedBusinessPhone = useMemo<ContactChatPhoneOption | null>(() => {
     const routePhoneId = chatChannelValue.startsWith('whatsapp:') ? chatChannelValue.slice('whatsapp:'.length) : ''
     if (routePhoneId) {
@@ -1218,18 +1296,44 @@ export function ContactDetailsModal({
       if (routePhone) return routePhone
     }
 
-    const preferredId = getPreferredWhatsAppPhoneNumberId(selectedContact)
-    if (preferredId) {
-      const preferredPhone = availableWhatsAppPhones.find((phone) => phone.id === preferredId)
+    if (preferredWhatsAppPhoneNumberId) {
+      const preferredPhone = availableWhatsAppPhones.find((phone) => phone.id === preferredWhatsAppPhoneNumberId)
       if (preferredPhone) return preferredPhone
     }
+
+    if (automaticWhatsAppRoutePhone) return automaticWhatsAppRoutePhone
 
     return availableWhatsAppPhones.find((phone) => phone.is_default_sender) ||
       whatsappStatus?.selectedPhone ||
       availableWhatsAppPhones[0] ||
       null
-  }, [availableWhatsAppPhones, chatChannelValue, selectedContact, whatsappStatus?.selectedPhone])
+  }, [automaticWhatsAppRoutePhone, availableWhatsAppPhones, chatChannelValue, preferredWhatsAppPhoneNumberId, whatsappStatus?.selectedPhone])
   const selectedBusinessPhoneValue = getWhatsAppPhoneValue(selectedBusinessPhone) || whatsappStatus?.sender?.phone || ''
+  const selectedWhatsAppPreferencePhone = preferredWhatsAppPhoneNumberId
+    ? availableWhatsAppPhones.find((phone) => phone.id === preferredWhatsAppPhoneNumberId) ||
+      whatsappPhoneNumbers.find((phone) => phone.id === preferredWhatsAppPhoneNumberId) ||
+      null
+    : null
+  const whatsappPreferenceRoutePhone = selectedWhatsAppPreferencePhone || automaticWhatsAppRoutePhone || selectedBusinessPhone
+  const whatsappPreferenceRouteLabel = getContactChatPhoneLabel(whatsappPreferenceRoutePhone)
+  const whatsappPreferenceRouteNumber =
+    getWhatsAppPhoneValue(whatsappPreferenceRoutePhone) || selectedBusinessPhoneValue || ''
+  const whatsappPreferenceRouteDisplay = whatsappPreferenceRouteNumber
+    ? whatsappPreferenceRouteLabel && whatsappPreferenceRouteLabel !== whatsappPreferenceRouteNumber
+      ? `${whatsappPreferenceRouteLabel} · ${whatsappPreferenceRouteNumber}`
+      : whatsappPreferenceRouteNumber
+    : 'Sin número configurado'
+  const whatsappPreferenceModeLabel = preferredWhatsAppPhoneNumberId
+    ? 'Número fijo para este contacto'
+    : 'Automático por conversación'
+  const whatsappPreferenceRouteMode = preferredWhatsAppPhoneNumberId
+    ? 'Responde desde'
+    : automaticWhatsAppRoutePhone
+    ? 'Último mensaje llegó por'
+    : 'Fallback actual'
+  const whatsappPreferenceDescription = preferredWhatsAppPhoneNumberId
+    ? 'Ristak siempre responderá a este contacto desde este número.'
+    : 'Ristak usará el número por donde llegó el mensaje. Si no hay historial, tomará este número.'
   const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
   const detectedContactChannels = useMemo(
     () => getContactDetectedSocialChannels(selectedContact, chatMessages),
@@ -1374,7 +1478,11 @@ export function ContactDetailsModal({
     if (!isOpen || !selectedContact) return
     if (chatChannelOptions.some((option) => option.value === chatChannelValue)) return
 
+    const preferredWhatsAppOption = selectedBusinessPhone?.id
+      ? chatChannelOptions.find((option) => option.value === `whatsapp:${selectedBusinessPhone.id}`)
+      : undefined
     const preferredOption =
+      preferredWhatsAppOption ||
       chatChannelOptions.find((option) => option.value.startsWith('whatsapp')) ||
       chatChannelOptions.find((option) => option.value === 'email') ||
       chatChannelOptions.find((option) => option.value === 'messenger') ||
@@ -1382,7 +1490,7 @@ export function ContactDetailsModal({
       chatChannelOptions[0]
 
     if (preferredOption) setChatChannelValue(preferredOption.value)
-  }, [chatChannelOptions, chatChannelValue, isOpen, selectedContact])
+  }, [chatChannelOptions, chatChannelValue, isOpen, selectedBusinessPhone?.id, selectedContact])
 
   useEffect(() => {
     if (selectedChatChannel !== 'email' || chatEmailHtml.trim() || !chatDraft.trim()) return
@@ -1993,6 +2101,43 @@ export function ContactDetailsModal({
                     </div>
                   </div>
 
+                  {whatsappPreferenceOptions.length > 0 && (
+                    <div className={styles.detailSection}>
+                      <h5 className={styles.detailSectionTitle}>WhatsApp para responder</h5>
+                      <div className={styles.whatsappPreference}>
+                        <div className={styles.whatsappPreferenceHeader}>
+                          <Icon name="whatsapp" size={16} />
+                          <div>
+                            <strong>{whatsappPreferenceModeLabel}</strong>
+                            <span>{whatsappPreferenceDescription}</span>
+                          </div>
+                        </div>
+                        <div className={styles.whatsappPreferenceRouteSummary}>
+                          <span>{whatsappPreferenceRouteMode}</span>
+                          <strong>{whatsappPreferenceRouteDisplay}</strong>
+                        </div>
+                        <CustomSelect
+                          value={preferredWhatsAppPhoneNumberId}
+                          onChange={(event) => updatePreferredWhatsAppPhoneNumber(event.target.value)}
+                          disabled={savingWhatsAppPreference || !onUpdatePreferredWhatsAppPhoneNumber}
+                        >
+                          <option value="">Automático: usar el número por donde llegó</option>
+                          {whatsappPreferenceOptions.map((phone) => (
+                            <option key={phone.id} value={phone.id}>
+                              {getWhatsAppPhoneLabel(phone)}{phone.is_default_sender ? ' · Principal' : ''}
+                            </option>
+                          ))}
+                        </CustomSelect>
+                        {savingWhatsAppPreference && (
+                          <p className={styles.whatsappPreferenceHint}>Guardando cambio...</p>
+                        )}
+                        {whatsappPreferenceError && (
+                          <p className={styles.customFieldError}>{whatsappPreferenceError}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Etiquetas: la interna (según actividad) + las del usuario como chips */}
                   <div className={styles.detailSection}>
                     <h5 className={styles.detailSectionTitle}>Etiquetas</h5>
@@ -2006,53 +2151,16 @@ export function ContactDetailsModal({
                       })()}
                       allowCreate
                       disabled={savingTags || !onUpdateTags}
-                      placeholder="Agregar etiqueta…"
-                      aria-label="Etiquetas del contacto"
+                      placeholder="Agregar etiqueta"
+                      aria-label="Agregar etiqueta al contacto"
+                      triggerVariant="chip"
+                      closeOnSelect
+                      portal
+                      className={styles.contactTagPicker}
                     />
                     {savingTags && <p className={styles.whatsappPreferenceHint}>Guardando etiquetas...</p>}
                     {tagsError && <p className={styles.customFieldError}>{tagsError}</p>}
                   </div>
-
-                {whatsappPhoneNumbers.length > 0 && (
-                  <div className={styles.detailSection}>
-                    <h5 className={styles.detailSectionTitle}>WhatsApp para responder</h5>
-                    <div className={styles.whatsappPreference}>
-                      <div className={styles.whatsappPreferenceHeader}>
-                        <Icon name="whatsapp" size={16} />
-                        <div>
-                          <strong>
-                            {getPreferredWhatsAppPhoneNumberId(selectedContact)
-                              ? 'Número fijo para este contacto'
-                              : 'Automático por conversación'}
-                          </strong>
-                          <span>
-                            {getPreferredWhatsAppPhoneNumberId(selectedContact)
-                              ? 'Ristak siempre responderá a este contacto desde el número elegido.'
-                              : 'Ristak responderá desde el número por donde llegó el mensaje. Si no hay historial, usa el principal.'}
-                          </span>
-                        </div>
-                      </div>
-                      <CustomSelect
-                        value={getPreferredWhatsAppPhoneNumberId(selectedContact)}
-                        onChange={(event) => updatePreferredWhatsAppPhoneNumber(event.target.value)}
-                        disabled={savingWhatsAppPreference || !onUpdatePreferredWhatsAppPhoneNumber}
-                      >
-                        <option value="">Automático: usar el número por donde llegó</option>
-                        {whatsappPhoneNumbers.map((phone) => (
-                          <option key={phone.id} value={phone.id}>
-                            {getWhatsAppPhoneLabel(phone)}{phone.is_default_sender ? ' · Principal' : ''}
-                          </option>
-                        ))}
-                      </CustomSelect>
-                      {savingWhatsAppPreference && (
-                        <p className={styles.whatsappPreferenceHint}>Guardando cambio...</p>
-                      )}
-                      {whatsappPreferenceError && (
-                        <p className={styles.customFieldError}>{whatsappPreferenceError}</p>
-                      )}
-                    </div>
-                  </div>
-                )}
 
                 <div className={styles.detailSection}>
                   <button
