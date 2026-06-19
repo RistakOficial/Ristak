@@ -167,15 +167,13 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
 
         {messageType === 'text' && (
           <>
-            <MessageBlocksEditor
-              value={config.messageBlocks}
-              onChange={(messageBlocks: MessageBlock[]) => set({ messageBlocks })}
-              supportsQuickReplies={false}
-              buttonLabelMaxLength={20}
-            />
-
             {(hasQrConnected || sendViaQr) && (
               <div className={styles.qrModeBox}>
+                <Toggle
+                  checked={sendViaQr}
+                  onChange={setSendViaQr}
+                  label="Activar QR"
+                />
                 <div className={styles.qrModeCopy}>
                   <div className={styles.qrModeTitle}>
                     <span
@@ -190,11 +188,6 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
                     Usa un número conectado por QR en lugar de WhatsApp API para estos mensajes. Actívalo sólo si aceptas el riesgo de bloqueo del número.
                   </span>
                 </div>
-                <Toggle
-                  checked={sendViaQr}
-                  onChange={setSendViaQr}
-                  label="Activar QR"
-                />
               </div>
             )}
 
@@ -204,6 +197,13 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
                 Esta automatización tiene QR activado, pero ahora no hay ningún número conectado por QR.
               </div>
             )}
+
+            <MessageBlocksEditor
+              value={config.messageBlocks}
+              onChange={(messageBlocks: MessageBlock[]) => set({ messageBlocks })}
+              supportsQuickReplies={false}
+              buttonLabelMaxLength={20}
+            />
           </>
         )}
 

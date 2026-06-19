@@ -1534,17 +1534,21 @@
 
 .qrModeBox {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
   background: var(--surface-2);
   padding: 10px;
-  margin-top: 10px;
+  margin: 0 0 12px;
 }
 
 .qrModeCopy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -1568,6 +1572,8 @@
 .qrModeBox .toggleField {
   flex: 0 0 auto;
   margin: 0;
+  min-width: max-content;
+  padding-top: 1px;
 }
 
 /* Tarjetas de modo del nodo "Esperar" */
