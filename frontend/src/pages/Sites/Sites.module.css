@@ -17304,15 +17304,6 @@
   padding: 10px;
 }
 
-.videoElementFrameSample {
-  display: block;
-  width: min(100%, 250px);
-  height: 42px;
-  border: var(--video-settings-frame-border-width, 0) solid var(--video-settings-frame-border-color, transparent);
-  border-radius: var(--video-settings-frame-radius, 18px);
-  background: var(--video-settings-frame-bg, var(--surface-2));
-}
-
 .videoElementBarSample {
   width: min(100%, 250px);
   display: grid;

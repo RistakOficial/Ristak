@@ -13100,6 +13100,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
   const showCustomControlBar = showOverlay && settings.videoControlBar === true
+  const showControlBarInitially = settings.videoControlBarInitiallyVisible !== false
   const showCustomVolume = settings.videoControlVolume !== false
   const showCustomSpeed = settings.videoControlSpeed !== false
   const soundHint = settings.videoSoundHint !== false
@@ -13131,7 +13132,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     'rstk-video-player',
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
-    showCustomControlBar ? 'rstk-video-controls-visible' : '',
+    showCustomControlBar ? (showControlBarInitially ? 'rstk-video-controls-visible' : 'rstk-video-controls-hidden') : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
     muted ? 'rstk-video-is-muted' : '',
     `rstk-video-play-shape-${playShape}`,
@@ -15915,11 +15916,13 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        const soundNotice = host.querySelector('.rstk-video-sound');
 	        const controlBar = host.querySelector('[data-rstk-video-control-bar]');
 	        const hasControlBar = Boolean(controlBar);
+	        const startsWithHiddenControls = hasControlBar && host.classList.contains('rstk-video-controls-hidden');
 	        const previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
 	        let previewing = false;
 	        let hasUserPlayed = Boolean(video.autoplay);
-	        let controlsAreVisible = true;
+	        let controlsAreVisible = !startsWithHiddenControls;
 	        let controlsHideTimer = 0;
+	        const shouldHideControlsAtStart = () => startsWithHiddenControls && !hasUserPlayed;
 	        const setControlsVisible = visible => {
 	          if (!hasControlBar) return;
 	          controlsAreVisible = Boolean(visible);
@@ -15933,7 +15936,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        };
 	        const hideControlsAfter = delay => {
 	          clearControlsHideTimer();
-	          if (!hasControlBar || video.paused || previewing) return;
+	          if (!hasControlBar || (!shouldHideControlsAtStart() && (video.paused || previewing))) return;
 	          controlsHideTimer = window.setTimeout(() => {
 	            setControlsVisible(false);
 	            controlsHideTimer = 0;
@@ -15950,7 +15953,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          hideControlsAfter(controlsLeaveIdleMs);
 	        };
 	        if (hasControlBar) {
-	          setControlsVisible(true);
+	          setControlsVisible(controlsAreVisible);
 	          ['pointerenter', 'pointermove', 'touchstart', 'focusin'].forEach(eventName => host.addEventListener(eventName, handlePlayerActivity, { passive: true }));
 	          ['pointerleave', 'focusout'].forEach(eventName => host.addEventListener(eventName, handlePlayerLeave));
 	          controlBar.addEventListener('click', event => {
@@ -15999,7 +16002,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused || previewing ? 'Reproducir video' : 'Pausar video'));
 	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
 	          if (hasControlBar) {
-	            if (!video.paused && !previewing) {
+	            if (shouldHideControlsAtStart()) {
+	              if (controlsAreVisible && !controlsHideTimer) hideControlsAfter(controlsIdleMs);
+	            } else if (!video.paused && !previewing) {
 	              if (controlsAreVisible && !controlsHideTimer) hideControlsAfter(controlsIdleMs);
 	            } else {
 	              clearControlsHideTimer();

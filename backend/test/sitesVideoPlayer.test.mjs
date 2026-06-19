@@ -299,6 +299,26 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     assert.match(streamLiveHtml, /setControlsVisible\(false\)/)
     assert.match(streamLiveHtml, /rstk-video-controls-hidden/)
     assert.match(streamLiveHtml, /showControlsTemporarily\(\)/)
+    assert.match(streamLiveHtml, /startsWithHiddenControls/)
+    assert.match(streamLiveHtml, /shouldHideControlsAtStart/)
+
+    const hiddenInitialSettings = {
+      ...visualSettings,
+      videoControlBarInitiallyVisible: false
+    }
+    const plainHiddenHtml = await render(baseSite({
+      ...hiddenInitialSettings,
+      mediaUrl: plainUrl
+    }), { trackingEnabled: false, preview: true })
+    const streamHiddenHtml = await render(baseSite({
+      ...hiddenInitialSettings,
+      mediaUrl: storageUrl
+    }), { trackingEnabled: true, preview: false })
+    const hiddenInitialSignature = getVideoPlayerVisualSignature(plainHiddenHtml)
+
+    assert.match(hiddenInitialSignature.classes, /\brstk-video-controls-hidden\b/)
+    assert.doesNotMatch(hiddenInitialSignature.classes, /\brstk-video-controls-visible\b/)
+    assert.deepEqual(getVideoPlayerVisualSignature(streamHiddenHtml), hiddenInitialSignature)
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }

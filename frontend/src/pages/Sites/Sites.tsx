@@ -688,6 +688,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
   videoControls: false,
   videoControlBar: false,
+  videoControlBarInitiallyVisible: true,
   videoControlVolume: true,
   videoControlSpeed: true,
   videoPreviewEnabled: true,
@@ -19556,14 +19557,10 @@ const VideoPreviewRangeControl: React.FC<{
 
 const VideoSettingsElementPreview: React.FC<{
   settings: Record<string, unknown>
-  type: 'frame' | 'bar' | 'play' | 'sound'
+  type: 'bar' | 'play' | 'sound'
 }> = ({ settings, type }) => {
   const playShape = getVideoPlayShape(settings)
   const playIconStyle = getVideoPlayIconStyle(settings)
-  const frameRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
-  const frameBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
-  const frameBorderColor = visibleVideoBorderColor(getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT)
-  const frameBorderWidth = `${getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}px`
   const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
   const playRadius = `${getVideoPlayRadiusValue(settings, playShape)}px`
@@ -19573,17 +19570,12 @@ const VideoSettingsElementPreview: React.FC<{
     <div
       className={styles.videoElementPreview}
       style={{
-        ['--video-settings-frame-bg' as string]: frameBackground,
-        ['--video-settings-frame-radius' as string]: frameRadius,
-        ['--video-settings-frame-border-color' as string]: frameBorderColor,
-        ['--video-settings-frame-border-width' as string]: frameBorderWidth,
         ['--video-settings-play-bg' as string]: playerColor,
         ['--video-settings-play-color' as string]: playColor,
         ['--video-settings-play-radius' as string]: playRadius,
         ['--video-settings-sound-color' as string]: soundColor
       } as React.CSSProperties}
     >
-      {type === 'frame' && <span className={styles.videoElementFrameSample} />}
       {type === 'bar' && (
         <span className={styles.videoElementBarSample}>
           <span className={styles.videoElementBarPlay}><Play size={11} fill="currentColor" /></span>
@@ -19654,7 +19646,6 @@ const VideoPlayerSettingsControls: React.FC<{
           <span>Video</span>
           <strong>Marco y ajuste</strong>
         </div>
-        <VideoSettingsElementPreview settings={settings} type="frame" />
         <label className={styles.field}>
           <span>Estilo del reproductor</span>
           <CustomSelect
@@ -19815,6 +19806,20 @@ const VideoPlayerSettingsControls: React.FC<{
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
+                  checked={settings.videoControlBarInitiallyVisible !== false}
+                  disabled={!showCustomControlBar}
+                  onChange={(event) => {
+                    onPatchSettings({ videoControlBarInitiallyVisible: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Mostrar al inicio</span>
+              </label>
+            </div>
+            <div className={styles.twoColumn}>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
                   checked={settings.videoControlVolume !== false}
                   disabled={!showCustomControlBar}
                   onChange={(event) => {
@@ -19824,19 +19829,19 @@ const VideoPlayerSettingsControls: React.FC<{
                 />
                 <span>Volumen</span>
               </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.videoControlSpeed !== false}
+                  disabled={!showCustomControlBar}
+                  onChange={(event) => {
+                    onPatchSettings({ videoControlSpeed: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Velocidad</span>
+              </label>
             </div>
-            <label className={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={settings.videoControlSpeed !== false}
-                disabled={!showCustomControlBar}
-                onChange={(event) => {
-                  onPatchSettings({ videoControlSpeed: event.target.checked })
-                  window.setTimeout(onSave, 0)
-                }}
-              />
-              <span>Velocidad</span>
-            </label>
           </section>
 
           <section className={styles.videoSettingsSection}>
@@ -23576,7 +23581,8 @@ const VideoPlayerPreview: React.FC<{
   const [isPreviewLooping, setIsPreviewLooping] = useState(false)
   const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
   const [progress, setProgress] = useState(0)
-  const [controlsVisible, setControlsVisible] = useState(true)
+  const showControlBarInitially = settings.videoControlBarInitiallyVisible !== false
+  const [controlsVisible, setControlsVisible] = useState(showControlBarInitially)
   const controlsMode = getVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
@@ -23615,6 +23621,7 @@ const VideoPlayerPreview: React.FC<{
   const controlsHideTimerRef = useRef<number | null>(null)
   const showOverlayLayer = showOverlay && (!isPlaying || isPreviewLooping)
   const showSoundNotice = showOverlayLayer && soundHint && !hasStartedPlayback
+  const shouldHideControlBarAtStart = showCustomControlBar && !showControlBarInitially && !hasStartedPlayback
   const clearControlsHideTimer = useCallback(() => {
     if (!controlsHideTimerRef.current) return
     window.clearTimeout(controlsHideTimerRef.current)
@@ -23622,12 +23629,12 @@ const VideoPlayerPreview: React.FC<{
   }, [])
   const hideControlsAfter = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
     clearControlsHideTimer()
-    if (!showCustomControlBar || !isPlaying) return
+    if (!showCustomControlBar || (!isPlaying && !shouldHideControlBarAtStart)) return
     controlsHideTimerRef.current = window.setTimeout(() => {
       setControlsVisible(false)
       controlsHideTimerRef.current = null
     }, delay)
-  }, [clearControlsHideTimer, isPlaying, showCustomControlBar])
+  }, [clearControlsHideTimer, isPlaying, shouldHideControlBarAtStart, showCustomControlBar])
   const showControlsTemporarily = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
     if (!showCustomControlBar) return
     setControlsVisible(true)
@@ -23667,9 +23674,14 @@ const VideoPlayerPreview: React.FC<{
       setControlsVisible(true)
       return
     }
+    if (shouldHideControlBarAtStart) {
+      clearControlsHideTimer()
+      setControlsVisible(false)
+      return
+    }
     setControlsVisible(true)
     hideControlsAfter()
-  }, [clearControlsHideTimer, hideControlsAfter, showCustomControlBar])
+  }, [clearControlsHideTimer, hideControlsAfter, shouldHideControlBarAtStart, showCustomControlBar])
 
   const getActivePreviewRange = useCallback(() => {
     const duration = videoRef.current?.duration
