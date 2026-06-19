@@ -1,4 +1,5 @@
 import React from 'react'
+import { cn } from '@/utils/cn'
 import styles from './Badge.module.css'
 
 export type BadgeVariant = 'default' | 'success' | 'warning' | 'error' | 'info' | 'purple' | 'neutral' | 'primary'
@@ -17,7 +18,11 @@ export const Badge: React.FC<BadgeProps> = ({
   const variantClass = styles[variant] || styles.default
 
   return (
-    <span className={`${styles.badge} ${variantClass} ${className || ''}`}>
+    <span
+      className={cn(styles.badge, variantClass, className)}
+      data-badge
+      data-tone={variant}
+    >
       {children}
     </span>
   )

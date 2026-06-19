@@ -1,59 +1,62 @@
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.25rem 0.625rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
+  gap: 0.25rem;
+  min-height: 22px;
+  padding: 0.1875rem 0.625rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-family: var(--label-font);
+  font-size: var(--font-size-xs);
   font-weight: 600;
   line-height: 1.2;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
   white-space: nowrap;
-  transition: all 0.15s ease;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
-/* Variant: default */
 .default {
-  background-color: var(--badge-default-bg, rgba(107, 114, 128, 0.15));
-  color: var(--badge-default-text, var(--color-text-secondary));
+  background: var(--badge-default-bg);
+  color: var(--badge-default-text);
+  border-color: var(--border);
 }
 
-/* Variant: success */
 .success {
-  background-color: var(--badge-success-bg, rgba(16, 185, 129, 0.12));
-  color: var(--badge-success-text, #064e3b);
+  background: var(--badge-success-bg);
+  color: var(--badge-success-text);
 }
 
-/* Variant: warning */
 .warning {
-  background-color: var(--badge-warning-bg, rgba(245, 158, 11, 0.12));
-  color: var(--badge-warning-text, #78350f);
+  background: var(--badge-warning-bg);
+  color: var(--badge-warning-text);
 }
 
-/* Variant: error */
 .error {
-  background-color: var(--badge-error-bg, rgba(239, 68, 68, 0.12));
-  color: var(--badge-error-text, #7f1d1d);
+  background: var(--badge-error-bg);
+  color: var(--badge-error-text);
 }
 
-/* Variant: info */
 .info {
-  background-color: var(--badge-info-bg, rgba(59, 130, 246, 0.12));
-  color: var(--badge-info-text, #1e3a8a);
+  background: var(--badge-info-bg);
+  color: var(--badge-info-text);
 }
 
-/* Variant: purple */
 .purple {
-  background-color: var(--badge-purple-bg, rgba(139, 92, 246, 0.12));
-  color: var(--badge-purple-text, #4c1d95);
+  background: var(--badge-purple-bg);
+  color: var(--badge-purple-text);
 }
 
-/* Variant: neutral (para leads) */
 .neutral {
-  background-color: var(--badge-neutral-bg, rgba(107, 114, 128, 0.15));
-  color: var(--badge-neutral-text, #374151);
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-text);
+  border-color: var(--border);
 }
 
-/* Variant: primary (para customers) */
 .primary {
-  background-color: var(--badge-primary-bg, rgba(59, 130, 246, 0.15));
-  color: var(--badge-primary-text, #1e40af);
+  background: var(--badge-primary-bg);
+  color: var(--badge-primary-text);
 }

@@ -1,4 +1,6 @@
 import React from 'react'
+import { cn } from '@/utils/cn'
+import styles from './SegmentTabs.module.css'
 
 export interface SegmentTab {
   id: string
@@ -33,18 +35,8 @@ export const SegmentTabs: React.FC<SegmentTabsProps> = ({
   <div
     role="tablist"
     aria-label={ariaLabel}
-    className={className}
+    className={cn(styles.root, className)}
     data-scroll
-    style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 4,
-      marginBottom: 18,
-      borderBottom: '1px solid var(--border)',
-      overflowX: 'auto',
-      overflowY: 'hidden',
-      scrollbarWidth: 'none'
-    }}
   >
     {tabs.map((tab) => {
       const active = tab.id === value
@@ -58,24 +50,7 @@ export const SegmentTabs: React.FC<SegmentTabsProps> = ({
           data-segdir=""
           data-on={active ? 'true' : undefined}
           onClick={() => onChange(tab.id)}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 7,
-            flex: '0 0 auto',
-            fontSize: 13,
-            fontWeight: 600,
-            padding: '9px 15px',
-            borderRadius: '8px 8px 0 0',
-            border: '1px solid transparent',
-            borderBottom: '2px solid transparent',
-            marginBottom: -1,
-            color: 'var(--text-dim)',
-            cursor: tab.disabled ? 'not-allowed' : 'pointer',
-            whiteSpace: 'nowrap',
-            transition: 'color .15s ease, background .15s ease'
-          }}
+          className={styles.tab}
         >
           {tab.icon}
           <span>{tab.label}</span>

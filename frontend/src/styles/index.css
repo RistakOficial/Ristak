@@ -440,8 +440,9 @@ body:not([data-phone-app='active']) :where(select):not(:where(.rstkCanvas select
   background-repeat: no-repeat !important;
   background-size: 14px 14px !important;
   color: var(--color-text-primary) !important;
-  font-size: var(--font-size-sm) !important;
-  font-weight: var(--font-weight-medium) !important;
+  font-size: var(--app-control-font-size, var(--font-size-sm)) !important;
+  font-weight: var(--app-control-font-weight, var(--font-weight-medium)) !important;
+  letter-spacing: var(--app-control-letter-spacing, 0) !important;
   line-height: 1.25rem !important;
   box-shadow: var(--ristak-dropdown-trigger-shadow, var(--design-control-shadow)) !important;
   outline: none !important;
@@ -490,8 +491,9 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where
   background-color: var(--design-control-bg);
   color: var(--design-control-text);
   box-shadow: var(--design-control-shadow);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  font-size: var(--app-control-font-size, var(--font-size-sm));
+  font-weight: var(--app-control-font-weight, var(--font-weight-medium));
+  letter-spacing: var(--app-control-letter-spacing, 0);
   line-height: 1.25rem;
   outline: none;
   transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -624,6 +626,8 @@ body:not([data-phone-app='active']) [data-ristak-dropdown-item] {
   min-height: 36px;
   border-radius: 0 !important;
   color: var(--color-text-primary);
+  font-size: var(--app-control-font-size, var(--font-size-sm));
+  font-weight: var(--app-control-font-weight, 500);
   outline: none !important;
 }
 
@@ -2931,8 +2935,8 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   [data-cta]:hover { filter: brightness(1.07); }
   [data-cta]:active { filter: brightness(0.96); transform: translateY(0.5px); }
   /* Sistema de botones */
-  [data-btn] { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 38px; padding: 0 16px; border-radius: var(--radius-ctl); font-size: 13px; font-weight: 700; cursor: pointer; transition: filter .14s, background .14s, border-color .14s, transform .1s; border: 1px solid transparent; white-space: nowrap; user-select: none; }
-  [data-btn][data-size='sm'] { height: 32px; padding: 0 12px; font-size: 12.5px; font-weight: 600; }
+  [data-btn] { display: inline-flex; align-items: center; justify-content: center; gap: var(--app-button-gap, 7px); height: var(--app-button-height, 38px); padding: 0 var(--app-button-padding-x, 16px); border-radius: var(--radius-ctl); font-family: var(--font-body); font-size: var(--app-button-font-size, 13px); font-weight: var(--app-button-font-weight, 600); letter-spacing: var(--app-control-letter-spacing, 0); cursor: pointer; transition: filter .14s, background .14s, border-color .14s, box-shadow .14s, transform .1s; border: 1px solid transparent; white-space: nowrap; user-select: none; }
+  [data-btn][data-size='sm'] { height: var(--app-button-height-sm, 32px); padding: 0 var(--app-button-padding-x-sm, 12px); font-size: var(--app-button-font-size-sm, 12.5px); font-weight: var(--app-button-font-weight-sm, 600); }
   [data-btn][data-v='primary'] { background: var(--accent); color: var(--on-accent); }
   [data-btn][data-v='primary']:hover { filter: brightness(1.08); }
   [data-btn][data-v='primary']:active { filter: brightness(0.95); transform: translateY(0.5px); }
@@ -2941,7 +2945,8 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   [data-btn][data-v='ghost'] { background: transparent; color: var(--text-dim); }
   [data-btn][data-v='ghost']:hover { background: var(--surface-2); color: var(--text); }
   [data-btn][data-v='danger'] { background: var(--neg-soft); color: var(--neg); border-color: transparent; }
-  [data-btn][data-v='danger']:hover { background: var(--neg); color: #fff; }
+  [data-btn][data-v='danger']:hover { background: var(--neg); color: var(--on-accent); }
+  [data-btn]:focus-visible { outline: none; box-shadow: var(--ristak-focus-ring); }
   [data-btn][data-disabled='true'] { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
   [data-btn][data-on='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
   [data-typecard] { transition: border-color .12s, background .12s; }
@@ -3256,12 +3261,14 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   [data-amt][data-tone='pos'] { color: var(--pos); }
   [data-amt][data-tone='neg'] { color: var(--neg); }
   /* Switch */
-  [data-sw] { width: 40px; height: 23px; border-radius: 999px; position: relative; flex-shrink: 0; cursor: pointer; transition: background .16s; background: var(--surface-2); border: 1px solid var(--border-strong); }
+  [data-sw] { width: 40px; height: 23px; border-radius: var(--radius-pill); position: relative; flex-shrink: 0; cursor: pointer; transition: background .16s, border-color .16s, box-shadow .16s; background: var(--surface-2); border: 1px solid var(--border-strong); }
+  [data-sw]:hover:not(:disabled) { border-color: var(--accent); }
+  [data-sw]:focus-visible { outline: none; box-shadow: var(--ristak-focus-ring); }
   [data-sw] .knob { position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: var(--text-mute); transition: transform .16s, background .16s; }
   [data-sw][data-on='true'] { background: var(--accent); border-color: var(--accent); }
-  [data-sw][data-on='true'] .knob { transform: translateX(17px); background: #fff; }
+  [data-sw][data-on='true'] .knob { transform: translateX(17px); background: var(--on-accent); }
   /* Campo (input simulado) */
-  [data-fld] { height: 40px; display: flex; align-items: center; padding: 0 13px; border: 1px solid var(--border); border-radius: var(--radius-ctl); background: var(--bg-soft); font-size: 13.5px; color: var(--text); transition: border-color .14s; }
+  [data-fld] { height: var(--app-control-height, 40px); display: flex; align-items: center; padding: 0 13px; border: 1px solid var(--border); border-radius: var(--radius-ctl); background: var(--surface); font-size: var(--app-control-font-size, var(--font-size-sm)); font-weight: var(--app-control-font-weight, 500); color: var(--text); transition: border-color .14s, background .14s, box-shadow .14s; }
   [data-fld]:hover { border-color: var(--border-strong); }
   [data-sel]:hover { border-color: var(--border-strong); }
   [data-cfgnav]:hover { background: var(--surface-hover); color: var(--text); }
@@ -3487,7 +3494,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --modal-shadow: var(--shadow-pop);
 
     /* Controles / paneles / tarjetas (--design-*) */
-    --design-control-bg: var(--bg-soft);
+    --design-control-bg: var(--surface);
     --design-control-bg-hover: var(--surface-hover);
     --design-control-border: var(--border);
     --design-control-border-hover: var(--border-strong);
@@ -3629,7 +3636,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
 
   body[data-dir].dark:not([data-phone-app='active']):not([data-phone-chat-theme='active']),
   body:not([data-dir]).dark:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
-    --design-control-bg: var(--bg-soft);
+    --design-control-bg: var(--surface);
     --design-control-bg-hover: var(--surface-hover);
     --design-control-shadow: var(--shadow-xs);
     --ristak-dropdown-trigger-shadow: var(--design-control-shadow);
@@ -3736,8 +3743,13 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
   --app-card-padding-md: 1.25rem;
   --app-card-padding-lg: 1.5rem;
   --app-control-height: 40px;
+  --app-control-font-size: var(--font-size-sm);
+  --app-control-font-weight: 500;
+  --app-control-letter-spacing: 0;
+  --app-control-placeholder: var(--text-mute);
+  --app-control-icon: var(--text-mute);
   --app-global-search-height: 42px;
-  --app-global-search-font-size: 0.95rem;
+  --app-global-search-font-size: var(--app-control-font-size);
   --app-dropdown-trigger-height: 40px;
   --app-dropdown-item-height: 36px;
   --app-button-height: 38px;
@@ -3746,6 +3758,8 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
   --app-button-padding-x-sm: 12px;
   --app-button-font-size: 13px;
   --app-button-font-size-sm: 12.5px;
+  --app-button-font-weight: 600;
+  --app-button-font-weight-sm: 600;
   --app-button-gap: 7px;
   --app-segment-height: 32px;
   --app-segment-padding-y: 0.375rem;

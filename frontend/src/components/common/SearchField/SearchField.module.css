@@ -5,6 +5,11 @@
   --search-field-action-size: 28px;
   --search-field-action-gap: 6px;
   --search-field-right-pad: calc(var(--search-field-action-size) + var(--search-field-action-gap) + 8px);
+  --search-field-font-size: var(--app-control-font-size, var(--font-size-sm));
+  --search-field-font-weight: var(--app-control-font-weight, 500);
+  --search-field-letter-spacing: var(--app-control-letter-spacing, 0);
+  --search-field-placeholder-color: var(--app-control-placeholder, var(--text-mute));
+  --search-field-icon-color: var(--app-control-icon, var(--text-mute));
 
   position: relative;
   display: flex;
@@ -16,6 +21,7 @@
   border-radius: var(--radius-ctl);
   background: var(--surface);
   color: var(--text);
+  box-shadow: var(--design-control-shadow, none);
   transition:
     border-color var(--transition-fast),
     background-color var(--transition-fast),
@@ -30,6 +36,7 @@
 
 .root:hover:not([data-disabled='true']) {
   border-color: var(--border-strong);
+  background: var(--design-control-bg-hover, var(--surface-hover));
 }
 
 .root:focus-within {
@@ -48,7 +55,7 @@
   top: 50%;
   flex: 0 0 auto;
   transform: translateY(-50%);
-  color: var(--text-mute);
+  color: var(--search-field-icon-color);
   pointer-events: none;
 }
 
@@ -75,8 +82,10 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  font-family: var(--font-body, inherit);
+  font-size: var(--search-field-font-size);
+  font-weight: var(--search-field-font-weight);
+  letter-spacing: var(--search-field-letter-spacing);
   line-height: 1.25rem;
   padding:
     0
@@ -86,7 +95,8 @@
 }
 
 .input::placeholder {
-  color: var(--text-mute);
+  color: var(--search-field-placeholder-color);
+  font-weight: var(--search-field-font-weight);
 }
 
 .input::-webkit-search-decoration,

@@ -8,22 +8,21 @@
   display: block;
   font-size: var(--font-size-sm);
   font-weight: 500;
-  color: var(--color-text-secondary);
+  color: var(--text-dim);
   margin-bottom: var(--spacing-xs);
 }
 
 .required {
-  color: var(--color-danger);
+  color: var(--neg);
 }
 
-/* Chip for selected contact */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
-  background: var(--color-primary-light);
-  border: 1px solid var(--color-primary);
-  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill);
   padding: var(--spacing-xs) var(--spacing-sm);
   max-width: 100%;
 }
@@ -34,7 +33,7 @@
   gap: var(--spacing-xs);
   flex: 1;
   min-width: 0;
-  color: var(--color-primary);
+  color: var(--accent);
 }
 
 .chipName {
@@ -46,7 +45,7 @@
 
 .chipEmail {
   font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -58,16 +57,18 @@
   justify-content: center;
   background: transparent;
   border: none;
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   cursor: pointer;
   padding: var(--spacing-xxs);
-  border-radius: var(--radius-sm);
-  transition: all 0.2s ease;
+  border-radius: var(--radius-ctl);
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .chipRemove:hover:not(:disabled) {
-  background: var(--color-bg-hover);
-  color: var(--color-text-primary);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .chipRemove:disabled {
@@ -75,7 +76,6 @@
   cursor: not-allowed;
 }
 
-/* Dropdown */
 .dropdown {
   position: absolute;
   top: calc(100% + 4px);
@@ -92,7 +92,6 @@
   flex-direction: column;
 }
 
-/* Suggestions */
 .suggestions {
   list-style: none;
   padding: 0;
@@ -124,7 +123,7 @@
 .suggestionItem svg {
   margin-top: 2px;
   flex-shrink: 0;
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
 }
 
 .contactInfo {
@@ -135,14 +134,14 @@
 .contactName {
   font-weight: 500;
   font-size: var(--font-size-base);
-  color: var(--color-text-primary);
+  color: var(--text);
   line-height: 1.3;
   margin-bottom: 2px;
 }
 
 .contactDetails {
   font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -150,17 +149,17 @@
 }
 
 .highlight {
-  background: rgba(var(--color-primary-rgb), 0.2);
-  color: var(--color-primary);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 500;
   padding: 0 2px;
-  border-radius: 2px;
+  border-radius: calc(var(--radius-ctl) / 2);
 }
 
 .noResults {
   padding: var(--spacing-md);
   text-align: center;
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   font-size: var(--font-size-sm);
   background: transparent;
 }
@@ -177,8 +176,8 @@
   border: none;
   border-top: 1px solid var(--border);
   border-radius: 0 !important;
-  color: var(--color-primary);
-  font-size: var(--font-size-base);
+  color: var(--accent);
+  font-size: var(--app-control-font-size, var(--font-size-sm));
   font-weight: 500;
   cursor: pointer;
   transition: background 0.1s ease;
@@ -188,7 +187,7 @@
 .addNewButton:hover,
 .addNewButton.selected {
   border-radius: 0 !important;
-  background: rgba(var(--color-primary-rgb), 0.08);
+  background: var(--accent-soft);
 }
 
 .addNewButton svg {
@@ -206,13 +205,13 @@
   align-items: center;
   margin-bottom: var(--spacing-md);
   padding-bottom: var(--spacing-sm);
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--border);
 }
 
 .formHeader h4 {
   margin: 0;
   font-size: var(--font-size-base);
-  color: var(--color-text-primary);
+  color: var(--text);
 }
 
 .closeButton {
@@ -221,16 +220,18 @@
   justify-content: center;
   background: transparent;
   border: none;
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   cursor: pointer;
   padding: var(--spacing-xxs);
-  border-radius: var(--radius-sm);
-  transition: all 0.2s ease;
+  border-radius: var(--radius-ctl);
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .closeButton:hover {
-  background: var(--color-bg-hover);
-  color: var(--color-text-primary);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .formBody {
@@ -254,26 +255,30 @@
 .formField input {
   width: 100%;
   padding: var(--spacing-xs) var(--spacing-sm);
-  font-size: var(--font-size-sm);
-  background: var(--surface-2);
+  font-size: var(--app-control-font-size, var(--font-size-sm));
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-ctl);
   color: var(--text);
-  transition: all 0.2s ease;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .formField input:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .formField input.inputError {
-  border-color: var(--color-danger);
+  border-color: var(--neg);
 }
 
 .errorText {
   font-size: var(--font-size-xs);
-  color: var(--color-danger);
+  color: var(--neg);
   margin-top: 2px;
 }
 
@@ -283,48 +288,12 @@
   justify-content: flex-end;
   margin-top: var(--spacing-sm);
   padding-top: var(--spacing-sm);
-  border-top: 1px solid var(--color-border-subtle);
-}
-
-.cancelButton {
-  padding: var(--spacing-xs) var(--spacing-md);
-  font-size: var(--font-size-sm);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.cancelButton:hover {
-  background: var(--color-bg-hover);
-}
-
-.saveButton {
-  padding: var(--spacing-xs) var(--spacing-md);
-  font-size: var(--font-size-sm);
-  background: var(--color-primary);
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--on-accent);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.saveButton:hover:not(:disabled) {
-  background: var(--color-primary-dark);
-}
-
-.saveButton:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  border-top: 1px solid var(--border);
 }
 
 .error {
   display: block;
   font-size: var(--font-size-xs);
-  color: var(--color-danger);
+  color: var(--neg);
   margin-top: var(--spacing-xs);
 }

@@ -5,9 +5,9 @@
   overflow: hidden;
   border-radius: var(--ristak-dropdown-radius);
   border: 1px solid var(--ristak-dropdown-border);
-  background: var(--surface-solid, var(--surface));
+  background: var(--ristak-dropdown-panel-bg, var(--surface-solid, var(--surface)));
   padding: 4px 0;
-  color: var(--color-text-primary);
+  color: var(--text);
   box-shadow: var(--ristak-dropdown-panel-shadow);
   animation: fadeIn 0.15s ease-out;
 }
@@ -31,20 +31,22 @@
   cursor: pointer;
   user-select: none;
   align-items: center;
+  gap: 8px;
   border-radius: 0 !important;
-  padding: var(--spacing-sm) var(--spacing-md);
-  font-size: var(--font-size-sm);
+  padding: 7px 10px;
+  font-size: var(--app-control-font-size, var(--font-size-sm));
+  font-weight: var(--app-control-font-weight, 500);
   outline: none;
   transition: background-color var(--transition-fast), color var(--transition-fast);
-  color: var(--color-text-primary);
+  color: var(--text);
 }
 
 .item:hover {
-  background: var(--color-background-secondary);
+  background: var(--ristak-dropdown-bg-hover);
 }
 
 .item:focus {
-  background: var(--color-background-secondary);
+  background: var(--ristak-dropdown-bg-hover);
 }
 
 .item[data-disabled] {
@@ -53,18 +55,18 @@
 }
 
 .item.destructive {
-  color: var(--color-error);
+  color: var(--neg);
 }
 
 .item.destructive:hover {
-  background: rgba(var(--color-error-rgb, 239, 68, 68), 0.1);
+  background: var(--neg-soft);
 }
 
 /* Separator */
 .separator {
   margin: var(--spacing-xs) -var(--spacing-xs);
   height: 1px;
-  background: var(--color-border);
+  background: var(--border);
 }
 
 /* Inset modifier */

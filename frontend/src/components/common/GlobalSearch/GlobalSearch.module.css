@@ -7,6 +7,8 @@
 .inputField {
   --search-field-height: var(--app-global-search-height, 42px);
   --search-field-pad-x: 13px;
+  --search-field-font-size: var(--app-global-search-font-size, var(--app-control-font-size, var(--font-size-sm)));
+  --search-field-font-weight: var(--app-control-font-weight, 500);
 }
 
 .dropdown {
@@ -18,7 +20,7 @@
   max-height: min(68vh, 620px);
   overflow-y: auto;
   border: 1px solid var(--border-strong);
-  border-radius: var(--design-card-radius, 12px);
+  border-radius: var(--radius-card);
   background: var(--surface-solid, var(--surface));
   box-shadow: var(--shadow-pop);
   padding: 0;
@@ -32,11 +34,12 @@
 
 .categoryHeader {
   padding: 5px 8px 7px;
-  color: var(--color-text-tertiary);
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  color: var(--text-mute);
+  font-family: var(--label-font);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: var(--label-transform);
+  letter-spacing: var(--label-spacing);
 }
 
 .resultList {
@@ -57,7 +60,7 @@
   border: 0;
   border-radius: 0 !important;
   background: transparent;
-  color: var(--color-text-primary);
+  color: var(--text);
   padding: 8px;
   text-align: left;
 }
@@ -73,8 +76,8 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: var(--design-control-radius, 8px);
-  color: var(--color-text-secondary);
+  border-radius: var(--radius-ctl);
+  color: var(--text-dim);
   background: var(--surface-2);
 }
 
@@ -94,27 +97,27 @@
 }
 
 .resultTitle {
-  color: var(--color-text-primary);
-  font-size: 0.9rem;
-  font-weight: 650;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
 }
 
 .resultSubtitle {
-  color: var(--color-text-tertiary);
-  font-size: 0.78rem;
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
 }
 
 .resultMeta {
   justify-self: end;
   max-width: 190px;
-  color: var(--color-text-tertiary);
-  font-size: 0.75rem;
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
 }
 
 .stateRow {
   padding: 18px 12px;
-  color: var(--color-text-tertiary);
-  font-size: 0.86rem;
+  color: var(--text-mute);
+  font-size: var(--font-size-sm);
   text-align: center;
 }
 

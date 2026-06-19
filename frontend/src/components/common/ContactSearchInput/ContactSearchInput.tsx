@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import styles from './ContactSearchInput.module.css';
 import { Icon } from '../Icon/Icon';
 import { SearchField } from '../SearchField';
+import { Button } from '../Button';
 import { Contact } from '@/types';
 import { contactsService } from '@/services/contactsService';
 
@@ -230,6 +231,8 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
             className={styles.chipRemove}
             onClick={handleRemoveContact}
             disabled={disabled}
+            data-icon-btn
+            aria-label="Quitar contacto seleccionado"
           >
             <Icon name="x" size={14} />
           </button>
@@ -264,6 +267,8 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                     <button
                       type="button"
                       className={styles.closeButton}
+                      data-icon-btn
+                      aria-label="Cerrar formulario de contacto"
                       onClick={() => {
                         setShowNewContactForm(false);
                         setNewContact({ name: '', lastName: '', email: '', phone: '' });
@@ -324,9 +329,10 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                     )}
 
                     <div className={styles.formActions}>
-                      <button
+                      <Button
                         type="button"
-                        className={styles.cancelButton}
+                        variant="secondary"
+                        size="sm"
                         onClick={() => {
                           setShowNewContactForm(false);
                           setNewContact({ name: '', lastName: '', email: '', phone: '' });
@@ -334,15 +340,15 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                         }}
                       >
                         Cancelar
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className={styles.saveButton}
+                        size="sm"
                         onClick={handleCreateContact}
                         disabled={isLoading}
                       >
                         {isLoading ? 'Guardando...' : 'Guardar'}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 </div>
