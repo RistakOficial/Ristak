@@ -1523,6 +1523,13 @@ function getBusinessPhoneLabel(phone?: WhatsAppApiPhoneNumber | null) {
   return phone?.label || phone?.verified_name || phone?.display_phone_number || phone?.phone_number || 'WhatsApp'
 }
 
+function renderComposerChannelIcon(channel: ComposerChannel) {
+  if (channel === 'whatsapp') return <FaWhatsapp className={styles.composerChannelBrandIcon} aria-hidden="true" />
+  if (channel === 'messenger') return <FaFacebookMessenger className={styles.composerChannelBrandIcon} aria-hidden="true" />
+  if (channel === 'instagram') return <FaInstagram className={styles.composerChannelBrandIcon} aria-hidden="true" />
+  return <Mail size={18} aria-hidden="true" />
+}
+
 function getComposerBusinessPhone(status?: WhatsAppApiStatus | null, contact?: DesktopChatContact | null): WhatsAppApiPhoneNumber | null {
   const phones = status?.phoneNumbers || []
   const preferredId = contact?.preferredWhatsAppPhoneNumberId || contact?.preferred_whatsapp_phone_number_id || ''
@@ -1990,21 +1997,24 @@ export const DesktopChat: React.FC = () => {
   const composerChannelOptions = COMPOSER_CHANNEL_OPTIONS.flatMap((option) => {
     if (option.value === 'whatsapp') {
       const whatsappDisabled = !activeContact?.phone || (!whatsappApiSourcesAvailable && !highLevelConnected)
-      if (whatsappComposerPhones.length === 0) return [{ ...option, disabled: whatsappDisabled }]
+      if (whatsappComposerPhones.length === 0) return [{ ...option, icon: renderComposerChannelIcon(option.value), disabled: whatsappDisabled }]
       return whatsappComposerPhones.map((phone) => ({
         value: `whatsapp:${phone.id}`,
         label: `${option.label} · ${getBusinessPhoneLabel(phone)}`,
+        icon: renderComposerChannelIcon(option.value),
         disabled: whatsappDisabled || !getBusinessPhoneValue(phone)
       }))
     }
     if (option.value === 'email') {
       return [{
         ...option,
+        icon: renderComposerChannelIcon(option.value),
         disabled: !activeContact?.email || !emailConnected
       }]
     }
     return [{
       ...option,
+      icon: renderComposerChannelIcon(option.value),
       disabled: !highLevelConnected || (option.value === 'messenger' ? !hasDetectedMessenger : !hasDetectedInstagram)
     }]
   })
@@ -4786,12 +4796,12 @@ export const DesktopChat: React.FC = () => {
                     ))}
                   </div>
                 ) : null}
-	                {renderVoiceWave()}
-	                {renderVoiceDraft()}
-	                {composerChannelHint ? (
-	                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
-	                ) : null}
-	                <div className={styles.agentComposerWrap}>
+                {renderVoiceWave()}
+                {renderVoiceDraft()}
+                {composerChannelHint ? (
+                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
+                ) : null}
+                <div className={styles.agentComposerWrap}>
                   <button
                     type="button"
                     className={styles.agentComposerButton}
@@ -4804,32 +4814,34 @@ export const DesktopChat: React.FC = () => {
                     title={conversationAgentActive ? 'Agente conversacional activo' : 'Asignar agente conversacional'}
                   >
                     {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
-	                  </button>
-	                  {renderComposerAgentMenu()}
-	                </div>
-		                <div className={styles.composerChannelSelect}>
-		                  <CustomSelect
-		                    value={composerRouteValue}
-		                    options={composerChannelOptions}
-		                    onValueChange={handleComposerChannelChange}
-		                    portal
-		                    aria-label="Canal de envío"
-		                  />
-		                </div>
-		                <div className={styles.composerTextField}>
-		                  {isEmailComposer ? (
-		                    <input
-	                      data-ristak-unstyled
-	                      className={styles.emailSubjectInput}
-	                      value={emailSubject}
-	                      onChange={(event) => setEmailSubject(event.target.value)}
-	                      placeholder="Asunto"
-	                      disabled={!activeContact || composerStatus === 'sending'}
-	                    />
-	                  ) : null}
-	                  <textarea
-	                    data-ristak-unstyled
-	                    value={composerText}
+                  </button>
+                  {renderComposerAgentMenu()}
+                </div>
+                <div className={styles.composerChannelSelect}>
+                  <CustomSelect
+                    value={composerRouteValue}
+                    options={composerChannelOptions}
+                    onValueChange={handleComposerChannelChange}
+                    portal
+                    iconOnly
+                    dropdownMinWidth={240}
+                    aria-label="Canal de envío"
+                  />
+                </div>
+                <div className={styles.composerTextField}>
+                  {isEmailComposer ? (
+                    <input
+                      data-ristak-unstyled
+                      className={styles.emailSubjectInput}
+                      value={emailSubject}
+                      onChange={(event) => setEmailSubject(event.target.value)}
+                      placeholder="Asunto"
+                      disabled={!activeContact || composerStatus === 'sending'}
+                    />
+                  ) : null}
+                  <textarea
+                    data-ristak-unstyled
+                    value={composerText}
                     onChange={(event) => setComposerText(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -4838,82 +4850,82 @@ export const DesktopChat: React.FC = () => {
                         if (canSend) void handleSendMessage()
                       }
                     }}
-	                    placeholder={isEmailComposer ? 'Escribe el correo...' : voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
-	                    rows={isEmailComposer ? 3 : 1}
+                    placeholder={isEmailComposer ? 'Escribe el correo...' : voiceRecording ? 'Grabando audio...' : voiceDraft ? 'Audio listo para enviar' : 'Escribe una respuesta...'}
+                    rows={isEmailComposer ? 3 : 1}
                     onFocus={() => {
                       setComposerMenuOpen(false)
                       closeTemplatePanel()
                       closeComposerAgentMenu()
                     }}
-	                    disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
-	                  />
-	                  {!isEmailComposer ? (
-	                    <button
-	                      type="button"
-	                      className={styles.scheduleComposerButton}
-	                      onClick={handleOpenScheduleModal}
-	                      disabled={!activeContact || composerStatus === 'sending' || voiceRecording || voiceProcessing || Boolean(voiceDraft)}
-	                      aria-label="Programar mensaje"
-	                      title="Programar mensaje"
-	                    >
-	                      <Clock size={16} />
-		                    </button>
-		                  ) : null}
-		                </div>
-		                {!isEmailComposer ? (
-		                  <div ref={composerMenuRef} className={styles.composerActionWrap}>
-		                    <button
-		                      type="button"
-		                      className={styles.composerPlusButton}
-		                      onClick={() => {
-		                        closeComposerAgentMenu()
-		                        closeTemplatePanel()
-		                        setComposerMenuOpen((current) => !current)
-		                      }}
-		                      aria-label="Abrir opciones de adjuntos"
-		                      aria-expanded={composerMenuOpen || templatePanelOpen}
-		                    >
-		                      <Plus size={20} />
-		                    </button>
-		                    {composerMenuOpen ? (
-		                      <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
-		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
-		                          <FileText size={16} />
-		                          <span>Plantillas</span>
-		                        </button>
-		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
-		                          <ImageIcon size={16} />
-		                          <span>Fotos</span>
-		                        </button>
-		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
-		                          <FileText size={16} />
-		                          <span>Documentos</span>
-		                        </button>
-		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
-		                          <MapPin size={16} />
-		                          <span>Ubicación</span>
-		                        </button>
-		                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
-		                          <Banknote size={16} />
-		                          <span>CLABE</span>
-		                        </button>
-		                      </div>
-		                    ) : null}
-		                    {renderTemplatePanel()}
-		                  </div>
-		                ) : null}
-		                {!isEmailComposer ? (
-		                  <button
-	                    type="button"
-	                    className={styles.micButton}
-	                    onClick={handleVoiceButtonClick}
+                    disabled={voiceRecording || voiceProcessing || Boolean(voiceDraft)}
+                  />
+                  {!isEmailComposer ? (
+                    <button
+                      type="button"
+                      className={styles.scheduleComposerButton}
+                      onClick={handleOpenScheduleModal}
+                      disabled={!activeContact || composerStatus === 'sending' || voiceRecording || voiceProcessing || Boolean(voiceDraft)}
+                      aria-label="Programar mensaje"
+                      title="Programar mensaje"
+                    >
+                      <Clock size={16} />
+                    </button>
+                  ) : null}
+                </div>
+                {!isEmailComposer ? (
+                  <div ref={composerMenuRef} className={styles.composerActionWrap}>
+                    <button
+                      type="button"
+                      className={styles.composerPlusButton}
+                      onClick={() => {
+                        closeComposerAgentMenu()
+                        closeTemplatePanel()
+                        setComposerMenuOpen((current) => !current)
+                      }}
+                      aria-label="Abrir opciones de adjuntos"
+                      aria-expanded={composerMenuOpen || templatePanelOpen}
+                    >
+                      <Plus size={20} />
+                    </button>
+                    {composerMenuOpen ? (
+                      <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
+                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
+                          <FileText size={16} />
+                          <span>Plantillas</span>
+                        </button>
+                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
+                          <ImageIcon size={16} />
+                          <span>Fotos</span>
+                        </button>
+                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
+                          <FileText size={16} />
+                          <span>Documentos</span>
+                        </button>
+                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
+                          <MapPin size={16} />
+                          <span>Ubicación</span>
+                        </button>
+                        <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
+                          <Banknote size={16} />
+                          <span>CLABE</span>
+                        </button>
+                      </div>
+                    ) : null}
+                    {renderTemplatePanel()}
+                  </div>
+                ) : null}
+                {!isEmailComposer ? (
+                  <button
+                    type="button"
+                    className={styles.micButton}
+                    onClick={handleVoiceButtonClick}
 	                    disabled={composerStatus === 'sending' || voiceProcessing || Boolean(voiceDraft)}
 	                    aria-label={voiceRecording ? 'Terminar grabación' : voiceDraft ? 'Audio listo' : 'Grabar audio'}
 	                    data-recording={voiceRecording ? 'true' : undefined}
-	                  >
-	                    {voiceProcessing ? <Loader2 size={18} className={styles.spin} /> : voiceRecording ? <Square size={16} /> : <Mic size={18} />}
-	                  </button>
-	                ) : null}
+                  >
+                    {voiceProcessing ? <Loader2 size={18} className={styles.spin} /> : voiceRecording ? <Square size={16} /> : <Mic size={18} />}
+                  </button>
+                ) : null}
                 <button type="submit" className={styles.sendButton} disabled={!canSend} aria-label="Enviar mensaje">
                   {composerStatus === 'sending' ? <Loader2 size={18} className={styles.spin} /> : <ArrowUp size={18} />}
                 </button>

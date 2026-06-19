@@ -7,6 +7,7 @@ interface Option {
   value: string
   label: string
   disabled?: boolean
+  icon?: React.ReactNode
 }
 
 interface OptionGroup {
@@ -39,6 +40,8 @@ interface CustomSelectProps {
   className?: string
   style?: React.CSSProperties
   portal?: boolean
+  dropdownMinWidth?: number
+  iconOnly?: boolean
   size?: 'default' | 'large'
   name?: string
   id?: string
@@ -113,6 +116,8 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   className = '',
   style,
   portal = false,
+  dropdownMinWidth,
+  iconOnly = false,
   size = 'default',
   name,
   id,
@@ -151,6 +156,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     const rowHeight = size === 'large' ? 42 : 40
     const maxDropdownHeight = size === 'large' ? 420 : 280
     const minDropdownHeight = size === 'large' ? 220 : 120
+    const dropdownWidth = dropdownMinWidth ? Math.max(rect.width, dropdownMinWidth) : rect.width
     const estimatedHeight = Math.min(flatOptions.length * rowHeight + 8, maxDropdownHeight)
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding
     const spaceAbove = rect.top - viewportPadding
@@ -163,11 +169,11 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       top: openAbove
         ? Math.max(viewportPadding, rect.top - dropdownHeight - dropdownGap)
         : Math.min(rect.bottom + dropdownGap, window.innerHeight - viewportPadding - dropdownHeight),
-      left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - rect.width - viewportPadding),
-      width: rect.width,
+      left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - dropdownWidth - viewportPadding),
+      width: dropdownWidth,
       '--custom-select-options-max-height': `${dropdownHeight}px`
     } as React.CSSProperties)
-  }, [flatOptions.length, portal, size])
+  }, [dropdownMinWidth, flatOptions.length, portal, size])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -276,6 +282,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       </div>
     </div>
   ) : null
+  const selectedIcon = selectedOption?.icon
 
   return (
     <div
@@ -286,18 +293,24 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       <button
         id={id}
         type="button"
-        className={`${styles.trigger} ${isOpen ? styles.open : ''}`}
+        className={`${styles.trigger} ${iconOnly ? styles.iconOnlyTrigger : ''} ${isOpen ? styles.open : ''}`}
         onClick={() => !disabled && setIsOpen(!isOpen)}
         onBlur={onBlur}
         disabled={disabled}
         aria-expanded={isOpen}
         aria-haspopup="listbox"
-        aria-label={ariaLabel}
+        aria-label={ariaLabel || selectedOption?.label || placeholder}
         aria-labelledby={ariaLabelledBy}
+        title={iconOnly ? selectedOption?.label || placeholder : undefined}
         data-ristak-dropdown-trigger
       >
         <span className={selectedOption ? styles.selected : styles.placeholder}>
-          {selectedOption?.label || placeholder}
+          {iconOnly && selectedIcon ? (
+            <>
+              <span className={styles.triggerIcon} aria-hidden="true">{selectedIcon}</span>
+              <span className={styles.srOnly}>{selectedOption?.label || placeholder}</span>
+            </>
+          ) : selectedOption?.label || placeholder}
         </span>
         <ChevronDown
           size={16}

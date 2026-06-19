@@ -1239,7 +1239,7 @@
 .composer {
   position: relative;
   display: grid;
-  grid-template-columns: 40px minmax(150px, 220px) minmax(0, 1fr) 40px 36px 40px;
+  grid-template-columns: 40px 40px minmax(0, 1fr) 40px 36px 40px;
   gap: 8px;
   align-items: center;
   padding: 10px 12px;
@@ -1248,7 +1248,7 @@
 }
 
 .composer[data-email-mode='true'] {
-  grid-template-columns: 40px minmax(150px, 220px) minmax(0, 1fr) 40px;
+  grid-template-columns: 40px 40px minmax(0, 1fr) 40px;
   align-items: end;
 }
 
@@ -1463,7 +1463,14 @@
 }
 
 .composerChannelSelect {
-  min-width: 0;
+  width: 40px;
+  min-width: 40px;
+}
+
+.composerChannelBrandIcon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
 }
 
 .agentComposerWrap {
@@ -2729,11 +2736,11 @@
   }
 
   .composer {
-    grid-template-columns: 34px minmax(128px, 160px) minmax(0, 1fr) 36px 28px 40px;
+    grid-template-columns: 34px 38px minmax(0, 1fr) 36px 28px 40px;
   }
 
   .composer[data-email-mode='true'] {
-    grid-template-columns: 34px minmax(128px, 160px) minmax(0, 1fr) 40px;
+    grid-template-columns: 34px 38px minmax(0, 1fr) 40px;
   }
 
   .messageBubble {

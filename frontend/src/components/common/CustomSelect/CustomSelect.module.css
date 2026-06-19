@@ -67,6 +67,50 @@
   transform: rotate(180deg);
 }
 
+.iconOnlyTrigger {
+  justify-content: center;
+  gap: 0;
+  min-width: var(--ristak-dropdown-trigger-height);
+  padding: 0;
+}
+
+.iconOnlyTrigger .selected,
+.iconOnlyTrigger .placeholder {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: visible;
+}
+
+.iconOnlyTrigger .chevron {
+  display: none;
+}
+
+.triggerIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.triggerIcon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .dropdown {
   position: absolute;
   top: calc(100% + 4px);
