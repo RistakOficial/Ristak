@@ -4,10 +4,12 @@ import { App } from './App'
 import { registerPwa } from './pwa'
 import { ensureLocalDevAuth, installAuthFetch } from './services/authFetch'
 import { mobileAppService } from './services/mobileAppService'
+import { installEnterSubmitShortcuts } from './utils/enterSubmitShortcuts'
 import './styles/index.css'
 
 async function bootstrapRistak() {
   installAuthFetch()
+  installEnterSubmitShortcuts()
   await ensureLocalDevAuth()
   registerPwa()
   mobileAppService.configureShell()
