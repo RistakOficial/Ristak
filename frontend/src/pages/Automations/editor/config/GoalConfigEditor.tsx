@@ -21,6 +21,13 @@ type Config = Record<string, unknown>
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
 
+function excludedGoalFilterFields(goalType: string, config: Config): string[] {
+  if (goalType === 'conversation' && str(config.conversationEvent) === 'keyword') {
+    return ['message']
+  }
+  return []
+}
+
 const GOAL_TYPES = [
   { value: 'tag', label: 'Etiqueta' },
   { value: 'payment', label: 'Pago' },
@@ -41,6 +48,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
   const set = (patch: Config) => onChange({ ...config, ...patch })
   const goalType = str(config.goalType)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const excludedFilterFields = excludedGoalFilterFields(goalType, config)
 
   return (
     <div>
@@ -302,6 +310,7 @@ export const GoalConfigEditor: React.FC<{ config: Config; onChange: (config: Con
           value={config.filters}
           onChange={(filters: TriggerFilter[]) => set({ filters })}
           contextKey={`goal-${goalType}`}
+          excludedFieldIds={excludedFilterFields}
           selectedFormId={str(config.form)}
         />
       )}

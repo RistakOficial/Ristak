@@ -24,11 +24,13 @@ export const TriggerFiltersEditor: React.FC<{
   onChange: (filters: TriggerFilter[]) => void
   /** Tipo del disparador (u objetivo) para mostrar solo campos congruentes */
   contextKey?: string
+  /** Campos que ya se configuran en el evento/objetivo y no deben repetirse como filtro */
+  excludedFieldIds?: string[]
   /** Formulario elegido en el disparador/objetivo para cargar sus preguntas */
   selectedFormId?: string
-}> = ({ value, onChange, contextKey, selectedFormId }) => {
+}> = ({ value, onChange, contextKey, excludedFieldIds = [], selectedFormId }) => {
   const filters = asTriggerFilters(value)
-  const fields = filterFieldsFor(contextKey)
+  const fields = filterFieldsFor(contextKey, excludedFieldIds)
   const formIdForQuestions = selectedFormId || filters.find((filter) => filter.field === 'form-specific' && filter.value)?.value || ''
 
   const groups: DrillGroup[] = []

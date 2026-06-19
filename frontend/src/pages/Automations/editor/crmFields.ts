@@ -713,11 +713,30 @@ const TRIGGER_FILTER_CONTEXTS: Record<string, string[]> = {
   'goal-ads': ['ads']
 }
 
+const TRIGGER_FILTER_CONTEXT_EXCLUSIONS: Record<string, string[]> = {
+  'trigger-contact-tag': ['tag'],
+  'trigger-customer-replied': ['channel'],
+  'trigger-payment-received': ['payment_status'],
+  'trigger-refund': ['payment_status', 'amount'],
+  'trigger-facebook-comment': ['channel'],
+  'trigger-instagram-comment': ['channel'],
+  'trigger-click-to-whatsapp': ['channel'],
+  'goal-tag': ['tag'],
+  'goal-payment': ['payment_status', 'amount'],
+  'goal-conversation': ['channel']
+}
+
 /** Campos de filtro congruentes con el disparador: los del evento + contacto */
-export function filterFieldsFor(contextKey?: string): TriggerFilterField[] {
+export function filterFieldsFor(contextKey?: string, excludedFieldIds: string[] = []): TriggerFilterField[] {
   const contexts = (contextKey && TRIGGER_FILTER_CONTEXTS[contextKey]) || []
+  const excluded = new Set([
+    ...((contextKey && TRIGGER_FILTER_CONTEXT_EXCLUSIONS[contextKey]) || []),
+    ...excludedFieldIds
+  ])
   return TRIGGER_FILTER_FIELDS.filter(
-    (field) => !field.appliesTo || field.appliesTo.some((context) => contexts.includes(context))
+    (field) =>
+      !excluded.has(field.id) &&
+      (!field.appliesTo || field.appliesTo.some((context) => contexts.includes(context)))
   )
 }
 
