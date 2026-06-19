@@ -1324,16 +1324,16 @@ export function ContactDetailsModal({
       : whatsappPreferenceRouteNumber
     : 'Sin número configurado'
   const whatsappPreferenceModeLabel = preferredWhatsAppPhoneNumberId
-    ? 'Número fijo para este contacto'
-    : 'Automático por conversación'
+    ? 'Número fijo'
+    : 'Automático'
   const whatsappPreferenceRouteMode = preferredWhatsAppPhoneNumberId
     ? 'Responde desde'
     : automaticWhatsAppRoutePhone
-    ? 'Último mensaje llegó por'
-    : 'Fallback actual'
+    ? 'Último mensaje'
+    : 'Principal actual'
   const whatsappPreferenceDescription = preferredWhatsAppPhoneNumberId
-    ? 'Ristak siempre responderá a este contacto desde este número.'
-    : 'Ristak usará el número por donde llegó el mensaje. Si no hay historial, tomará este número.'
+    ? 'Siempre usa este remitente para este contacto.'
+    : 'Usa la conversación; si no hay historial, toma el principal.'
   const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
   const detectedContactChannels = useMemo(
     () => getContactDetectedSocialChannels(selectedContact, chatMessages),
@@ -2105,18 +2105,19 @@ export function ContactDetailsModal({
 
                   {whatsappPreferenceOptions.length > 0 && (
                     <div className={styles.detailSection}>
-                      <h5 className={styles.detailSectionTitle}>WhatsApp para responder</h5>
                       <div className={styles.whatsappPreference}>
                         <div className={styles.whatsappPreferenceHeader}>
                           <Icon name="whatsapp" size={16} />
-                          <div>
-                            <strong>{whatsappPreferenceModeLabel}</strong>
-                            <span>{whatsappPreferenceDescription}</span>
+                          <div className={styles.whatsappPreferenceCopy}>
+                            <span className={styles.whatsappPreferenceTitle}>Respuesta por WhatsApp</span>
+                            <span className={styles.whatsappPreferenceDescription}>
+                              {whatsappPreferenceModeLabel} · {whatsappPreferenceDescription}
+                            </span>
                           </div>
                         </div>
                         <div className={styles.whatsappPreferenceRouteSummary}>
                           <span>{whatsappPreferenceRouteMode}</span>
-                          <strong>{whatsappPreferenceRouteDisplay}</strong>
+                          <span>{whatsappPreferenceRouteDisplay}</span>
                         </div>
                         <CustomSelect
                           value={preferredWhatsAppPhoneNumberId}
