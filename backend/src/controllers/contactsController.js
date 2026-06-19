@@ -24,7 +24,7 @@ import {
   parseContactCustomFields,
   serializeContactCustomFieldsForDb
 } from '../utils/contactCustomFields.js'
-import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
 import {
   cancelContactBulkAction,
@@ -83,6 +83,61 @@ const buildContactPhoneCandidates = (phone) => {
   ].filter(Boolean))]
 }
 
+const appendSqlInClause = (clauses, params, column, values = []) => {
+  const uniqueValues = [...new Set(values.map(cleanString).filter(Boolean))]
+  if (!uniqueValues.length) return
+
+  clauses.push(`${column} IN (${uniqueValues.map(() => '?').join(', ')})`)
+  params.push(...uniqueValues)
+}
+
+const collectBusinessPhoneMatchCandidates = (...values) => {
+  const candidates = new Set()
+  values.forEach((value) => {
+    buildPhoneMatchCandidates(value).forEach((candidate) => candidates.add(candidate))
+  })
+  return [...candidates]
+}
+
+const resolveRelatedBusinessPhoneFilters = async ({ phoneNumberId, businessPhone } = {}) => {
+  const phoneIds = new Set()
+  const phoneCandidates = new Set(collectBusinessPhoneMatchCandidates(businessPhone))
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  if (cleanPhoneNumberId) phoneIds.add(cleanPhoneNumberId)
+
+  if (!cleanPhoneNumberId && !phoneCandidates.size) {
+    return { phoneIds: [], phoneCandidates: [] }
+  }
+
+  const rows = await db.all(`
+    SELECT id, phone_number, display_phone_number, qr_connected_phone
+    FROM whatsapp_api_phone_numbers
+  `).catch(() => [])
+
+  const seedRows = cleanPhoneNumberId
+    ? rows.filter(row => row.id === cleanPhoneNumberId)
+    : []
+
+  for (const row of seedRows) {
+    collectBusinessPhoneMatchCandidates(row.phone_number, row.display_phone_number, row.qr_connected_phone)
+      .forEach((candidate) => phoneCandidates.add(candidate))
+  }
+
+  for (const row of rows) {
+    const rowCandidates = collectBusinessPhoneMatchCandidates(row.phone_number, row.display_phone_number, row.qr_connected_phone)
+    const matchesFilter = rowCandidates.some((candidate) => phoneCandidates.has(candidate))
+    if (!matchesFilter) continue
+
+    phoneIds.add(cleanString(row.id))
+    rowCandidates.forEach((candidate) => phoneCandidates.add(candidate))
+  }
+
+  return {
+    phoneIds: [...phoneIds].filter(Boolean),
+    phoneCandidates: [...phoneCandidates].filter(Boolean)
+  }
+}
+
 const buildWhatsAppApiMessageContactMatch = (contactId, phoneCandidates = [], alias = 'msg', profileAlias = 'api_profile') => {
   const cleanContactId = cleanString(contactId)
   const cleanPhoneCandidates = [...new Set(phoneCandidates.map(cleanString).filter(Boolean))]
@@ -124,9 +179,12 @@ const APPOINTMENT_CANCELED_STATUSES = new Set([
 ])
 const APPOINTMENT_ATTENDED_STATUSES = new Set(['showed', 'attended', 'completed', 'complete'])
 const sqlList = values => [...values].map(value => `'${value}'`).join(', ')
+const isPostgresDatabase = Boolean(process.env.DATABASE_URL)
 const ACTIVE_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) NOT IN (${sqlList(APPOINTMENT_CANCELED_STATUSES)})`
 const ATTENDED_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) IN (${sqlList(APPOINTMENT_ATTENDED_STATUSES)})`
-const CONFIRMATION_BADGE_CONDITION = `COALESCE(confirmation_badge_until, '') != '' AND datetime(confirmation_badge_until) > datetime('now')`
+const CONFIRMATION_BADGE_CONDITION = isPostgresDatabase
+  ? 'confirmation_badge_until IS NOT NULL AND confirmation_badge_until > CURRENT_TIMESTAMP'
+  : `COALESCE(confirmation_badge_until, '') != '' AND datetime(confirmation_badge_until) > datetime('now')`
 const CONTACT_WHATSAPP_PROFILE_SELECTS = `
         (
           SELECT profile_name
@@ -1473,6 +1531,10 @@ export const getChatContacts = async (req, res) => {
     const searchTerm = cleanString(q)
     const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
     const businessPhoneFilter = normalizePhoneForStorage(businessPhone)
+    const relatedBusinessPhoneFilters = await resolveRelatedBusinessPhoneFilters({
+      phoneNumberId: phoneNumberIdFilter,
+      businessPhone: businessPhoneFilter || businessPhone
+    })
     const resolvedWhatsAppContactIdSql = `
       COALESCE(
         msg.contact_id,
@@ -1503,14 +1565,8 @@ export const getChatContacts = async (req, res) => {
 
     if (phoneNumberIdFilter || businessPhoneFilter) {
       const phoneClauses = []
-      if (phoneNumberIdFilter) {
-        phoneClauses.push('msg.business_phone_number_id = ?')
-        whatsappMessageParams.push(phoneNumberIdFilter)
-      }
-      if (businessPhoneFilter) {
-        phoneClauses.push('msg.business_phone = ?')
-        whatsappMessageParams.push(businessPhoneFilter)
-      }
+      appendSqlInClause(phoneClauses, whatsappMessageParams, 'msg.business_phone_number_id', relatedBusinessPhoneFilters.phoneIds)
+      appendSqlInClause(phoneClauses, whatsappMessageParams, 'msg.business_phone', relatedBusinessPhoneFilters.phoneCandidates)
       whatsappMessageConditions.push(`(${phoneClauses.join(' OR ')})`)
     }
 

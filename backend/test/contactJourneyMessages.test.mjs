@@ -853,3 +853,85 @@ test('chat history includes WhatsApp messages matched by phone when contact_id i
     await cleanup(contactId, phone)
   }
 })
+
+test('chat contacts phone filter includes API and QR records for the same business number', async () => {
+  const id = randomUUID()
+  const contactId = `chat_phone_filter_${id}`
+  const phone = `+52993${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const apiPhoneNumberId = `wa_api_${id}`
+  const qrPhoneNumberId = `wa_qr_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente Filtro QR API',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2026-06-19T12:00:00.000Z',
+      updated_at: '2026-06-19T12:00:00.000Z'
+    })
+
+    await insertRow('whatsapp_api_phone_numbers', {
+      id: apiPhoneNumberId,
+      provider: 'ycloud',
+      phone_number: businessPhone,
+      display_phone_number: businessPhone,
+      verified_name: 'API',
+      status: 'CONNECTED',
+      api_send_enabled: 1,
+      qr_send_enabled: 1,
+      qr_status: 'connected',
+      qr_connected_phone: businessPhone,
+      updated_at: '2026-06-19T12:00:00.000Z'
+    })
+
+    await insertRow('whatsapp_api_phone_numbers', {
+      id: qrPhoneNumberId,
+      provider: 'qr',
+      phone_number: businessPhone,
+      display_phone_number: '+52 1 656 100 0000',
+      verified_name: 'QR',
+      status: 'QR_ONLY',
+      api_send_enabled: 0,
+      qr_send_enabled: 1,
+      qr_status: 'connected',
+      qr_connected_phone: '+5216561000000',
+      updated_at: '2026-06-19T12:00:00.000Z'
+    })
+
+    await insertRow('whatsapp_api_messages', {
+      id: `api_filtered_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: businessPhone,
+      business_phone: businessPhone,
+      business_phone_number_id: apiPhoneNumberId,
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Mensaje visible desde filtro QR',
+      message_timestamp: '2026-06-19T12:01:00.000Z',
+      created_at: '2026-06-19T12:01:00.000Z'
+    })
+
+    const chats = await readChatContacts({
+      businessPhoneNumberId: qrPhoneNumberId,
+      businessPhone: '+52 1 656 100 0000',
+      limit: '100'
+    })
+    const chat = chats.find(item => item.id === contactId)
+
+    assert.ok(chat)
+    assert.equal(chat.lastMessageText, 'Mensaje visible desde filtro QR')
+    assert.equal(chat.lastBusinessPhoneNumberId, apiPhoneNumberId)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?)', [apiPhoneNumberId, qrPhoneNumberId]).catch(() => undefined)
+    await cleanup(contactId, phone)
+  }
+})
