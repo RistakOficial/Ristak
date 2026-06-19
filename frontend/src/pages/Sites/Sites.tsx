@@ -18269,6 +18269,48 @@ const DimensionField: React.FC<DimensionFieldProps> = ({ label, value, min, max,
   )
 }
 
+const VideoDimensionSliderField: React.FC<DimensionFieldProps> = ({ label, value, min, max, step = 1, unit = 'px', onChange, onCommit }) => {
+  const set = (raw: number) => onChange(clampNumber(raw, min, max))
+  const commitFromKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+      window.setTimeout(onCommit, 0)
+    }
+  }
+
+  return (
+    <label className={`${styles.dimensionField} ${styles.videoDimensionField}`}>
+      <span>{label}</span>
+      <div className={styles.videoDimensionRow}>
+        <input
+          className={styles.videoDimensionSlider}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(event) => set(Number(event.target.value))}
+          onPointerUp={onCommit}
+          onTouchEnd={onCommit}
+          onKeyUp={commitFromKey}
+          onBlur={onCommit}
+          aria-label={label}
+        />
+        <div className={styles.dimensionBox} data-ristak-unstyled>
+          <NumberInput
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onValueChange={set}
+            onBlur={onCommit}
+          />
+          <small>{unit}</small>
+        </div>
+      </div>
+    </label>
+  )
+}
+
 const AlignmentControl: React.FC<{
   label: string
   value: string
@@ -19472,7 +19514,7 @@ const VideoPlayerSettingsControls: React.FC<{
           <ColorField label="Borde del video" value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBorderColor: value })} onCommit={onSave} />
         </div>
         <div className={styles.twoColumn}>
-          <DimensionField
+          <VideoDimensionSliderField
             label="Radio del video"
             value={getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}
             min={0}
@@ -19480,7 +19522,7 @@ const VideoPlayerSettingsControls: React.FC<{
             onChange={(value) => onPatchSettings({ videoPlayerRadius: value })}
             onCommit={onSave}
           />
-          <DimensionField
+          <VideoDimensionSliderField
             label="Borde del video"
             value={getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}
             min={0}
@@ -19651,7 +19693,7 @@ const VideoPlayerSettingsControls: React.FC<{
                   ))}
                 </CustomSelect>
               </label>
-              <DimensionField
+              <VideoDimensionSliderField
                 label="Radio del player"
                 value={getVideoPlayRadiusValue(settings, getVideoPlayShape(settings))}
                 min={0}
@@ -19666,8 +19708,8 @@ const VideoPlayerSettingsControls: React.FC<{
             </div>
             <div className={styles.twoColumn}>
               <ColorField label="Borde del play" value={getSettingString(settings, 'videoPlayBorderColor') || DEFAULT_VIDEO_TRANSPARENT} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayBorderColor: value })} onCommit={onSave} />
-              <DimensionField
-                label="Borde del play"
+              <VideoDimensionSliderField
+                label="Borde del player"
                 value={getSettingNumber(settings, 'videoPlayBorderWidth', 0, 0, 10)}
                 min={0}
                 max={10}
@@ -19676,7 +19718,7 @@ const VideoPlayerSettingsControls: React.FC<{
               />
             </div>
             <div className={styles.twoColumn}>
-              <DimensionField
+              <VideoDimensionSliderField
                 label="Tamaño del play"
                 value={getVideoPlaySizeValue(settings)}
                 min={VIDEO_PLAY_SIZE_MIN}
@@ -19684,7 +19726,7 @@ const VideoPlayerSettingsControls: React.FC<{
                 onChange={(value) => onPatchSettings({ videoPlaySize: value, videoPlayShape: getVideoPlayShape(settings) })}
                 onCommit={onSave}
               />
-              <DimensionField
+              <VideoDimensionSliderField
                 label="Ícono play"
                 value={getVideoPlayIconSizeValue(settings)}
                 min={VIDEO_PLAY_ICON_SIZE_MIN}
