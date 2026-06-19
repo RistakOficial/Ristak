@@ -151,6 +151,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const [savingStripeConfig, setSavingStripeConfig] = useState(false)
   const [testingStripeConfig, setTestingStripeConfig] = useState(false)
   const [connectingStripe, setConnectingStripe] = useState(false)
+  const [syncingStripeConnect, setSyncingStripeConnect] = useState(false)
   const [disconnectingStripe, setDisconnectingStripe] = useState(false)
 
   useEffect(() => {
@@ -171,17 +172,35 @@ export const PaymentsConfiguration: React.FC = () => {
     if (!status) return
 
     const message = params.get('stripe_message') || ''
-    if (status === 'success') {
-      showToast('success', 'Stripe conectado', message || 'La cuenta quedó lista para cobrar desde Ristak.')
-    } else if (status === 'warning') {
-      showToast('warning', 'Stripe conectado con pendiente', message || 'La cuenta conectó, pero el webhook necesita revisión.')
-    } else {
-      showToast('error', 'No se pudo conectar Stripe', message || 'Intenta conectar la cuenta de nuevo.')
+
+    const finishStripeReturn = async () => {
+      if (status === 'success' || status === 'warning') {
+        setSyncingStripeConnect(true)
+        try {
+          const config = await stripePaymentsService.syncConnect()
+          applyStripeConfig(config)
+          invalidateIntegrationsStatus()
+          if (status === 'success') {
+            showToast('success', 'Stripe conectado', message || 'La cuenta quedó lista para cobrar desde Ristak.')
+          } else {
+            showToast('warning', 'Stripe conectado con pendiente', message || 'La cuenta conectó, pero el webhook necesita revisión.')
+          }
+        } catch (error: any) {
+          showToast('warning', 'Stripe autorizó, falta sincronizar', error.message || 'Vuelve a abrir esta pantalla para sincronizar la conexión.')
+          await loadStripeConfig()
+        } finally {
+          setSyncingStripeConnect(false)
+        }
+      } else {
+        showToast('error', 'No se pudo conectar Stripe', message || 'Intenta conectar la cuenta de nuevo.')
+        await loadStripeConfig()
+      }
+
+      navigate(location.pathname, { replace: true })
     }
 
-    loadStripeConfig()
-    navigate(location.pathname, { replace: true })
-  }, [location.search])
+    void finishStripeReturn()
+  }, [location.pathname, location.search, navigate])
 
   const stripeGatewayOption: PaymentGatewayOption = useMemo(() => ({
     id: 'stripe',
@@ -351,7 +370,7 @@ export const PaymentsConfiguration: React.FC = () => {
       })
       window.location.assign(response.url)
     } catch (error: any) {
-      showToast('error', 'No se pudo abrir Stripe', error.message || 'Revisa las credenciales de Stripe Connect de esta instalación.')
+      showToast('error', 'No se pudo abrir Stripe', error.message || 'Revisa Stripe Connect en el Installer o las variables locales de esta instalación.')
       setConnectingStripe(false)
     }
   }
@@ -519,13 +538,13 @@ export const PaymentsConfiguration: React.FC = () => {
                 <div>
                   <h3 className={styles.sectionTitle}>Stripe</h3>
                   <p className={styles.sectionDescription}>
-                    Conecta la cuenta de Stripe con OAuth para cobrar desde Ristak sin copiar llaves ni configurar webhooks a mano.
+                    Conecta la cuenta de Stripe con OAuth desde el Installer para cobrar sin copiar llaves ni configurar webhooks a mano.
                   </p>
                 </div>
-                {loadingStripeConfig ? (
+                {loadingStripeConfig || syncingStripeConnect ? (
                   <Badge variant="warning">
                     <Loader2 size={16} className={styles.spinIcon} />
-                    <span>Cargando</span>
+                    <span>{syncingStripeConnect ? 'Sincronizando' : 'Cargando'}</span>
                   </Badge>
                 ) : stripeConnected ? (
                   <Badge variant="success">
@@ -577,7 +596,7 @@ export const PaymentsConfiguration: React.FC = () => {
                       <h4>{stripeOAuthConnected ? stripeAccountLabel || 'Cuenta Stripe conectada' : stripeConnected ? 'Stripe configurado manualmente' : 'Conectar con Stripe'}</h4>
                       <p>
                         {stripeOAuthConnected
-                          ? `Ristak cobra en modo ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'} usando Stripe Connect.`
+                          ? `Ristak cobra en modo ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'} usando Stripe Connect${stripeConfig?.connectManagedByPortal ? ' administrado por el Installer' : ''}.`
                           : stripeConnected
                             ? 'Esta instalación usa llaves guardadas manualmente. Puedes reconectar con OAuth para automatizar la cuenta y el webhook.'
                           : 'Se abrirá Stripe, el usuario inicia sesión, autoriza Ristak y regresa aquí con la cuenta lista.'}
@@ -586,7 +605,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     <div className={styles.stripeConnectActions}>
                       <Button
                         onClick={handleConnectStripe}
-                        disabled={connectingStripe || disconnectingStripe || !stripeModeOauthReady}
+                        disabled={connectingStripe || syncingStripeConnect || disconnectingStripe || !stripeModeOauthReady}
                       >
                         {connectingStripe ? (
                           <>
@@ -604,7 +623,7 @@ export const PaymentsConfiguration: React.FC = () => {
                         <Button
                           variant="secondary"
                           onClick={handleTestStripeConfig}
-                          disabled={testingStripeConfig || connectingStripe || disconnectingStripe}
+                          disabled={testingStripeConfig || connectingStripe || syncingStripeConnect || disconnectingStripe}
                         >
                           {testingStripeConfig ? (
                             <>
@@ -623,7 +642,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     <div className={styles.stripeWebhookAlert}>
                       <AlertTriangle size={16} />
                       <span>
-                        Faltan variables de Stripe Connect para {stripeMode === 'live' ? 'modo en vivo' : 'modo prueba'}:
+                        Falta configurar Stripe Connect para {stripeMode === 'live' ? 'modo en vivo' : 'modo prueba'}:
                         {' '}
                         {(stripeConfig?.connectMissingEnv || []).join(', ') || `STRIPE_CONNECT_${stripeMode.toUpperCase()}_CLIENT_ID / SECRET_KEY / PUBLISHABLE_KEY`}.
                       </span>

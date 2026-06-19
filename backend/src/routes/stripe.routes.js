@@ -12,6 +12,7 @@ import {
   saveStripeConfigView,
   stripeConnectCallbackView,
   stripeWebhookView,
+  syncStripeConnectView,
   testStripeConfigView
 } from '../controllers/stripePaymentsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
@@ -31,6 +32,7 @@ router.post('/config', requireModuleAccess('settings_payments'), saveStripeConfi
 router.delete('/config', requireModuleAccess('settings_payments'), deleteStripeConfigView)
 router.post('/config/test', requireModuleAccess('settings_payments'), testStripeConfigView)
 router.post('/connect/url', requireModuleAccess('settings_payments'), createStripeConnectUrlView)
+router.post('/connect/sync', requireModuleAccess('settings_payments'), syncStripeConnectView)
 router.post('/payment-links', requireModuleAccess('payments'), createStripePaymentLinkView)
 router.post('/payment-plans', requireModuleAccess('payments'), createStripePaymentPlanView)
 router.get('/contacts/:contactId/payment-methods', requireModuleAccess('payments'), getStripeSavedPaymentMethodsView)

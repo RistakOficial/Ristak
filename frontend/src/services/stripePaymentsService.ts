@@ -23,6 +23,9 @@ export interface StripePaymentConfig {
   connectOauthReadyByMode?: Record<'test' | 'live', boolean>
   connectMissingEnv?: string[]
   connectAccountEmail?: string
+  connectManagedByPortal?: boolean
+  connectUsesAccessToken?: boolean
+  connectUsesPlatformAccountHeader?: boolean
   connectChargesEnabled?: boolean
   connectPayoutsEnabled?: boolean
   connectDetailsSubmitted?: boolean
@@ -254,6 +257,14 @@ export const stripePaymentsService = {
       body: JSON.stringify(payload)
     })
     return parseApiResponse<StripeConnectUrlResponse>(response)
+  },
+
+  async syncConnect(): Promise<StripePaymentConfig> {
+    const response = await fetch(apiUrl('/api/stripe/connect/sync'), {
+      method: 'POST',
+      headers: getAuthHeaders()
+    })
+    return parseApiResponse<StripePaymentConfig>(response)
   },
 
   async deleteConfig(): Promise<StripePaymentConfig> {

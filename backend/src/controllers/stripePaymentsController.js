@@ -11,6 +11,7 @@ import {
   getStripeSavedPaymentMethods,
   handleStripeWebhookEvent,
   saveStripePaymentConfig,
+  syncStripeConnectFromCentral,
   testStripePaymentConfig
 } from '../services/stripePaymentService.js'
 import { getAppConfig } from '../config/database.js'
@@ -155,6 +156,16 @@ export async function createStripeConnectUrlView(req, res) {
   } catch (error) {
     logger.error(`Error creando URL OAuth Stripe Connect: ${error.message}`)
     sendStripeError(res, error, 'No se pudo iniciar Stripe Connect')
+  }
+}
+
+export async function syncStripeConnectView(req, res) {
+  try {
+    const config = await syncStripeConnectFromCentral()
+    res.json({ success: true, data: await withStripeWebhookEndpoints(req, config) })
+  } catch (error) {
+    logger.error(`Error sincronizando Stripe Connect central: ${error.message}`)
+    sendStripeError(res, error, 'No se pudo sincronizar Stripe Connect')
   }
 }
 

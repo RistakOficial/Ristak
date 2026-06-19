@@ -32,6 +32,26 @@ en la cuenta de Render de cada cliente desde el portal central
 Si `LICENSE_SERVER_URL`, `CLIENT_ID` o `LICENSE_KEY` faltan, la app corre en **modo standalone**
 (desarrollo local o instalación propia): no exige licencia y todas las features quedan activas.
 
+## Stripe Connect en instalaciones gestionadas
+
+En una instalación creada por el portal central, Stripe Connect se configura en el
+Installer, no en la app del cliente. El admin guarda ahí las credenciales de la
+plataforma Stripe Connect para modo test y live, y registra como callback:
+
+```text
+{LICENSE_SERVER_URL}/api/stripe/connect/callback
+```
+
+Desde Ristak, el usuario solo entra a **Configuración → Pagos → Stripe** y pulsa
+**Conectar con Stripe**. La app pide la URL OAuth al Installer, Stripe regresa al
+Installer y Ristak sincroniza la conexión con `POST /api/stripe/connect/sync`.
+La configuración local guarda cifrado el acceso de la cuenta conectada, el
+publishable key de esa cuenta y el signing secret del webhook automático.
+
+Si la app corre en modo standalone, siguen disponibles las variables locales
+`STRIPE_CONNECT_TEST_*` y `STRIPE_CONNECT_LIVE_*` como respaldo para crear el
+OAuth desde la propia instalación.
+
 ## Flujo de autenticación con licencia
 
 1. Usuario escribe email/usuario y contraseña.

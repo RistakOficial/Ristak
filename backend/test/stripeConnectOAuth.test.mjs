@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { db } from '../src/config/database.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 import {
@@ -7,13 +8,20 @@ import {
   createStripeConnectOAuthUrl,
   setStripeConnectFetchForTest,
   setStripeFactoryForTest,
+  syncStripeConnectFromCentral,
   testStripePaymentConfig
 } from '../src/services/stripePaymentService.js'
+import { setVerifiedAppBaseUrlResolverForTests } from '../src/services/licenseService.js'
 
 const STRIPE_ENV_KEYS = [
   'STRIPE_CONNECT_TEST_CLIENT_ID',
   'STRIPE_CONNECT_TEST_SECRET_KEY',
-  'STRIPE_CONNECT_TEST_PUBLISHABLE_KEY'
+  'STRIPE_CONNECT_TEST_PUBLISHABLE_KEY',
+  'LICENSE_SERVER_URL',
+  'CLIENT_ID',
+  'LICENSE_KEY',
+  'INSTALLATION_ID',
+  'APP_URL'
 ]
 
 async function snapshotStripeConfig(callback) {
@@ -46,6 +54,7 @@ async function snapshotStripeConfig(callback) {
     }
     setStripeConnectFetchForTest(null)
     setStripeFactoryForTest(null)
+    setVerifiedAppBaseUrlResolverForTests()
   }
 }
 
@@ -88,6 +97,20 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
     })
 
     setStripeFactoryForTest((secretKey) => {
+      if (secretKey === 'sk_test_connected_access') {
+        return {
+          balance: {
+            retrieve: async (_params = {}, options = {}) => {
+              balanceOptions = options
+              return {
+                livemode: false,
+                available: [{ amount: 1000, currency: 'mxn' }]
+              }
+            }
+          }
+        }
+      }
+
       assert.equal(secretKey, 'sk_test_platform')
       return {
         accounts: {
@@ -102,15 +125,6 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
               business_profile: {
                 name: 'Ristak Test Stripe'
               }
-            }
-          }
-        },
-        balance: {
-          retrieve: async (_params = {}, options = {}) => {
-            balanceOptions = options
-            return {
-              livemode: false,
-              available: [{ amount: 1000, currency: 'mxn' }]
             }
           }
         },
@@ -150,8 +164,10 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
     assert.equal(completed.config.configured, true)
     assert.equal(completed.config.connectedAccountId, 'acct_test_connected')
     assert.equal(completed.config.accountLabel, 'Ristak Test Stripe')
-    assert.equal(completed.config.publishableKey, 'pk_test_platform')
+    assert.equal(completed.config.publishableKey, 'pk_test_connected')
     assert.equal(completed.config.connectScope, 'read_write')
+    assert.equal(completed.config.connectUsesAccessToken, true)
+    assert.equal(completed.config.connectUsesPlatformAccountHeader, false)
     assert.equal(completed.config.hasWebhookSecret, true)
     assert.equal(completed.config.connectWebhookEndpointId, 'we_test_123')
     assert.equal(completed.config.connectWebhookStatus, 'active')
@@ -163,6 +179,135 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
     const testResult = await testStripePaymentConfig()
     assert.equal(testResult.connectionType, 'connect')
     assert.equal(testResult.connectedAccountId, 'acct_test_connected')
-    assert.deepEqual(balanceOptions, { stripeAccount: 'acct_test_connected' })
+    assert.deepEqual(balanceOptions, {})
+  })
+})
+
+async function startCentralStripeServer() {
+  let lastRequestBody = null
+  const server = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', chunk => chunks.push(chunk))
+    req.on('end', () => {
+      const rawBody = Buffer.concat(chunks).toString('utf8')
+      lastRequestBody = rawBody ? JSON.parse(rawBody) : null
+      res.setHeader('Content-Type', 'application/json')
+
+      if (req.url === '/api/license/stripe-connect/connect-url') {
+        assert.equal(lastRequestBody.client_id, 'cli_test_stripe')
+        assert.equal(lastRequestBody.license_key, 'RSTK-STRIPE-TEST')
+        assert.equal(lastRequestBody.installation_id, 'inst_test_stripe')
+        assert.equal(lastRequestBody.app_url, 'https://app.example.com')
+        assert.equal(lastRequestBody.mode, 'test')
+        res.end(JSON.stringify({
+          success: true,
+          url: 'https://connect.stripe.com/oauth/authorize?state=central_state',
+          mode: 'test',
+          redirect_uri: 'https://portal.test/api/stripe/connect/callback',
+          webhook_url: 'https://app.example.com/api/stripe/webhook'
+        }))
+        return
+      }
+
+      if (req.url === '/api/license/stripe-connect/status') {
+        assert.equal(lastRequestBody.client_id, 'cli_test_stripe')
+        res.end(JSON.stringify({
+          success: true,
+          connection: {
+            connected: true,
+            mode: 'test',
+            account_id: 'acct_central_connected',
+            publishable_key: 'pk_test_connected',
+            scope: 'read_write',
+            livemode: false,
+            token_type: 'bearer',
+            account_email: 'owner@stripe.test',
+            account_label: 'Stripe Central',
+            charges_enabled: true,
+            payouts_enabled: true,
+            details_submitted: true,
+            webhook_endpoint_id: 'we_central_123',
+            webhook_url: 'https://app.example.com/api/stripe/webhook',
+            webhook_status: 'active',
+            connected_at: '2026-06-19T00:00:00.000Z',
+            access_token: 'sk_test_connected_access',
+            refresh_token: 'rt_test_connected',
+            webhook_secret: 'whsec_central_123'
+          }
+        }))
+        return
+      }
+
+      if (req.url === '/api/license/stripe-connect/disconnect') {
+        res.end(JSON.stringify({ success: true, connection: { connected: false } }))
+        return
+      }
+
+      res.statusCode = 404
+      res.end(JSON.stringify({ error: 'not found' }))
+    })
+  })
+
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  return {
+    server,
+    baseUrl: `http://127.0.0.1:${server.address().port}`
+  }
+}
+
+test('Stripe Connect central delega OAuth al Installer y sincroniza credenciales', async () => {
+  await initializeMasterKey()
+
+  await snapshotStripeConfig(async () => {
+    const central = await startCentralStripeServer()
+    try {
+      process.env.LICENSE_SERVER_URL = central.baseUrl
+      process.env.CLIENT_ID = 'cli_test_stripe'
+      process.env.LICENSE_KEY = 'RSTK-STRIPE-TEST'
+      process.env.INSTALLATION_ID = 'inst_test_stripe'
+      process.env.APP_URL = 'https://render.example.com'
+      setVerifiedAppBaseUrlResolverForTests(async () => 'https://app.example.com')
+
+      let balanceOptions = null
+      setStripeFactoryForTest((secretKey) => {
+        assert.equal(secretKey, 'sk_test_connected_access')
+        return {
+          balance: {
+            retrieve: async (_params = {}, options = {}) => {
+              balanceOptions = options
+              return { livemode: false, available: [{ amount: 300, currency: 'mxn' }] }
+            }
+          }
+        }
+      })
+
+      const started = await createStripeConnectOAuthUrl({
+        mode: 'test',
+        baseUrl: 'https://app.example.com',
+        returnPath: '/settings/payments/stripe'
+      })
+      assert.equal(started.url, 'https://connect.stripe.com/oauth/authorize?state=central_state')
+      assert.equal(started.managedByPortal, true)
+      assert.equal(started.redirectUri, 'https://portal.test/api/stripe/connect/callback')
+
+      const config = await syncStripeConnectFromCentral()
+      assert.equal(config.configured, true)
+      assert.equal(config.connectionType, 'connect')
+      assert.equal(config.connectManagedByPortal, true)
+      assert.equal(config.connectedAccountId, 'acct_central_connected')
+      assert.equal(config.publishableKey, 'pk_test_connected')
+      assert.equal(config.hasWebhookSecret, true)
+      assert.equal(config.connectUsesAccessToken, true)
+      assert.equal(config.connectUsesPlatformAccountHeader, false)
+      assert.equal(config.connectWebhookStatus, 'active')
+
+      const result = await testStripePaymentConfig()
+      assert.equal(result.connectionType, 'connect')
+      assert.equal(result.connectedAccountId, 'acct_central_connected')
+      assert.deepEqual(balanceOptions, {})
+    } finally {
+      central.server.closeAllConnections?.()
+      central.server.close()
+    }
   })
 })
