@@ -2085,7 +2085,7 @@ export function ContactDetailsModal({
                           onSave={(value) => saveContactIdentityField('email', value)}
                         />
                       </div>
-                      <div className={styles.detailItem}>
+                      <div className={`${styles.detailItem} ${styles.phoneDetailItem}`}>
                         <Icon name="phone" size={16} />
                         <ContactPhoneSelector
                           phones={selectedContactPhones}

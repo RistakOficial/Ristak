@@ -968,6 +968,10 @@
   flex: 0 0 auto;
 }
 
+.phoneDetailItem {
+  align-items: center;
+}
+
 .detailItem > :not(svg) {
   flex: 1 1 auto;
   min-width: 0;

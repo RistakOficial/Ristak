@@ -82,6 +82,9 @@ export function ContactPhoneSelector({
               ) : (
                 <span className={styles.phoneText}>{phone}</span>
               )}
+            </div>
+
+            <div className={styles.phoneActions}>
               {isPrimary ? (
                 <span
                   className={styles.phoneStatusIcon}
@@ -91,9 +94,6 @@ export function ContactPhoneSelector({
                   <Star size={13} fill="currentColor" />
                 </span>
               ) : null}
-            </div>
-
-            <div className={styles.phoneActions}>
               <Badge variant={isPrimary ? 'primary' : 'neutral'} className={styles.phoneBadge}>
                 {isPrimary ? 'Principal' : 'Secundario'}
               </Badge>
