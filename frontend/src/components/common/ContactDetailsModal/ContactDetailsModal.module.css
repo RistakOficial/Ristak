@@ -973,19 +973,23 @@
   min-width: 0;
 }
 
-.detailItem [data-layout='block'] {
+.detailItem > [data-layout='block'] {
   width: 100%;
   max-width: 100%;
 }
 
-.detailItem [data-layout='block'] button {
+.detailItem > [data-layout='block'] button {
   width: 100%;
   max-width: 100%;
-  overflow: hidden;
-  overflow-wrap: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.detailItem > [data-layout='block'] input {
+  width: 100%;
 }
 
 .detailItemLabel {
