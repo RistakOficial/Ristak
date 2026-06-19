@@ -391,10 +391,6 @@ export const Transactions: React.FC = () => {
     enabled: paymentTableTab === 'transactions' && viewMode === 'by-date'
   })
 
-  const navigatePaymentsTable = (nextTab: PaymentsTableTab, nextViewMode = viewMode) => {
-    navigateTransactionsPath(nextTab === 'payment-plans' ? buildPaymentPlansPath() : buildTransactionsPath(nextViewMode))
-  }
-
   useEffect(() => {
     if (paymentTableTab === 'transactions') {
       fetchData()
@@ -402,27 +398,21 @@ export const Transactions: React.FC = () => {
   }, [dateRange, viewMode, paymentTableTab])
 
   useEffect(() => {
-    if (paymentTableTab === 'payment-plans') {
-      fetchPaymentPlans()
-    }
-  }, [paymentTableTab])
+    if (paymentTableTab !== 'payment-plans') return
 
-  // Si la integración se desconecta, regresar a transacciones: sin HighLevel no
-  // existen planes de pago que mostrar.
-  useEffect(() => {
-    if (!highLevelConnected && paymentTableTab === 'payment-plans') {
-      setPaymentTableTab('transactions')
-      navigateTransactionsPath(buildTransactionsPath(viewMode), { replace: true })
-    }
-  }, [highLevelConnected, navigateTransactionsPath, paymentTableTab, viewMode])
-
-  useEffect(() => {
-    if (!highLevelConnected && routeState.tab === 'payment-plans') {
+    if (!highLevelConnected) {
+      setPaymentPlans([])
+      setPaymentPlansLoading(false)
       return
     }
+
+    fetchPaymentPlans()
+  }, [highLevelConnected, paymentTableTab])
+
+  useEffect(() => {
     setPaymentTableTab(current => current === routeState.tab ? current : routeState.tab)
     setViewMode(current => current === routeState.viewMode ? current : routeState.viewMode)
-  }, [highLevelConnected, routeState.tab, routeState.viewMode])
+  }, [routeState.tab, routeState.viewMode])
 
   useEffect(() => {
     setIsClient(true)
@@ -489,16 +479,14 @@ export const Transactions: React.FC = () => {
     }
   }
 
-  const handlePaymentTableTabChange = (value: string) => {
-    if (value !== 'transactions' && value !== 'payment-plans') return
-    setPaymentTableTab(value)
-    navigatePaymentsTable(value)
-  }
-
   const handleSync = async () => {
     setSyncing(true)
     try {
       if (paymentTableTab === 'payment-plans') {
+        if (!highLevelConnected) {
+          showToast('warning', 'HighLevel no está conectado', 'Conecta HighLevel para consultar y programar planes de pago.')
+          return
+        }
         showToast('info', 'Actualizando planes de pago', 'Consultando facturas recurrentes en HighLevel...')
         await fetchPaymentPlans()
         showToast('success', 'Planes actualizados', 'La lista de planes de pago se actualizó desde HighLevel')
@@ -564,6 +552,11 @@ export const Transactions: React.FC = () => {
   }
 
   const openPaymentPlanCreateModal = () => {
+    if (!highLevelConnected) {
+      showToast('warning', 'HighLevel no está conectado', 'Conecta HighLevel para programar planes de pago recurrentes.')
+      return
+    }
+
     setPaymentTableTab('payment-plans')
     setPaymentPlanCreateModal({
       open: true,
@@ -916,6 +909,13 @@ export const Transactions: React.FC = () => {
   useEffect(() => {
     if (!routeState.createPaymentPlan) return
     setPaymentTableTab('payment-plans')
+
+    if (!highLevelConnected) {
+      showToast('warning', 'HighLevel no está conectado', 'Conecta HighLevel para programar planes de pago recurrentes.')
+      navigateTransactionsPath(buildPaymentPlansPath(), { replace: true })
+      return
+    }
+
     setPaymentPlanCreateModal({
       open: true,
       selectedContact: null,
@@ -925,7 +925,7 @@ export const Transactions: React.FC = () => {
       endType: 'never',
       monthlyMode: 'dayOfMonth'
     })
-  }, [routeState.createPaymentPlan])
+  }, [highLevelConnected, navigateTransactionsPath, routeState.createPaymentPlan, showToast])
 
   useEffect(() => {
     if (!routeState.createPaymentPlan && paymentPlanCreateModal.open) {
@@ -951,6 +951,13 @@ export const Transactions: React.FC = () => {
     if (handledOpenPaymentPlanRef.current === planId) return
     handledOpenPaymentPlanRef.current = planId
     setPaymentTableTab('payment-plans')
+
+    if (!highLevelConnected) {
+      showToast('warning', 'HighLevel no está conectado', 'Conecta HighLevel para abrir el detalle de planes de pago.')
+      navigateTransactionsPath(buildPaymentPlansPath(), { replace: true })
+      return
+    }
+
     setPaymentPlanModal({
       plan: { id: planId } as PaymentPlan,
       loading: true,
@@ -976,7 +983,7 @@ export const Transactions: React.FC = () => {
     return () => {
       isMounted = false
     }
-  }, [routeState.paymentPlanId, showToast])
+  }, [highLevelConnected, navigateTransactionsPath, routeState.paymentPlanId, showToast])
 
   useEffect(() => {
     if (!routeState.transactionId && modal.type === 'edit') {
@@ -1563,16 +1570,6 @@ export const Transactions: React.FC = () => {
     setTransactionStatusFilters(filters)
   }
 
-  // Solo se ofrece el selector Transacciones/Planes de pago cuando hay una
-  // integración de terceros conectada. Sin ella se omite (undefined) y la tabla
-  // no renderiza ninguna pestaña.
-  const paymentTableTabs = highLevelConnected
-    ? [
-        { label: 'Transacciones', value: 'transactions' },
-        { label: 'Planes de pago', value: 'payment-plans' }
-      ]
-    : undefined
-
   const statusFilterControl = (
     <TreeFilter
       availableData={activeStatusFilterData}
@@ -1755,17 +1752,22 @@ export const Transactions: React.FC = () => {
 
   const lockedContactName = modal.transaction?.contactName || modal.selectedContact?.name || 'Sin nombre'
   const lockedContactDetail = modal.transaction?.email || modal.selectedContact?.email || modal.transaction?.phone || modal.selectedContact?.phone
+  const isPaymentPlansPage = paymentTableTab === 'payment-plans'
+  const pageTitle = isPaymentPlansPage ? 'Planes de pago' : 'Transacciones'
+  const pageSubtitle = isPaymentPlansPage
+    ? 'Administra facturas recurrentes, estados y próximas ejecuciones.'
+    : 'Monitorea ingresos, reembolsos y tickets promedio de tus operaciones.'
 
   return (
     <PageContainer>
       <div className={styles.container}>
         <PageHeader
-          title="Pagos"
-          subtitle="Monitorea ingresos, reembolsos y tickets promedio de tus operaciones."
+          title={pageTitle}
+          subtitle={pageSubtitle}
         />
 
         <div className={styles.controlsRow}>
-          {paymentTableTab === 'transactions' ? (
+          {!isPaymentPlansPage ? (
             <div className={styles.dateFilters}>
               {statusFilterControl}
               <TabList
@@ -1804,7 +1806,7 @@ export const Transactions: React.FC = () => {
             </div>
           ) : (
             <div className={styles.dateFilters}>
-              {statusFilterControl}
+              {highLevelConnected ? statusFilterControl : null}
             </div>
           )}
           <div className={styles.actions}>
@@ -1828,10 +1830,12 @@ export const Transactions: React.FC = () => {
                 Registrar pago
               </Button>
             )}
-            {paymentTableTab === 'payment-plans' && (
+            {isPaymentPlansPage && (
               <Button
                 variant="secondary"
                 onClick={openPaymentPlanCreateModal}
+                disabled={!highLevelConnected}
+                title={!highLevelConnected ? 'Conecta HighLevel para programar planes' : undefined}
               >
                 <Plus size={16} />
                 Programar plan
@@ -1840,43 +1844,45 @@ export const Transactions: React.FC = () => {
           </div>
         </div>
 
-        <div className={styles.kpiRow}>
-          <KpiCard
-            title="Ingresos Netos"
-            value={formatCurrency(totals.ingresos)}
-            delta={totals.ingresosChange}
-            deltaLabel="vs periodo anterior"
-            loading={transactionsRefreshing}
-            icon={<DollarSign className="text-[var(--color-text-tertiary)]" />}
-          />
-          <KpiCard
-            title="Pagos Completados"
-            value={formatNumber(totals.completados)}
-            delta={totals.completadosChange}
-            deltaLabel="vs periodo anterior"
-            loading={transactionsRefreshing}
-            icon={<CheckCircle className="text-[var(--color-text-tertiary)]" />}
-          />
-          <KpiCard
-            title="Ticket Promedio"
-            value={formatCurrency(totals.ticketPromedio)}
-            delta={totals.ticketChange}
-            deltaLabel="vs periodo anterior"
-            loading={transactionsRefreshing}
-            icon={<Receipt className="text-[var(--color-text-tertiary)]" />}
-          />
-          <KpiCard
-            title="Reembolsos"
-            value={formatNumber(totals.reembolsos)}
-            delta={totals.reembolsosChange}
-            deltaLabel="vs periodo anterior"
-            loading={transactionsRefreshing}
-            icon={<RotateCcw className="text-[var(--color-text-tertiary)]" />}
-          />
-        </div>
+        {!isPaymentPlansPage && (
+          <div className={styles.kpiRow}>
+            <KpiCard
+              title="Ingresos Netos"
+              value={formatCurrency(totals.ingresos)}
+              delta={totals.ingresosChange}
+              deltaLabel="vs periodo anterior"
+              loading={transactionsRefreshing}
+              icon={<DollarSign className="text-[var(--color-text-tertiary)]" />}
+            />
+            <KpiCard
+              title="Pagos Completados"
+              value={formatNumber(totals.completados)}
+              delta={totals.completadosChange}
+              deltaLabel="vs periodo anterior"
+              loading={transactionsRefreshing}
+              icon={<CheckCircle className="text-[var(--color-text-tertiary)]" />}
+            />
+            <KpiCard
+              title="Ticket Promedio"
+              value={formatCurrency(totals.ticketPromedio)}
+              delta={totals.ticketChange}
+              deltaLabel="vs periodo anterior"
+              loading={transactionsRefreshing}
+              icon={<Receipt className="text-[var(--color-text-tertiary)]" />}
+            />
+            <KpiCard
+              title="Reembolsos"
+              value={formatNumber(totals.reembolsos)}
+              delta={totals.reembolsosChange}
+              deltaLabel="vs periodo anterior"
+              loading={transactionsRefreshing}
+              icon={<RotateCcw className="text-[var(--color-text-tertiary)]" />}
+            />
+          </div>
+        )}
 
       <Card padding="none">
-        {paymentTableTab === 'transactions' ? (
+        {!isPaymentPlansPage ? (
           <Table
             key="transactions_table"
             initialColumns={columns}
@@ -1888,9 +1894,6 @@ export const Transactions: React.FC = () => {
             searchPlaceholder="Buscar pagos..."
             paginated={true}
             pageSize={20}
-            filters={paymentTableTabs}
-            activeFilter={paymentTableTab}
-            onFilterChange={handlePaymentTableTabChange}
             searchPosition="left"
             tableId="transactions"
             initialSortBy="date"
@@ -1910,15 +1913,12 @@ export const Transactions: React.FC = () => {
             data={filteredPaymentPlans}
             keyExtractor={(item) => item.id}
             onRowClick={handleOpenPaymentPlan}
-            emptyMessage="No hay planes de pago"
+            emptyMessage={highLevelConnected ? 'No hay planes de pago' : 'Conecta HighLevel para ver y programar planes de pago'}
             loading={paymentPlansLoading}
             searchable={true}
             searchPlaceholder="Buscar planes de pago..."
             paginated={true}
             pageSize={20}
-            filters={paymentTableTabs}
-            activeFilter={paymentTableTab}
-            onFilterChange={handlePaymentTableTabChange}
             searchPosition="left"
             tableId="payment_plans"
             initialSortBy="sortDate"

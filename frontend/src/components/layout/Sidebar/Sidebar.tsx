@@ -77,6 +77,18 @@ interface NavItem {
   action?: () => void
 }
 
+interface SidebarNavChild {
+  to: string
+  label: string
+  exact?: boolean
+}
+
+const PAYMENTS_NAV_ITEMS: SidebarNavChild[] = [
+  { to: '/transactions', label: 'Transacciones', exact: true },
+  { to: '/transactions/payment-plans', label: 'Planes de pago' },
+  { to: '/transactions/products', label: 'Productos' }
+]
+
 const baseNavigation: NavItem[] = [
   { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { id: 'chat', name: 'Chat', href: '/chat', icon: MessageCircle },
@@ -290,6 +302,93 @@ const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({
   )
 }
 
+interface PaymentsNavGroupProps {
+  pathname: string
+  open: boolean
+  collapsed?: boolean
+  onToggle: () => void
+  onRequestExpand?: () => void
+  onNavigate?: () => void
+}
+
+const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
+  pathname,
+  open,
+  collapsed = false,
+  onToggle,
+  onRequestExpand,
+  onNavigate
+}) => {
+  const isPaymentsRoute = pathname.startsWith('/transactions')
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          if (!open) onToggle()
+          onRequestExpand?.()
+        }}
+        aria-label="Pagos"
+        title="Pagos"
+        data-ristak-sidebar-nav-item
+        data-active={isPaymentsRoute ? 'true' : undefined}
+        className={cn(getNavLinkClasses(isPaymentsRoute, 'w-full', true))}
+      >
+        <Banknote className="h-5 w-5 flex-shrink-0" />
+        <span className="sr-only">Pagos</span>
+      </button>
+    )
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        data-ristak-sidebar-nav-item
+        data-active={isPaymentsRoute && !open ? 'true' : undefined}
+        className={cn(getNavLinkClasses(isPaymentsRoute && !open, 'w-full'))}
+      >
+        <Banknote className="h-5 w-5 flex-shrink-0" />
+        <span className="flex-1 text-left">Pagos</span>
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 flex-shrink-0 text-[var(--text-mute)] transition-transform',
+            open && 'rotate-180'
+          )}
+        />
+      </button>
+
+      {open && (
+        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[var(--border)] pl-2.5">
+          {PAYMENTS_NAV_ITEMS.map((child) => {
+            const childActive = child.exact ? pathname === child.to : pathname.startsWith(child.to)
+            return (
+              <Link
+                key={child.to}
+                to={child.to}
+                onClick={onNavigate}
+                data-ristak-sidebar-nav-item
+                data-active={childActive ? 'true' : undefined}
+                className={cn(
+                  'block rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors',
+                  childActive
+                    ? 'bg-[var(--accent-soft)] text-[var(--text)]'
+                    : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
+                )}
+              >
+                {child.label}
+              </Link>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, collapsed = false, onNavigate }) => {
   const Icon = item.icon
 
@@ -461,12 +560,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isEditMode, setIsEditMode] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
   const isAIAgentRoute = location.pathname.startsWith('/ai-agent')
+  const isPaymentsRoute = location.pathname.startsWith('/transactions')
   const [aiAgentOpen, setAiAgentOpen] = useState(isAIAgentRoute)
+  const [paymentsOpen, setPaymentsOpen] = useState(isPaymentsRoute)
 
   // Sincronizar el estado de los grupos con la ruta actual
   useEffect(() => {
     setAiAgentOpen(isAIAgentRoute)
   }, [isAIAgentRoute])
+
+  useEffect(() => {
+    setPaymentsOpen(isPaymentsRoute)
+  }, [isPaymentsRoute])
 
   useEffect(() => {
     if (!collapsed) return
@@ -900,13 +1005,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {navigation.map((item) => {
               const isActive = location.pathname.startsWith(item.href)
               return (
-                <NavigationItem
-                  key={item.id}
-                  item={item}
-                  isActive={isActive}
-                  collapsed={collapsed}
-                  onNavigate={handleNavigate}
-                />
+                item.id === 'transactions' ? (
+                  <PaymentsNavGroup
+                    key={item.id}
+                    pathname={location.pathname}
+                    open={paymentsOpen}
+                    collapsed={collapsed}
+                    onToggle={() => setPaymentsOpen((current) => !current)}
+                    onRequestExpand={handleRequestExpand}
+                    onNavigate={handleNavigate}
+                  />
+                ) : (
+                  <NavigationItem
+                    key={item.id}
+                    item={item}
+                    isActive={isActive}
+                    collapsed={collapsed}
+                    onNavigate={handleNavigate}
+                  />
+                )
               )
             })}
 

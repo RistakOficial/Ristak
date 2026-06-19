@@ -14,7 +14,7 @@ import { Initialization } from '@/pages/Initialization'
 import { useInitialization } from '@/contexts/InitializationContext'
 import { Reports } from '@/pages/Reports'
 import { Campaigns } from '@/pages/Campaigns'
-import { Transactions } from '@/pages/Transactions'
+import { PaymentProducts, Transactions } from '@/pages/Transactions'
 import { Contacts } from '@/pages/Contacts'
 import { Settings } from '@/pages/Settings'
 import { APIDocumentation } from '@/pages/Settings/APIDocumentation'
@@ -731,6 +731,7 @@ const AppWithNotifications: React.FC = () => {
             <Route path="chat/*" element={<AccessRoute moduleKey="contacts"><DesktopChat /></AccessRoute>} />
             <Route path="reports/*" element={<AccessRoute moduleKey="reports"><Reports /></AccessRoute>} />
             <Route path="campaigns/*" element={<AccessRoute moduleKey="campaigns"><Campaigns /></AccessRoute>} />
+            <Route path="transactions/products/*" element={<AccessRoute moduleKey="payments"><PaymentProducts /></AccessRoute>} />
             <Route path="transactions/*" element={<AccessRoute moduleKey="payments"><Transactions /></AccessRoute>} />
             <Route path="contacts/*" element={<AccessRoute moduleKey="contacts"><Contacts /></AccessRoute>} />
             <Route path="appointments/*" element={<AccessRoute moduleKey="appointments"><Appointments /></AccessRoute>} />
