@@ -158,7 +158,11 @@ test('publicar acepta el canal "any" y canales permitidos en disparadores', () =
     nodes: [
       startNode([
         { id: 't1', type: 'trigger-customer-replied', config: { channel: 'any' } },
-        { id: 't2', type: 'trigger-click-to-whatsapp', config: { channel: 'whatsapp' } }
+        { id: 't2', type: 'trigger-click-to-whatsapp', config: { channel: 'whatsapp' } },
+        { id: 't3', type: 'trigger-whatsapp-message', config: { keywords: [] } },
+        { id: 't4', type: 'trigger-instagram-message', config: { keywords: [] } },
+        { id: 't5', type: 'trigger-messenger-message', config: { keywords: [] } },
+        { id: 't6', type: 'trigger-email-message', config: { keywords: [] } }
       ])
     ],
     edges: []

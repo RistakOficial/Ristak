@@ -32,6 +32,12 @@ const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
 const WAIT_KIND_DRIP = 'drip'
 const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 const CONDITION_VARIABLE_FIELD_PREFIX = 'var:'
+const MESSAGE_TRIGGER_CHANNELS = {
+  'trigger-whatsapp-message': 'whatsapp',
+  'trigger-instagram-message': 'instagram',
+  'trigger-messenger-message': 'messenger',
+  'trigger-email-message': 'email'
+}
 
 function makeId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`
@@ -67,6 +73,16 @@ function engineError(status, message) {
 
 function normalizeText(value) {
   return String(value || '').trim().toLowerCase()
+}
+
+function normalizeConversationChannel(value = '') {
+  const channel = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_')
+  if (!channel) return ''
+  if (channel.includes('whatsapp') || channel === 'wa') return 'whatsapp'
+  if (channel.includes('instagram') || channel === 'ig' || channel === 'instagram_dm') return 'instagram'
+  if (channel.includes('messenger') || channel === 'facebook' || channel === 'fb') return 'messenger'
+  if (channel.includes('email') || channel.includes('correo') || channel === 'mail') return 'email'
+  return channel
 }
 
 function normalizeButtonMatchText(value) {
@@ -987,9 +1003,11 @@ function triggerMatches(trigger, eventType, ctx) {
 
   switch (eventType) {
     case 'message-received': {
-      if (trigger.type !== 'trigger-customer-replied') return false
-      const channel = str(config.channel) || 'any'
-      if (channel !== 'any' && channel !== ctx.channel) return false
+      const fixedTriggerChannel = MESSAGE_TRIGGER_CHANNELS[trigger.type]
+      if (!fixedTriggerChannel && trigger.type !== 'trigger-customer-replied') return false
+      const configuredChannel = fixedTriggerChannel || normalizeConversationChannel(config.channel) || 'any'
+      const eventChannel = normalizeConversationChannel(ctx.channel)
+      if (configuredChannel !== 'any' && configuredChannel !== eventChannel) return false
       return keywordsMatch(config, ctx.messageText)
     }
 
@@ -1090,7 +1108,7 @@ function triggerMatches(trigger, eventType, ctx) {
 }
 
 const EVENT_DESCRIPTIONS = {
-  'message-received': (ctx) => `el contacto respondió por ${ctx.channel}`,
+  'message-received': (ctx) => `llegó un mensaje por ${ctx.channel || 'el canal configurado'}`,
   'contact-created': () => 'se creó el contacto',
   'contact-updated': (ctx) => `cambió ${(ctx.changedFields || []).join(', ') || 'un campo'} del contacto`,
   'tag-changed': (ctx) => `etiqueta "${ctx.tag}" ${ctx.tagAction === 'removed' ? 'eliminada' : 'añadida'}`,
@@ -2900,7 +2918,7 @@ export async function handleIncomingMessage({
     const baseCtx = {
       contact,
       messageText: text || '',
-      channel,
+      channel: normalizeConversationChannel(channel) || 'whatsapp',
       businessPhoneNumberId,
       messageType,
       buttonId,
@@ -3077,7 +3095,7 @@ export async function handleAutomationEvent(eventType, data = {}) {
       ...eventData,
       contact,
       messageText: eventData.messageText || '',
-      channel: eventData.channel || ''
+      channel: normalizeConversationChannel(eventData.channel || '')
     })
     const automations = await listPublishedAutomations()
     if (eventType === 'trigger-link-clicked') {

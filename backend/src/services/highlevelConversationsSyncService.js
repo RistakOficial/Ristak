@@ -217,6 +217,30 @@ async function ensureLocalContact({ contactId, apiToken, locationId }) {
   return { contact, created: Boolean(ensured.created) }
 }
 
+async function triggerAutomationsForInboundMessage({ contact, channel, text, messageType, isNew, notifyNewInbound }) {
+  if (!contact?.id || !isNew || !notifyNewInbound) return
+  if (!['whatsapp', 'messenger', 'instagram'].includes(channel)) return
+
+  await import('./automationEngine.js')
+    .then(engine => engine.handleIncomingMessage({
+      contactId: contact.id,
+      phone: contact.phone,
+      contactName: contact.full_name || contact.first_name,
+      text,
+      messageType,
+      channel
+    }))
+    .catch(error => {
+      logger.warn(`[Automatizaciones] GHL no pudo procesar mensaje entrante ${channel}: ${error.message}`)
+    })
+}
+
+function getAutomationChannel(channel = {}) {
+  if (channel.table === 'meta') return channel.platform
+  if (channel.table === 'whatsapp' && channel.transport === 'ghl_whatsapp') return 'whatsapp'
+  return ''
+}
+
 async function upsertWhatsAppRow({ message, contact, transport, direction, notifyNewInbound }) {
   const remoteMessageId = getRemoteMessageId(message)
   if (!remoteMessageId) return { saved: 0, isNew: false }
@@ -429,6 +453,17 @@ export async function upsertHighLevelConversationMessage({
   const result = channel.table === 'meta'
     ? await upsertMetaRow({ message, contact, platform: channel.platform, direction, notifyNewInbound })
     : await upsertWhatsAppRow({ message, contact, transport: channel.transport, direction, notifyNewInbound })
+
+  if (direction === 'inbound') {
+    await triggerAutomationsForInboundMessage({
+      contact,
+      channel: getAutomationChannel(channel),
+      text: getMessageBody(message),
+      messageType: getMessageAttachments(message).length ? 'media' : 'text',
+      isNew: result.isNew,
+      notifyNewInbound
+    })
+  }
 
   return { ...result, skipped: false, contactCreated: created, table: channel.table }
 }

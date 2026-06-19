@@ -4713,6 +4713,22 @@ export async function captureQrChatMessage({
     const shouldBypass = confirmWindow.windowActive && confirmWindow.bypassAutomations
 
     if (result.contactId && !shouldBypass) {
+      await import('./automationEngine.js')
+        .then(engine => engine.handleIncomingMessage({
+          contactId: result.contactId,
+          phone: result.phone,
+          contactName: result.contactName,
+          text: result.messageText,
+          messageType: result.messageType,
+          channel: 'whatsapp',
+          businessPhoneNumberId: result.businessPhoneNumberId || phoneRow?.id || null
+        }))
+        .catch(error => {
+          logger.warn(`[Automatizaciones] No se pudo procesar el mensaje entrante (QR): ${error.message}`)
+        })
+    }
+
+    if (result.contactId && !shouldBypass) {
       import('../agents/conversational/runner.js')
         .then(runner => runner.handleInboundMessageForConversationalAgent({
           contactId: result.contactId,

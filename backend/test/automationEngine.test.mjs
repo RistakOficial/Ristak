@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
-import { db } from '../src/config/database.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
   renderTemplate,
   filtersMatch,
@@ -14,6 +14,7 @@ import {
   processScheduledContactEnrollments,
   enrollContactManually
 } from '../src/services/automationEngine.js'
+import { captureQrChatMessage, getWhatsAppApiConfigKeys } from '../src/services/whatsappApiService.js'
 
 const ctx = {
   contact: {
@@ -31,6 +32,21 @@ const ctx = {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function withAppConfigValues(entries, callback) {
+  const previous = {}
+  for (const [key, value] of Object.entries(entries)) {
+    previous[key] = await getAppConfig(key)
+    await setAppConfig(key, value)
+  }
+  try {
+    return await callback()
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      await setAppConfig(key, value)
+    }
+  }
+}
 
 test('renderTemplate reemplaza variables del contacto y la conversación', () => {
   assert.equal(renderTemplate('Hola {{contact.first_name}}!', ctx), 'Hola María!')
@@ -455,6 +471,183 @@ test('filtersMatch: conector O entre filtros', () => {
     { field: 'message', match: 'contains', value: 'precio', connector: 'and' }
   ]
   assert.equal(filtersMatch(andFilters, ctx), false)
+})
+
+test('disparador de mensaje de WhatsApp inscribe al contacto cuando llega un mensaje', async () => {
+  const suffix = randomUUID()
+  const contactId = `rstk_contact_whatsapp_trigger_${suffix}`
+  const automationId = `automation_whatsapp_trigger_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-whatsapp',
+              type: 'trigger-whatsapp-message',
+              config: { keywords: ['holii'], match: 'contains' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `whatsapp-trigger-${suffix}@example.com`,
+        'Contacto WhatsApp Trigger',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test mensaje WhatsApp', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('message-received', {
+      contactId,
+      messageText: 'hola, holii',
+      channel: 'WhatsApp API'
+    })
+
+    const enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.ok(enrollment)
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(enrollment.current_node_id, 'done')
+    const log = JSON.parse(enrollment.log)
+    assert.ok(log.some((entry) => String(entry.detail || '').includes('mensaje por whatsapp')))
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('mensaje entrante por QR dispara automatizaciones de WhatsApp', async () => {
+  const suffix = randomUUID()
+  const keys = getWhatsAppApiConfigKeys()
+  const phoneNumberId = `qr_phone_${suffix}`
+  const businessPhone = `+5215500${Date.now().toString().slice(-6)}`
+  const contactPhone = `+5215511${Date.now().toString().slice(-6)}`
+  const contactId = `rstk_contact_qr_trigger_${suffix}`
+  const automationId = `automation_qr_trigger_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-whatsapp',
+              type: 'trigger-whatsapp-message',
+              config: { keywords: [], match: 'contains' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'done',
+        type: 'extra-comment',
+        label: 'Listo',
+        config: {}
+      }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: {}
+  }
+
+  await withAppConfigValues({
+    [keys.enabled]: '0',
+    [keys.apiKey]: '',
+    [keys.phoneNumberId]: '',
+    [keys.senderPhone]: '',
+    [keys.wabaId]: ''
+  }, async () => {
+    try {
+      await db.run(
+        `INSERT INTO whatsapp_api_phone_numbers (
+          id, phone_number, display_phone_number, verified_name, label,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, 0, 1, 'connected', 'CONNECTED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [phoneNumberId, businessPhone, businessPhone, 'QR Test', 'QR Test']
+      )
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          contactPhone,
+          `qr-trigger-${suffix}@example.com`,
+          'Contacto QR Trigger',
+          'Contacto',
+          '{}'
+        ]
+      )
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, 'Test QR WhatsApp', JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      const result = await captureQrChatMessage({
+        phoneNumberId,
+        businessPhone,
+        direction: 'inbound',
+        wamid: `wamid_qr_trigger_${suffix}`,
+        messageType: 'text',
+        text: 'hola desde QR',
+        profileName: 'Contacto QR Trigger',
+        contactPhone,
+        timestamp: new Date().toISOString(),
+        raw: { test: true }
+      })
+
+      assert.equal(result.skipped, false)
+      const enrollment = await db.get(
+        'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, contactId]
+      )
+      assert.ok(enrollment)
+      assert.equal(enrollment.status, 'completed')
+      assert.equal(enrollment.current_node_id, 'done')
+    } finally {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ?', [contactPhone]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [contactPhone]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
+  })
 })
 
 test('logic-wait por duración respeta segundos', async () => {

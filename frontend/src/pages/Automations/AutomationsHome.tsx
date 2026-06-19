@@ -15,7 +15,7 @@ const genId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(
  * una automatización desde cero, plantilla o con IA.
  */
 
-/** Flujo de la plantilla "Bienvenida": respuesta del cliente → WhatsApp */
+/** Flujo de la plantilla "Bienvenida": mensaje de WhatsApp → WhatsApp */
 function welcomeTemplateFlow() {
   const whatsappId = genId('node')
   return {
@@ -30,8 +30,8 @@ function welcomeTemplateFlow() {
           triggers: [
             {
               id: genId('trig'),
-              type: 'trigger-customer-replied',
-              config: { channel: 'any', keywords: [], match: 'contains' }
+              type: 'trigger-whatsapp-message',
+              config: { keywords: [], match: 'contains' }
             }
           ]
         }

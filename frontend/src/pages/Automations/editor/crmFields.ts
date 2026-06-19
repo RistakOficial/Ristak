@@ -100,7 +100,7 @@ export const CRM_FIELDS: CrmField[] = [
   { id: 'tag-any-of', label: 'Contiene cualquiera de estas etiquetas', category: 'tags', type: 'tags', valueCatalog: 'tags' },
   { id: 'tag-all-of', label: 'Contiene todas estas etiquetas', category: 'tags', type: 'tags', valueCatalog: 'tags' },
 
-  // Conversación (solo WhatsApp, Messenger e Instagram Direct)
+  // Conversación (WhatsApp, Messenger, Instagram Direct y disparos de correo)
   { id: 'conv-last-received', label: 'Último mensaje recibido', category: 'conversation', type: 'text' },
   { id: 'conv-last-sent', label: 'Último mensaje enviado', category: 'conversation', type: 'text' },
   { id: 'conv-replied', label: 'Respondió', category: 'conversation', type: 'boolean' },
@@ -694,6 +694,10 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
 
 /** Contextos de evento que produce cada disparador / tipo de objetivo */
 const TRIGGER_FILTER_CONTEXTS: Record<string, string[]> = {
+  'trigger-whatsapp-message': ['message'],
+  'trigger-instagram-message': ['message'],
+  'trigger-messenger-message': ['message'],
+  'trigger-email-message': ['message'],
   'trigger-customer-replied': ['message'],
   'trigger-contact-updated': ['contact_change'],
   'trigger-appointment-booked': ['appointment'],

@@ -14,6 +14,7 @@ import {
   Hourglass,
   Instagram,
   ListChecks,
+  Mail,
   Megaphone,
   MessageCircle,
   MessageCircleReply,
@@ -54,8 +55,8 @@ import {
 // declarativo (o componente de configuración propio), validación, resumen,
 // CTA contextual y salidas (handles).
 //
-// Canales conversacionales soportados: WhatsApp, Messenger e Instagram
-// Direct. No existen SMS ni Email como canales (el email solo es dato CRM).
+// Canales conversacionales soportados para acciones: WhatsApp, Messenger e
+// Instagram Direct. El correo existe como disparador entrante separado.
 // ---------------------------------------------------------------------------
 
 export type NodeKind = 'trigger' | 'action'
@@ -356,7 +357,7 @@ export const CONTACT_VARIABLES = [
   '{{respuesta_ia}}'
 ]
 
-/** Únicos canales conversacionales de la app (sin SMS ni Email) */
+/** Canales conversacionales disponibles para acciones de chat (sin SMS ni Email) */
 export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram'] as const
 
 export const CHANNEL_OPTIONS: ConfigFieldOption[] = [
@@ -486,6 +487,21 @@ const FORM_FIELDS: VariableSchemaField[] = [
   field('Respuestas por ID', 'respuestas_por_id', 'object')
 ]
 
+const MESSAGE_TRIGGER_FIELDS: ConfigField[] = [
+  { key: 'keywords', label: 'Palabras clave (opcional)', type: 'keywords', placeholder: 'Escribe y presiona Enter', advanced: true },
+  {
+    key: 'match',
+    label: 'Coincidencia',
+    type: 'select',
+    advanced: true,
+    options: [
+      { value: 'contains', label: 'Contiene' },
+      { value: 'exact', label: 'Coincidencia exacta' },
+      { value: 'starts_with', label: 'Empieza con' }
+    ]
+  }
+]
+
 const TRIGGER_LINK_FIELDS: VariableSchemaField[] = [
   field('ID del enlace', 'id_enlace'),
   field('Nombre del enlace', 'nombre_enlace'),
@@ -589,6 +605,51 @@ const aiOutput = (config: Record<string, unknown>): NodeVariableOutput => {
     : { baseId: 'chatgpt', baseLabel: 'ChatGPT', fields: [field('Respuesta', 'respuesta')] }
 }
 
+function messageTriggerDefinition({
+  type,
+  label,
+  description,
+  icon,
+  accent,
+  brand,
+  summaryBase
+}: {
+  type: string
+  label: string
+  description: string
+  icon: React.ComponentType<{ size?: number | string; color?: string }>
+  accent: NodeAccent
+  brand?: string
+  summaryBase: string
+}): NodeDefinition {
+  return {
+    type,
+    kind: 'trigger',
+    label,
+    brand,
+    category: 'trigger-events',
+    description,
+    icon,
+    accent,
+    addButtonLabel: 'Configurar mensaje',
+    defaultConfig: () => ({ keywords: [], match: 'contains' }),
+    fields: MESSAGE_TRIGGER_FIELDS,
+    outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'respuesta_whatsapp',
+      baseLabel: 'Respuesta del contacto',
+      fields: WHATSAPP_REPLY_FIELDS,
+      fixedTokenRoot: 'respuesta_whatsapp'
+    }),
+    summary: (config) => {
+      const keywords = arr<string>(config.keywords)
+      return {
+        text: `${summaryBase}${keywords.length > 0 ? ` con "${keywords.join('" o "')}"` : ''}${triggerFiltersSentence(config.filters)}`
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Disparadores
 // ---------------------------------------------------------------------------
@@ -665,6 +726,53 @@ const TRIGGERS: NodeDefinition[] = [
     })
   },
   {
+    ...messageTriggerDefinition({
+      type: 'trigger-whatsapp-message',
+      label: 'Mensaje de WhatsApp',
+      brand: 'WhatsApp',
+      description: 'Se activa cuando llega un mensaje de WhatsApp',
+      icon: WhatsAppIcon,
+      accent: 'green',
+      summaryBase: 'Cuando haya mensaje de WhatsApp'
+    }),
+    allowedChannels: ['whatsapp']
+  },
+  {
+    ...messageTriggerDefinition({
+      type: 'trigger-instagram-message',
+      label: 'Instagram DM',
+      brand: 'Instagram',
+      description: 'Se activa cuando llega un DM de Instagram',
+      icon: InstagramIcon,
+      accent: 'pink',
+      summaryBase: 'Cuando haya Instagram DM'
+    }),
+    allowedChannels: ['instagram']
+  },
+  {
+    ...messageTriggerDefinition({
+      type: 'trigger-messenger-message',
+      label: 'Mensaje de Messenger',
+      brand: 'Messenger',
+      description: 'Se activa cuando llega un mensaje de Messenger',
+      icon: MessengerIcon,
+      accent: 'blue',
+      summaryBase: 'Cuando haya mensaje de Messenger'
+    }),
+    allowedChannels: ['messenger']
+  },
+  {
+    ...messageTriggerDefinition({
+      type: 'trigger-email-message',
+      label: 'Correo electrónico',
+      description: 'Se activa cuando llega un correo electrónico',
+      icon: Mail,
+      accent: 'purple',
+      summaryBase: 'Cuando haya correo electrónico'
+    }),
+    allowedChannels: ['email']
+  },
+  {
     type: 'trigger-customer-replied',
     kind: 'trigger',
     label: 'Cliente respondió',
@@ -674,6 +782,7 @@ const TRIGGERS: NodeDefinition[] = [
     accent: 'green',
     addButtonLabel: 'Configurar respuesta',
     allowedChannels: [...ALLOWED_CHANNELS, 'any'],
+    hiddenFromPicker: true,
     defaultConfig: () => ({ channel: 'any', keywords: [], match: 'contains' }),
     fields: [
       { key: 'channel', label: 'Canal', type: 'select', required: true, options: CHANNEL_OPTIONS_WITH_ANY },
