@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Bot, Brain, ChevronDown, FileText, Image as ImageIcon, KeyRound, MessageCircle, Pause, Play, Plus, Power, RotateCcw, Trash2, Video, X } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronDown, FileText, Image as ImageIcon, KeyRound, MessageCircle, Pause, Play, Plus, RotateCcw, Trash2, Video, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, Modal, NumberInput, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
@@ -58,7 +58,6 @@ import { ConditionBuilder } from './ConditionBuilder'
 import styles from './AIAgentSettings.module.css'
 
 const AUTOSAVE_DELAY_MS = 900
-const OMIT_ALL_CONFIRM_TEXT = 'OMITIR TODO'
 const buildConversationalAgentPath = (agentId?: string | null) => (
   agentId ? `/ai-agent/conversational/${encodeURIComponent(agentId)}` : '/ai-agent/conversational'
 )
@@ -917,6 +916,16 @@ function getBusinessPromptBlockerText(status?: ConversationalBusinessPromptStatu
     return 'Vuelve a guardar la descripción del negocio para regenerar la estrategia interna.'
   }
   return 'Ristak está preparando el prompt interno. Espera a que quede listo antes de publicar.'
+}
+
+function getConversationalBusinessTitle(status?: ConversationalBusinessPromptStatus | null) {
+  const cleanBusinessName = String(status?.businessName || '').trim()
+  if (cleanBusinessName) return cleanBusinessName
+
+  const cleanIndustry = String(status?.industry || '').trim()
+  if (cleanIndustry) return cleanIndustry
+
+  return 'sin descripción del negocio'
 }
 
 interface QuestionSelectOption<T extends string> {
@@ -2875,7 +2884,6 @@ export const ConversationalAgentSettings: React.FC = () => {
 
   const businessPromptStatus = config?.businessPromptStatus || null
   const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
-  const promptStatusText = getBusinessPromptStatusText(businessPromptStatus)
   const promptBlockerText = getBusinessPromptBlockerText(businessPromptStatus)
 
   const handleAgentChange = (agentId: string, patch: ConversationalAgentDefInput) => {
@@ -3015,35 +3023,6 @@ export const ConversationalAgentSettings: React.FC = () => {
     )
   }
 
-  const handleOmitAll = () => {
-    showConfirm(
-      'Omitir todo',
-      'Esto apaga el agente conversacional y desactiva todos los agentes configurados. Las conversaciones dejan de responderse por IA hasta que vuelvas a activar un agente.',
-      async () => {
-        try {
-          saveTimersRef.current.forEach((timer) => window.clearTimeout(timer))
-          saveTimersRef.current.clear()
-          const nextConfig = await conversationalAgentService.saveConfig({ enabled: false })
-          const updatedAgents = await Promise.all(
-            agentsRef.current.map((agent) => conversationalAgentService.updateAgent(agent.id, { enabled: false }))
-          )
-          setConfig(nextConfig)
-          setAgents(updatedAgents)
-          setSelectedAgentId(null)
-          navigate(buildConversationalAgentPath(), { replace: true })
-          void refreshMetrics()
-          showToast('success', 'Agente conversacional', 'Todo quedó omitido y apagado.')
-        } catch (error: any) {
-          showToast('error', 'No se pudo omitir todo', error?.message || 'Inténtalo otra vez.')
-        }
-      },
-      'Omitir todo',
-      'Cancelar',
-      undefined,
-      { typeToConfirm: OMIT_ALL_CONFIRM_TEXT }
-    )
-  }
-
   const systemStrategy = config?.systemClosingStrategy || ''
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) || null : null
   const activeAgentsCount = agents.filter((agent) => agent.enabled).length
@@ -3053,8 +3032,7 @@ export const ConversationalAgentSettings: React.FC = () => {
   const completedConversations = metrics?.completedConversations ?? 0
   const errorEvents = metrics?.errorEvents ?? 0
   const successRate = metrics?.successRate ?? 0
-  const connectedAIProviderCount = aiProviders.filter((provider) => provider.connected).length
-  const connectedAIProviderLabel = connectedAIProviderCount === 1 ? '1 conectada' : `${connectedAIProviderCount} conectadas`
+  const businessTitle = getConversationalBusinessTitle(businessPromptStatus)
   const providerModalOption = providerModalId ? getConversationalAIProviderOption(providerModalId) : null
   const renderProviderModal = () => (
     <Modal
@@ -3175,28 +3153,61 @@ export const ConversationalAgentSettings: React.FC = () => {
               <MessageCircle size={22} />
             </div>
             <div>
-              <h2 className={styles.title}>Agente conversacional</h2>
+              <h2 className={styles.conversationalDirectoryTitle}>Agente conversacional - {businessTitle}</h2>
               <p className={styles.description}>
                 Crea agentes separados, cada uno con su modelo, objetivo y reglas de atención.
               </p>
             </div>
           </div>
           <div className={styles.headerActions}>
-            {!config?.enabled && (
+            <div className={styles.aiProviderDropdown}>
               <Button
                 variant="secondary"
-                onClick={() => handleGlobalChange({ enabled: true })}
-                disabled={loading || !config || !businessPromptReady}
-                title={!businessPromptReady ? promptBlockerText : undefined}
+                size="sm"
+                className={styles.aiProviderManagerToggle}
+                onClick={() => setAIProvidersExpanded((current) => !current)}
+                aria-expanded={aiProvidersExpanded}
+                aria-controls="conversational-ai-provider-list"
+                aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
               >
-                <Bot size={16} />
-                Reactivar
+                Modelos de IA disponibles
+                <ChevronDown
+                  size={15}
+                  className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
+                />
               </Button>
-            )}
-            <Button variant="danger" onClick={handleOmitAll} disabled={loading || !config || (!agents.length && !config.enabled)}>
-              <Power size={16} />
-              Omitir todo
-            </Button>
+              {aiProvidersExpanded && (
+                <div id="conversational-ai-provider-list" className={`${styles.aiProviderManagerList} ${styles.aiProviderDropdownMenu}`}>
+                  {conversationalAIProviderOptions.map((provider) => {
+                    const status = getProviderStatus(aiProviders, provider.id)
+                    const connected = Boolean(status?.connected)
+                    const canDelete = Boolean(status?.canDelete && connected)
+                    return (
+                      <div key={provider.id} className={styles.aiProviderManagerRow}>
+                        <div className={styles.aiProviderManagerCopy}>
+                          <strong>{provider.label}</strong>
+                          <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
+                        </div>
+                        <Badge variant={connected ? 'success' : 'neutral'}>
+                          {connected ? 'Conectado' : 'Toca para conectar'}
+                        </Badge>
+                        {canDelete ? (
+                          <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
+                            <Trash2 size={15} />
+                            Eliminar
+                          </Button>
+                        ) : (
+                          <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
+                            <KeyRound size={15} />
+                            {connected ? 'Administrar' : 'Conectar'}
+                          </Button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
             <Button
               onClick={handleCreateAgent}
               loading={creating}
@@ -3207,75 +3218,6 @@ export const ConversationalAgentSettings: React.FC = () => {
               Nuevo agente
             </Button>
           </div>
-        </div>
-
-        <div className={`${styles.promptReadinessBanner} ${businessPromptReady ? styles.promptReadinessBannerReady : styles.promptReadinessBannerLocked}`}>
-          <strong>{promptStatusText}</strong>
-          <span>
-            {businessPromptReady
-              ? 'La estrategia avanzada de fábrica ya está parametrizada con la descripción actual del negocio.'
-              : promptBlockerText}
-          </span>
-        </div>
-
-        <div className={styles.aiProviderManager}>
-          <div className={styles.aiProviderManagerHeader}>
-            <div className={styles.sectionHeading}>
-              <Brain size={17} />
-              <h3 className={styles.sectionTitle}>IAs conectadas</h3>
-            </div>
-            <div className={styles.aiProviderManagerActions}>
-              <Button
-                variant="secondary"
-                size="sm"
-                className={styles.aiProviderManagerToggle}
-                onClick={() => setAIProvidersExpanded((current) => !current)}
-                aria-expanded={aiProvidersExpanded}
-                aria-controls="conversational-ai-provider-list"
-                aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
-              >
-                Modelos de IA Disponibles
-                <ChevronDown
-                  size={15}
-                  className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
-                />
-              </Button>
-              <span className={styles.aiProviderManagerSummary}>
-                {conversationalAIProviderOptions.length} IAs disponibles · {connectedAIProviderLabel}
-              </span>
-            </div>
-          </div>
-          {aiProvidersExpanded && (
-            <div id="conversational-ai-provider-list" className={styles.aiProviderManagerList}>
-              {conversationalAIProviderOptions.map((provider) => {
-                const status = getProviderStatus(aiProviders, provider.id)
-                const connected = Boolean(status?.connected)
-                const canDelete = Boolean(status?.canDelete && connected)
-                return (
-                  <div key={provider.id} className={styles.aiProviderManagerRow}>
-                    <div className={styles.aiProviderManagerCopy}>
-                      <strong>{provider.label}</strong>
-                      <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
-                    </div>
-                    <Badge variant={connected ? 'success' : 'neutral'}>
-                      {connected ? 'Conectado' : 'Toca para conectar'}
-                    </Badge>
-                    {canDelete ? (
-                      <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
-                        <Trash2 size={15} />
-                        Eliminar
-                      </Button>
-                    ) : (
-                      <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
-                        <KeyRound size={15} />
-                        {connected ? 'Administrar' : 'Conectar'}
-                      </Button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
         </div>
 
         <div className={styles.agentDirectoryStats}>
