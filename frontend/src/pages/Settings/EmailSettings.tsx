@@ -7,6 +7,7 @@ import {
   Bold,
   CheckCircle2,
   ChevronDown,
+  Code2,
   Image,
   Italic,
   KeyRound,
@@ -22,7 +23,6 @@ import {
   Server,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
   Strikethrough,
   Subscript,
   Superscript,
@@ -34,7 +34,6 @@ import {
 } from 'lucide-react'
 import { Badge, Button, CustomSelect, PageHeader, Switch } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import { aiAgentService, type AIAgentConfigStatus } from '@/services/aiAgentService'
 import {
   EmailProviderDetection,
   EmailSignatureConfig,
@@ -81,6 +80,86 @@ const BLOCK_OPTIONS = [
 
 const EMPTY_SIGNATURE_HTML = ''
 const MAX_SIGNATURE_IMAGE_BYTES = 2 * 1024 * 1024
+const SIGNATURE_CODE_LIMIT = 70000
+const SIGNATURE_CODE_ALLOWED_TAGS = new Set([
+  'a',
+  'b',
+  'blockquote',
+  'br',
+  'div',
+  'em',
+  'hr',
+  'i',
+  'img',
+  'li',
+  'ol',
+  'p',
+  's',
+  'span',
+  'strong',
+  'sub',
+  'sup',
+  'table',
+  'tbody',
+  'td',
+  'tfoot',
+  'th',
+  'thead',
+  'tr',
+  'u',
+  'ul'
+])
+const SIGNATURE_CODE_VOID_TAGS = new Set(['br', 'hr', 'img'])
+const SIGNATURE_CODE_BLOCKED_TAGS = new Set([
+  'base',
+  'button',
+  'embed',
+  'form',
+  'iframe',
+  'input',
+  'link',
+  'meta',
+  'object',
+  'script',
+  'select',
+  'style',
+  'textarea'
+])
+const SIGNATURE_CODE_ALLOWED_STYLE_PROPS = new Set([
+  'background-color',
+  'border',
+  'border-bottom',
+  'border-left',
+  'border-radius',
+  'border-right',
+  'border-top',
+  'color',
+  'display',
+  'font-family',
+  'font-size',
+  'font-style',
+  'font-weight',
+  'height',
+  'line-height',
+  'margin',
+  'margin-bottom',
+  'margin-left',
+  'margin-right',
+  'margin-top',
+  'max-width',
+  'min-width',
+  'object-fit',
+  'padding',
+  'padding-bottom',
+  'padding-left',
+  'padding-right',
+  'padding-top',
+  'text-align',
+  'text-decoration',
+  'vertical-align',
+  'white-space',
+  'width'
+])
 
 function formatDateTime(value?: string | null) {
   if (!value) return 'Sin registro'
@@ -95,6 +174,125 @@ function getSecurityLabel(value?: string | null) {
   if (value === 'ssl') return 'SSL/TLS'
   if (value === 'none') return 'Sin cifrado'
   return 'STARTTLS'
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function isSafeSignatureCodeUrl(value: string, type: 'href' | 'src' = 'href') {
+  const url = value.trim()
+  if (!url || /[\u0000-\u001f<>"`]/.test(url)) return false
+  if (type === 'src' && /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(url)) {
+    return url.length <= MAX_SIGNATURE_IMAGE_BYTES * 2
+  }
+  if (type === 'href' && /^(mailto:|tel:|#)/i.test(url)) return true
+  return /^https?:\/\//i.test(url)
+}
+
+function sanitizeSignatureCodeStyle(value: string) {
+  return value
+    .split(';')
+    .map(rule => rule.trim())
+    .filter(Boolean)
+    .map(rule => {
+      const separatorIndex = rule.indexOf(':')
+      if (separatorIndex <= 0) return ''
+      const property = rule.slice(0, separatorIndex).trim().toLowerCase()
+      const propertyValue = rule.slice(separatorIndex + 1).trim()
+      if (!SIGNATURE_CODE_ALLOWED_STYLE_PROPS.has(property)) return ''
+      if (!propertyValue || /url\s*\(|expression\s*\(|javascript:|@import|[{}<>]/i.test(propertyValue)) return ''
+      return `${property}: ${propertyValue}`
+    })
+    .filter(Boolean)
+    .join('; ')
+}
+
+function sanitizeSignatureHtmlForEditor(rawHtml: string) {
+  const raw = rawHtml.slice(0, SIGNATURE_CODE_LIMIT).trim()
+  if (!raw) return EMPTY_SIGNATURE_HTML
+
+  if (!raw.includes('<')) {
+    return escapeHtml(raw).replace(/\r?\n/g, '<br>')
+  }
+
+  if (typeof window === 'undefined') return raw
+
+  const documentRef = window.document.implementation.createHTMLDocument('signature')
+  documentRef.body.innerHTML = raw
+
+  const sanitizeNode = (node: Node): Node | null => {
+    if (node.nodeType === window.Node.TEXT_NODE) {
+      return window.document.createTextNode(node.textContent || '')
+    }
+
+    if (node.nodeType !== window.Node.ELEMENT_NODE) return null
+
+    const sourceElement = node as HTMLElement
+    const tagName = sourceElement.tagName.toLowerCase()
+    if (SIGNATURE_CODE_BLOCKED_TAGS.has(tagName)) return null
+
+    if (!SIGNATURE_CODE_ALLOWED_TAGS.has(tagName)) {
+      const fragment = window.document.createDocumentFragment()
+      sourceElement.childNodes.forEach(child => {
+        const cleanChild = sanitizeNode(child)
+        if (cleanChild) fragment.appendChild(cleanChild)
+      })
+      return fragment
+    }
+
+    const cleanElement = window.document.createElement(tagName)
+    const style = sanitizeSignatureCodeStyle(sourceElement.getAttribute('style') || '')
+    if (style) cleanElement.setAttribute('style', style)
+
+    const title = sourceElement.getAttribute('title') || ''
+    if (title) cleanElement.setAttribute('title', title.slice(0, 160))
+
+    if (tagName === 'a') {
+      const href = sourceElement.getAttribute('href') || ''
+      if (isSafeSignatureCodeUrl(href, 'href')) {
+        cleanElement.setAttribute('href', href)
+        cleanElement.setAttribute('target', '_blank')
+        cleanElement.setAttribute('rel', 'noreferrer')
+      }
+    }
+
+    if (tagName === 'img') {
+      const src = sourceElement.getAttribute('src') || ''
+      const alt = sourceElement.getAttribute('alt') || ''
+      if (isSafeSignatureCodeUrl(src, 'src')) cleanElement.setAttribute('src', src)
+      if (alt) cleanElement.setAttribute('alt', alt.slice(0, 160))
+
+      for (const attributeName of ['width', 'height']) {
+        const numericValue = Math.max(1, Math.min(Number(sourceElement.getAttribute(attributeName)) || 0, 800))
+        if (numericValue) cleanElement.setAttribute(attributeName, String(numericValue))
+      }
+    }
+
+    if (!SIGNATURE_CODE_VOID_TAGS.has(tagName)) {
+      sourceElement.childNodes.forEach(child => {
+        const cleanChild = sanitizeNode(child)
+        if (cleanChild) cleanElement.appendChild(cleanChild)
+      })
+    }
+
+    return cleanElement
+  }
+
+  const fragment = window.document.createDocumentFragment()
+  documentRef.body.childNodes.forEach(child => {
+    const cleanChild = sanitizeNode(child)
+    if (cleanChild) fragment.appendChild(cleanChild)
+  })
+
+  const wrapper = window.document.createElement('div')
+  wrapper.appendChild(fragment)
+  return wrapper.innerHTML.trim()
 }
 
 export const EmailSettings: React.FC = () => {
@@ -131,10 +329,8 @@ export const EmailSettings: React.FC = () => {
   const [signatureEnabled, setSignatureEnabled] = useState(false)
   const [includeBeforeQuotedText, setIncludeBeforeQuotedText] = useState(true)
   const [savingSignature, setSavingSignature] = useState(false)
-  const [generatingSignature, setGeneratingSignature] = useState(false)
-  const [aiSignaturePrompt, setAiSignaturePrompt] = useState('')
-  const [aiSignatureAvailable, setAiSignatureAvailable] = useState(false)
-  const [signatureImageDataUrl, setSignatureImageDataUrl] = useState('')
+  const [signatureCodeOpen, setSignatureCodeOpen] = useState(false)
+  const [signatureHtmlCode, setSignatureHtmlCode] = useState(EMPTY_SIGNATURE_HTML)
   const [signatureFontFamily, setSignatureFontFamily] = useState(FONT_FAMILY_OPTIONS[0].value)
   const [signatureFontSize, setSignatureFontSize] = useState(FONT_SIZE_OPTIONS[1].value)
   const [signatureLineHeight, setSignatureLineHeight] = useState(LINE_HEIGHT_OPTIONS[1].value)
@@ -184,9 +380,12 @@ export const EmailSettings: React.FC = () => {
     setUsername(nextDetection.smtp.username || nextDetection.email)
   }
 
+  const getSignatureEditorHtml = () => signatureEditorRef.current?.innerHTML || signatureHtmlRef.current || EMPTY_SIGNATURE_HTML
+
   const setSignatureEditorHtml = (html: string) => {
-    const nextHtml = html.trim() || EMPTY_SIGNATURE_HTML
+    const nextHtml = sanitizeSignatureHtmlForEditor(html)
     signatureHtmlRef.current = nextHtml
+    setSignatureHtmlCode(nextHtml)
     window.requestAnimationFrame(() => {
       if (signatureEditorRef.current && signatureEditorRef.current.innerHTML !== nextHtml) {
         signatureEditorRef.current.innerHTML = nextHtml
@@ -201,25 +400,19 @@ export const EmailSettings: React.FC = () => {
     setSignatureEditorHtml(nextSignature.html || EMPTY_SIGNATURE_HTML)
   }
 
-  const applyAIAgentStatus = (nextStatus: AIAgentConfigStatus | null | undefined) => {
-    setAiSignatureAvailable(Boolean(nextStatus?.configured && !nextStatus?.needsReconnect))
-  }
-
   useEffect(() => {
     let cancelled = false
 
     const bootstrap = async () => {
       try {
-        const [nextStatus, nextSignature, nextAIAgentStatus] = await Promise.all([
+        const [nextStatus, nextSignature] = await Promise.all([
           emailService.getStatus(),
-          emailService.getSignature(),
-          aiAgentService.getConfig().catch(() => null)
+          emailService.getSignature()
         ])
         if (cancelled) return
         setStatus(nextStatus)
         applyStatusToForm(nextStatus)
         applySignatureToForm(nextSignature)
-        applyAIAgentStatus(nextAIAgentStatus)
       } catch (error) {
         if (!cancelled) {
           showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo leer la configuración de correo')
@@ -243,17 +436,6 @@ export const EmailSettings: React.FC = () => {
       signatureEditorRef.current.innerHTML = nextHtml
     }
   }, [loading])
-
-  useEffect(() => {
-    const handleAIAgentConfigChange = (event: Event) => {
-      applyAIAgentStatus((event as CustomEvent<AIAgentConfigStatus>).detail)
-    }
-
-    window.addEventListener('ai-agent-config-changed', handleAIAgentConfigChange)
-    return () => {
-      window.removeEventListener('ai-agent-config-changed', handleAIAgentConfigChange)
-    }
-  }, [])
 
   useEffect(() => {
     if (connected && !editing) return
@@ -468,45 +650,31 @@ export const EmailSettings: React.FC = () => {
     reader.onload = () => {
       const dataUrl = typeof reader.result === 'string' ? reader.result : ''
       if (!dataUrl) return
-      setSignatureImageDataUrl(dataUrl)
       insertSignatureHtml(`<img src="${dataUrl}" alt="" style="max-width: 120px; height: auto; border-radius: 8px;">`)
     }
     reader.readAsDataURL(file)
   }
 
-  const generateSignatureWithAI = async () => {
-    const prompt = aiSignaturePrompt.trim()
-    if (!prompt) {
-      showToast('warning', 'Faltan instrucciones', 'Pega en la caja de IA los datos y estilo que quieres para tu firma')
-      return
-    }
+  const toggleSignatureCodePanel = () => {
+    setSignatureCodeOpen(value => {
+      const nextOpen = !value
+      if (nextOpen) {
+        setSignatureHtmlCode(getSignatureEditorHtml())
+      }
+      return nextOpen
+    })
+  }
 
-    const senderEmail = fromEmailValue || status?.sender.fromEmail || ''
-    const senderName = fromName.trim() || status?.sender.fromName || ''
+  const refreshSignatureCodeFromEditor = () => {
+    syncSignatureFromEditor()
+    setSignatureHtmlCode(getSignatureEditorHtml())
+  }
 
-    setGeneratingSignature(true)
-    try {
-      const nextSignature = await emailService.generateSignature({
-        senderName,
-        senderEmail,
-        replyTo: replyToValue || status?.sender.replyTo || '',
-        instructions: prompt,
-        includeImage: Boolean(signatureImageDataUrl),
-        imageDataUrl: signatureImageDataUrl || undefined,
-        includeBeforeQuotedText
-      })
-      setSignatureEnabled(true)
-      applySignatureToForm({
-        ...nextSignature,
-        enabled: true,
-        includeBeforeQuotedText
-      })
-      showToast('success', 'Firma generada', 'Revísala y guarda cuando quede como quieres')
-    } catch (error) {
-      showToast('error', 'No se pudo generar', error instanceof Error ? error.message : 'Revisa la configuración del Agente AI')
-    } finally {
-      setGeneratingSignature(false)
-    }
+  const applySignatureHtmlCode = () => {
+    const html = sanitizeSignatureHtmlForEditor(signatureHtmlCode)
+    setSignatureEditorHtml(html)
+    setSignatureHtmlCode(html)
+    showToast('success', 'HTML aplicado', 'La firma quedó lista para revisar y guardar')
   }
 
   const saveSignature = async () => {
@@ -985,6 +1153,18 @@ export const EmailSettings: React.FC = () => {
           <Button type="button" variant="ghost" size="sm" className={styles.toolButton} title="Agregar imagen" onClick={() => signatureImageInputRef.current?.click()}>
             <Image size={16} />
           </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={styles.toolButton}
+            title="Código HTML"
+            aria-pressed={signatureCodeOpen}
+            data-on={signatureCodeOpen ? 'true' : undefined}
+            onClick={toggleSignatureCodePanel}
+          >
+            <Code2 size={16} />
+          </Button>
           <Button type="button" variant="ghost" size="sm" className={styles.toolButton} title="Deshacer" onClick={() => runEditorCommand('undo')}>
             <Undo2 size={16} />
           </Button>
@@ -999,25 +1179,26 @@ export const EmailSettings: React.FC = () => {
             onChange={handleSignatureImageUpload}
           />
         </div>
-        {aiSignatureAvailable && (
-          <div className={styles.signatureAiInline}>
-            <Sparkles size={16} aria-hidden="true" />
+        {signatureCodeOpen && (
+          <div className={styles.signatureCodePanel}>
+            <div className={styles.signatureCodeHeader}>
+              <strong>Código HTML</strong>
+              <div className={styles.signatureCodeActions}>
+                <Button type="button" variant="secondary" size="sm" onClick={refreshSignatureCodeFromEditor}>
+                  Tomar del editor
+                </Button>
+                <Button type="button" size="sm" onClick={applySignatureHtmlCode}>
+                  Aplicar HTML
+                </Button>
+              </div>
+            </div>
             <textarea
-              value={aiSignaturePrompt}
-              onChange={(event) => setAiSignaturePrompt(event.target.value)}
-              placeholder="IA: pega aquí todo de una vez: nombre, cargo, teléfono, web, horario, estilo, colores, texto legal..."
-              rows={2}
+              value={signatureHtmlCode}
+              onChange={(event) => setSignatureHtmlCode(event.target.value)}
+              placeholder="<table><tr><td>Tu firma...</td></tr></table>"
+              spellCheck={false}
+              rows={7}
             />
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={generateSignatureWithAI}
-              loading={generatingSignature}
-              disabled={!aiSignaturePrompt.trim()}
-            >
-              Generar
-            </Button>
           </div>
         )}
         <div

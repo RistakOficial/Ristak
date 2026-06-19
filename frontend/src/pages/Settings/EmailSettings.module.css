@@ -449,46 +449,73 @@
 }
 
 .toolButton {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  color: var(--text);
   padding: 0;
 }
 
-.signatureAiInline {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text-mute);
-  padding: 10px;
+.toolButton svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.25;
 }
 
-.signatureAiInline textarea {
+.signatureCodePanel {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 12px;
+}
+
+.signatureCodeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.signatureCodeHeader strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.signatureCodeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.signatureCodePanel textarea {
   width: 100%;
   min-width: 0;
-  min-height: 44px;
-  max-height: 96px;
+  min-height: 150px;
+  max-height: 340px;
   resize: vertical;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
   outline: none;
   background: var(--surface);
   color: var(--text);
-  font: inherit;
+  font-family: var(--font-mono);
   font-size: 13px;
-  line-height: 1.35;
-  padding: 9px 10px;
+  line-height: 1.5;
+  padding: 12px;
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
-.signatureAiInline textarea:focus {
+.signatureCodePanel textarea:focus {
   border-color: var(--accent);
   box-shadow: var(--ristak-focus-ring);
 }
 
-.signatureAiInline textarea::placeholder {
+.signatureCodePanel textarea::placeholder {
   color: var(--text-mute);
 }
 
@@ -510,7 +537,7 @@
 
 .signatureEditor:empty::before {
   color: var(--text-mute);
-  content: 'Escribe o genera tu firma de correo...';
+  content: 'Escribe o pega tu firma de correo...';
 }
 
 .signatureEditor a {
@@ -664,17 +691,13 @@
     justify-content: flex-start;
   }
 
-  .signatureAiInline {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: stretch;
+  .signatureCodeHeader {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
-  .signatureAiInline > svg {
-    display: none;
-  }
-
-  .signatureAiInline button {
-    justify-self: start;
+  .signatureCodeActions {
+    justify-content: flex-start;
   }
 
   .toolbarSelect {

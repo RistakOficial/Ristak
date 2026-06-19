@@ -3,7 +3,6 @@ import nodemailer from 'nodemailer'
 import { getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
-import { getAIAgentConfig, requireOpenAIApiKey } from './aiAgentService.js'
 import { clearEmailIntegrationCredentials } from './integrationCredentialsCleanupService.js'
 
 // Configuración del remitente de correo de la cuenta.
@@ -17,8 +16,6 @@ const SMTP_SECURITY_TYPES = new Set(['starttls', 'ssl', 'none'])
 const SIGNATURE_HTML_LIMIT = 70000
 const SIGNATURE_TEXT_LIMIT = 8000
 const SIGNATURE_IMAGE_LIMIT = 2 * 1024 * 1024
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
-const DEFAULT_SIGNATURE_MODEL = 'gpt-4.1-mini'
 const ALLOWED_SIGNATURE_TAGS = new Set([
   'a',
   'b',
@@ -40,6 +37,9 @@ const ALLOWED_SIGNATURE_TAGS = new Set([
   'table',
   'tbody',
   'td',
+  'tfoot',
+  'th',
+  'thead',
   'tr',
   'u',
   'ul'
@@ -496,22 +496,6 @@ function normalizeEmailSignatureConfig(payload = {}, previous = null) {
   }
 }
 
-function buildDefaultSignature({ senderName, senderEmail, role, phone, website } = {}) {
-  const rows = [
-    senderName ? `<strong>${escapeHtml(senderName)}</strong>` : '',
-    role ? escapeHtml(role) : '',
-    phone ? `T: ${escapeHtml(phone)}` : '',
-    senderEmail ? `<a href="mailto:${escapeAttribute(senderEmail)}">${escapeHtml(senderEmail)}</a>` : '',
-    website ? `<a href="${escapeAttribute(website)}">${escapeHtml(website.replace(/^https?:\/\//i, ''))}</a>` : ''
-  ].filter(Boolean)
-
-  return `
-    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.45;">
-      <p style="margin: 0 0 6px;">${rows.join('<br>')}</p>
-    </div>
-  `
-}
-
 function buildSignatureHtml(signature) {
   if (!signature?.enabled || !cleanString(signature.html)) return ''
   return `<div data-ristak-email-signature="true" style="margin-top: 18px;">${signature.html}</div>`
@@ -548,84 +532,6 @@ function applySignatureToMessage(message, signature) {
       ? (signature.includeBeforeQuotedText ? insertSignatureBeforeQuotedHtml(baseHtml, signatureHtml) : `${baseHtml}${signatureHtml}`)
       : undefined,
     text: baseText && signatureText ? `${baseText}\n\n-- \n${signatureText}` : (message.text || undefined)
-  }
-}
-
-function extractOpenAIText(data) {
-  if (typeof data?.output_text === 'string') return data.output_text
-  const output = Array.isArray(data?.output) ? data.output : []
-  return output
-    .flatMap(item => Array.isArray(item?.content) ? item.content : [])
-    .map(part => part?.text || part?.output_text || '')
-    .filter(Boolean)
-    .join('\n')
-    .trim()
-}
-
-function parseJsonObject(text) {
-  const raw = cleanString(text)
-  if (!raw) return null
-
-  try {
-    return JSON.parse(raw)
-  } catch {
-    const start = raw.indexOf('{')
-    const end = raw.lastIndexOf('}')
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(raw.slice(start, end + 1))
-      } catch {
-        return null
-      }
-    }
-  }
-
-  return null
-}
-
-async function callOpenAIForSignature({ apiKey, model, prompt }) {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 45000)
-
-  try {
-    const response = await fetch(OPENAI_RESPONSES_URL, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: cleanString(model) || DEFAULT_SIGNATURE_MODEL,
-        instructions: [
-          'Eres un diseñador de firmas de correo para negocios.',
-          'Responde únicamente JSON válido con la forma {"html":"...","plainText":"..."};',
-          'No uses Markdown. No uses scripts, formularios, iframes ni CSS externo.',
-          'Usa HTML compacto con estilos inline compatibles con clientes de correo.',
-          'Si se te pide imagen, usa exactamente {{SIGNATURE_IMAGE}} como src de una etiqueta img.'
-        ].join(' '),
-        input: prompt,
-        max_output_tokens: 1100
-      })
-    })
-
-    let data = null
-    try {
-      data = await response.json()
-    } catch {
-      data = null
-    }
-
-    if (!response.ok) {
-      const message = data?.error?.message || 'La IA no pudo generar la firma'
-      throw httpError(response.status === 401 ? 409 : 502, message)
-    }
-
-    const text = extractOpenAIText(data)
-    if (!text) throw httpError(502, 'La IA respondió sin contenido utilizable')
-    return text
-  } finally {
-    clearTimeout(timeout)
   }
 }
 
@@ -831,67 +737,6 @@ export async function saveEmailSignature(payload = {}) {
   }
   await setAppConfig(EMAIL_SIGNATURE_CONFIG_KEY, signature)
   return signature
-}
-
-export async function generateEmailSignature(payload = {}, { userId } = {}) {
-  const apiKey = await requireOpenAIApiKey()
-  const agentConfig = await getAIAgentConfig({ userId })
-
-  const senderName = limitString(payload.senderName || payload.fromName, 120)
-  const senderEmail = limitString(payload.senderEmail || payload.fromEmail, 180).toLowerCase()
-  const role = limitString(payload.role || payload.title, 140)
-  const company = limitString(payload.company || payload.businessName, 140)
-  const phone = limitString(payload.phone, 80)
-  const website = limitString(payload.website, 240)
-  const replyTo = limitString(payload.replyTo, 180).toLowerCase()
-  const instructions = limitString(payload.instructions || payload.prompt, 700)
-  const imageDataUrl = isSafeSignatureUrl(payload.imageDataUrl, 'src') ? cleanString(payload.imageDataUrl) : ''
-  const includeImage = toBoolean(payload.includeImage, Boolean(imageDataUrl))
-
-  const prompt = [
-    'Crea una firma de correo profesional para Ristak.',
-    'Debe verse limpia, premium, compacta y lista para pegar en clientes de correo.',
-    'Datos del remitente:',
-    JSON.stringify({
-      senderName,
-      senderEmail,
-      replyTo,
-      role,
-      company,
-      phone,
-      website,
-      includeImage,
-      businessContext: limitString(agentConfig?.business_context, 700),
-      brandVoice: limitString(agentConfig?.brand_voice, 400),
-      extraInstructions: instructions
-    }),
-    'Los datos completos de la firma pueden venir mezclados en extraInstructions; extrae de ahí nombre, cargo, teléfono, sitio web, ubicación, horarios, tono, texto legal y preferencias visuales.',
-    includeImage
-      ? 'Incluye una imagen pequeña en la firma usando <img src="{{SIGNATURE_IMAGE}}" ...>.'
-      : 'No incluyas imagen si no hay datos visuales.',
-    'Evita claims largos, colores chillones y layouts enormes. Incluye texto legal corto solo si lo piden las instrucciones.'
-  ].join('\n')
-
-  const rawText = await callOpenAIForSignature({
-    apiKey,
-    model: agentConfig?.model || DEFAULT_SIGNATURE_MODEL,
-    prompt
-  })
-
-  const parsed = parseJsonObject(rawText)
-  const fallbackHtml = buildDefaultSignature({ senderName, senderEmail, role, phone, website })
-  const generatedHtml = cleanString(parsed?.html || rawText || fallbackHtml)
-    .replace(/\{\{SIGNATURE_IMAGE\}\}/g, imageDataUrl)
-  const html = sanitizeEmailSignatureHtml(generatedHtml)
-  const text = limitString(cleanString(parsed?.plainText) || signatureHtmlToText(html), SIGNATURE_TEXT_LIMIT)
-
-  return {
-    enabled: true,
-    html: html || sanitizeEmailSignatureHtml(fallbackHtml.replace(/\{\{SIGNATURE_IMAGE\}\}/g, imageDataUrl)),
-    text,
-    includeBeforeQuotedText: toBoolean(payload.includeBeforeQuotedText, true),
-    generatedAt: new Date().toISOString()
-  }
 }
 
 /**

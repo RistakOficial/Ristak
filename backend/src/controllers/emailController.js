@@ -2,7 +2,6 @@ import {
   connectEmail,
   detectEmailProvider,
   disconnectEmail,
-  generateEmailSignature,
   getEmailSignature,
   getEmailStatus,
   saveEmailSignature,
@@ -16,7 +15,6 @@ function sendError(res, error, fallback) {
     success: false,
     error: status < 500 ? error.message : fallback,
     ...(error.code ? { code: error.code } : {}),
-    ...(error.needsOpenAIConfig ? { needsOpenAIConfig: true } : {}),
     ...(error.needsReconnect ? { needsReconnect: true } : {})
   })
 }
@@ -78,18 +76,6 @@ export async function saveEmailSignatureView(req, res) {
   } catch (error) {
     logger.error(`Error guardando firma de correo: ${error.message}`)
     sendError(res, error, 'Error guardando la firma de correo')
-  }
-}
-
-export async function generateEmailSignatureView(req, res) {
-  try {
-    const data = await generateEmailSignature(req.body || {}, {
-      userId: req.user?.userId || req.user?.id || null
-    })
-    res.json({ success: true, data })
-  } catch (error) {
-    logger.error(`Error generando firma con IA: ${error.message}`)
-    sendError(res, error, 'Error generando la firma con IA')
   }
 }
 

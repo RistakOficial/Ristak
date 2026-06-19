@@ -3,7 +3,6 @@ import {
   connectEmailView,
   detectEmailProviderView,
   disconnectEmailView,
-  generateEmailSignatureView,
   getEmailSignatureView,
   getEmailStatusView,
   saveEmailSignatureView,
@@ -21,7 +20,6 @@ router.post('/connect', connectEmailView)
 router.post('/test', sendTestEmailView)
 router.get('/signature', getEmailSignatureView)
 router.post('/signature', saveEmailSignatureView)
-router.post('/signature/generate', generateEmailSignatureView)
 router.post('/disconnect', disconnectEmailView)
 
 export default router

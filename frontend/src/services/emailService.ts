@@ -84,20 +84,6 @@ export interface EmailSignatureConfig {
   generatedAt?: string | null
 }
 
-export interface EmailSignatureGeneratePayload {
-  senderName?: string
-  senderEmail?: string
-  replyTo?: string
-  role?: string
-  company?: string
-  phone?: string
-  website?: string
-  instructions?: string
-  includeImage?: boolean
-  imageDataUrl?: string
-  includeBeforeQuotedText?: boolean
-}
-
 export const emailService = {
   getStatus: () => apiClient.get<EmailStatus>('/email/status'),
   detect: (email: string) => apiClient.post<EmailProviderDetection>('/email/detect', { email }),
@@ -105,7 +91,5 @@ export const emailService = {
   sendTest: (to: string) => apiClient.post<EmailTestResult>('/email/test', { to }),
   getSignature: () => apiClient.get<EmailSignatureConfig>('/email/signature'),
   saveSignature: (payload: EmailSignatureConfig) => apiClient.post<EmailSignatureConfig>('/email/signature', payload),
-  generateSignature: (payload: EmailSignatureGeneratePayload) =>
-    apiClient.post<EmailSignatureConfig>('/email/signature/generate', payload),
   disconnect: () => apiClient.post<EmailStatus>('/email/disconnect')
 }
