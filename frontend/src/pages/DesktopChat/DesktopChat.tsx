@@ -93,7 +93,7 @@ type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type DraftAttachmentKind = 'image' | 'document'
 type InfoPanelView = 'summary' | 'journey'
 type BulkChatConfirmAction = 'archive' | 'remove'
-type BulkAgentSelectionAction = Extract<ConversationStateAction, 'pause' | 'take_over' | 'skip'>
+type BulkAgentSelectionAction = Extract<ConversationStateAction, 'activate' | 'pause' | 'take_over' | 'skip'>
 type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta'
 type SchedulePeriod = 'AM' | 'PM'
 type TemplatePanelMode = 'choice' | 'select' | 'create'
@@ -367,6 +367,15 @@ const CONVERSATION_AGENT_STATUS_LABELS: Record<string, string> = {
   completed: 'Objetivo completado por el agente',
   discarded: 'Conversación descartada'
 }
+
+function getConversationAgentObjectiveLabel(objective: ConversationalAgentDef['objective']) {
+  if (objective === 'ventas') return 'Ventas'
+  if (objective === 'datos') return 'Datos'
+  if (objective === 'filtrar') return 'Filtrar'
+  if (objective === 'custom') return 'Personalizado'
+  return 'Citas y seguimiento'
+}
+
 const EMPTY_TEMPLATE_LOCATION = {
   latitude: '',
   longitude: '',
@@ -1974,6 +1983,12 @@ export const DesktopChat: React.FC = () => {
     ? `${selectedVisibleChatCount} chat${selectedVisibleChatCount === 1 ? '' : 's'} volverá${selectedVisibleChatCount === 1 ? '' : 'n'} a la bandeja principal.`
     : `${selectedVisibleChatCount} chat${selectedVisibleChatCount === 1 ? '' : 's'} se moverá${selectedVisibleChatCount === 1 ? '' : 'n'} a Archivados.`
   const bulkRemoveConfirmMessage = `${selectedVisibleChatCount} chat${selectedVisibleChatCount === 1 ? '' : 's'} se ocultará${selectedVisibleChatCount === 1 ? '' : 'n'} de esta lista. El historial no se borra y volverá${selectedVisibleChatCount === 1 ? '' : 'n'} si llega un mensaje nuevo.`
+  const showBulkAgentAssignmentActions = !agentAssignedViewOpen && !archivedViewOpen
+  const bulkSelectionMenuDescription = agentAssignedViewOpen
+    ? 'Gestiona los chats atendidos por el bot.'
+    : showBulkAgentAssignmentActions
+    ? 'Gestiona estos chats o mándalos a un agente.'
+    : 'Gestiona estos chats sin abrirlos uno por uno.'
   const messageGroups = useMemo(() => {
     const groups: Array<{ key: string; label: string; messages: DesktopChatMessage[] }> = []
     messages.forEach((message) => {
@@ -3368,7 +3383,8 @@ export const DesktopChat: React.FC = () => {
   const handleRunBulkConversationAgentAction = useCallback(async (
     action: BulkAgentSelectionAction,
     successTitle: string,
-    buildSuccessMessage: (count: number) => string
+    buildSuccessMessage: (count: number) => string,
+    options: { agentId?: string } = {}
   ) => {
     if (selectedChatContacts.length === 0 || bulkAgentActionBusy) return
     if (!conversationAgentEnabled) {
@@ -3380,10 +3396,12 @@ export const DesktopChat: React.FC = () => {
     setBulkAgentActionBusy(action)
     try {
       const results = await Promise.allSettled(
-        targets.map((contact) => conversationalAgentService.updateState(contact.id, action))
+        targets.map((contact) => conversationalAgentService.updateState(contact.id, action, options))
       )
       const updatedStates = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : [])
       const failedCount = results.length - updatedStates.length
+      const firstRejectedResult = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+      const firstErrorMessage = firstRejectedResult?.reason?.message
 
       if (updatedStates.length > 0) {
         setAgentStates((current) => {
@@ -3406,12 +3424,27 @@ export const DesktopChat: React.FC = () => {
             : buildSuccessMessage(updatedStates.length)
         )
       } else {
-        showToast('error', 'No se pudo cambiar el bot', 'Ningún chat seleccionado pudo actualizarse. Intenta otra vez.')
+        showToast('error', 'No se pudo cambiar el bot', firstErrorMessage || 'Ningún chat seleccionado pudo actualizarse. Intenta otra vez.')
       }
     } finally {
       setBulkAgentActionBusy(null)
     }
   }, [activeContactId, bulkAgentActionBusy, conversationAgentEnabled, selectedChatContacts, showToast])
+
+  const handleAssignSelectedChatsToConversationAgent = useCallback((agentId: string) => {
+    const agent = availableAgentDefs.find((item) => item.id === agentId)
+    if (!agent) {
+      showToast('warning', 'Agente no disponible', 'Elige un agente activo para atender los chats seleccionados.')
+      return
+    }
+
+    void handleRunBulkConversationAgentAction(
+      'activate',
+      'Chats enviados a inteligencia artificial',
+      (count) => `${agent.name || 'El agente'} atenderá ${count} chat${count === 1 ? '' : 's'} seleccionado${count === 1 ? '' : 's'}.`,
+      { agentId }
+    )
+  }, [availableAgentDefs, handleRunBulkConversationAgentAction, showToast])
 
   const handleOpenBulkArchiveConfirm = useCallback(() => {
     if (selectedChatContacts.length === 0) return
@@ -4044,7 +4077,7 @@ export const DesktopChat: React.FC = () => {
                   </span>
                   <span>
                     <strong>{agent.name || 'Agente sin nombre'}</strong>
-                    <small>{agent.objective === 'ventas' ? 'Ventas' : agent.objective === 'datos' ? 'Datos' : agent.objective === 'filtrar' ? 'Filtrar' : 'Citas y seguimiento'}</small>
+                    <small>{getConversationAgentObjectiveLabel(agent.objective)}</small>
                   </span>
                 </button>
               ))}
@@ -4606,7 +4639,7 @@ export const DesktopChat: React.FC = () => {
                 <DropdownMenuContent align="end" sideOffset={8} className={styles.chatSelectionMenu}>
                   <div className={styles.chatSelectionMenuHeader}>
                     <strong>{selectedVisibleChatCount} seleccionado{selectedVisibleChatCount === 1 ? '' : 's'}</strong>
-                    <span>{agentAssignedViewOpen ? 'Gestiona los chats atendidos por el bot.' : 'Gestiona estos chats sin abrirlos uno por uno.'}</span>
+                    <span>{bulkSelectionMenuDescription}</span>
                   </div>
                   <DropdownMenuItem className={styles.chatSelectionMenuItem} onSelect={() => handleMarkSelectedChatsAsRead()}>
                     <CheckCheck size={15} />
@@ -4622,6 +4655,47 @@ export const DesktopChat: React.FC = () => {
                       <small>{archivedViewOpen ? 'Devuelve estos chats a conversaciones.' : 'Mueve estos chats fuera de la bandeja principal.'}</small>
                     </span>
                   </DropdownMenuItem>
+                  {showBulkAgentAssignmentActions ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <div className={styles.chatSelectionMenuHeader}>
+                        <strong>Mandar a inteligencia artificial</strong>
+                        <span>Elige el agente que atenderá todos los chats seleccionados.</span>
+                      </div>
+                      {!conversationAgentEnabled ? (
+                        <DropdownMenuItem className={styles.chatSelectionMenuItem} disabled>
+                          <Bot size={15} />
+                          <span>
+                            <strong>Agente conversacional apagado</strong>
+                            <small>Actívalo en Agente AI para usarlo aquí.</small>
+                          </span>
+                        </DropdownMenuItem>
+                      ) : availableAgentDefs.length > 0 ? (
+                        availableAgentDefs.map((agent) => (
+                          <DropdownMenuItem
+                            key={agent.id}
+                            className={styles.chatSelectionMenuItem}
+                            disabled={Boolean(bulkAgentActionBusy)}
+                            onSelect={() => handleAssignSelectedChatsToConversationAgent(agent.id)}
+                          >
+                            <Bot size={15} />
+                            <span>
+                              <strong>{agent.name || 'Agente sin nombre'}</strong>
+                              <small>{getConversationAgentObjectiveLabel(agent.objective)}</small>
+                            </span>
+                          </DropdownMenuItem>
+                        ))
+                      ) : (
+                        <DropdownMenuItem className={styles.chatSelectionMenuItem} disabled>
+                          <Bot size={15} />
+                          <span>
+                            <strong>Sin agentes activos</strong>
+                            <small>Crea o activa un agente en Agente AI.</small>
+                          </span>
+                        </DropdownMenuItem>
+                      )}
+                    </>
+                  ) : null}
                   {agentAssignedViewOpen ? (
                     <>
                       <DropdownMenuSeparator />
