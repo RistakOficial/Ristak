@@ -23914,6 +23914,73 @@ const VideoPlayerPreview: React.FC<{
     setCurrentSpeed(nextSpeed)
   }
 
+  const seekToProgressRatio = (ratio: number) => {
+    const video = videoRef.current
+    if (!video) return false
+    const duration = Number.isFinite(video.duration) ? video.duration : 0
+    if (duration <= 0) return false
+    stopPreviewLoop()
+    markUserPlaybackStarted()
+    const nextProgress = Math.max(0, Math.min(1, ratio))
+    video.currentTime = nextProgress * duration
+    setProgress(nextProgress)
+    syncVideoState()
+    return true
+  }
+
+  const seekToClientPosition = (clientX: number, track: HTMLElement) => {
+    const rect = track.getBoundingClientRect()
+    if (rect.width <= 0) return false
+    return seekToProgressRatio((clientX - rect.left) / rect.width)
+  }
+
+  const handleProgressPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (shouldLetEditorSelect) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    showControlsTemporarily()
+    seekToClientPosition(event.clientX, event.currentTarget)
+  }
+
+  const handleProgressPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (shouldLetEditorSelect || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+    event.preventDefault()
+    event.stopPropagation()
+    showControlsTemporarily()
+    seekToClientPosition(event.clientX, event.currentTarget)
+  }
+
+  const handleProgressPointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (shouldLetEditorSelect) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    showControlsTemporarily()
+  }
+
+  const handleProgressKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (shouldLetEditorSelect) return
+    const video = videoRef.current
+    const duration = video && Number.isFinite(video.duration) ? video.duration : 0
+    if (!video || duration <= 0) return
+    const stepSeconds = event.shiftKey ? 10 : 5
+    let nextTime = video.currentTime
+
+    if (event.key === 'ArrowLeft') nextTime -= stepSeconds
+    else if (event.key === 'ArrowRight') nextTime += stepSeconds
+    else if (event.key === 'Home') nextTime = 0
+    else if (event.key === 'End') nextTime = duration
+    else return
+
+    event.preventDefault()
+    event.stopPropagation()
+    showControlsTemporarily()
+    seekToProgressRatio(nextTime / duration)
+  }
+
   return (
     <div
       className={className}
@@ -23978,7 +24045,20 @@ const VideoPlayerPreview: React.FC<{
           <button type="button" className="rstk-video-control-button" onClick={handleControlPlayClick} aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}>
             {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play className="rstk-video-control-play-icon" size={15} fill="currentColor" />}
           </button>
-          <div className="rstk-video-progress" aria-hidden="true">
+          <div
+            className="rstk-video-progress"
+            role="slider"
+            tabIndex={0}
+            aria-label="Progreso del video"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(progress * 100)}
+            onPointerDown={handleProgressPointerDown}
+            onPointerMove={handleProgressPointerMove}
+            onPointerUp={handleProgressPointerEnd}
+            onPointerCancel={handleProgressPointerEnd}
+            onKeyDown={handleProgressKeyDown}
+          >
             <span style={{ width: `${Math.round(progress * 100)}%` }} />
           </div>
           {showCustomVolume && (

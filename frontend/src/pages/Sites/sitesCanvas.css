@@ -427,23 +427,45 @@
 .rstkCanvas .rstk-video-control-button svg {
   display: block;
   flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
 }
 .rstkCanvas .rstk-video-control-play-icon {
   transform: translateX(1px);
 }
 .rstkCanvas .rstk-video-progress {
-  height: 5px;
-  overflow: hidden;
+  position: relative;
+  height: 18px;
+  overflow: visible;
   border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+.rstkCanvas .rstk-video-progress::before {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 5px;
+  border-radius: inherit;
   background: rgba(255,255,255,.2);
+  transform: translateY(-50%);
 }
 .rstkCanvas .rstk-video-progress span {
+  position: absolute;
+  left: 0;
+  top: 50%;
   display: block;
   width: 0;
-  height: 100%;
+  height: 5px;
   border-radius: inherit;
   background: currentColor;
+  transform: translateY(-50%);
   transition: width .16s linear;
+}
+.rstkCanvas .rstk-video-progress:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
 }
 .rstkCanvas .rstk-video-speed-control {
   position: relative;

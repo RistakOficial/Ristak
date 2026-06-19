@@ -13183,7 +13183,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
       ${showCustomControlBar ? `
         <div class="rstk-video-control-bar" data-rstk-video-control-bar>
           <button type="button" class="rstk-video-control-button" data-rstk-video-toggle aria-label="Reproducir video"><span class="rstk-video-control-play">${RSTK_ICONS.play}</span><span class="rstk-video-control-pause">${RSTK_ICONS.pause}</span></button>
-          <div class="rstk-video-progress" aria-hidden="true"><span data-rstk-video-progress></span></div>
+          <div class="rstk-video-progress" data-rstk-video-progress-track role="slider" tabindex="0" aria-label="Progreso del video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-rstk-video-progress></span></div>
           ${showCustomVolume ? `<button type="button" class="rstk-video-control-button" data-rstk-video-mute aria-label="Silenciar video"><span class="rstk-video-control-volume">${RSTK_ICONS.volume}</span><span class="rstk-video-control-muted">${RSTK_ICONS.volumeMuted}</span></button>` : ''}
           ${showCustomSpeed ? `<label class="rstk-video-speed-control" aria-label="Velocidad de reproducción">${RSTK_ICONS.settings}<select data-rstk-video-speed-select>${renderVideoSpeedOptions(String(speed))}</select></label>` : ''}
         </div>
@@ -14287,15 +14287,17 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-custom-controls.rstk-video-is-playing.rstk-video-controls-hidden video{cursor:none}
 	  .rstk-video-control-button{width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;cursor:pointer}
 	  .rstk-video-control-button:hover{background:rgba(255,255,255,.2)}
-	  .rstk-video-control-button svg{display:block;flex:0 0 auto}
+	  .rstk-video-control-button svg{display:block;flex:0 0 auto;width:15px;height:15px}
 	  .rstk-video-control-play svg{transform:translateX(1px)}
 	  .rstk-video-control-pause,.rstk-video-control-muted{display:none}
 	  .rstk-video-is-playing .rstk-video-control-play{display:none}
 	  .rstk-video-is-playing .rstk-video-control-pause{display:block}
 	  .rstk-video-is-muted .rstk-video-control-volume{display:none}
 	  .rstk-video-is-muted .rstk-video-control-muted{display:block}
-	  .rstk-video-progress{height:5px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.2)}
-	  .rstk-video-progress span{display:block;width:0;height:100%;border-radius:inherit;background:currentColor;transition:width .16s linear}
+	  .rstk-video-progress{position:relative;height:18px;overflow:visible;border-radius:999px;background:transparent;cursor:pointer;touch-action:none}
+	  .rstk-video-progress::before{content:"";position:absolute;inset:50% 0 auto;height:5px;border-radius:inherit;background:rgba(255,255,255,.2);transform:translateY(-50%)}
+	  .rstk-video-progress span{position:absolute;left:0;top:50%;display:block;width:0;height:5px;border-radius:inherit;background:currentColor;transform:translateY(-50%);transition:width .16s linear}
+	  .rstk-video-progress:focus-visible{outline:2px solid currentColor;outline-offset:3px}
 	  .rstk-video-speed-control{position:relative;min-width:66px;height:30px;display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;padding:0 20px 0 8px}
 	  .rstk-video-speed-control::after{content:"";position:absolute;top:50%;right:8px;width:0;height:0;border-top:4px solid currentColor;border-right:4px solid transparent;border-left:4px solid transparent;opacity:.72;pointer-events:none;transform:translateY(-35%)}
 	  .rstk-video-speed-control select{-webkit-appearance:none;appearance:none;width:34px;min-width:0;height:100%;margin:0;border:0!important;border-radius:0;background:transparent!important;background-image:none!important;box-shadow:none!important;color:inherit;cursor:pointer;font:inherit;font-size:.76rem;font-weight:750;line-height:1;outline:0;padding:0}
@@ -15911,6 +15913,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
 	        video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
 	        const progress = host.querySelector('[data-rstk-video-progress]');
+	        const progressTrack = host.querySelector('[data-rstk-video-progress-track]');
 	        const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
 	        const toggleButtons = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
 	        const muteButtons = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
@@ -15985,6 +15988,26 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          });
 	          sync();
 	        };
+	        const seekToProgressRatio = ratio => {
+	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
+	          if (duration <= 0) return false;
+	          if (previewing) stopPreviewLoop();
+	          hasUserPlayed = true;
+	          hideSoundNotice();
+	          const nextProgress = Math.max(0, Math.min(1, ratio));
+	          video.currentTime = nextProgress * duration;
+	          if (progress) progress.style.width = Math.round(nextProgress * 100) + '%';
+	          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(nextProgress * 100)));
+	          sync();
+	          return true;
+	        };
+	        const seekToClientPosition = (clientX, track) => {
+	          const targetTrack = track || progressTrack;
+	          if (!targetTrack || !targetTrack.getBoundingClientRect) return false;
+	          const rect = targetTrack.getBoundingClientRect();
+	          if (!rect.width) return false;
+	          return seekToProgressRatio((clientX - rect.left) / rect.width);
+	        };
 	        const sync = () => {
 	          if (previewing) {
 	            const range = normalizePreviewRange(video);
@@ -15999,7 +16022,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          host.classList.toggle('rstk-video-is-previewing', !video.paused && previewing);
 	          host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
 	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
-	          if (progress) progress.style.width = duration > 0 ? Math.max(0, Math.min(100, (video.currentTime / duration) * 100)) + '%' : '0%';
+	          const progressRatio = duration > 0 ? Math.max(0, Math.min(1, video.currentTime / duration)) : 0;
+	          if (progress) progress.style.width = Math.round(progressRatio * 100) + '%';
+	          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(progressRatio * 100)));
 	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused || previewing ? 'Reproducir video' : 'Pausar video'));
 	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
 	          if (hasControlBar) {
@@ -16068,6 +16093,47 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	            sync();
 	          });
 	        });
+	        if (progressTrack) {
+	          progressTrack.addEventListener('pointerdown', event => {
+	            event.preventDefault();
+	            event.stopPropagation();
+	            if (progressTrack.setPointerCapture) progressTrack.setPointerCapture(event.pointerId);
+	            showControlsTemporarily();
+	            seekToClientPosition(event.clientX, progressTrack);
+	          });
+	          progressTrack.addEventListener('pointermove', event => {
+	            if (!progressTrack.hasPointerCapture || !progressTrack.hasPointerCapture(event.pointerId)) return;
+	            event.preventDefault();
+	            event.stopPropagation();
+	            showControlsTemporarily();
+	            seekToClientPosition(event.clientX, progressTrack);
+	          });
+	          ['pointerup', 'pointercancel'].forEach(eventName => {
+	            progressTrack.addEventListener(eventName, event => {
+	              event.preventDefault();
+	              event.stopPropagation();
+	              if (progressTrack.hasPointerCapture && progressTrack.hasPointerCapture(event.pointerId)) {
+	                progressTrack.releasePointerCapture(event.pointerId);
+	              }
+	              showControlsTemporarily();
+	            });
+	          });
+	          progressTrack.addEventListener('keydown', event => {
+	            const duration = Number.isFinite(video.duration) ? video.duration : 0;
+	            if (duration <= 0) return;
+	            const stepSeconds = event.shiftKey ? 10 : 5;
+	            let nextTime = video.currentTime;
+	            if (event.key === 'ArrowLeft') nextTime -= stepSeconds;
+	            else if (event.key === 'ArrowRight') nextTime += stepSeconds;
+	            else if (event.key === 'Home') nextTime = 0;
+	            else if (event.key === 'End') nextTime = duration;
+	            else return;
+	            event.preventDefault();
+	            event.stopPropagation();
+	            showControlsTemporarily();
+	            seekToProgressRatio(nextTime / duration);
+	          });
+	        }
 	        if (speedSelect) {
 	          speedSelect.value = String(video.playbackRate);
 	          speedSelect.addEventListener('change', event => {

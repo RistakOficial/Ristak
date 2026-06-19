@@ -81,6 +81,7 @@ const getVideoPlayerVisualSignature = (html) => {
 test('video player clean mode renders custom overlay controls', async () => {
   const html = await renderPublicSiteHtml(baseSite({
     videoControlsMode: 'clean',
+    videoControlBar: true,
     videoSoundHint: true,
     videoPlayerBackground: '#111827',
     videoPlayerRadius: 28,
@@ -120,6 +121,11 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /\.rstk-video-play-dot\{[^}]*border:0/)
   assert.match(html, /\.rstk-video-control-bar\{[^}]*background:var\(--rstk-video-player-color/)
   assert.match(html, /\.rstk-video-control-bar\{[^}]*box-shadow:none/)
+  assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="0"/)
+  assert.match(html, /aria-label="Progreso del video"/)
+  assert.match(html, /\.rstk-video-control-button svg\{[^}]*width:15px[^}]*height:15px/)
+  assert.match(html, /\.rstk-video-progress\{[^}]*cursor:pointer[^}]*touch-action:none/)
+  assert.match(html, /\.rstk-video-progress::before\{[^}]*height:5px/)
   assert.match(html, /\.rstk-video-controls-hidden \.rstk-video-control-bar\{[^}]*opacity:0/)
   assert.match(html, /\.rstk-video-player\{container-type:inline-size/)
   assert.match(html, /15cqw/)
@@ -325,6 +331,10 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     assert.match(streamLiveHtml, /showControlsTemporarily\(\)/)
     assert.match(streamLiveHtml, /startsWithHiddenControls/)
     assert.match(streamLiveHtml, /shouldHideControlsAtStart/)
+    assert.match(streamLiveHtml, /seekToProgressRatio/)
+    assert.match(streamLiveHtml, /seekToClientPosition/)
+    assert.match(streamLiveHtml, /pointerdown/)
+    assert.match(streamLiveHtml, /ArrowRight/)
 
     const hiddenInitialSettings = {
       ...visualSettings,
