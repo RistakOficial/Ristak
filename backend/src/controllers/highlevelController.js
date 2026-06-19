@@ -32,6 +32,7 @@ import {
   syncProductsWithSavedConfig,
   updateLocalProduct
 } from '../services/localProductService.js';
+import { applyStripePaymentPlanAction } from '../services/stripePaymentService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -2867,6 +2868,13 @@ async function getLocalInvoiceSchedule(scheduleId) {
   return row ? paymentPlanFromRow(row) : null;
 }
 
+function isStripeLocalInvoiceSchedule(schedule) {
+  return schedule?.source === 'stripe'
+    || schedule?.raw?.provider === 'stripe'
+    || schedule?.raw?.paymentFlow?.id
+    || schedule?.raw?.schedule?.provider === 'stripe';
+}
+
 async function markLocalInvoiceScheduleStatus(scheduleId, status, rawPatch = {}) {
   const now = new Date().toISOString();
   const existing = await getLocalInvoiceSchedule(scheduleId);
@@ -3076,6 +3084,10 @@ export const listInvoiceSchedules = async (req, res) => {
     let offset = Math.max(Number(req.query.offset) || 0, 0);
     const maxPages = singlePage ? 1 : 10;
     const schedules = [];
+    const localStripePlans = await listLocalInvoiceSchedules({
+      activeOnly,
+      source: 'stripe'
+    });
 
     const ghlClient = await getGHLClient();
 
@@ -3096,10 +3108,6 @@ export const listInvoiceSchedules = async (req, res) => {
 
     await persistLocalInvoiceSchedules(data);
 
-    const localStripePlans = await listLocalInvoiceSchedules({
-      activeOnly,
-      source: 'stripe'
-    });
     const seenIds = new Set(data.map(schedule => schedule.id));
     const mergedData = [
       ...data,
@@ -3122,13 +3130,11 @@ export const listInvoiceSchedules = async (req, res) => {
         activeOnly: req.query.activeOnly === 'true'
       });
 
-      if (data.length > 0) {
-        return res.json({
-          success: true,
-          data,
-          source: 'local_cache'
-        });
-      }
+      return res.json({
+        success: true,
+        data,
+        source: 'local_cache'
+      });
     } catch (localError) {
       logger.error(`Error leyendo cache local de invoice schedules: ${localError.message}`);
     }
@@ -3148,6 +3154,15 @@ export const getInvoiceSchedule = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'scheduleId requerido'
+      });
+    }
+
+    const localSchedule = await getLocalInvoiceSchedule(scheduleId);
+    if (isStripeLocalInvoiceSchedule(localSchedule)) {
+      return res.json({
+        success: true,
+        data: localSchedule,
+        source: 'local_stripe'
       });
     }
 
@@ -3212,6 +3227,14 @@ export const updateInvoiceSchedule = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Payload inválido para actualizar plan de pago'
+      });
+    }
+
+    const localSchedule = await getLocalInvoiceSchedule(scheduleId);
+    if (isStripeLocalInvoiceSchedule(localSchedule)) {
+      return res.status(409).json({
+        success: false,
+        error: 'Este plan se administra con Stripe en Ristak. Usa las acciones del plan para pausarlo, activarlo, cancelarlo o eliminarlo.'
       });
     }
 
@@ -3292,6 +3315,33 @@ export const actionInvoiceSchedule = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Acción inválida para plan de pago'
+      });
+    }
+
+    const localSchedule = await getLocalInvoiceSchedule(scheduleId);
+    if (isStripeLocalInvoiceSchedule(localSchedule)) {
+      const actionMap = {
+        activate: 'activate',
+        pause: 'pause',
+        cancel: 'cancel',
+        delete: 'delete'
+      };
+      const stripeAction = actionMap[action];
+
+      if (!stripeAction) {
+        return res.status(409).json({
+          success: false,
+          error: 'Esta acción no aplica para planes de Stripe.'
+        });
+      }
+
+      await applyStripePaymentPlanAction(scheduleId, stripeAction);
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+
+      return res.json({
+        success: true,
+        data: updatedLocalSchedule,
+        source: 'local_stripe'
       });
     }
 

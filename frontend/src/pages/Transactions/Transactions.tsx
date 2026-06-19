@@ -634,7 +634,7 @@ export const Transactions: React.FC = () => {
       })
     } catch (error) {
       setPaymentPlanModal(prev => ({ ...prev, loading: false }))
-      showToast('error', 'No se pudo cargar el detalle', 'Se abrió la información disponible de la tabla, pero HighLevel no devolvió el detalle completo.')
+      showToast('error', 'No se pudo cargar el detalle', 'Se abrió la información disponible de la tabla, pero no se pudo cargar el detalle completo.')
     }
   }
 
@@ -705,7 +705,7 @@ export const Transactions: React.FC = () => {
       showToast('success', successTitle, successMessage)
       fetchPaymentPlans()
     } catch (error: any) {
-      showToast('error', 'No se pudo actualizar el plan', error?.message || 'HighLevel rechazó la acción para esta factura recurrente.')
+      showToast('error', 'No se pudo actualizar el plan', error?.message || 'No se pudo aplicar la acción para este plan de pago.')
     } finally {
       setPaymentPlanActionId(null)
     }
@@ -718,29 +718,31 @@ export const Transactions: React.FC = () => {
     const planName = plan.name || plan.title || 'este plan de pago'
 
     if (action === 'cancel') {
+      const providerLabel = isStripePaymentPlan(plan) ? 'Stripe' : 'HighLevel'
       showConfirm(
         'Cancelar plan de pago',
-        `¿Seguro que quieres cancelar ${planName}? HighLevel dejará de generar esta factura recurrente.`,
-        () => runPaymentPlanAction(plan, action, 'Plan cancelado', 'La factura recurrente quedó cancelada en HighLevel y se actualizó localmente.')
+        `¿Seguro que quieres cancelar ${planName}? ${providerLabel} dejará de cobrar este plan.`,
+        () => runPaymentPlanAction(plan, action, 'Plan cancelado', 'El plan quedó cancelado y se actualizó la lista.')
       )
       return
     }
 
     if (action === 'delete') {
+      const providerLabel = isStripePaymentPlan(plan) ? 'Stripe' : 'HighLevel'
       showConfirm(
         'Eliminar plan de pago',
-        `¿Seguro que quieres eliminar ${planName}? Esta acción borra el schedule en HighLevel y lo marca como eliminado en la base local.`,
-        () => runPaymentPlanAction(plan, action, 'Plan eliminado', 'La factura recurrente se eliminó en HighLevel y quedó marcada como eliminada localmente.')
+        `¿Seguro que quieres eliminar ${planName}? Esta acción lo marca como eliminado en ${providerLabel} y en Ristak.`,
+        () => runPaymentPlanAction(plan, action, 'Plan eliminado', 'El plan quedó eliminado y se actualizó la lista.')
       )
       return
     }
 
     if (action === 'pause') {
-      runPaymentPlanAction(plan, action, 'Plan pausado', 'La factura recurrente quedó pausada y el registro local fue actualizado.')
+      runPaymentPlanAction(plan, action, 'Plan pausado', 'El plan quedó pausado y se actualizó la lista.')
       return
     }
 
-    runPaymentPlanAction(plan, action, 'Plan activado', 'La factura recurrente quedó activa/programada en HighLevel.')
+    runPaymentPlanAction(plan, action, 'Plan activado', 'El plan quedó activo/programado.')
   }
 
   const handleCreatePaymentPlan = async (formData: FormData) => {
@@ -999,12 +1001,6 @@ export const Transactions: React.FC = () => {
     handledOpenPaymentPlanRef.current = planId
     setPaymentTableTab('payment-plans')
 
-    if (!highLevelConnected) {
-      showToast('warning', 'HighLevel no está conectado', 'Conecta HighLevel para abrir el detalle de planes de pago.')
-      navigateTransactionsPath(buildPaymentPlansPath(), { replace: true })
-      return
-    }
-
     setPaymentPlanModal({
       plan: { id: planId } as PaymentPlan,
       loading: true,
@@ -1030,7 +1026,7 @@ export const Transactions: React.FC = () => {
     return () => {
       isMounted = false
     }
-  }, [highLevelConnected, navigateTransactionsPath, routeState.paymentPlanId, showToast])
+  }, [routeState.paymentPlanId, showToast])
 
   useEffect(() => {
     if (!routeState.transactionId && modal.type === 'edit') {
@@ -1171,7 +1167,7 @@ export const Transactions: React.FC = () => {
 
   const handleCopyPaymentLink = async (transaction: Transaction) => {
     try {
-      const link = await transactionsService.getPaymentLink(transaction.id)
+      const link = transaction.paymentUrl || await transactionsService.getPaymentLink(transaction.id)
       await navigator.clipboard.writeText(link)
       showToast('success', '¡Enlace copiado!', 'El enlace de pago se copió al portapapeles')
     } catch (error) {
@@ -1356,9 +1352,13 @@ export const Transactions: React.FC = () => {
       render: (_value, item) => {
         // Contar acciones disponibles según el estado
         const actions = []
+        const method = String(item.method || '').toLowerCase()
+        const provider = String(item.paymentProvider || '').toLowerCase()
+        const isStripeTransaction = provider === 'stripe' || method.startsWith('stripe') || Boolean(item.publicPaymentId || item.paymentUrl || item.stripePaymentIntentId)
+        const hasPaymentLink = Boolean(item.paymentUrl || item.publicPaymentId || item.invoiceId)
 
         // Copiar enlace - disponible para draft, sent, pending, overdue
-        if (['draft', 'sent', 'pending', 'overdue', 'partial'].includes(item.status)) {
+        if (hasPaymentLink && ['draft', 'sent', 'pending', 'overdue', 'partial'].includes(item.status)) {
           actions.push('copy')
         }
 
@@ -1368,7 +1368,7 @@ export const Transactions: React.FC = () => {
         }
 
         // Enviar - solo para draft y pending
-        if (['draft', 'pending'].includes(item.status)) {
+        if (!isStripeTransaction && item.invoiceId && ['draft', 'pending'].includes(item.status)) {
           actions.push('send')
         }
 
@@ -1732,25 +1732,25 @@ export const Transactions: React.FC = () => {
                   <span style={{ marginLeft: '8px' }}>{stripePlan ? 'Ver plan Stripe' : 'Editar factura'}</span>
                 </DropdownMenuItem>
 
-                {!stripePlan && canActivatePaymentPlan(item) && (
+                {canActivatePaymentPlan(item) && (
                   <DropdownMenuItem disabled={actionInProgress} onClick={() => handlePaymentPlanAction(item, 'activate')}>
                     <PlayCircle size={16} />
                     <span style={{ marginLeft: '8px' }}>{activationLabel}</span>
                   </DropdownMenuItem>
                 )}
 
-                {!stripePlan && canPausePaymentPlan(item) && (
+                {canPausePaymentPlan(item) && (
                   <DropdownMenuItem disabled={actionInProgress} onClick={() => handlePaymentPlanAction(item, 'pause')}>
                     <PauseCircle size={16} />
                     <span style={{ marginLeft: '8px' }}>Pausar plan</span>
                   </DropdownMenuItem>
                 )}
 
-                {!stripePlan && (canCancelPaymentPlan(item) || canDeletePaymentPlan(item)) && (
+                {(canCancelPaymentPlan(item) || canDeletePaymentPlan(item)) && (
                   <DropdownMenuSeparator />
                 )}
 
-                {!stripePlan && canCancelPaymentPlan(item) && (
+                {canCancelPaymentPlan(item) && (
                   <DropdownMenuItem
                     disabled={actionInProgress}
                     onClick={() => handlePaymentPlanAction(item, 'cancel')}
@@ -1761,7 +1761,7 @@ export const Transactions: React.FC = () => {
                   </DropdownMenuItem>
                 )}
 
-                {!stripePlan && canDeletePaymentPlan(item) && (
+                {canDeletePaymentPlan(item) && (
                   <DropdownMenuItem
                     disabled={actionInProgress}
                     onClick={() => handlePaymentPlanAction(item, 'delete')}

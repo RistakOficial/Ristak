@@ -26,6 +26,8 @@ const STRIPE_PLAN_STATES = {
   CARD_AUTHORIZED: 'card_authorized',
   INSTALLMENT_PLAN_CREATED: 'installment_plan_created',
   INSTALLMENT_PLAN_ACTIVE: 'installment_plan_active',
+  PAUSED: 'paused',
+  DELETED: 'deleted',
   CANCELLED: 'cancelled'
 }
 const FIRST_PAYMENT_PLAN_TRIGGERS = new Set(['first_payment', 'first_payment_saved_card'])
@@ -1285,12 +1287,22 @@ function getStripePlanRecurrenceLabel(frequency) {
 
 function getStripePlanMirrorStatus(flow = {}) {
   const state = cleanString(flow.current_state).toLowerCase()
+  if (state === STRIPE_PLAN_STATES.DELETED) return 'deleted'
   if (state === STRIPE_PLAN_STATES.CANCELLED) return 'cancelled'
+  if (state === STRIPE_PLAN_STATES.PAUSED) return 'paused'
   if (state === STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE) return 'active'
   if (state === STRIPE_PLAN_STATES.INSTALLMENT_PLAN_CREATED) return 'scheduled'
   if (state === STRIPE_PLAN_STATES.CARD_AUTHORIZED) return 'scheduled'
   if (state === STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION) return 'scheduled'
   return 'scheduled'
+}
+
+function getPlanTriggerStatusFromPaymentStatus(status) {
+  const normalized = cleanString(status).toLowerCase()
+  if (normalized === 'paid') return 'paid'
+  if (normalized === 'failed') return 'failed'
+  if (['void', 'deleted', 'cancelled', 'canceled'].includes(normalized)) return 'void'
+  return 'pending'
 }
 
 async function persistStripePaymentPlanMirror(flowId, extra = {}) {
@@ -1502,13 +1514,7 @@ async function syncStripePlanFromPayment(paymentRow, savedMethod, config) {
   }
 
   if (isFirstPlanPayment && paymentRow.status) {
-    const firstPaymentStatus = paymentRow.status === 'paid'
-      ? 'paid'
-      : paymentRow.status === 'failed'
-        ? 'failed'
-        : paymentRow.status === 'void'
-          ? 'void'
-          : 'pending'
+    const firstPaymentStatus = getPlanTriggerStatusFromPaymentStatus(paymentRow.status)
 
     await db.run(
       `UPDATE payment_flows
@@ -1521,13 +1527,7 @@ async function syncStripePlanFromPayment(paymentRow, savedMethod, config) {
   }
 
   if (isCardSetupPayment && paymentRow.status) {
-    const cardSetupStatus = paymentRow.status === 'paid'
-      ? 'paid'
-      : paymentRow.status === 'failed'
-        ? 'failed'
-        : paymentRow.status === 'void'
-          ? 'void'
-          : 'pending'
+    const cardSetupStatus = getPlanTriggerStatusFromPaymentStatus(paymentRow.status)
 
     await db.run(
       `UPDATE payment_flows
@@ -1542,11 +1542,186 @@ async function syncStripePlanFromPayment(paymentRow, savedMethod, config) {
 
   if (paymentRow.status === 'paid' && savedMethod && isFirstPlanPayment) {
     await activateStripePaymentPlan(flowId, savedMethod, config)
+    return
   }
 
   if (paymentRow.status === 'paid' && savedMethod && isCardSetupPayment) {
     await activateStripePaymentPlan(flowId, savedMethod, config)
+    return
   }
+
+  await persistStripePaymentPlanMirror(flowId)
+}
+
+export async function syncStripePaymentPlanFromLocalPayment(paymentId) {
+  const cleanPaymentId = cleanString(paymentId)
+  if (!cleanPaymentId) return null
+
+  const paymentRow = await db.get('SELECT * FROM payments WHERE id = ?', [cleanPaymentId])
+  if (!paymentRow) return null
+
+  await syncStripePlanFromPayment(paymentRow, null, null)
+
+  const metadata = parseJson(paymentRow.metadata_json, {})
+  const flowId = cleanString(metadata?.paymentPlan?.flowId)
+  if (!flowId) return null
+
+  return db.get('SELECT * FROM payment_plans WHERE id = ?', [flowId])
+}
+
+export async function applyStripePaymentPlanAction(flowId, action) {
+  const cleanFlowId = cleanString(flowId)
+  const normalizedAction = cleanString(action).toLowerCase()
+  if (!cleanFlowId) {
+    const error = new Error('Plan Stripe requerido.')
+    error.status = 400
+    throw error
+  }
+
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  if (!flow || flow.payment_provider !== 'stripe') {
+    const error = new Error('Plan Stripe no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  const now = new Date().toISOString()
+  const stateHistory = (nextState) => addPlanState(flow.state_history, nextState)
+
+  if (normalizedAction === 'activate') {
+    const hasSavedCard = Boolean(cleanString(flow.stripe_payment_method_id))
+    const nextState = hasSavedCard
+      ? STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE
+      : STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION
+
+    await db.run(
+      `UPDATE payment_flows
+       SET current_state = ?,
+           installment_plan_created_at = CASE WHEN ? = ? THEN COALESCE(installment_plan_created_at, ?) ELSE installment_plan_created_at END,
+           installment_plan_active_at = CASE WHEN ? = ? THEN COALESCE(installment_plan_active_at, ?) ELSE installment_plan_active_at END,
+           state_history = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        nextState,
+        nextState,
+        STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE,
+        now,
+        nextState,
+        STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE,
+        now,
+        JSON.stringify(stateHistory(nextState)),
+        cleanFlowId
+      ]
+    )
+
+    if (hasSavedCard) {
+      await db.run(
+        `UPDATE installment_payments
+         SET status = 'scheduled',
+             payment_method = 'stripe_saved_card',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE flow_id = ?
+           AND automatic = 1
+           AND status IN ('waiting_card_authorization', 'pending_card', 'pending')`,
+        [cleanFlowId]
+      )
+    }
+
+    return persistStripePaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
+  }
+
+  if (normalizedAction === 'pause') {
+    await db.run(
+      `UPDATE payment_flows
+       SET current_state = ?,
+           state_history = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        STRIPE_PLAN_STATES.PAUSED,
+        JSON.stringify(stateHistory(STRIPE_PLAN_STATES.PAUSED)),
+        cleanFlowId
+      ]
+    )
+
+    return persistStripePaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
+  }
+
+  if (!['cancel', 'delete'].includes(normalizedAction)) {
+    const error = new Error('Acción inválida para plan Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  const finalState = normalizedAction === 'delete'
+    ? STRIPE_PLAN_STATES.DELETED
+    : STRIPE_PLAN_STATES.CANCELLED
+  const finalPaymentStatus = normalizedAction === 'delete' ? 'deleted' : 'void'
+  const finalInstallmentStatus = normalizedAction === 'delete' ? 'deleted' : 'cancelled'
+
+  await db.run(
+    `UPDATE payment_flows
+     SET current_state = ?,
+         state_history = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      finalState,
+      JSON.stringify(stateHistory(finalState)),
+      cleanFlowId
+    ]
+  )
+
+  await db.run(
+    `UPDATE installment_payments
+     SET status = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE flow_id = ?
+       AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled')`,
+    [finalInstallmentStatus, cleanFlowId]
+  )
+
+  await db.run(
+    `UPDATE payments
+     SET status = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id IN (
+       SELECT payment_id
+       FROM installment_payments
+       WHERE flow_id = ?
+         AND payment_id IS NOT NULL
+       UNION
+       SELECT first_payment_invoice_id
+       FROM payment_flows
+       WHERE id = ?
+         AND first_payment_invoice_id IS NOT NULL
+       UNION
+       SELECT card_setup_invoice_id
+       FROM payment_flows
+       WHERE id = ?
+         AND card_setup_invoice_id IS NOT NULL
+     )
+       AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+    [finalPaymentStatus, cleanFlowId, cleanFlowId, cleanFlowId]
+  )
+
+  const mirrored = await persistStripePaymentPlanMirror(cleanFlowId, {
+    localAction: normalizedAction,
+    actionedAt: now
+  })
+
+  if (normalizedAction === 'delete') {
+    await db.run(
+      `UPDATE payment_plans
+       SET status = 'deleted',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [cleanFlowId]
+    )
+  }
+
+  return mirrored
 }
 
 export async function createStripeSavedCardPayment(input = {}) {

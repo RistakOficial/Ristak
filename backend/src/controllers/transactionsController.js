@@ -5,7 +5,7 @@ import { buildTransactionStats, buildTransactionSummary } from '../services/anal
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { syncAllInvoices, syncLocalPaymentsToHighLevel } from '../services/invoicesSyncService.js'
-import { refreshStripePaymentFromIntent } from '../services/stripePaymentService.js'
+import { refreshStripePaymentFromIntent, syncStripePaymentPlanFromLocalPayment } from '../services/stripePaymentService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerWhatsappFirstPurchaseEvent } from '../services/metaWhatsappEventsService.js'
@@ -70,6 +70,41 @@ const normalizeAmount = (amount) => {
 const cleanString = (value) => String(value || '').trim()
 
 const createLocalId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+
+const parseJson = (value, fallback = {}) => {
+  if (!value) return fallback
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+const getRequestBaseUrl = (req) => {
+  const configured = process.env.PUBLIC_APP_URL || process.env.APP_PUBLIC_URL || process.env.FRONTEND_URL || process.env.RENDER_EXTERNAL_URL
+  if (configured) return String(configured).replace(/\/+$/, '')
+
+  const forwardedHost = String(req.headers?.['x-forwarded-host'] || '').split(',')[0].trim()
+  const host = forwardedHost || req.headers?.host || req.get?.('host')
+  const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim()
+  const protocol = forwardedProto || req.protocol || 'https'
+  return host ? `${protocol}://${host}`.replace(/\/+$/, '') : ''
+}
+
+const buildLocalPaymentUrl = (req, publicPaymentId) => {
+  const cleanPublicId = cleanString(publicPaymentId)
+  const baseUrl = getRequestBaseUrl(req)
+  return cleanPublicId && baseUrl ? `${baseUrl}/pay/${encodeURIComponent(cleanPublicId)}` : ''
+}
+
+const isStripeBackedTransaction = (transaction = {}) => {
+  if (cleanString(transaction.payment_provider).toLowerCase() === 'stripe') return true
+  if (cleanString(transaction.payment_method).toLowerCase().startsWith('stripe')) return true
+  if (cleanString(transaction.public_payment_id) || cleanString(transaction.payment_url) || cleanString(transaction.stripe_payment_intent_id)) return true
+  const metadata = parseJson(transaction.metadata_json, {})
+  return Boolean(metadata?.paymentPlan?.flowId)
+}
 
 const splitName = (name = '') => {
   const parts = cleanString(name).split(/\s+/).filter(Boolean)
@@ -587,6 +622,8 @@ export const getTransactions = async (req, res) => {
         FROM payment_flows pf
         WHERE pf.first_payment_invoice_id = p.id
           AND pf.payment_provider = 'stripe'
+          AND COALESCE(p.public_payment_id, '') = ''
+          AND COALESCE(p.payment_url, '') = ''
           AND LOWER(COALESCE(p.status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')
       )
     `)
@@ -1005,6 +1042,10 @@ export const updateTransaction = async (req, res) => {
       ]
     )
 
+    if (isStripeBackedTransaction(transaction)) {
+      await syncStripePaymentPlanFromLocalPayment(id)
+    }
+
     const statsContacts = new Set([transaction.contact_id, finalContactId].filter(Boolean))
     await Promise.all([...statsContacts].map(contact => updateSingleContactStats(contact)))
 
@@ -1052,6 +1093,14 @@ export const deleteTransaction = async (req, res) => {
         success: false,
         error: 'Transacción no encontrada'
       })
+    }
+
+    if (isStripeBackedTransaction(transaction)) {
+      await db.run(
+        'UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        ['deleted', id]
+      )
+      await syncStripePaymentPlanFromLocalPayment(id)
     }
 
     // Eliminar de la base de datos
@@ -1190,6 +1239,9 @@ export const voidTransaction = async (req, res) => {
 
     // Actualizar estado en BD
     await db.run('UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['void', id])
+    if (isStripeBackedTransaction(transaction)) {
+      await syncStripePaymentPlanFromLocalPayment(id)
+    }
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
       import('../services/automationEngine.js')
@@ -1272,6 +1324,9 @@ export const recordPayment = async (req, res) => {
       'UPDATE payments SET status = ?, amount = ?, payment_method = ?, payment_mode = ?, date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       ['paid', amount || transaction.amount, paymentMethod || transaction.payment_method, paymentMode, paymentDate || transaction.date, id]
     )
+    if (isStripeBackedTransaction(transaction)) {
+      await syncStripePaymentPlanFromLocalPayment(id)
+    }
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
       await triggerWhatsappFirstPurchaseEvent(transaction.contact_id, {
@@ -1281,7 +1336,7 @@ export const recordPayment = async (req, res) => {
       })
     }
 
-    if (!transaction.ghl_invoice_id) {
+    if (!transaction.ghl_invoice_id && !isStripeBackedTransaction(transaction)) {
       try {
         const localExport = await syncLocalPaymentsToHighLevel({ paymentId: id, limit: 1 })
         if (localExport.exported > 0) {
@@ -1374,6 +1429,18 @@ export const getPaymentLink = async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'Transacción no encontrada'
+      })
+    }
+
+    const localLink = cleanString(transaction.payment_url)
+      || buildLocalPaymentUrl(req, transaction.public_payment_id)
+
+    if (localLink) {
+      return res.json({
+        success: true,
+        data: {
+          link: localLink
+        }
       })
     }
 
