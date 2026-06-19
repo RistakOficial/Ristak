@@ -19375,15 +19375,16 @@ const VideoPreviewRangeControl: React.FC<{
   )
 }
 
-const VideoPlayerSettingsMiniPreview: React.FC<{ settings: Record<string, unknown> }> = ({ settings }) => {
-  const controlsMode = getVideoControlsMode(settings)
-  const showCustomControls = controlsMode === 'clean'
-  const showControlBar = showCustomControls && settings.videoControlBar === true
-  const showSoundHint = showCustomControls && settings.videoSoundHint !== false
+const VideoSettingsElementPreview: React.FC<{
+  settings: Record<string, unknown>
+  type: 'frame' | 'bar' | 'play' | 'sound'
+}> = ({ settings, type }) => {
   const playShape = getVideoPlayShape(settings)
   const playIconStyle = getVideoPlayIconStyle(settings)
   const frameRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
   const frameBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
+  const frameBorderColor = getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT
+  const frameBorderWidth = `${getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}px`
   const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
   const playRadius = `${getVideoPlayRadiusValue(settings, playShape)}px`
@@ -19393,10 +19394,12 @@ const VideoPlayerSettingsMiniPreview: React.FC<{ settings: Record<string, unknow
 
   return (
     <div
-      className={styles.videoSettingsPreview}
+      className={styles.videoElementPreview}
       style={{
         ['--video-settings-frame-bg' as string]: frameBackground,
         ['--video-settings-frame-radius' as string]: frameRadius,
+        ['--video-settings-frame-border-color' as string]: frameBorderColor,
+        ['--video-settings-frame-border-width' as string]: frameBorderWidth,
         ['--video-settings-play-bg' as string]: playerColor,
         ['--video-settings-play-color' as string]: playColor,
         ['--video-settings-play-radius' as string]: playRadius,
@@ -19405,32 +19408,27 @@ const VideoPlayerSettingsMiniPreview: React.FC<{ settings: Record<string, unknow
         ['--video-settings-sound-color' as string]: soundColor
       } as React.CSSProperties}
     >
-      <div className={styles.videoSettingsPreviewHeader}>
-        <span>Vista rápida</span>
-        <strong>{showCustomControls ? 'Reproductor personalizado' : controlsMode === 'native' ? 'Navegador' : 'Sin controles'}</strong>
-      </div>
-      <div className={styles.videoSettingsPreviewFrame}>
-        <span className={styles.videoSettingsPreviewTag}>Marco del video</span>
-        {showCustomControls && (
-          <span className={`${styles.videoSettingsPreviewPlay} ${playShape === 'round' ? styles.videoSettingsPreviewPlayRound : ''}`}>
-            <VideoPlayGlyph iconStyle={playIconStyle} size={22} />
-            <small>Play</small>
+      {type === 'frame' && <span className={styles.videoElementFrameSample} />}
+      {type === 'bar' && (
+        <span className={styles.videoElementBarSample}>
+          <span className={styles.videoElementBarPlay}><Play size={11} fill="currentColor" /></span>
+          <i />
+          <span className={styles.videoElementBarSpeed}>1x</span>
+        </span>
+      )}
+      {type === 'play' && (
+        <span className={`${styles.videoElementPlaySample} ${playShape === 'round' ? styles.videoElementPlayRound : ''}`}>
+          <VideoPlayGlyph iconStyle={playIconStyle} size={22} />
+        </span>
+      )}
+      {type === 'sound' && (
+        <span className={styles.videoElementSoundSample}>
+          <span className={styles.videoElementSoundIcon}>
+            <Volume2 size={16} />
           </span>
-        )}
-        {showSoundHint && (
-          <span className={styles.videoSettingsPreviewSound}>
-            <Volume2 size={13} />
-            <small>Bocina</small>
-          </span>
-        )}
-        {showControlBar && (
-          <span className={styles.videoSettingsPreviewBar}>
-            <i />
-            <small>Barra del reproductor</small>
-            <b>1x</b>
-          </span>
-        )}
-      </div>
+          <small>{getVideoSoundNoticeText(settings)}</small>
+        </span>
+      )}
     </div>
   )
 }
@@ -19476,13 +19474,12 @@ const VideoPlayerSettingsControls: React.FC<{
 
   return (
     <div className={styles.videoSettingsBox}>
-      <VideoPlayerSettingsMiniPreview settings={settings} />
-
       <section className={styles.videoSettingsSection}>
         <div className={styles.videoSettingsSectionHeader}>
           <span>Video</span>
           <strong>Marco y ajuste</strong>
         </div>
+        <VideoSettingsElementPreview settings={settings} type="frame" />
         <label className={styles.field}>
           <span>Estilo del reproductor</span>
           <CustomSelect
@@ -19615,6 +19612,7 @@ const VideoPlayerSettingsControls: React.FC<{
               <span>Barra</span>
               <strong>Controles inferiores</strong>
             </div>
+            <VideoSettingsElementPreview settings={settings} type="bar" />
             <div className={styles.twoColumn}>
               <label className={styles.checkboxLabel}>
                 <input
@@ -19659,6 +19657,7 @@ const VideoPlayerSettingsControls: React.FC<{
               <span>Botón play</span>
               <strong>Forma, color y tamaño</strong>
             </div>
+            <VideoSettingsElementPreview settings={settings} type="play" />
             <label className={styles.field}>
               <span>Tipo de play</span>
               <CustomSelect
@@ -19742,6 +19741,7 @@ const VideoPlayerSettingsControls: React.FC<{
               <span>Bocina</span>
               <strong>Aviso de sonido</strong>
             </div>
+            <VideoSettingsElementPreview settings={settings} type="sound" />
             <label className={styles.checkboxLabel}>
               <input
                 type="checkbox"
