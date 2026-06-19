@@ -613,14 +613,8 @@
 }
 
 .contactChatMessages {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 0.875rem;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 1rem;
-  background: var(--bg-soft);
+  --chat-message-surface-gap: 0.875rem;
+  --chat-message-surface-padding: 1rem;
 }
 
 .contactChatState,

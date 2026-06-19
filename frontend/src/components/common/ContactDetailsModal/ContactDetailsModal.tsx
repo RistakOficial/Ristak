@@ -6,6 +6,7 @@ import {
   Icon,
   Badge,
   Button,
+  ChatMessageSurface,
   ContactPhoneSelector,
   CustomSelect,
   EmailRichTextEditor,
@@ -1700,7 +1701,7 @@ export function ContactDetailsModal({
           </span>
         </header>
 
-        <div className={styles.contactChatMessages}>
+        <ChatMessageSurface className={styles.contactChatMessages}>
           {chatLoading ? (
             <div className={styles.contactChatState} role="status" aria-live="polite">
               <Loader2 size={18} className={styles.spinIcon} aria-hidden="true" />
@@ -1754,7 +1755,7 @@ export function ContactDetailsModal({
             ))
           )}
           <div ref={chatEndRef} />
-        </div>
+        </ChatMessageSurface>
 
         <form
           className={selectedChatChannel === 'email' ? styles.contactEmailComposer : styles.contactChatComposer}

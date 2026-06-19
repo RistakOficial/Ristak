@@ -1,0 +1,25 @@
+.surface {
+  --chat-message-surface-base: var(--color-background-secondary, var(--bg-soft));
+  --chat-message-surface-soft: color-mix(in srgb, var(--text-mute) 8%, transparent);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--chat-message-surface-gap, 14px);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--chat-message-surface-padding, 18px 18px 12px);
+  background:
+    radial-gradient(
+      circle at 1px 1px,
+      var(--chat-message-surface-dot, color-mix(in srgb, var(--text-mute) 16%, transparent)) 1px,
+      transparent 1.2px
+    ) 0 0 / var(--chat-message-surface-grid-size, 18px) var(--chat-message-surface-grid-size, 18px),
+    linear-gradient(
+      180deg,
+      var(
+        --chat-message-surface-bg-start,
+        color-mix(in srgb, var(--chat-message-surface-base) 88%, var(--chat-message-surface-soft))
+      ),
+      var(--chat-message-surface-bg-end, var(--chat-message-surface-base))
+    );
+}

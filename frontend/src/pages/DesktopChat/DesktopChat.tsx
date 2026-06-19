@@ -38,6 +38,7 @@ import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
 import {
   AppointmentModal,
   Button,
+  ChatMessageSurface,
   CustomSelect,
   ContactPhoneSelector,
   DropdownMenu,
@@ -4990,7 +4991,7 @@ export const DesktopChat: React.FC = () => {
                 </div>
               </header>
 
-              <div className={styles.messagePane}>
+              <ChatMessageSurface className={styles.messagePane}>
                 {messagesLoading ? (
                   <div className={styles.stateBlock} role="status" aria-live="polite" aria-label="Cargando conversación">
                     <Loader2 size={18} className={styles.spin} aria-hidden="true" />
@@ -5031,7 +5032,7 @@ export const DesktopChat: React.FC = () => {
                   </div>
                 ))}
                 <div ref={messagesEndRef} />
-              </div>
+              </ChatMessageSurface>
 
 	              <form
 	                className={styles.composer}

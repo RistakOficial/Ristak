@@ -851,16 +851,8 @@
 }
 
 .messagePane {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 14px;
-  min-height: 0;
-  overflow: auto;
-  padding: 18px 18px 12px;
-  background:
-    radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.16) 1px, transparent 1.2px) 0 0 / 18px 18px,
-    linear-gradient(180deg, color-mix(in srgb, var(--color-background-secondary) 88%, var(--chat-soft)), var(--color-background-secondary));
+  --chat-message-surface-gap: 14px;
+  --chat-message-surface-padding: 18px 18px 12px;
 }
 
 .messageGroup {
