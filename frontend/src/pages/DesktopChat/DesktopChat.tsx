@@ -4393,40 +4393,24 @@ export const DesktopChat: React.FC = () => {
           aria-label={agentAssignedViewOpen ? 'Lista de chats del bot' : 'Lista de chats'}
         >
           <div className={`${styles.inboxHeader} ${agentAssignedViewOpen ? styles.inboxHeaderAgent : ''}`}>
-            {agentAssignedViewOpen ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className={`${styles.agentInboxButton} ${styles.agentInboxButtonActive}`}
-                onClick={handleToggleAgentAssignedView}
-                aria-label="Cerrar vista de conversaciones asignadas al bot"
-                aria-pressed={true}
-                title="Cerrar chats del bot"
-              >
-                <AgentRobot size={42} active={conversationAgentEnabled} label="Agente conversacional" />
-              </Button>
-            ) : null}
             <div className={styles.inboxHeaderCopy}>
               <span className={styles.inboxTitleLine}>
                 <h2>{inboxTitle}</h2>
               </span>
               <p>{inboxSubtitle}</p>
             </div>
-            {!agentAssignedViewOpen ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className={styles.agentInboxButton}
-                onClick={handleToggleAgentAssignedView}
-                aria-label="Ver conversaciones asignadas al bot"
-                aria-pressed={false}
-                title="Conversaciones asignadas al bot"
-              >
-                <AgentRobot size={42} active={conversationAgentEnabled} label="Agente conversacional" />
-              </Button>
-            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={`${styles.agentInboxButton} ${agentAssignedViewOpen ? styles.agentInboxButtonActive : ''}`}
+              onClick={handleToggleAgentAssignedView}
+              aria-label={agentAssignedViewOpen ? 'Cerrar vista de conversaciones asignadas al bot' : 'Ver conversaciones asignadas al bot'}
+              aria-pressed={agentAssignedViewOpen}
+              title={agentAssignedViewOpen ? 'Cerrar chats del bot' : 'Conversaciones asignadas al bot'}
+            >
+              <AgentRobot size={42} active={conversationAgentEnabled} label="Agente conversacional" />
+            </Button>
           </div>
 
           <SearchField

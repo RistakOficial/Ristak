@@ -29,7 +29,15 @@ export const AgentRobot: React.FC<AgentRobotProps> = ({
     hand: `rkb-hand-${uid}`,
     bulb: `rkb-bulb-${uid}`
   }
-  const rootStyle = size ? { width: size, height: size } : undefined
+  const rootStyle: React.CSSProperties | undefined = size
+    ? {
+        width: size,
+        height: size,
+        minWidth: size,
+        minHeight: size,
+        flex: `0 0 ${size}px`
+      }
+    : undefined
   const rootClassName = [styles.robotShell, active ? styles.active : '', className].filter(Boolean).join(' ')
 
   return (

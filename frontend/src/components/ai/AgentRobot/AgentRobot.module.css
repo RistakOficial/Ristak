@@ -5,6 +5,8 @@
   justify-content: center;
   width: 72px;
   height: 72px;
+  aspect-ratio: 1 / 1;
+  flex: 0 0 auto;
   line-height: 0;
   pointer-events: none;
   -webkit-user-select: none;
