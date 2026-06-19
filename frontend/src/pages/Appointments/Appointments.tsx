@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading } from '@/components/common';
-import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Search, X, Settings, Bell, Sparkles } from 'lucide-react';
+import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading, SearchField } from '@/components/common';
+import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Settings, Bell, Sparkles } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -1462,37 +1462,25 @@ export const Appointments: React.FC = () => {
 
           {/* Buscador de citas */}
           <div className={styles.searchContainer}>
-            <div className={styles.searchInputWrapper}>
-              <Search size={18} className={styles.searchIcon} />
-              <input
-                ref={searchInputRef}
-                type="text"
-                className={styles.searchInput}
-                placeholder="Buscar citas..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setIsSearchDropdownOpen(e.target.value.trim().length > 0);
-                }}
-                onFocus={() => {
-                  if (searchQuery.trim().length > 0) {
-                    setIsSearchDropdownOpen(true);
-                  }
-                }}
-              />
-              {searchQuery && (
-                <button
-                  className={styles.searchClearButton}
-                  onClick={() => {
-                    setSearchQuery('');
-                    setIsSearchDropdownOpen(false);
-                  }}
-                  aria-label="Limpiar búsqueda"
-                >
-                  <X size={16} />
-                </button>
-              )}
-            </div>
+            <SearchField
+              ref={searchInputRef}
+              value={searchQuery}
+              placeholder="Buscar citas..."
+              onChange={(nextQuery) => {
+                setSearchQuery(nextQuery);
+                setIsSearchDropdownOpen(nextQuery.trim().length > 0);
+              }}
+              onFocus={() => {
+                if (searchQuery.trim().length > 0) {
+                  setIsSearchDropdownOpen(true);
+                }
+              }}
+              onClear={() => {
+                setSearchQuery('');
+                setIsSearchDropdownOpen(false);
+              }}
+              aria-expanded={isSearchDropdownOpen}
+            />
 
             {/* Dropdown de resultados */}
             {isSearchDropdownOpen && searchResults.length > 0 && (

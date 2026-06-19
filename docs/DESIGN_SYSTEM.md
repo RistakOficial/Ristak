@@ -88,11 +88,18 @@ temado (se congela con el default oscuro); decláralo en `body` si hace falta.
 
 ## 4. Componentes que SIEMPRE se reutilizan (no reinventes)
 
+Regla de religión del producto: si un patrón se repite en más de una pantalla,
+**vive en `frontend/src/components/common/` o como recipe global documentada
+aquí**. Las páginas solo acomodan el layout y pasan datos; no inventan su propio
+look para buscadores, botones, inputs con iconos, tabs, cards, tablas, modales,
+badges, menús o pills. Si necesitas una variación real, extiende el componente
+global con props/tokens y documenta la variación en esta guía.
+
 | Necesitas… | Usa | Nunca |
 | --- | --- | --- |
 | Botón | `<Button variant="primary\|secondary\|ghost\|danger">` | `<button>` con estilos propios |
 | Etiqueta de estado / badge | `<Badge variant=…>` (+ `utils/statusBadges`) | un `span` "pill" con colores a mano |
-| Buscador | `<ContactSearchInput>` / `<GlobalSearch>` / receta `[data-fld]` (fondo `var(--surface)`, borde `var(--border)`, radio `var(--radius-ctl)`) | un input con fondo `transparent`/`--bg`/glass (¡desaparece en Onyx!) |
+| Buscador | `<SearchField>`; para casos especializados `<ContactSearchInput>` / `<GlobalSearch>` | un `Search` + `<input>` + botón `X` con CSS local; un input con fondo `transparent`/`--bg`/glass (¡desaparece en Onyx!) |
 | Tabs segmentados (en card) | `<TabList>` | rgba hardcodeados |
 | Tabs de sub-sección (underline) | `<SegmentTabs>` (recipe `[data-segdir]`) | un nav a mano |
 | Switch / toggle | `<Switch>` (recipe `[data-sw]`) | un checkbox estilizado a mano |
@@ -105,6 +112,11 @@ temado (se congela con el default oscuro); decláralo en `body` si hace falta.
 | Inputs nativos | ya están skineados globalmente; un `<input>` plano hereda el sistema | re-estilizarlos |
 
 Foco: `--ristak-focus-ring` / borde `--accent`. **Nunca** un ring de color a mano.
+
+Responsive: sí se permite ajustar ancho, densidad y orden visual para ventanas
+chicas usando `flex`, `grid`, `minmax`, `clamp`, `min-width: 0`, container/media
+queries y variables del componente. Lo que no se permite es crear otro estilo
+visual por página para "resolver" pantallas chicas.
 
 ---
 
@@ -124,6 +136,9 @@ Foco: `--ristak-focus-ring` / borde `--accent`. **Nunca** un ring de color a man
    van en 600–700. El cuerpo, labels, valores y celdas de tabla van en 400–500.
 5. **Reinventar** botones, inputs, tablas, modales, tabs, switches o badges
    cuando ya existe el componente/recipe global.
+   En especial, prohibido duplicar `.searchBox`, `.searchInput`,
+   `.inputWithIcon`, `.tabs`, `.pill`, `.badge`, `.table` o `.modal` para
+   resolver lo mismo que ya existe en `common/`.
 6. **Estilos inline en JSX** para cosas que ya tienen clase o token.
 7. **Romper los `data-ristak-*`** del shell (sidebar/header/card/table/nav) — el
    re-skin global cuelga de ellos.
@@ -173,9 +188,13 @@ una isla.
 1. Abriste `docs/design-reference/design-system.html` y tu pantalla se le parece.
 2. `<PageContainer>` + `<PageHeader>`; secciones con `gap` ~18px.
 3. Solo componentes/recipes globales (§4). Cero `<button>`/`<table>`/modal a mano.
-4. Cero hex/rgba hardcodeados; todo por token (§3). Cero verde/rojo a mano (§5.1).
-5. Buscadores/segmentos con fondo `var(--surface)` (visibles en Onyx) (§5.2).
-6. Negrita solo en títulos/números/badges (§5.4).
-7. Estados de foco/hover/disabled con tokens.
-8. **Probado en las 4 familias × claro/oscuro** (Aurora/Onyx/Brut/Nimbus).
-9. No tocaste `Phone*`, Automatizaciones, ni el layout/flujo.
+4. Buscadores nuevos con `<SearchField>` o componente especializado; nada de icono
+   absoluto + input local.
+5. Cero hex/rgba hardcodeados; todo por token (§3). Cero verde/rojo a mano (§5.1).
+6. Buscadores/segmentos con fondo `var(--surface)` (visibles en Onyx) (§5.2).
+7. Negrita solo en títulos/números/badges (§5.4).
+8. Estados de foco/hover/disabled con tokens.
+9. **Probado en las 4 familias × claro/oscuro** (Aurora/Onyx/Brut/Nimbus).
+10. El responsive para ventanas chicas sigue funcionando con reglas fluidas, no
+   con estilos visuales paralelos.
+11. No tocaste `Phone*`, Automatizaciones, ni el layout/flujo.

@@ -16,6 +16,15 @@
   mano; buscadores/segmentos con fondo `var(--surface)` (transparente se ve vacío en
   Onyx); negrita solo en títulos/números/badges; probar en las 4 familias ×
   claro/oscuro; **no cambiar layout/posición/flujo** (solo lo visual).
+- **Religión de componentes globales.** Si existe o se repite un patrón
+  (buscador, botón, input con icono, tabs, card, tabla, modal, badge, menú,
+  etiqueta/pill), usa o extiende `frontend/src/components/common/` y los tokens
+  globales. No crees CSS local tipo `.searchBox`, `.searchInput`, `.tabs`,
+  `.badge`, `.modal`, etc. para resolver lo mismo en una página.
+- **Responsive sí importa.** Mantén layouts fluidos para compus chicas usando
+  `flex`, `grid`, `minmax`, `clamp`, `min-width: 0`, container/media queries y
+  variables del componente. No confundas responsive con inventar otra identidad
+  visual aislada por pantalla.
 - La app móvil integrada (`Phone*`, `data-phone-app`, `data-phone-chat-theme`) y
   Automatizaciones tienen su propio sistema visual y quedan fuera de los cambios
   de diseño de escritorio.

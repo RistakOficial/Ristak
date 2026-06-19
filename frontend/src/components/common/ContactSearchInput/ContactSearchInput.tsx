@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import styles from './ContactSearchInput.module.css';
 import { Icon } from '../Icon/Icon';
+import { SearchField } from '../SearchField';
 import { Contact } from '@/types';
 import { contactsService } from '@/services/contactsService';
 
@@ -236,24 +237,22 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
       ) : (
         // Search input
         <>
-          <div className={styles.inputWrapper}>
-            <Icon name="search" size={16} className={styles.searchIcon} />
-            <input
-              ref={inputRef}
-              type="text"
-              className={styles.input}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onFocus={() => searchTerm && setIsOpen(true)}
-              placeholder={placeholder}
-              disabled={disabled}
-            />
-            {isLoading && (
-              <div className={styles.spinner}>
-                <Icon name="loader-2" size={16} />
-              </div>
-            )}
-          </div>
+          <SearchField
+            ref={inputRef}
+            value={searchTerm}
+            onChange={(nextTerm) => setSearchTerm(nextTerm)}
+            onFocus={() => searchTerm && setIsOpen(true)}
+            onClear={() => {
+              setSearchTerm('');
+              setSuggestions([]);
+              setIsOpen(false);
+              setSelectedIndex(-1);
+            }}
+            placeholder={placeholder}
+            disabled={disabled}
+            loading={isLoading}
+            aria-expanded={isOpen}
+          />
 
           {isOpen && (
             <div ref={dropdownRef} className={styles.dropdown} data-ristak-dropdown-panel>

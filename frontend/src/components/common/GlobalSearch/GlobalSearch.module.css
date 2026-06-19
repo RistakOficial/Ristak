@@ -4,61 +4,9 @@
   width: 100%;
 }
 
-.inputWrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-height: var(--app-global-search-height, 42px);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: var(--design-control-radius, 12px);
-  background: var(--effect-glassMorphism-background, rgba(255, 255, 255, 0.04));
-  backdrop-filter: var(--effect-glassMorphism-backdropFilter, blur(10px));
-}
-
-.inputIcon {
-  position: absolute;
-  left: 12px;
-  color: var(--color-text-tertiary);
-  pointer-events: none;
-}
-
-.input {
-  width: 100%;
-  min-width: 0;
-  height: calc(var(--app-global-search-height, 42px) - 2px);
-  border: 0;
-  background: transparent;
-  color: var(--color-text-primary);
-  font-size: var(--app-global-search-font-size, 0.95rem);
-  outline: none;
-  padding: 0 38px 0 38px;
-}
-
-.input::placeholder {
-  color: var(--color-text-tertiary);
-}
-
-.clearButton {
-  position: absolute;
-  top: 50%;
-  right: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  transform: translateY(-50%);
-  border: 0;
-  border-radius: var(--design-control-radius, 8px);
-  color: var(--color-text-secondary);
-  background: transparent;
-  transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
-}
-
-.clearButton:hover {
-  color: var(--color-text-primary);
-  background: rgba(148, 163, 184, 0.12);
+.inputField {
+  --search-field-height: var(--app-global-search-height, 42px);
+  --search-field-pad-x: 13px;
 }
 
 .dropdown {
@@ -69,18 +17,17 @@
   z-index: var(--z-index-popover);
   max-height: min(68vh, 620px);
   overflow-y: auto;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid var(--border-strong);
   border-radius: var(--design-card-radius, 12px);
   background: var(--surface-solid, var(--surface));
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow-pop);
   padding: 0;
 }
 
 .category + .category {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  border-top: 1px solid var(--border);
 }
 
 .categoryHeader {
@@ -117,7 +64,7 @@
 
 .resultItem:hover,
 .resultItemActive {
-  background: rgba(var(--color-primary-rgb, 100, 116, 139), 0.13);
+  background: var(--surface-2);
 }
 
 .resultIcon {
@@ -128,7 +75,7 @@
   height: 32px;
   border-radius: var(--design-control-radius, 8px);
   color: var(--color-text-secondary);
-  background: rgba(148, 163, 184, 0.12);
+  background: var(--surface-2);
 }
 
 .resultBody {

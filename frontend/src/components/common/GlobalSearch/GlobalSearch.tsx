@@ -6,12 +6,11 @@ import {
   Layers,
   Megaphone,
   MousePointerClick,
-  Search,
-  User,
-  X
+  User
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/utils/cn'
+import { SearchField } from '@/components/common/SearchField'
 import { globalSearchService, type GlobalSearchCategory, type GlobalSearchItem, type GlobalSearchItemType } from '@/services/globalSearchService'
 import { getRouteAccess, hasModuleAccess, type AccessControlledUser } from '@/utils/accessControl'
 import { buildSearchIndex, searchIndexIncludes } from '@/utils/searchText'
@@ -255,38 +254,25 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
 
   return (
     <div ref={rootRef} className={cn(styles.root, className)}>
-      <div className={styles.inputWrap} data-ristak-unstyled>
-        <Search size={17} className={styles.inputIcon} />
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="Buscar"
-          className={styles.input}
-          value={query}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(event) => {
-            setQuery(event.target.value)
-            setIsOpen(Boolean(event.target.value.trim()))
-          }}
-          onFocus={() => {
-            if (trimmedQuery) setIsOpen(true)
-          }}
-          onKeyDown={handleKeyDown}
-          aria-expanded={showDropdown}
-          aria-controls="global-search-results"
-        />
-        {query && (
-          <button
-            type="button"
-            className={styles.clearButton}
-            onClick={clearSearch}
-            aria-label="Limpiar búsqueda"
-          >
-            <X size={15} />
-          </button>
-        )}
-      </div>
+      <SearchField
+        ref={inputRef}
+        className={styles.inputField}
+        value={query}
+        placeholder="Buscar"
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(nextQuery) => {
+          setQuery(nextQuery)
+          setIsOpen(Boolean(nextQuery.trim()))
+        }}
+        onFocus={() => {
+          if (trimmedQuery) setIsOpen(true)
+        }}
+        onKeyDown={handleKeyDown}
+        onClear={clearSearch}
+        aria-expanded={showDropdown}
+        aria-controls="global-search-results"
+      />
 
       {showDropdown && (
         <div id="global-search-results" className={styles.dropdown} role="listbox" data-ristak-dropdown-panel>

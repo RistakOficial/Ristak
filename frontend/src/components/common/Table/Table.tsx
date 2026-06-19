@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
-  Search,
   ChevronUp,
   ChevronDown,
   Settings,
@@ -13,6 +12,7 @@ import {
 import { useTableConfig } from '@/hooks'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { TabList } from '../TabList'
+import { SearchField } from '../SearchField'
 import styles from './Table.module.css'
 
 export interface Column<T> {
@@ -486,13 +486,13 @@ export function Table<T extends Record<string, any>>({
 
   const searchControl = searchable ? (
     <div className={styles.searchContainer}>
-      <Search size={18} className={styles.searchIcon} />
-      <input
-        type="text"
-        className={styles.searchInput}
+      <SearchField
+        className={styles.searchField}
+        size="sm"
         placeholder={searchPlaceholder}
         value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
+        onChange={(nextTerm) => setSearchTerm(nextTerm)}
+        onClear={() => setSearchTerm('')}
       />
     </div>
   ) : null
