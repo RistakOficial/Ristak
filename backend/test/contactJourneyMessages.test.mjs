@@ -51,6 +51,15 @@ async function cleanup(contactId, phone) {
   await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
 }
 
+async function insertRow(table, values) {
+  const columns = Object.keys(values)
+  const placeholders = columns.map(() => '?').join(', ')
+  await db.run(
+    `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
+    columns.map(column => values[column])
+  )
+}
+
 test('contact journey defaults to contact-authored messages only', async () => {
   const id = randomUUID()
   const contactId = `journey_msg_${id}`
@@ -568,6 +577,216 @@ test('contact journey annotates page visits with matched video playback', async 
     assert.ok(standaloneVideo)
     assert.equal(standaloneVideo.data.playback_id, orphanPlaybackId)
     assert.equal(standaloneVideo.data.standalone, true)
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('contact journey exposes pre-registration tracking attribution and match evidence', async () => {
+  const id = randomUUID()
+  const contactId = `journey_pre_registration_${id}`
+  const phone = `+52996${Date.now().toString().slice(-7)}`
+  const visitorId = `visitor_pre_${id}`
+  const preSessionId = `session_pre_${id}`
+  const conversionSessionId = `session_conversion_${id}`
+  const playbackId = `playback_pre_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      email: `pre-${id}@ristak.test`,
+      full_name: 'Cliente Pre Registro',
+      first_name: 'Cliente',
+      source: 'native_site',
+      visitor_id: visitorId,
+      created_at: '2026-06-16T10:00:00.000Z',
+      updated_at: '2026-06-16T10:00:00.000Z'
+    })
+
+    await insertRow('sessions', {
+      id: `session_row_pre_${id}`,
+      session_id: preSessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Pre Registro',
+      email: `pre-${id}@ristak.test`,
+      event_name: 'page_view',
+      started_at: '2026-06-16T09:15:00.000Z',
+      created_at: '2026-06-16T09:15:00.000Z',
+      page_url: 'https://demo.ristak.test/landing?utm_source=facebook&utm_medium=paid&utm_campaign=pre_launch&utm_content=video_ad&utm_term=curso',
+      referrer_url: 'https://facebook.com/ads/click',
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      utm_campaign: 'pre_launch',
+      utm_term: 'curso',
+      utm_content: 'video_ad',
+      gclid: `gclid_${id}`,
+      fbclid: `fbclid_${id}`,
+      fbc: `fb.1.${Date.now()}.${id}`,
+      fbp: `fb.1.${Date.now()}.browser`,
+      ttclid: `ttclid_${id}`,
+      channel: 'paid_social',
+      source_platform: 'facebook',
+      campaign_id: `campaign_${id}`,
+      adset_id: `adset_${id}`,
+      ad_group_id: `group_${id}`,
+      ad_id: `ad_${id}`,
+      campaign_name: 'Pre Launch',
+      adset_name: 'Audiencia Caliente',
+      ad_group_name: 'Grupo Principal',
+      ad_name: 'Video Hook 01',
+      placement: 'facebook_feed',
+      site_source_name: 'facebook',
+      network: 'meta',
+      match_type: 'broad',
+      keyword: 'curso marketing',
+      search_query: 'como vender mas',
+      creative_id: `creative_${id}`,
+      ad_position: 'feed',
+      device_type: 'mobile',
+      os: 'iOS 18',
+      browser: 'Facebook In-App Browser',
+      browser_version: '520',
+      language: 'es-MX',
+      timezone: 'America/Mexico_City',
+      geo_country: 'MX',
+      geo_region: 'Chihuahua',
+      geo_city: 'Juarez',
+      tracking_source: 'native_site',
+      site_id: `site_${id}`,
+      site_slug: 'landing-pre',
+      site_name: 'Landing Pre Registro',
+      site_type: 'landing',
+      form_site_id: `form_${id}`,
+      form_site_name: 'Formulario Lead',
+      public_page_id: `page_${id}`,
+      public_page_title: 'Landing Principal',
+      match_method: 'related_identity_source',
+      match_confidence: 90,
+      identity_evidence_json: JSON.stringify({
+        deviceSignals: 12,
+        hasNetwork: true,
+        hasBrowser: true,
+        sourceKeys: ['utm_campaign', 'site_id', 'fbclid'],
+        clickIdKeys: ['gclid', 'fbclid', 'ttclid'],
+        sourceMatches: 3,
+        strongSourceMatches: 2
+      })
+    })
+
+    await insertRow('sessions', {
+      id: `session_row_conversion_${id}`,
+      session_id: conversionSessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Pre Registro',
+      email: `pre-${id}@ristak.test`,
+      event_name: 'native_site_conversion',
+      started_at: '2026-06-16T10:00:00.000Z',
+      created_at: '2026-06-16T10:00:00.000Z',
+      page_url: 'https://demo.ristak.test/landing#form',
+      referrer_url: 'https://facebook.com/ads/click',
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      utm_campaign: 'pre_launch',
+      utm_content: 'form_submit',
+      gclid: `gclid_${id}`,
+      fbclid: `fbclid_${id}`,
+      source_platform: 'facebook',
+      campaign_id: `campaign_${id}`,
+      adset_id: `adset_${id}`,
+      ad_id: `ad_${id}`,
+      campaign_name: 'Pre Launch',
+      adset_name: 'Audiencia Caliente',
+      ad_name: 'Formulario Final',
+      tracking_source: 'native_site',
+      site_id: `site_${id}`,
+      site_name: 'Landing Pre Registro',
+      form_site_id: `form_${id}`,
+      form_site_name: 'Formulario Lead',
+      public_page_id: `page_${id}`,
+      public_page_title: 'Landing Principal',
+      conversion_type: 'form_submit',
+      submission_id: `submission_${id}`,
+      match_method: 'direct_contact_id',
+      match_confidence: 100,
+      identity_evidence_json: JSON.stringify({ directContact: true, clickIdKeys: ['gclid', 'fbclid'] })
+    })
+
+    await insertRow('video_playback_sessions', {
+      id: `video_session_pre_${id}`,
+      playback_id: playbackId,
+      visitor_id: visitorId,
+      session_id: preSessionId,
+      contact_id: contactId,
+      full_name: 'Cliente Pre Registro',
+      email: `pre-${id}@ristak.test`,
+      media_asset_id: `asset_${id}`,
+      stream_video_id: `stream_${id}`,
+      video_provider: 'bunny_stream',
+      video_title: 'Video Antes del Registro',
+      tracking_source: 'native_site_video',
+      site_id: `site_${id}`,
+      site_name: 'Landing Pre Registro',
+      public_page_id: `page_${id}`,
+      public_page_title: 'Landing Principal',
+      block_id: `block_${id}`,
+      block_label: 'Video de oferta',
+      page_url: 'https://demo.ristak.test/landing?utm_source=facebook',
+      duration_seconds: 180,
+      max_position_seconds: 126,
+      watched_seconds: 120,
+      max_progress_percent: 70,
+      play_count: 1,
+      ended: 0,
+      match_method: 'related_identity_source',
+      match_confidence: 90,
+      identity_evidence_json: JSON.stringify({ deviceSignals: 12, sourceKeys: ['site_id'] }),
+      first_event_at: '2026-06-16T09:16:00.000Z',
+      started_at: '2026-06-16T09:16:00.000Z',
+      last_event_at: '2026-06-16T09:18:00.000Z'
+    })
+
+    const journey = await readJourney(contactId)
+    const preVisit = journey.find(event => event.type === 'page_visit' && event.data.session_id === preSessionId)
+    const conversion = journey.find(event => event.type === 'contact_created')
+
+    assert.ok(preVisit)
+    assert.equal(preVisit.data.is_pre_registration, true)
+    assert.equal(preVisit.data.minutes_before_contact, 45)
+    assert.equal(preVisit.data.visitor_id, visitorId)
+    assert.equal(preVisit.data.utm_term, 'curso')
+    assert.equal(preVisit.data.gclid, `gclid_${id}`)
+    assert.equal(preVisit.data.ttclid, `ttclid_${id}`)
+    assert.equal(preVisit.data.campaign_id, `campaign_${id}`)
+    assert.equal(preVisit.data.ad_group_name, 'Grupo Principal')
+    assert.equal(preVisit.data.keyword, 'curso marketing')
+    assert.equal(preVisit.data.search_query, 'como vender mas')
+    assert.equal(preVisit.data.browser_version, '520')
+    assert.equal(preVisit.data.match_method, 'related_identity_source')
+    assert.equal(preVisit.data.match_confidence, 90)
+    assert.equal(preVisit.data.identity_evidence.deviceSignals, 12)
+    assert.deepEqual(preVisit.data.identity_evidence.clickIdKeys, ['gclid', 'fbclid', 'ttclid'])
+    assert.equal(preVisit.data.identity_hash, undefined)
+    assert.equal(preVisit.data.device_signature, undefined)
+    assert.equal(preVisit.data.network_signature, undefined)
+    assert.equal(preVisit.data.ip, undefined)
+
+    assert.equal(preVisit.data.video_engagements?.length, 1)
+    assert.equal(preVisit.data.video_engagements[0].playback_id, playbackId)
+    assert.equal(preVisit.data.video_engagements[0].is_pre_registration, true)
+    assert.equal(preVisit.data.video_engagements[0].match_confidence, 90)
+
+    assert.ok(conversion)
+    assert.equal(conversion.data.conversion_channel, 'web')
+    assert.equal(conversion.data.submission_id, `submission_${id}`)
+    assert.equal(conversion.data.campaign_id, `campaign_${id}`)
+    assert.equal(conversion.data.gclid, `gclid_${id}`)
+    assert.equal(conversion.data.match_method, 'direct_contact_id')
+    assert.equal(conversion.data.match_confidence, 100)
   } finally {
     await cleanup(contactId, phone)
   }

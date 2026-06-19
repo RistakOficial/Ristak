@@ -158,6 +158,111 @@ const appendVideoTooltipItems = (
   }
 }
 
+const CLICK_ID_TOOLTIP_FIELDS: Array<[string, string]> = [
+  ['gclid', 'GCLID'],
+  ['wbraid', 'WBRAID'],
+  ['gbraid', 'GBRAID'],
+  ['msclkid', 'MSCLKID'],
+  ['ttclid', 'TTCLID'],
+  ['fbclid', 'FBCLID'],
+  ['fbc', 'FBC'],
+  ['fbp', 'FBP']
+]
+
+const MATCH_METHOD_LABELS: Record<string, string> = {
+  direct_contact_id: 'Contacto directo',
+  visitor_id: 'Mismo visitante',
+  visitor_id_linked: 'Visitante enlazado',
+  related_identity_source: 'Misma identidad y fuente',
+  probabilistic_device_network: 'Probable por dispositivo y fuente',
+  probabilistic_device_network_candidate: 'Candidato probable',
+  ambiguous_identity_hash: 'Identidad ambigua',
+  anonymous: 'Anónimo'
+}
+
+const appendTooltipItem = (
+  items: { label: string; value: string }[],
+  label: string,
+  value: unknown,
+  formatter?: (value: string) => string
+) => {
+  if (!hasMeaningfulValue(value)) return
+  const text = String(value).trim()
+  items.push({ label, value: formatter ? formatter(text) : text })
+}
+
+const formatMinutesBeforeContact = (minutesValue: unknown): string => {
+  const minutes = Math.max(0, Math.round(getNumberValue(minutesValue)))
+  if (minutes <= 0) return ''
+  if (minutes < 60) return `${minutes} min antes`
+
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  if (hours < 24) {
+    return remainingMinutes > 0 ? `${hours} h ${remainingMinutes} min antes` : `${hours} h antes`
+  }
+
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  return remainingHours > 0 ? `${days} d ${remainingHours} h antes` : `${days} d antes`
+}
+
+const formatMatchMethod = (value: unknown): string => {
+  const method = String(value || '').trim()
+  if (!method) return ''
+  if (method.startsWith('exact_')) {
+    return `ID exacto: ${method.replace(/^exact_/, '').toUpperCase()}`
+  }
+  return MATCH_METHOD_LABELS[method] || formatUrlParameter(method.replace(/_/g, ' '))
+}
+
+const formatMatchConfidence = (value: unknown): string => {
+  const confidence = Math.round(getNumberValue(value))
+  if (confidence <= 0) return ''
+  return `${confidence}%`
+}
+
+const getIdentityEvidenceSummary = (evidence: unknown): string => {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return ''
+  const data = evidence as Record<string, any>
+  const parts: string[] = []
+  const deviceSignals = getNumberValue(data.deviceSignals)
+  const sourceKeys = Array.isArray(data.sourceKeys) ? data.sourceKeys.length : 0
+  const clickIdKeys = Array.isArray(data.clickIdKeys)
+    ? data.clickIdKeys.map((item: unknown) => String(item).toUpperCase()).filter(Boolean)
+    : []
+
+  if (deviceSignals > 0) parts.push(`${deviceSignals} señales de dispositivo`)
+  if (data.hasNetwork) parts.push('red detectada')
+  if (sourceKeys > 0) parts.push(`${sourceKeys} señales de origen`)
+  if (clickIdKeys.length > 0) parts.push(`IDs: ${clickIdKeys.slice(0, 3).join(', ')}`)
+
+  return parts.join(' · ')
+}
+
+const appendPreRegistrationTooltipItems = (items: { label: string; value: string }[], data: Record<string, any>) => {
+  if (!data.is_pre_registration) return
+  const summary = formatMinutesBeforeContact(data.minutes_before_contact)
+  appendTooltipItem(items, 'Antes del registro', summary || 'Sí')
+}
+
+const appendMatchTooltipItems = (items: { label: string; value: string }[], data: Record<string, any>) => {
+  const method = formatMatchMethod(data.match_method)
+  if (method) appendTooltipItem(items, 'Match', method)
+
+  const confidence = formatMatchConfidence(data.match_confidence)
+  if (confidence) appendTooltipItem(items, 'Confianza', confidence)
+
+  const evidence = getIdentityEvidenceSummary(data.identity_evidence)
+  if (evidence) appendTooltipItem(items, 'Evidencia', evidence)
+}
+
+const appendClickIdTooltipItems = (items: { label: string; value: string }[], data: Record<string, any>) => {
+  CLICK_ID_TOOLTIP_FIELDS.forEach(([field, label]) => {
+    appendTooltipItem(items, label, data[field])
+  })
+}
+
 const sourceLooksWhatsApp = (source?: string | null) =>
   WHATSAPP_JOURNEY_SOURCE_PATTERN.test(String(source || '').trim().toLowerCase())
 
@@ -409,40 +514,65 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
   const items: { label: string; value: string }[] = []
 
   if (type === 'page_visit') {
-    if (data.landing_page) {
-      items.push({ label: 'Página', value: data.landing_page })
-    }
+    appendPreRegistrationTooltipItems(items, data)
+    appendTooltipItem(items, 'Página', data.public_page_title || data.landing_page || data.page_url)
+    appendTooltipItem(items, 'URL', data.page_url)
+    appendTooltipItem(items, 'Formulario', data.form_site_name)
+    appendTooltipItem(items, 'Sitio', data.site_name)
     const source = getEventSourceLabel(event)
     if (source) {
       items.push({ label: 'Fuente', value: source })
     }
+    appendTooltipItem(items, 'Referrer', data.referrer_url)
+    appendTooltipItem(items, 'Canal', data.channel)
+    appendTooltipItem(items, 'UTM source', data.utm_source, formatUrlParameter)
+    appendTooltipItem(items, 'UTM medium', data.utm_medium, formatUrlParameter)
     if (data.campaign_name || data.utm_campaign) {
       items.push({ label: 'Campaña', value: formatUrlParameter(data.campaign_name || data.utm_campaign) })
     }
+    appendTooltipItem(items, 'Campaña ID', data.campaign_id)
     if (data.adset_name) {
       items.push({ label: 'Conjunto de anuncios', value: data.adset_name })
     }
+    appendTooltipItem(items, 'Conjunto ID', data.adset_id)
+    appendTooltipItem(items, 'Grupo anuncio', data.ad_group_name)
+    appendTooltipItem(items, 'Grupo ID', data.ad_group_id)
     if (data.ad_name || data.utm_content) {
       items.push({ label: 'Anuncio', value: formatUrlParameter(data.ad_name || data.utm_content) })
     }
     if (data.ad_id) {
       items.push({ label: 'ID Anuncio', value: data.ad_id })
     }
+    appendTooltipItem(items, 'Creativo', data.creative_id)
+    appendTooltipItem(items, 'Placement', data.placement)
+    appendTooltipItem(items, 'Red', data.network)
+    appendTooltipItem(items, 'Match Ads', data.match_type)
+    appendTooltipItem(items, 'Keyword', data.keyword)
+    appendTooltipItem(items, 'Búsqueda', data.search_query)
+    appendTooltipItem(items, 'Posición', data.ad_position)
+    appendClickIdTooltipItems(items, data)
     if (data.device_type) {
       items.push({ label: 'Dispositivo', value: data.device_type })
     }
     if (data.browser) {
-      items.push({ label: 'Navegador', value: data.browser })
+      const browser = [data.browser, data.browser_version].filter(Boolean).join(' ')
+      items.push({ label: 'Navegador', value: browser })
     }
+    appendTooltipItem(items, 'Sistema', data.os)
+    appendTooltipItem(items, 'Idioma', data.language)
+    appendTooltipItem(items, 'Zona horaria', data.timezone)
     if (data.geo_city || data.geo_region || data.geo_country) {
       const location = [data.geo_city, data.geo_region, data.geo_country].filter(Boolean).join(', ')
       items.push({ label: 'Ubicación', value: location })
     }
+    appendMatchTooltipItems(items, data)
     appendVideoTooltipItems(items, getVideoEngagements(event), timezone)
   }
 
   if (type === 'video_playback') {
+    appendPreRegistrationTooltipItems(items, data)
     appendVideoTooltipItems(items, getVideoEngagements(event), timezone, true)
+    appendMatchTooltipItems(items, data)
   }
 
   if (type === 'whatsapp_message') {
@@ -513,15 +643,32 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string) => {
     if (data.campaign_name) {
       items.push({ label: 'Campaña', value: data.campaign_name })
     }
+    appendTooltipItem(items, 'Campaña ID', data.campaign_id)
     if (data.adset_name) {
       items.push({ label: 'Conjunto de anuncios', value: data.adset_name })
     }
+    appendTooltipItem(items, 'Conjunto ID', data.adset_id)
+    appendTooltipItem(items, 'Grupo anuncio', data.ad_group_name)
+    appendTooltipItem(items, 'Grupo ID', data.ad_group_id)
     if (data.attribution_ad_name) {
       items.push({ label: 'Anuncio', value: formatUrlParameter(data.attribution_ad_name) })
     }
     if (data.attribution_ad_id) {
       items.push({ label: 'ID Anuncio', value: data.attribution_ad_id })
     }
+    appendTooltipItem(items, 'Página', data.public_page_title || data.landing_page || data.page_url)
+    appendTooltipItem(items, 'Formulario', data.form_site_name)
+    appendTooltipItem(items, 'Sitio', data.site_name)
+    appendTooltipItem(items, 'Referrer', data.referrer_url)
+    appendTooltipItem(items, 'UTM source', data.utm_source, formatUrlParameter)
+    appendTooltipItem(items, 'UTM medium', data.utm_medium, formatUrlParameter)
+    appendTooltipItem(items, 'UTM term', data.utm_term, formatUrlParameter)
+    appendTooltipItem(items, 'UTM content', data.utm_content, formatUrlParameter)
+    appendTooltipItem(items, 'Placement', data.placement)
+    appendTooltipItem(items, 'Keyword', data.keyword)
+    appendTooltipItem(items, 'Búsqueda', data.search_query)
+    appendClickIdTooltipItems(items, data)
+    appendMatchTooltipItems(items, data)
   }
 
   if (type === 'appointment') {

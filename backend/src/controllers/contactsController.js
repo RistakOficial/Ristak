@@ -303,15 +303,34 @@ const buildWebConversionJourneyDataFromSession = (session = null) => {
     utm_source: session.utm_source,
     utm_medium: session.utm_medium,
     utm_campaign: session.utm_campaign,
+    utm_term: session.utm_term,
     utm_content: session.utm_content,
+    gclid: session.gclid,
+    fbclid: session.fbclid,
+    fbc: session.fbc,
+    fbp: session.fbp,
+    wbraid: session.wbraid,
+    gbraid: session.gbraid,
+    msclkid: session.msclkid,
+    ttclid: session.ttclid,
+    channel: session.channel,
     source_platform: session.source_platform,
     site_source_name: session.site_source_name,
     campaign_id: session.campaign_id,
     campaign_name: session.campaign_name || session.utm_campaign,
     adset_id: session.adset_id,
     adset_name: session.adset_name,
+    ad_group_id: session.ad_group_id,
+    ad_group_name: session.ad_group_name,
     ad_name: session.ad_name || session.utm_content,
     ad_id: session.ad_id,
+    placement: session.placement,
+    network: session.network,
+    match_type: session.match_type,
+    keyword: session.keyword,
+    search_query: session.search_query,
+    creative_id: session.creative_id,
+    ad_position: session.ad_position,
     attribution_ad_name: session.ad_name || session.utm_content,
     attribution_ad_id: session.ad_id,
     tracking_source: session.tracking_source,
@@ -325,6 +344,9 @@ const buildWebConversionJourneyDataFromSession = (session = null) => {
     public_page_title: session.public_page_title,
     conversion_type: session.conversion_type,
     submission_id: session.submission_id,
+    match_method: session.match_method,
+    match_confidence: toFiniteNumber(session.match_confidence),
+    identity_evidence: parseJourneyJsonObject(session.identity_evidence_json),
     origin_confidence_score: getWebSessionScore(session)
   }
 }
@@ -444,6 +466,41 @@ const toFiniteNumber = (value) => {
   return Number.isFinite(number) ? number : 0
 }
 
+const parseJourneyJsonObject = (value) => {
+  if (!value) return null
+  if (typeof value === 'object' && !Array.isArray(value)) return value
+
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+const buildPreRegistrationJourneyMeta = (eventDate, contactCreatedAt) => {
+  const eventTime = new Date(eventDate || 0).getTime()
+  const contactTime = new Date(contactCreatedAt || 0).getTime()
+
+  if (!Number.isFinite(eventTime) || !Number.isFinite(contactTime) || eventTime <= 0 || contactTime <= 0) {
+    return {
+      is_pre_registration: false,
+      contact_created_at: contactCreatedAt || null
+    }
+  }
+
+  const millisecondsBeforeContact = contactTime - eventTime
+  const isPreRegistration = millisecondsBeforeContact > 0
+
+  return {
+    is_pre_registration: isPreRegistration,
+    contact_created_at: contactCreatedAt || null,
+    minutes_before_contact: isPreRegistration
+      ? Math.max(1, Math.round(millisecondsBeforeContact / 60000))
+      : 0
+  }
+}
+
 const normalizeJourneyPageUrl = (value) => {
   const raw = cleanString(value)
   if (!raw) return ''
@@ -476,12 +533,13 @@ const normalizeJourneyPagePath = (value) => {
   }
 }
 
-const buildVideoEngagementJourneyData = (row = {}) => {
+const buildVideoEngagementJourneyData = (row = {}, contact = {}) => {
   const maxPosition = Math.max(
     toFiniteNumber(row.max_position_seconds),
     toFiniteNumber(row.max_event_position_seconds),
     toFiniteNumber(row.last_position_seconds)
   )
+  const eventDate = row.first_event_at || row.started_at || row.last_event_at
 
   return {
     id: row.id,
@@ -518,10 +576,13 @@ const buildVideoEngagementJourneyData = (row = {}) => {
     event_count: toFiniteNumber(row.event_count),
     ended: Boolean(row.ended),
     match_method: row.match_method,
-    first_event_at: row.first_event_at || row.started_at || row.last_event_at,
+    match_confidence: toFiniteNumber(row.match_confidence),
+    identity_evidence: parseJourneyJsonObject(row.identity_evidence_json),
+    first_event_at: eventDate,
     last_event_at: row.last_event_at || row.ended_at || row.first_event_at,
     ended_at: row.ended_at,
-    standalone: false
+    standalone: false,
+    ...buildPreRegistrationJourneyMeta(eventDate, contact.created_at)
   }
 }
 
@@ -577,27 +638,56 @@ const findVideoSessionEntry = (video, sessionEntries) => {
   return null
 }
 
-const buildPageVisitJourneyEvent = (session, videoEngagements = []) => ({
+const buildPageVisitJourneyEvent = (session, { contactCreatedAt } = {}) => ({
   type: 'page_visit',
   date: session.started_at,
   data: {
+    id: session.id,
     event_name: session.event_name,
     session_id: session.session_id,
     tracking_session_id: session.id,
+    visitor_id: session.visitor_id,
+    contact_id: session.contact_id,
     page_url: session.page_url,
     landing_page: session.landing_page,
     referrer_url: session.referrer_url,
     utm_source: session.utm_source,
     utm_medium: session.utm_medium,
     utm_campaign: session.utm_campaign,
+    utm_term: session.utm_term,
     utm_content: session.utm_content,
+    gclid: session.gclid,
+    fbclid: session.fbclid,
+    fbc: session.fbc,
+    fbp: session.fbp,
+    wbraid: session.wbraid,
+    gbraid: session.gbraid,
+    msclkid: session.msclkid,
+    ttclid: session.ttclid,
+    channel: session.channel,
     source_platform: session.source_platform,
     site_source_name: session.site_source_name,
+    campaign_id: session.campaign_id,
+    adset_id: session.adset_id,
+    ad_group_id: session.ad_group_id,
+    ad_group_name: session.ad_group_name,
     campaign_name: session.campaign_name,
+    adset_name: session.adset_name,
     ad_name: session.ad_name,
     ad_id: session.ad_id,
+    placement: session.placement,
+    network: session.network,
+    match_type: session.match_type,
+    keyword: session.keyword,
+    search_query: session.search_query,
+    creative_id: session.creative_id,
+    ad_position: session.ad_position,
     device_type: session.device_type,
+    os: session.os,
     browser: session.browser,
+    browser_version: session.browser_version,
+    language: session.language,
+    timezone: session.timezone,
     geo_city: session.geo_city,
     geo_region: session.geo_region,
     geo_country: session.geo_country,
@@ -612,7 +702,10 @@ const buildPageVisitJourneyEvent = (session, videoEngagements = []) => ({
     public_page_title: session.public_page_title,
     conversion_type: session.conversion_type,
     submission_id: session.submission_id,
-    ...(videoEngagements.length ? { video_engagements: videoEngagements } : {})
+    match_method: session.match_method,
+    match_confidence: toFiniteNumber(session.match_confidence),
+    identity_evidence: parseJourneyJsonObject(session.identity_evidence_json),
+    ...buildPreRegistrationJourneyMeta(session.started_at, contactCreatedAt)
   }
 })
 
@@ -677,7 +770,7 @@ const loadContactVideoEngagements = async (contact = {}) => {
     ORDER BY COALESCE(vps.first_event_at, vps.started_at, vps.last_event_at) ASC
   `, params)
 
-  return rows.map(buildVideoEngagementJourneyData)
+  return rows.map(row => buildVideoEngagementJourneyData(row, contact))
 }
 
 const HIGHLEVEL_MESSAGE_REFRESH_LIMIT = 12
@@ -3532,7 +3625,7 @@ export const getContactJourney = async (req, res) => {
     const videoEngagements = await loadContactVideoEngagements(contact)
     const sessionJourneyEntries = sessions.map(session => ({
       session,
-      event: buildPageVisitJourneyEvent(session)
+      event: buildPageVisitJourneyEvent(session, { contactCreatedAt: contact.created_at })
     }))
     const attachedVideoKeys = attachVideoEngagementsToPageVisits(sessionJourneyEntries, videoEngagements)
 

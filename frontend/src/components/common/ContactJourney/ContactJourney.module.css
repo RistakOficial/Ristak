@@ -434,6 +434,8 @@
   box-shadow: var(--shadow-pop);
   min-width: 220px;
   max-width: 320px;
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
   pointer-events: none;
   animation: tooltipFadeIn 0.18s ease-out;
   color: var(--text);
