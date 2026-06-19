@@ -2001,13 +2001,10 @@ function getMessageTransportBadge(message: ChatMessage, status?: WhatsAppApiStat
   return getHighLevelChatChannelLabel(raw)
 }
 
-function getMessageRoutingNote(message: ChatMessage, status?: WhatsAppApiStatus | null) {
+function getMessageRoutingReason(message: ChatMessage) {
   if (message.direction !== 'outbound') return ''
-  const label = getMessageTransportBadge(message, status)
   const reason = String(message.routingReason || '').trim()
-  const cleanReason = reason === 'Capturado desde la sesión de WhatsApp Web.' ? '' : reason
-  if (label && cleanReason) return `${label} · ${cleanReason}`
-  return label || cleanReason
+  return reason === 'Capturado desde la sesión de WhatsApp Web.' ? '' : reason
 }
 
 function inferHighLevelChatChannel(contact?: ChatContact | null, messages: ChatMessage[] = []): HighLevelChatChannel {
@@ -9274,8 +9271,8 @@ export const PhoneChat: React.FC = () => {
                         <Star size={12} fill="currentColor" />
                       </span>
                     )}
-                    {!isAudioMessage && getMessageRoutingNote(message, whatsappStatus) && (
-                      <small className={styles.messageRoutingNote}>{getMessageRoutingNote(message, whatsappStatus)}</small>
+                    {!isAudioMessage && getMessageRoutingReason(message) && (
+                      <small className={styles.messageRoutingNote}>{getMessageRoutingReason(message)}</small>
                     )}
                     {!isAudioMessage && renderMessageMeta(message)}
                     </div>

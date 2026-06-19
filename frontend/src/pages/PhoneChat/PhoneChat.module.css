@@ -4111,30 +4111,20 @@
 .messageTransport {
   display: inline-flex;
   align-items: center;
-  min-height: 15px;
+  min-height: 13px;
   padding: 0 4px;
+  border: 1px solid currentColor;
   border-radius: 999px;
-  color: #0b6b42;
-  background: rgba(11, 107, 66, 0.13);
+  color: currentColor;
   font-style: normal;
-  font-size: 9px;
-  font-weight: 850;
+  font-size: 8.5px;
+  font-weight: 760;
   letter-spacing: 0;
+  opacity: 0.78;
 }
 
 .messageRow_outbound .messageTransport {
-  color: #0a6b42;
-  background: rgba(10, 107, 66, 0.12);
-}
-
-.phoneChatPage[data-phone-chat-tone="dark"] .messageTransport {
-  color: #d7f7e5;
-  background: rgba(233, 237, 239, 0.1);
-}
-
-.phoneChatPage[data-phone-chat-tone="dark"] .messageRow_outbound .messageTransport {
-  color: #93e7b6;
-  background: rgba(147, 231, 182, 0.16);
+  color: currentColor;
 }
 
 .messageActionOverlay {

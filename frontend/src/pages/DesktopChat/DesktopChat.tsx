@@ -1525,13 +1525,12 @@ function getMessageTransportLabel(message: DesktopChatMessage, status?: WhatsApp
   return ''
 }
 
-function getMessageRoutingNote(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
-  if (message.direction !== 'outbound') return ''
+function getMessageRoutingDetails(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
+  if (message.direction !== 'outbound') return { label: '', reason: '' }
   const label = getMessageTransportLabel(message, status)
   const reason = String(message.routingReason || '').trim()
   const cleanReason = reason === 'Capturado desde la sesión de WhatsApp Web.' ? '' : reason
-  if (label && cleanReason) return `${label} · ${cleanReason}`
-  return label || cleanReason
+  return { label, reason: cleanReason }
 }
 
 function getDefaultAppointmentRange(timeZone: string) {
@@ -4087,12 +4086,13 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
-  const renderMessageMeta = (message: DesktopChatMessage) => {
+  const renderMessageMeta = (message: DesktopChatMessage, transportLabel = '') => {
     const status = String(message.status || '').trim().toLowerCase()
     const failed = FAILED_MESSAGE_STATUSES.has(status) || Boolean(message.errorReason)
     const pending = PENDING_MESSAGE_STATUSES.has(status)
     return (
       <span className={styles.messageMeta}>
+        {transportLabel ? <em className={styles.messageTransport}>{transportLabel}</em> : null}
         {formatMessageTime(message.date)}
         {message.direction === 'outbound' && !failed && !pending ? <CheckCheck size={13} /> : null}
         {pending ? <Clock size={13} /> : null}
@@ -4461,7 +4461,7 @@ export const DesktopChat: React.FC = () => {
                   <div key={group.key} className={styles.messageGroup}>
                     <div className={styles.dayDivider}>{group.label}</div>
                     {group.messages.map((message) => {
-                      const routingNote = getMessageRoutingNote(message, whatsappStatus)
+                      const routingDetails = getMessageRoutingDetails(message, whatsappStatus)
                       return (
                         <article
                           key={message.id}
@@ -4469,11 +4469,11 @@ export const DesktopChat: React.FC = () => {
                         >
                           {renderAttachment(message)}
                           {message.text ? <p>{message.text}</p> : null}
-                          {routingNote ? <small className={styles.messageRoutingNote}>{routingNote}</small> : null}
+                          {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
                           {message.errorReason ? <small className={styles.errorText}>{message.errorReason}</small> : null}
                           {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
                           {renderScheduledMessageActions(message)}
-                          {renderMessageMeta(message)}
+                          {renderMessageMeta(message, routingDetails.label)}
                         </article>
                       )
                     })}
