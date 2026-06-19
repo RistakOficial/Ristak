@@ -35,6 +35,7 @@ import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, pars
 import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan } from '@/services/transactionsService'
 import { highLevelService } from '@/services/highLevelService'
+import { getIntegrationsStatus } from '@/services/integrationsService'
 import {
   getTransactionStatusBadge,
   getPaymentPlanStatusBadge,
@@ -369,13 +370,16 @@ export const Transactions: React.FC = () => {
   const [transactionDeleteConfirmation, setTransactionDeleteConfirmation] = useState('')
   const [deletingTransactions, setDeletingTransactions] = useState(false)
 
-  // Los planes de pago dependen de una integración de terceros (HighLevel).
-  // Sin ella, Ristak solo registra transacciones locales: no hay tab de planes.
-  const { connected: highLevelConnected } = useHighLevelConnected()
+  // Los planes de pago pueden programarse con Stripe o con HighLevel.
+  // La lista histórica sigue leyendo schedules de HighLevel cuando está conectado.
+  const { connected: highLevelConnected, loading: highLevelLoading } = useHighLevelConnected()
+  const [stripeConnected, setStripeConnected] = useState(false)
+  const [stripeStatusLoading, setStripeStatusLoading] = useState(true)
   const [transactionStatusFilters, setTransactionStatusFilters] = useUrlFilterState('statusFilters')
   const [paymentPlanStatusFilters, setPaymentPlanStatusFilters] = useUrlFilterState('planFilters')
   const [viewMode, setViewMode] = useState<TransactionsViewMode>(routeState.viewMode)
   const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false)
+  const [recordPaymentInitialMode, setRecordPaymentInitialMode] = useState<'single' | 'partial'>('single')
   const [isClient, setIsClient] = useState(false)
   const [hasLoadedTransactions, setHasLoadedTransactions] = useState(false)
   const handledOpenPaymentRef = useRef<string | null>(null)
@@ -390,6 +394,27 @@ export const Transactions: React.FC = () => {
     setDateRange,
     enabled: paymentTableTab === 'transactions' && viewMode === 'by-date'
   })
+
+  useEffect(() => {
+    let cancelled = false
+
+    getIntegrationsStatus()
+      .then((data) => {
+        if (cancelled) return
+        setStripeConnected(Boolean(data?.stripe?.connected))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setStripeConnected(false)
+      })
+      .finally(() => {
+        if (!cancelled) setStripeStatusLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (paymentTableTab === 'transactions') {
@@ -552,8 +577,16 @@ export const Transactions: React.FC = () => {
   }
 
   const openPaymentPlanCreateModal = () => {
+    if (stripeConnected) {
+      setPaymentTableTab('payment-plans')
+      setRecordPaymentInitialMode('partial')
+      setShowRecordPaymentModal(true)
+      navigateTransactionsPath('/transactions/payment-plans/new')
+      return
+    }
+
     if (!highLevelConnected) {
-      showToast('warning', 'HighLevel no está conectado', 'Conecta HighLevel para programar planes de pago recurrentes.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o HighLevel para programar planes de pago.')
       return
     }
 
@@ -897,21 +930,31 @@ export const Transactions: React.FC = () => {
   useEffect(() => {
     if (!routeState.createTransaction) return
     setPaymentTableTab('transactions')
+    setRecordPaymentInitialMode('single')
     setShowRecordPaymentModal(true)
   }, [routeState.createTransaction])
 
   useEffect(() => {
-    if (!routeState.createTransaction && showRecordPaymentModal) {
+    const paymentPlanStripeFlowOpen = routeState.createPaymentPlan && stripeConnected
+    if (!routeState.createTransaction && !paymentPlanStripeFlowOpen && showRecordPaymentModal) {
       setShowRecordPaymentModal(false)
     }
-  }, [routeState.createTransaction, showRecordPaymentModal])
+  }, [routeState.createPaymentPlan, routeState.createTransaction, showRecordPaymentModal, stripeConnected])
 
   useEffect(() => {
     if (!routeState.createPaymentPlan) return
     setPaymentTableTab('payment-plans')
 
+    if (stripeConnected) {
+      setRecordPaymentInitialMode('partial')
+      setShowRecordPaymentModal(true)
+      return
+    }
+
+    if (stripeStatusLoading || highLevelLoading) return
+
     if (!highLevelConnected) {
-      showToast('warning', 'HighLevel no está conectado', 'Conecta HighLevel para programar planes de pago recurrentes.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o HighLevel para programar planes de pago.')
       navigateTransactionsPath(buildPaymentPlansPath(), { replace: true })
       return
     }
@@ -925,7 +968,7 @@ export const Transactions: React.FC = () => {
       endType: 'never',
       monthlyMode: 'dayOfMonth'
     })
-  }, [highLevelConnected, navigateTransactionsPath, routeState.createPaymentPlan, showToast])
+  }, [highLevelConnected, highLevelLoading, navigateTransactionsPath, routeState.createPaymentPlan, showToast, stripeConnected, stripeStatusLoading])
 
   useEffect(() => {
     if (!routeState.createPaymentPlan && paymentPlanCreateModal.open) {
@@ -1753,6 +1796,8 @@ export const Transactions: React.FC = () => {
   const lockedContactName = modal.transaction?.contactName || modal.selectedContact?.name || 'Sin nombre'
   const lockedContactDetail = modal.transaction?.email || modal.selectedContact?.email || modal.transaction?.phone || modal.selectedContact?.phone
   const isPaymentPlansPage = paymentTableTab === 'payment-plans'
+  const canProgramPaymentPlan = stripeConnected || highLevelConnected
+  const paymentPlanConnectionLoading = stripeStatusLoading || highLevelLoading
   const pageTitle = isPaymentPlansPage ? 'Planes de pago' : 'Transacciones'
   const pageSubtitle = isPaymentPlansPage
     ? 'Administra facturas recurrentes, estados y próximas ejecuciones.'
@@ -1822,6 +1867,7 @@ export const Transactions: React.FC = () => {
               <Button
                 variant="secondary"
                 onClick={() => {
+                  setRecordPaymentInitialMode('single')
                   setShowRecordPaymentModal(true)
                   navigateTransactionsPath(buildCreateTransactionPath(viewMode))
                 }}
@@ -1834,8 +1880,8 @@ export const Transactions: React.FC = () => {
               <Button
                 variant="secondary"
                 onClick={openPaymentPlanCreateModal}
-                disabled={!highLevelConnected}
-                title={!highLevelConnected ? 'Conecta HighLevel para programar planes' : undefined}
+                disabled={paymentPlanConnectionLoading || !canProgramPaymentPlan}
+                title={!canProgramPaymentPlan ? 'Conecta Stripe o HighLevel para programar planes' : undefined}
               >
                 <Plus size={16} />
                 Programar plan
@@ -2544,16 +2590,26 @@ export const Transactions: React.FC = () => {
 
       <RecordPaymentModal
         isOpen={showRecordPaymentModal}
+        initialPaymentMode={recordPaymentInitialMode}
         onClose={() => {
+          const targetPath = recordPaymentInitialMode === 'partial'
+            ? buildPaymentPlansPath()
+            : buildTransactionsPath(viewMode)
           setShowRecordPaymentModal(false)
-          navigateTransactionsPath(buildTransactionsPath(viewMode), { replace: true })
+          navigateTransactionsPath(targetPath, { replace: true })
         }}
         onSuccess={() => {
+          const targetPath = recordPaymentInitialMode === 'partial'
+            ? buildPaymentPlansPath()
+            : buildTransactionsPath(viewMode)
           setShowRecordPaymentModal(false)
-          navigateTransactionsPath(buildTransactionsPath(viewMode), { replace: true })
+          navigateTransactionsPath(targetPath, { replace: true })
           // El modal ya sincronizó el invoice específico desde GHL.
           // Solo recargar desde BD local (sin sync completo).
           fetchData()
+          if (recordPaymentInitialMode === 'partial' && highLevelConnected) {
+            fetchPaymentPlans()
+          }
         }}
       />
       </div>
