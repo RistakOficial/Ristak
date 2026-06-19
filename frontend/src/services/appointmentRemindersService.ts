@@ -19,6 +19,9 @@ export interface AppointmentReminder {
   channel: string
   senderMode: ReminderSenderMode
   senderPhoneNumberId: string | null
+  templateId: string | null
+  templateName: string | null
+  templateLanguage: string
   offsetValue: number
   offsetUnit: ReminderOffsetUnit
   messageText: string
@@ -28,6 +31,7 @@ export interface AppointmentReminder {
   smartOverflow: ReminderSmartOverflow
   noConfirmAction: ReminderNoConfirmAction
   bypassAutomations: boolean
+  qrFallbackEnabled: boolean
   position: number
   createdAt: string
   updatedAt: string

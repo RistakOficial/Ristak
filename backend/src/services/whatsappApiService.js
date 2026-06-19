@@ -6546,7 +6546,8 @@ export async function sendWhatsAppApiTemplateMessage({
   userId,
   publicBaseUrl,
   extraVariables,
-  phoneNumberId
+  phoneNumberId,
+  allowQrFallback = true
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
@@ -6671,7 +6672,7 @@ export async function sendWhatsAppApiTemplateMessage({
     fromPhone,
     phoneNumberId
   })
-  if (fallbackDecision.shouldFallback) {
+  if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendTemplateViaQr({
       fallbackReason: fallbackDecision.reason,
       fallbackPhoneNumberId: fallbackDecision.phoneRow?.id
@@ -6692,7 +6693,7 @@ export async function sendWhatsAppApiTemplateMessage({
       phoneNumberId,
       error
     })
-    if (retryDecision.shouldFallback) {
+    if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de plantilla API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendTemplateViaQr({
         fallbackReason: retryDecision.reason,

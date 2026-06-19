@@ -2,7 +2,11 @@ import crypto from 'crypto'
 import { DateTime } from 'luxon'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { getAccountTimezone } from '../utils/dateUtils.js'
-import { sendWhatsAppApiTextMessage } from './whatsappApiService.js'
+import {
+  sendWhatsAppApiTemplateMessage,
+  sendWhatsAppApiTextMessage
+} from './whatsappApiService.js'
+import { ensureDefaultAppointmentMessageTemplates } from './messageTemplatesService.js'
 import { logger } from '../utils/logger.js'
 import {
   DEFAULT_REMINDER_TEXT,
@@ -28,10 +32,44 @@ const OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
 const SENDER_MODES = new Set(['contact', 'default', 'specific'])
 const SMART_OVERFLOWS = new Set(['before', 'next_day'])
 const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
+const DEFAULT_TEMPLATE_NAME_BY_MESSAGE_TYPE = {
+  reminder: 'recordatorio_cita_un_dia_antes',
+  confirmation: 'confirmacion_cita_dia_anterior'
+}
+const APPROVED_TEMPLATE_STATUSES = new Set(['APPROVED'])
+const FALLBACK_TEMPLATE_STATUSES = new Set([
+  '',
+  'DRAFT',
+  'PENDING',
+  'IN_REVIEW',
+  'UNDER_REVIEW',
+  'PENDING_REVIEW',
+  'IN_APPEAL',
+  'REJECTED',
+  'PAUSED',
+  'DISABLED',
+  'ARCHIVED',
+  'DELETED'
+])
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
+}
+
+function parseJson(value, fallback) {
+  if (value === null || value === undefined || value === '') return fallback
+  if (typeof value !== 'string') return value
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function normalizeTemplateStatus(value) {
+  return cleanString(value).toUpperCase()
 }
 
 function createServiceError(message, status = 400) {
@@ -56,6 +94,8 @@ function normalizeReminderRow(row = {}) {
   if (!row) return null
   const offsetUnit = OFFSET_UNITS.has(cleanString(row.offset_unit)) ? cleanString(row.offset_unit) : 'days'
   const offsetValue = Math.max(1, Math.round(Number(row.offset_value) || 1))
+  const templateName = cleanString(row.template_name || row.resolved_template_name)
+  const templateLanguage = cleanString(row.template_language || row.resolved_template_language) || 'es_MX'
   return {
     id: cleanString(row.id),
     name: cleanString(row.name) || formatOffsetLabel(offsetValue, offsetUnit),
@@ -65,6 +105,9 @@ function normalizeReminderRow(row = {}) {
     channel: cleanString(row.channel) || 'whatsapp',
     senderMode: SENDER_MODES.has(cleanString(row.sender_mode)) ? cleanString(row.sender_mode) : 'contact',
     senderPhoneNumberId: cleanString(row.sender_phone_number_id) || null,
+    templateId: cleanString(row.template_id) || null,
+    templateName: templateName || null,
+    templateLanguage,
     offsetValue,
     offsetUnit,
     messageText: cleanString(row.message_text),
@@ -74,9 +117,88 @@ function normalizeReminderRow(row = {}) {
     smartOverflow: SMART_OVERFLOWS.has(cleanString(row.smart_overflow)) ? cleanString(row.smart_overflow) : 'before',
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(row.no_confirm_action)) ? cleanString(row.no_confirm_action) : 'no_action',
     bypassAutomations: Number(row.bypass_automations || 0) === 1,
+    qrFallbackEnabled: Number(row.qr_fallback_enabled || 0) === 1,
     position: Number(row.position || 0),
     createdAt: cleanString(row.created_at),
     updatedAt: cleanString(row.updated_at)
+  }
+}
+
+function mapReminderTemplateRow(row = {}) {
+  if (!row) return null
+  return {
+    id: cleanString(row.id),
+    name: cleanString(row.name),
+    language: cleanString(row.language) || 'es_MX',
+    status: cleanString(row.status) || 'draft',
+    headerText: cleanString(row.header_text),
+    bodyText: cleanString(row.body_text),
+    footerText: cleanString(row.footer_text),
+    buttons: parseJson(row.buttons_json, []),
+    variableBindings: parseJson(row.variable_bindings_json, { headerText: {}, bodyText: {} }),
+    ycloudTemplateId: cleanString(row.ycloud_template_id) || null,
+    ycloudStatus: normalizeTemplateStatus(row.ycloud_status)
+  }
+}
+
+async function getReminderTemplateById(templateId) {
+  const id = cleanString(templateId)
+  if (!id) return null
+  const row = await db.get('SELECT * FROM whatsapp_message_templates WHERE id = ?', [id])
+  return row ? mapReminderTemplateRow(row) : null
+}
+
+async function getReminderTemplateByName(name, language = 'es_MX') {
+  const cleanName = cleanString(name)
+  if (!cleanName) return null
+  const row = await db.get(`
+    SELECT * FROM whatsapp_message_templates
+    WHERE name = ? AND language = ?
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [cleanName, cleanString(language) || 'es_MX'])
+  return row ? mapReminderTemplateRow(row) : null
+}
+
+async function getDefaultReminderTemplate(messageType) {
+  const name = DEFAULT_TEMPLATE_NAME_BY_MESSAGE_TYPE[messageType] || DEFAULT_TEMPLATE_NAME_BY_MESSAGE_TYPE.reminder
+  return getReminderTemplateByName(name, 'es_MX')
+}
+
+async function resolveReminderTemplateSelection(data = {}) {
+  let template = await getReminderTemplateById(data.templateId)
+  if (!template && data.templateName) {
+    template = await getReminderTemplateByName(data.templateName, data.templateLanguage)
+  }
+  if (!template && !data.templateId) {
+    template = await getDefaultReminderTemplate(data.messageType)
+  }
+
+  return {
+    ...data,
+    templateId: template?.id || cleanString(data.templateId) || null,
+    templateName: template?.name || cleanString(data.templateName),
+    templateLanguage: template?.language || cleanString(data.templateLanguage) || 'es_MX'
+  }
+}
+
+async function backfillMissingReminderTemplates() {
+  await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+  const rows = await db.all(`
+    SELECT id, message_type
+    FROM appointment_reminders
+    WHERE COALESCE(template_id, '') = ''
+  `)
+
+  for (const row of rows) {
+    const messageType = MESSAGE_TYPES.has(cleanString(row.message_type)) ? cleanString(row.message_type) : 'reminder'
+    const template = await getDefaultReminderTemplate(messageType)
+    if (!template) continue
+    await db.run(`
+      UPDATE appointment_reminders
+      SET template_id = ?, template_name = ?, template_language = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [template.id, template.name, template.language, row.id])
   }
 }
 
@@ -94,11 +216,12 @@ async function listSenderOptions() {
     name: cleanString(row.verified_name) || cleanString(row.label),
     isDefault: Number(row.is_default_sender || 0) === 1,
     apiEnabled: Number(row.api_send_enabled || 0) === 1,
-    qrConnected: cleanString(row.qr_status) === 'connected'
+    qrConnected: Number(row.qr_send_enabled || 0) === 1 && cleanString(row.qr_status).toLowerCase() === 'connected'
   }))
 }
 
 export async function getAppointmentRemindersOverview() {
+  await backfillMissingReminderTemplates()
   const rows = await db.all('SELECT * FROM appointment_reminders ORDER BY position ASC, created_at ASC')
   const senders = await listSenderOptions()
   const whatsappConnected = senders.some(sender => sender.apiEnabled || sender.qrConnected)
@@ -119,6 +242,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
   const offsetValue = Math.max(1, Math.min(60, Math.round(Number(merged.offsetValue) || 1)))
   const smartStart = parseHHMM(merged.smartStart, null) ? cleanString(merged.smartStart) : '09:00'
   const smartEnd = parseHHMM(merged.smartEnd, null) ? cleanString(merged.smartEnd) : '21:00'
+  const templateLanguage = cleanString(merged.templateLanguage) || 'es_MX'
 
   return {
     name: cleanString(merged.name) || formatOffsetLabel(offsetValue, offsetUnit),
@@ -128,6 +252,9 @@ function sanitizeReminderInput(input = {}, base = {}) {
     channel: 'whatsapp',
     senderMode: SENDER_MODES.has(cleanString(merged.senderMode)) ? cleanString(merged.senderMode) : 'contact',
     senderPhoneNumberId: cleanString(merged.senderPhoneNumberId) || null,
+    templateId: cleanString(merged.templateId) || null,
+    templateName: cleanString(merged.templateName),
+    templateLanguage,
     offsetValue,
     offsetUnit,
     messageText: cleanString(merged.messageText) ||
@@ -137,25 +264,29 @@ function sanitizeReminderInput(input = {}, base = {}) {
     smartEnd,
     smartOverflow: SMART_OVERFLOWS.has(cleanString(merged.smartOverflow)) ? cleanString(merged.smartOverflow) : 'before',
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(merged.noConfirmAction)) ? cleanString(merged.noConfirmAction) : 'no_action',
-    bypassAutomations: merged.bypassAutomations === true ? 1 : 0
+    bypassAutomations: merged.bypassAutomations === true ? 1 : 0,
+    qrFallbackEnabled: merged.qrFallbackEnabled === true ? 1 : 0
   }
 }
 
 export async function createAppointmentReminder(input = {}) {
-  const data = sanitizeReminderInput(input)
+  await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
+  const data = await resolveReminderTemplateSelection(sanitizeReminderInput(input))
   const id = createReminderId()
   const positionRow = await db.get('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM appointment_reminders')
 
   await db.run(`
     INSERT INTO appointment_reminders (
       id, name, enabled, message_type, ai_enabled, channel, sender_mode,
-      sender_phone_number_id, offset_value, offset_unit, message_text,
+      sender_phone_number_id, template_id, template_name, template_language,
+      qr_fallback_enabled, offset_value, offset_unit, message_text,
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
       bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
-    data.senderMode, data.senderPhoneNumberId, data.offsetValue, data.offsetUnit,
+    data.senderMode, data.senderPhoneNumberId, data.templateId, data.templateName,
+    data.templateLanguage, data.qrFallbackEnabled, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
     data.smartOverflow, data.noConfirmAction, data.bypassAutomations,
     Number(positionRow?.next || 0)
@@ -170,7 +301,7 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
   if (!existing) throw createServiceError('Mensaje automático no encontrado.', 404)
 
   const base = normalizeReminderRow(existing)
-  const data = sanitizeReminderInput(input, base)
+  const data = await resolveReminderTemplateSelection(sanitizeReminderInput(input, base))
 
   // Si cambia el tiempo y el nombre era el autogenerado, regenerarlo.
   const autoName = formatOffsetLabel(base.offsetValue, base.offsetUnit)
@@ -181,13 +312,15 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
   await db.run(`
     UPDATE appointment_reminders
     SET name = ?, enabled = ?, message_type = ?, ai_enabled = ?, sender_mode = ?,
-      sender_phone_number_id = ?, offset_value = ?, offset_unit = ?, message_text = ?,
+      sender_phone_number_id = ?, template_id = ?, template_name = ?, template_language = ?,
+      qr_fallback_enabled = ?, offset_value = ?, offset_unit = ?, message_text = ?,
       smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
       no_confirm_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
     name, data.enabled, data.messageType, data.aiEnabled, data.senderMode,
-    data.senderPhoneNumberId, data.offsetValue, data.offsetUnit, data.messageText,
+    data.senderPhoneNumberId, data.templateId, data.templateName, data.templateLanguage,
+    data.qrFallbackEnabled, data.offsetValue, data.offsetUnit, data.messageText,
     data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
     data.noConfirmAction, data.bypassAutomations, id
   ])
@@ -212,8 +345,12 @@ export async function deleteAppointmentReminder(reminderId) {
  * Usa una bandera en app_config para no recrearlo si el usuario lo borra.
  */
 export async function ensureDefaultAppointmentReminder() {
+  await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
   const seeded = await getAppConfig(SEEDED_CONFIG_KEY)
-  if (seeded) return
+  if (seeded) {
+    await backfillMissingReminderTemplates()
+    return
+  }
 
   const existing = await db.get('SELECT id FROM appointment_reminders LIMIT 1')
   if (!existing) {
@@ -227,6 +364,7 @@ export async function ensureDefaultAppointmentReminder() {
     logger.info('[Citas] Recordatorio por defecto creado (1 día antes)')
   }
 
+  await backfillMissingReminderTemplates()
   await setAppConfig(SEEDED_CONFIG_KEY, '1')
 }
 
@@ -256,14 +394,139 @@ async function resolveSenderPhone(reminder, contact) {
     `)
   }
 
-  if (!row) return { fromPhone: null, phoneNumberId: null, transport: 'api' }
+  if (!row) return {
+    fromPhone: null,
+    phoneNumberId: null,
+    transport: 'api',
+    apiEnabled: false,
+    qrReady: false
+  }
 
   const apiEnabled = Number(row.api_send_enabled || 0) === 1
+  const qrReady = Number(row.qr_send_enabled || 0) === 1 && cleanString(row.qr_status).toLowerCase() === 'connected'
   return {
     fromPhone: cleanString(row.phone_number) || null,
     phoneNumberId: cleanString(row.id) || null,
-    transport: apiEnabled ? 'api' : 'qr'
+    transport: apiEnabled ? 'api' : 'qr',
+    apiEnabled,
+    qrReady
   }
+}
+
+async function resolveQrFallbackSender(preferredSender = {}) {
+  if (preferredSender.qrReady) return preferredSender
+
+  const row = await db.get(`
+    SELECT id, phone_number, api_send_enabled, qr_send_enabled, qr_status
+    FROM whatsapp_api_phone_numbers
+    WHERE qr_send_enabled = 1 AND LOWER(COALESCE(qr_status, '')) = 'connected'
+    ORDER BY is_default_sender DESC, updated_at DESC
+    LIMIT 1
+  `)
+
+  if (!row) return null
+  return {
+    fromPhone: cleanString(row.phone_number) || null,
+    phoneNumberId: cleanString(row.id) || null,
+    transport: 'qr',
+    apiEnabled: Number(row.api_send_enabled || 0) === 1,
+    qrReady: true
+  }
+}
+
+function extractNumericVariableIndexes(text = '') {
+  const indexes = new Set()
+  for (const match of cleanString(text).matchAll(/\{\{\s*(\d+)\s*\}\}/g)) {
+    indexes.add(Number(match[1]))
+  }
+  return [...indexes].filter(Number.isFinite).sort((a, b) => a - b)
+}
+
+function renderBindingValue(binding = {}, { appointment, timezone } = {}) {
+  const mergeField = cleanString(binding.mergeField) ||
+    (cleanString(binding.variableKey) ? `{{${cleanString(binding.variableKey)}}}` : '')
+  if (!mergeField) return cleanString(binding.example)
+  return renderMessageText(mergeField, { contact: appointment, appointment, timezone }) ||
+    cleanString(binding.example)
+}
+
+function buildTemplateParameters(template, target, context) {
+  const indexes = extractNumericVariableIndexes(template?.[target])
+  if (!indexes.length) return []
+  const bindings = template.variableBindings?.[target] || {}
+  return indexes.map((index) => ({
+    type: 'text',
+    text: cleanString(renderBindingValue(bindings[String(index)], context))
+  }))
+}
+
+function buildReminderTemplateComponents(template, context) {
+  const components = []
+  const headerParameters = buildTemplateParameters(template, 'headerText', context)
+  if (headerParameters.length) {
+    components.push({ type: 'header', parameters: headerParameters })
+  }
+
+  const bodyParameters = buildTemplateParameters(template, 'bodyText', context)
+  if (bodyParameters.length) {
+    components.push({ type: 'body', parameters: bodyParameters })
+  }
+
+  return components
+}
+
+function renderNumericTemplateText(text = '', bindings = {}, context) {
+  return cleanString(text).replace(/\{\{\s*(\d+)\s*\}\}/g, (match, index) => (
+    cleanString(renderBindingValue(bindings[String(index)], context)) || match
+  ))
+}
+
+function renderReminderTemplateText(template, context) {
+  const bindings = template.variableBindings || { headerText: {}, bodyText: {} }
+  const parts = [
+    renderNumericTemplateText(template.headerText, bindings.headerText || {}, context),
+    renderNumericTemplateText(template.bodyText, bindings.bodyText || {}, context),
+    cleanString(template.footerText)
+  ].filter(Boolean)
+
+  const buttonLabels = (Array.isArray(template.buttons) ? template.buttons : [])
+    .map(button => cleanString(button.label || button.text || button.title))
+    .filter(Boolean)
+  if (buttonLabels.length) {
+    parts.push(buttonLabels.map(label => `- ${label}`).join('\n'))
+  }
+
+  return parts.join('\n\n')
+}
+
+async function sendReminderViaQr({ reminder, appointment, sender, template, timezone, reason }) {
+  if (!reminder.qrFallbackEnabled) {
+    throw new Error(reason || 'El respaldo por QR no está activado para este recordatorio.')
+  }
+
+  const qrSender = await resolveQrFallbackSender(sender)
+  if (!qrSender?.qrReady) {
+    throw new Error('El respaldo por QR está activado, pero no hay un número conectado por QR.')
+  }
+
+  const text = template
+    ? renderReminderTemplateText(template, { appointment, timezone })
+    : renderMessageText(reminder.messageText, { contact: appointment, appointment, timezone })
+
+  return sendWhatsAppApiTextMessage({
+    to: appointment.phone,
+    text,
+    from: qrSender.fromPhone || undefined,
+    contactId: appointment.contact_id,
+    phoneNumberId: qrSender.phoneNumberId || undefined,
+    transport: 'qr'
+  })
+}
+
+function shouldFallbackToQrAfterTemplateError(error) {
+  const text = cleanString(error?.message)
+  if (!text) return false
+  return /WhatsApp[_\s-]*API no está conectado|WhatsApp Business no está conectado|Falta el número emisor|restricción|límite|limit|quality|sender|from|phone number|business account/i.test(text)
 }
 
 async function recordSend({ reminder, appointment, status, sendAt, sentMessageId = '', errorMessage = '' }) {
@@ -336,36 +599,68 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
 
       try {
         const sender = await resolveSenderPhone(reminder, appointment)
-        const text = renderMessageText(reminder.messageText, { contact: appointment, appointment, timezone })
+        const template = await getReminderTemplateById(reminder.templateId)
+        if (!template) {
+          throw new Error('Selecciona una plantilla de WhatsApp para este recordatorio.')
+        }
+
+        const templateStatus = normalizeTemplateStatus(template.ycloudStatus)
         let response
-        try {
-          response = await sendWhatsAppApiTextMessage({
-            to: appointment.phone,
-            text,
-            from: sender.fromPhone || undefined,
-            contactId: appointment.contact_id,
-            phoneNumberId: sender.phoneNumberId || undefined,
-            transport: sender.transport
+        if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus)) {
+          const statusLabel = templateStatus || 'sin enviar a revisión'
+          if (!reminder.qrFallbackEnabled || !FALLBACK_TEMPLATE_STATUSES.has(templateStatus)) {
+            throw new Error(`La plantilla ${template.name} está ${statusLabel}; solo se pueden enviar plantillas APPROVED por WhatsApp API.`)
+          }
+          response = await sendReminderViaQr({
+            reminder,
+            appointment,
+            sender,
+            template,
+            timezone,
+            reason: `La plantilla ${template.name} está ${statusLabel}; se usará QR como respaldo.`
           })
-        } catch (error) {
-          // Si la API oficial no está conectada, intentar por WhatsApp Web (QR).
-          if (sender.transport === 'api' && /no está conectado/i.test(error.message || '')) {
-            response = await sendWhatsAppApiTextMessage({
-            to: appointment.phone,
-            text,
-            from: sender.fromPhone || undefined,
-            contactId: appointment.contact_id,
-            phoneNumberId: sender.phoneNumberId || undefined,
-            transport: 'qr'
+        } else if (!sender.apiEnabled && reminder.qrFallbackEnabled) {
+          response = await sendReminderViaQr({
+            reminder,
+            appointment,
+            sender,
+            template,
+            timezone,
+            reason: 'WhatsApp API no está disponible para este remitente.'
           })
-          } else {
-            throw error
+        } else {
+          const components = buildReminderTemplateComponents(template, { appointment, timezone })
+          try {
+            response = await sendWhatsAppApiTemplateMessage({
+              to: appointment.phone,
+              from: sender.fromPhone || undefined,
+              templateName: template.name,
+              language: template.language,
+              ...(components.length ? { components } : {}),
+              contactId: appointment.contact_id,
+              phoneNumberId: sender.phoneNumberId || undefined,
+              allowQrFallback: reminder.qrFallbackEnabled === true
+            })
+          } catch (error) {
+            if (reminder.qrFallbackEnabled && shouldFallbackToQrAfterTemplateError(error)) {
+              response = await sendReminderViaQr({
+                reminder,
+                appointment,
+                sender,
+                template,
+                timezone,
+                reason: error.message
+              })
+            } else {
+              throw error
+            }
           }
         }
 
         await recordSend({ reminder, appointment, status: 'sent', sendAt, sentMessageId: response?.id || '' })
         sent += 1
-        logger.info(`[Citas] Mensaje automático "${reminder.name}" enviado a ${appointment.phone} (cita ${appointment.id})`)
+        const transport = response?.transport === 'qr' ? 'QR' : 'WhatsApp API'
+        logger.info(`[Citas] Mensaje automático "${reminder.name}" enviado por ${transport} a ${appointment.phone} (cita ${appointment.id})`)
       } catch (error) {
         await recordSend({ reminder, appointment, status: 'error', sendAt, errorMessage: error.message })
         errors += 1

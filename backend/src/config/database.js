@@ -4265,6 +4265,10 @@ async function initTables() {
         channel TEXT DEFAULT 'whatsapp',
         sender_mode TEXT DEFAULT 'contact',
         sender_phone_number_id TEXT,
+        template_id TEXT,
+        template_name TEXT,
+        template_language TEXT DEFAULT 'es_MX',
+        qr_fallback_enabled INTEGER DEFAULT 0,
         offset_value INTEGER DEFAULT 1,
         offset_unit TEXT DEFAULT 'days',
         message_text TEXT,
@@ -4355,6 +4359,22 @@ async function initTables() {
 
     try {
       await db.run("ALTER TABLE appointment_reminders ADD COLUMN bypass_automations INTEGER DEFAULT 0")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminders ADD COLUMN template_id TEXT')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminders ADD COLUMN template_name TEXT')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN template_language TEXT DEFAULT 'es_MX'")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminders ADD COLUMN qr_fallback_enabled INTEGER DEFAULT 0')
     } catch (_) { /* columna ya existe */ }
 
     // Ventanas de confirmación con IA: acumula mensajes durante 3 min antes de clasificar.

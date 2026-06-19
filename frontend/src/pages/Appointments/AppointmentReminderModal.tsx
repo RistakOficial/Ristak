@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Bell, Sparkles, Trash2 } from 'lucide-react'
-import { Modal, Button, CustomSelect, NumberInput } from '@/components/common'
+import { Bell, ShieldAlert, Sparkles, Trash2 } from 'lucide-react'
+import { Modal, Button, CustomSelect, NumberInput, Switch } from '@/components/common'
+import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import {
   type AppointmentReminder,
   type AppointmentReminderInput,
@@ -9,6 +10,7 @@ import {
   type ReminderSenderOption,
   formatReminderOffsetLabel
 } from '@/services/appointmentRemindersService'
+import type { MessageTemplate } from '@/services/messageTemplatesService'
 import styles from './AppointmentReminderModal.module.css'
 
 interface AppointmentReminderModalProps {
@@ -16,6 +18,7 @@ interface AppointmentReminderModalProps {
   reminder: AppointmentReminder | null
   senders: ReminderSenderOption[]
   channels: ReminderChannelOption[]
+  templates: MessageTemplate[]
   onClose: () => void
   onSave: (reminderId: string, input: AppointmentReminderInput) => Promise<void>
   onDelete: (reminderId: string) => Promise<void>
@@ -27,13 +30,55 @@ const OFFSET_UNIT_OPTIONS = [
   { value: 'days', label: 'Días' }
 ]
 
-const MESSAGE_VARIABLES = ['{{contact.first_name}}', '{{cita.titulo}}', '{{cita.fecha}}', '{{cita.hora}}']
+const DEFAULT_TEMPLATE_NAME_BY_TYPE = {
+  reminder: 'recordatorio_cita_un_dia_antes',
+  confirmation: 'confirmacion_cita_dia_anterior'
+} as const
+
+const getTemplateReviewStatus = (template?: MessageTemplate | null) => String(template?.ycloudStatus || '').toUpperCase()
+
+const getTemplateStatusLabel = (template?: MessageTemplate | null) => {
+  const status = getTemplateReviewStatus(template)
+  if (!template) return 'Sin plantilla'
+  if (status === 'APPROVED') return 'Aprobada'
+  if (['PENDING', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW'].includes(status)) return 'En revisión'
+  if (status === 'REJECTED') return 'Rechazada'
+  if (status === 'PAUSED') return 'Pausada'
+  if (status === 'DISABLED') return 'Deshabilitada'
+  if (!status) return 'No enviada'
+  return status
+}
+
+const getTemplateStatusVariant = (template?: MessageTemplate | null): BadgeVariant => {
+  const status = getTemplateReviewStatus(template)
+  if (status === 'APPROVED') return 'success'
+  if (['PENDING', 'IN_REVIEW', 'UNDER_REVIEW', 'PENDING_REVIEW', 'IN_APPEAL'].includes(status)) return 'warning'
+  if (['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED'].includes(status)) return 'error'
+  return 'neutral'
+}
+
+const replaceTemplateVariables = (
+  text: string | undefined,
+  bindings: MessageTemplate['variableBindings']['bodyText'] = {}
+) => (text || '').replace(/\{\{\s*(\d+)\s*\}\}/g, (match, index) => (
+  bindings[index]?.mergeField || (bindings[index]?.variableKey ? `{{${bindings[index]?.variableKey}}}` : match)
+))
+
+const buildTemplatePreview = (template?: MessageTemplate | null) => {
+  if (!template) return ''
+  return [
+    replaceTemplateVariables(template.headerText, template.variableBindings.headerText),
+    replaceTemplateVariables(template.bodyText, template.variableBindings.bodyText),
+    template.footerText || ''
+  ].filter(Boolean).join('\n\n')
+}
 
 export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> = ({
   isOpen,
   reminder,
   senders,
   channels,
+  templates,
   onClose,
   onSave,
   onDelete
@@ -51,6 +96,10 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       bypassAutomations: reminder.bypassAutomations,
       senderMode: reminder.senderMode,
       senderPhoneNumberId: reminder.senderPhoneNumberId,
+      templateId: reminder.templateId,
+      templateName: reminder.templateName || '',
+      templateLanguage: reminder.templateLanguage || 'es_MX',
+      qrFallbackEnabled: reminder.qrFallbackEnabled,
       offsetValue: reminder.offsetValue,
       offsetUnit: reminder.offsetUnit,
       messageText: reminder.messageText,
@@ -71,6 +120,46 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   const channel = channels[0]
   const isConfirmation = draft.messageType === 'confirmation'
+  const hasQrConnected = senders.some(sender => sender.qrConnected)
+  const hasApiConnected = senders.some(sender => sender.apiEnabled)
+
+  const visibleTemplates = useMemo(() => (
+    templates
+      .filter(template => template.status !== 'archived')
+      .sort((left, right) => {
+        const leftReminder = left.folderId === 'Reminders' ? 0 : 1
+        const rightReminder = right.folderId === 'Reminders' ? 0 : 1
+        if (leftReminder !== rightReminder) return leftReminder - rightReminder
+        return left.name.localeCompare(right.name)
+      })
+  ), [templates])
+
+  const selectedTemplate = useMemo(() => (
+    visibleTemplates.find(template => template.id === draft.templateId) || null
+  ), [draft.templateId, visibleTemplates])
+
+  const defaultTemplateForType = useMemo(() => {
+    const name = DEFAULT_TEMPLATE_NAME_BY_TYPE[(draft.messageType as AppointmentReminder['messageType']) || 'reminder']
+    return visibleTemplates.find(template => template.name === name) || visibleTemplates[0] || null
+  }, [draft.messageType, visibleTemplates])
+
+  useEffect(() => {
+    if (!isOpen || !reminder || draft.templateId || !defaultTemplateForType) return
+    setDraft(prev => ({
+      ...prev,
+      templateId: defaultTemplateForType.id,
+      templateName: defaultTemplateForType.name,
+      templateLanguage: defaultTemplateForType.language
+    }))
+  }, [defaultTemplateForType, draft.templateId, isOpen, reminder])
+
+  const templateOptions = useMemo(() => visibleTemplates.map(template => ({
+    value: template.id,
+    label: `${template.name} · ${getTemplateStatusLabel(template)}`
+  })), [visibleTemplates])
+
+  const selectedTemplatePreview = useMemo(() => buildTemplatePreview(selectedTemplate), [selectedTemplate])
+  const selectedTemplateApproved = getTemplateReviewStatus(selectedTemplate) === 'APPROVED'
 
   const senderOptions = useMemo(() => senders.map(sender => ({
     value: sender.id,
@@ -84,7 +173,37 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   if (!reminder) return null
 
+  const selectTemplate = (templateId: string) => {
+    const template = visibleTemplates.find(item => item.id === templateId)
+    setDraft(prev => ({
+      ...prev,
+      templateId,
+      templateName: template?.name || prev.templateName || '',
+      templateLanguage: template?.language || prev.templateLanguage || 'es_MX'
+    }))
+  }
+
+  const changeMessageType = (messageType: AppointmentReminderInput['messageType']) => {
+    const nextName = DEFAULT_TEMPLATE_NAME_BY_TYPE[messageType || 'reminder']
+    const previousName = DEFAULT_TEMPLATE_NAME_BY_TYPE[(draft.messageType as AppointmentReminder['messageType']) || 'reminder']
+    const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
+    const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
+
+    setDraft(prev => ({
+      ...prev,
+      messageType,
+      ...(shouldSwitchTemplate && nextTemplate
+        ? {
+            templateId: nextTemplate.id,
+            templateName: nextTemplate.name,
+            templateLanguage: nextTemplate.language
+          }
+        : {})
+    }))
+  }
+
   const handleSave = async () => {
+    if (!draft.templateId) return
     setSaving(true)
     try {
       await onSave(reminder.id, draft)
@@ -121,7 +240,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               <button
                 type="button"
                 className={`${styles.typeCard} ${!isConfirmation ? styles.typeCardActive : ''}`}
-                onClick={() => set('messageType', 'reminder')}
+                onClick={() => changeMessageType('reminder')}
               >
                 <Bell size={18} aria-hidden="true" />
                 <div>
@@ -132,7 +251,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               <button
                 type="button"
                 className={`${styles.typeCard} ${isConfirmation ? styles.typeCardActive : ''}`}
-                onClick={() => set('messageType', 'confirmation')}
+                onClick={() => changeMessageType('confirmation')}
               >
                 <Sparkles size={18} aria-hidden="true" />
                 <div>
@@ -348,26 +467,82 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
           {/* Mensaje */}
           <section className={styles.section}>
-            <h4 className={styles.sectionTitle}>Mensaje</h4>
-            <textarea
-              className={styles.messageInput}
-              rows={4}
-              value={draft.messageText || ''}
-              onChange={(e) => set('messageText', e.target.value)}
-              placeholder="Escribe el mensaje que recibirá el contacto…"
-            />
-            <div className={styles.variables}>
-              {MESSAGE_VARIABLES.map(variable => (
-                <button
-                  key={variable}
-                  type="button"
-                  className={styles.variableChip}
-                  onClick={() => set('messageText', `${draft.messageText || ''}${draft.messageText?.endsWith(' ') || !draft.messageText ? '' : ' '}${variable}`)}
-                >
-                  {variable}
-                </button>
-              ))}
+            <div className={styles.sectionHeader}>
+              <h4 className={styles.sectionTitle}>Plantilla de WhatsApp</h4>
+              {selectedTemplate && (
+                <Badge variant={getTemplateStatusVariant(selectedTemplate)}>
+                  {getTemplateStatusLabel(selectedTemplate)}
+                </Badge>
+              )}
             </div>
+
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Mensaje seleccionado</label>
+              <CustomSelect
+                value={draft.templateId || ''}
+                options={templateOptions}
+                placeholder={templateOptions.length ? 'Elige una plantilla' : 'Sin plantillas disponibles'}
+                disabled={!templateOptions.length}
+                onValueChange={selectTemplate}
+                aria-label="Plantilla del mensaje automático"
+                portal
+              />
+              <span className={styles.helpText}>
+                Los recordatorios por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada,
+                el envío queda detenido salvo que actives el respaldo por QR.
+              </span>
+            </div>
+
+            {selectedTemplate ? (
+              <div className={styles.templatePreview}>
+                <div className={styles.templatePreviewHeader}>
+                  <span>{selectedTemplate.name}</span>
+                  <small>{selectedTemplate.language}</small>
+                </div>
+                <p>{selectedTemplatePreview || 'Esta plantilla no tiene texto para previsualizar.'}</p>
+              </div>
+            ) : (
+              <p className={styles.templateEmpty}>
+                Cuando conectes WhatsApp API, Ristak crea las plantillas de recordatorios y las manda a revisión.
+              </p>
+            )}
+
+            {selectedTemplate && !selectedTemplateApproved && !draft.qrFallbackEnabled && (
+              <div className={styles.templateNotice}>
+                Esta plantilla todavía no está aprobada por WhatsApp API. No se enviará hasta que Meta la apruebe o actives el respaldo por QR.
+              </div>
+            )}
+
+            {!hasApiConnected && selectedTemplateApproved && !draft.qrFallbackEnabled && (
+              <div className={styles.templateNotice}>
+                La plantilla está lista, pero WhatsApp API no está disponible ahora. Con QR apagado, este recordatorio esperará a que la API vuelva.
+              </div>
+            )}
+
+            {hasQrConnected && (
+              <div className={styles.qrFallbackBox}>
+                <div className={styles.qrFallbackCopy}>
+                  <div className={styles.qrFallbackTitle}>
+                    <span
+                      className={styles.qrRiskIcon}
+                      title="Precaución: el envío por QR usa una aplicación de terceros no validada por Meta y puede aumentar el riesgo de bloqueo del número."
+                    >
+                      <ShieldAlert size={17} aria-hidden="true" />
+                    </span>
+                    Usar QR como respaldo riesgoso
+                  </div>
+                  <span className={styles.helpText}>
+                    Si WhatsApp API no está disponible o la plantilla sigue en revisión, rechazada o pausada,
+                    Ristak intentará mandar el texto de esta plantilla por QR.
+                  </span>
+                </div>
+                <Switch
+                  checked={draft.qrFallbackEnabled === true}
+                  onChange={(checked) => set('qrFallbackEnabled', checked)}
+                  aria-label="Usar QR como respaldo riesgoso"
+                />
+              </div>
+            )}
           </section>
 
           <div className={styles.footer}>
@@ -383,7 +558,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               <Button variant="secondary" onClick={onClose} disabled={saving || deleting}>
                 Cancelar
               </Button>
-              <Button variant="primary" onClick={handleSave} disabled={saving || deleting}>
+              <Button variant="primary" onClick={handleSave} disabled={saving || deleting || !draft.templateId}>
                 {saving ? 'Guardando…' : 'Guardar'}
               </Button>
             </div>

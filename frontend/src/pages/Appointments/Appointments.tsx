@@ -22,6 +22,10 @@ import {
   type ReminderChannelOption,
   type ReminderSenderOption
 } from '@/services/appointmentRemindersService';
+import {
+  messageTemplatesService,
+  type MessageTemplate
+} from '@/services/messageTemplatesService';
 import AppointmentReminderModal from './AppointmentReminderModal';
 import styles from './Appointments.module.css';
 
@@ -254,6 +258,7 @@ export const Appointments: React.FC = () => {
   const [reminders, setReminders] = useState<AppointmentReminder[]>([]);
   const [reminderSenders, setReminderSenders] = useState<ReminderSenderOption[]>([]);
   const [reminderChannels, setReminderChannels] = useState<ReminderChannelOption[]>([]);
+  const [reminderTemplates, setReminderTemplates] = useState<MessageTemplate[]>([]);
   const [selectedReminder, setSelectedReminder] = useState<AppointmentReminder | null>(null);
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
   const [creatingReminder, setCreatingReminder] = useState(false);
@@ -299,13 +304,17 @@ export const Appointments: React.FC = () => {
   // Carga inicial de los mensajes automáticos del panel lateral.
   useEffect(() => {
     let cancelled = false;
-    appointmentRemindersService.getOverview()
-      .then(overview => {
-        if (cancelled) return;
-        setReminders(overview.reminders);
-        setReminderSenders(overview.senders);
-        setReminderChannels(overview.channels);
-      })
+    const loadReminderSettings = async () => {
+      const overview = await appointmentRemindersService.getOverview();
+      const templateBundle = await messageTemplatesService.getBundle();
+      if (cancelled) return;
+      setReminders(overview.reminders);
+      setReminderSenders(overview.senders);
+      setReminderChannels(overview.channels);
+      setReminderTemplates(templateBundle.templates);
+    };
+
+    loadReminderSettings()
       .catch(() => {
         if (!cancelled) {
           showToast('error', 'Mensajes automáticos', 'No se pudieron cargar los mensajes automáticos.');
@@ -2407,6 +2416,7 @@ export const Appointments: React.FC = () => {
         reminder={selectedReminder}
         senders={reminderSenders}
         channels={reminderChannels}
+        templates={reminderTemplates}
         onClose={() => {
           setIsReminderModalOpen(false);
           setSelectedReminder(null);
