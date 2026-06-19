@@ -1473,6 +1473,38 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       throw new Error(data.error || 'No se pudo crear el flujo de parcialidades')
     }
 
+    if (selectedContact && data.cardSetupPaymentLink) {
+      showPaymentLinkReady({
+        kind: 'card_setup',
+        title: 'Enlace de domiciliación listo',
+        description: 'Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.',
+        paymentUrl: data.cardSetupPaymentLink,
+        amount: cardSetupAmount,
+        currency: summary.currency,
+        contact: selectedContact,
+        paymentId: data.cardSetupInvoiceId
+      })
+      showToast('success', 'Parcialidades creadas', 'El enlace de domiciliación está listo para copiar o enviar.')
+      onSuccess?.()
+      return
+    }
+
+    if (selectedContact && data.firstPaymentLink) {
+      showPaymentLinkReady({
+        kind: 'first_payment',
+        title: 'Primer pago listo',
+        description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.',
+        paymentUrl: data.firstPaymentLink,
+        amount: firstPaymentAmount,
+        currency: summary.currency,
+        contact: selectedContact,
+        paymentId: data.firstPaymentInvoiceId
+      })
+      showToast('success', 'Parcialidades creadas', 'El enlace del primer pago está listo para copiar o enviar.')
+      onSuccess?.()
+      return
+    }
+
     const statusMessage = data.currentState === 'waiting_card_authorization'
       ? 'Parcialidades creadas. El sistema esperará la autorización de tarjeta antes de activar los pagos automáticos.'
       : 'Parcialidades creadas correctamente.'
@@ -1754,7 +1786,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return
     }
 
-    if (paymentOption === 'stripe' && paymentMode === 'partial') {
+    if (paymentOption === 'stripe' && activePaymentMode === 'partial') {
       if (!selectedContact) {
         showToast('error', 'Selecciona un contacto')
         setStep('options')
@@ -1912,7 +1944,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     try {
-      if (paymentMode === 'partial') {
+      if (activePaymentMode === 'partial') {
         const channels = paymentOption === 'send'
           ? {
               email: EMAIL_SEND_METHODS.has(effectiveSendMethod),
@@ -2880,7 +2912,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const renderPaymentOptions = () => {
     if (!invoiceSummary) return null
 
-    if (paymentMode === 'partial') {
+    if (activePaymentMode === 'partial') {
       const stripeSavedCardLabel = stripePlanSavedPaymentMethod
         ? `Stripe usará ${getSavedCardDescription(stripePlanSavedPaymentMethod)} para los cobros programados.`
         : 'Selecciona una tarjeta guardada para programar este plan.'
