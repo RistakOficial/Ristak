@@ -3704,6 +3704,10 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-
   padding: var(--app-page-padding-top) var(--app-page-gutter) var(--app-page-padding-bottom) !important;
 }
 
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-page][data-fullbleed='true'] {
+  padding: 0 !important;
+}
+
 body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-layout-sidebar] {
   position: relative;
   width: var(--app-sidebar-width) !important;

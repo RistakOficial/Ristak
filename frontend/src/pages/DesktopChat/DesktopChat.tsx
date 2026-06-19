@@ -4016,6 +4016,7 @@ export const DesktopChat: React.FC = () => {
     <div
       className={`${styles.page} ${agentAssignedViewOpen ? styles.pageAgentInbox : ''}`}
       data-ristak-page
+      data-fullbleed="true"
       data-desktop-chat-agent-view={agentAssignedViewOpen ? 'true' : undefined}
     >
       <section className={styles.chatShell} data-desktop-chat-page>
