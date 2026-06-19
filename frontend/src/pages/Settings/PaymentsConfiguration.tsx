@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Card, Button, NumberInput } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
-import { CheckCircle, Clock, CreditCard, KeyRound, Loader2, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, CheckCircle, Clock, CreditCard, KeyRound, Loader2, ShieldCheck } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
 import { invalidateIntegrationsStatus } from '@/services/integrationsService'
@@ -73,7 +73,8 @@ export const PaymentsConfiguration: React.FC = () => {
   const { showToast } = useNotification()
   const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
 
-  const [selectedGateway, setSelectedGateway] = useState<PaymentGatewayId>(routeGateway || 'stripe')
+  const selectedGateway = routeGateway
+  const isGatewayDetail = Boolean(routeGateway)
   const [paymentTitle, setPaymentTitle] = useState('PAGO')
   const [paymentNumberPrefix, setPaymentNumberPrefix] = useState('INV-')
   const [paymentDueDays, setPaymentDueDays] = useState(7)
@@ -96,12 +97,10 @@ export const PaymentsConfiguration: React.FC = () => {
   useEffect(() => {
     if (loadingHighLevelConnection) return
 
-    setSelectedGateway(routeGateway || (highLevelConnected ? 'highlevel' : 'stripe'))
-
     if (highLevelConnected) {
       loadPaymentConfig()
     }
-  }, [highLevelConnected, loadingHighLevelConnection, routeGateway])
+  }, [highLevelConnected, loadingHighLevelConnection])
 
   useEffect(() => {
     loadStripeConfig()
@@ -143,6 +142,10 @@ export const PaymentsConfiguration: React.FC = () => {
   const selectedGatewayOption = allGatewayOptions.find((gateway) => gateway.id === selectedGateway)
   const showHighLevelSettings = highLevelConnected && selectedGateway === 'highlevel'
   const showStripeSettings = selectedGateway === 'stripe'
+  const pageTitle = isGatewayDetail && selectedGatewayOption ? selectedGatewayOption.name : 'Pagos'
+  const pageSubtitle = isGatewayDetail && selectedGatewayOption
+    ? selectedGatewayOption.description
+    : 'Elige qué pasarela de pago usará Ristak para cobrar y dar seguimiento a tus pagos.'
 
   const loadPaymentConfig = async () => {
     try {
@@ -256,7 +259,6 @@ export const PaymentsConfiguration: React.FC = () => {
   }
 
   const handleSelectGateway = (gateway: PaymentGatewayOption) => {
-    setSelectedGateway(gateway.id)
     navigate(`/settings/payments/${gateway.id}`)
 
     if (gateway.status === 'soon') {
@@ -274,13 +276,17 @@ export const PaymentsConfiguration: React.FC = () => {
                 <CreditCard size={22} />
               </div>
               <div>
-                <h2 className={styles.pageTitle}>Pagos</h2>
-                <p className={styles.pageSubtitle}>
-                  Elige qué pasarela de pago usará Ristak para cobrar y dar seguimiento a tus pagos.
-                </p>
+                <h2 className={styles.pageTitle}>{pageTitle}</h2>
+                <p className={styles.pageSubtitle}>{pageSubtitle}</p>
               </div>
             </div>
             <div className={styles.headerRight}>
+              {isGatewayDetail && (
+                <Button variant="secondary" onClick={() => navigate('/settings/payments')}>
+                  <ArrowLeft size={16} />
+                  Pasarelas
+                </Button>
+              )}
               {loadingHighLevelConnection ? (
                 <Badge variant="warning">
                   <Loader2 size={16} className={styles.spinIcon} />
@@ -307,57 +313,70 @@ export const PaymentsConfiguration: React.FC = () => {
         </div>
 
         <div className={styles.section}>
-          {gatewayCategories.map((category, index) => (
-            <section key={category.id} style={index > 0 ? { marginTop: 'var(--spacing-lg)' } : undefined}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <h3 className={styles.sectionTitle}>{category.title}</h3>
-                  <p className={styles.sectionDescription}>{category.description}</p>
+          {!isGatewayDetail && (
+            <>
+              {gatewayCategories.map((category) => (
+                <section key={category.id} className={styles.gatewayCategorySection}>
+                  <div className={styles.sectionHeader}>
+                    <div>
+                      <h3 className={styles.sectionTitle}>{category.title}</h3>
+                      <p className={styles.sectionDescription}>{category.description}</p>
+                    </div>
+                  </div>
+
+                  <div className={styles.gatewayGrid}>
+                    {category.options.map((gateway) => {
+                      const isSelected = selectedGateway === gateway.id
+                      const isConnected = gateway.status === 'connected'
+                      const isAvailable = gateway.status === 'available'
+
+                      return (
+                        <button
+                          key={gateway.id}
+                          type="button"
+                          className={`${styles.gatewayCard} ${isSelected ? styles.gatewayCardSelected : ''}`}
+                          onClick={() => handleSelectGateway(gateway)}
+                          aria-pressed={isSelected}
+                        >
+                          <span className={styles.gatewayCardHeader}>
+                            <span className={styles.gatewayCardName}>{gateway.name}</span>
+                            <Badge variant={isConnected ? 'success' : isAvailable ? 'info' : 'warning'}>
+                              {isConnected ? 'Conectado' : isAvailable ? 'Configurar' : 'Próximamente'}
+                            </Badge>
+                          </span>
+                          <span className={styles.gatewayCardDescription}>{gateway.description}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </section>
+              ))}
+
+              {!loadingHighLevelConnection && !highLevelConnected && !stripeConfig?.configured && (
+                <div className={styles.gatewayNotice}>
+                  <h4>Conecta Stripe para cobrar con tarjeta</h4>
+                  <p>
+                    GoHighLevel no está activo en esta cuenta, pero Stripe ya se puede configurar desde su propia pantalla.
+                  </p>
                 </div>
-              </div>
-
-              <div className={styles.gatewayGrid}>
-                {category.options.map((gateway) => {
-                  const isSelected = selectedGateway === gateway.id
-                  const isConnected = gateway.status === 'connected'
-                  const isAvailable = gateway.status === 'available'
-
-                  return (
-                    <button
-                      key={gateway.id}
-                      type="button"
-                      className={`${styles.gatewayCard} ${isSelected ? styles.gatewayCardSelected : ''}`}
-                      onClick={() => handleSelectGateway(gateway)}
-                      aria-pressed={isSelected}
-                    >
-                      <span className={styles.gatewayCardHeader}>
-                        <span className={styles.gatewayCardName}>{gateway.name}</span>
-                        <Badge variant={isConnected ? 'success' : isAvailable ? 'info' : 'warning'}>
-                          {isConnected ? 'Conectado' : isAvailable ? 'Configurar' : 'Próximamente'}
-                        </Badge>
-                      </span>
-                      <span className={styles.gatewayCardDescription}>{gateway.description}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </section>
-          ))}
-
-          {!loadingHighLevelConnection && !highLevelConnected && !stripeConfig?.configured && (
-            <div className={styles.gatewayNotice}>
-              <h4>Conecta Stripe para cobrar con tarjeta</h4>
-              <p>
-                GoHighLevel no está activo en esta cuenta, pero Stripe ya se puede configurar aquí para crear links de pago públicos desde Ristak.
-              </p>
-            </div>
+              )}
+            </>
           )}
 
-          {selectedGatewayOption?.status === 'soon' && (
+          {isGatewayDetail && selectedGatewayOption?.status === 'soon' && (
             <div className={styles.gatewayNotice}>
               <h4>{selectedGatewayOption.name} estará disponible próximamente</h4>
               <p>
                 Esta opción todavía no cobra ni guarda datos reales. La dejamos visible para que elijas el camino que quieres usar cuando se libere.
+              </p>
+            </div>
+          )}
+
+          {isGatewayDetail && selectedGateway === 'highlevel' && !highLevelConnected && (
+            <div className={styles.gatewayNotice}>
+              <h4>GoHighLevel no está conectado</h4>
+              <p>
+                Conecta GoHighLevel primero para administrar sus invoices desde esta pantalla.
               </p>
             </div>
           )}
@@ -600,8 +619,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     value={paymentTermsNotes}
                     onChange={(e) => setPaymentTermsNotes(e.target.value)}
                     placeholder="Escribe tus términos y condiciones aquí..."
-                    className={styles.input}
-                    style={{ minHeight: '120px', resize: 'vertical' }}
+                    className={`${styles.input} ${styles.textareaInput}`}
                   />
                   <p className={styles.hint}>
                     Estos términos aparecerán al final del documento de pago
