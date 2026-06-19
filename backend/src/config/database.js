@@ -1847,6 +1847,53 @@ async function initTables() {
       }
     }
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_phone_numbers (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        phone TEXT NOT NULL UNIQUE,
+        label TEXT,
+        is_primary INTEGER DEFAULT 0,
+        source TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_phone_numbers_contact ON contact_phone_numbers(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_phone_numbers_primary ON contact_phone_numbers(contact_id, is_primary)')
+
+    const contactPhoneSeedRows = await db.all(`
+      SELECT id, phone
+      FROM contacts
+      WHERE phone IS NOT NULL AND phone != ''
+    `).catch(() => [])
+
+    for (const row of contactPhoneSeedRows) {
+      const phone = normalizePhoneForStorage(row.phone) || String(row.phone || '').trim()
+      if (!phone) continue
+
+      await db.run(`
+        INSERT INTO contact_phone_numbers (
+          id, contact_id, phone, label, is_primary, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(phone) DO UPDATE SET
+          is_primary = CASE
+            WHEN contact_phone_numbers.contact_id = excluded.contact_id THEN 1
+            ELSE contact_phone_numbers.is_primary
+          END,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        `contact_phone_${crypto.randomUUID()}`,
+        row.id,
+        phone,
+        'Principal',
+        'legacy'
+      ]).catch(error => {
+        logger.warn(`No se pudo registrar teléfono adicional para ${row.id}: ${error.message}`)
+      })
+    }
+
     // Enlaces de disparo: URL publica con ID propio que registra cada visita
     // antes de redirigir al destino final.
     await db.run(`

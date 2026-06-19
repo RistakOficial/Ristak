@@ -43,6 +43,12 @@ function sortContactsByPriority(a, b) {
   return String(a.created_at || '').localeCompare(String(b.created_at || ''))
 }
 
+const cleanString = (value) => String(value || '').trim()
+
+function normalizeContactPhone(value) {
+  return normalizePhoneForStorage(value) || cleanString(value) || null
+}
+
 async function updateContactReferences(fromId, toId) {
   const references = await getContactReferenceTables()
 
@@ -191,10 +197,6 @@ async function syncContactPhoneColumns(contactId, canonicalPhone) {
   if (!contactId || !canonicalPhone) return
 
   const updates = [
-    ['whatsapp_attribution', 'phone'],
-    ['whatsapp_api_contacts', 'phone'],
-    ['whatsapp_api_messages', 'phone'],
-    ['whatsapp_api_attribution', 'phone'],
     ['payment_flows', 'contact_phone']
   ]
 
@@ -207,21 +209,123 @@ async function syncContactPhoneColumns(contactId, canonicalPhone) {
   }
 }
 
+export async function listContactPhoneNumbers(contactId) {
+  const id = cleanString(contactId)
+  if (!id) return []
+
+  const rows = await db.all(
+    `SELECT id, phone, label, is_primary, source, created_at, updated_at
+     FROM contact_phone_numbers
+     WHERE contact_id = ?
+     ORDER BY is_primary DESC, created_at ASC, phone ASC`,
+    [id]
+  ).catch(() => [])
+
+  return rows.map(row => ({
+    id: row.id,
+    phone: row.phone,
+    label: row.label || '',
+    isPrimary: Boolean(row.is_primary),
+    is_primary: Boolean(row.is_primary),
+    source: row.source || '',
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }))
+}
+
+export async function getContactPhoneValues(contactId, primaryPhone = null) {
+  const values = new Set()
+  const addCandidates = (value) => {
+    buildPhoneMatchCandidates(value).forEach(candidate => {
+      const clean = cleanString(candidate)
+      if (clean) values.add(clean)
+    })
+  }
+
+  addCandidates(primaryPhone)
+
+  const rows = await listContactPhoneNumbers(contactId)
+  rows.forEach(row => addCandidates(row.phone))
+
+  return [...values]
+}
+
+export async function recordContactPhoneNumber({
+  contactId,
+  phone,
+  label = '',
+  isPrimary = false,
+  source = 'manual',
+  mergeConflicts = true
+} = {}) {
+  const id = cleanString(contactId)
+  const canonicalPhone = normalizeContactPhone(phone)
+  if (!id || !canonicalPhone) return null
+
+  const existing = await db.get(
+    'SELECT contact_id FROM contact_phone_numbers WHERE phone = ? LIMIT 1',
+    [canonicalPhone]
+  ).catch(() => null)
+
+  if (existing?.contact_id && existing.contact_id !== id && mergeConflicts) {
+    await mergeContactIds({
+      fromId: existing.contact_id,
+      toId: id,
+      canonicalPhone: isPrimary ? canonicalPhone : null
+    })
+  }
+
+  if (isPrimary) {
+    await db.run(
+      'UPDATE contact_phone_numbers SET is_primary = 0, updated_at = CURRENT_TIMESTAMP WHERE contact_id = ?',
+      [id]
+    ).catch(() => {})
+  }
+
+  await db.run(`
+    INSERT INTO contact_phone_numbers (
+      id, contact_id, phone, label, is_primary, source, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(phone) DO UPDATE SET
+      contact_id = excluded.contact_id,
+      label = COALESCE(NULLIF(excluded.label, ''), contact_phone_numbers.label),
+      is_primary = CASE
+        WHEN excluded.is_primary = 1 THEN 1
+        ELSE contact_phone_numbers.is_primary
+      END,
+      source = COALESCE(NULLIF(excluded.source, ''), contact_phone_numbers.source),
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    `contact_phone_${crypto.randomUUID()}`,
+    id,
+    canonicalPhone,
+    cleanString(label) || (isPrimary ? 'Principal' : 'Adicional'),
+    isPrimary ? 1 : 0,
+    cleanString(source) || 'manual'
+  ])
+
+  return {
+    phone: canonicalPhone,
+    isPrimary: Boolean(isPrimary)
+  }
+}
+
 export async function findContactByPhoneCandidates(phone, { excludeId = null } = {}) {
   const candidates = buildPhoneMatchCandidates(phone)
   if (!candidates.length) return null
 
   const placeholders = candidates.map(() => '?').join(', ')
-  const params = [...candidates]
-  const excludeClause = excludeId ? ' AND id != ?' : ''
+  const params = [...candidates, ...candidates]
+  const excludeClause = excludeId ? ' AND contacts.id != ?' : ''
   if (excludeId) params.push(excludeId)
 
   const rows = await db.all(
-    `SELECT id, phone, full_name, source, total_paid, purchases_count,
-            attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
-            created_at
+    `SELECT DISTINCT contacts.id, contacts.phone, contacts.full_name, contacts.source,
+            contacts.total_paid, contacts.purchases_count, contacts.attribution_ctwa_clid,
+            contacts.attribution_ad_name, contacts.attribution_ad_id, contacts.created_at
      FROM contacts
-     WHERE phone IN (${placeholders})${excludeClause}`,
+     LEFT JOIN contact_phone_numbers cpn ON cpn.contact_id = contacts.id
+     WHERE (contacts.phone IN (${placeholders}) OR cpn.phone IN (${placeholders}))${excludeClause}`,
     params
   )
 
@@ -243,6 +347,22 @@ export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
   const purchasesCount = Math.max(Number(fromContact.purchases_count || 0), Number(toContact.purchases_count || 0))
 
   await db.run('UPDATE contacts SET phone = NULL, email = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [fromId])
+
+  if (fromContact.phone) {
+    await recordContactPhoneNumber({
+      contactId: toId,
+      phone: fromContact.phone,
+      label: 'Adicional',
+      source: 'merge',
+      mergeConflicts: false
+    }).catch(() => {})
+  }
+
+  await db.run(
+    'UPDATE contact_phone_numbers SET contact_id = ?, updated_at = CURRENT_TIMESTAMP WHERE contact_id = ?',
+    [toId, fromId]
+  ).catch(() => {})
+
   await updateContactReferences(fromId, toId)
 
   await db.run(`
@@ -284,6 +404,17 @@ export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
     purchasesCount,
     toId
   ])
+
+  if (normalizedPhone) {
+    await recordContactPhoneNumber({
+      contactId: toId,
+      phone: normalizedPhone,
+      label: 'Principal',
+      isPrimary: true,
+      source: 'merge',
+      mergeConflicts: false
+    }).catch(() => {})
+  }
 
   await db.run('DELETE FROM contacts WHERE id = ?', [fromId])
   await syncContactPhoneColumns(toId, normalizedPhone)

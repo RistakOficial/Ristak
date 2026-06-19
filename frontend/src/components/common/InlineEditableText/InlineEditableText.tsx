@@ -11,6 +11,7 @@ export interface InlineEditableTextProps {
   inputMode?: InputHTMLAttributes<HTMLInputElement>['inputMode']
   disabled?: boolean
   className?: string
+  layout?: 'inline' | 'block'
   onSave: (value: string) => Promise<void> | void
   normalizeValue?: (value: string) => string
   validate?: (value: string) => string | null | undefined
@@ -26,6 +27,7 @@ export function InlineEditableText({
   inputMode,
   disabled = false,
   className = '',
+  layout = 'inline',
   onSave,
   normalizeValue = defaultNormalizeValue,
   validate
@@ -104,7 +106,7 @@ export function InlineEditableText({
 
   if (editing) {
     return (
-      <span className={rootClassName} data-inline-editing="true">
+      <span className={rootClassName} data-inline-editing="true" data-layout={layout}>
         <input
           ref={inputRef}
           className={styles.input}
@@ -130,7 +132,7 @@ export function InlineEditableText({
   }
 
   return (
-    <span className={rootClassName}>
+    <span className={rootClassName} data-layout={layout}>
       <button
         type="button"
         className={`${styles.displayButton} ${normalizedValue ? '' : styles.emptyValue}`.trim()}

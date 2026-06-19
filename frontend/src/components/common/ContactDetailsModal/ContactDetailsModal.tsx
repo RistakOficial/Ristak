@@ -24,7 +24,7 @@ import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/cont
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import type { ContactCustomField, ContactCustomFieldValue, ContactMetaAttribution } from '@/types'
+import type { ContactCustomField, ContactCustomFieldValue, ContactMetaAttribution, ContactPhoneNumber } from '@/types'
 import styles from './ContactDetailsModal.module.css'
 
 interface ContactPaymentDetail {
@@ -106,6 +106,8 @@ interface ContactDetail {
   firstSession?: ContactFirstSession | null
   customFields?: ContactCustomField[]
   tags?: string[]
+  phones?: ContactPhoneNumber[]
+  phoneNumbers?: ContactPhoneNumber[]
   preferredWhatsAppPhoneNumberId?: string | null
   preferred_whatsapp_phone_number_id?: string | null
 }
@@ -153,6 +155,40 @@ interface ContactDetailsModalProps {
 
 type ContactIdentityField = 'name' | 'email' | 'phone'
 type ContactIdentityUpdate = Partial<Pick<ContactDetail, ContactIdentityField>>
+
+const getContactPhoneEntries = (contact?: ContactDetail | null): ContactPhoneNumber[] => {
+  const byPhone = new Map<string, ContactPhoneNumber>()
+  const addPhone = (entry?: ContactPhoneNumber | null) => {
+    const phone = String(entry?.phone || '').trim()
+    if (!phone || byPhone.has(phone)) return
+    const isPrimary = Boolean(entry?.isPrimary || entry?.is_primary || phone === String(contact?.phone || '').trim())
+    byPhone.set(phone, {
+      ...entry,
+      id: entry?.id || phone,
+      phone,
+      label: entry?.label || (isPrimary ? 'Principal' : 'Adicional'),
+      isPrimary,
+      is_primary: isPrimary
+    })
+  }
+
+  if (contact?.phone) {
+    addPhone({
+      id: `${contact.id}-primary-phone`,
+      phone: contact.phone,
+      label: 'Principal',
+      isPrimary: true
+    })
+  }
+  ;(contact?.phones || contact?.phoneNumbers || []).forEach(addPhone)
+
+  return Array.from(byPhone.values()).sort((left, right) => {
+    const leftPrimary = Boolean(left.isPrimary || left.is_primary)
+    const rightPrimary = Boolean(right.isPrimary || right.is_primary)
+    if (leftPrimary !== rightPrimary) return leftPrimary ? -1 : 1
+    return String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+  })
+}
 
 const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
   field.id || field.key || field.fieldKey || field.label || field.name || `custom-field-${index}`
@@ -1223,6 +1259,7 @@ export function ContactDetailsModal({
   ])
   const selectedChatChannelOption = chatChannelOptions.find((option) => option.value === chatChannelValue) || chatChannelOptions[0]
   const selectedChatRouteLabel = selectedChatChannelOption?.label || CONTACT_CHAT_CHANNEL_LABELS[selectedChatChannel]
+  const selectedContactPhones = useMemo(() => getContactPhoneEntries(selectedContact), [selectedContact])
   const chatMessageGroups = useMemo(() => {
     const groups: Array<{ key: string; label: string; messages: ContactChatMessage[] }> = []
     chatMessages.forEach((message) => {
@@ -1793,21 +1830,49 @@ export function ContactDetailsModal({
                           ariaLabel="Editar correo del contacto"
                           type="email"
                           inputMode="email"
+                          layout="block"
                           disabled={!onUpdateContact}
                           onSave={(value) => saveContactIdentityField('email', value)}
                         />
                       </div>
                       <div className={styles.detailItem}>
                         <Icon name="phone" size={16} />
-                        <InlineEditableText
-                          value={selectedContact.phone || ''}
-                          emptyLabel="Sin teléfono"
-                          ariaLabel="Editar teléfono del contacto"
-                          type="tel"
-                          inputMode="tel"
-                          disabled={!onUpdateContact}
-                          onSave={(value) => saveContactIdentityField('phone', value)}
-                        />
+                        <div className={styles.contactPhoneList}>
+                          {selectedContactPhones.length > 0 ? (
+                            selectedContactPhones.map((phoneEntry) => {
+                              const isPrimary = Boolean(phoneEntry.isPrimary || phoneEntry.is_primary)
+                              return isPrimary ? (
+                                <InlineEditableText
+                                  key={phoneEntry.id || phoneEntry.phone}
+                                  value={phoneEntry.phone}
+                                  emptyLabel="Sin teléfono"
+                                  ariaLabel="Editar teléfono principal del contacto"
+                                  type="tel"
+                                  inputMode="tel"
+                                  layout="block"
+                                  disabled={!onUpdateContact}
+                                  onSave={(value) => saveContactIdentityField('phone', value)}
+                                />
+                              ) : (
+                                <span key={phoneEntry.id || phoneEntry.phone} className={styles.contactPhoneValue}>
+                                  <span>{phoneEntry.phone}</span>
+                                  <small>{phoneEntry.label || 'Adicional'}</small>
+                                </span>
+                              )
+                            })
+                          ) : (
+                            <InlineEditableText
+                              value=""
+                              emptyLabel="Sin teléfono"
+                              ariaLabel="Editar teléfono del contacto"
+                              type="tel"
+                              inputMode="tel"
+                              layout="block"
+                              disabled={!onUpdateContact}
+                              onSave={(value) => saveContactIdentityField('phone', value)}
+                            />
+                          )}
+                        </div>
                       </div>
                       <div className={styles.detailItem}>
                         <Icon name="calendar" size={16} />

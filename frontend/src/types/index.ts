@@ -140,12 +140,25 @@ export interface ContactCustomFieldDefinitionSource {
   lastSeenAt?: string | null
 }
 
+export interface ContactPhoneNumber {
+  id?: string
+  phone: string
+  label?: string
+  isPrimary?: boolean
+  is_primary?: boolean
+  source?: string
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
 export interface Contact {
   id: string
   createdAt: string
   name: string
   email?: string
   phone?: string
+  phones?: ContactPhoneNumber[]
+  phoneNumbers?: ContactPhoneNumber[]
   ltv: number
   status: 'lead' | 'appointment' | 'customer'
   lastPurchase?: string

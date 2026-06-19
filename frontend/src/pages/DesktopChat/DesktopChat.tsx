@@ -77,7 +77,7 @@ import {
   type WhatsAppApiStatus,
   type WhatsAppApiTemplate
 } from '@/services/whatsappApiService'
-import type { Contact, ContactAppointment, ContactPayment } from '@/types'
+import type { Contact, ContactAppointment, ContactPayment, ContactPhoneNumber } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import styles from './DesktopChat.module.css'
@@ -1375,6 +1375,40 @@ function getChatPreview(contact: DesktopChatContact) {
   return contact.phone || contact.email || 'Sin mensajes todavía'
 }
 
+function getContactPhoneEntries(contact?: Contact | null): ContactPhoneNumber[] {
+  const byPhone = new Map<string, ContactPhoneNumber>()
+  const addPhone = (entry?: ContactPhoneNumber | null) => {
+    const phone = String(entry?.phone || '').trim()
+    if (!phone || byPhone.has(phone)) return
+    const isPrimary = Boolean(entry?.isPrimary || entry?.is_primary || phone === String(contact?.phone || '').trim())
+    byPhone.set(phone, {
+      ...entry,
+      id: entry?.id || phone,
+      phone,
+      label: entry?.label || (isPrimary ? 'Principal' : 'Adicional'),
+      isPrimary,
+      is_primary: isPrimary
+    })
+  }
+
+  if (contact?.phone) {
+    addPhone({
+      id: `${contact.id}-primary-phone`,
+      phone: contact.phone,
+      label: 'Principal',
+      isPrimary: true
+    })
+  }
+  ;(contact?.phones || contact?.phoneNumbers || []).forEach(addPhone)
+
+  return Array.from(byPhone.values()).sort((left, right) => {
+    const leftPrimary = Boolean(left.isPrimary || left.is_primary)
+    const rightPrimary = Boolean(right.isPrimary || right.is_primary)
+    if (leftPrimary !== rightPrimary) return leftPrimary ? -1 : 1
+    return String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+  })
+}
+
 function getContactInfoPayments(contact?: Contact | null, journey: JourneyEvent[] = []): ContactInfoPayment[] {
   const contactPayments = (contact?.payments || []).map((payment: ContactPayment, index: number) => ({
     id: String(payment.id || `${contact?.id || 'contact'}-payment-${index}`),
@@ -1735,6 +1769,10 @@ export const DesktopChat: React.FC = () => {
   const activeContact = useMemo(
     () => chats.find((contact) => contact.id === activeContactId) || null,
     [activeContactId, chats]
+  )
+  const activeContactPhones = useMemo(
+    () => getContactPhoneEntries(contactInfoData || activeContact),
+    [activeContact, contactInfoData]
   )
   const businessPhones = useMemo(() => whatsappStatus?.phoneNumbers || [], [whatsappStatus?.phoneNumbers])
   const defaultComposerBusinessPhone = useMemo(() => getComposerBusinessPhone(whatsappStatus, activeContact), [activeContact, whatsappStatus])
@@ -5201,14 +5239,40 @@ export const DesktopChat: React.FC = () => {
                   <div>
                     <dt><Phone size={14} /> Teléfono</dt>
                     <dd>
-                      <InlineEditableText
-                        value={(contactInfoData || activeContact).phone || ''}
-                        emptyLabel="Sin teléfono"
-                        ariaLabel="Editar teléfono del contacto"
-                        type="tel"
-                        inputMode="tel"
-                        onSave={(value) => handleUpdateContactIdentityField('phone', value)}
-                      />
+                      <div className={styles.contactPhoneList}>
+                        {activeContactPhones.length > 0 ? (
+                          activeContactPhones.map((phoneEntry) => {
+                            const isPrimary = Boolean(phoneEntry.isPrimary || phoneEntry.is_primary)
+                            return isPrimary ? (
+                              <InlineEditableText
+                                key={phoneEntry.id || phoneEntry.phone}
+                                value={phoneEntry.phone}
+                                emptyLabel="Sin teléfono"
+                                ariaLabel="Editar teléfono principal del contacto"
+                                type="tel"
+                                inputMode="tel"
+                                layout="block"
+                                onSave={(value) => handleUpdateContactIdentityField('phone', value)}
+                              />
+                            ) : (
+                              <span key={phoneEntry.id || phoneEntry.phone} className={styles.contactPhoneValue}>
+                                <span>{phoneEntry.phone}</span>
+                                <small>{phoneEntry.label || 'Adicional'}</small>
+                              </span>
+                            )
+                          })
+                        ) : (
+                          <InlineEditableText
+                            value=""
+                            emptyLabel="Sin teléfono"
+                            ariaLabel="Editar teléfono del contacto"
+                            type="tel"
+                            inputMode="tel"
+                            layout="block"
+                            onSave={(value) => handleUpdateContactIdentityField('phone', value)}
+                          />
+                        )}
+                      </div>
                     </dd>
                   </div>
                   <div>
@@ -5220,6 +5284,7 @@ export const DesktopChat: React.FC = () => {
                         ariaLabel="Editar correo del contacto"
                         type="email"
                         inputMode="email"
+                        layout="block"
                         onSave={(value) => handleUpdateContactIdentityField('email', value)}
                       />
                     </dd>

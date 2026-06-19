@@ -88,6 +88,43 @@ const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
     (result as any).contactName = formatName((result as any).contactName)
   }
 
+  const rawPhones = Array.isArray((result as any).phones)
+    ? (result as any).phones
+    : Array.isArray((result as any).phoneNumbers)
+      ? (result as any).phoneNumbers
+      : []
+  const phonesByValue = new Map<string, Record<string, any>>()
+  const addPhone = (entry: Record<string, any>) => {
+    const phone = String(entry?.phone || '').trim()
+    if (!phone || phonesByValue.has(phone)) return
+    const isPrimary = Boolean(entry?.isPrimary || entry?.is_primary || phone === String((result as any).phone || '').trim())
+    phonesByValue.set(phone, {
+      ...entry,
+      id: entry?.id || phone,
+      phone,
+      label: entry?.label || (isPrimary ? 'Principal' : 'Adicional'),
+      isPrimary,
+      is_primary: isPrimary
+    })
+  }
+
+  if (typeof (result as any).phone === 'string' && (result as any).phone.trim()) {
+    addPhone({
+      id: `${(result as any).id || 'contact'}-primary-phone`,
+      phone: (result as any).phone,
+      label: 'Principal',
+      isPrimary: true
+    })
+  }
+  rawPhones.forEach(addPhone)
+
+  const phones = Array.from(phonesByValue.values()).sort((left, right) => {
+    if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1
+    return String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+  })
+  ;(result as any).phones = phones
+  ;(result as any).phoneNumbers = phones
+
   return result
 }
 

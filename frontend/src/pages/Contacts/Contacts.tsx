@@ -29,7 +29,7 @@ import { contactsService, type Contact, type ContactStats } from '@/services/con
 import { contactTagsService } from '@/services/contactTagsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
-import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefinition, ContactPayment } from '@/types'
+import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefinition, ContactPayment, ContactPhoneNumber } from '@/types'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import styles from './Contacts.module.css'
@@ -359,6 +359,68 @@ const mergeCustomFields = (baseFields: ContactCustomField[] = [], nextFields: Co
   return Array.from(fieldMap.values())
 }
 
+const mergeContactPhoneNumbers = (contacts: Contact[], primaryPhone?: string | null): ContactPhoneNumber[] => {
+  const byPhone = new Map<string, ContactPhoneNumber>()
+  const normalizedPrimaryPhone = String(primaryPhone || '').trim()
+
+  const addPhone = (entry?: ContactPhoneNumber | null) => {
+    const phone = String(entry?.phone || '').trim()
+    if (!phone) return
+
+    const existing = byPhone.get(phone)
+    const entryIsPrimary = Boolean(entry?.isPrimary || entry?.is_primary)
+    const nextIsPrimary = Boolean(existing?.isPrimary || existing?.is_primary || entryIsPrimary)
+
+    byPhone.set(phone, {
+      ...(existing || {}),
+      ...(entry || {}),
+      id: entry?.id || existing?.id || phone,
+      phone,
+      label: entry?.label || existing?.label,
+      isPrimary: nextIsPrimary,
+      is_primary: nextIsPrimary
+    })
+  }
+
+  contacts.forEach(contact => {
+    if (contact.phone) {
+      addPhone({
+        id: `${contact.id}-primary-phone`,
+        phone: contact.phone,
+        label: 'Principal',
+        isPrimary: contact.phone === normalizedPrimaryPhone
+      })
+    }
+    contact.phones?.forEach(addPhone)
+    contact.phoneNumbers?.forEach(addPhone)
+  })
+
+  let fallbackPrimaryAssigned = false
+  return Array.from(byPhone.values())
+    .map((phoneEntry) => {
+      const isPrimary = normalizedPrimaryPhone
+        ? phoneEntry.phone === normalizedPrimaryPhone
+        : !fallbackPrimaryAssigned && Boolean(phoneEntry.isPrimary || phoneEntry.is_primary)
+      if (isPrimary) fallbackPrimaryAssigned = true
+      const label = isPrimary
+        ? 'Principal'
+        : phoneEntry.label && phoneEntry.label !== 'Principal'
+          ? phoneEntry.label
+          : 'Adicional'
+
+      return {
+        ...phoneEntry,
+        label,
+        isPrimary,
+        is_primary: isPrimary
+      }
+    })
+    .sort((left, right) => {
+      if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1
+      return String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+    })
+}
+
 const mergeContactDetailRecords = (
   baseContact: Contact | null,
   detailContacts: Contact[],
@@ -522,6 +584,12 @@ const mergeContactDetailRecords = (
   }
 
   merged.mergedContactIds = Array.from(mergedIds).filter(id => id && id !== merged.id)
+  const mergedPhones = mergeContactPhoneNumbers(allContacts, merged.phone)
+  if (mergedPhones.length > 0) {
+    merged.phone = merged.phone || mergedPhones[0].phone
+    merged.phones = mergedPhones
+    merged.phoneNumbers = mergedPhones
+  }
 
   return merged
 }
@@ -939,6 +1007,8 @@ const ContactsTable: React.FC = () => {
       pictureUrl: contactData.pictureUrl,
       profile_picture_url: contactData.profile_picture_url,
       created_at: createdAt,
+      phones: contactData.phones || contactData.phoneNumbers || [],
+      phoneNumbers: contactData.phoneNumbers || contactData.phones || [],
       ltv: contactData.ltv,
       purchases: contactData.purchases,
       payments,

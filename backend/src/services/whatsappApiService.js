@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url'
 import nodeFetch from 'node-fetch'
 import sharp from 'sharp'
 import { db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
-import { findContactByPhoneCandidates, generateContactId } from './contactIdentityService.js'
+import { findContactByPhoneCandidates, generateContactId, recordContactPhoneNumber } from './contactIdentityService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 import {
@@ -4007,6 +4007,16 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
       cleanMessageTimestamp || nowIso()
     ])
 
+    await recordContactPhoneNumber({
+      contactId,
+      phone: canonicalPhone,
+      label: 'Principal',
+      isPrimary: true,
+      source: 'whatsapp_api'
+    }).catch(error => {
+      logger.warn(`[WhatsApp API] No se pudo registrar teléfono principal para ${contactId}: ${error.message}`)
+    })
+
     return {
       id: contactId,
       created: true,
@@ -4087,6 +4097,16 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
     params.push(existing.id)
     await db.run(`UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`, params)
   }
+
+  await recordContactPhoneNumber({
+    contactId: existing.id,
+    phone: canonicalPhone,
+    label: existing.phone && normalizePhoneForStorage(existing.phone) !== canonicalPhone ? 'Adicional' : 'Principal',
+    isPrimary: !cleanString(existing.phone) || normalizePhoneForStorage(existing.phone) === canonicalPhone,
+    source: 'whatsapp_api'
+  }).catch(error => {
+    logger.warn(`[WhatsApp API] No se pudo registrar teléfono para ${existing.id}: ${error.message}`)
+  })
 
   return {
     id: existing.id,

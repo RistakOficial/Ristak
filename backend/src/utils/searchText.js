@@ -114,12 +114,21 @@ export function buildContactSearchCondition(alias = 'contacts', options = {}) {
   const phone = `${prefix}phone`
   const id = `${prefix}id`
   const joinedName = `COALESCE(${fullName}, '') || ' ' || COALESCE(${firstName}, '') || ' ' || COALESCE(${lastName}, '')`
+  const relatedPhoneExists = `
+    EXISTS (
+      SELECT 1
+      FROM contact_phone_numbers cpn_search
+      WHERE cpn_search.contact_id = ${id}
+        AND ${phoneDigitsExpression('cpn_search.phone')} LIKE ?
+    )
+  `
 
   const conditions = [
     `${textFoldExpression(fullName)} LIKE ?`,
     `${textFoldExpression(joinedName)} LIKE ?`,
     `${textFoldExpression(email)} LIKE ?`,
     `${phoneDigitsExpression(phone)} LIKE ?`,
+    relatedPhoneExists,
     `${textFoldExpression(id)} LIKE ?`
   ]
 
@@ -139,7 +148,7 @@ export function buildContactSearchParams(value, options = {}) {
   const textLike = containsPattern(value, 500) || '__no_text_match__'
   const digits = normalizePhoneDigits(value)
   const phoneLike = digits ? `%${digits}%` : '__no_phone_match__'
-  const params = [textLike, textLike, textLike, phoneLike, textLike]
+  const params = [textLike, textLike, textLike, phoneLike, phoneLike, textLike]
 
   if (options.includeSource) {
     params.push(textLike, textLike)

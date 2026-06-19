@@ -4,7 +4,14 @@ import { updateContactsStats } from '../utils/updateContactsStats.js'
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildContactStats } from '../services/analyticsService.js'
 import { getGHLClient } from '../services/ghlClient.js'
-import { findContactByPhoneCandidates, getGhlContactIdForLocalContact, prepareContactPhoneUpsert } from '../services/contactIdentityService.js'
+import {
+  findContactByPhoneCandidates,
+  getContactPhoneValues,
+  getGhlContactIdForLocalContact,
+  listContactPhoneNumbers,
+  prepareContactPhoneUpsert,
+  recordContactPhoneNumber
+} from '../services/contactIdentityService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
@@ -189,21 +196,27 @@ const CONTACT_WHATSAPP_PROFILE_SELECTS = `
         (
           SELECT profile_name
           FROM whatsapp_api_contacts
-          WHERE contact_id = c.id OR phone = c.phone
+          WHERE contact_id = c.id
+             OR phone = c.phone
+             OR phone IN (SELECT phone FROM contact_phone_numbers WHERE contact_id = c.id)
           ORDER BY updated_at DESC
           LIMIT 1
         ) AS whatsapp_profile_name,
         (
           SELECT raw_profile_json
           FROM whatsapp_api_contacts
-          WHERE contact_id = c.id OR phone = c.phone
+          WHERE contact_id = c.id
+             OR phone = c.phone
+             OR phone IN (SELECT phone FROM contact_phone_numbers WHERE contact_id = c.id)
           ORDER BY updated_at DESC
           LIMIT 1
         ) AS whatsapp_raw_profile_json,
         (
           SELECT profile_picture_url
           FROM whatsapp_api_contacts
-          WHERE contact_id = c.id OR phone = c.phone
+          WHERE contact_id = c.id
+             OR phone = c.phone
+             OR phone IN (SELECT phone FROM contact_phone_numbers WHERE contact_id = c.id)
           ORDER BY CASE WHEN NULLIF(profile_picture_url, '') IS NULL THEN 1 ELSE 0 END,
                    profile_picture_updated_at DESC,
                    updated_at DESC
@@ -212,7 +225,9 @@ const CONTACT_WHATSAPP_PROFILE_SELECTS = `
         (
           SELECT profile_picture_updated_at
           FROM whatsapp_api_contacts
-          WHERE contact_id = c.id OR phone = c.phone
+          WHERE contact_id = c.id
+             OR phone = c.phone
+             OR phone IN (SELECT phone FROM contact_phone_numbers WHERE contact_id = c.id)
           ORDER BY profile_picture_updated_at DESC, updated_at DESC
           LIMIT 1
         ) AS whatsapp_profile_picture_updated_at`
@@ -1179,6 +1194,84 @@ const getSafeContactAdFields = (contact = {}) => {
   }
 }
 
+const buildContactPhonesForResponse = (contact = {}) => {
+  const byPhone = new Map()
+  const addPhone = (entry = {}) => {
+    const phone = cleanString(entry.phone)
+    if (!phone || byPhone.has(phone)) return
+
+    const isPrimary = Boolean(entry.isPrimary || entry.is_primary || phone === cleanString(contact.phone))
+    byPhone.set(phone, {
+      id: cleanString(entry.id) || phone,
+      phone,
+      label: cleanString(entry.label) || (isPrimary ? 'Principal' : 'Adicional'),
+      isPrimary,
+      is_primary: isPrimary,
+      source: cleanString(entry.source),
+      createdAt: entry.createdAt || entry.created_at || null,
+      updatedAt: entry.updatedAt || entry.updated_at || null
+    })
+  }
+
+  if (contact.phone) {
+    addPhone({
+      id: `${contact.id || 'contact'}-primary-phone`,
+      phone: contact.phone,
+      label: 'Principal',
+      isPrimary: true
+    })
+  }
+
+  const phones = Array.isArray(contact.phoneNumbers)
+    ? contact.phoneNumbers
+    : Array.isArray(contact.phones)
+      ? contact.phones
+      : []
+
+  phones.forEach(addPhone)
+
+  return [...byPhone.values()].sort((left, right) => {
+    if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1
+    return String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+  })
+}
+
+const attachContactPhoneNumbers = async (contacts = []) => {
+  if (!Array.isArray(contacts) || contacts.length === 0) return contacts
+
+  const uniqueIds = [...new Set(contacts.map(contact => cleanString(contact?.id)).filter(Boolean))]
+  if (!uniqueIds.length) return contacts
+
+  const phoneRowsByContact = new Map(uniqueIds.map(id => [id, []]))
+  const rows = await db.all(
+    `SELECT id, contact_id, phone, label, is_primary, source, created_at, updated_at
+     FROM contact_phone_numbers
+     WHERE contact_id IN (${uniqueIds.map(() => '?').join(', ')})
+     ORDER BY is_primary DESC, created_at ASC, phone ASC`,
+    uniqueIds
+  ).catch(() => [])
+
+  rows.forEach(row => {
+    const contactId = cleanString(row.contact_id)
+    if (!phoneRowsByContact.has(contactId)) return
+    phoneRowsByContact.get(contactId).push({
+      id: row.id,
+      phone: row.phone,
+      label: row.label || '',
+      isPrimary: Boolean(row.is_primary),
+      is_primary: Boolean(row.is_primary),
+      source: row.source || '',
+      createdAt: row.created_at || null,
+      updatedAt: row.updated_at || null
+    })
+  })
+
+  return contacts.map(contact => ({
+    ...contact,
+    phoneNumbers: phoneRowsByContact.get(cleanString(contact?.id)) || []
+  }))
+}
+
 const mapContactRowForResponse = (contact = {}) => {
   let status = 'lead'
   if (Number(contact.purchases_count || 0) > 0) {
@@ -1187,6 +1280,8 @@ const mapContactRowForResponse = (contact = {}) => {
     status = 'appointment'
   }
   const adFields = getSafeContactAdFields(contact)
+
+  const phones = buildContactPhonesForResponse(contact)
 
   return {
     id: contact.id,
@@ -1208,6 +1303,8 @@ const mapContactRowForResponse = (contact = {}) => {
     ad_id: adFields.ad_id,
     preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
     preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
+    phones,
+    phoneNumbers: phones,
     customFields: parseContactCustomFields(contact.custom_fields),
     notes: ''
   }
@@ -1543,13 +1640,16 @@ export const getChatContacts = async (req, res) => {
           WHEN msg.contact_id IS NULL AND api_profile.contact_id IS NULL THEN (
             SELECT c_lookup.id
             FROM contacts c_lookup
-            WHERE c_lookup.phone IS NOT NULL
-              AND c_lookup.phone != ''
-              AND (
+            LEFT JOIN contact_phone_numbers cpn_lookup ON cpn_lookup.contact_id = c_lookup.id
+            WHERE (
                 c_lookup.phone = msg.phone
                 OR c_lookup.phone = msg.from_phone
                 OR c_lookup.phone = msg.to_phone
                 OR c_lookup.phone = api_profile.phone
+                OR cpn_lookup.phone = msg.phone
+                OR cpn_lookup.phone = msg.from_phone
+                OR cpn_lookup.phone = msg.to_phone
+                OR cpn_lookup.phone = api_profile.phone
               )
             LIMIT 1
           )
@@ -1797,10 +1897,11 @@ ${CONTACT_META_PROFILE_SELECT},
           qrLimit: 24
         })
       : rows
+    const responseRowsWithPhones = await attachContactPhoneNumbers(responseRows)
 
     res.json({
       success: true,
-      data: responseRows.map(mapChatContactRowForResponse)
+      data: responseRowsWithPhones.map(mapChatContactRowForResponse)
     })
   } catch (error) {
     logger.error(`Error obteniendo chats: ${error.message}`)
@@ -1999,14 +2100,15 @@ ${CONTACT_META_PROFILE_SELECT},
           qrLimit: Math.min(limitNumber, 24)
         })
       : contacts
+    const contactsWithPhones = await attachContactPhoneNumbers(hydratedContacts)
 
     const firstSessionsByContact = new Map()
     const firstSessionsByVisitor = new Map()
     const firstSessionsByEmail = new Map()
-    const contactIds = Array.from(new Set(hydratedContacts.map(c => c.id).filter(Boolean)))
-    const visitorIds = Array.from(new Set(hydratedContacts.map(c => c.visitor_id).filter(Boolean)))
+    const contactIds = Array.from(new Set(contactsWithPhones.map(c => c.id).filter(Boolean)))
+    const visitorIds = Array.from(new Set(contactsWithPhones.map(c => c.visitor_id).filter(Boolean)))
     const emails = Array.from(new Set(
-      hydratedContacts
+      contactsWithPhones
         .map(c => c.email)
         .filter(Boolean)
         .map(email => String(email).toLowerCase())
@@ -2084,7 +2186,7 @@ ${CONTACT_META_PROFILE_SELECT},
     const whatsappAttributionsByContact = await loadFirstWhatsAppAttributions(contactIds)
 
     // Mapear campos de base de datos a nombres esperados por frontend
-    const mappedContacts = hydratedContacts.map(c => {
+    const mappedContacts = contactsWithPhones.map(c => {
       const firstSession = getFirstSessionForContact(c)
       const attributionFields = buildContactAttributionFields(c, whatsappAttributionsByContact.get(c.id))
       const adFields = getSafeContactAdFields({
@@ -2128,6 +2230,8 @@ ${CONTACT_META_PROFILE_SELECT},
         preferredWhatsAppPhoneNumberId: c.preferred_whatsapp_phone_number_id || '',
         preferred_whatsapp_phone_number_id: c.preferred_whatsapp_phone_number_id || '',
         profilePhotoUrl: getContactProfilePhotoUrl(c) || null,
+        phones: buildContactPhonesForResponse(c),
+        phoneNumbers: buildContactPhonesForResponse(c),
         customFields: parseContactCustomFields(c.custom_fields),
         tags: parseContactTags(c.tags),
         firstSession: firstSession ? {
@@ -2162,7 +2266,7 @@ ${CONTACT_META_PROFILE_SELECT},
     const totalPages = Math.ceil(totalContacts / limitNumber)
 
     logger.debug(
-      `Contactos obtenidos (${rangeLabel}) -> ${hydratedContacts.length} registros en esta página, ${totalContacts} total`
+      `Contactos obtenidos (${rangeLabel}) -> ${contactsWithPhones.length} registros en esta página, ${totalContacts} total`
     )
 
     res.json({
@@ -2521,6 +2625,9 @@ ${CONTACT_META_PROFILE_SELECT},
     const attributionFields = buildContactAttributionFields(contact, whatsappAttribution)
     const metaAttribution = await getMetaAttributionForContact(contact, firstSession, whatsappAttribution)
     const resolvedAdFields = buildResolvedMetaAdFields(contact, metaAttribution)
+    const phoneNumbers = await listContactPhoneNumbers(id)
+    const contactWithPhones = { ...contact, phoneNumbers }
+    const phones = buildContactPhonesForResponse(contactWithPhones)
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedContact = {
@@ -2543,6 +2650,8 @@ ${CONTACT_META_PROFILE_SELECT},
       preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
       preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
       profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
+      phones,
+      phoneNumbers: phones,
       customFields: parseContactCustomFields(contact.custom_fields),
       tags: parseContactTags(contact.tags),
       notes: '',
@@ -2688,9 +2797,10 @@ ${CONTACT_META_PROFILE_SELECT},
       apiLimit: 20,
       qrLimit: 10
     })
+    const contactsWithPhones = await attachContactPhoneNumbers(hydratedContacts)
 
     // Mapear campos de base de datos a nombres esperados por frontend
-    const mappedContacts = hydratedContacts.map(c => {
+    const mappedContacts = contactsWithPhones.map(c => {
       // Determinar status basado en la actividad del contacto
       let status = 'lead'
       if (c.purchases_count > 0) {
@@ -2717,6 +2827,8 @@ ${CONTACT_META_PROFILE_SELECT},
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,
         profilePhotoUrl: getContactProfilePhotoUrl(c) || null,
+        phones: buildContactPhonesForResponse(c),
+        phoneNumbers: buildContactPhonesForResponse(c),
         notes: ''
       }
     })
@@ -2816,6 +2928,18 @@ export const createContact = async (req, res) => {
     )
 
     const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [id])
+    if (normalizedPhone) {
+      await recordContactPhoneNumber({
+        contactId: id,
+        phone: normalizedPhone,
+        label: 'Principal',
+        isPrimary: true,
+        source: 'manual'
+      }).catch(error => {
+        logger.warn(`No se pudo registrar teléfono principal para ${id}: ${error.message}`)
+      })
+    }
+    const [contactWithPhones] = await attachContactPhoneNumbers([contact])
 
     logger.info(`Contacto manual creado: ${id} (${contact.full_name || contact.email || contact.phone || 'sin nombre'})`)
 
@@ -2825,7 +2949,7 @@ export const createContact = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: mapContactRowForResponse(contact)
+      data: mapContactRowForResponse(contactWithPhones || contact)
     })
   } catch (error) {
     logger.error(`Error creando contacto: ${error.message}`)
@@ -3126,6 +3250,25 @@ export const updateContact = async (req, res) => {
       await db.run(query, params)
     }
 
+    if (phone !== undefined) {
+      if (phoneUpsert?.phone) {
+        await recordContactPhoneNumber({
+          contactId: id,
+          phone: phoneUpsert.phone,
+          label: 'Principal',
+          isPrimary: true,
+          source: 'manual'
+        }).catch(error => {
+          logger.warn(`No se pudo registrar teléfono principal para ${id}: ${error.message}`)
+        })
+      } else if (existing.phone) {
+        await db.run(
+          'UPDATE contact_phone_numbers SET is_primary = 0, updated_at = CURRENT_TIMESTAMP WHERE contact_id = ? AND phone = ?',
+          [id, existing.phone]
+        ).catch(() => {})
+      }
+    }
+
     // Dejar rastro cuando la conversación se mueve manualmente a otro número
     if (hasPreferredWhatsAppPhoneNumberUpdate) {
       const previousPreferredId = cleanString(existing.preferred_whatsapp_phone_number_id)
@@ -3181,11 +3324,16 @@ export const updateContact = async (req, res) => {
       `SELECT * FROM contacts WHERE id = ?`,
       [id]
     )
+    const [updatedWithPhones] = await attachContactPhoneNumbers([updated])
+    const responseContact = updatedWithPhones || updated
+    const phones = buildContactPhonesForResponse(responseContact)
     const updatedData = {
-      ...updated,
-      preferredWhatsAppPhoneNumberId: updated.preferred_whatsapp_phone_number_id || '',
-      customFields: parseContactCustomFields(updated.custom_fields),
-      tags: parseContactTags(updated.tags)
+      ...responseContact,
+      preferredWhatsAppPhoneNumberId: responseContact.preferred_whatsapp_phone_number_id || '',
+      phones,
+      phoneNumbers: phones,
+      customFields: parseContactCustomFields(responseContact.custom_fields),
+      tags: parseContactTags(responseContact.tags)
     }
 
     logger.info(`Contacto actualizado: ${id}`)
@@ -3641,7 +3789,10 @@ export const getContactJourney = async (req, res) => {
         error: 'Contacto no encontrado'
       })
     }
-    const contactPhoneCandidates = buildContactPhoneCandidates(contact.phone)
+    const contactPhoneValues = await getContactPhoneValues(id, contact.phone)
+    const contactPhoneCandidates = contactPhoneValues.length
+      ? contactPhoneValues
+      : buildContactPhoneCandidates(contact.phone)
     const whatsappApiMessageContactMatch = buildWhatsAppApiMessageContactMatch(id, contactPhoneCandidates)
 
     const journey = []

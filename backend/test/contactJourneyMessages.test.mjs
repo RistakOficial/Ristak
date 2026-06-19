@@ -41,12 +41,16 @@ async function readChatContacts(query = {}) {
   return res.body.data
 }
 
-async function cleanup(contactId, phone) {
+async function cleanup(contactId, phone, extraPhones = []) {
+  const phones = [phone, ...extraPhones].filter(Boolean)
   await db.run('DELETE FROM video_playback_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM video_playback_sessions WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM sessions WHERE contact_id = ?', [contactId]).catch(() => undefined)
-  await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
-  await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
+  for (const phoneValue of phones) {
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
+    await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
+  }
   await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
 }
@@ -209,6 +213,82 @@ test('contact journey defaults to contact-authored messages only', async () => {
     )
   } finally {
     await cleanup(contactId, phone)
+  }
+})
+
+test('chat and journey include WhatsApp messages from secondary contact phones', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const contactId = `journey_multi_phone_${id}`
+  const primaryPhone = `+521550${suffix}`
+  const secondaryPhone = `+521551${suffix}`
+
+  await cleanup(contactId, primaryPhone, [secondaryPhone])
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone: primaryPhone,
+      full_name: 'Cliente Dos Numeros',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2099-06-16T10:00:00.000Z',
+      updated_at: '2099-06-16T10:00:00.000Z'
+    })
+
+    await insertRow('contact_phone_numbers', {
+      id: `contact_phone_primary_${id}`,
+      contact_id: contactId,
+      phone: primaryPhone,
+      label: 'Principal',
+      is_primary: 1,
+      source: 'test',
+      created_at: '2099-06-16T10:00:00.000Z',
+      updated_at: '2099-06-16T10:00:00.000Z'
+    })
+
+    await insertRow('contact_phone_numbers', {
+      id: `contact_phone_secondary_${id}`,
+      contact_id: contactId,
+      phone: secondaryPhone,
+      label: 'Adicional',
+      is_primary: 0,
+      source: 'whatsapp_api',
+      created_at: '2099-06-16T10:01:00.000Z',
+      updated_at: '2099-06-16T10:01:00.000Z'
+    })
+
+    await insertRow('whatsapp_api_messages', {
+      id: `api_secondary_${id}`,
+      contact_id: null,
+      phone: secondaryPhone,
+      from_phone: secondaryPhone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Mensaje desde segundo numero',
+      message_timestamp: '2099-06-16T10:02:00.000Z',
+      created_at: '2099-06-16T10:02:00.000Z'
+    })
+
+    const chats = await readChatContacts()
+    const chat = chats.find(contact => contact.id === contactId)
+    assert.ok(chat, 'chat list should resolve the secondary phone message to the existing contact')
+    assert.equal(chat.lastMessageText, 'Mensaje desde segundo numero')
+    assert.deepEqual(
+      chat.phones.map(entry => entry.phone),
+      [primaryPhone, secondaryPhone]
+    )
+
+    const journey = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    assert.ok(
+      journey.some(event => event.type === 'whatsapp_message' && event.data.phone === secondaryPhone),
+      'journey should include WhatsApp messages matched by secondary phone'
+    )
+  } finally {
+    await cleanup(contactId, primaryPhone, [secondaryPhone])
   }
 })
 
