@@ -1,13 +1,15 @@
-import React from 'react'
-import { AlertTriangle } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { AlertTriangle, ShieldAlert } from 'lucide-react'
 import { CustomSelect } from './configPrimitives'
 import {
   CatalogSelect,
   ConfigSection,
   Field,
+  Toggle,
   useCatalogOptions
 } from './configPrimitives'
 import { MessageBlocksEditor } from './MessageBlocksEditor'
+import { whatsappApiService } from '@/services/whatsappApiService'
 import type { MessageBlock } from '../nodeRegistry'
 import { genId } from '../flowUtils'
 import styles from '../AutomationEditor.module.css'
@@ -35,6 +37,30 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const set = (patch: Config) => onChange({ ...config, ...patch })
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
+  const sendViaQr = config.sendViaQr === true || str(config.transport) === 'qr'
+  const [hasQrConnected, setHasQrConnected] = useState(false)
+
+  useEffect(() => {
+    let mounted = true
+    whatsappApiService.getStatus()
+      .then((status) => {
+        if (!mounted) return
+        const phoneHasQr = (status.phoneNumbers || []).some((phone) => (
+          phone.qr_send_enabled === true &&
+          String(phone.qr_status || '').toLowerCase() === 'connected'
+        ))
+        const sessionHasQr = (status.qr?.sessions || []).some((session) => (
+          String(session.status || '').toLowerCase() === 'connected'
+        ))
+        setHasQrConnected(phoneHasQr || sessionHasQr)
+      })
+      .catch(() => {
+        if (mounted) setHasQrConnected(false)
+      })
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   // Compatibilidad: si la config vieja solo tenía templateId, se ve como bloque
   const rawBlocks = Array.isArray(config.messageBlocks) ? (config.messageBlocks as MessageBlock[]) : []
@@ -71,11 +97,20 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
         messageType: 'template',
         messageBlocks: nextBlocks,
         templateId: str(firstTemplate?.templateId),
-        templateName: str(firstTemplate?.templateName)
+        templateName: str(firstTemplate?.templateName),
+        sendViaQr: false,
+        transport: 'api'
       })
       return
     }
     set({ messageType: next })
+  }
+
+  const setSendViaQr = (checked: boolean) => {
+    set({
+      sendViaQr: checked,
+      transport: checked ? 'qr' : 'api'
+    })
   }
 
   return (
@@ -131,12 +166,45 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
         </Field>
 
         {messageType === 'text' && (
-          <MessageBlocksEditor
-            value={config.messageBlocks}
-            onChange={(messageBlocks: MessageBlock[]) => set({ messageBlocks })}
-            supportsQuickReplies={false}
-            buttonLabelMaxLength={20}
-          />
+          <>
+            <MessageBlocksEditor
+              value={config.messageBlocks}
+              onChange={(messageBlocks: MessageBlock[]) => set({ messageBlocks })}
+              supportsQuickReplies={false}
+              buttonLabelMaxLength={20}
+            />
+
+            {(hasQrConnected || sendViaQr) && (
+              <div className={styles.qrModeBox}>
+                <div className={styles.qrModeCopy}>
+                  <div className={styles.qrModeTitle}>
+                    <span
+                      className={styles.qrRiskIcon}
+                      title="Precaución: el envío por QR usa una aplicación de terceros no validada por Meta y puede aumentar el riesgo de bloqueo del número."
+                    >
+                      <ShieldAlert size={16} aria-hidden="true" />
+                    </span>
+                    Enviar mensajes normales por QR
+                  </div>
+                  <span className={styles.configHelp}>
+                    Usa un número conectado por QR en lugar de WhatsApp API para estos mensajes. Actívalo sólo si aceptas el riesgo de bloqueo del número.
+                  </span>
+                </div>
+                <Toggle
+                  checked={sendViaQr}
+                  onChange={setSendViaQr}
+                  label="Activar QR"
+                />
+              </div>
+            )}
+
+            {sendViaQr && !hasQrConnected && (
+              <div className={styles.configWarning}>
+                <AlertTriangle size={12} />
+                Esta automatización tiene QR activado, pero ahora no hay ningún número conectado por QR.
+              </div>
+            )}
+          </>
         )}
 
         {messageType === 'template' && (

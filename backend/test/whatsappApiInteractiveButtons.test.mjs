@@ -376,3 +376,78 @@ test('automatización de WhatsApp queda esperando botón y continúa por la sali
     }
   })
 })
+
+test('automatización de texto por QR no usa WhatsApp API cuando QR no está conectado', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const suffix = randomUUID()
+    const contactId = `contact_qr_mode_${suffix}`
+    const automationId = `automation_qr_mode_${suffix}`
+    const phone = `+52156${Date.now().toString().slice(-8)}`
+    const flow = {
+      nodes: [
+        {
+          id: 'start',
+          type: 'start',
+          label: 'Cuando...',
+          config: {
+            triggers: [
+              { id: 'trigger-contact-created', type: 'trigger-contact-created', config: { source: '' } }
+            ]
+          }
+        },
+        {
+          id: 'send-whatsapp',
+          type: 'channel-whatsapp',
+          label: 'WhatsApp',
+          config: {
+            sender: 'default',
+            messageType: 'text',
+            sendViaQr: true,
+            transport: 'qr',
+            messageBlocks: [
+              {
+                id: 'block-text',
+                type: 'text',
+                compiledText: 'Hola por QR'
+              }
+            ]
+          }
+        }
+      ],
+      edges: [
+        { id: 'edge-start-send', sourceNodeId: 'start', targetNodeId: 'send-whatsapp' }
+      ],
+      settings: { allowReentry: true }
+    }
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [contactId, phone, `qr-mode-${suffix}@example.com`, 'Contacto QR', 'Contacto', '{}']
+      )
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, 'Test WhatsApp QR mode', JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      await handleAutomationEvent('contact-created', { contactId })
+
+      const enrollment = await db.get(
+        'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, contactId]
+      )
+      assert.equal(captures.length, 0)
+      assert.equal(enrollment.status, 'exited')
+      const log = JSON.parse(enrollment.log)
+      assert.equal(log.some(entry => String(entry.detail || '').includes('conectado por QR')), true)
+    } finally {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phone])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, phone])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
+  })
+})

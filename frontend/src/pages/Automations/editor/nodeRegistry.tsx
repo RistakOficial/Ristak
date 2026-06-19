@@ -1283,6 +1283,8 @@ const CHANNEL_NODES: NodeDefinition[] = [
       senderNumberId: '',
       senderNumberLabel: '',
       messageType: 'text',
+      sendViaQr: false,
+      transport: 'api',
       messageBlocks: [],
       extraBranches: [],
       templateId: '',
@@ -1320,8 +1322,9 @@ const CHANNEL_NODES: NodeDefinition[] = [
       const blocks = messageBlocks.filter((block) => block.type === 'text').length
       const firstTemplate = messageBlocks.find((block) => block.type === 'template')
       const templateLabel = str(config.templateName) || str(firstTemplate?.templateName) || str(firstTemplate?.templateId)
+      const qrLabel = !isTemplate && (config.sendViaQr === true || str(config.transport) === 'qr') ? ' · QR' : ''
       return {
-        text: `${senderLabels[str(config.sender)] || 'Número principal'}${isTemplate ? ' · Plantilla' : blocks > 1 ? ` · ${blocks} mensajes` : ''}`,
+        text: `${senderLabels[str(config.sender)] || 'Número principal'}${isTemplate ? ' · Plantilla' : blocks > 1 ? ` · ${blocks} mensajes` : ''}${qrLabel}`,
         box: isTemplate ? templateLabel || undefined : firstTextBlock(config) || undefined,
         empty: 'Configura el mensaje de WhatsApp'
       }

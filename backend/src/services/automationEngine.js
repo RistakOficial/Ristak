@@ -1921,7 +1921,7 @@ async function applyContactUserAction(node, ctx) {
 
 /** Envía un bloque adjunto: si es un archivo subido a Ristak se manda como
     data URL (el servicio de WhatsApp lo publica); si es URL externa, directo */
-async function sendMediaBlock({ block, to, phoneNumberId, ctx }) {
+async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport = 'api', ctx }) {
   const {
     sendWhatsAppApiImageMessage,
     sendWhatsAppApiAudioMessage,
@@ -1954,28 +1954,69 @@ async function sendMediaBlock({ block, to, phoneNumberId, ctx }) {
   }
 
   if (block.type === 'image') {
-    await sendWhatsAppApiImageMessage({ to, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId })
+    await sendWhatsAppApiImageMessage({ to, from: fromPhone, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport })
   } else if (block.type === 'audio') {
     await sendWhatsAppApiAudioMessage({
       to,
+      from: fromPhone,
       audioDataUrl: dataUrl || undefined,
       audioUrl: externalUrl || undefined,
       // Nota de voz de WhatsApp (ogg/opus) salvo que el usuario lo apague
       voice: block.voiceNote !== false,
-      phoneNumberId
+      phoneNumberId,
+      transport
     })
   } else {
     // video y archivo se envían como documento (conserva calidad y nombre)
     await sendWhatsAppApiDocumentMessage({
       to,
+      from: fromPhone,
       documentDataUrl: dataUrl || undefined,
       documentUrl: externalUrl || undefined,
       filename,
       mimeType,
       caption,
       contactId: ctx.contact?.id,
-      phoneNumberId
+      phoneNumberId,
+      transport
     })
+  }
+}
+
+function isQrSenderReady(row = {}) {
+  return Number(row.qr_send_enabled || 0) === 1 &&
+    cleanString(row.qr_status).toLowerCase() === 'connected'
+}
+
+function whatsappSenderPhone(row = {}) {
+  return cleanString(row.phone_number) || cleanString(row.display_phone_number)
+}
+
+async function resolveAutomationQrSender(preferredPhoneNumberId) {
+  const preferred = await loadWhatsAppPhoneSnapshot(preferredPhoneNumberId)
+  if (preferred && isQrSenderReady(preferred)) {
+    return {
+      phoneNumberId: preferred.id,
+      fromPhone: whatsappSenderPhone(preferred)
+    }
+  }
+
+  const fallback = await db.get(`
+    SELECT id, phone_number, display_phone_number, verified_name, label,
+      is_default_sender, qr_send_enabled, qr_status, updated_at
+    FROM whatsapp_api_phone_numbers
+    WHERE qr_send_enabled = 1 AND LOWER(COALESCE(qr_status, '')) = 'connected'
+    ORDER BY is_default_sender DESC, updated_at DESC
+    LIMIT 1
+  `)
+
+  if (!fallback) {
+    throw new Error('No hay un número de WhatsApp conectado por QR para esta automatización')
+  }
+
+  return {
+    phoneNumberId: fallback.id,
+    fromPhone: whatsappSenderPhone(fallback)
   }
 }
 
@@ -1995,6 +2036,19 @@ async function sendWhatsAppBlocks(node, ctx) {
     phoneNumberId = str(config.senderNumberId)
   } else if (str(config.sender) !== 'default' && ctx.businessPhoneNumberId) {
     phoneNumberId = ctx.businessPhoneNumberId
+  }
+
+  const sendViaQr = str(config.messageType) !== 'template' && (
+    config.sendViaQr === true ||
+    str(config.transport).toLowerCase() === 'qr'
+  )
+  const transport = sendViaQr ? 'qr' : 'api'
+  let fromPhone
+
+  if (sendViaQr) {
+    const qrSender = await resolveAutomationQrSender(phoneNumberId)
+    phoneNumberId = qrSender.phoneNumberId
+    fromPhone = qrSender.fromPhone
   }
 
   if (str(config.messageType) === 'template') {
@@ -2097,14 +2151,16 @@ async function sendWhatsAppBlocks(node, ctx) {
       if (branchButtons.length) {
         await sendWhatsAppApiInteractiveMessage({
           to,
+          from: fromPhone,
           body: text,
           buttons: branchButtons.map(button => ({ id: button.id, title: button.label })),
           contactId: ctx.contact?.id,
-          phoneNumberId
+          phoneNumberId,
+          transport
         })
         sent += 1
         return {
-          detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}; esperando botón`,
+          detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}${sendViaQr ? ' por QR' : ''}; esperando botón`,
           waitForButtons: branchButtons.map(button => ({ id: button.id, label: button.label }))
         }
       }
@@ -2112,13 +2168,15 @@ async function sendWhatsAppBlocks(node, ctx) {
       if (urlButtons.length) {
         await sendWhatsAppApiInteractiveMessage({
           to,
+          from: fromPhone,
           body: text,
           urlButton: { title: urlButtons[0].label, url: urlButtons[0].url },
           contactId: ctx.contact?.id,
-          phoneNumberId
+          phoneNumberId,
+          transport
         })
       } else {
-        await sendWhatsAppApiTextMessage({ to, text, contactId: ctx.contact?.id, phoneNumberId })
+        await sendWhatsAppApiTextMessage({ to, from: fromPhone, text, contactId: ctx.contact?.id, phoneNumberId, transport })
       }
       sent += 1
     } else if (block.type === 'delay') {
@@ -2128,7 +2186,7 @@ async function sendWhatsAppBlocks(node, ctx) {
       )
       if (seconds > 0) await sleep(seconds * 1000)
     } else if (['image', 'video', 'audio', 'file'].includes(block.type) && str(block.url)) {
-      await sendMediaBlock({ block, to, phoneNumberId, ctx })
+      await sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport, ctx })
       sent += 1
     } else {
       notes.push(`adjunto "${block.type}" sin archivo: omitido`)
@@ -2136,7 +2194,7 @@ async function sendWhatsAppBlocks(node, ctx) {
   }
   if (sent === 0) throw new Error('El mensaje está vacío: configura al menos un globo de texto')
   return {
-    detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}${notes.length ? ` (${notes.join(', ')})` : ''}`
+    detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''}${sendViaQr ? ' por QR' : ''}${notes.length ? ` (${notes.join(', ')})` : ''}`
   }
 }
 
@@ -2514,7 +2572,8 @@ async function loadWhatsAppPhoneSnapshot(phoneNumberId) {
   const id = cleanString(phoneNumberId)
   if (!id) return null
   return db.get(`
-    SELECT id, phone_number, display_phone_number, verified_name, label
+    SELECT id, phone_number, display_phone_number, verified_name, label,
+      is_default_sender, qr_send_enabled, qr_status, updated_at
     FROM whatsapp_api_phone_numbers
     WHERE id = ?
   `, [id]).catch(() => null)
