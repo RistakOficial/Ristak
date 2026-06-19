@@ -17932,3 +17932,116 @@
     flex-direction: column;
   }
 }
+
+/* Site editor toolbar controls: Página, Pop up and Ajustes share one visual contract. */
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools {
+  --sites-editor-tool-bg: var(--design-control-bg);
+  --sites-editor-tool-bg-hover: var(--design-control-bg-hover);
+  --sites-editor-tool-border: var(--design-control-border);
+  --sites-editor-tool-border-hover: var(--design-control-border-hover);
+  --sites-editor-tool-color: var(--color-text-secondary);
+  --sites-editor-tool-color-hover: var(--color-text-primary);
+  --sites-editor-tool-pad-x: max(var(--sites-editor-action-pad-x, 13px), 10px);
+  --sites-editor-page-selector-min-w: 132px;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorPageSelectorSlot {
+  flex: 0 0 var(--sites-editor-page-selector-w, 190px);
+  min-width: min(100%, var(--sites-editor-page-selector-min-w));
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorPageSelectorSlot .pagesDropdown {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton) {
+  height: var(--editor-control-h, 40px);
+  min-height: var(--editor-control-h, 40px);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--sites-editor-tool-border);
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--sites-editor-tool-bg);
+  color: var(--sites-editor-tool-color);
+  padding: 0 var(--sites-editor-tool-pad-x);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .pagesDropdownTrigger {
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton):hover:not(:disabled),
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton):focus-visible,
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .pagesDropdownOpen .pagesDropdownTrigger {
+  border-color: var(--sites-editor-tool-border-hover);
+  background: var(--sites-editor-tool-bg-hover);
+  color: var(--sites-editor-tool-color-hover);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton):focus-visible {
+  outline: none;
+  box-shadow: var(--ristak-focus-ring, 0 0 0 3px var(--accent-soft));
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton) > svg {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .pagesDropdownTriggerText {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: block;
+  line-height: 1.2;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .pagesDropdownTriggerText strong {
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .pagesDropdownChevron {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.headerToolbarButtonActive, .editorSettingsButtonActive) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--color-text-primary);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorSettingsButtonWarning {
+  border-color: color-mix(in srgb, var(--warn) 42%, var(--sites-editor-tool-border) 58%);
+  background: color-mix(in srgb, var(--warn-soft) 72%, var(--sites-editor-tool-bg) 28%);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools .editorSettingsBadge {
+  min-width: 17px;
+  height: 17px;
+  padding-inline: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold, 600);
+}
