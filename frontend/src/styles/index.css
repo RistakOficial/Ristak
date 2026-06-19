@@ -251,20 +251,30 @@ body.dark {
   }
 
   ::-webkit-scrollbar {
-    @apply w-2 h-2;
+    width: var(--ristak-scrollbar-size, 10px);
+    height: var(--ristak-scrollbar-size, 10px);
   }
 
   ::-webkit-scrollbar-track {
+    margin: var(--ristak-scrollbar-track-margin, 4px);
     background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    background-color: rgba(148, 163, 184, 0.25);
-    border-radius: 9999px;
+    min-width: 36px;
+    min-height: 36px;
+    border: var(--ristak-scrollbar-padding, 3px) solid transparent;
+    border-radius: var(--radius-pill, 999px);
+    background-color: var(--ristak-scrollbar-thumb, var(--border-strong, var(--color-border)));
+    background-clip: padding-box;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background-color: rgba(148, 163, 184, 0.4);
+    background-color: var(--ristak-scrollbar-thumb-hover, var(--accent, var(--color-primary)));
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
 
   :root {
@@ -507,8 +517,33 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where
 
 body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(textarea):not(:where(.rstkCanvas *, .rstk-block-style *, [data-ristak-unstyled], [data-ristak-unstyled] *)) {
   min-height: 92px;
-  padding: 10px var(--design-control-padding-x);
+  padding: 10px calc(var(--design-control-padding-x) + var(--ristak-scrollbar-size, 10px)) 10px var(--design-control-padding-x);
+  background-clip: padding-box;
   resize: vertical;
+  scrollbar-gutter: stable;
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(textarea):not(:where(.rstkCanvas *, .rstk-block-style *, [data-ristak-unstyled], [data-ristak-unstyled] *))::-webkit-scrollbar-track {
+  margin-block: var(--ristak-textarea-scrollbar-margin, 7px);
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(textarea):not(:where(.rstkCanvas *, .rstk-block-style *, [data-ristak-unstyled], [data-ristak-unstyled] *))::-webkit-resizer {
+  border-bottom-right-radius: var(--radius-ctl, var(--design-control-radius));
+  background:
+    linear-gradient(
+      135deg,
+      transparent 0 44%,
+      var(--ristak-resize-grip) 45% 51%,
+      transparent 52% 62%,
+      var(--ristak-resize-grip-strong) 63% 69%,
+      transparent 70%
+    );
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(textarea):not(:where(.rstkCanvas *, .rstk-block-style *, [data-ristak-unstyled], [data-ristak-unstyled] *)):hover::-webkit-resizer,
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(textarea):not(:where(.rstkCanvas *, .rstk-block-style *, [data-ristak-unstyled], [data-ristak-unstyled] *)):focus::-webkit-resizer {
+  --ristak-resize-grip: var(--ristak-resize-grip-active);
+  --ristak-resize-grip-strong: var(--accent);
 }
 
 body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(
@@ -2820,8 +2855,36 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   body[data-dir^='e'].light { --surface-solid: rgb(255,255,255); }
 
   ::selection { background: var(--accent-soft); }
-  [data-scroll]::-webkit-scrollbar { width: 9px; height: 9px; }
-  [data-scroll]::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
+    --ristak-scrollbar-size: 10px;
+    --ristak-scrollbar-padding: 3px;
+    --ristak-scrollbar-track-margin: 4px;
+    --ristak-textarea-scrollbar-margin: 7px;
+    --ristak-scrollbar-thumb: color-mix(in srgb, var(--border-strong) 72%, transparent);
+    --ristak-scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 38%, var(--border-strong));
+    --ristak-resize-grip: color-mix(in srgb, var(--border-strong) 68%, transparent);
+    --ristak-resize-grip-strong: color-mix(in srgb, var(--border-strong) 92%, transparent);
+    --ristak-resize-grip-active: color-mix(in srgb, var(--accent) 50%, var(--border-strong));
+    scrollbar-color: var(--ristak-scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
+  body[data-dir^='d']:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
+    --ristak-scrollbar-padding: 2px;
+    --ristak-scrollbar-track-margin: 2px;
+    --ristak-textarea-scrollbar-margin: 3px;
+  }
+  body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(*):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *, [data-ristak-unstyled], [data-ristak-unstyled] *)) {
+    scrollbar-color: var(--ristak-scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
+  [data-scroll] {
+    scrollbar-gutter: stable;
+  }
+  [data-scroll]::-webkit-scrollbar { width: var(--ristak-scrollbar-size); height: var(--ristak-scrollbar-size); }
+  [data-scroll]::-webkit-scrollbar-track { margin: var(--ristak-scrollbar-track-margin); background: transparent; }
+  [data-scroll]::-webkit-scrollbar-thumb { background: var(--ristak-scrollbar-thumb); border-radius: var(--radius-pill); border: var(--ristak-scrollbar-padding) solid transparent; background-clip: padding-box; }
+  [data-scroll]::-webkit-scrollbar-thumb:hover { background: var(--ristak-scrollbar-thumb-hover); background-clip: padding-box; }
+  [data-scroll]::-webkit-scrollbar-corner { background: transparent; }
   body.light .brand-logo-dark { display: none !important; }
   body.light .brand-logo-light { display: block !important; }
   [data-workspace]:hover { background: var(--surface-hover); }
@@ -3046,7 +3109,7 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
 
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] :where(textarea):not(:where(.rstkCanvas *, .rstk-block-style *, [data-ristak-unstyled], [data-ristak-unstyled] *)) {
     min-height: 68px !important;
-    padding: 8px var(--modal-density-control-padding-x) !important;
+    padding: 8px calc(var(--modal-density-control-padding-x) + var(--ristak-scrollbar-size, 10px)) 8px var(--modal-density-control-padding-x) !important;
     font-size: var(--modal-density-control-font-size) !important;
     line-height: 1.35;
   }

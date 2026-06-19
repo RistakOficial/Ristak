@@ -142,20 +142,24 @@
 }
 
 .searchDropdown::-webkit-scrollbar {
-  width: 6px;
+  width: var(--ristak-scrollbar-size, 10px);
 }
 
 .searchDropdown::-webkit-scrollbar-track {
+  margin-block: var(--ristak-scrollbar-track-margin, 4px);
   background: transparent;
 }
 
 .searchDropdown::-webkit-scrollbar-thumb {
-  background: var(--color-gray-300);
+  border: var(--ristak-scrollbar-padding, 3px) solid transparent;
   border-radius: var(--radius-full);
+  background: var(--ristak-scrollbar-thumb);
+  background-clip: padding-box;
 }
 
 .searchDropdown::-webkit-scrollbar-thumb:hover {
-  background: var(--color-gray-400);
+  background: var(--ristak-scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 
 .searchResultItem {
@@ -314,20 +318,24 @@
 }
 
 .dropdownMenu::-webkit-scrollbar {
-  width: 6px;
+  width: var(--ristak-scrollbar-size, 10px);
 }
 
 .dropdownMenu::-webkit-scrollbar-track {
+  margin-block: var(--ristak-scrollbar-track-margin, 4px);
   background: transparent;
 }
 
 .dropdownMenu::-webkit-scrollbar-thumb {
-  background: var(--color-gray-300);
+  border: var(--ristak-scrollbar-padding, 3px) solid transparent;
   border-radius: var(--radius-full);
+  background: var(--ristak-scrollbar-thumb);
+  background-clip: padding-box;
 }
 
 .dropdownMenu::-webkit-scrollbar-thumb:hover {
-  background: var(--color-gray-400);
+  background: var(--ristak-scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 
 /* Items del dropdown */
@@ -1334,23 +1342,25 @@
 }
 
 .weekGrid::-webkit-scrollbar {
-  width: 10px;
+  width: var(--ristak-scrollbar-size, 10px);
   display: block;
 }
 
 .weekGrid::-webkit-scrollbar-track {
-  background: var(--color-gray-100);
-  border-radius: var(--radius-sm);
+  margin-block: var(--ristak-scrollbar-track-margin, 4px);
+  background: transparent;
 }
 
 .weekGrid::-webkit-scrollbar-thumb {
-  background: var(--color-gray-400);
-  border-radius: var(--radius-sm);
-  border: 2px solid var(--color-gray-100);
+  border: var(--ristak-scrollbar-padding, 3px) solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--ristak-scrollbar-thumb);
+  background-clip: padding-box;
 }
 
 .weekGrid::-webkit-scrollbar-thumb:hover {
-  background: var(--color-gray-500);
+  background: var(--ristak-scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 
 .timeColumn {
@@ -1580,23 +1590,25 @@
 }
 
 .dayGrid::-webkit-scrollbar {
-  width: 10px;
+  width: var(--ristak-scrollbar-size, 10px);
   display: block;
 }
 
 .dayGrid::-webkit-scrollbar-track {
-  background: var(--color-gray-100);
-  border-radius: var(--radius-sm);
+  margin-block: var(--ristak-scrollbar-track-margin, 4px);
+  background: transparent;
 }
 
 .dayGrid::-webkit-scrollbar-thumb {
-  background: var(--color-gray-400);
-  border-radius: var(--radius-sm);
-  border: 2px solid var(--color-gray-100);
+  border: var(--ristak-scrollbar-padding, 3px) solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--ristak-scrollbar-thumb);
+  background-clip: padding-box;
 }
 
 .dayGrid::-webkit-scrollbar-thumb:hover {
-  background: var(--color-gray-500);
+  background: var(--ristak-scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 
 .dayEvent {

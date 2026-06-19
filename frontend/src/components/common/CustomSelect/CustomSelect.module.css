@@ -101,6 +101,7 @@
 .options {
   max-height: var(--custom-select-options-max-height, 280px);
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 0;
 }
 
@@ -109,20 +110,24 @@
 }
 
 .options::-webkit-scrollbar {
-  width: 8px;
+  width: var(--ristak-scrollbar-size, 10px);
 }
 
 .options::-webkit-scrollbar-track {
+  margin-block: var(--ristak-scrollbar-track-margin, 4px);
   background: transparent;
 }
 
 .options::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.2);
-  border-radius: 4px;
+  border: var(--ristak-scrollbar-padding, 3px) solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--ristak-scrollbar-thumb);
+  background-clip: padding-box;
 }
 
 .options::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.3);
+  background: var(--ristak-scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 
 .option {

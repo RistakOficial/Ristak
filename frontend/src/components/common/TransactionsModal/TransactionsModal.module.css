@@ -82,25 +82,27 @@
   gap: 0;
   padding: 1rem 1.25rem;
   background: var(--color-background-primary);
+  scrollbar-gutter: stable;
 }
 
 .listContainer::-webkit-scrollbar {
-  width: 6px;
+  width: var(--ristak-scrollbar-size, 10px);
 }
 
 .listContainer::-webkit-scrollbar-track {
+  margin-block: var(--ristak-scrollbar-track-margin, 4px);
   background: transparent;
 }
 
 .listContainer::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.2);
-  border-radius: 3px;
-  border: 1px solid transparent;
+  border: var(--ristak-scrollbar-padding, 3px) solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--ristak-scrollbar-thumb);
   background-clip: padding-box;
 }
 
 .listContainer::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.35);
+  background: var(--ristak-scrollbar-thumb-hover);
   background-clip: padding-box;
 }
 
