@@ -1,15 +1,18 @@
 .inlineEditableText {
   display: inline-grid;
+  width: fit-content;
   max-width: 100%;
   min-width: 0;
   gap: 0.25rem;
   color: inherit;
+  justify-items: start;
   vertical-align: top;
 }
 
 .inlineEditableText[data-layout='block'] {
   display: grid;
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .displayButton {
@@ -30,7 +33,8 @@
 }
 
 .inlineEditableText[data-layout='block'] .displayButton {
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   text-align: left;
 }
 
@@ -55,8 +59,10 @@
 }
 
 .input {
-  width: min(100%, 18rem);
-  min-width: min(12rem, 100%);
+  justify-self: start;
+  width: auto;
+  max-width: 100%;
+  min-width: min(4ch, 100%);
   box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
@@ -69,7 +75,8 @@
 }
 
 .inlineEditableText[data-layout='block'] .input {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
 }
 
 .input:focus {
