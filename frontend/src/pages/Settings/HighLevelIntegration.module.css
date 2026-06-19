@@ -1859,6 +1859,12 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
   overflow: visible;
 }
 
+.paymentsConfigurationSection {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .sectionHeader {
   display: flex;
   align-items: flex-start;
@@ -2056,6 +2062,52 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
   gap: 8px;
   align-items: center;
   min-width: 0;
+}
+
+.stripeWebhookEventsBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.stripeWebhookEventsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stripeWebhookEventsList {
+  display: grid;
+  gap: 8px;
+}
+
+.stripeWebhookEventItem {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.48fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.stripeWebhookEventItem code {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.stripeWebhookEventItem span {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .formGroup,
@@ -2519,7 +2571,8 @@ textarea.input {
   .scopesGrid,
   .calendarConfigGrid,
   .stripeWebhookEndpointRow,
-  .stripeWebhookEndpointCopy {
+  .stripeWebhookEndpointCopy,
+  .stripeWebhookEventItem {
     grid-template-columns: 1fr;
   }
 

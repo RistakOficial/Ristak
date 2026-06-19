@@ -122,6 +122,38 @@ function fromStripeAmount(amount, currency) {
   return ZERO_DECIMAL_CURRENCIES.has(code) ? value : Math.round(value) / 100
 }
 
+function extractStripeObjectId(value) {
+  if (!value) return ''
+  if (typeof value === 'string') return cleanString(value)
+  return cleanString(value.id)
+}
+
+function extractInvoicePaymentIntentId(invoice) {
+  const directPaymentIntentId = extractStripeObjectId(invoice?.payment_intent)
+  if (directPaymentIntentId) return directPaymentIntentId
+
+  const invoicePayments = Array.isArray(invoice?.payments?.data) ? invoice.payments.data : []
+  for (const invoicePayment of invoicePayments) {
+    const paymentIntentId = extractStripeObjectId(invoicePayment?.payment_intent)
+      || extractStripeObjectId(invoicePayment?.payment?.payment_intent)
+
+    if (paymentIntentId) return paymentIntentId
+
+    if (invoicePayment?.payment?.type === 'payment_intent') {
+      const paymentId = extractStripeObjectId(invoicePayment.payment)
+      if (paymentId.startsWith('pi_')) return paymentId
+    }
+  }
+
+  return ''
+}
+
+function timestampToIso(timestamp) {
+  const seconds = Number(timestamp)
+  if (!Number.isFinite(seconds) || seconds <= 0) return null
+  return new Date(seconds * 1000).toISOString()
+}
+
 function buildPaymentUrl(baseUrl, publicPaymentId) {
   const cleanBase = cleanString(baseUrl).replace(/\/+$/, '')
   return `${cleanBase}/pay/${encodeURIComponent(publicPaymentId)}`
@@ -476,6 +508,106 @@ async function updatePaymentFromIntent(intent) {
   return nextStatus
 }
 
+async function updatePaymentFromInvoice(invoice, nextStatus) {
+  const paymentIntentId = extractInvoicePaymentIntentId(invoice)
+  if (paymentIntentId) {
+    return refreshStripePaymentFromIntent(paymentIntentId)
+  }
+
+  const paymentId = cleanString(invoice?.metadata?.ristak_payment_id)
+  const publicPaymentId = cleanString(invoice?.metadata?.public_payment_id)
+  const whereColumn = paymentId ? 'id' : 'public_payment_id'
+  const whereValue = paymentId || publicPaymentId
+  if (!whereValue) return null
+
+  const currency = normalizeCurrency(invoice.currency)
+  const invoiceAmount = nextStatus === 'paid'
+    ? invoice.amount_paid || invoice.amount_due || invoice.total
+    : invoice.amount_due || invoice.total || invoice.amount_paid
+  const amount = fromStripeAmount(invoiceAmount, currency)
+  const paidAt = nextStatus === 'paid' ? timestampToIso(invoice.status_transitions?.paid_at) || new Date().toISOString() : null
+  const reference = extractStripeObjectId(invoice?.payment_intent) || cleanString(invoice.id)
+
+  await db.run(
+    `UPDATE payments
+     SET amount = COALESCE(?, amount),
+         currency = COALESCE(?, currency),
+         status = ?,
+         payment_method = 'stripe',
+         payment_provider = 'stripe',
+         reference = COALESCE(?, reference),
+         stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
+         paid_at = COALESCE(?, paid_at),
+         date = CASE WHEN ? IS NOT NULL THEN ? ELSE date END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE ${whereColumn} = ?`,
+    [
+      amount,
+      currency,
+      nextStatus,
+      reference,
+      paymentIntentId || null,
+      paidAt,
+      paidAt,
+      paidAt,
+      whereValue
+    ]
+  )
+
+  const row = await db.get(`SELECT contact_id FROM payments WHERE ${whereColumn} = ?`, [whereValue])
+  if (row?.contact_id && nextStatus === 'paid') {
+    updateSingleContactStats(row.contact_id).catch((error) => {
+      logger.warn(`No se pudieron actualizar stats del contacto por invoice Stripe ${whereValue}: ${error.message}`)
+    })
+  }
+
+  return nextStatus
+}
+
+async function updatePaymentFromRefund(refund) {
+  const paymentIntentId = extractStripeObjectId(refund?.payment_intent)
+  const chargeId = extractStripeObjectId(refund?.charge)
+  const filters = []
+  const params = []
+
+  if (paymentIntentId) {
+    filters.push('stripe_payment_intent_id = ?')
+    params.push(paymentIntentId)
+  }
+
+  if (chargeId) {
+    filters.push('stripe_charge_id = ?')
+    params.push(chargeId)
+  }
+
+  if (!filters.length) return null
+
+  const payment = await db.get(
+    `SELECT id, contact_id FROM payments WHERE ${filters.join(' OR ')} LIMIT 1`,
+    params
+  )
+
+  if (!payment) return null
+
+  await db.run(
+    `UPDATE payments
+     SET status = 'refunded',
+         payment_method = 'stripe',
+         payment_provider = 'stripe',
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [payment.id]
+  )
+
+  if (payment.contact_id) {
+    updateSingleContactStats(payment.contact_id).catch((error) => {
+      logger.warn(`No se pudieron actualizar stats del contacto por refund Stripe ${payment.id}: ${error.message}`)
+    })
+  }
+
+  return 'refunded'
+}
+
 export async function refreshStripePaymentFromIntent(paymentIntentId) {
   const { stripe } = await getStripeClient()
   const intent = await stripe.paymentIntents.retrieve(paymentIntentId)
@@ -495,6 +627,12 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
 
   if (object?.object === 'payment_intent') {
     await updatePaymentFromIntent(object)
+  } else if (event.type === 'invoice.payment_succeeded' && object?.object === 'invoice') {
+    await updatePaymentFromInvoice(object, 'paid')
+  } else if (event.type === 'invoice.payment_failed' && object?.object === 'invoice') {
+    await updatePaymentFromInvoice(object, 'failed')
+  } else if (event.type === 'refund.created' && object?.object === 'refund') {
+    await updatePaymentFromRefund(object)
   }
 
   return { received: true, type: event.type }

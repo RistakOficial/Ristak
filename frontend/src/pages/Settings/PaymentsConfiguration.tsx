@@ -58,6 +58,21 @@ const TAX_GATEWAYS: PaymentGatewayOption[] = [
 ]
 
 const paymentGatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercado-libre', 'clip', 'gigstacK']
+const STRIPE_WEBHOOK_EVENTS = [
+  {
+    name: 'invoice.payment_failed',
+    description: 'Cuando un intento de pago de invoice falla.'
+  },
+  {
+    name: 'invoice.payment_succeeded',
+    description: 'Cuando un intento de pago de invoice se completa.'
+  },
+  {
+    name: 'refund.created',
+    description: 'Cuando se crea un reembolso.'
+  }
+]
+
 const isPaymentGatewayId = (value?: string): value is PaymentGatewayId => paymentGatewayIds.includes(value as PaymentGatewayId)
 const parsePaymentGatewayRoute = (pathname: string) => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -295,6 +310,16 @@ export const PaymentsConfiguration: React.FC = () => {
     showToast('error', 'No se pudo copiar', endpoint.url)
   }
 
+  const handleCopyStripeWebhookEvents = async () => {
+    const copied = await copyTextToClipboard(STRIPE_WEBHOOK_EVENTS.map((event) => event.name).join('\n'))
+    if (copied) {
+      showToast('success', 'Eventos copiados', 'Copiaste los eventos que debes seleccionar en Stripe.')
+      return
+    }
+
+    showToast('error', 'No se pudieron copiar', 'Selecciona los eventos manualmente en Stripe.')
+  }
+
   const handleSelectGateway = (gateway: PaymentGatewayOption) => {
     navigate(`/settings/payments/${gateway.id}`)
 
@@ -349,7 +374,7 @@ export const PaymentsConfiguration: React.FC = () => {
           </div>
         </div>
 
-        <div className={styles.section}>
+        <div className={`${styles.section} ${styles.paymentsConfigurationSection}`}>
           {!isGatewayDetail && (
             <>
               {gatewayCategories.map((category) => (
@@ -556,8 +581,29 @@ export const PaymentsConfiguration: React.FC = () => {
                     ))}
                   </div>
                   <p className={styles.hint}>
-                    En Stripe pega una de estas URLs en Developers → Webhooks como Endpoint URL y escucha `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.processing` y `payment_intent.canceled`.
+                    En Stripe pega una de estas URLs en Developers → Webhooks como Endpoint URL.
                   </p>
+                  <div className={styles.stripeWebhookEventsBlock}>
+                    <div className={styles.stripeWebhookEventsHeader}>
+                      <span>Eventos que debes seleccionar</span>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={handleCopyStripeWebhookEvents}
+                      >
+                        <Copy size={16} />
+                        Copiar eventos
+                      </Button>
+                    </div>
+                    <div className={styles.stripeWebhookEventsList}>
+                      {STRIPE_WEBHOOK_EVENTS.map((event) => (
+                        <div key={event.name} className={styles.stripeWebhookEventItem}>
+                          <code>{event.name}</code>
+                          <span>{event.description}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 <div className={styles.formField}>
