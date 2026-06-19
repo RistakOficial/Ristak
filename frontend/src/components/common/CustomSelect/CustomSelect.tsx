@@ -40,6 +40,7 @@ interface CustomSelectProps {
   className?: string
   style?: React.CSSProperties
   portal?: boolean
+  dropdownPlacement?: 'auto' | 'top' | 'bottom'
   dropdownMinWidth?: number
   iconOnly?: boolean
   size?: 'default' | 'large'
@@ -116,6 +117,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   className = '',
   style,
   portal = false,
+  dropdownPlacement = 'auto',
   dropdownMinWidth,
   iconOnly = false,
   size = 'default',
@@ -128,6 +130,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false)
   const [portalStyle, setPortalStyle] = useState<React.CSSProperties>({})
+  const [portalPlacement, setPortalPlacement] = useState<'top' | 'bottom'>('bottom')
   const containerRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -160,9 +163,11 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     const estimatedHeight = Math.min(flatOptions.length * rowHeight + 8, maxDropdownHeight)
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding
     const spaceAbove = rect.top - viewportPadding
-    const openAbove = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
+    const openAbove = dropdownPlacement === 'top' ||
+      (dropdownPlacement === 'auto' && spaceBelow < estimatedHeight && spaceAbove > spaceBelow)
     const availableSpace = Math.max(minDropdownHeight, openAbove ? spaceAbove : spaceBelow)
     const dropdownHeight = Math.min(estimatedHeight, availableSpace)
+    setPortalPlacement(openAbove ? 'top' : 'bottom')
 
     setPortalStyle({
       position: 'fixed',
@@ -173,7 +178,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       width: dropdownWidth,
       '--custom-select-options-max-height': `${dropdownHeight}px`
     } as React.CSSProperties)
-  }, [dropdownMinWidth, flatOptions.length, portal, size])
+  }, [dropdownMinWidth, dropdownPlacement, flatOptions.length, portal, size])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -234,6 +239,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       ref={dropdownRef}
       className={`${styles.dropdown} ${portal ? styles.portalDropdown : ''} ${size === 'large' ? styles.dropdownLarge : ''}`}
       style={portal ? portalStyle : undefined}
+      data-placement={portal ? portalPlacement : undefined}
       data-ristak-dropdown-panel
     >
       <div className={styles.options}>

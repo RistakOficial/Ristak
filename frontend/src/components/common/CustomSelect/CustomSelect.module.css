@@ -131,10 +131,25 @@
   z-index: var(--z-index-tooltip, 10100);
 }
 
+.dropdown[data-placement='top'] {
+  animation-name: slideUp;
+}
+
 @keyframes slideDown {
   from {
     opacity: 0;
     transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
   to {
     opacity: 1;

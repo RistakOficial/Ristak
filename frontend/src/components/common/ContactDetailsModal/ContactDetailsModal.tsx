@@ -1774,6 +1774,7 @@ export function ContactDetailsModal({
                     options={chatChannelOptions}
                     onValueChange={handleContactChatChannelChange}
                     portal
+                    dropdownPlacement="top"
                     iconOnly
                     dropdownMinWidth={240}
                     aria-label="Canal de envio"
@@ -1838,6 +1839,7 @@ export function ContactDetailsModal({
                   options={chatChannelOptions}
                   onValueChange={handleContactChatChannelChange}
                   portal
+                  dropdownPlacement="top"
                   iconOnly
                   dropdownMinWidth={240}
                   aria-label="Canal de envio"

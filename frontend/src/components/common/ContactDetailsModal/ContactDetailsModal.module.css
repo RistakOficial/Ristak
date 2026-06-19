@@ -949,12 +949,14 @@
 .detailSectionContent {
   display: flex;
   flex-direction: column;
+  width: 100%;
   gap: 0.375rem;
 }
 
 .detailItem {
   display: flex;
   align-items: flex-start;
+  width: 100%;
   gap: 0.5rem;
   font-size: 0.8125rem;
   color: var(--color-text-secondary);
@@ -964,6 +966,26 @@
 .detailItem svg {
   color: var(--color-text-tertiary);
   flex: 0 0 auto;
+}
+
+.detailItem > :not(svg) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.detailItem [data-layout='block'] {
+  width: 100%;
+  max-width: 100%;
+}
+
+.detailItem [data-layout='block'] button {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .detailItemLabel {
