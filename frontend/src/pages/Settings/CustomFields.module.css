@@ -275,8 +275,7 @@
 
 .field input,
 .field select,
-.field textarea,
-.search input {
+.field textarea {
   width: 100%;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 8px;
@@ -300,34 +299,8 @@
   margin-bottom: 12px;
 }
 
-.search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.toolbarSearch {
   width: min(440px, 100%);
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-  color: var(--text-mute);
-}
-
-.search:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.search input {
-  min-height: 38px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-}
-
-.search input::placeholder {
-  color: var(--text-mute);
 }
 
 .selectionBar {
@@ -678,8 +651,7 @@
 
 .field input:focus,
 .field select:focus,
-.field textarea:focus,
-.search:focus-within {
+.field textarea:focus {
   border-color: var(--ristak-focus-border);
   box-shadow: var(--ristak-focus-ring);
 }

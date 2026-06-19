@@ -19,6 +19,7 @@ import {
   Check
 } from 'lucide-react'
 import { Button } from '@/components/common/Button'
+import { Badge } from '@/components/common/Badge'
 import { Logo } from '@/components/common/Logo'
 import { Modal } from '@/components/common/Modal'
 import { useAuth } from '@/contexts/AuthContext'
@@ -234,10 +235,10 @@ export const Initialization: React.FC = () => {
                 <div className={styles.stepTitleRow}>
                   <span className={styles.stepTitle}>{meta.title}</span>
                   {!step.required && step.done && (
-                    <span className={`${styles.badge} ${styles.badgeDone}`}>Conectado</span>
+                    <Badge variant="success">Conectado</Badge>
                   )}
                   {!step.required && !step.done && (
-                    <span className={`${styles.badge} ${styles.badgeOptional}`}>Opcional</span>
+                    <Badge variant="neutral">Opcional</Badge>
                   )}
                 </div>
                 <p className={styles.stepDesc}>{meta.description}</p>

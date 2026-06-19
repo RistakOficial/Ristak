@@ -12,14 +12,13 @@ import {
   Plus,
   QrCode,
   RefreshCw,
-  Search,
   ShieldCheck,
   Star,
   Unplug,
   Wallet
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
-import { Badge, Button, Modal, PageHeader } from '@/components/common'
+import { Badge, Button, Modal, PageHeader, SearchField } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
 import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
@@ -839,10 +838,13 @@ export const WhatsAppSettings: React.FC = () => {
 
         <main className={styles.tablePanel}>
           <div className={styles.toolbar}>
-            <label className={styles.search} data-ristak-unstyled>
-              <Search size={16} />
-              <input value={phoneSearch} placeholder="Buscar por número, nombre o estado" onChange={(event) => setPhoneSearch(event.target.value)} />
-            </label>
+            <SearchField
+              className={styles.toolbarSearch}
+              value={phoneSearch}
+              placeholder="Buscar por número, nombre o estado"
+              onChange={(nextSearch) => setPhoneSearch(nextSearch)}
+              onClear={() => setPhoneSearch('')}
+            />
             <div className={styles.toolbarActions}>
               <span>{filteredPhones.length} números</span>
               <span className={styles.balancePill}><Wallet size={15} />{balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'}</span>
@@ -877,7 +879,7 @@ export const WhatsAppSettings: React.FC = () => {
 
           {filteredPhones.length > 0 ? (
             <div className={styles.tableWrap}>
-              <table className={styles.table}>
+              <table className={styles.table} data-ristak-table data-ristak-table-element>
                 <thead>
                   <tr>
                     <th>Número</th>
@@ -1024,16 +1026,19 @@ export const WhatsAppSettings: React.FC = () => {
 
         <main className={styles.tablePanel}>
           <div className={styles.toolbar}>
-            <label className={styles.search} data-ristak-unstyled>
-              <Search size={16} />
-              <input value={alertSearch} placeholder="Buscar por alerta o detalle" onChange={(event) => setAlertSearch(event.target.value)} />
-            </label>
+            <SearchField
+              className={styles.toolbarSearch}
+              value={alertSearch}
+              placeholder="Buscar por alerta o detalle"
+              onChange={(nextSearch) => setAlertSearch(nextSearch)}
+              onClear={() => setAlertSearch('')}
+            />
             <span>{filteredAlerts.length} alertas</span>
           </div>
 
           {filteredAlerts.length > 0 ? (
             <div className={styles.tableWrap}>
-              <table className={styles.table}>
+              <table className={styles.table} data-ristak-table data-ristak-table-element>
                 <thead>
                   <tr>
                     <th>Alerta</th>

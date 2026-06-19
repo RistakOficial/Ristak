@@ -21,6 +21,10 @@
   etiqueta/pill), usa o extiende `frontend/src/components/common/` y los tokens
   globales. No crees CSS local tipo `.searchBox`, `.searchInput`, `.tabs`,
   `.badge`, `.modal`, etc. para resolver lo mismo en una página.
+- **Auditoría obligatoria.** Antes de cerrar cualquier cambio de UI de escritorio,
+  corre `cd frontend && npm run design:audit`. Si falla, migra al componente
+  global correcto. No agregues archivos a la allowlist del auditor salvo que sea
+  deuda legacy ya existente y quede explícitamente justificado en el cambio.
 - **Responsive sí importa.** Mantén layouts fluidos para compus chicas usando
   `flex`, `grid`, `minmax`, `clamp`, `min-width: 0`, container/media queries y
   variables del componente. No confundas responsive con inventar otra identidad

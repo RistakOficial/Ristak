@@ -195,28 +195,6 @@
   color: var(--color-text-tertiary);
 }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.15rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.badgeOptional {
-  color: var(--color-text-tertiary);
-  background: rgba(148, 163, 184, 0.12);
-}
-
-.badgeDone {
-  color: var(--color-status-success);
-  background: color-mix(in srgb, var(--color-status-success) 14%, transparent);
-}
-
 .stepAction {
   flex-shrink: 0;
 }

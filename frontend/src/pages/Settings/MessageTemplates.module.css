@@ -230,7 +230,6 @@
 }
 
 .newFolder input,
-.searchBox input,
 .field input,
 .field select,
 .field textarea,
@@ -370,36 +369,8 @@
   min-width: max-content;
 }
 
-.searchBox {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.toolbarSearch {
   width: min(460px, 100%);
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-  color: var(--text-mute);
-}
-
-.searchBox:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.searchBox input {
-  min-height: 38px;
-  padding: 0;
-  color: var(--text);
-}
-
-.searchBox input::placeholder {
-  color: var(--text-mute);
-}
-
-.searchBox svg {
-  flex-shrink: 0;
 }
 
 .filterBar {
@@ -458,8 +429,7 @@
 .inlineForm input:focus,
 .buttonEditorRow input:focus,
 .buttonEditorRow select:focus,
-.newFolder input:focus,
-.searchBox:focus-within {
+.newFolder input:focus {
   border-color: var(--ristak-focus-border);
   box-shadow: var(--ristak-focus-ring);
 }

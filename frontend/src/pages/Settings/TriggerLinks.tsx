@@ -9,11 +9,10 @@ import {
   MousePointerClick,
   Plus,
   Save,
-  Search,
   Trash2,
   X
 } from 'lucide-react'
-import { Button, PageHeader } from '@/components/common'
+import { Button, PageHeader, SearchField } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
 import {
@@ -294,10 +293,13 @@ export const TriggerLinks: React.FC = () => {
 
         <main className={styles.tablePanel}>
           <div className={styles.toolbar}>
-            <label className={styles.search} data-ristak-unstyled>
-              <Search size={16} />
-              <input value={search} placeholder="Buscar por nombre, parámetro o destino" onChange={(event) => setSearch(event.target.value)} />
-            </label>
+            <SearchField
+              className={styles.toolbarSearch}
+              value={search}
+              placeholder="Buscar por nombre, parámetro o destino"
+              onChange={(nextSearch) => setSearch(nextSearch)}
+              onClear={() => setSearch('')}
+            />
             <span>{visibleLinks.length} enlaces</span>
           </div>
 
@@ -332,7 +334,7 @@ export const TriggerLinks: React.FC = () => {
             </div>
           ) : (
             <div className={styles.tableWrap}>
-              <table className={`${styles.table} ${styles.plainTable}`}>
+              <table className={`${styles.table} ${styles.plainTable}`} data-ristak-table data-ristak-table-element>
                 <thead>
                   <tr>
                     <th className={styles.selectionHead}>

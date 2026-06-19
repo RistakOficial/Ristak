@@ -31,7 +31,7 @@ import {
   Video,
   X
 } from 'lucide-react'
-import { Button, Loading, CustomSelect, PageHeader } from '@/components/common'
+import { Button, Loading, CustomSelect, PageHeader, SearchField } from '@/components/common'
 import { PhoneChatPreview, type PhoneChatPreviewMessage } from '@/components/phone/PhoneChatPreview'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -1428,14 +1428,13 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
         <main className={styles.tablePanel}>
           <div className={styles.toolbar}>
-            <label className={styles.searchBox} data-ristak-unstyled>
-              <Search size={16} />
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="Buscar por nombre, texto, carpeta o estado"
-              />
-            </label>
+            <SearchField
+              className={styles.toolbarSearch}
+              value={searchTerm}
+              placeholder="Buscar por nombre, texto, carpeta o estado"
+              onChange={(nextSearch) => setSearchTerm(nextSearch)}
+              onClear={() => setSearchTerm('')}
+            />
             <div className={styles.toolbarActions}>
               <span className={styles.toolbarCount}>{visibleTemplates.length} plantillas</span>
               <Button variant="outline" onClick={syncAllTemplates} loading={syncing}>
@@ -1541,7 +1540,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
           {visibleTemplates.length ? (
             <div className={styles.collectionTableWrap}>
-              <table className={styles.collectionTable}>
+              <table className={styles.collectionTable} data-ristak-table data-ristak-table-element>
                 <thead>
                   <tr>
                     <th className={styles.selectionHead}>

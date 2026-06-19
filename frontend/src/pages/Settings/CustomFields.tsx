@@ -10,11 +10,10 @@ import {
   MoreHorizontal,
   Plus,
   Save,
-  Search,
   Trash2,
   X
 } from 'lucide-react'
-import { Button, CustomSelect, PageHeader } from '@/components/common'
+import { Button, CustomSelect, PageHeader, SearchField } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
@@ -628,10 +627,13 @@ export const CustomFields: React.FC = () => {
 
         <main className={styles.tablePanel}>
           <div className={styles.toolbar}>
-            <label className={styles.search} data-ristak-unstyled>
-              <Search size={16} />
-              <input value={search} placeholder="Buscar por nombre, parámetro o tipo" onChange={(event) => setSearch(event.target.value)} />
-            </label>
+            <SearchField
+              className={styles.toolbarSearch}
+              value={search}
+              placeholder="Buscar por nombre, parámetro o tipo"
+              onChange={(nextSearch) => setSearch(nextSearch)}
+              onClear={() => setSearch('')}
+            />
             <span>{visibleFields.length} campos</span>
           </div>
 
@@ -682,7 +684,7 @@ export const CustomFields: React.FC = () => {
             </div>
           ) : (
             <div className={styles.tableWrap}>
-              <table className={styles.table}>
+              <table className={styles.table} data-ristak-table data-ristak-table-element>
                 <thead>
                   <tr>
                     <th className={styles.selectionHead}>

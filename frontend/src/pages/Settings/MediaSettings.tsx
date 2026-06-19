@@ -25,7 +25,6 @@ import {
   MoreHorizontal,
   PlayCircle,
   RefreshCw,
-  Search,
   Trash2,
   Upload,
   X
@@ -43,6 +42,7 @@ import {
   MediaUploadTray,
   Modal,
   PageHeader,
+  SearchField,
   TabList
 } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
@@ -1506,20 +1506,14 @@ export const MediaSettings: React.FC = () => {
 
       <Card padding="none" className={styles.explorerCard}>
         <div className={styles.toolbar}>
-          <div className={styles.searchBox} data-ristak-unstyled>
-            <Search size={17} className={styles.searchIcon} />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Buscar archivos, carpetas o tipos"
-              aria-label="Buscar archivos de Media"
-            />
-            {query ? (
-              <button type="button" className={styles.searchClearButton} onClick={() => setQuery('')} aria-label="Limpiar búsqueda">
-                <X size={15} />
-              </button>
-            ) : null}
-          </div>
+          <SearchField
+            className={styles.toolbarSearch}
+            value={query}
+            placeholder="Buscar archivos, carpetas o tipos"
+            aria-label="Buscar archivos de Media"
+            onChange={(nextQuery) => setQuery(nextQuery)}
+            onClear={() => setQuery('')}
+          />
 
           <TabList
             tabs={mediaTabs}

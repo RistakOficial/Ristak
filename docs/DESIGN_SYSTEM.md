@@ -12,6 +12,9 @@
 >    **tokens** de `frontend/src/styles/index.css`. No inventes nada.
 > 3. **Pruebes tu cambio en las 4 familias × claro/oscuro** antes de darlo por
 >    hecho (sobre todo **Onyx**, que destapa bugs de contraste).
+> 4. **Corras `cd frontend && npm run design:audit`** antes de cerrar. Si falla,
+>    no lo tapes: usa el componente global correcto o convierte el patrón en una
+>    extensión documentada del sistema.
 >
 > La congruencia de marca **no es negociable**, aunque la función sea nueva.
 > Una pantalla que "parece de otra app" se **rechaza en review**. No hay excusa
@@ -94,6 +97,12 @@ aquí**. Las páginas solo acomodan el layout y pasan datos; no inventan su prop
 look para buscadores, botones, inputs con iconos, tabs, cards, tablas, modales,
 badges, menús o pills. Si necesitas una variación real, extiende el componente
 global con props/tokens y documenta la variación en esta guía.
+
+La guardia automática vive en `frontend/scripts/audit-design-system.mjs` y se
+ejecuta con `npm run design:audit`. Bloquea patrones locales nuevos como
+`.searchBox`, `.searchInput`, `.inputWithIcon`, `.tabs`, `.badge`, `.modal`,
+`.table` y colores semánticos hardcodeados. La allowlist del script es deuda
+legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 
 | Necesitas… | Usa | Nunca |
 | --- | --- | --- |
@@ -195,6 +204,7 @@ una isla.
 7. Negrita solo en títulos/números/badges (§5.4).
 8. Estados de foco/hover/disabled con tokens.
 9. **Probado en las 4 familias × claro/oscuro** (Aurora/Onyx/Brut/Nimbus).
-10. El responsive para ventanas chicas sigue funcionando con reglas fluidas, no
+10. `npm run design:audit` pasa sin violaciones nuevas.
+11. El responsive para ventanas chicas sigue funcionando con reglas fluidas, no
    con estilos visuales paralelos.
-11. No tocaste `Phone*`, Automatizaciones, ni el layout/flujo.
+12. No tocaste `Phone*`, Automatizaciones, ni el layout/flujo.

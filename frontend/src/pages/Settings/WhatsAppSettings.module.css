@@ -203,34 +203,10 @@
   gap: 8px;
 }
 
-.search {
-  display: flex;
+.toolbarSearch {
   width: min(440px, 100%);
-  min-height: 40px;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-  color: var(--text-mute);
-  padding: 0 12px;
 }
 
-.search input {
-  width: 100%;
-  min-height: 38px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-}
-
-.search input::placeholder {
-  color: var(--text-mute);
-}
-
-.search:focus-within,
 .inputWrap:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);

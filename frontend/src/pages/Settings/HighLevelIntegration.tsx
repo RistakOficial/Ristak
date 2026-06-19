@@ -565,9 +565,16 @@ export const HighLevelIntegration: React.FC = () => {
 
       {/* Modal de Contactos Ocultos */}
       {showHiddenContactsModal && createPortal(
-        <div className={styles.modalOverlay} onClick={() => setShowHiddenContactsModal(false)}>
-          <div className={styles.hiddenContactsModal} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
+        <div className={styles.modalOverlay} data-overlay="" onClick={() => setShowHiddenContactsModal(false)}>
+          <div
+            className={styles.hiddenContactsModal}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="md"
+            data-modal-type="custom"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.modalHeader} data-modal-header="">
               <h2>Contactos Ocultos</h2>
               <button
                 className={styles.modalClose}
@@ -577,7 +584,7 @@ export const HighLevelIntegration: React.FC = () => {
               </button>
             </div>
 
-            <div className={styles.modalBody}>
+            <div className={styles.modalBody} data-modal-content="">
               <p className={styles.modalDescription}>
                 Agrega palabras clave para ocultar contactos en todas las vistas. Los contactos que coincidan
                 con estos textos en su nombre, email, teléfono o ID serán filtrados automáticamente.
@@ -652,7 +659,7 @@ export const HighLevelIntegration: React.FC = () => {
               </div>
             </div>
 
-            <div className={styles.modalFooter}>
+            <div className={styles.modalFooter} data-modal-footer="">
               <Button
                 variant="ghost"
                 onClick={() => setShowHiddenContactsModal(false)}

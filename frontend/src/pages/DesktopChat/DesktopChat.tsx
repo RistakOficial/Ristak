@@ -47,6 +47,7 @@ import {
   Icon,
   Modal,
   RecordPaymentModal,
+  SearchField,
   TagPicker
 } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
@@ -3751,20 +3752,16 @@ export const DesktopChat: React.FC = () => {
       return (
         <div className={styles.templatePanel} role="dialog" aria-label="Seleccionar plantilla guardada">
           {renderPanelHeader('Seleccionar plantilla', `${templates.length} guardada${templates.length === 1 ? '' : 's'}`, true)}
-          <div className={styles.templateSearchBox}>
-            <Search size={15} />
-            <input
-              value={templateSearch}
-              onChange={(event) => setTemplateSearch(event.target.value)}
-              placeholder="Buscar plantilla..."
-              autoFocus
-            />
-            {templateSearch ? (
-              <button type="button" onClick={() => setTemplateSearch('')} aria-label="Limpiar búsqueda de plantillas">
-                <X size={14} />
-              </button>
-            ) : null}
-          </div>
+          <SearchField
+            className={styles.templateSearchField}
+            value={templateSearch}
+            placeholder="Buscar plantilla..."
+            autoFocus
+            onChange={(nextSearch) => setTemplateSearch(nextSearch)}
+            onClear={() => setTemplateSearch('')}
+            clearLabel="Limpiar búsqueda de plantillas"
+            size="sm"
+          />
           {templatesError ? (
             <div className={styles.templateEmptyState}>
               <CircleAlert size={18} />
@@ -4362,23 +4359,16 @@ export const DesktopChat: React.FC = () => {
             ) : null}
           </div>
 
-          <label className={styles.searchBox}>
-            <Search size={16} />
-            <input
-              data-ristak-unstyled
-              value={chatQuery}
-              onChange={(event) => setChatQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void handleSearchContacts()
-              }}
-              placeholder="Buscar chat, contacto, teléfono o correo"
-            />
-            {chatQuery ? (
-              <button type="button" onClick={() => setChatQuery('')} aria-label="Limpiar búsqueda">
-                <X size={14} />
-              </button>
-            ) : null}
-          </label>
+          <SearchField
+            className={styles.chatSearchField}
+            value={chatQuery}
+            placeholder="Buscar chat, contacto, teléfono o correo"
+            onChange={(nextQuery) => setChatQuery(nextQuery)}
+            onClear={() => setChatQuery('')}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void handleSearchContacts()
+            }}
+          />
 
           <div className={styles.filterRow} role="tablist" aria-label="Filtros de chat">
             <button

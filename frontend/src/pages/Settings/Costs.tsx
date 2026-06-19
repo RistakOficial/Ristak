@@ -455,16 +455,23 @@ export const Costs: React.FC = () => {
 
       {/* Modal para crear/editar costo */}
       {showModal && createPortal(
-        <div className={styles.modalOverlay} onClick={() => setShowModal(false)}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
+        <div className={styles.modalOverlay} data-overlay="" onClick={() => setShowModal(false)}>
+          <div
+            className={styles.modal}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="md"
+            data-modal-type="custom"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.modalHeader} data-modal-header="">
               <h3>{editingCost ? 'Editar costo' : 'Nuevo costo'}</h3>
               <button className={styles.closeButton} onClick={() => setShowModal(false)}>
                 <X size={20} />
               </button>
             </div>
 
-            <div className={styles.modalBody}>
+            <div className={styles.modalBody} data-modal-content="">
               {/* Nombre */}
               <div className={styles.formGroup}>
                 <label>Nombre *</label>
@@ -556,7 +563,7 @@ export const Costs: React.FC = () => {
               )}
             </div>
 
-            <div className={styles.modalFooter}>
+            <div className={styles.modalFooter} data-modal-footer="">
               <Button
                 variant="ghost"
                 onClick={() => setShowModal(false)}

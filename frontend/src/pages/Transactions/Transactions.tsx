@@ -1928,7 +1928,7 @@ export const Transactions: React.FC = () => {
       </Card>
 
       {isClient && transactionsPendingDeletion.length > 0 && createPortal(
-        <div className={styles.modalOverlay} onClick={closeTransactionDeleteModal}>
+        <div className={styles.modalOverlay} data-overlay="" onClick={closeTransactionDeleteModal}>
           <div
             className={styles.modal}
             data-modal=""
@@ -1984,7 +1984,7 @@ export const Transactions: React.FC = () => {
       )}
 
       {isClient && modal.type && createPortal(
-        <div className={styles.modalOverlay} onClick={closeTransactionModal}>
+        <div className={styles.modalOverlay} data-overlay="" onClick={closeTransactionModal}>
           <div
             className={styles.modal}
             data-modal=""
@@ -2124,7 +2124,7 @@ export const Transactions: React.FC = () => {
       )}
 
       {isClient && paymentPlanCreateModal.open && createPortal(
-        <div className={styles.modalOverlay} onClick={closePaymentPlanCreateModal}>
+        <div className={styles.modalOverlay} data-overlay="" onClick={closePaymentPlanCreateModal}>
           <div
             className={`${styles.modal} ${styles.paymentPlanModal}`}
             data-modal=""
@@ -2427,7 +2427,7 @@ export const Transactions: React.FC = () => {
       )}
 
       {isClient && paymentPlanModal.plan && createPortal(
-        <div className={styles.modalOverlay} onClick={closePaymentPlanModal}>
+        <div className={styles.modalOverlay} data-overlay="" onClick={closePaymentPlanModal}>
           <div
             className={`${styles.modal} ${styles.paymentPlanModal}`}
             data-modal=""

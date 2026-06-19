@@ -7,12 +7,11 @@ import {
   MoreHorizontal,
   Plus,
   Save,
-  Search,
   Tag as TagIcon,
   Trash2,
   X
 } from 'lucide-react'
-import { Button, CustomSelect, PageHeader } from '@/components/common'
+import { Button, CustomSelect, PageHeader, SearchField } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
@@ -544,10 +543,13 @@ export const TagsSettings: React.FC = () => {
 
         <main className={styles.tablePanel}>
           <div className={styles.toolbar}>
-            <label className={styles.search} data-ristak-unstyled>
-              <Search size={16} />
-              <input value={search} placeholder="Buscar por nombre o carpeta" onChange={(event) => setSearch(event.target.value)} />
-            </label>
+            <SearchField
+              className={styles.toolbarSearch}
+              value={search}
+              placeholder="Buscar por nombre o carpeta"
+              onChange={(nextSearch) => setSearch(nextSearch)}
+              onClear={() => setSearch('')}
+            />
             <span>{visibleTags.length} etiquetas</span>
           </div>
 
@@ -598,7 +600,7 @@ export const TagsSettings: React.FC = () => {
             </div>
           ) : (
             <div className={styles.tableWrap}>
-              <table className={styles.table}>
+              <table className={styles.table} data-ristak-table data-ristak-table-element>
                 <thead>
                   <tr>
                     <th className={styles.selectionHead}>

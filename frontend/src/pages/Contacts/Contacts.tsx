@@ -2023,7 +2023,7 @@ const ContactsTable: React.FC = () => {
       )}
 
       {isClient && showNewContactModal && createPortal(
-        <div className={styles.modalOverlay} onClick={() => {
+        <div className={styles.modalOverlay} data-overlay="" onClick={() => {
           setShowNewContactModal(false)
           navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
         }}>
@@ -2097,7 +2097,7 @@ const ContactsTable: React.FC = () => {
       )}
 
       {isClient && editingContact && createPortal(
-        <div className={styles.modalOverlay} onClick={() => {
+        <div className={styles.modalOverlay} data-overlay="" onClick={() => {
           setEditingContact(null)
           navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
         }}>
@@ -2188,7 +2188,7 @@ const ContactsTable: React.FC = () => {
       )}
 
       {isClient && contactsPendingDeletion.length > 0 && createPortal(
-        <div className={styles.modalOverlay} onClick={closeContactDeleteModal}>
+        <div className={styles.modalOverlay} data-overlay="" onClick={closeContactDeleteModal}>
           <div
             className={styles.modal}
             data-modal=""

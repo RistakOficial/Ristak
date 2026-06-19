@@ -340,59 +340,9 @@
   border-bottom: 1px solid var(--design-panel-border);
 }
 
-.searchBox {
-  box-sizing: border-box;
-  position: relative;
-  display: flex;
+.toolbarSearch {
   min-width: 260px;
   flex: 1;
-  align-items: center;
-  width: 100%;
-  min-height: 42px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-  color: var(--text-mute);
-  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.searchBox *,
-.searchBox *::before,
-.searchBox *::after {
-  box-sizing: border-box;
-}
-
-.searchBox:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.searchIcon {
-  position: absolute;
-  left: 12px;
-  color: var(--text-mute);
-  pointer-events: none;
-}
-
-.searchBox input {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 100%;
-  min-width: 0;
-  height: 40px;
-  min-height: 0;
-  padding: 0 38px;
-  border: 0;
-  background: transparent;
-  box-shadow: none !important;
-  color: var(--text);
-  font-size: 0.95rem;
-  line-height: 1;
-  outline: none;
-}
-
-.searchBox input::placeholder {
-  color: var(--text-mute);
 }
 
 .viewToggle button {
@@ -405,25 +355,6 @@
   cursor: pointer;
 }
 
-.searchClearButton {
-  position: absolute;
-  top: 50%;
-  right: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  transform: translateY(-50%);
-  border: 0;
-  border-radius: var(--design-control-radius, 8px);
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
-}
-
-.searchClearButton:hover,
 .viewToggle button:hover {
   background: rgba(148, 163, 184, 0.1);
   color: var(--color-text-primary);
@@ -1115,7 +1046,7 @@
     flex-wrap: wrap;
   }
 
-  .searchBox {
+  .toolbarSearch {
     min-width: min(100%, 320px);
   }
 
@@ -1159,7 +1090,7 @@
     align-items: stretch;
   }
 
-  .searchBox,
+  .toolbarSearch,
   .typeTabs,
   .viewToggle {
     width: 100%;
