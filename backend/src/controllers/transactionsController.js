@@ -573,6 +573,24 @@ export const getTransactions = async (req, res) => {
       filters.push(`(p.contact_id IS NULL OR p.contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition}))`)
     }
 
+    filters.push(`
+      NOT EXISTS (
+        SELECT 1
+        FROM installment_payments ip
+        WHERE ip.payment_id = p.id
+          AND LOWER(COALESCE(p.status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')
+      )
+    `)
+    filters.push(`
+      NOT EXISTS (
+        SELECT 1
+        FROM payment_flows pf
+        WHERE pf.first_payment_invoice_id = p.id
+          AND pf.payment_provider = 'stripe'
+          AND LOWER(COALESCE(p.status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')
+      )
+    `)
+
     const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
     const countResult = await db.get(`SELECT COUNT(*) as total FROM payments p ${whereClause}`, params)
     const totalTransactions = countResult?.total || 0

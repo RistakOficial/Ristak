@@ -57,6 +57,7 @@ type PaymentMode = 'single' | 'partial'
 type InstallmentValueType = 'percentage' | 'amount'
 type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
 type RemainingFrequency = 'custom' | 'weekly' | 'biweekly' | 'monthly'
+type StripePlanCardSource = 'new_card' | 'saved_card'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
 type PaymentSegmentedOption = { value: string; label: string }
@@ -491,6 +492,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
   const [savedPaymentMethods, setSavedPaymentMethods] = useState<StripeSavedPaymentMethod[]>([])
   const [selectedSavedPaymentMethodId, setSelectedSavedPaymentMethodId] = useState('')
+  const [stripePlanCardSource, setStripePlanCardSource] = useState<StripePlanCardSource>('new_card')
 
   // Estado de conexión con HighLevel. Cuando NO está conectado, Ristak opera en
   // modo local: productos y pagos manuales siguen funcionando; enlaces y
@@ -594,10 +596,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const selectedSavedPaymentMethod = savedPaymentMethods.find((method) => (
     method.stripePaymentMethodId === selectedSavedPaymentMethodId || method.id === selectedSavedPaymentMethodId
   )) || null
-  const stripePlanSavedPaymentMethod = selectedSavedPaymentMethod || savedPaymentMethods[0] || null
+  const stripePlanSavedPaymentMethod = stripePlanCardSource === 'saved_card'
+    ? selectedSavedPaymentMethod || savedPaymentMethods[0] || null
+    : null
   const firstPaymentCanAuthorizeStripePlan = firstPaymentEnabled && firstPaymentMethod === 'card'
-  const stripePlanNeedsSetupLink = !stripePlanSavedPaymentMethod && !firstPaymentCanAuthorizeStripePlan
-  const stripePlanCanBeAuthorized = Boolean(stripePlanSavedPaymentMethod) || firstPaymentCanAuthorizeStripePlan || stripePlanNeedsSetupLink
+  const stripePlanNeedsSetupLink = stripePlanCardSource === 'new_card' && !firstPaymentCanAuthorizeStripePlan
+  const stripePlanCanBeAuthorized = stripePlanCardSource === 'saved_card'
+    ? Boolean(stripePlanSavedPaymentMethod)
+    : firstPaymentCanAuthorizeStripePlan || stripePlanNeedsSetupLink
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
   const isEmbedded = variant === 'embedded'
   const renderPaymentSegmentedTabs = ({
@@ -708,6 +714,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setManualPaymentData(defaultManualPaymentData())
     setSavedPaymentMethods([])
     setSelectedSavedPaymentMethodId('')
+    setStripePlanCardSource('new_card')
   }
 
   const loadConfig = async () => {
@@ -1537,6 +1544,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       if (activePaymentMode === 'partial') {
         setPaymentOption(stripeConnected ? 'stripe' : 'send')
+        setStripePlanCardSource('new_card')
         setStep('options')
         return
       }
@@ -2657,7 +2665,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               <span>
                 {stripeConnected
                   ? (savedPaymentMethods.length > 0
-                      ? 'Stripe usará la tarjeta guardada para programar y cobrar cada fecha del plan.'
+                      ? 'En el siguiente paso eliges si Stripe usa una tarjeta guardada o si manda link de domiciliación para otra tarjeta.'
                       : firstPaymentEnabled && firstPaymentMethod === 'card'
                         ? 'Si el primer pago es con tarjeta/link de Stripe, esa tarjeta quedará guardada y activará los cobros futuros.'
                         : `Stripe enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`)
@@ -2719,11 +2727,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (!invoiceSummary) return null
 
     if (paymentMode === 'partial') {
-      const stripeAuthorizationLabel = stripePlanSavedPaymentMethod
-        ? `Stripe cobrará automáticamente con ${getSavedCardDescription(stripePlanSavedPaymentMethod)}.`
-        : firstPaymentEnabled && firstPaymentMethod === 'card'
+      const stripeSavedCardLabel = stripePlanSavedPaymentMethod
+        ? `Stripe usará ${getSavedCardDescription(stripePlanSavedPaymentMethod)} para los cobros programados.`
+        : 'Selecciona una tarjeta guardada para programar este plan.'
+      const stripeNewCardLabel = firstPaymentEnabled && firstPaymentMethod === 'card'
           ? 'Stripe enviará el primer link; cuando se pague, guardará la tarjeta y activará los cobros futuros.'
           : `Stripe enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}; al pagarse, guardará la tarjeta y activará el plan.`
+      const stripeAuthorizationLabel = stripePlanCardSource === 'saved_card'
+        ? stripeSavedCardLabel
+        : stripeNewCardLabel
       const authorizationLabel = paymentOption === 'stripe'
         ? stripeAuthorizationLabel
         : partialNeedsCardAuthorization
@@ -2768,20 +2780,48 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             {stripeConnected && (
               <button
                 type="button"
-                className={`${styles.optionButton} ${paymentOption === 'stripe' ? styles.optionButtonActive : ''}`}
-                onClick={() => setPaymentOption('stripe')}
+                className={`${styles.optionButton} ${paymentOption === 'stripe' && stripePlanCardSource === 'new_card' ? styles.optionButtonActive : ''}`}
+                onClick={() => {
+                  setPaymentOption('stripe')
+                  setStripePlanCardSource('new_card')
+                }}
               >
                 <div className={styles.optionInfo}>
                   <div className={styles.optionIcon}>
                     <CreditCard size={18} />
                   </div>
                   <div>
-                    <p>Programar con Stripe</p>
-                    <span>{stripeAuthorizationLabel}</span>
+                    <p>Enviar link para nueva tarjeta</p>
+                    <span>{stripeNewCardLabel}</span>
                   </div>
                 </div>
 
-                {paymentOption === 'stripe' && (
+                {paymentOption === 'stripe' && stripePlanCardSource === 'new_card' && (
+                  <Check size={18} className={styles.optionCheck} />
+                )}
+              </button>
+            )}
+
+            {stripeConnected && savedPaymentMethods.length > 0 && (
+              <button
+                type="button"
+                className={`${styles.optionButton} ${paymentOption === 'stripe' && stripePlanCardSource === 'saved_card' ? styles.optionButtonActive : ''}`}
+                onClick={() => {
+                  setPaymentOption('stripe')
+                  setStripePlanCardSource('saved_card')
+                }}
+              >
+                <div className={styles.optionInfo}>
+                  <div className={styles.optionIcon}>
+                    <ShieldCheck size={18} />
+                  </div>
+                  <div>
+                    <p>Usar tarjeta guardada</p>
+                    <span>{stripeSavedCardLabel}</span>
+                  </div>
+                </div>
+
+                {paymentOption === 'stripe' && stripePlanCardSource === 'saved_card' && (
                   <div className={styles.optionAction}>
                     <Check size={18} className={styles.optionCheck} />
                     {savedPaymentMethods.length > 1 && (
@@ -3101,13 +3141,17 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const requiresDeliveryChannel = paymentOption === 'send'
       const lacksDeliveryChannel = requiresDeliveryChannel && !selectedContact?.email && !selectedContact?.phone
       const lacksSavedCard = paymentOption === 'stripe_saved_card' && !selectedSavedPaymentMethodId
+      const lacksStripePlanSavedCard = paymentOption === 'stripe' &&
+        activePaymentMode === 'partial' &&
+        stripePlanCardSource === 'saved_card' &&
+        !stripePlanSavedPaymentMethod
       const lacksStripePlanAuthorization = paymentOption === 'stripe' &&
         activePaymentMode === 'partial' &&
         !stripePlanCanBeAuthorized
       const confirmLabel = paymentOption === 'stripe_saved_card'
         ? 'Cobrar tarjeta'
         : paymentOption === 'stripe' && activePaymentMode === 'partial'
-          ? 'Crear plan Stripe'
+          ? stripePlanCardSource === 'saved_card' ? 'Programar con tarjeta' : 'Crear link de domiciliación'
         : paymentOption === 'stripe'
         ? 'Crear link Stripe'
         : paymentOption === 'send'
@@ -3133,6 +3177,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 loading ||
                 lacksDeliveryChannel ||
                 lacksSavedCard ||
+                lacksStripePlanSavedCard ||
                 lacksStripePlanAuthorization
               }
               title={
@@ -3140,6 +3185,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   ? 'El contacto no tiene email ni teléfono para enviar el enlace'
                   : lacksSavedCard
                     ? 'Selecciona una tarjeta guardada'
+                  : lacksStripePlanSavedCard
+                    ? 'Selecciona una tarjeta guardada para el plan'
                   : lacksStripePlanAuthorization
                     ? 'Usa una tarjeta guardada o marca el primer pago como tarjeta/link'
                   : undefined
@@ -3165,6 +3212,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               <div className={styles.tooltipInfo}>
                 <AlertCircle size={14} />
                 <span>Selecciona una tarjeta guardada</span>
+              </div>
+            )}
+            {lacksStripePlanSavedCard && (
+              <div className={styles.tooltipInfo}>
+                <AlertCircle size={14} />
+                <span>Selecciona una tarjeta guardada para programar</span>
               </div>
             )}
             {lacksStripePlanAuthorization && (

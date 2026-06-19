@@ -57,6 +57,7 @@ export interface PaymentPlan {
   recurrenceLabel?: string
   liveMode?: boolean
   itemCount?: number
+  source?: 'ghl' | 'stripe' | string
   createdAt?: string
   updatedAt?: string
   sortDate?: string

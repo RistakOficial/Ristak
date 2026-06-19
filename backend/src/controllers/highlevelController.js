@@ -2823,6 +2823,7 @@ function paymentPlanFromRow(row = {}) {
     recurrenceLabel: row.recurrence_label || 'Sin recurrencia',
     liveMode: dbToBoolean(row.live_mode),
     itemCount: Number(row.item_count || 0),
+    source: row.source || 'ghl',
     createdAt: row.created_at || undefined,
     updatedAt: row.updated_at || undefined,
     sortDate: row.next_run_at || row.updated_at || row.created_at,
@@ -2833,11 +2834,21 @@ function paymentPlanFromRow(row = {}) {
   };
 }
 
-async function listLocalInvoiceSchedules({ activeOnly = false } = {}) {
-  const where = activeOnly
-    ? `WHERE LOWER(COALESCE(status, 'active')) NOT IN (${Array.from(INACTIVE_INVOICE_SCHEDULE_STATUSES).map(() => '?').join(', ')})`
-    : '';
-  const params = activeOnly ? Array.from(INACTIVE_INVOICE_SCHEDULE_STATUSES) : [];
+async function listLocalInvoiceSchedules({ activeOnly = false, source = '' } = {}) {
+  const filters = [];
+  const params = [];
+
+  if (activeOnly) {
+    filters.push(`LOWER(COALESCE(status, 'active')) NOT IN (${Array.from(INACTIVE_INVOICE_SCHEDULE_STATUSES).map(() => '?').join(', ')})`);
+    params.push(...Array.from(INACTIVE_INVOICE_SCHEDULE_STATUSES));
+  }
+
+  if (source) {
+    filters.push("COALESCE(source, 'ghl') = ?");
+    params.push(source);
+  }
+
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   const rows = await db.all(
     `SELECT * FROM payment_plans ${where}
      ORDER BY COALESCE(next_run_at, updated_at, created_at) DESC`,
@@ -3085,9 +3096,23 @@ export const listInvoiceSchedules = async (req, res) => {
 
     await persistLocalInvoiceSchedules(data);
 
+    const localStripePlans = await listLocalInvoiceSchedules({
+      activeOnly,
+      source: 'stripe'
+    });
+    const seenIds = new Set(data.map(schedule => schedule.id));
+    const mergedData = [
+      ...data,
+      ...localStripePlans.filter(schedule => {
+        if (!schedule.id || seenIds.has(schedule.id)) return false;
+        seenIds.add(schedule.id);
+        return true;
+      })
+    ].sort((left, right) => timestamp(right.sortDate) - timestamp(left.sortDate));
+
     res.json({
       success: true,
-      data
+      data: mergedData
     });
   } catch (error) {
     logger.warn(`No se pudo sincronizar invoice schedules desde GHL; usando cache local si existe: ${error.message}`);

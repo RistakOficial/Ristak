@@ -640,6 +640,10 @@ export const Transactions: React.FC = () => {
 
   const handleSavePaymentPlan = async (formData: FormData) => {
     if (!paymentPlanModal.plan) return
+    if (isStripePaymentPlan(paymentPlanModal.plan)) {
+      showToast('info', 'Plan Stripe', 'Este plan se administra desde el flujo de Stripe en Ristak.')
+      return
+    }
 
     const payload: Record<string, any> = { ...getPlanPayload(paymentPlanModal.plan) }
     const name = String(formData.get('name') || '').trim()
@@ -1518,6 +1522,7 @@ export const Transactions: React.FC = () => {
   }
 
   const getNormalizedPlanStatus = (plan: PaymentPlan) => String(plan.status || 'active').toLowerCase()
+  const isStripePaymentPlan = (plan: PaymentPlan) => plan.source === 'stripe' || plan.raw?.provider === 'stripe'
   const getPlanFilterStatus = (plan: PaymentPlan) => {
     const status = getNormalizedPlanStatus(plan)
     if (status === 'canceled') return 'cancelled'
@@ -1702,6 +1707,7 @@ export const Transactions: React.FC = () => {
       render: (_value, item) => {
         const status = getNormalizedPlanStatus(item)
         const actionInProgress = paymentPlanActionId?.startsWith(`${item.id}:`) || false
+        const stripePlan = isStripePaymentPlan(item)
         const activationLabel = status === 'paused' ? 'Continuar plan' : 'Activar plan'
 
         if (isPlanDeleted(item)) {
@@ -1723,28 +1729,28 @@ export const Transactions: React.FC = () => {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem disabled={actionInProgress} onClick={() => handleOpenPaymentPlan(item)}>
                   <Edit size={16} />
-                  <span style={{ marginLeft: '8px' }}>Editar factura</span>
+                  <span style={{ marginLeft: '8px' }}>{stripePlan ? 'Ver plan Stripe' : 'Editar factura'}</span>
                 </DropdownMenuItem>
 
-                {canActivatePaymentPlan(item) && (
+                {!stripePlan && canActivatePaymentPlan(item) && (
                   <DropdownMenuItem disabled={actionInProgress} onClick={() => handlePaymentPlanAction(item, 'activate')}>
                     <PlayCircle size={16} />
                     <span style={{ marginLeft: '8px' }}>{activationLabel}</span>
                   </DropdownMenuItem>
                 )}
 
-                {canPausePaymentPlan(item) && (
+                {!stripePlan && canPausePaymentPlan(item) && (
                   <DropdownMenuItem disabled={actionInProgress} onClick={() => handlePaymentPlanAction(item, 'pause')}>
                     <PauseCircle size={16} />
                     <span style={{ marginLeft: '8px' }}>Pausar plan</span>
                   </DropdownMenuItem>
                 )}
 
-                {(canCancelPaymentPlan(item) || canDeletePaymentPlan(item)) && (
+                {!stripePlan && (canCancelPaymentPlan(item) || canDeletePaymentPlan(item)) && (
                   <DropdownMenuSeparator />
                 )}
 
-                {canCancelPaymentPlan(item) && (
+                {!stripePlan && canCancelPaymentPlan(item) && (
                   <DropdownMenuItem
                     disabled={actionInProgress}
                     onClick={() => handlePaymentPlanAction(item, 'cancel')}
@@ -1755,7 +1761,7 @@ export const Transactions: React.FC = () => {
                   </DropdownMenuItem>
                 )}
 
-                {canDeletePaymentPlan(item) && (
+                {!stripePlan && canDeletePaymentPlan(item) && (
                   <DropdownMenuItem
                     disabled={actionInProgress}
                     onClick={() => handlePaymentPlanAction(item, 'delete')}

@@ -1272,6 +1272,143 @@ function validateStripePaymentPlanPayload(input = {}) {
   }
 }
 
+function getStripePlanRecurrenceLabel(frequency) {
+  const labels = {
+    weekly: 'Semanal',
+    biweekly: 'Quincenal',
+    monthly: 'Mensual',
+    custom: 'Personalizado'
+  }
+
+  return labels[cleanString(frequency).toLowerCase()] || 'Personalizado'
+}
+
+function getStripePlanMirrorStatus(flow = {}) {
+  const state = cleanString(flow.current_state).toLowerCase()
+  if (state === STRIPE_PLAN_STATES.CANCELLED) return 'cancelled'
+  if (state === STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE) return 'active'
+  if (state === STRIPE_PLAN_STATES.INSTALLMENT_PLAN_CREATED) return 'scheduled'
+  if (state === STRIPE_PLAN_STATES.CARD_AUTHORIZED) return 'scheduled'
+  if (state === STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION) return 'scheduled'
+  return 'scheduled'
+}
+
+async function persistStripePaymentPlanMirror(flowId, extra = {}) {
+  const cleanFlowId = cleanString(flowId)
+  if (!cleanFlowId) return null
+
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  if (!flow || flow.payment_provider !== 'stripe') return null
+
+  const installments = await db.all(
+    `SELECT *
+     FROM installment_payments
+     WHERE flow_id = ?
+     ORDER BY sequence ASC`,
+    [cleanFlowId]
+  )
+  const metadata = parseJson(flow.metadata, {})
+  const nextInstallment = (installments || []).find((installment) => (
+    !['paid', 'cancelled', 'canceled', 'deleted'].includes(cleanString(installment.status).toLowerCase())
+  )) || (installments || [])[0] || null
+  const lastInstallment = (installments || [])[Math.max(0, (installments || []).length - 1)] || null
+  const startDate = flow.first_payment_date || (installments || [])[0]?.due_date || flow.created_at
+  const nextRunAt = nextInstallment?.due_date || flow.first_payment_date || flow.created_at
+  const itemCount = (Number(flow.first_payment_amount || 0) > 0 ? 1 : 0) + (installments || []).length
+  const scheduleJson = {
+    provider: 'stripe',
+    flowId: cleanFlowId,
+    remainingFrequency: metadata.remainingFrequency || 'custom',
+    cardSetupRequired: Boolean(flow.card_setup_required),
+    cardSetupStatus: flow.card_setup_status || null,
+    firstPayment: {
+      amount: Number(flow.first_payment_amount || 0),
+      date: flow.first_payment_date || null,
+      method: flow.first_payment_method || null,
+      status: flow.first_payment_status || null,
+      paymentId: flow.first_payment_invoice_id || null
+    },
+    installments: (installments || []).map((installment) => ({
+      id: installment.id,
+      sequence: installment.sequence,
+      amount: Number(installment.amount || 0),
+      percentage: installment.percentage ?? null,
+      dueDate: installment.due_date || null,
+      status: installment.status || null,
+      paymentId: installment.payment_id || null,
+      paymentMethod: installment.payment_method || null
+    }))
+  }
+  const rawJson = {
+    id: cleanFlowId,
+    provider: 'stripe',
+    paymentFlow: {
+      id: cleanFlowId,
+      state: flow.current_state,
+      contactId: flow.contact_id,
+      cardSetupPaymentLink: flow.card_setup_payment_link || null,
+      stripePaymentMethodLabel: flow.stripe_payment_method_label || null
+    },
+    schedule: scheduleJson,
+    ...(extra && Object.keys(extra).length ? extra : {})
+  }
+
+  await db.run(
+    `INSERT INTO payment_plans (
+      id, ghl_schedule_id, contact_id, contact_name, email, phone,
+      name, title, status, total, currency, description, recurrence_label,
+      start_date, next_run_at, end_date, live_mode, item_count,
+      schedule_json, raw_json, source, last_synced_at, created_at, updated_at
+    ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'stripe', CURRENT_TIMESTAMP, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      ghl_schedule_id = NULL,
+      contact_id = excluded.contact_id,
+      contact_name = excluded.contact_name,
+      email = excluded.email,
+      phone = excluded.phone,
+      name = excluded.name,
+      title = excluded.title,
+      status = excluded.status,
+      total = excluded.total,
+      currency = excluded.currency,
+      description = excluded.description,
+      recurrence_label = excluded.recurrence_label,
+      start_date = excluded.start_date,
+      next_run_at = excluded.next_run_at,
+      end_date = excluded.end_date,
+      live_mode = excluded.live_mode,
+      item_count = excluded.item_count,
+      schedule_json = excluded.schedule_json,
+      raw_json = excluded.raw_json,
+      source = 'stripe',
+      last_synced_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP`,
+    [
+      cleanFlowId,
+      flow.contact_id,
+      flow.contact_name || null,
+      flow.contact_email || null,
+      flow.contact_phone || null,
+      flow.concept || 'Plan de pagos',
+      flow.concept || 'Plan de pagos',
+      getStripePlanMirrorStatus(flow),
+      Number(flow.total_amount || 0),
+      flow.currency || DEFAULT_CURRENCY,
+      flow.concept || 'Plan de pagos',
+      getStripePlanRecurrenceLabel(metadata.remainingFrequency),
+      startDate || null,
+      nextRunAt || null,
+      lastInstallment?.due_date || null,
+      itemCount,
+      JSON.stringify(scheduleJson),
+      JSON.stringify(rawJson),
+      flow.created_at || null
+    ]
+  )
+
+  return db.get('SELECT * FROM payment_plans WHERE id = ?', [cleanFlowId])
+}
+
 async function activateStripePaymentPlan(flowId, savedMethod, config) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId || !savedMethod) return null
@@ -1331,6 +1468,8 @@ async function activateStripePaymentPlan(flowId, savedMethod, config) {
        AND status IN ('pending', 'waiting_card_authorization')`,
     [cleanFlowId]
   )
+
+  await persistStripePaymentPlanMirror(cleanFlowId)
 
   return db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
 }
@@ -1533,7 +1672,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
   plan.cardSetupAmount = await resolveStripeCardSetupAmount(input.cardSetupAmount)
   const savedMethod = plan.paymentMethodId
     ? await resolveStripeSavedMethod(plan.contact.id, plan.paymentMethodId, config)
-    : await resolveStripeSavedMethod(plan.contact.id, '', config)
+    : null
   const hasSavedCard = Boolean(savedMethod)
   const firstPaymentIsCard = plan.firstPayment.enabled && ['card', 'payment_link', 'direct_card', 'saved_card'].includes(plan.firstPayment.method)
   const firstPaymentIsOffline = plan.firstPayment.enabled && ['cash', 'bank_transfer', 'transfer', 'deposit', 'manual', 'offline', 'check', 'other'].includes(plan.firstPayment.method)
@@ -1833,6 +1972,10 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       status
     })
   }
+
+  await persistStripePaymentPlanMirror(flowId, {
+    response
+  })
 
   return response
 }
