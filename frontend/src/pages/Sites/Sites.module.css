@@ -18577,34 +18577,64 @@
 
 .videoFormGateEditorPreview {
   min-width: 0;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: var(--radius-ctl);
   background: var(--surface);
-  padding: 8px;
+  padding: 0;
 }
 
 .videoFormGateEditorFrame {
+  position: relative;
   min-height: 320px;
   display: grid;
   place-items: center;
   border-radius: var(--radius-ctl);
   background: color-mix(in srgb, var(--text) 72%, var(--bg));
-  padding: 10px;
+  padding: 14px;
   overflow: hidden;
+  isolation: isolate;
+}
+
+.videoFormGateEditorVideo,
+.videoFormGateEditorVideoFallback,
+.videoFormGateEditorShade {
+  position: absolute;
+  inset: 0;
+}
+
+.videoFormGateEditorVideo {
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--text) 72%, var(--bg));
+}
+
+.videoFormGateEditorVideoFallback {
+  z-index: 0;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--text) 74%, var(--bg)), color-mix(in srgb, var(--text) 44%, var(--bg)));
+}
+
+.videoFormGateEditorShade {
+  z-index: 1;
+  background: color-mix(in srgb, var(--bg) 18%, transparent);
 }
 
 .videoFormGateEditorCard {
+  position: relative;
+  z-index: 2;
   width: min(100%, 680px);
   max-height: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 10px;
   overflow: hidden;
-  border: 1px solid var(--vfg-preview-field-border, var(--border));
+  border: 0;
   border-radius: var(--radius-card);
   background: var(--vfg-preview-bg, var(--surface));
   color: var(--vfg-preview-text, var(--text));
-  padding: 12px;
+  padding: 14px;
   box-shadow: var(--shadow-card);
 }
 
@@ -18643,8 +18673,8 @@
   min-width: 0;
   display: grid;
   gap: 5px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-ctl);
+  border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--vfg-preview-text, var(--text));
   padding: 6px;
@@ -18654,8 +18684,8 @@
 
 .videoFormGatePreviewQuestion:hover,
 .videoFormGatePreviewQuestionActive {
-  border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .videoFormGatePreviewQuestion > span {
@@ -18682,12 +18712,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border: 1px solid var(--vfg-preview-field-border, var(--border));
+  border: var(--vfg-preview-field-border-width, 1px) solid var(--vfg-preview-field-border, var(--border));
   border-radius: var(--vfg-preview-field-radius, var(--radius-ctl));
   background: var(--vfg-preview-field-bg, var(--surface));
   color: var(--vfg-preview-field-text, var(--text));
   padding: 0 10px;
   font-size: 0.78rem;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vfg-preview-field-border, var(--border)) 42%, transparent);
 }
 
 .videoFormGatePreviewInput span {
@@ -18708,12 +18739,13 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--vfg-preview-field-border, var(--border));
+  border: var(--vfg-preview-field-border-width, 1px) solid var(--vfg-preview-field-border, var(--border));
   border-radius: var(--vfg-preview-field-radius, var(--radius-ctl));
   background: var(--vfg-preview-field-bg, var(--surface));
   color: var(--vfg-preview-field-text, var(--text));
   padding: 0 10px;
   font-size: 0.77rem;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vfg-preview-field-border, var(--border)) 42%, transparent);
 }
 
 .videoFormGatePreviewOptions i {
@@ -18736,7 +18768,7 @@
   min-height: 34px;
   min-width: 0;
   flex: 1 1 92px;
-  border: 1px solid var(--vfg-preview-submit-border, var(--accent));
+  border: var(--vfg-preview-submit-border-width, 1px) solid var(--vfg-preview-submit-border, var(--accent));
   border-radius: var(--vfg-preview-submit-radius, var(--radius-ctl));
   background: var(--vfg-preview-submit-bg, var(--accent));
   color: var(--vfg-preview-submit-text, var(--on-accent));
@@ -18824,6 +18856,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.videoFormGateQuestionEditor {
+  display: grid;
+  gap: 10px;
+  padding-top: 2px;
 }
 
 .videoSettingsSection {

@@ -5503,8 +5503,38 @@ const normalizeVideoFormGateBlocks = (blocks: SiteBlock[] = [], formSiteId: stri
     .map((item, index) => withVideoFormGateQuestionSettings(item, index, formSiteId))
 )
 
+const videoFormGateDefaultQuestions: Array<{
+  systemFieldKey: SystemFormFieldKey
+  label: string
+  placeholder: string
+}> = [
+  { systemFieldKey: 'full_name', label: 'Nombre', placeholder: 'Escribe tu nombre' },
+  { systemFieldKey: 'email', label: 'Correo', placeholder: 'correo@ejemplo.com' },
+  { systemFieldKey: 'phone', label: 'Teléfono', placeholder: 'Número de teléfono' }
+]
+
 const createVideoFormGateBlocks = (siteId: string): SiteBlock[] =>
-  createEmbeddedBlocks(siteId).map((field, index) => withVideoFormGateQuestionSettings(field, index, siteId))
+  videoFormGateDefaultQuestions.map((config, index) => {
+    const preset = getSystemFormFieldPreset(config.systemFieldKey)
+    const now = new Date().toISOString()
+    const field: SiteBlock = {
+      id: `video_gate_${crypto.randomUUID()}`,
+      siteId,
+      blockType: preset?.blockType || 'short_text',
+      label: config.label,
+      content: '',
+      placeholder: config.placeholder,
+      required: Boolean(preset?.required),
+      options: [],
+      settings: preset
+        ? buildSystemFormFieldSettings(preset, { customFieldDataType: preset.dataType })
+        : { internalName: config.systemFieldKey },
+      sortOrder: index,
+      createdAt: now,
+      updatedAt: now
+    }
+    return withVideoFormGateQuestionSettings(field, index, siteId)
+  })
 
 const getVideoFormGateDraftBlocks = (block: SiteBlock): SiteBlock[] => {
   const settings = block.settings || {}
@@ -31602,18 +31632,27 @@ const VideoFormGateSettingsPanel: React.FC<{
   const completionTargetIds = getVideoFormGateCompletionTargetIds(settings)
   const needsCompletionTargets = finalAction === 'show_targets' || finalAction === 'hide_targets'
   const previewAccent = defaultAccentForSite(videoGateSite)
+  const previewRawVideoUrl = getSettingString(settings, 'mediaUrl') || block.content || ''
+  const previewVideoSrc = isDirectVideoUrl(previewRawVideoUrl)
+    ? appendEditorNoTrackParam(safePublicMediaUrl(previewRawVideoUrl, 'video'))
+    : ''
+  const previewFieldBg = getThemePaint(videoGateTheme, 'formFieldBg', '').trim()
   const previewStyle = {
     ['--vfg-preview-bg' as string]: getThemePaint(videoGateTheme, 'backgroundColor', userBgColor(videoGateSite) || resolvedPageBg(videoGateSite)),
     ['--vfg-preview-text' as string]: getThemePaint(videoGateTheme, 'textColor', isSiteDark(videoGateSite) ? '#ffffff' : '#111827'),
     ['--vfg-preview-help' as string]: getThemePaint(videoGateTheme, 'formHelpColor', '#64748b'),
-    ['--vfg-preview-field-bg' as string]: getThemePaint(videoGateTheme, 'formFieldBg', 'transparent'),
+    ['--vfg-preview-field-bg' as string]: previewFieldBg && previewFieldBg !== 'transparent'
+      ? previewFieldBg
+      : 'color-mix(in srgb, var(--vfg-preview-text) 8%, transparent)',
     ['--vfg-preview-field-text' as string]: getThemePaint(videoGateTheme, 'formFieldText', isSiteDark(videoGateSite) ? '#ffffff' : '#111827'),
     ['--vfg-preview-field-border' as string]: getThemePaint(videoGateTheme, 'formFieldBorder', '#dbe3ef'),
     ['--vfg-preview-submit-bg' as string]: getThemePaint(videoGateTheme, 'submitBg', previewAccent),
     ['--vfg-preview-submit-text' as string]: getThemePaint(videoGateTheme, 'submitTextColor', onAccentFor(previewAccent)),
     ['--vfg-preview-submit-border' as string]: getThemePaint(videoGateTheme, 'submitBorderColor', previewAccent),
     ['--vfg-preview-field-radius' as string]: `${getThemeNumber(videoGateTheme, 'formFieldRadius', 12, 0, 36)}px`,
-    ['--vfg-preview-submit-radius' as string]: `${getThemeNumber(videoGateTheme, 'submitRadius', 12, 0, 80)}px`
+    ['--vfg-preview-field-border-width' as string]: `${getThemeNumber(videoGateTheme, 'formFieldBorderWidth', 1, 0, 8)}px`,
+    ['--vfg-preview-submit-radius' as string]: `${getThemeNumber(videoGateTheme, 'submitRadius', 12, 0, 80)}px`,
+    ['--vfg-preview-submit-border-width' as string]: `${getThemeNumber(videoGateTheme, 'submitBorderWidth', 1, 0, 8)}px`
   } as React.CSSProperties
 
   const patchCompletionTargetIds = (nextIds: string[]) => {
@@ -31704,6 +31743,19 @@ const VideoFormGateSettingsPanel: React.FC<{
   const renderVideoGatePreview = () => (
     <div className={styles.videoFormGateEditorPreview} style={previewStyle}>
       <div className={styles.videoFormGateEditorFrame}>
+        {previewVideoSrc ? (
+          <video
+            className={styles.videoFormGateEditorVideo}
+            src={previewVideoSrc}
+            muted
+            playsInline
+            preload="metadata"
+            aria-hidden="true"
+          />
+        ) : (
+          <div className={styles.videoFormGateEditorVideoFallback} aria-hidden="true" />
+        )}
+        <div className={styles.videoFormGateEditorShade} aria-hidden="true" />
         <div className={styles.videoFormGateEditorCard}>
           <div className={styles.videoFormGateEditorHeader}>
             <strong>{getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE}</strong>
@@ -31767,80 +31819,81 @@ const VideoFormGateSettingsPanel: React.FC<{
             </CustomSelect>
           </label>
 
-          {renderVideoGatePreview()}
+          <div className={styles.settingsGroup}>
+            <div className={styles.panelSubheader}>Contenido del formulario</div>
+            {showTriggerControl && (
+              <label className={styles.field}>
+                <span>Mostrar en segundo</span>
+                <NumberInput
+                  value={getSettingNumber(settings, 'videoFormGateTriggerSeconds', 0, 0, 86399)}
+                  min={0}
+                  max={86399}
+                  step={1}
+                  onValueChange={(value) => onPatchSettings({ videoFormGateTriggerSeconds: Math.round(value) })}
+                  onBlur={onSave}
+                />
+              </label>
+            )}
 
-          {showTriggerControl && (
             <label className={styles.field}>
-              <span>Mostrar en segundo</span>
-              <NumberInput
-                value={getSettingNumber(settings, 'videoFormGateTriggerSeconds', 0, 0, 86399)}
-                min={0}
-                max={86399}
-                step={1}
-                onValueChange={(value) => onPatchSettings({ videoFormGateTriggerSeconds: Math.round(value) })}
+              <span>Título</span>
+              <input
+                value={getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE}
+                onChange={(event) => onPatchSettings({ videoFormGateTitle: event.target.value })}
                 onBlur={onSave}
               />
             </label>
-          )}
 
-          <label className={styles.field}>
-            <span>Título</span>
-            <input
-              value={getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE}
-              onChange={(event) => onPatchSettings({ videoFormGateTitle: event.target.value })}
-              onBlur={onSave}
-            />
-          </label>
-
-          <label className={styles.field}>
-            <span>Descripción</span>
-            <textarea
-              rows={2}
-              value={getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION}
-              onChange={(event) => onPatchSettings({ videoFormGateDescription: event.target.value })}
-              onBlur={onSave}
-            />
-          </label>
-
-          <div className={styles.threeColumn}>
             <label className={styles.field}>
-              <span>Botón siguiente</span>
-              <input
-                value={getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT}
-                onChange={(event) => patchButtonCopy({ videoFormGateNextText: event.target.value }, { nextText: event.target.value, continueText: event.target.value })}
+              <span>Descripción</span>
+              <textarea
+                rows={2}
+                value={getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION}
+                onChange={(event) => onPatchSettings({ videoFormGateDescription: event.target.value })}
                 onBlur={onSave}
               />
             </label>
+
+            <div className={styles.threeColumn}>
+              <label className={styles.field}>
+                <span>Botón siguiente</span>
+                <input
+                  value={getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT}
+                  onChange={(event) => patchButtonCopy({ videoFormGateNextText: event.target.value }, { nextText: event.target.value, continueText: event.target.value })}
+                  onBlur={onSave}
+                />
+              </label>
+              <label className={styles.field}>
+                <span>Botón anterior</span>
+                <input
+                  value={getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT}
+                  onChange={(event) => patchButtonCopy({ videoFormGateBackText: event.target.value }, { backText: event.target.value })}
+                  onBlur={onSave}
+                />
+              </label>
+              <label className={styles.field}>
+                <span>Botón final</span>
+                <input
+                  value={getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT}
+                  onChange={(event) => patchButtonCopy({ videoFormGateSubmitText: event.target.value }, { submitText: event.target.value })}
+                  onBlur={onSave}
+                />
+              </label>
+            </div>
+
             <label className={styles.field}>
-              <span>Botón anterior</span>
-              <input
-                value={getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT}
-                onChange={(event) => patchButtonCopy({ videoFormGateBackText: event.target.value }, { backText: event.target.value })}
+              <span>Animación de aparición</span>
+              <CustomSelect
+                value={getVideoFormGateAnimation(settings)}
+                onChange={(event) => onPatchSettings({ videoFormGateAnimation: event.target.value })}
                 onBlur={onSave}
-              />
-            </label>
-            <label className={styles.field}>
-              <span>Botón final</span>
-              <input
-                value={getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT}
-                onChange={(event) => patchButtonCopy({ videoFormGateSubmitText: event.target.value }, { submitText: event.target.value })}
-                onBlur={onSave}
-              />
+              >
+                {videoFormGateAnimationOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
             </label>
           </div>
-
-          <label className={styles.field}>
-            <span>Animación de aparición</span>
-            <CustomSelect
-              value={getVideoFormGateAnimation(settings)}
-              onChange={(event) => onPatchSettings({ videoFormGateAnimation: event.target.value })}
-              onBlur={onSave}
-            >
-              {videoFormGateAnimationOptions.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </CustomSelect>
-          </label>
 
           {showCompletionControls && (
             <div className={styles.settingsGroup}>
@@ -31942,72 +31995,49 @@ const VideoFormGateSettingsPanel: React.FC<{
             </div>
           )}
 
-          {showDesignControls && (
-            <div className={styles.settingsGroup}>
-              <div className={styles.panelSubheader}>Diseño del formulario</div>
-              <div className={styles.twoColumn}>
-                <ColorField
-                  label="Fondo"
-                  value={getThemePaint(videoGateTheme, 'backgroundColor', userBgColor(videoGateSite) || resolvedPageBg(videoGateSite))}
-                  allowGradient
-                  onChange={(value) => patchVideoGateTheme({ backgroundColor: value })}
-                  onCommit={onSave}
-                />
-                <ColorField
-                  label="Texto"
-                  value={getThemePaint(videoGateTheme, 'textColor', isSiteDark(videoGateSite) ? '#ffffff' : '#111827')}
-                  allowGradient
-                  onChange={(value) => patchVideoGateTheme({ textColor: value, textColorCustom: true })}
-                  onCommit={onSave}
-                />
-              </div>
-              <FormFieldGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
-              <FormOptionGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
-              <FormSubmitGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
+          <div className={styles.settingsGroup}>
+            <div className={styles.panelSubheader}>Edición de preguntas</div>
+            <div className={styles.videoFormGateQuestionTools}>
+              <CustomSelect value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as SiteBlockType)}>
+                {videoFormGateFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+              </CustomSelect>
+              <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={() => addQuestion(newQuestionType)}>
+                Pregunta
+              </Button>
             </div>
-          )}
 
-          <div className={styles.videoFormGateQuestionTools}>
-            <CustomSelect value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as SiteBlockType)}>
-              {videoFormGateFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
-            </CustomSelect>
-            <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={() => addQuestion(newQuestionType)}>
-              Pregunta
-            </Button>
-          </div>
-
-          <div className={styles.videoFormGatePresetGrid}>
-            {systemFormFieldPaletteItems.map(item => (
-              <button key={item.id} type="button" onClick={() => addQuestion(item.blockType, item.initialSettings || {})}>
-                {blockIcons[item.blockType]}
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className={styles.formFieldList}>
-            {questions.map((question, index) => {
-              const selected = activeQuestion?.id === question.id
-              return (
-                <button
-                  key={question.id}
-                  type="button"
-                  className={`${styles.formFieldItem} ${selected ? styles.formFieldItemActive : ''}`}
-                  onClick={() => setActiveQuestionId(question.id)}
-                >
-                  <span>{blockIcons[question.blockType]}</span>
-                  <span>
-                    <strong>{question.label || 'Pregunta'}</strong>
-                    <small>{blockLabels[question.blockType]}{question.required ? ' - requerida' : ''}</small>
-                  </span>
-                  <em>{index + 1}</em>
+            <div className={styles.videoFormGatePresetGrid}>
+              {systemFormFieldPaletteItems.map(item => (
+                <button key={item.id} type="button" onClick={() => addQuestion(item.blockType, item.initialSettings || {})}>
+                  {blockIcons[item.blockType]}
+                  <span>{item.label}</span>
                 </button>
-              )
-            })}
-          </div>
+              ))}
+            </div>
 
-          {activeQuestion ? (
-            <div className={styles.settingsGroup}>
+            <div className={styles.formFieldList}>
+              {questions.map((question, index) => {
+                const selected = activeQuestion?.id === question.id
+                return (
+                  <button
+                    key={question.id}
+                    type="button"
+                    className={`${styles.formFieldItem} ${selected ? styles.formFieldItemActive : ''}`}
+                    onClick={() => setActiveQuestionId(question.id)}
+                  >
+                    <span>{blockIcons[question.blockType]}</span>
+                    <span>
+                      <strong>{question.label || 'Pregunta'}</strong>
+                      <small>{blockLabels[question.blockType]}{question.required ? ' - requerida' : ''}</small>
+                    </span>
+                    <em>{index + 1}</em>
+                  </button>
+                )
+              })}
+            </div>
+
+            {activeQuestion ? (
+              <div className={styles.videoFormGateQuestionEditor}>
               <div className={styles.formFieldEditorHeader}>
                 <div>
                   <strong>Pregunta seleccionada</strong>
@@ -32100,9 +32130,36 @@ const VideoFormGateSettingsPanel: React.FC<{
                   onSave={onSave}
                 />
               )}
+              </div>
+            ) : (
+              <p className={styles.muted}>Agrega una pregunta para configurar el formulario de video.</p>
+            )}
+          </div>
+
+          {showDesignControls && (
+            <div className={styles.settingsGroup}>
+              <div className={styles.panelSubheader}>Diseño del formulario</div>
+              {renderVideoGatePreview()}
+              <div className={styles.twoColumn}>
+                <ColorField
+                  label="Fondo"
+                  value={getThemePaint(videoGateTheme, 'backgroundColor', userBgColor(videoGateSite) || resolvedPageBg(videoGateSite))}
+                  allowGradient
+                  onChange={(value) => patchVideoGateTheme({ backgroundColor: value })}
+                  onCommit={onSave}
+                />
+                <ColorField
+                  label="Texto"
+                  value={getThemePaint(videoGateTheme, 'textColor', isSiteDark(videoGateSite) ? '#ffffff' : '#111827')}
+                  allowGradient
+                  onChange={(value) => patchVideoGateTheme({ textColor: value, textColorCustom: true })}
+                  onCommit={onSave}
+                />
+              </div>
+              <FormFieldGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
+              <FormOptionGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
+              <FormSubmitGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
             </div>
-          ) : (
-            <p className={styles.muted}>Agrega una pregunta para configurar el formulario de video.</p>
           )}
         </>
       )}
