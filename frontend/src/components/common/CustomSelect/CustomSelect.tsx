@@ -43,6 +43,7 @@ interface CustomSelectProps {
   portal?: boolean
   dropdownPlacement?: 'auto' | 'top' | 'bottom'
   dropdownMinWidth?: number
+  dropdownMinHeight?: number
   iconOnly?: boolean
   size?: 'default' | 'large'
   name?: string
@@ -120,6 +121,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   portal = true,
   dropdownPlacement = 'auto',
   dropdownMinWidth,
+  dropdownMinHeight,
   iconOnly = false,
   size = 'default',
   name,
@@ -159,15 +161,21 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     const viewportPadding = 12
     const dropdownGap = 6
     const rowHeight = size === 'large' ? 42 : 40
+    const groupLabelHeight = size === 'large' ? 34 : 28
     const maxDropdownHeight = size === 'large' ? 420 : 280
-    const minDropdownHeight = size === 'large' ? 220 : 120
+    const viewportMinHeight = size === 'large' ? 220 : 120
     const dropdownWidth = dropdownMinWidth ? Math.max(rect.width, dropdownMinWidth) : rect.width
-    const estimatedHeight = Math.min(flatOptions.length * rowHeight + 8, maxDropdownHeight)
+    const optionGroupCount = optionEntries.filter(isOptionGroup).length
+    const estimatedContentHeight = flatOptions.length * rowHeight + optionGroupCount * groupLabelHeight + 8
+    const estimatedHeight = Math.min(
+      Math.max(estimatedContentHeight, dropdownMinHeight || 0),
+      maxDropdownHeight
+    )
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding
     const spaceAbove = rect.top - viewportPadding
     const openAbove = dropdownPlacement === 'top' ||
       (dropdownPlacement === 'auto' && spaceBelow < estimatedHeight && spaceAbove > spaceBelow)
-    const availableSpace = Math.max(minDropdownHeight, openAbove ? spaceAbove : spaceBelow)
+    const availableSpace = Math.max(viewportMinHeight, openAbove ? spaceAbove : spaceBelow)
     const dropdownHeight = Math.min(estimatedHeight, availableSpace)
     setPortalPlacement(openAbove ? 'top' : 'bottom')
 
@@ -179,9 +187,10 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - dropdownWidth - viewportPadding),
       width: dropdownWidth,
       zIndex: getFloatingLayerZIndex(containerRef.current, 'popover'),
-      '--custom-select-options-max-height': `${dropdownHeight}px`
+      '--custom-select-options-max-height': `${dropdownHeight}px`,
+      ...(dropdownMinHeight ? { '--custom-select-options-min-height': `${dropdownHeight}px` } : {})
     } as React.CSSProperties)
-  }, [dropdownMinWidth, dropdownPlacement, flatOptions.length, shouldPortal, size])
+  }, [dropdownMinHeight, dropdownMinWidth, dropdownPlacement, flatOptions.length, optionEntries, shouldPortal, size])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

@@ -246,11 +246,17 @@ export const Domains: React.FC = () => {
     <label className={styles.field}>
       <span>Ruta principal del dominio</span>
       <CustomSelect
-        value={domainConfig.defaultRoute?.siteId || ''}
+        value={sortedSites.length > 0 ? domainConfig.defaultRoute?.siteId || '' : ''}
         disabled={savingDefaultRoute || sortedSites.length === 0}
+        size="large"
+        dropdownMinHeight={300}
         onChange={(event) => { void updateDefaultRoute(event.target.value) }}
       >
-        <option value="">Elegir automáticamente</option>
+        {sortedSites.length > 0 ? (
+          <option value="">Elegir automáticamente</option>
+        ) : (
+          <option value="">No hay páginas ni formularios</option>
+        )}
         {landingPages.length > 0 && (
           <optgroup label="Páginas">
             {landingPages.map(site => (
@@ -270,7 +276,11 @@ export const Domains: React.FC = () => {
           </optgroup>
         )}
       </CustomSelect>
-      <small>Esta es la página o formulario que abrirá cuando alguien entre directo al dominio, sin escribir ruta.</small>
+      <small>
+        {sortedSites.length > 0
+          ? 'Esta es la página o formulario que abrirá cuando alguien entre directo al dominio, sin escribir ruta.'
+          : 'Cuando publiques una página o formulario, aparecerá aquí para elegirla.'}
+      </small>
     </label>
   )
 

@@ -158,6 +158,7 @@
 }
 
 .options {
+  min-height: var(--custom-select-options-min-height, 0);
   max-height: var(--custom-select-options-max-height, 280px);
   overflow-y: auto;
   scrollbar-gutter: auto;
