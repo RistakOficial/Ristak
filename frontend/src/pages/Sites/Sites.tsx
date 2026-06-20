@@ -33649,12 +33649,20 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const retentionVideoRef = useRef<HTMLVideoElement | null>(null)
   const retentionScrubbingRef = useRef(false)
   const [retentionPlaybackPercent, setRetentionPlaybackPercent] = useState(0)
+  const [retentionCurrentSeconds, setRetentionCurrentSeconds] = useState(0)
+  const [retentionDurationSeconds, setRetentionDurationSeconds] = useState(0)
+  const [isRetentionPlaying, setIsRetentionPlaying] = useState(false)
+  const [isRetentionMuted, setIsRetentionMuted] = useState(false)
   const [isRetentionScrubbing, setIsRetentionScrubbing] = useState(false)
   const retentionPreviewUrl = getSitesAnalyticsStoragePreviewUrl(selectedVideo)
   const syncRetentionVideoPlayback = useCallback((video: HTMLVideoElement) => {
     const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
     const nextPercent = duration > 0 ? clampSitesPercent((video.currentTime / duration) * 100) : 0
     setRetentionPlaybackPercent(nextPercent)
+    setRetentionCurrentSeconds(Number.isFinite(video.currentTime) ? video.currentTime : 0)
+    setRetentionDurationSeconds(duration)
+    setIsRetentionPlaying(!video.paused && !video.ended)
+    setIsRetentionMuted(video.muted || video.volume === 0)
   }, [])
   const syncRetentionPlayback = useCallback((event: React.SyntheticEvent<HTMLVideoElement>) => {
     syncRetentionVideoPlayback(event.currentTarget)
@@ -33724,10 +33732,41 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       seekRetentionPlaybackToPercent(100)
     }
   }, [retentionPlaybackPercent, retentionPreviewUrl, seekRetentionPlaybackToPercent])
+  const handleRetentionTogglePlay = useCallback(() => {
+    const video = retentionVideoRef.current
+    if (!video || !retentionPreviewUrl) return
+
+    if (video.paused || video.ended) {
+      if (video.ended) video.currentTime = 0
+      void video.play().catch(() => {
+        setIsRetentionPlaying(false)
+      })
+    } else {
+      video.pause()
+    }
+
+    syncRetentionVideoPlayback(video)
+  }, [retentionPreviewUrl, syncRetentionVideoPlayback])
+  const handleRetentionToggleMute = useCallback(() => {
+    const video = retentionVideoRef.current
+    if (!video || !retentionPreviewUrl) return
+
+    video.muted = !video.muted
+    syncRetentionVideoPlayback(video)
+  }, [retentionPreviewUrl, syncRetentionVideoPlayback])
+  const handleRetentionTimelinePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!retentionPreviewUrl || (event.button !== undefined && event.button !== 0)) return
+    event.preventDefault()
+    seekRetentionPlaybackFromClientX(event.clientX, event.currentTarget)
+  }, [retentionPreviewUrl, seekRetentionPlaybackFromClientX])
 
   useEffect(() => {
     stopRetentionScrubbing()
     setRetentionPlaybackPercent(0)
+    setRetentionCurrentSeconds(0)
+    setRetentionDurationSeconds(0)
+    setIsRetentionPlaying(false)
+    setIsRetentionMuted(false)
   }, [selectedVideoId, stopRetentionScrubbing])
 
   const isVideosView = selectedSiteType === 'videos'
@@ -33821,11 +33860,14 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const retentionPlayheadStyle = {
     '--video-retention-playhead': `${retentionPlaybackPercent}%`
   } as React.CSSProperties
+  const retentionControlProgressStyle = {
+    '--video-retention-control-progress': `${retentionPlaybackPercent}%`
+  } as React.CSSProperties
+  const retentionDisplayDuration = retentionDurationSeconds ||
+    readSitesNumber(selectedVideo?.duration) ||
+    retentionSegments[retentionSegments.length - 1]?.endSeconds ||
+    0
   const videoViewers = firstPartyTracking?.viewers || []
-  const pageBreakdown = firstPartyTracking?.pages || []
-  const blockBreakdown = firstPartyTracking?.blocks || []
-  const countryRows = analytics?.countries || []
-  const topCountry = selectedVideo ? analytics?.summary.topCountry || countryRows[0]?.country || 'Sin dato' : 'Sin dato'
   const currentVideoLabel = selectedVideo ? getSiteAnalyticsVideoLabel(selectedVideo, sitesById) : 'Sin video seleccionado'
   const scopeSiteLabel = selectedSiteId
     ? sitesById.get(selectedSiteId)?.name || 'Sitio seleccionado'
@@ -34128,18 +34170,15 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     }
 
     const primaryVideoMetrics = [
+      { key: 'average', icon: <Clock3 size={15} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime), hint: 'Tiempo promedio por reproducción.' },
+      { key: 'viewers', icon: <Eye size={15} />, label: 'Visitantes únicos', value: formatSitesCompactNumber(uniqueVideoViewers), hint: 'Personas o visitantes distintos detectados.' },
+      { key: 'loads', icon: <MousePointerClick size={15} />, label: 'Cargas del reproductor', value: formatSitesCompactNumber(videoLoads), hint: 'Veces que el reproductor quedó listo en la página.' },
       { key: 'engagement', icon: <Flame size={15} />, label: 'Interacción promedio', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore), hint: 'Promedio del máximo visto por sesión.' },
       { key: 'plays', icon: <Play size={15} />, label: 'Reproducciones', value: formatSitesCompactNumber(videoViews), hint: `${formatSitesCompactNumber(videoLoads)} cargas detectadas.` },
       { key: 'play-rate', icon: <MousePointerClick size={15} />, label: 'Tasa de reproducción', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate), hint: 'Sesiones que sí reprodujeron el video.' },
       { key: 'completion', icon: <CheckCircle2 size={15} />, label: 'Finalización', value: completionRate === null ? 'Sin dato' : formatSitesPercent(completionRate), hint: `${firstPartySummary?.completions ?? 0} reproducciones completas.` },
       { key: 'drop-off', icon: <ArrowDown size={15} />, label: 'Abandono', value: dropOffRate === null ? 'Sin dato' : formatSitesPercent(dropOffRate), hint: 'Promedio que se perdió antes del final.' },
       { key: 'identified', icon: <Eye size={15} />, label: 'Contactos identificados', value: formatSitesCompactNumber(firstPartySummary?.identifiedContacts ?? 0), hint: `${formatSitesCompactNumber(firstPartySummary?.anonymousVisitors ?? 0)} visitantes anónimos.` }
-    ]
-    const videoDetailMetrics = [
-      { key: 'average', icon: <Clock3 size={15} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime) },
-      { key: 'viewers', icon: <Eye size={15} />, label: 'Visitantes únicos', value: formatSitesCompactNumber(uniqueVideoViewers) },
-      { key: 'loads', icon: <MousePointerClick size={15} />, label: 'Cargas del reproductor', value: formatSitesCompactNumber(videoLoads) },
-      { key: 'top-country', icon: <Globe2 size={15} />, label: 'País top', value: topCountry }
     ]
 
     return (
@@ -34153,15 +34192,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               </div>
             </div>
             <div className={styles.videoDetailBody}>
-              <div className={styles.videoDetailMetricGrid}>
-                {videoDetailMetrics.map(metric => (
-                  <div key={metric.key} className={styles.videoDetailMetricCard}>
-                    <span className={styles.videoDetailMetricIcon}>{metric.icon}</span>
-                    <span>{metric.label}</span>
-                    <strong>{metric.value}</strong>
-                  </div>
-                ))}
-              </div>
               <div className={styles.videoDetailEngagementBlock}>
                 <div className={styles.videoDetailBreakdownTitle}>
                   <Flame size={15} />
@@ -34176,39 +34206,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                       <small>{metric.hint}</small>
                     </div>
                   ))}
-                </div>
-              </div>
-              <div className={styles.videoDetailBreakdowns}>
-                <div className={styles.videoDetailBreakdownGroup}>
-                  <div className={styles.videoDetailBreakdownTitle}>
-                    <LayoutTemplate size={15} />
-                    <span>Páginas</span>
-                  </div>
-                  {renderDetailRows(
-                    pageBreakdown.slice(0, 4).map(row => ({
-                      key: row.key,
-                      icon: <LayoutTemplate size={15} />,
-                      label: row.label,
-                      value: `${formatSitesCompactNumber(row.plays)} reproducciones · ${formatSitesPercent(row.avgProgressPercent)}`
-                    })),
-                    'Sin páginas asociadas.'
-                  )}
-                </div>
-
-                <div className={styles.videoDetailBreakdownGroup}>
-                  <div className={styles.videoDetailBreakdownTitle}>
-                    <Video size={15} />
-                    <span>Bloques de video</span>
-                  </div>
-                  {renderDetailRows(
-                    blockBreakdown.slice(0, 4).map(row => ({
-                      key: row.key,
-                      icon: <Video size={15} />,
-                      label: row.label,
-                      value: `${formatSitesCompactNumber(row.playbackSessions)} sesiones · ${formatSitesSeconds(row.watchedSeconds)}`
-                    })),
-                    'Sin bloques asociados.'
-                  )}
                 </div>
               </div>
             </div>
@@ -34228,9 +34225,9 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                   ref={retentionVideoRef}
                   className={styles.videoRetentionMedia}
                   src={retentionPreviewUrl}
-                  controls
                   playsInline
                   preload="metadata"
+                  muted={isRetentionMuted}
                   data-no-track="true"
                   data-rstk-video-track="false"
                   data-rstk-analytics-preview="true"
@@ -34241,6 +34238,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                   onSeeked={syncRetentionPlayback}
                   onPause={syncRetentionPlayback}
                   onEnded={syncRetentionPlayback}
+                  onVolumeChange={syncRetentionPlayback}
                 />
               ) : (
                 <div className={styles.videoRetentionMediaEmpty}>
@@ -34289,8 +34287,47 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               ) : null}
               <div className={styles.videoRetentionTimes}>
                 <span>0:00</span>
-                <span>{formatSitesTimecode(readSitesNumber(selectedVideo.duration) || retentionSegments[retentionSegments.length - 1]?.endSeconds || 0)}</span>
+                <span>{formatSitesTimecode(retentionDisplayDuration)}</span>
               </div>
+              {retentionPreviewUrl ? (
+                <div className={styles.videoRetentionControls}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={styles.videoRetentionControlButton}
+                    onClick={handleRetentionTogglePlay}
+                    aria-label={isRetentionPlaying ? 'Pausar video' : 'Reproducir video'}
+                  >
+                    {isRetentionPlaying ? <Pause size={15} /> : <Play size={15} />}
+                  </Button>
+                  <div
+                    className={styles.videoRetentionControlTimeline}
+                    style={retentionControlProgressStyle}
+                    role="progressbar"
+                    aria-label="Progreso de reproducción"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(retentionPlaybackPercent)}
+                    onPointerDown={handleRetentionTimelinePointerDown}
+                  >
+                    <span />
+                  </div>
+                  <span className={styles.videoRetentionControlTime}>
+                    {formatSitesTimecode(retentionCurrentSeconds)} / {formatSitesTimecode(retentionDisplayDuration)}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={styles.videoRetentionControlButton}
+                    onClick={handleRetentionToggleMute}
+                    aria-label={isRetentionMuted ? 'Activar sonido' : 'Silenciar video'}
+                  >
+                    {isRetentionMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
