@@ -35,12 +35,22 @@ let cachedState = null
 let lastVerifiedEmail = null
 let verifiedAppBaseUrlResolver = getVerifiedAppBaseUrl
 
+function firstEnv(...keys) {
+  for (const key of keys) {
+    const value = process.env[key]
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value).trim()
+    }
+  }
+  return ''
+}
+
 function getConfig() {
   return {
-    licenseServerUrl: (process.env.LICENSE_SERVER_URL || '').replace(/\/+$/, ''),
-    clientId: process.env.CLIENT_ID || '',
-    licenseKey: process.env.LICENSE_KEY || '',
-    installationId: process.env.INSTALLATION_ID || '',
+    licenseServerUrl: normalizeBaseUrl(firstEnv('LICENSE_SERVER_URL', 'RISTAK_LICENSE_SERVER_URL')),
+    clientId: firstEnv('CLIENT_ID', 'RISTAK_CLIENT_ID'),
+    licenseKey: firstEnv('LICENSE_KEY', 'RISTAK_LICENSE_KEY'),
+    installationId: firstEnv('INSTALLATION_ID', 'RISTAK_INSTALLATION_ID'),
     appUrl: process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || '',
     appVersion: process.env.APP_VERSION || '0.0.0',
     ownerEmail: process.env.OWNER_EMAIL || '',
@@ -79,8 +89,9 @@ async function buildInstalledAppPayload(extra = {}) {
 
 /**
  * La licencia solo se exige cuando la app fue instalada por el portal central
- * (tiene LICENSE_SERVER_URL + CLIENT_ID + LICENSE_KEY). En desarrollo local o
- * instalaciones standalone la app funciona sin license server.
+ * (tiene servidor central + cliente + licencia). En desarrollo local o
+ * instalaciones standalone la app funciona sin license server. El Installer
+ * puede publicar esos datos como LICENSE_* o como RISTAK_*.
  */
 export function isLicenseEnforced() {
   const config = getConfig()

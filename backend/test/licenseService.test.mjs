@@ -11,6 +11,17 @@ let lastRequestBody = null
 
 let licenseService
 
+const MANAGED_ENV_KEYS = [
+  'LICENSE_SERVER_URL',
+  'RISTAK_LICENSE_SERVER_URL',
+  'CLIENT_ID',
+  'RISTAK_CLIENT_ID',
+  'LICENSE_KEY',
+  'RISTAK_LICENSE_KEY',
+  'INSTALLATION_ID',
+  'RISTAK_INSTALLATION_ID'
+]
+
 function startMockServer() {
   return new Promise(resolve => {
     server = http.createServer((req, res) => {
@@ -106,7 +117,14 @@ function startMockServer() {
   })
 }
 
+function clearManagedEnv() {
+  for (const key of MANAGED_ENV_KEYS) {
+    delete process.env[key]
+  }
+}
+
 function configureManagedInstall() {
+  clearManagedEnv()
   process.env.LICENSE_SERVER_URL = baseUrl
   process.env.CLIENT_ID = 'cli_1'
   process.env.LICENSE_KEY = 'RSTK-TEST-0000'
@@ -118,9 +136,7 @@ function configureManagedInstall() {
 }
 
 function configureStandalone() {
-  delete process.env.LICENSE_SERVER_URL
-  delete process.env.CLIENT_ID
-  delete process.env.LICENSE_KEY
+  clearManagedEnv()
 }
 
 before(async () => {
@@ -173,6 +189,26 @@ test('licencia activa permite el acceso y entrega features', async () => {
   assert.equal(lastRequestBody.email, 'dueno@clinica.com')
   assert.equal(lastRequestBody.app_url, 'https://demo.onrender.com')
   assert.equal(lastRequestBody.version, '1.2.3')
+})
+
+test('instalación central también funciona con aliases RISTAK_*', async () => {
+  clearManagedEnv()
+  process.env.RISTAK_LICENSE_SERVER_URL = `${baseUrl}/`
+  process.env.RISTAK_CLIENT_ID = 'cli_alias'
+  process.env.RISTAK_LICENSE_KEY = 'RSTK-ALIAS-0000'
+  process.env.RISTAK_INSTALLATION_ID = 'inst_alias'
+
+  assert.equal(licenseService.isLicenseEnforced(), true)
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+  const info = licenseService.getHealthInfo()
+
+  assert.equal(state.allowed, true)
+  assert.equal(lastRequestBody.client_id, 'cli_alias')
+  assert.equal(lastRequestBody.license_key, 'RSTK-ALIAS-0000')
+  assert.equal(lastRequestBody.installation_id, 'inst_alias')
+  assert.equal(info.client_id, 'cli_alias')
+  assert.equal(info.installation_id, 'inst_alias')
 })
 
 test('dominio de app verificado reemplaza app_url enviado al portal central', async () => {
