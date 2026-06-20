@@ -17902,6 +17902,7 @@ const ImportedHtmlEditorPanel: React.FC<{
               <VideoPlayerSettingsControls
                 settings={importedCodeVideoBlock.settings}
                 mediaUrl={codeElementEditor.mediaUrl || codeElementEditor.value}
+                sections="playback"
                 onPatchSettings={(patch) => {
                   setCodeElementEditor(current => current ? {
                     ...current,
@@ -17931,6 +17932,18 @@ const ImportedHtmlEditorPanel: React.FC<{
                 site={site}
                 block={importedCodeVideoBlock}
                 blocks={codeElementEditor.videoTargetBlocks || []}
+                onPatchSettings={(patch) => {
+                  setCodeElementEditor(current => current ? {
+                    ...current,
+                    videoSettings: cleanImportedVideoSettings({ ...(current.videoSettings || {}), ...patch }, current.mediaUrl || current.value)
+                  } : current)
+                }}
+                onSave={() => undefined}
+              />
+              <VideoPlayerSettingsControls
+                settings={importedCodeVideoBlock.settings}
+                mediaUrl={codeElementEditor.mediaUrl || codeElementEditor.value}
+                sections="chrome"
                 onPatchSettings={(patch) => {
                   setCodeElementEditor(current => current ? {
                     ...current,
@@ -18062,6 +18075,7 @@ const ImportedHtmlEditorPanel: React.FC<{
               <VideoPlayerSettingsControls
                 settings={importedVideoBlock.settings}
                 mediaUrl={videoEditor.value}
+                sections="playback"
                 onPatchSettings={(patch) => {
                   setImportedVideoEditorState(current => current ? {
                     ...current,
@@ -18101,18 +18115,32 @@ const ImportedHtmlEditorPanel: React.FC<{
             label: 'Diseño',
             icon: <Sparkles size={14} />,
             content: (
-              <InlineBlockStyleControls
-                site={site}
-                block={importedVideoBlock}
-                blocks={videoEditor.targetBlocks}
-                onPatchSettings={(patch) => {
-                  setImportedVideoEditorState(current => current ? {
-                    ...current,
-                    settings: cleanImportedVideoSettings({ ...current.settings, ...patch }, current.value)
-                  } : current)
-                }}
-                onSave={() => void saveImportedVideoEditor()}
-              />
+              <>
+                <InlineBlockStyleControls
+                  site={site}
+                  block={importedVideoBlock}
+                  blocks={videoEditor.targetBlocks}
+                  onPatchSettings={(patch) => {
+                    setImportedVideoEditorState(current => current ? {
+                      ...current,
+                      settings: cleanImportedVideoSettings({ ...current.settings, ...patch }, current.value)
+                    } : current)
+                  }}
+                  onSave={() => void saveImportedVideoEditor()}
+                />
+                <VideoPlayerSettingsControls
+                  settings={importedVideoBlock.settings}
+                  mediaUrl={videoEditor.value}
+                  sections="chrome"
+                  onPatchSettings={(patch) => {
+                    setImportedVideoEditorState(current => current ? {
+                      ...current,
+                      settings: cleanImportedVideoSettings({ ...current.settings, ...patch }, current.value)
+                    } : current)
+                  }}
+                  onSave={() => void saveImportedVideoEditor()}
+                />
+              </>
             )
           }
         ]}
@@ -21632,11 +21660,15 @@ const VideoSettingsElementPreview: React.FC<{
 const VideoPlayerSettingsControls: React.FC<{
   settings: Record<string, unknown>
   mediaUrl?: string
+  sections?: 'all' | 'playback' | 'chrome'
+  afterPlaybackContent?: React.ReactNode
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ settings, mediaUrl = '', onPatchSettings, onSave }) => {
+}> = ({ settings, mediaUrl = '', sections = 'all', afterPlaybackContent, onPatchSettings, onSave }) => {
   const controlsMode = getVideoControlsMode(settings)
   const showCustomControls = controlsMode === 'clean'
+  const showPlaybackSections = sections === 'all' || sections === 'playback'
+  const showChromeSections = sections === 'all' || sections === 'chrome'
   const showCustomControlBar = settings.videoControlBar === true
   const playShape = getVideoPlayShape(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
@@ -21669,181 +21701,189 @@ const VideoPlayerSettingsControls: React.FC<{
     }
   }, [metadataPreviewEnabled, metadataSource])
 
+  if (sections === 'chrome' && !showCustomControls) return null
+
   return (
     <div className={styles.videoSettingsBox}>
-      <section className={styles.videoSettingsSection}>
-        <div className={styles.videoSettingsSectionHeader}>
-          <span>Video</span>
-          <strong>Marco y ajuste</strong>
-        </div>
-        <label className={styles.field}>
-          <span>Estilo del reproductor</span>
-          <CustomSelect
-            value={controlsMode}
-            onChange={(event) => {
-              const nextMode = isVideoControlsMode(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROLS_MODE
-              onPatchSettings({
-                videoControlsMode: nextMode,
-                videoControls: nextMode === 'native'
-              })
-            }}
-            onBlur={onSave}
-          >
-            {videoControlsModeOptions.map(option => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </CustomSelect>
-        </label>
-        <div className={styles.twoColumn}>
-          <label className={styles.field}>
-            <span>Formato</span>
-            <CustomSelect
-              value={getVideoOrientation(settings)}
-              onChange={(event) => {
-                const nextOrientation = isVideoOrientation(event.target.value) ? event.target.value : DEFAULT_VIDEO_ORIENTATION
-                onPatchSettings(getVideoOrientationPatch(settings, nextOrientation))
-              }}
-              onBlur={onSave}
-            >
-              {videoOrientationOptions.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </CustomSelect>
-          </label>
-          <label className={styles.field}>
-            <span>Ajuste</span>
-            <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
-              <option value="cover">Cubrir espacio</option>
-              <option value="contain">Mostrar completo</option>
-              <option value="fill">Estirar</option>
-            </CustomSelect>
-          </label>
-        </div>
-        <div className={styles.twoColumn}>
-          <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
-          <ColorField
-            label="Borde del video"
-            value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT}
-            allowGradient={false}
-            onChange={(value) => {
-              const patch: Record<string, unknown> = { videoPlayerBorderColor: value }
-              if (!isTransparentCssColorValue(value) && getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12) === 0) {
-                patch.videoPlayerBorderWidth = 1
-              }
-              onPatchSettings(patch)
-            }}
-            onCommit={onSave}
-          />
-        </div>
-        <div className={styles.twoColumn}>
-          <VideoDimensionSliderField
-            label="Radio del video"
-            value={getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}
-            min={0}
-            max={80}
-            onChange={(value) => onPatchSettings({ videoPlayerRadius: value })}
-            onCommit={onSave}
-          />
-          <VideoDimensionSliderField
-            label="Borde del video"
-            value={getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}
-            min={0}
-            max={12}
-            onChange={(value) => onPatchSettings({ videoPlayerBorderWidth: value })}
-            onCommit={onSave}
-          />
-        </div>
-      </section>
+      {showPlaybackSections && (
+        <>
+          <section className={styles.videoSettingsSection}>
+            <div className={styles.videoSettingsSectionHeader}>
+              <span>Video</span>
+              <strong>Marco y ajuste</strong>
+            </div>
+            <label className={styles.field}>
+              <span>Estilo del reproductor</span>
+              <CustomSelect
+                value={controlsMode}
+                onChange={(event) => {
+                  const nextMode = isVideoControlsMode(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROLS_MODE
+                  onPatchSettings({
+                    videoControlsMode: nextMode,
+                    videoControls: nextMode === 'native'
+                  })
+                }}
+                onBlur={onSave}
+              >
+                {videoControlsModeOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+            <div className={styles.twoColumn}>
+              <label className={styles.field}>
+                <span>Formato</span>
+                <CustomSelect
+                  value={getVideoOrientation(settings)}
+                  onChange={(event) => {
+                    const nextOrientation = isVideoOrientation(event.target.value) ? event.target.value : DEFAULT_VIDEO_ORIENTATION
+                    onPatchSettings(getVideoOrientationPatch(settings, nextOrientation))
+                  }}
+                  onBlur={onSave}
+                >
+                  {videoOrientationOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+              <label className={styles.field}>
+                <span>Ajuste</span>
+                <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
+                  <option value="cover">Cubrir espacio</option>
+                  <option value="contain">Mostrar completo</option>
+                  <option value="fill">Estirar</option>
+                </CustomSelect>
+              </label>
+            </div>
+            <div className={styles.twoColumn}>
+              <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
+              <ColorField
+                label="Borde del video"
+                value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT}
+                allowGradient={false}
+                onChange={(value) => {
+                  const patch: Record<string, unknown> = { videoPlayerBorderColor: value }
+                  if (!isTransparentCssColorValue(value) && getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12) === 0) {
+                    patch.videoPlayerBorderWidth = 1
+                  }
+                  onPatchSettings(patch)
+                }}
+                onCommit={onSave}
+              />
+            </div>
+            <div className={styles.twoColumn}>
+              <VideoDimensionSliderField
+                label="Radio del video"
+                value={getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}
+                min={0}
+                max={80}
+                onChange={(value) => onPatchSettings({ videoPlayerRadius: value })}
+                onCommit={onSave}
+              />
+              <VideoDimensionSliderField
+                label="Borde del video"
+                value={getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}
+                min={0}
+                max={12}
+                onChange={(value) => onPatchSettings({ videoPlayerBorderWidth: value })}
+                onCommit={onSave}
+              />
+            </div>
+          </section>
 
-      <section className={styles.videoSettingsSection}>
-        <div className={styles.videoSettingsSectionHeader}>
-          <span>Reproducción</span>
-          <strong>Inicio y preview</strong>
-        </div>
-        <div className={styles.twoColumn}>
-          <label className={styles.field}>
-            <span>Velocidad inicial</span>
-            <CustomSelect
-              value={String(getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4))}
-              onChange={(event) => onPatchSettings({ videoDefaultSpeed: Number(event.target.value) })}
-              onBlur={onSave}
-            >
-              {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </CustomSelect>
-          </label>
-          <label className={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={Boolean(settings.videoAutoplay)}
-              onChange={(event) => {
-                onPatchSettings({ videoAutoplay: event.target.checked, videoMuted: event.target.checked ? true : settings.videoMuted })
-                window.setTimeout(onSave, 0)
-              }}
-            />
-            <span>Autoplay</span>
-          </label>
-        </div>
-        <div className={styles.twoColumn}>
-          <label className={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={settings.videoPreviewEnabled !== false}
-              onChange={(event) => {
-                onPatchSettings({ videoPreviewEnabled: event.target.checked })
-                window.setTimeout(onSave, 0)
-              }}
-            />
-            <span>Preview de primeros segundos</span>
-          </label>
-          <label className={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={settings.videoMuted !== false}
-              onChange={(event) => {
-                onPatchSettings({ videoMuted: event.target.checked })
-                window.setTimeout(onSave, 0)
-              }}
-            />
-            <span>Iniciar silenciado</span>
-          </label>
-        </div>
+          <section className={styles.videoSettingsSection}>
+            <div className={styles.videoSettingsSectionHeader}>
+              <span>Reproducción</span>
+              <strong>Inicio y preview</strong>
+            </div>
+            <div className={styles.twoColumn}>
+              <label className={styles.field}>
+                <span>Velocidad inicial</span>
+                <CustomSelect
+                  value={String(getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4))}
+                  onChange={(event) => onPatchSettings({ videoDefaultSpeed: Number(event.target.value) })}
+                  onBlur={onSave}
+                >
+                  {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </CustomSelect>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.videoAutoplay)}
+                  onChange={(event) => {
+                    onPatchSettings({ videoAutoplay: event.target.checked, videoMuted: event.target.checked ? true : settings.videoMuted })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Autoplay</span>
+              </label>
+            </div>
+            <div className={styles.twoColumn}>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.videoPreviewEnabled !== false}
+                  onChange={(event) => {
+                    onPatchSettings({ videoPreviewEnabled: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Preview de primeros segundos</span>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.videoMuted !== false}
+                  onChange={(event) => {
+                    onPatchSettings({ videoMuted: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Iniciar silenciado</span>
+              </label>
+            </div>
 
-        {settings.videoPreviewEnabled !== false && (
-          <VideoPreviewRangeControl
-            settings={settings}
-            durationSeconds={metadataDuration}
-            onPatchSettings={onPatchSettings}
-            onSave={onSave}
-          />
-        )}
+            {settings.videoPreviewEnabled !== false && (
+              <VideoPreviewRangeControl
+                settings={settings}
+                durationSeconds={metadataDuration}
+                onPatchSettings={onPatchSettings}
+                onSave={onSave}
+              />
+            )}
 
-        <div className={styles.twoColumn}>
-          <label className={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={Boolean(settings.videoLoop)}
-              onChange={(event) => {
-                onPatchSettings({ videoLoop: event.target.checked })
-                window.setTimeout(onSave, 0)
-              }}
-            />
-            <span>Repetir video</span>
-          </label>
-          <label className={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={settings.videoDisableEditorPlayback === true}
-              onChange={(event) => {
-                onPatchSettings({ videoDisableEditorPlayback: event.target.checked })
-                window.setTimeout(onSave, 0)
-              }}
-            />
-            <span>No reproducir mientras se edita</span>
-          </label>
-        </div>
-      </section>
+            <div className={styles.twoColumn}>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.videoLoop)}
+                  onChange={(event) => {
+                    onPatchSettings({ videoLoop: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Repetir video</span>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.videoDisableEditorPlayback === true}
+                  onChange={(event) => {
+                    onPatchSettings({ videoDisableEditorPlayback: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>No reproducir mientras se edita</span>
+              </label>
+            </div>
+          </section>
 
-      {showCustomControls && (
+          {afterPlaybackContent}
+        </>
+      )}
+
+      {showChromeSections && showCustomControls && (
         <>
           <section className={styles.videoSettingsSection}>
             <div className={styles.videoSettingsSectionHeader}>
@@ -28064,7 +28104,7 @@ const PopupInspector: React.FC<{
   )
 }
 
-type InspectorTabId = 'edit' | 'design' | 'settings' | 'videoActions' | 'videoFormGate'
+type InspectorTabId = 'edit' | 'design' | 'settings' | 'videoActions'
 
 interface InspectorTab {
   value: InspectorTabId
@@ -29521,6 +29561,21 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       onSave={onSave}
     />
   ) : null
+  const videoFormGateContent = block.blockType === 'video' ? (
+    <VideoFormGateSettingsPanel
+      site={site}
+      block={block}
+      forms={forms}
+      customFields={customFields}
+      customFieldFolders={customFieldFolders}
+      pages={pages}
+      activePageId={activePageId}
+      onPatchSettings={onPatchSettings}
+      onCustomFieldCreated={onCustomFieldCreated}
+      onSave={onSave}
+    />
+  ) : null
+
   const settingsContent = (
     <>
       {!isField && blockHasExtraSettingsContent && (
@@ -29534,6 +29589,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           activePageId={activePageId}
           connectedSocialProfiles={connectedSocialProfiles}
           loadingSocialProfiles={loadingSocialProfiles}
+          videoFormGateContent={videoFormGateContent}
           onPatchSettings={onPatchSettings}
           onSave={onSave}
         />
@@ -29616,6 +29672,16 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {isFormSite(site) && isField && (
         <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       )}
+
+      {block.blockType === 'video' && (
+        <VideoPlayerSettingsControls
+          settings={settings}
+          mediaUrl={getSettingString(settings, 'mediaUrl')}
+          sections="chrome"
+          onPatchSettings={onPatchSettings}
+          onSave={onSave}
+        />
+      )}
     </>
   )
 
@@ -29634,25 +29700,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     />
   ) : null
 
-  const videoFormGateContent = block.blockType === 'video' ? (
-    <VideoFormGateSettingsPanel
-      site={site}
-      block={block}
-      forms={forms}
-      customFields={customFields}
-      customFieldFolders={customFieldFolders}
-      pages={pages}
-      activePageId={activePageId}
-      onPatchSettings={onPatchSettings}
-      onCustomFieldCreated={onCustomFieldCreated}
-      onSave={onSave}
-    />
-  ) : null
-
   const inspectorTabs: InspectorTab[] = [
     { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
     ...(videoActionsContent ? [{ value: 'videoActions' as InspectorTabId, label: 'Acciones de video', icon: <Clock3 size={14} />, content: videoActionsContent }] : []),
-    ...(videoFormGateContent ? [{ value: 'videoFormGate' as InspectorTabId, label: 'Formulario de video', icon: <FormInput size={14} />, content: videoFormGateContent }] : []),
     { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent }
   ]
 
@@ -29843,6 +29893,7 @@ interface LandingBlockSettingsProps {
   activePageId: string
   connectedSocialProfiles: ConnectedSocialProfile[]
   loadingSocialProfiles: boolean
+  videoFormGateContent?: React.ReactNode
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }
@@ -30376,7 +30427,7 @@ const VideoFormGateSettingsPanel: React.FC<{
   )
 }
 
-const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
+const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, videoFormGateContent, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
 
   if (isPanelBlock(block)) {
@@ -30645,6 +30696,8 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           <VideoPlayerSettingsControls
             settings={settings}
             mediaUrl={getSettingString(settings, 'mediaUrl')}
+            sections="playback"
+            afterPlaybackContent={videoFormGateContent}
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
