@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Lock, Plus, Search, X } from 'lucide-react'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
+import { getFloatingLayerZIndex } from '@/utils/layering'
 import styles from './TagPicker.module.css'
 
 /**
@@ -127,7 +128,7 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
         : Math.min(rect.bottom + gap, window.innerHeight - viewportPadding - height),
       left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - rect.width - viewportPadding),
       width: rect.width,
-      zIndex: 10000,
+      zIndex: getFloatingLayerZIndex(containerRef.current, 'popover'),
       '--tag-picker-options-max-height': `${height - (size === 'large' ? 58 : 52)}px`
     } as React.CSSProperties)
   }, [portal, size])

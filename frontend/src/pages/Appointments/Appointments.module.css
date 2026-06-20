@@ -1010,7 +1010,7 @@
 /* Tooltip de eventos - sin sombra */
 .eventTooltip {
   position: fixed;
-  z-index: 2147483647 !important; /* Maximum z-index value */
+  z-index: var(--z-index-tooltip);
   isolation: isolate;
   background-color: #1a1a1a !important;
   border: 1px solid rgba(255, 255, 255, 0.1);

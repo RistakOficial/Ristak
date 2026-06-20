@@ -8,6 +8,7 @@ import React, {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/utils/cn'
+import { getFloatingLayerZIndex } from '@/utils/layering'
 import styles from './HelpTooltip.module.css'
 
 type TooltipPosition = {
@@ -126,7 +127,8 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({
         data-placement={position.placement}
         style={{
           left: position.left,
-          top: position.top
+          top: position.top,
+          zIndex: getFloatingLayerZIndex(triggerRef.current, 'tooltip')
         }}
       >
         {content}

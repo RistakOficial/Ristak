@@ -1785,7 +1785,7 @@ export const Appointments: React.FC = () => {
                                     top: `${tooltipPosition.top}px`,
                                     left: `${tooltipPosition.left}px`,
                                     transform: 'translate(-50%, -100%)',
-                                    zIndex: 2147483647
+                                    zIndex: 'var(--z-index-tooltip)'
                                   }}
                                 >
                                   <div className={styles.tooltipTitle}>
@@ -1971,7 +1971,7 @@ export const Appointments: React.FC = () => {
                                     top: `${tooltipPosition.top}px`,
                                     left: `${tooltipPosition.left}px`,
                                     transform: 'translate(-50%, -100%)',
-                                    zIndex: 2147483647
+                                    zIndex: 'var(--z-index-tooltip)'
                                   }}
                                 >
                                   <div className={styles.tooltipTitle}>

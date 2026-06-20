@@ -425,7 +425,7 @@
 /* Tooltips */
 .eventTooltip {
   position: fixed;
-  z-index: 2147483647 !important;
+  z-index: var(--z-index-tooltip);
   isolation: isolate;
   background: var(--surface-solid, var(--surface));
   border: 1px solid var(--border);

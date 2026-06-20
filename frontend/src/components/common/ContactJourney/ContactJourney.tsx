@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '@/components/common'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
+import { getFloatingLayerZIndex } from '@/utils/layering'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import styles from './ContactJourney.module.css'
@@ -846,6 +847,7 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
 
 export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
+  const journeyRef = useRef<HTMLDivElement>(null)
   const [journey, setJourney] = useState<JourneyEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [hoveredEventIndex, setHoveredEventIndex] = useState<number | null>(null)
@@ -883,7 +885,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
   }
 
   return (
-    <div className={styles.journey}>
+    <div className={styles.journey} ref={journeyRef}>
       <h4 className={styles.title}>Viaje del Cliente</h4>
       <div className={styles.timeline}>
         {displayJourney.map((event, index) => {
@@ -951,7 +953,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
                     left: `${tooltipPosition.left}px`,
                     position: 'fixed',
                     transform: 'translate(-50%, -100%)',
-                    zIndex: 2147483647
+                    zIndex: getFloatingLayerZIndex(journeyRef.current, 'tooltip')
                   }}
                 >
                   <div className={styles.tooltipTitle}>{getEventTitle(event)}</div>

@@ -222,6 +222,7 @@ export const Modal: React.FC<ModalProps> = ({
       className={`${styles.backdrop} ${isSystemModal ? styles.systemBackdrop : ''} ${draggableSheet ? styles.bottomSheetBackdrop : ''} ${draggableSheet && bottomSheetDragging ? styles.bottomSheetBackdropInteractive : ''} ${draggableSheet && bottomSheetDismiss.closing ? styles.bottomSheetBackdropClosing : ''} ${sheetExiting ? styles.bottomSheetBackdropExiting : ''} ${backdropClassName}`.trim()}
       style={draggableSheet ? bottomSheetDismiss.backdropStyle : undefined}
       onClick={handleBackdropClick}
+      data-overlay=""
       data-phone-modal-root="true"
     >
       <div

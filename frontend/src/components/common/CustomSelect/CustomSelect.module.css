@@ -128,7 +128,7 @@
 .portalDropdown {
   position: fixed;
   right: auto;
-  z-index: var(--z-index-tooltip, 10100);
+  z-index: var(--z-index-popover);
 }
 
 .dropdown[data-placement='top'] {

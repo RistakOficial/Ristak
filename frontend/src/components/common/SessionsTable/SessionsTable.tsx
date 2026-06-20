@@ -561,9 +561,9 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
           top: 0,
           left: 0,
           right: 0,
-          bottom: 0,
-          backgroundColor: 'var(--color-background)',
-          zIndex: 9999,
+	          bottom: 0,
+	          backgroundColor: 'var(--color-background)',
+	          zIndex: 'var(--z-index-modal)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden'
@@ -876,10 +876,10 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
               padding: '16px 24px',
               display: 'flex',
               gap: '12px',
-              alignItems: 'center',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-              zIndex: 10000
-            }}>
+	              alignItems: 'center',
+	              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+	              zIndex: 'var(--z-index-modal-popover)'
+	            }}>
               <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>
                 {selectedIds.size} {selectedIds.size === 1 ? 'sesión seleccionada' : 'sesiones seleccionadas'}
               </span>
@@ -974,12 +974,12 @@ const EditSessionModal: React.FC<EditSessionModalProps> = ({ session, onClose, o
       right: 0,
       bottom: 0,
       backgroundColor: 'rgba(0,0,0,0.5)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 10001,
-      padding: '20px'
-    }}>
+	      display: 'flex',
+	      alignItems: 'center',
+	      justifyContent: 'center',
+	      zIndex: 'var(--z-index-modal-popover)',
+	      padding: '20px'
+	    }}>
       <div style={{
         backgroundColor: 'var(--color-surface)',
         borderRadius: '12px',

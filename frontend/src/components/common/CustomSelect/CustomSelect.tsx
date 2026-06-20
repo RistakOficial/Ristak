@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Check } from 'lucide-react'
+import { getFloatingLayerZIndex } from '@/utils/layering'
 import styles from './CustomSelect.module.css'
 
 interface Option {
@@ -177,6 +178,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         : Math.min(rect.bottom + dropdownGap, window.innerHeight - viewportPadding - dropdownHeight),
       left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - dropdownWidth - viewportPadding),
       width: dropdownWidth,
+      zIndex: getFloatingLayerZIndex(containerRef.current, 'popover'),
       '--custom-select-options-max-height': `${dropdownHeight}px`
     } as React.CSSProperties)
   }, [dropdownMinWidth, dropdownPlacement, flatOptions.length, shouldPortal, size])

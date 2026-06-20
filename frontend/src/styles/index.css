@@ -330,15 +330,18 @@ body.dark {
     --opacity-hover: 0.8;
     --opacity-backdrop: 0.6;
 
-    /* Orden de apilado: los flotantes (dropdown/popover) van POR ENCIMA del header
-       y de los modales (para que un select dentro de un modal también funcione).
-       Antes el header (1200) tapaba a los dropdowns (1100) -> aparecían detrás. */
+    /* Orden de apilado: los flotantes de pagina van sobre el header, pero debajo
+       del escudo modal. Los flotantes que nacen dentro de un modal usan la escala
+       modal-* para no quedar enterrados. */
     --z-index-header: 1200;
-    --z-index-modal: 9999;
-    --z-index-dropdown: 10000;
-    --z-index-popover: 10010;
-    --z-index-tooltip: 10100;
-    --z-index-toast: 10200;
+    --z-index-dropdown: 4000;
+    --z-index-popover: 4010;
+    --z-index-tooltip: 4020;
+    --z-index-modal: 10000;
+    --z-index-modal-dropdown: 10010;
+    --z-index-modal-popover: 10020;
+    --z-index-modal-tooltip: 10030;
+    --z-index-toast: 11000;
 
     --color-background: var(--color-background-secondary);
     --color-surface: var(--color-background-tertiary);
@@ -2968,10 +2971,13 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   [data-radio][data-on='true'] { border-color: var(--accent); }
   [data-radio] .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform .12s; }
   [data-radio][data-on='true'] .dot { transform: scale(1); }
-  [data-overlay] { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--modal-backdrop-bg, color-mix(in srgb, var(--bg, var(--color-background-primary)) 72%, transparent)); backdrop-filter: var(--modal-backdrop-filter, blur(8px) saturate(1.08)); -webkit-backdrop-filter: var(--modal-backdrop-filter, blur(8px) saturate(1.08)); animation: rk-ovfade 0.16s ease both; }
+  [data-overlay] { position: fixed; inset: 0; z-index: var(--z-index-modal); display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--modal-backdrop-bg, color-mix(in srgb, var(--bg, var(--color-background-primary)) 72%, transparent)); backdrop-filter: var(--modal-backdrop-filter, blur(8px) saturate(1.08)); -webkit-backdrop-filter: var(--modal-backdrop-filter, blur(8px) saturate(1.08)); animation: rk-ovfade 0.16s ease both; }
   @keyframes rk-ovfade { from { opacity: 0; } to { opacity: 1; } }
   [data-modal] { background: var(--modal-surface-bg, var(--surface-solid, var(--surface, var(--color-background-primary)))); border: 1px solid var(--border-strong); border-radius: var(--radius-card); box-shadow: var(--modal-shadow, var(--shadow-pop)); width: 100%; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; animation: rk-modalin 0.2s cubic-bezier(0.4,0,0.2,1) both; }
   body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-modal] {
+    --z-index-dropdown: var(--z-index-modal-dropdown);
+    --z-index-popover: var(--z-index-modal-popover);
+    --z-index-tooltip: var(--z-index-modal-tooltip);
     --modal-density-control-height: 44px;
     --modal-density-control-padding-x: 14px;
     --modal-density-control-font-size: 15px;

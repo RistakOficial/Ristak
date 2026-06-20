@@ -1,4 +1,7 @@
 .backdrop {
+  --z-index-dropdown: var(--z-index-modal-dropdown);
+  --z-index-popover: var(--z-index-modal-popover);
+  --z-index-tooltip: var(--z-index-modal-tooltip);
   position: fixed;
   top: 0;
   left: 0;

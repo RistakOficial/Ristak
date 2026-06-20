@@ -42,7 +42,7 @@
 .mediaPickerOverlay[data-overlay] {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: var(--z-index-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2619,7 +2619,7 @@
 .aiCreationOverlay {
   position: fixed;
   inset: 0;
-  z-index: 95;
+  z-index: var(--z-index-modal);
   display: grid;
   place-items: center;
   padding: 20px;
@@ -3840,7 +3840,7 @@
 .importReviewOverlay {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: var(--z-index-modal);
   display: grid;
   place-items: center;
   padding: 20px;
@@ -8103,7 +8103,7 @@
 .unsavedModalBackdrop {
   position: fixed;
   inset: 0;
-  z-index: 1600;
+  z-index: var(--z-index-modal);
   display: grid;
   place-items: center;
   background: var(--modal-backdrop-bg);
@@ -8156,7 +8156,7 @@
 .seoModalBackdrop {
   position: fixed;
   inset: 0;
-  z-index: 1650;
+  z-index: var(--z-index-modal);
   display: grid;
   place-items: center;
   background: var(--modal-backdrop-bg);
@@ -11525,7 +11525,7 @@
 .libraryRouteOverlay[data-overlay] {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: var(--z-index-modal);
   display: grid;
   place-items: center;
   background: var(--modal-backdrop-bg);
