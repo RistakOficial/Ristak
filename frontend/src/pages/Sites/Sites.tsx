@@ -1481,7 +1481,7 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
 const isChoiceBlock = (blockType: SiteBlockType) =>
   blockType === 'dropdown' || blockType === 'radio' || blockType === 'checkboxes'
 
-const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile', 'image', 'video', 'countdown', 'embed', 'calendar_embed'])
+const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed'])
 
 const isBlockHidden = (block?: SiteBlock | null) => block?.settings?.hidden === true
 

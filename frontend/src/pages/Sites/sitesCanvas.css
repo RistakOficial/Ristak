@@ -107,7 +107,7 @@
   width: 100%;
   max-width: var(--rstk-max);
   margin: 0 auto;
-  padding: var(--rstk-block-pad, var(--rstk-frame-pad, clamp(28px, 5vw, 72px)));
+  padding: var(--rstk-block-pad, 0);
   display: grid;
   gap: var(--rstk-section-gap, clamp(18px, 3vw, 30px));
 }
@@ -764,7 +764,7 @@
   width: 100%;
   border: 1px solid transparent;
   border-radius: calc(var(--rstk-radius) + 4px);
-  padding: 8px;
+  padding: var(--rstk-block-pad, 0);
   transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
 }
 .rstkCanvas .rstkEmbeddedFormField {
@@ -790,7 +790,7 @@
 .rstkCanvas .rstk-embed-actions {
   border: 1px solid transparent;
   border-radius: calc(var(--rstk-submit-radius, var(--rstk-radius)) + 6px);
-  padding: 8px;
+  padding: 0;
   transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
 }
 .rstkCanvas .rstk-embed-actions:hover,

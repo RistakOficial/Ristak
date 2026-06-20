@@ -16177,7 +16177,7 @@ const RSTK_BASE_CSS = `
   .rstk-centered .rstk-shell{text-align:center;justify-items:center}
   .rstk-centered .rstk-subheading,.rstk-centered .rstk-text{margin-inline:auto}
   .rstk-section-lane.rstk-block-style,.rstk-section-lane{position:relative;width:100%;margin:var(--rstk-block-margin,0);background-color:var(--rstk-block-bg-color,var(--rstk-block-bg,transparent));background-image:var(--rstk-block-bg-layer,none),var(--rstk-block-bg-image,none);background-position:center center,var(--rstk-block-bg-position,center center);background-repeat:no-repeat,var(--rstk-block-bg-repeat,no-repeat);background-size:100% 100%,var(--rstk-block-bg-size,cover);color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);padding:0}
-  .rstk-section-inner{width:100%;max-width:var(--rstk-max);margin:0 auto;padding:var(--rstk-block-pad,var(--rstk-frame-pad,clamp(28px,5vw,72px)));display:grid;gap:var(--rstk-section-gap,clamp(18px,3vw,30px))}
+  .rstk-section-inner{width:100%;max-width:var(--rstk-max);margin:0 auto;padding:var(--rstk-block-pad,0);display:grid;gap:var(--rstk-section-gap,clamp(18px,3vw,30px))}
   .rstk-section-heading{display:grid;gap:10px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
   .rstk-section-heading h2,.rstk-section-heading p{margin:0}
   .rstk-section-columns{display:grid;grid-template-columns:repeat(var(--rstk-section-columns,1),minmax(0,1fr));gap:var(--rstk-section-gap,clamp(18px,3vw,30px));align-items:start}
