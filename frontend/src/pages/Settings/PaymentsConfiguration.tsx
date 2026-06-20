@@ -95,6 +95,7 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
 
 const sectionIds = sectionItems.map((item) => item.id)
 const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercado-libre', 'clip']
+const defaultStripeConnectMode: StripePaymentConfig['mode'] = 'live'
 
 const STRIPE_WEBHOOK_EVENTS = [
   {
@@ -221,6 +222,17 @@ const invoiceTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   ledger: 'documentThemeLedger'
 }
 
+const getPreferredStripeConnectMode = (config?: StripePaymentConfig | null): StripePaymentConfig['mode'] => {
+  if (!config) return defaultStripeConnectMode
+  if (config.configured) return config.mode
+
+  if (config.connectOauthReadyByMode?.live) return 'live'
+  if (config.connectOauthReadyByMode?.test) return 'test'
+  if (config.connectOauthReady) return config.mode
+
+  return defaultStripeConnectMode
+}
+
 export const PaymentsConfiguration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
@@ -241,7 +253,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const [cardSetupAmount, setCardSetupAmount] = useState(25)
   const [ghlInvoiceMode, setGhlInvoiceMode] = useState<'live' | 'test'>('live')
   const [stripeConfig, setStripeConfig] = useState<StripePaymentConfig | null>(null)
-  const [stripeMode, setStripeMode] = useState<'test' | 'live'>('test')
+  const [stripeMode, setStripeMode] = useState<'test' | 'live'>(defaultStripeConnectMode)
   const [stripeAccountLabel, setStripeAccountLabel] = useState('')
   const [stripePublishableKey, setStripePublishableKey] = useState('')
   const [stripeSecretKey, setStripeSecretKey] = useState('')
@@ -367,6 +379,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const stripeConnectionType = stripeConfig?.connectionType || 'manual'
   const stripeIsConnect = stripeConnectionType === 'connect'
   const stripeModeOauthReady = stripeConfig?.connectOauthReadyByMode?.[stripeMode] ?? stripeConfig?.connectOauthReady ?? false
+  const stripeSelectedModeLabel = stripeMode === 'live' ? 'en vivo' : 'prueba'
   const stripeWebhookReady = stripeConfig?.connectWebhookStatus === 'active' && stripeConfig?.hasWebhookSecret
   const stripeOAuthConnected = Boolean(stripeConfig?.configured && stripeIsConnect && stripeConfig?.connectedAccountId)
   const stripeConnected = Boolean(stripeConfig?.configured)
@@ -593,7 +606,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const applyStripeConfig = (config: StripePaymentConfig) => {
     setStripeConfig(config)
-    setStripeMode(config.mode || 'test')
+    setStripeMode(getPreferredStripeConnectMode(config))
     setStripeAccountLabel(config.accountLabel || '')
     setStripePublishableKey(config.publishableKey || '')
     setStripeSecretKey(config.secretKeyPreview || '')
@@ -607,6 +620,7 @@ export const PaymentsConfiguration: React.FC = () => {
       applyStripeConfig(config)
     } catch {
       setStripeConfig(null)
+      setStripeMode(defaultStripeConnectMode)
     } finally {
       setLoadingStripeConfig(false)
     }
@@ -1716,7 +1730,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     ? `Ristak cobra en modo ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'} usando Stripe Connect.`
                     : stripeConnected
                       ? 'Esta instalación usa llaves guardadas manualmente. Puedes reconectar con OAuth para automatizar cuenta y webhook.'
-                      : 'Se abrirá Stripe, autorizas Ristak y regresas aquí con la cuenta lista.'}
+                      : `Se abrirá Stripe en modo ${stripeSelectedModeLabel}, autorizas Ristak y regresas aquí con la cuenta lista.`}
                 </p>
               </div>
               <div className={styles.actionsRow}>
@@ -1761,9 +1775,18 @@ export const PaymentsConfiguration: React.FC = () => {
               <div className={styles.inlineWarning}>
                 <AlertTriangle size={16} />
                 <span>
-                  Falta configurar Stripe Connect para {stripeMode === 'live' ? 'modo en vivo' : 'modo prueba'}:
+                  Falta configurar Stripe Connect para modo {stripeSelectedModeLabel}:
                   {' '}
                   {(stripeConfig?.connectMissingEnv || []).join(', ') || `STRIPE_CONNECT_${stripeMode.toUpperCase()}_CLIENT_ID / SECRET_KEY / PUBLISHABLE_KEY`}.
+                </span>
+              </div>
+            )}
+
+            {stripeMode === 'test' && stripeModeOauthReady && !stripeOAuthConnected && (
+              <div className={styles.inlineWarning}>
+                <AlertTriangle size={16} />
+                <span>
+                  Modo prueba usa el Test Client ID de Stripe. Ese callback también debe estar autorizado en Stripe Dashboard con test mode activo.
                 </span>
               </div>
             )}
