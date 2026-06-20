@@ -132,11 +132,11 @@ const STRIPE_WEBHOOK_EVENTS = [
   },
   {
     name: 'invoice.payment_succeeded',
-    description: 'Cuando un invoice de Stripe queda pagado.'
+    description: 'Cuando un comprobante de Stripe queda pagado.'
   },
   {
     name: 'invoice.payment_failed',
-    description: 'Cuando un invoice de Stripe falla.'
+    description: 'Cuando un comprobante de Stripe falla.'
   }
 ]
 
@@ -772,9 +772,9 @@ export const PaymentsConfiguration: React.FC = () => {
     setSavingHighLevelConfig(true)
     try {
       await saveHighLevelInvoiceConfig(latestSettingsRef.current)
-      showToast('success', 'GoHighLevel guardado', 'La configuración de invoices quedó actualizada.')
+      showToast('success', 'GoHighLevel guardado', 'La configuración de comprobantes quedó actualizada.')
     } catch (error: any) {
-      showToast('error', 'No se pudo guardar GoHighLevel', error.message || 'Revisa la configuración de invoices.')
+      showToast('error', 'No se pudo guardar GoHighLevel', error.message || 'Revisa la configuración de comprobantes.')
     } finally {
       setSavingHighLevelConfig(false)
     }
@@ -968,7 +968,7 @@ export const PaymentsConfiguration: React.FC = () => {
     if (!file) return
 
     if (!file.type.startsWith('image/')) {
-      showToast('error', 'Archivo no válido', 'Sube una imagen para el logo del invoice.')
+      showToast('error', 'Archivo no válido', 'Sube una imagen para el logo del comprobante.')
       return
     }
 
@@ -983,7 +983,7 @@ export const PaymentsConfiguration: React.FC = () => {
         onProgress: ({ percent }) => setReceiptLogoUploadProgress(percent)
       })
       setReceiptValue('logoUrl', uploaded.publicUrl || `/api/media/assets/${encodeURIComponent(uploaded.id)}/file`)
-      showToast('success', 'Logo subido', 'El logo quedó guardado en Media y enlazado al invoice.')
+      showToast('success', 'Logo subido', 'El logo quedó guardado en Media y enlazado al comprobante.')
     } catch (uploadError: any) {
       showToast('error', 'No se pudo subir el logo', uploadError.message || 'Revisa el archivo e intenta de nuevo.')
     } finally {
@@ -1204,11 +1204,11 @@ export const PaymentsConfiguration: React.FC = () => {
     const invoiceStyleVars = buildInvoiceStyleVars(receipt)
 
     return (
-      <div className={styles.twoColumnLayout}>
+      <div className={`${styles.twoColumnLayout} ${styles.receiptDocumentLayout}`}>
         <Card className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
             <div>
-              <h2>Invoice descargable</h2>
+              <h2>Comprobante de pago descargable</h2>
               <p>Configura la hoja PDF que el cliente podrá descargar desde la confirmación de pago.</p>
             </div>
             <Badge variant="success">
@@ -1219,7 +1219,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
           <div className={styles.formGrid}>
             <div className={`${styles.formField} ${styles.fullWidthField}`}>
-              <span>Logo del invoice</span>
+              <span>Logo del comprobante</span>
               <div className={styles.logoUploadControl}>
                 <div className={styles.logoUploadPreview}>
                   {receipt.logoUrl ? <img src={receipt.logoUrl} alt="" /> : <Image size={22} />}
@@ -1304,7 +1304,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 type="email"
                 value={receipt.businessEmail}
                 onChange={(event) => setReceiptValue('businessEmail', event.target.value)}
-                placeholder="facturacion@tu-negocio.com"
+                placeholder="pagos@tu-negocio.com"
               />
             )}
             {renderField(
@@ -1347,19 +1347,19 @@ export const PaymentsConfiguration: React.FC = () => {
                 className={styles.largeTextarea}
                 value={receipt.terms}
                 onChange={(event) => setReceiptValue('terms', event.target.value)}
-                placeholder="Políticas de pago, reembolso, facturación o condiciones del servicio."
+                placeholder="Políticas de pago, reembolso, emisión de comprobantes o condiciones del servicio."
               />
-              <small>Este texto puede ser largo y también se sincroniza como nota de términos para invoices de GoHighLevel cuando esté conectado.</small>
+              <small>Este texto puede ser largo y también se sincroniza como nota de términos para comprobantes de GoHighLevel cuando esté conectado.</small>
             </div>
           </div>
 
           <div className={styles.switchStack}>
             {renderSwitchRow('Mostrar datos del negocio', 'Incluye nombre, contacto y dirección en la hoja.', receipt.showBusinessInfo, (next) => setReceiptValue('showBusinessInfo', next))}
             {renderSwitchRow('Mostrar datos del cliente', 'Incluye nombre, email y referencia del pago.', receipt.showCustomerInfo, (next) => setReceiptValue('showCustomerInfo', next))}
-            {renderSwitchRow('Mostrar términos', 'Agrega términos al final del invoice descargable.', receipt.showTerms, (next) => setReceiptValue('showTerms', next))}
+            {renderSwitchRow('Mostrar términos', 'Agrega términos al final del comprobante descargable.', receipt.showTerms, (next) => setReceiptValue('showTerms', next))}
           </div>
 
-          {renderSectionSaveBar('Guardar invoice')}
+          {renderSectionSaveBar('Guardar comprobante')}
         </Card>
 
         <Card className={styles.documentPreviewCard}>
@@ -1453,7 +1453,7 @@ export const PaymentsConfiguration: React.FC = () => {
           </div>
 
           <div className={styles.documentViewport}>
-            <article className={invoiceSheetClassName} style={invoiceStyleVars} aria-label="Vista previa del invoice descargable">
+            <article className={invoiceSheetClassName} style={invoiceStyleVars} aria-label="Vista previa del comprobante de pago descargable">
               <header className={styles.documentSheetHeader}>
                 <div className={styles.documentIdentity}>
                   {receipt.logoUrl ? (
@@ -1547,7 +1547,7 @@ export const PaymentsConfiguration: React.FC = () => {
               {receipt.showTerms && (
                 <section className={styles.documentTerms}>
                   <strong>Términos y condiciones</strong>
-                  <p>{receipt.terms || 'Agrega aquí políticas de pago, reembolso, facturación o condiciones del servicio.'}</p>
+                  <p>{receipt.terms || 'Agrega aquí políticas de pago, reembolso, emisión de comprobantes o condiciones del servicio.'}</p>
                 </section>
               )}
 
@@ -1838,7 +1838,7 @@ export const PaymentsConfiguration: React.FC = () => {
           <AlertTriangle size={18} />
           <div>
             <strong>GoHighLevel no está conectado</strong>
-            <p>Conecta GoHighLevel primero para administrar sus invoices desde esta pantalla.</p>
+            <p>Conecta GoHighLevel primero para administrar sus comprobantes desde esta pantalla.</p>
           </div>
         </Card>
       )}
@@ -1847,7 +1847,7 @@ export const PaymentsConfiguration: React.FC = () => {
         <Card className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
             <div>
-              <h2>GoHighLevel Invoices</h2>
+              <h2>Comprobantes de GoHighLevel</h2>
               <p>Personaliza cómo se generan documentos, vencimientos y cargos de domiciliación.</p>
             </div>
           </div>
@@ -1855,7 +1855,7 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.formGrid}>
             <div className={styles.modeSelector}>
               <span className={ghlInvoiceMode === 'test' ? styles.modeActive : ''}>Prueba</span>
-              <Switch checked={ghlInvoiceMode === 'live'} onChange={(next) => setGhlInvoiceMode(next ? 'live' : 'test')} aria-label="Cambiar modo de GoHighLevel invoices" />
+              <Switch checked={ghlInvoiceMode === 'live'} onChange={(next) => setGhlInvoiceMode(next ? 'live' : 'test')} aria-label="Cambiar modo de comprobantes de GoHighLevel" />
               <span className={ghlInvoiceMode === 'live' ? styles.modeActive : ''}>En vivo</span>
             </div>
             {renderField(
@@ -1864,7 +1864,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 type="text"
                 value={paymentTitle}
                 onChange={(event) => setPaymentTitle(event.target.value)}
-                placeholder="PAGO, FACTURA, INVOICE"
+                placeholder="PAGO, COMPROBANTE, RECIBO"
               />
             )}
             {renderField(
@@ -2287,7 +2287,7 @@ export const PaymentsConfiguration: React.FC = () => {
         <div className={styles.switchStack}>
           {renderSwitchRow('Cobrar impuestos', 'Activa el cálculo de impuesto como regla estándar de pagos.', taxes.enabled, (next) => setTaxValue('enabled', next))}
           {renderSwitchRow('Aplicar a Stripe', 'Usa esta regla para links de cobro con Stripe.', taxes.applyToStripe, (next) => setTaxValue('applyToStripe', next))}
-          {renderSwitchRow('Aplicar a GoHighLevel', 'Usa esta regla cuando generes invoices de GoHighLevel.', taxes.applyToHighLevel, (next) => setTaxValue('applyToHighLevel', next))}
+          {renderSwitchRow('Aplicar a GoHighLevel', 'Usa esta regla cuando generes comprobantes de GoHighLevel.', taxes.applyToHighLevel, (next) => setTaxValue('applyToHighLevel', next))}
         </div>
 
         <div className={styles.formGrid}>

@@ -33,6 +33,10 @@
   align-items: start;
 }
 
+.receiptDocumentLayout {
+  grid-template-columns: minmax(360px, 0.95fr) minmax(480px, 1.05fr);
+}
+
 .singleColumnLayout {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -1499,7 +1503,8 @@
 }
 
 @media (max-width: 1040px) {
-  .twoColumnLayout {
+  .twoColumnLayout,
+  .receiptDocumentLayout {
     grid-template-columns: 1fr;
   }
 
