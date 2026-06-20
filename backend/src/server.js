@@ -4,6 +4,7 @@ import express from 'express'
 import cors from 'cors'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { databaseReady } from './config/database.js'
 import { logger } from './utils/logger.js'
 import { initializeMasterKey } from './utils/encryption.js'
 import { initializeDefaultUser } from './utils/auth.js'
@@ -77,6 +78,16 @@ const __dirname = dirname(__filename)
 
 const app = express()
 const PORT = process.env.PORT || 3001
+const startupState = {
+  ready: false,
+  error: null
+}
+
+function getStartupStatus() {
+  if (startupState.ready) return 'ready'
+  if (startupState.error) return 'error'
+  return 'starting'
+}
 
 // Render y la mayoría de despliegues están detrás de un proxy que envía X-Forwarded-For con la IP real
 app.set('trust proxy', true)
@@ -97,8 +108,9 @@ app.use('/uploads', express.static(join(__dirname, '../uploads'), {
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({
+  res.status(startupState.error ? 503 : 200).json({
     status: 'ok',
+    startup: getStartupStatus(),
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     version: process.env.APP_VERSION || '0.0.0'
@@ -108,7 +120,28 @@ app.get('/api/health', (req, res) => {
 // Health check de instalación (lo consulta el portal instalador para saber
 // si la app ya está lista). Debe ir antes del host router de Sites.
 app.get('/health', (req, res) => {
-  res.json(getHealthInfo())
+  res.status(startupState.error ? 503 : 200).json({
+    ...getHealthInfo(),
+    startup: getStartupStatus()
+  })
+})
+
+app.use((req, res, next) => {
+  if (startupState.ready) {
+    return next()
+  }
+
+  if (startupState.error) {
+    return res.status(503).json({
+      error: 'Aplicación no disponible',
+      message: 'El arranque falló. Revisa los logs del servidor.'
+    })
+  }
+
+  return res.status(503).json({
+    error: 'Aplicación iniciando',
+    message: 'La app está terminando de preparar la base de datos y servicios internos.'
+  })
 })
 
 // Multimedia pública/fallback e integraciones internas del installer.
@@ -195,13 +228,9 @@ app.use((err, req, res, next) => {
   })
 })
 
-// Iniciar servidor. Render requiere escuchar en 0.0.0.0 y el puerto de PORT.
-app.listen(PORT, '0.0.0.0', async () => {
-  import('./services/automationEngine.js')
-    .then((engine) => engine.startAutomationScheduler())
-    .catch((error) => logger.error(`No se pudo iniciar el motor de automatizaciones: ${error.message}`))
-  logger.success(`🚀 Servidor corriendo en puerto ${PORT}`)
-  logger.info(`Entorno: ${process.env.NODE_ENV || 'development'}`)
+async function startRuntimeServices() {
+  logger.info('Preparando base de datos antes de habilitar la app...')
+  await databaseReady
 
   // Inicializar clave maestra de encriptación (DEBE ser lo primero)
   await initializeMasterKey()
@@ -246,6 +275,9 @@ app.listen(PORT, '0.0.0.0', async () => {
   })
 
   // Iniciar cron jobs
+  import('./services/automationEngine.js')
+    .then((engine) => engine.startAutomationScheduler())
+    .catch((error) => logger.error(`No se pudo iniciar el motor de automatizaciones: ${error.message}`))
   startMetaSyncCron()              // Sincroniza anuncios de Meta Ads cada hora
   startHighLevelSyncCron()         // Sincroniza contactos, citas y pagos de HighLevel cada hora (silencioso)
   startMetaVersionCron()           // Revisa versión Meta API una vez al mes
@@ -256,6 +288,21 @@ app.listen(PORT, '0.0.0.0', async () => {
   startStripePaymentPlansCron()    // Cobra parcialidades Stripe vencidas con tarjetas guardadas
   startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
   startMercadoPagoPaymentPlansCron() // Genera links Mercado Pago para parcialidades vencidas
+  startupState.ready = true
+  logger.success('App lista para recibir tráfico')
+}
+
+// Iniciar servidor. Render requiere escuchar en 0.0.0.0 y el puerto de PORT.
+app.listen(PORT, '0.0.0.0', () => {
+  logger.success(`🚀 Servidor escuchando en puerto ${PORT}`)
+  logger.info(`Entorno: ${process.env.NODE_ENV || 'development'}`)
+
+  startRuntimeServices().catch((error) => {
+    startupState.error = error
+    logger.error('Error durante el arranque de la app:', error)
+    process.exitCode = 1
+    setTimeout(() => process.exit(1), 1000)
+  })
 })
 
 // Manejo de errores de proceso

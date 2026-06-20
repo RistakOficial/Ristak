@@ -5080,8 +5080,17 @@ async function migrateTagIdsToSlugs() {
   logger.info(`IDs de etiquetas migrados a slugs legibles: ${renames.length} etiqueta${renames.length === 1 ? '' : 's'}`)
 }
 
-// Inicializar al importar
-await initTables()
+// En produccion no bloqueamos el import completo con las migraciones:
+// Render necesita que el proceso abra puerto rapido para no marcar el deploy
+// como "no open ports detected". El servidor espera esta promesa antes de
+// habilitar las rutas reales.
+export const databaseReady = initTables()
+
+if (process.env.NODE_ENV === 'production') {
+  databaseReady.catch(() => {})
+} else {
+  await databaseReady
+}
 
 /**
  * Obtiene la configuración de HighLevel desde la base de datos
