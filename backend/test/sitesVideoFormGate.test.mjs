@@ -66,6 +66,16 @@ test('video form gate renders inside the video player and posts as the source fo
       blankCanvas: true,
       theme: {
         template: 'ristak',
+        backgroundColor: '#fee2e2',
+        textColor: '#7f1d1d',
+        textColorCustom: true,
+        formFieldBg: '#fff1f2',
+        formFieldText: '#7f1d1d',
+        formFieldBorder: '#fecdd3',
+        submitBg: '#ef4444',
+        submitTextColor: '#ffffff',
+        submitBorderColor: '#ef4444',
+        submitRadius: 30,
         submitText: 'Enviar video',
         nextText: 'Siguiente video',
         finalMessages: {
@@ -147,6 +157,25 @@ test('video form gate renders inside the video player and posts as the source fo
         mediaUrl: 'https://cdn.example.com/video-form-gate.mp4',
         videoFormGateEnabled: true,
         videoFormGateFormSiteId: formSite.id,
+        videoFormGateEmbeddedTheme: {
+          template: 'ristak',
+          backgroundColor: '#ffffff',
+          textColor: '#111827',
+          textColorCustom: true,
+          formFieldBg: '#ffffff',
+          formFieldText: '#111827',
+          formFieldBorder: '#d1d5db',
+          formPlaceholderColor: '#6b7280',
+          formFieldRadius: 14,
+          submitBg: '#111827',
+          submitTextColor: '#ffffff',
+          submitBorderColor: '#111827',
+          submitRadius: 12,
+          submitHeight: 52,
+          submitPaddingX: 28,
+          submitPaddingY: 10,
+          submitFontSize: 16
+        },
         videoFormGateTitle: 'Formulario de video',
         videoFormGateTriggerSeconds: 3,
         videoFormGateVideoBackground: 'rgba(255, 255, 255, 0.2)',
@@ -189,6 +218,22 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, /data-trigger-seconds="3"/)
     assert.match(html, /--rstk-video-form-gate-video-bg:rgba\(255, 255, 255, 0\.2\)/)
     assert.match(html, /rstk-video-gate-active\{aspect-ratio:auto;min-height:/)
+    assert.match(html, /--rstk-video-form-panel-bg:#ffffff/)
+    assert.match(html, /--rstk-form-field-bg:#ffffff/)
+    assert.match(html, /--rstk-form-field-text:#111827/)
+    assert.match(html, /--rstk-form-field-border:#d1d5db/)
+    assert.match(html, /--rstk-form-placeholder:#6b7280/)
+    assert.match(html, /--rstk-form-field-radius:14px/)
+    assert.match(html, /--rstk-submit-bg:#111827/)
+    assert.match(html, /--rstk-submit-text:#ffffff/)
+    assert.match(html, /--rstk-submit-border:#111827/)
+    assert.match(html, /--rstk-submit-radius:12px/)
+    assert.match(html, /--rstk-submit-height:52px/)
+    assert.match(html, /--rstk-submit-pad-x:28px/)
+    assert.match(html, /--rstk-submit-pad-y:10px/)
+    assert.match(html, /--rstk-submit-size:16px/)
+    assert.doesNotMatch(html, /--rstk-submit-bg:#ef4444/)
+    assert.match(html, /\.rstk-video-form-actions button\{[^}]*background:var\(--rstk-submit-bg,var\(--rstk-accent\)\)/)
     assert.match(html, /data-completion-action="show_targets"/)
     assert.match(html, /data-repeat-mode="remember_visitor"/)
     assert.match(html, /data-storage-ttl-seconds="3888000"/)

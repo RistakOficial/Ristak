@@ -10633,6 +10633,12 @@ async function hydrateEmbeddedForms(blocks = []) {
     const embeddedBlocks = embeddedSite?.blocks || []
     const embeddedPages = normalizeEmbeddedFormPages(normalizeSitePages(embeddedSite))
     if (isVideoGate) {
+      const draftTheme = getVideoFormGateEmbeddedTheme(settings)
+      const draftBlocks = getVideoFormGateEmbeddedBlocks(settings)
+      const embeddedTheme = {
+        ...(embeddedSite?.theme || {}),
+        ...(draftTheme || {})
+      }
       hydrated.push({
         ...block,
         settings: {
@@ -10640,8 +10646,8 @@ async function hydrateEmbeddedForms(blocks = []) {
           videoFormGateEmbeddedSiteId: embeddedSite?.id || formSiteId,
           videoFormGateEmbeddedSiteName: embeddedSite?.name || '',
           videoFormGateEmbeddedSiteType: embeddedSite?.siteType || embeddedSite?.site_type || 'standard_form',
-          videoFormGateEmbeddedTheme: embeddedSite?.theme || {},
-          videoFormGateEmbeddedBlocks: collectFieldBlocks(embeddedBlocks)
+          videoFormGateEmbeddedTheme: embeddedTheme,
+          videoFormGateEmbeddedBlocks: collectFieldBlocks(draftBlocks.length ? draftBlocks : embeddedBlocks)
         }
       })
       continue
@@ -11719,14 +11725,21 @@ function getVideoFormGateSourceFormId(settings = {}) {
   )
 }
 
+function getVideoFormGateEmbeddedTheme(settings = {}) {
+  if (isPlainObject(settings.videoFormGateEmbeddedTheme)) return settings.videoFormGateEmbeddedTheme
+  if (isPlainObject(settings.video_form_gate_embedded_theme)) return settings.video_form_gate_embedded_theme
+  return null
+}
+
+function getVideoFormGateEmbeddedBlocks(settings = {}) {
+  if (Array.isArray(settings.videoFormGateEmbeddedBlocks)) return settings.videoFormGateEmbeddedBlocks
+  if (Array.isArray(settings.video_form_gate_embedded_blocks)) return settings.video_form_gate_embedded_blocks
+  return []
+}
+
 function getVideoFormGateFields(settings = {}) {
   if (!isVideoFormGateEnabled(settings)) return []
-  const blocks = Array.isArray(settings.videoFormGateEmbeddedBlocks)
-    ? settings.videoFormGateEmbeddedBlocks
-    : Array.isArray(settings.video_form_gate_embedded_blocks)
-      ? settings.video_form_gate_embedded_blocks
-      : []
-  return collectFieldBlocks(blocks)
+  return collectFieldBlocks(getVideoFormGateEmbeddedBlocks(settings))
 }
 
 function getVideoFormGateTriggerSeconds(settings = {}) {
@@ -11745,11 +11758,7 @@ const VIDEO_FORM_GATE_REPEAT_MODES = new Set(['every_visit', 'session', 'remembe
 function normalizeVideoFormGateCompletionAction(settings = {}) {
   const action = cleanString(settings.videoFormGateCompletionAction || settings.video_form_gate_completion_action)
   if (VIDEO_FORM_GATE_COMPLETION_ACTIONS.has(action)) return action
-  const embeddedTheme = isPlainObject(settings.videoFormGateEmbeddedTheme)
-    ? settings.videoFormGateEmbeddedTheme
-    : isPlainObject(settings.video_form_gate_embedded_theme)
-      ? settings.video_form_gate_embedded_theme
-      : {}
+  const embeddedTheme = getVideoFormGateEmbeddedTheme(settings) || {}
   const legacyCompletionAction = cleanString(embeddedTheme.formCompletionAction || embeddedTheme.form_completion_action || settings.completionAction || settings.completion_action)
   const legacyRedirectUrl = safeHref(settings.videoFormGateRedirectUrl || settings.video_form_gate_redirect_url || embeddedTheme.formQualifiedRedirectUrl || embeddedTheme.form_qualified_redirect_url || '', '')
   if (legacyCompletionAction === 'redirect_qualified' && legacyRedirectUrl) return 'redirect'
@@ -11785,11 +11794,7 @@ function getVideoFormGateCompletionTargetIds(settings = {}) {
 }
 
 function getVideoFormGateRedirectUrl(settings = {}) {
-  const embeddedTheme = isPlainObject(settings.videoFormGateEmbeddedTheme)
-    ? settings.videoFormGateEmbeddedTheme
-    : isPlainObject(settings.video_form_gate_embedded_theme)
-      ? settings.video_form_gate_embedded_theme
-      : {}
+  const embeddedTheme = getVideoFormGateEmbeddedTheme(settings) || {}
   return safeHref(settings.videoFormGateRedirectUrl || settings.video_form_gate_redirect_url || embeddedTheme.formQualifiedRedirectUrl || embeddedTheme.form_qualified_redirect_url || '', '')
 }
 
@@ -11820,12 +11825,15 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
   const fields = getVideoFormGateFields(settings)
   if (!fields.length) return ''
 
-  const embeddedTheme = isPlainObject(settings.videoFormGateEmbeddedTheme)
-    ? { ...DEFAULT_THEME, ...settings.videoFormGateEmbeddedTheme }
-    : {}
+  const embeddedTheme = {
+    ...DEFAULT_THEME,
+    ...(getVideoFormGateEmbeddedTheme(settings) || {})
+  }
   const videoBackground = normalizeVideoFormGateVideoBackground(settings)
+  const panelBackground = normalizeCssPaint(embeddedTheme.backgroundColor, '')
   const style = `
     ${buildEmbeddedFormProxyStyle(embeddedTheme, context.formStyleContext)}
+    ${panelBackground ? `--rstk-video-form-panel-bg:${panelBackground};` : ''}
     --rstk-video-form-gate-video-bg:${videoBackground};
   `.replace(/\s+/g, ' ').trim()
   const formSiteId = getVideoFormGateSourceFormId(settings)
@@ -16979,7 +16987,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-gate-anim-fade:not([hidden]){animation:rstkVideoFormGateFade .22s ease-out both}
 	  .rstk-video-form-gate-anim-slide_up:not([hidden]){animation:rstkVideoFormGateSlide .24s ease-out both}
 	  .rstk-video-form-gate-anim-instant:not([hidden]){animation:none}
-	  .rstk-video-form-gate-panel{width:min(100%,680px);height:100%;max-width:100%;max-height:100%;min-height:0;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;gap:clamp(8px,1.8cqw,14px);overflow:hidden;border:var(--rstk-video-form-panel-border-width,0) solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:clamp(10px,2.4cqw,20px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-ink);box-shadow:0 24px 70px -42px rgba(0,0,0,.66);padding:clamp(12px,3cqw,24px)}
+	  .rstk-video-form-gate-panel{width:min(100%,680px);height:100%;max-width:100%;max-height:100%;min-height:0;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;gap:clamp(8px,1.8cqw,14px);overflow:hidden;border:var(--rstk-video-form-panel-border-width,0) solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:clamp(10px,2.4cqw,20px);background:var(--rstk-video-form-panel-bg,var(--rstk-block-bg,var(--rstk-surface)));color:var(--rstk-ink);box-shadow:0 24px 70px -42px rgba(0,0,0,.66);padding:clamp(12px,3cqw,24px)}
 	  .rstk-video-form-gate-header{display:grid;gap:4px;text-align:left}
 	  .rstk-video-form-gate-header strong{display:block;color:var(--rstk-ink);font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(1rem,3.2cqw,1.5rem);font-weight:800;line-height:1.1}
 	  .rstk-video-form-gate-header p{margin:0;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.78rem,2.1cqw,.95rem);line-height:1.35}
@@ -16990,14 +16998,15 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,.98rem);font-style:var(--rstk-form-font-style,normal);font-weight:650;text-decoration:var(--rstk-form-text-decoration,none);line-height:1.25}
 	  .rstk-video-form-field .rstk-help{color:var(--rstk-form-help-color,var(--rstk-muted));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.74rem,1.9cqw,.9rem);line-height:1.3}
 	  .rstk-video-form-gate input,.rstk-video-form-gate textarea,.rstk-video-form-gate select{min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border:var(--rstk-form-field-border-width,1px) solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.86rem,2.4cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
+	  .rstk-video-form-gate input::placeholder,.rstk-video-form-gate textarea::placeholder{color:var(--rstk-form-placeholder,color-mix(in srgb,var(--rstk-muted) 80%,transparent))}
 	  .rstk-video-form-gate textarea{min-height:clamp(78px,18cqw,108px)}
 	  .rstk-video-form-gate .rstk-phone-input{grid-template-columns:minmax(108px,34%) minmax(0,1fr);gap:8px}
 	  .rstk-video-form-gate .rstk-options{display:grid;gap:clamp(7px,1.8cqw,10px)}
 	  .rstk-video-form-gate .rstk-option{min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
 	  .rstk-video-form-gate .rstk-option:has(input:checked){border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-bg,color-mix(in srgb,var(--rstk-accent) 8%,transparent))}
 	  .rstk-video-form-gate .rstk-error{margin:0;color:#dc2626;font-size:clamp(.72rem,1.8cqw,.84rem);font-weight:700}
-	  .rstk-video-form-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
-	  .rstk-video-form-actions button{width:auto;min-width:min(128px,46%);min-height:clamp(38px,7.5cqw,48px);border:0;border-radius:var(--rstk-btn-radius);background:var(--rstk-accent);color:var(--rstk-on-accent);font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.1cqw,.98rem);font-weight:var(--rstk-btn-weight,800);cursor:pointer;padding:9px 14px}
+	  .rstk-video-form-actions{display:flex;align-items:center;justify-content:var(--rstk-submit-justify,flex-end);gap:8px;min-width:0}
+	  .rstk-video-form-actions button{box-sizing:border-box;width:var(--rstk-submit-width,auto);max-width:100%;min-width:min(128px,46%);min-height:clamp(38px,7.5cqw,var(--rstk-submit-height,48px));border:var(--rstk-submit-border-width,1px) solid var(--rstk-submit-border,var(--rstk-accent));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.1cqw,var(--rstk-submit-size,.98rem));font-weight:var(--rstk-btn-weight,800);cursor:pointer;padding:var(--rstk-submit-pad-y,9px) var(--rstk-submit-pad-x,14px)}
 	  .rstk-video-form-actions .rstk-secondary{background:transparent;color:var(--rstk-ink);border:1px solid var(--rstk-form-field-border,var(--rstk-input-border))}
 	  .rstk-video-form-actions button:disabled{opacity:.62;cursor:not-allowed}
 	  .rstk-video-form-gate .rstk-submit-message{min-height:18px;margin:0;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.74rem,1.8cqw,.88rem);font-weight:650;text-align:left}
@@ -17426,6 +17435,7 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
 	    --rstk-submit-radius:${themeNumber(theme, 'submitRadius', defaultButtonRadius, 0, 80)}px;
 	    --rstk-submit-height:${themeNumber(theme, 'submitHeight', 50, 34, 96)}px;
 	    --rstk-submit-pad-x:${themeNumber(theme, 'submitPaddingX', 22, 8, 72)}px;
+	    --rstk-submit-pad-y:${themeNumber(theme, 'submitPaddingY', 9, 6, 36)}px;
 	    --rstk-submit-size:${themeNumber(theme, 'submitFontSize', 16, 11, 32)}px;
 	    --rstk-submit-border-width:${themeNumber(theme, 'submitBorderWidth', 1, 0, 8)}px;
 	    --rstk-submit-justify:${justifyForAlign(submitAlign)};

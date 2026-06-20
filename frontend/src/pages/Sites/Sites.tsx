@@ -5692,7 +5692,6 @@ const stripVideoFormGateDraftSettings = (settings: Record<string, unknown>, form
   delete next.video_form_gate_embedded_blocks
   delete next.videoFormGateEmbeddedSiteId
   delete next.videoFormGateEmbeddedSiteName
-  delete next.videoFormGateEmbeddedTheme
   delete next.videoFormGateEmbeddedSiteType
   next.videoFormGateFormSiteId = formSiteId
   return next
@@ -5720,6 +5719,7 @@ const EMBEDDED_FORM_PROXY_THEME_KEYS: Array<keyof SiteTheme> = [
   'submitRadius',
   'submitHeight',
   'submitPaddingX',
+  'submitPaddingY',
   'submitFontSize',
   'submitBorderWidth',
   'submitWidth',
@@ -7306,21 +7306,27 @@ export const Sites: React.FC = () => {
     for (const [index, block] of siteBlocks.entries()) {
       const settings = block.settings || {}
       const enabled = settings.videoFormGateEnabled === true
-      const hasDraftBlocks = Array.isArray(settings.videoFormGateEmbeddedBlocks)
+      const hasDraftBlocks = Array.isArray(settings.videoFormGateEmbeddedBlocks) || Array.isArray(settings.video_form_gate_embedded_blocks)
+      const draftTheme = settings.videoFormGateEmbeddedTheme || settings.video_form_gate_embedded_theme
+      const hasDraftTheme = Boolean(
+        draftTheme &&
+        typeof draftTheme === 'object' &&
+        !Array.isArray(draftTheme)
+      )
 
-      if (block.blockType !== 'video' || !enabled || !hasDraftBlocks) {
+      if (block.blockType !== 'video' || !enabled || (!hasDraftBlocks && !hasDraftTheme)) {
         nextBlocks.push(block)
         continue
       }
 
       const draftBlocks = getVideoFormGateDraftBlocks(block)
-      if (!draftBlocks.length) {
+      const sourceId = getVideoFormGateSourceId(block)
+      const existingSource = sourceId ? forms.find(form => form.id === sourceId) || null : null
+      if (!existingSource && !draftBlocks.length) {
         nextBlocks.push(block)
         continue
       }
 
-      const sourceId = getVideoFormGateSourceId(block)
-      const existingSource = sourceId ? forms.find(form => form.id === sourceId) || null : null
       const formLabel = block.label || `Video ${index + 1}`
       const formName = existingSource?.name || `${siteToSave.name || 'Sitio web'} - Formulario de video ${formLabel}`
       let sourceForm = existingSource
@@ -7353,28 +7359,32 @@ export const Sites: React.FC = () => {
           metaEventName: siteToSave.metaEventName
         }))
 
-      const sourceBlocks = normalizeVideoFormGateBlocks(draftBlocks, sourceForm.id)
-      const sourceBlockIds = new Set(sourceBlocks.map(field => field.id))
-      const removedFieldIds = (sourceForm.blocks || [])
-        .filter(field => videoFormGateBlockTypeSet.has(field.blockType) && !sourceBlockIds.has(field.id))
-        .map(field => field.id)
-      for (const fieldId of removedFieldIds) {
-        sourceForm = normalizeSiteForEditor(await sitesService.deleteBlock(sourceForm.id, fieldId))
-      }
-      if (sourceBlocks.length) {
-        sourceForm = normalizeSiteForEditor(await sitesService.restoreBlocks(sourceForm.id, sourceBlocks))
-        sourceForm = normalizeSiteForEditor(await sitesService.reorderBlocks(sourceForm.id, sourceBlocks.map(field => field.id)))
+      if (hasDraftBlocks) {
+        const sourceBlocks = normalizeVideoFormGateBlocks(draftBlocks, sourceForm.id)
+        const sourceBlockIds = new Set(sourceBlocks.map(field => field.id))
+        const removedFieldIds = (sourceForm.blocks || [])
+          .filter(field => videoFormGateBlockTypeSet.has(field.blockType) && !sourceBlockIds.has(field.id))
+          .map(field => field.id)
+        for (const fieldId of removedFieldIds) {
+          sourceForm = normalizeSiteForEditor(await sitesService.deleteBlock(sourceForm.id, fieldId))
+        }
+        if (sourceBlocks.length) {
+          sourceForm = normalizeSiteForEditor(await sitesService.restoreBlocks(sourceForm.id, sourceBlocks))
+          sourceForm = normalizeSiteForEditor(await sitesService.reorderBlocks(sourceForm.id, sourceBlocks.map(field => field.id)))
+        }
       }
       upsertSiteInEditorList(sourceForm)
 
       const nextBlock = {
         ...block,
-        settings: stripVideoFormGateDraftSettings(settings, sourceForm.id),
+        settings: hasDraftBlocks
+          ? stripVideoFormGateDraftSettings(settings, sourceForm.id)
+          : { ...settings, videoFormGateFormSiteId: sourceForm.id },
         updatedAt: new Date().toISOString()
       }
       pendingBlockSaveIdsRef.current.add(nextBlock.id)
       nextBlocks.push(nextBlock)
-      changed = true
+      changed = changed || hasDraftBlocks || sourceId !== sourceForm.id
     }
 
     if (!changed) return siteToSave

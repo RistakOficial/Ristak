@@ -212,6 +212,7 @@ export interface SiteTheme {
   submitRadius?: number
   submitHeight?: number
   submitPaddingX?: number
+  submitPaddingY?: number
   submitFontSize?: number
   submitBorderWidth?: number
   submitWidth?: number
