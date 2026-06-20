@@ -22,41 +22,47 @@
 .default {
   background: var(--badge-default-bg);
   color: var(--badge-default-text);
-  border-color: var(--border);
+  border-color: var(--badge-default-border, var(--border));
 }
 
 .success {
   background: var(--badge-success-bg);
   color: var(--badge-success-text);
+  border-color: var(--badge-success-border, var(--badge-success-bg));
 }
 
 .warning {
   background: var(--badge-warning-bg);
   color: var(--badge-warning-text);
+  border-color: var(--badge-warning-border, var(--badge-warning-bg));
 }
 
 .error {
   background: var(--badge-error-bg);
   color: var(--badge-error-text);
+  border-color: var(--badge-error-border, var(--badge-error-bg));
 }
 
 .info {
   background: var(--badge-info-bg);
   color: var(--badge-info-text);
+  border-color: var(--badge-info-border, var(--badge-info-bg));
 }
 
 .purple {
   background: var(--badge-purple-bg);
   color: var(--badge-purple-text);
+  border-color: var(--badge-purple-border, var(--badge-purple-bg));
 }
 
 .neutral {
   background: var(--badge-neutral-bg);
   color: var(--badge-neutral-text);
-  border-color: var(--border);
+  border-color: var(--badge-neutral-border, var(--border));
 }
 
 .primary {
   background: var(--badge-primary-bg);
   color: var(--badge-primary-text);
+  border-color: var(--badge-primary-border, var(--badge-primary-bg));
 }

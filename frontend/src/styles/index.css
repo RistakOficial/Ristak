@@ -3338,11 +3338,11 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   [data-trend][data-tone='pos'] { color: var(--pos); }
   [data-trend][data-tone='neg'] { color: var(--neg); }
   [data-trend][data-tone='neutral'] { color: var(--text-dim); }
-  [data-badge][data-tone='success'] { color: var(--pos); background: var(--pos-soft); }
-  [data-badge][data-tone='warning'] { color: var(--warn); background: var(--warn-soft); }
-  [data-badge][data-tone='error'] { color: var(--neg); background: var(--neg-soft); }
-  [data-badge][data-tone='info'] { color: var(--info); background: var(--info-soft); }
-  [data-badge][data-tone='neutral'] { color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border); }
+  [data-badge][data-tone='success'] { color: var(--pos); background: var(--badge-success-bg); border-color: var(--badge-success-border, var(--badge-success-bg)); }
+  [data-badge][data-tone='warning'] { color: var(--warn); background: var(--badge-warning-bg); border-color: var(--badge-warning-border, var(--badge-warning-bg)); }
+  [data-badge][data-tone='error'] { color: var(--neg); background: var(--badge-error-bg); border-color: var(--badge-error-border, var(--badge-error-bg)); }
+  [data-badge][data-tone='info'] { color: var(--info); background: var(--badge-info-bg); border-color: var(--badge-info-border, var(--badge-info-bg)); }
+  [data-badge][data-tone='neutral'] { color: var(--text-dim); background: var(--badge-neutral-bg); border: 1px solid var(--badge-neutral-border, var(--border)); }
   @keyframes rk-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   [data-screen] { opacity: 1; }
   @media (prefers-reduced-motion: no-preference) {
@@ -3484,15 +3484,16 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
     --color-status-info: var(--info);
     --color-info: var(--info);
 
-    /* Badges (legacy) -> sistema de tonos */
-    --badge-success-bg: var(--pos-soft);   --badge-success-text: var(--pos);
-    --badge-warning-bg: var(--warn-soft);   --badge-warning-text: var(--warn);
-    --badge-error-bg: var(--neg-soft);      --badge-error-text: var(--neg);
-    --badge-info-bg: var(--info-soft);      --badge-info-text: var(--info);
-    --badge-neutral-bg: var(--surface-2);   --badge-neutral-text: var(--text-dim);
-    --badge-default-bg: var(--surface-2);   --badge-default-text: var(--text-dim);
-    --badge-purple-bg: var(--accent-soft);  --badge-purple-text: var(--accent);
-    --badge-primary-bg: var(--accent-soft); --badge-primary-text: var(--accent);
+    /* Badges (legacy) -> sistema de tonos con relleno opaco */
+    --badge-solid-surface: var(--surface-solid, var(--surface));
+    --badge-success-bg: color-mix(in srgb, var(--pos) 24%, var(--badge-solid-surface) 76%);      --badge-success-text: var(--pos);      --badge-success-border: color-mix(in srgb, var(--pos) 42%, var(--border) 58%);
+    --badge-warning-bg: color-mix(in srgb, var(--warn) 24%, var(--badge-solid-surface) 76%);     --badge-warning-text: var(--warn);    --badge-warning-border: color-mix(in srgb, var(--warn) 42%, var(--border) 58%);
+    --badge-error-bg: color-mix(in srgb, var(--neg) 24%, var(--badge-solid-surface) 76%);        --badge-error-text: var(--neg);       --badge-error-border: color-mix(in srgb, var(--neg) 42%, var(--border) 58%);
+    --badge-info-bg: color-mix(in srgb, var(--info) 24%, var(--badge-solid-surface) 76%);        --badge-info-text: var(--info);       --badge-info-border: color-mix(in srgb, var(--info) 42%, var(--border) 58%);
+    --badge-neutral-bg: var(--surface-2);                                                        --badge-neutral-text: var(--text-dim); --badge-neutral-border: var(--border);
+    --badge-default-bg: var(--surface-2);                                                        --badge-default-text: var(--text-dim); --badge-default-border: var(--border);
+    --badge-purple-bg: color-mix(in srgb, var(--accent) 24%, var(--badge-solid-surface) 76%);    --badge-purple-text: var(--accent);   --badge-purple-border: color-mix(in srgb, var(--accent) 42%, var(--border) 58%);
+    --badge-primary-bg: color-mix(in srgb, var(--accent) 28%, var(--badge-solid-surface) 72%);   --badge-primary-text: var(--accent);  --badge-primary-border: color-mix(in srgb, var(--accent) 46%, var(--border) 54%);
 
     /* Radios (heredan la geometría de la familia) */
     --radius-sm: var(--radius-ctl);
