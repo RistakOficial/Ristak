@@ -6169,20 +6169,24 @@
 
 .videoActionPanel {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
+}
+
+.videoActionPanel button {
+  font-weight: 400;
 }
 
 .videoActionHeader {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .videoActionHeader h3 {
   margin: 0;
   color: var(--text);
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .videoActionHeader p,
@@ -6204,10 +6208,10 @@
   padding: 14px;
 }
 
-.videoActionEmpty strong {
+.videoActionEmptyTitle {
   color: var(--text);
   font-size: 0.92rem;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .videoActionRuleList {
@@ -6222,11 +6226,12 @@
   border-radius: var(--radius-card);
   background: var(--surface);
   overflow: hidden;
-  box-shadow: var(--shadow-xs);
+  box-shadow: none;
 }
 
 .videoActionRuleExpanded {
   border-color: var(--border-strong);
+  background: var(--surface-2);
 }
 
 .videoActionRuleTop {
@@ -6241,7 +6246,7 @@
   justify-content: flex-start;
   min-width: 0;
   min-height: 0;
-  padding: 4px;
+  padding: 5px;
   text-align: left;
 }
 
@@ -6251,10 +6256,10 @@
   min-width: 0;
 }
 
-.videoActionRuleCopy strong {
+.videoActionRuleText {
   color: var(--text);
   font-size: 0.9rem;
-  font-weight: 650;
+  font-weight: 400;
   line-height: 1.35;
 }
 
@@ -6276,7 +6281,7 @@
   color: var(--text-dim);
   padding: 0 8px;
   font-size: 0.72rem;
-  font-weight: 550;
+  font-weight: 400;
 }
 
 .videoActionRuleControls {
@@ -6298,7 +6303,7 @@
   gap: 7px;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  background: var(--surface);
+  background: var(--surface-2);
   padding: 10px;
 }
 
@@ -6308,7 +6313,7 @@
   gap: 8px;
   color: var(--text-mute);
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .videoActionTimelineTrack {
@@ -6382,7 +6387,7 @@
   color: var(--accent);
   padding: 2px 6px;
   font-size: 0.68rem;
-  font-weight: 700;
+  font-weight: 400;
   white-space: nowrap;
   pointer-events: none;
 }
@@ -6404,6 +6409,7 @@
   display: grid;
   gap: 10px;
   border-top: 1px solid var(--border);
+  background: var(--surface);
   padding: 10px 12px 12px;
 }
 
@@ -6417,7 +6423,7 @@
 .videoActionTimeRow > span {
   color: var(--text-dim);
   font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .videoActionTimeInput {
@@ -6430,6 +6436,7 @@
   padding: 0 9px;
   font: var(--num-font);
   font-size: 0.84rem;
+  font-weight: 400;
   outline: none;
 }
 
@@ -6456,14 +6463,14 @@
 .videoActionStepHeader span {
   color: var(--text-mute);
   font-size: 0.74rem;
-  font-weight: 500;
+  font-weight: 400;
   text-transform: none;
 }
 
-.videoActionStepHeader strong {
+.videoActionStepTitle {
   color: var(--text);
-  font-size: 0.9rem;
-  font-weight: 700;
+  font-size: 0.86rem;
+  font-weight: 400;
 }
 
 .videoActionQuickTimes,
@@ -6483,15 +6490,18 @@
 
 .videoActionTargetChoice {
   justify-content: space-between;
-  min-height: 46px;
+  min-height: 42px;
+  border-left-width: 3px;
+  border-left-color: transparent;
   text-align: left;
 }
 
 .videoActionTargetChoiceActive,
 .videoActionChoiceActive {
-  border-color: var(--accent) !important;
-  background: var(--accent-soft) !important;
-  color: var(--accent) !important;
+  border-color: var(--border-strong) !important;
+  border-left-color: var(--accent) !important;
+  background: var(--surface-2) !important;
+  color: var(--text) !important;
 }
 
 .videoActionTargetText {
@@ -6500,23 +6510,23 @@
   gap: 2px;
 }
 
-.videoActionTargetText strong,
+.videoActionTargetText span,
 .videoActionTargetText small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.videoActionTargetText strong {
+.videoActionTargetText span {
   color: inherit;
   font-size: 0.84rem;
-  font-weight: 650;
+  font-weight: 400;
 }
 
 .videoActionTargetText small {
   color: var(--text-mute);
   font-size: 0.72rem;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .videoActionChoice {
@@ -6539,10 +6549,10 @@
   min-width: 0;
 }
 
-.videoActionSwitchRow strong {
+.videoActionSwitchTitle {
   color: var(--text);
   font-size: 0.84rem;
-  font-weight: 650;
+  font-weight: 400;
 }
 
 .videoActionSwitchRow span {

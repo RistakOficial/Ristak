@@ -27728,7 +27728,7 @@ const VideoActionsPanel: React.FC<{
               onClick={() => handleToggleTarget(rule, target.id)}
             >
               <span className={styles.videoActionTargetText}>
-                <strong>{target.label}</strong>
+                <span>{target.label}</span>
                 <small>{target.kindLabel}</small>
               </span>
               {selected && <Check size={14} />}
@@ -27830,7 +27830,7 @@ const VideoActionsPanel: React.FC<{
         {videoActionTargetKinds.has(rule.action) && (
           <div className={styles.videoActionStep}>
             <div className={styles.videoActionStepHeader}>
-              <strong>{rule.action === 'open_form' ? 'Formulario o bloque a abrir' : 'Elementos a controlar'}</strong>
+              <span className={styles.videoActionStepTitle}>{rule.action === 'open_form' ? 'Formulario o bloque a abrir' : 'Elementos a controlar'}</span>
               <span>{videoActionMultiTargetKinds.has(rule.action) ? 'Puedes seleccionar uno o varios.' : 'Selecciona uno.'}</span>
             </div>
             {renderTargetPicker(rule)}
@@ -27840,7 +27840,7 @@ const VideoActionsPanel: React.FC<{
         {rule.action === 'open_form' && (
           <div className={styles.videoActionSwitchRow}>
             <div>
-              <strong>Bloquear video hasta completar</strong>
+              <span className={styles.videoActionSwitchTitle}>Bloquear video hasta completar</span>
               <span>El visitante no sigue viendo hasta enviar el formulario.</span>
             </div>
             <Switch
@@ -27867,7 +27867,7 @@ const VideoActionsPanel: React.FC<{
         )}
 
         <p className={styles.videoActionHint}>
-          Regla final: {getVideoActionRuleText(rule, targets, pages)}
+          Resultado: {getVideoActionRuleText(rule, targets, pages)}
           {rule.action === 'open_form' && rule.pauseUntilComplete !== false ? ' El video queda pausado hasta que lo completen.' : ''}
           {rule.action === 'show' && rule.before === 'hidden' ? ` Antes de ${formatVideoActionTime(rule.timeSeconds)}, ${selectedTargetLabel} queda oculto.` : ''}
         </p>
@@ -27882,14 +27882,14 @@ const VideoActionsPanel: React.FC<{
           <h3>Acciones de video</h3>
           <p>Controla qué elementos aparecen, se ocultan o cambian mientras el visitante ve este video.</p>
         </div>
-        <Button type="button" size="sm" leftIcon={<Plus size={14} />} onClick={openNewRule}>
+        <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={openNewRule}>
           Agregar acción
         </Button>
       </div>
 
       {rules.length === 0 ? (
         <div className={styles.videoActionEmpty}>
-          <strong>No hay acciones todavía.</strong>
+          <span className={styles.videoActionEmptyTitle}>No hay acciones todavía.</span>
           <p>Agrega una acción para mostrar botones, formularios u ofertas en un momento exacto del video.</p>
           <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={openNewRule}>
             Agregar primera acción
@@ -27912,7 +27912,7 @@ const VideoActionsPanel: React.FC<{
                     }}
                   >
                     <span className={styles.videoActionRuleCopy}>
-                      <strong>{getVideoActionRuleText(rule, targets, pages)}</strong>
+                      <span className={styles.videoActionRuleText}>{getVideoActionRuleText(rule, targets, pages)}</span>
                       <span className={styles.videoActionRuleMeta}>
                         <span><Clock3 size={13} />{formatVideoActionTime(rule.timeSeconds)}</span>
                         <span><MousePointerClick size={13} />{getRuleTargetMeta(rule)}</span>
