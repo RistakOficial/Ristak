@@ -16283,7 +16283,8 @@ const RSTK_BASE_CSS = `
   .rstk-block-style .rstk-social-followers{font-family:var(--rstk-block-font,var(--rstk-font));font-style:var(--rstk-block-font-style,normal);text-decoration:var(--rstk-block-text-decoration,none)}
   .rstk-block-style .rstk-social-name{font-size:var(--rstk-block-size,18px);font-weight:var(--rstk-block-weight,800)}
   .rstk-block-style .rstk-button-link,
-  .rstk-block-style button{border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius))}
+  .rstk-block-style button[data-rstk-edit-type="button"],
+  .rstk-block-style .rstk-actions button{border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius))}
   .rstk-block-style input,
   .rstk-block-style textarea,
   .rstk-block-style select,

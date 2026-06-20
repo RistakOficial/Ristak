@@ -208,7 +208,8 @@
   font-weight: var(--rstk-block-weight, 800);
 }
 .rstkCanvas .rstk-block-style .rstk-button-link,
-.rstkCanvas .rstk-block-style button { border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius)); }
+.rstkCanvas .rstk-block-style button[data-rstk-edit-type="button"],
+.rstkCanvas .rstk-block-style .rstk-actions button { border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius)); }
 .rstkCanvas .rstk-block-style input,
 .rstkCanvas .rstk-block-style textarea,
 .rstkCanvas .rstk-block-style select,
@@ -1638,7 +1639,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   transform-origin: top right;
 }
 .rstkCanvas .rstkSelActive > .rstkBlockTools { opacity: 1; pointer-events: auto; }
-.rstkCanvas .rstkBlockTool {
+.rstkCanvas .rstkBlockTools .rstkBlockTool {
   width: 30px; height: 30px; display: grid; place-items: center;
   border: 1px solid rgba(15, 23, 42, 0.14); border-radius: 8px;
   background: #ffffff; color: #334155; box-shadow: 0 12px 24px -12px rgba(15, 23, 42, 0.72);
