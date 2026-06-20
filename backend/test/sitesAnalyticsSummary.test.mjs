@@ -72,8 +72,8 @@ test('sites analytics summary respects selected site ids and date range', async 
       [submissionId, siteId, '{}', inRange]
     )
     await db.run(
-      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
-      [formSubmissionId, formId, '{}', inRange]
+      'INSERT INTO public_site_submissions (id, site_id, form_site_id, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
+      [formSubmissionId, siteId, formId, '{}', inRange]
     )
 
     const summary = await getSitesTrackingSummary({
@@ -85,8 +85,8 @@ test('sites analytics summary respects selected site ids and date range', async 
     assert.equal(summary.bySiteId[siteId].views, 1)
     assert.equal(summary.bySiteId[siteId].visitors, 1)
     assert.equal(summary.bySiteId[siteId].sessions, 1)
-    assert.equal(summary.bySiteId[siteId].conversions, 1)
-    assert.equal(summary.bySiteId[siteId].conversionRate, 100)
+    assert.equal(summary.bySiteId[siteId].conversions, 2)
+    assert.equal(summary.bySiteId[siteId].conversionRate, 200)
     assert.equal(summary.bySiteId[formId].views, 1)
     assert.equal(summary.bySiteId[formId].visitors, 1)
     assert.equal(summary.bySiteId[formId].sessions, 1)

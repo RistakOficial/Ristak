@@ -1105,6 +1105,7 @@ async function initTables() {
       CREATE TABLE IF NOT EXISTS public_site_submissions (
         id TEXT PRIMARY KEY,
         site_id TEXT NOT NULL,
+        form_site_id TEXT,
         contact_id TEXT,
         domain TEXT,
         response_json TEXT NOT NULL,
@@ -1177,6 +1178,7 @@ async function initTables() {
     }
 
     for (const [columnName, columnType] of [
+      ['form_site_id', 'TEXT'],
       ['raw_fields_json', 'TEXT'],
       ['mapped_fields_json', 'TEXT'],
       ['derived_fields_json', 'TEXT']
@@ -1208,6 +1210,7 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_sites_status ON public_sites(status)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_blocks_site_order ON public_site_blocks(site_id, sort_order)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_submissions_site ON public_site_submissions(site_id, created_at)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_submissions_form_site ON public_site_submissions(form_site_id, created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_submissions_contact ON public_site_submissions(contact_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_imports_site ON public_site_imports(site_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_import_assets_import ON public_site_import_assets(import_id)')

@@ -422,6 +422,7 @@ export interface ImportedSiteFieldMapping {
 
 export interface ImportedSiteFormMapping {
   formId: string
+  formSiteId?: string
   formTitle: string
   purpose?: string
   submitText?: string

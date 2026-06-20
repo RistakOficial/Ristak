@@ -1265,7 +1265,7 @@ function getImportedFieldRequiredFromAttrs(attrs = {}) {
   if (attrs.required !== undefined) return true
   if (cleanString(attrs['aria-required']).toLowerCase() === 'true') return true
 
-  return true
+  return false
 }
 
 function normalizeImportedFieldOptionValue(option = {}, index = 0) {
@@ -1411,6 +1411,7 @@ function detectImportedForms(html = '') {
       forms.push({
         id: normalizeImportedFieldKey(explicitForm || importedFormId || attrs.id || attrs.name || `form_${formIndex + 1}`, `form_${formIndex + 1}`),
         explicitForm,
+        importedFormId,
         title,
         purpose: 'lead_capture',
         submitText,
@@ -1452,7 +1453,7 @@ function ensureUniqueImportedFormId(baseId = 'form', usedIds = new Set()) {
 function namespaceImportedPageForms(forms = [], pagePath = '', usedIds = new Set()) {
   const pageKey = normalizeImportedFieldKey(pagePath.replace(/\.[^.]+$/, ''), 'page')
   return forms.map((form, index) => {
-    const explicitId = cleanString(form.explicitForm)
+    const explicitId = cleanString(form.explicitForm || form.importedFormId)
     const baseId = explicitId
       ? form.id
       : normalizeImportedFieldKey(`${pageKey}_${form.id || `form_${index + 1}`}`, `form_${index + 1}`)
@@ -2816,26 +2817,325 @@ function findExistingImportedFieldMapping(existingMappings = [], nextForm = {}, 
   return null
 }
 
-function mergeImportedFormMappings(existingMappings = [], nextMappings = []) {
-  return (Array.isArray(nextMappings) ? nextMappings : []).map(nextForm => ({
-    ...nextForm,
-    fields: (Array.isArray(nextForm?.fields) ? nextForm.fields : []).map(nextField => {
-      const existingField = findExistingImportedFieldMapping(existingMappings, nextForm, nextField)
-      if (!existingField) return nextField
+function findExistingImportedFormMapping(existingMappings = [], nextForm = {}) {
+  const normalizedFormId = normalizeImportedFieldKey(nextForm.formId, '')
+  const normalizedFormTitle = normalizeImportedFieldKey(nextForm.formTitle, '')
 
-      return {
-        ...nextField,
-        destinationType: existingField.destinationType || nextField.destinationType,
-        destinationKey: existingField.destinationKey || nextField.destinationKey,
-        saveMode: existingField.saveMode || nextField.saveMode,
-        ignored: Boolean(existingField.ignored || existingField.destinationType === 'ignored'),
-        confidence: Number(existingField.confidence || nextField.confidence || 0) || nextField.confidence,
-        options: Array.isArray(nextField.options) && nextField.options.length
-          ? nextField.options
-          : existingField.options || []
-      }
+  return (Array.isArray(existingMappings) ? existingMappings : []).find(mapping => {
+    const mappingFormId = normalizeImportedFieldKey(mapping?.formId, '')
+    const mappingFormTitle = normalizeImportedFieldKey(mapping?.formTitle, '')
+    return (
+      (normalizedFormId && mappingFormId === normalizedFormId) ||
+      (normalizedFormTitle && mappingFormTitle === normalizedFormTitle)
+    )
+  }) || null
+}
+
+function mergeImportedFormMappings(existingMappings = [], nextMappings = []) {
+  return (Array.isArray(nextMappings) ? nextMappings : []).map(nextForm => {
+    const existingForm = findExistingImportedFormMapping(existingMappings, nextForm)
+    const formSiteId = cleanString(existingForm?.formSiteId || existingForm?.form_site_id || nextForm?.formSiteId || nextForm?.form_site_id)
+
+    return {
+      ...nextForm,
+      ...(formSiteId ? { formSiteId } : {}),
+      fields: (Array.isArray(nextForm?.fields) ? nextForm.fields : []).map(nextField => {
+        const existingField = findExistingImportedFieldMapping(existingMappings, nextForm, nextField)
+        if (!existingField) return nextField
+
+        return {
+          ...nextField,
+          destinationType: existingField.destinationType || nextField.destinationType,
+          destinationKey: existingField.destinationKey || nextField.destinationKey,
+          saveMode: existingField.saveMode || nextField.saveMode,
+          ignored: Boolean(existingField.ignored || existingField.destinationType === 'ignored'),
+          confidence: Number(existingField.confidence || nextField.confidence || 0) || nextField.confidence,
+          options: Array.isArray(nextField.options) && nextField.options.length
+            ? nextField.options
+            : existingField.options || []
+        }
+      })
+    }
+  })
+}
+
+function getImportedFormMappingSourceSiteId(mapping = {}) {
+  return cleanString(mapping.formSiteId || mapping.form_site_id)
+}
+
+function findImportedDetectedFormForMapping(detectedForms = [], mapping = {}) {
+  const normalizedFormId = normalizeImportedFieldKey(mapping?.formId, '')
+  const normalizedFormTitle = normalizeImportedFieldKey(mapping?.formTitle, '')
+  const forms = Array.isArray(detectedForms) ? detectedForms : []
+
+  return forms.find(form => normalizeImportedFieldKey(form?.id, '') === normalizedFormId) ||
+    forms.find(form => normalizedFormTitle && normalizeImportedFieldKey(form?.title, '') === normalizedFormTitle) ||
+    null
+}
+
+function findImportedDetectedFieldForMapping(detectedForm = {}, fieldMapping = {}) {
+  const fields = Array.isArray(detectedForm?.fields) ? detectedForm.fields : []
+  const normalizedFieldId = normalizeImportedFieldKey(fieldMapping?.fieldId, '')
+  const normalizedSourceName = normalizeImportedFieldKey(fieldMapping?.sourceName, '')
+
+  return fields.find(field => normalizeImportedFieldKey(field?.id, '') === normalizedFieldId) ||
+    fields.find(field => normalizedSourceName && normalizeImportedFieldKey(field?.sourceName || field?.name, '') === normalizedSourceName) ||
+    null
+}
+
+function getImportedSourceFormName(site = {}, mapping = {}, detectedForm = {}) {
+  const siteName = cleanString(site.name || site.title || site.slug) || 'la página'
+  const formTitle = cleanString(mapping.formTitle || detectedForm.title)
+  const genericTitle = /^formulario(?:\s+\d+| detectado)?$/i.test(formTitle)
+  const suffix = formTitle && !genericTitle ? ` - ${formTitle}` : ''
+  return limitString(`Formulario de ${siteName}${suffix}`, 100)
+}
+
+function getImportedSourceFormSlug(site = {}, mapping = {}) {
+  return slugify(`formulario-${site.slug || site.name || site.id}-${mapping.formId || mapping.formTitle || 'html'}`)
+}
+
+function getImportedSourceFormBlockId(siteId = '', formId = '', fieldId = '') {
+  return `imported_field_${crypto
+    .createHash('sha1')
+    .update(`${siteId}:${formId}:${fieldId}`)
+    .digest('hex')
+    .slice(0, 28)}`
+}
+
+function getImportedSourceFieldBlockType(fieldMapping = {}, detectedField = {}) {
+  const type = normalizeImportedFieldKey(fieldMapping.type || detectedField.type || detectedField.tag, '')
+  const tag = normalizeImportedFieldKey(detectedField.tag, '')
+
+  if (tag === 'textarea' || type === 'textarea' || type === 'paragraph') return 'paragraph'
+  if (tag === 'select' || type === 'select' || type === 'dropdown') return 'dropdown'
+  if (type === 'radio') return 'radio'
+  if (type === 'checkbox' || type === 'checkboxes' || type === 'multiselect') return 'checkboxes'
+  if (type === 'email') return 'email'
+  if (type === 'tel' || type === 'phone') return 'phone'
+  if (type === 'number') return 'number'
+  if (type === 'date') return 'date'
+  if (type === 'currency') return 'currency'
+  return 'short_text'
+}
+
+function getImportedSourceFieldOptions(fieldMapping = {}, detectedField = {}) {
+  const options = Array.isArray(detectedField?.options) && detectedField.options.length
+    ? detectedField.options
+    : fieldMapping.options
+
+  return normalizeImportedFieldOptions(options || [])
+}
+
+function getImportedSourceFieldSettings({ site, imported, mapping, fieldMapping, detectedField }) {
+  const destinationType = fieldMapping?.ignored
+    ? 'ignored'
+    : cleanString(fieldMapping?.destinationType || fieldMapping?.saveMode || 'custom')
+  const destinationKey = normalizeImportedFieldKey(
+    fieldMapping?.destinationKey || fieldMapping?.customFieldKey || fieldMapping?.sourceName || fieldMapping?.fieldId,
+    'custom_field'
+  )
+  const internalName = normalizeImportedFieldKey(fieldMapping?.sourceName || fieldMapping?.fieldId || destinationKey, 'field')
+  const settings = {
+    pageId: DEFAULT_FUNNEL_PAGE_ID,
+    internalName,
+    importedHtmlSource: true,
+    importedHtmlSourceSiteId: site?.id || '',
+    importedHtmlSourceImportId: imported?.id || '',
+    importedHtmlSourceFormId: mapping?.formId || '',
+    importedHtmlSourceFieldId: fieldMapping?.fieldId || detectedField?.id || '',
+    importedHtmlSourceName: fieldMapping?.sourceName || detectedField?.sourceName || '',
+    importedDestinationType: destinationType,
+    importedDestinationKey: destinationKey,
+    importedIgnored: destinationType === 'ignored'
+  }
+
+  if (destinationType === 'standard' && IMPORTED_FORM_STANDARD_FIELDS.has(destinationKey)) {
+    settings.systemFieldKey = destinationKey
+  } else if (destinationType !== 'ignored') {
+    settings.customFieldKey = normalizeImportedFieldKey(fieldMapping?.customFieldKey || destinationKey, 'custom_field')
+    settings.customFieldLabel = cleanString(fieldMapping?.customFieldLabel || fieldMapping?.label || detectedField?.label) || settings.customFieldKey
+    settings.customFieldDataType = cleanString(fieldMapping?.customFieldDataType || fieldMapping?.custom_field_data_type) ||
+      inferImportedDataType(fieldMapping, '')
+    settings.customFieldSyncTarget = cleanString(fieldMapping?.customFieldSyncTarget || fieldMapping?.custom_field_sync_target || 'local')
+  }
+
+  if (settings.systemFieldKey === 'email') settings.validation = 'email'
+  if (settings.systemFieldKey === 'phone') settings.validation = 'phone'
+
+  return settings
+}
+
+function buildImportedSourceFormBlocks({ formSiteId, site, imported, mapping, detectedForm }) {
+  return (Array.isArray(mapping?.fields) ? mapping.fields : []).map((fieldMapping, index) => {
+    const detectedField = findImportedDetectedFieldForMapping(detectedForm, fieldMapping) || {}
+    const label = cleanString(fieldMapping.label || detectedField.label || detectedField.placeholder || fieldMapping.sourceName || fieldMapping.fieldId) ||
+      `Pregunta ${index + 1}`
+
+    return {
+      id: getImportedSourceFormBlockId(site?.id, mapping?.formId, fieldMapping.fieldId || fieldMapping.sourceName || index),
+      siteId: formSiteId,
+      blockType: getImportedSourceFieldBlockType(fieldMapping, detectedField),
+      label,
+      content: '',
+      placeholder: cleanString(detectedField.placeholder || fieldMapping.placeholder),
+      required: Boolean(detectedField.required || fieldMapping.required),
+      options: getImportedSourceFieldOptions(fieldMapping, detectedField),
+      settings: getImportedSourceFieldSettings({ site, imported, mapping, fieldMapping, detectedField }),
+      sortOrder: index
+    }
+  })
+}
+
+function buildImportedSourceFormTheme({ sourceSite, existingSite, mapping, detectedForm }) {
+  const existingTheme = existingSite?.theme || {}
+  const existingPages = normalizeSitePages({
+    siteType: 'standard_form',
+    theme: existingTheme
+  })
+  const finalPages = existingPages.filter(page => FORM_FINAL_PAGE_IDS.has(page.id))
+  const submitText = cleanString(mapping?.submitText || detectedForm?.submitText) || 'Enviar'
+  const sourceTemplate = cleanString(sourceSite?.theme?.template)
+
+  return {
+    ...existingTheme,
+    template: cleanString(existingTheme.template) || (sourceTemplate && sourceTemplate !== IMPORTED_SITE_TEMPLATE ? sourceTemplate : 'ristak'),
+    formCompletionAction: normalizeFormCompletionAction(existingTheme.formCompletionAction || existingTheme.form_completion_action, 'next_page_if_qualified'),
+    submitText,
+    pages: [
+      {
+        ...(existingPages.find(page => !FORM_FINAL_PAGE_IDS.has(page.id)) || {}),
+        id: DEFAULT_FUNNEL_PAGE_ID,
+        title: cleanString(mapping?.formTitle || detectedForm?.title) || 'Formulario',
+        sortOrder: 0,
+        buttonText: submitText
+      },
+      ...finalPages
+    ],
+    importedHtmlSource: true,
+    importedHtmlSourceSiteId: sourceSite?.id || '',
+    importedHtmlSourceFormId: mapping?.formId || '',
+    importedHtmlSourcePagePath: cleanString(detectedForm?.pagePath || detectedForm?.page_path),
+    importedHtmlSourceTitle: cleanString(mapping?.formTitle || detectedForm?.title),
+    importedHtmlSourceSubmitText: submitText
+  }
+}
+
+async function syncImportedSourceFormBlocks(formSiteId, blocks = [], context = {}) {
+  const nextIds = new Set(blocks.map(block => cleanString(block.id)).filter(Boolean))
+  const currentBlocks = await listSiteBlocks(formSiteId).catch(() => [])
+
+  for (const block of currentBlocks) {
+    const settings = block.settings || {}
+    const isImportedBlock = settings.importedHtmlSource === true &&
+      cleanString(settings.importedHtmlSourceSiteId) === cleanString(context.sourceSiteId) &&
+      cleanString(settings.importedHtmlSourceFormId) === cleanString(context.sourceFormId)
+    if (isImportedBlock && !nextIds.has(block.id)) {
+      await deleteBlock(formSiteId, block.id)
+    }
+  }
+
+  if (blocks.length) {
+    await restoreBlocks(formSiteId, blocks)
+  }
+}
+
+async function syncImportedFormSourceSites({ site, imported, detectedForms = [], mappings = [] } = {}) {
+  if (!site || !imported) return Array.isArray(mappings) ? mappings : []
+
+  const nextMappings = []
+  for (const mapping of Array.isArray(mappings) ? mappings : []) {
+    const fields = Array.isArray(mapping?.fields) ? mapping.fields : []
+    if (!cleanString(mapping?.formId) || fields.length === 0) {
+      nextMappings.push(mapping)
+      continue
+    }
+
+    const detectedForm = findImportedDetectedFormForMapping(detectedForms, mapping) || {}
+    const name = getImportedSourceFormName(site, mapping, detectedForm)
+    let formSiteId = getImportedFormMappingSourceSiteId(mapping)
+    let sourceForm = formSiteId
+      ? await getSite(formSiteId, { includeBlocks: true, includeSubmissions: false }).catch(() => null)
+      : null
+    const theme = buildImportedSourceFormTheme({
+      sourceSite: site,
+      existingSite: sourceForm,
+      mapping,
+      detectedForm
     })
-  }))
+
+    if (!sourceForm) {
+      sourceForm = await createSite({
+        name,
+        title: name,
+        slug: getImportedSourceFormSlug(site, mapping),
+        siteType: 'standard_form',
+        status: site.status === 'published' ? 'published' : 'draft',
+        blankCanvas: true,
+        theme
+      })
+      formSiteId = sourceForm?.id || ''
+    } else {
+      await updateSite(formSiteId, {
+        name,
+        title: name,
+        description: sourceForm.description || '',
+        siteType: 'standard_form',
+        status: sourceForm.status || (site.status === 'published' ? 'published' : 'draft'),
+        theme
+      })
+    }
+
+    const sourceBlocks = buildImportedSourceFormBlocks({
+      formSiteId,
+      site,
+      imported,
+      mapping,
+      detectedForm
+    })
+    await syncImportedSourceFormBlocks(formSiteId, sourceBlocks, {
+      sourceSiteId: site.id,
+      sourceFormId: mapping.formId
+    })
+
+    nextMappings.push({
+      ...mapping,
+      formSiteId
+    })
+  }
+
+  return nextMappings
+}
+
+async function syncAndPersistImportedFormSourceSites(siteId) {
+  const [site, imported] = await Promise.all([
+    getSite(siteId, { includeBlocks: false, includeSubmissions: false }),
+    getImportedSiteBySiteId(siteId)
+  ])
+
+  if (!site || !imported) return imported
+
+  const syncedMappings = await syncImportedFormSourceSites({
+    site,
+    imported,
+    detectedForms: imported.detectedForms,
+    mappings: imported.formMappings
+  })
+
+  await db.run(`
+    UPDATE public_site_imports SET
+      form_mappings_json = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE site_id = ?
+  `, [
+    jsonString(syncedMappings),
+    siteId
+  ])
+
+  return {
+    ...imported,
+    formMappings: syncedMappings
+  }
 }
 
 function isSocialTemplate(value) {
@@ -3071,6 +3371,7 @@ function mapSubmission(row) {
   return {
     id: row.id,
     siteId: row.site_id,
+    formSiteId: row.form_site_id || null,
     contactId: row.contact_id || null,
     domain: row.domain || '',
     responses: parseJson(row.response_json, {}),
@@ -6560,7 +6861,7 @@ export async function listSites() {
   const rows = await db.all(`
     SELECT
       s.*,
-      COUNT(sub.id) AS submissions_count,
+      COUNT(DISTINCT sub.id) AS submissions_count,
       (
         SELECT COUNT(*)
         FROM sessions ts
@@ -6588,7 +6889,9 @@ export async function listSites() {
           AND ts.submission_id != ''
       ) AS tracking_conversions
     FROM public_sites s
-    LEFT JOIN public_site_submissions sub ON sub.site_id = s.id
+    LEFT JOIN public_site_submissions sub
+      ON sub.site_id = s.id
+      OR (sub.form_site_id = s.id AND (sub.site_id IS NULL OR sub.site_id != s.id))
     GROUP BY
       s.id, s.name, s.slug, s.site_type, s.status, s.domain, s.title, s.description,
       s.theme_json, s.meta_capi_enabled, s.meta_event_name, s.render_domain_verified,
@@ -6742,14 +7045,31 @@ export async function getSitesTrackingSummary(input = {}) {
     ? 'AND created_at >= ? AND created_at <= ?'
     : ''
   const submissionRows = await db.all(`
+    WITH scoped_submissions AS (
+      SELECT
+        site_id as resolved_site_id,
+        id
+      FROM public_site_submissions
+      WHERE site_id IN (${placeholders})
+        ${submissionDateClause}
+      UNION ALL
+      SELECT
+        form_site_id as resolved_site_id,
+        id
+      FROM public_site_submissions
+      WHERE form_site_id IN (${placeholders})
+        AND (site_id IS NULL OR site_id != form_site_id)
+        ${submissionDateClause}
+    )
     SELECT
-      site_id,
-      COUNT(*) as submissions_count
-    FROM public_site_submissions
-    WHERE site_id IN (${placeholders})
-      ${submissionDateClause}
-    GROUP BY site_id
+      resolved_site_id as site_id,
+      COUNT(DISTINCT id) as submissions_count
+    FROM scoped_submissions
+    WHERE resolved_site_id IS NOT NULL AND resolved_site_id != ''
+    GROUP BY resolved_site_id
   `, [
+    ...siteIds,
+    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : []),
     ...siteIds,
     ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : [])
   ])
@@ -7041,9 +7361,10 @@ export async function listSiteSubmissions(siteId) {
     FROM public_site_submissions sub
     LEFT JOIN contacts c ON c.id = sub.contact_id
     WHERE sub.site_id = ?
+      OR (sub.form_site_id = ? AND (sub.site_id IS NULL OR sub.site_id != sub.form_site_id))
     ORDER BY sub.created_at DESC
     LIMIT 250
-  `, [siteId])
+  `, [siteId, siteId])
 
   return rows.map(mapSubmission)
 }
@@ -7835,7 +8156,7 @@ export async function getImportedSiteBySiteId(siteId) {
 
     if (redetectedFieldCount > storedFieldCount) {
       detectedForms = redetectedForms
-      formMappings = buildDefaultImportedFormMappings(redetectedForms)
+      formMappings = mergeImportedFormMappings(formMappings, buildDefaultImportedFormMappings(redetectedForms))
       await db.run(`
         UPDATE public_site_imports SET
           detected_forms_json = ?,
@@ -8028,6 +8349,8 @@ export async function createImportedSiteFromHtml(input = {}) {
     await replaceImportedSiteAssets(siteId, prepared.assets)
   }
 
+  await syncAndPersistImportedFormSourceSites(siteId)
+
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
     import: await getImportedSiteBySiteId(siteId)
@@ -8059,7 +8382,7 @@ export async function updateImportedSiteFormMappings(siteId, input = {}) {
     siteId
   ])
 
-  return getImportedSiteBySiteId(siteId)
+  return syncAndPersistImportedFormSourceSites(siteId)
 }
 
 async function replaceImportedSiteHtml(siteId, input = {}) {
@@ -8135,6 +8458,8 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
       siteId
     ])
 
+    await syncAndPersistImportedFormSourceSites(siteId)
+
     return {
       site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
       import: await getImportedSiteBySiteId(siteId)
@@ -8194,6 +8519,8 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
     publicDescription || null,
     siteId
   ])
+
+  await syncAndPersistImportedFormSourceSites(siteId)
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -8317,6 +8644,8 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
     shouldRefreshStoredMainHtml ? publicDescription || null : currentSite.description,
     siteId
   ])
+
+  await syncAndPersistImportedFormSourceSites(siteId)
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -8545,6 +8874,8 @@ export async function updateImportedSiteCodeFiles(siteId, input = {}) {
     publicDescription || null,
     siteId
   ])
+
+  await syncAndPersistImportedFormSourceSites(siteId)
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -18557,6 +18888,8 @@ async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, 
   const pages = normalizeSitePages(site)
   const page = pages.find(item => item.id === submittedPageId) || pages[0] || null
   const formContext = getNativeFormContext(site, blocks)
+  const explicitFormSiteId = cleanString(meta?.formSiteId || meta?.form_site_id)
+  const explicitFormSiteName = cleanString(meta?.formSiteName || meta?.form_site_name)
 
   const data = {
     ...tracking,
@@ -18565,8 +18898,8 @@ async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, 
     site_slug: site.slug,
     site_name: site.name,
     site_type: site.siteType,
-    form_site_id: formContext.formSiteId,
-    form_site_name: formContext.formSiteName,
+    form_site_id: explicitFormSiteId || formContext.formSiteId,
+    form_site_name: explicitFormSiteName || formContext.formSiteName,
     public_page_id: submittedPageId || page?.id || '',
     public_page_title: page?.title || '',
     conversion_type: 'form_submit',
@@ -18891,6 +19224,8 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     importedHtml: true,
     importedFormId: layers.formMapping?.formId || importedFormId,
     importedFormTitle: layers.formMapping?.formTitle || '',
+    formSiteId: getImportedFormMappingSourceSiteId(layers.formMapping),
+    formSiteName: layers.formMapping?.formTitle || '',
     userAgent: req.headers['user-agent'] || '',
     submittedAt: new Date().toISOString()
   }
@@ -18929,15 +19264,17 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
   const submissionId = crypto.randomUUID()
   const importedAutomationFormId = layers.formMapping?.formId || importedFormId
   const importedAutomationFormName = layers.formMapping?.formTitle || site.name || ''
+  const importedSourceFormSiteId = getImportedFormMappingSourceSiteId(layers.formMapping)
 
   await db.run(`
     INSERT INTO public_site_submissions (
-      id, site_id, contact_id, domain, response_json, raw_fields_json,
+      id, site_id, form_site_id, contact_id, domain, response_json, raw_fields_json,
       mapped_fields_json, derived_fields_json, meta_json, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `, [
     submissionId,
     site.id,
+    importedSourceFormSiteId || null,
     contactId,
     host,
     jsonString(layers.mappedFields),
@@ -18952,11 +19289,13 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     contactResult,
     formEvent: {
       contactId,
-      formId: site.id,
+      formId: importedSourceFormSiteId || site.id,
       formName: importedAutomationFormName,
       automationFormId: automationImportedFormId(site.id, importedAutomationFormId),
       siteId: site.id,
       siteName: site.name || '',
+      formSiteId: importedSourceFormSiteId || null,
+      formSiteName: importedAutomationFormName,
       importedFormId: importedAutomationFormId,
       importedFormName: importedAutomationFormName,
       submissionId,
@@ -19140,12 +19479,13 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
 
   await db.run(`
     INSERT INTO public_site_submissions (
-      id, site_id, contact_id, domain, response_json, raw_fields_json,
+      id, site_id, form_site_id, contact_id, domain, response_json, raw_fields_json,
       mapped_fields_json, derived_fields_json, meta_json, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `, [
     submissionId,
     site.id,
+    nativeFormContext.formSiteId || site.id,
     contactId,
     host,
     jsonString(responses),
