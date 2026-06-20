@@ -11153,13 +11153,19 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           target.removeAttribute('aria-hidden');
         }
       };
+      const isPreviewPlayback = video => video?.dataset?.rstkVideoPreviewing === 'true';
       const hasRealPlaybackStarted = video => (
         video && (video.autoplay || video.dataset.rstkVideoRealPlayed === 'true')
       );
       const markRealPlayback = video => {
-        if (!video || video.dataset.rstkVideoPreviewing === 'true') return false;
+        if (!video || isPreviewPlayback(video)) return false;
         video.dataset.rstkVideoRealPlayed = 'true';
         return true;
+      };
+      const ensureRealPlaybackStarted = video => {
+        if (hasRealPlaybackStarted(video)) return true;
+        if (!video || isPreviewPlayback(video) || video.paused || video.ended) return false;
+        return markRealPlayback(video);
       };
       const applyBeforeState = (action, targets) => {
         if (action.before === 'hidden') targets.forEach(target => setTargetHidden(target, true));
@@ -11187,7 +11193,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         window.addEventListener('ristak:submitted', release, { once: true });
       };
       const syncState = state => {
-        const realPlaybackStarted = hasRealPlaybackStarted(state.video);
+        const realPlaybackStarted = ensureRealPlaybackStarted(state.video);
         const time = realPlaybackStarted ? Number(state.video.currentTime || 0) : 0;
         state.actions.forEach(action => {
           const reached = realPlaybackStarted && time >= Number(action.timeSeconds || 0);
@@ -11239,12 +11245,29 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         const actions = parseActions(video);
         if (!actions.length) return;
         const state = { video, actions, triggered: new Set(), openedPopups: new Set(), blockedForms: new Set(), completedForms: new Set() };
-        const sync = () => syncState(state);
+        let frameId = 0;
+        const stopFrameSync = () => {
+          if (!frameId) return;
+          window.cancelAnimationFrame(frameId);
+          frameId = 0;
+        };
+        const startFrameSync = () => {
+          if (frameId || video.paused || video.ended || isPreviewPlayback(video) || !hasRealPlaybackStarted(video)) return;
+          frameId = window.requestAnimationFrame(() => {
+            frameId = 0;
+            sync();
+          });
+        };
+        const sync = () => {
+          syncState(state);
+          if (!video.paused && !video.ended && !isPreviewPlayback(video) && hasRealPlaybackStarted(video)) startFrameSync();
+          else stopFrameSync();
+        };
         const handlePlay = () => {
           markRealPlayback(video);
           sync();
         };
-        ['loadedmetadata', 'timeupdate', 'seeked', 'play', 'pause'].forEach(eventName => video.addEventListener(eventName, sync, { passive: true }));
+        ['loadedmetadata', 'durationchange', 'timeupdate', 'seeked', 'seeking', 'playing', 'pause', 'ended'].forEach(eventName => video.addEventListener(eventName, sync, { passive: true }));
         video.addEventListener('play', handlePlay, { passive: true });
         sync();
         attached.add(video);

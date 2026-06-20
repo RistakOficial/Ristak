@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import vm from 'node:vm'
 
 import { db } from '../src/config/database.js'
 import { renderPublicSiteHtml } from '../src/services/sitesService.js'
@@ -385,11 +386,140 @@ test('video actions render public target state and runtime', async () => {
   assert.match(html, /ristakVideoActionsRuntimeLoaded/)
   assert.match(html, /video\[data-rstk-video-actions\]/)
   assert.match(html, /timeupdate/)
+  assert.match(html, /ensureRealPlaybackStarted/)
+  assert.match(html, /isPreviewPlayback\(video\) \|\| video\.paused \|\| video\.ended/)
+  assert.match(html, /requestAnimationFrame/)
+  assert.match(html, /durationchange/)
+  assert.match(html, /playing/)
   assert.match(html, /setTargetHidden\(target, false\)/)
   assert.match(html, /setTargetHidden\(target, true\)/)
   assert.match(html, /blockedForms/)
   assert.match(html, /ristak:submitted/)
   assert.match(html, /redirectTo\(action\)/)
+})
+
+test('video actions fire when preview playback becomes real without a second play event', async () => {
+  const site = baseSite({
+    videoActions: [
+      {
+        id: 'show-button-at-5',
+        timeSeconds: 5,
+        targetBlockId: 'button-target',
+        targetBlockIds: ['button-target'],
+        action: 'show',
+        before: 'hidden'
+      }
+    ]
+  })
+  site.blocks.push({
+    id: 'button-target',
+    siteId: 'site_video_player',
+    blockType: 'button',
+    label: 'Botón Agendar llamada',
+    content: 'Agendar llamada',
+    placeholder: '',
+    required: false,
+    options: [],
+    sortOrder: 1,
+    settings: {
+      pageId: 'page-1',
+      buttonText: 'Agendar llamada',
+      buttonUrl: 'https://example.com/agenda'
+    },
+    createdAt: '',
+    updatedAt: ''
+  })
+
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+  const runtimeScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map(match => match[1])
+    .find(script => script.includes('ristakVideoActionsRuntimeLoaded'))
+  assert.ok(runtimeScript, 'expected video actions runtime script')
+
+  class FakeVideo {
+    constructor(actions) {
+      this.attrs = new Map([['data-rstk-video-actions', JSON.stringify(actions)]])
+      this.dataset = { rstkVideoPreviewing: 'true' }
+      this.autoplay = false
+      this.paused = false
+      this.ended = false
+      this.currentTime = 0
+      this.listeners = new Map()
+    }
+
+    getAttribute(name) {
+      return this.attrs.get(name) || ''
+    }
+
+    addEventListener(name, listener) {
+      const listeners = this.listeners.get(name) || []
+      listeners.push(listener)
+      this.listeners.set(name, listeners)
+    }
+
+    dispatch(name) {
+      for (const listener of this.listeners.get(name) || []) listener({ type: name })
+    }
+  }
+
+  const video = new FakeVideo([
+    {
+      id: 'show-button-at-5',
+      timeSeconds: 5,
+      targetBlockId: 'button-target',
+      targetBlockIds: ['button-target'],
+      action: 'show',
+      before: 'hidden'
+    }
+  ])
+  const targetAttrs = new Map([
+    ['data-rstk-video-action-hidden', 'true'],
+    ['aria-hidden', 'true']
+  ])
+  const target = {
+    setAttribute: (name, value) => targetAttrs.set(name, String(value)),
+    removeAttribute: (name) => targetAttrs.delete(name)
+  }
+  const document = {
+    documentElement: {},
+    querySelectorAll: (selector) => selector === 'video[data-rstk-video-actions]' ? [video] : [],
+    querySelector: (selector) => selector.includes('button-target') ? target : null,
+    getElementById: (id) => id === 'button-target' ? target : null
+  }
+  let frameCallback = null
+  const window = {
+    CSS: { escape: (value) => String(value) },
+    requestAnimationFrame: (callback) => {
+      frameCallback = callback
+      return 1
+    },
+    cancelAnimationFrame: () => {
+      frameCallback = null
+    },
+    addEventListener: () => {},
+    removeEventListener: () => {}
+  }
+  class MutationObserver {
+    observe() {}
+  }
+
+  vm.runInNewContext(runtimeScript, { window, document, MutationObserver })
+
+  video.currentTime = 6
+  video.dispatch('timeupdate')
+  assert.equal(targetAttrs.get('data-rstk-video-action-hidden'), 'true')
+  assert.equal(video.dataset.rstkVideoRealPlayed, undefined)
+
+  delete video.dataset.rstkVideoPreviewing
+  video.dispatch('timeupdate')
+  assert.equal(targetAttrs.has('data-rstk-video-action-hidden'), false)
+  assert.equal(targetAttrs.has('aria-hidden'), false)
+  assert.equal(video.dataset.rstkVideoRealPlayed, 'true')
+  assert.equal(typeof frameCallback, 'function')
 })
 
 test('video player uses the same visual signature for direct and Bunny Stream renders', async () => {
