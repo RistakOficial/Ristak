@@ -1,6 +1,6 @@
 import { tool } from '@openai/agents'
 import { z } from 'zod'
-import { db } from '../../config/database.js'
+import { db, getAppConfig, getHighLevelConfig } from '../../config/database.js'
 import { listLocalProducts } from '../../services/localProductService.js'
 import {
   createSinglePaymentLink,
@@ -8,13 +8,51 @@ import {
   updateScheduledInstallmentPayment,
   cancelScheduledInstallmentPayment
 } from '../../services/paymentFlowService.js'
+import {
+  createStripePaymentLink,
+  createStripePaymentPlan,
+  createStripeSavedCardPayment,
+  getStripePaymentConfig,
+  getStripeSavedPaymentMethods
+} from '../../services/stripePaymentService.js'
+import {
+  createMercadoPagoPaymentLink,
+  createMercadoPagoPaymentPlan,
+  getMercadoPagoPaymentConfig
+} from '../../services/mercadoPagoPaymentService.js'
+import {
+  createSubscription,
+  listSubscriptions
+} from '../../services/subscriptionsService.js'
 
 /**
- * Herramientas avanzadas de cobro (links de pago, parcialidades) portadas del
- * agente original. Usan paymentFlowService directamente: requieren HighLevel
- * conectado para emitir invoices; si no lo está, devuelven el error tal cual
- * para que el agente lo explique.
+ * Herramientas avanzadas de cobro para el agente. Detectan las pasarelas
+ * conectadas y sólo ejecutan escrituras cuando el usuario ya confirmó.
  */
+
+const PAYMENT_GATEWAY_CAPABILITIES = {
+  paymentLinks: 'links de pago',
+  installmentPlans: 'planes de pago',
+  subscriptions: 'suscripciones automáticas',
+  savedCardCharges: 'cobros con tarjeta guardada'
+}
+
+const PAYMENT_GATEWAY_LABELS = {
+  highlevel: 'GoHighLevel',
+  stripe: 'Stripe',
+  mercadopago: 'Mercado Pago'
+}
+
+const GATEWAY_PARAM = z.enum(['auto', 'highlevel', 'stripe', 'mercadopago'])
+  .nullable()
+  .describe('Pasarela a usar: auto, highlevel, stripe o mercadopago. Si hay varias conectadas, pregunta al usuario cuál prefiere antes de crear el cobro.')
+
+const CHANNEL_PARAM = z.enum(['email', 'whatsapp', 'sms', 'all'])
+  .describe('Canal por el que se envía el link de HighLevel.')
+
+const OPTIONAL_CHANNEL_PARAM = CHANNEL_PARAM
+  .nullable()
+  .describe('Canal de envío si la pasarela es HighLevel: email, whatsapp, sms o all. Para Stripe/Mercado Pago puede ser null porque devuelven un enlace público.')
 
 async function getPaymentContact(contactId) {
   const row = await db.get('SELECT id, full_name, email, phone FROM contacts WHERE id = ?', [contactId])
@@ -31,8 +69,186 @@ function buildChannels(channel) {
   }
 }
 
-const CHANNEL_PARAM = z.enum(['email', 'whatsapp', 'sms', 'all'])
-  .describe('Canal por el que se envía el link. SIEMPRE pregunta al usuario por cuál canal enviarlo antes de llamar la herramienta.')
+function cleanString(value) {
+  return String(value || '').trim()
+}
+
+function normalizeGatewayId(value) {
+  const normalized = cleanString(value).toLowerCase().replace(/[\s_-]+/g, '')
+  if (!normalized || normalized === 'auto') return 'auto'
+  if (['ghl', 'gohighlevel', 'highlevel'].includes(normalized)) return 'highlevel'
+  if (normalized === 'stripe') return 'stripe'
+  if (['mercadopago', 'mp', 'checkoutpro'].includes(normalized)) return 'mercadopago'
+  return ''
+}
+
+function normalizeBaseUrl(value) {
+  const clean = cleanString(value).replace(/\/+$/, '')
+  if (!clean) return ''
+
+  const withProtocol = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`
+  try {
+    const parsed = new URL(withProtocol)
+    return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+async function getPaymentBaseUrl() {
+  const envUrl = normalizeBaseUrl(
+    process.env.PUBLIC_APP_URL ||
+    process.env.APP_PUBLIC_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.APP_URL
+  )
+  if (envUrl) return envUrl
+
+  const appDomain = normalizeBaseUrl(await getAppConfig('sites_app_domain'))
+  const verified = ['1', 'true', 'yes'].includes(cleanString(await getAppConfig('sites_app_domain_verified')).toLowerCase())
+  return verified ? appDomain : ''
+}
+
+function mapGatewayStatus({ id, connected, mode = null, accountLabel = '', issue = '' }) {
+  const capabilities = {
+    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'mercadopago',
+    installmentPlans: id === 'highlevel' || id === 'stripe' || id === 'mercadopago',
+    subscriptions: id === 'stripe',
+    savedCardCharges: id === 'stripe'
+  }
+
+  return {
+    id,
+    label: PAYMENT_GATEWAY_LABELS[id] || id,
+    connected: Boolean(connected),
+    mode,
+    accountLabel: accountLabel || '',
+    capabilities,
+    issue: issue || ''
+  }
+}
+
+async function getPaymentGatewaySnapshot() {
+  const [highLevelResult, stripeResult, mercadoPagoResult] = await Promise.allSettled([
+    getHighLevelConfig(),
+    getStripePaymentConfig(),
+    getMercadoPagoPaymentConfig()
+  ])
+
+  const highLevelConfig = highLevelResult.status === 'fulfilled' ? highLevelResult.value : null
+  const stripeConfig = stripeResult.status === 'fulfilled' ? stripeResult.value : null
+  const mercadoPagoConfig = mercadoPagoResult.status === 'fulfilled' ? mercadoPagoResult.value : null
+
+  const gateways = [
+    mapGatewayStatus({
+      id: 'highlevel',
+      connected: Boolean(highLevelConfig?.api_token && highLevelConfig?.location_id),
+      mode: highLevelConfig?.ghl_invoice_mode || null,
+      accountLabel: highLevelConfig?.location_id ? `Location ${highLevelConfig.location_id}` : '',
+      issue: highLevelResult.status === 'rejected' ? highLevelResult.reason?.message : ''
+    }),
+    mapGatewayStatus({
+      id: 'stripe',
+      connected: Boolean(stripeConfig?.configured),
+      mode: stripeConfig?.mode || null,
+      accountLabel: stripeConfig?.accountLabel || stripeConfig?.connectAccountEmail || stripeConfig?.connectedAccountPreview || '',
+      issue: stripeResult.status === 'rejected' ? stripeResult.reason?.message : ''
+    }),
+    mapGatewayStatus({
+      id: 'mercadopago',
+      connected: Boolean(mercadoPagoConfig?.configured),
+      mode: mercadoPagoConfig?.mode || null,
+      accountLabel: mercadoPagoConfig?.accountLabel || mercadoPagoConfig?.userId || '',
+      issue: mercadoPagoResult.status === 'rejected' ? mercadoPagoResult.reason?.message : ''
+    })
+  ]
+
+  return {
+    ok: true,
+    gateways,
+    connectedGateways: gateways.filter((gateway) => gateway.connected),
+    byId: Object.fromEntries(gateways.map((gateway) => [gateway.id, gateway]))
+  }
+}
+
+async function selectPaymentGateway(requestedGateway, capability) {
+  const snapshot = await getPaymentGatewaySnapshot()
+  const requested = normalizeGatewayId(requestedGateway)
+  const capabilityLabel = PAYMENT_GATEWAY_CAPABILITIES[capability] || 'esta acción'
+
+  if (requested && requested !== 'auto') {
+    const gateway = snapshot.byId[requested]
+    if (!gateway) {
+      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Mercado Pago o GoHighLevel.', snapshot }
+    }
+    if (!gateway.capabilities[capability]) {
+      return { ok: false, error: `${gateway.label} no soporta ${capabilityLabel} en Ristak todavía.`, snapshot }
+    }
+    if (!gateway.connected) {
+      return { ok: false, error: `${gateway.label} no está conectada. Conéctala en Configuración > Pagos antes de usarla.`, snapshot }
+    }
+    return { ok: true, gateway, snapshot }
+  }
+
+  const eligible = snapshot.gateways.filter((gateway) => gateway.connected && gateway.capabilities[capability])
+  if (eligible.length === 1) {
+    return { ok: true, gateway: eligible[0], snapshot }
+  }
+
+  if (!eligible.length) {
+    return {
+      ok: false,
+      error: `No hay pasarelas conectadas para ${capabilityLabel}. Conecta Stripe, Mercado Pago o GoHighLevel en Configuración > Pagos.`,
+      snapshot
+    }
+  }
+
+  return {
+    ok: false,
+    needsGatewaySelection: true,
+    error: `Hay varias pasarelas conectadas para ${capabilityLabel}: ${eligible.map((gateway) => gateway.label).join(', ')}. Pregunta cuál quiere usar antes de ejecutar.`,
+    options: eligible.map((gateway) => ({ id: gateway.id, label: gateway.label })),
+    snapshot
+  }
+}
+
+function buildGatewayPaymentPayload({ contact, amount, currency, concept, dueDate }) {
+  return {
+    contactId: contact.id,
+    contactName: contact.name,
+    email: contact.email || '',
+    phone: contact.phone || '',
+    amount,
+    currency: currency || undefined,
+    title: concept,
+    description: concept,
+    dueDate: dueDate || undefined,
+    source: 'ai_agent'
+  }
+}
+
+function buildInstallmentPayload({ contact, totalAmount, currency, concept, firstPayment, remainingPayments, remainingFrequency = 'custom' }) {
+  return {
+    contact,
+    totalAmount,
+    currency: currency || undefined,
+    title: concept,
+    description: concept,
+    concept,
+    firstPayment: firstPayment
+      ? { enabled: true, amount: firstPayment.amount, date: firstPayment.date || undefined, method: firstPayment.method }
+      : { enabled: false },
+    remainingPayments: remainingPayments.map((payment, index) => ({
+      sequence: index + 1,
+      amount: payment.amount,
+      dueDate: payment.dueDate,
+      frequency: remainingFrequency
+    })),
+    remainingFrequency,
+    source: 'ai_agent'
+  }
+}
 
 export const listProductsTool = tool({
   name: 'list_products',
@@ -58,26 +274,86 @@ export const listProductsTool = tool({
   }
 })
 
+export const getPaymentGatewaysTool = tool({
+  name: 'get_payment_gateways',
+  description: 'Detecta qué pasarelas de pago están conectadas (GoHighLevel, Stripe, Mercado Pago) y qué puede hacer cada una: links, planes, suscripciones o cobros con tarjeta guardada. Úsala antes de crear cobros si el usuario no dijo pasarela.',
+  parameters: z.object({}),
+  execute: async () => {
+    const snapshot = await getPaymentGatewaySnapshot()
+    return {
+      ok: true,
+      gateways: snapshot.gateways,
+      connectedGateways: snapshot.connectedGateways.map((gateway) => ({
+        id: gateway.id,
+        label: gateway.label,
+        mode: gateway.mode,
+        accountLabel: gateway.accountLabel,
+        capabilities: gateway.capabilities
+      }))
+    }
+  }
+})
+
 export const createPaymentLinkTool = tool({
   name: 'create_payment_link',
-  description: 'Crea y envía un link de pago único (invoice de HighLevel) a un contacto. Antes de llamarla: 1) identifica el contacto real, 2) confirma con el usuario monto, concepto y canal de envío, 3) pasa confirm=true solo cuando el usuario ya aprobó el cobro.',
+  description: 'Crea un link de pago único con la pasarela conectada correcta (Stripe, Mercado Pago o GoHighLevel). Antes de llamarla: 1) identifica el contacto real, 2) si hay varias pasarelas conectadas pregunta cuál usar, 3) confirma monto, concepto y canal si aplica, 4) pasa confirm=true solo cuando el usuario ya aprobó el cobro.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto a cobrar (usa search_contacts)'),
     amount: z.number().positive().describe('Monto del cobro'),
     currency: z.string().nullable().describe('Moneda ISO (default: moneda de la cuenta)'),
     concept: z.string().describe('Concepto del cobro, ej. "Mensualidad junio"'),
     dueDate: z.string().nullable().describe('Fecha límite de pago YYYY-MM-DD (opcional)'),
-    channel: CHANNEL_PARAM,
+    gateway: GATEWAY_PARAM,
+    channel: OPTIONAL_CHANNEL_PARAM,
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente el cobro')
   }),
-  execute: async ({ contactId, amount, currency, concept, dueDate, channel, confirm }) => {
+  execute: async ({ contactId, amount, currency, concept, dueDate, gateway, channel, confirm }) => {
     if (!confirm) {
-      return { ok: false, error: 'Falta confirmación del usuario. Resume el cobro (contacto, monto, concepto, canal) y pide aprobación antes de crear el link.' }
+      return { ok: false, error: 'Falta confirmación del usuario. Resume el cobro (contacto, monto, concepto, pasarela y canal si aplica) y pide aprobación antes de crear el link.' }
     }
     const contact = await getPaymentContact(contactId)
     if (!contact) return { ok: false, error: 'Contacto no encontrado' }
 
     try {
+      const selected = await selectPaymentGateway(gateway, 'paymentLinks')
+      if (!selected.ok) return selected
+
+      const paymentPayload = buildGatewayPaymentPayload({ contact, amount, currency, concept, dueDate })
+
+      if (selected.gateway.id === 'stripe') {
+        const result = await createStripePaymentLink(paymentPayload, { baseUrl: await getPaymentBaseUrl() })
+        return {
+          ok: true,
+          gateway: selected.gateway.id,
+          gatewayLabel: selected.gateway.label,
+          paymentId: result.payment?.id || null,
+          publicPaymentId: result.publicPaymentId || null,
+          paymentLink: result.paymentUrl || result.payment?.paymentUrl || '',
+          amount: result.payment?.amount || amount,
+          currency: result.payment?.currency || currency || null,
+          status: result.payment?.status || 'sent'
+        }
+      }
+
+      if (selected.gateway.id === 'mercadopago') {
+        const result = await createMercadoPagoPaymentLink(paymentPayload, { baseUrl: await getPaymentBaseUrl() })
+        return {
+          ok: true,
+          gateway: selected.gateway.id,
+          gatewayLabel: selected.gateway.label,
+          paymentId: result.payment?.id || null,
+          publicPaymentId: result.publicPaymentId || null,
+          preferenceId: result.preferenceId || null,
+          paymentLink: result.paymentUrl || result.payment?.paymentUrl || '',
+          amount: result.payment?.amount || amount,
+          currency: result.payment?.currency || currency || null,
+          status: result.payment?.status || 'sent'
+        }
+      }
+
+      if (!channel) {
+        return { ok: false, error: 'Para enviar por GoHighLevel falta elegir canal: email, WhatsApp, SMS o todos.' }
+      }
       const result = await createSinglePaymentLink({
         contact,
         amount,
@@ -91,6 +367,8 @@ export const createPaymentLinkTool = tool({
       })
       return {
         ok: true,
+        gateway: selected.gateway.id,
+        gatewayLabel: selected.gateway.label,
         invoiceId: result.invoiceId,
         paymentLink: result.paymentLink,
         sendMethod: result.sendMethod,
@@ -106,7 +384,7 @@ export const createPaymentLinkTool = tool({
 
 export const createInstallmentPlanTool = tool({
   name: 'create_installment_plan',
-  description: 'Crea un plan de pagos por parcialidades para un contacto: primer pago opcional + pagos restantes con fechas. La suma del primer pago y los restantes debe ser igual al total. Confirma con el usuario el plan completo (montos, fechas, canal) y pasa confirm=true solo cuando ya aprobó.',
+  description: 'Crea un plan de pagos por parcialidades con Stripe, Mercado Pago o GoHighLevel: primer pago opcional + pagos restantes con fechas. La suma del primer pago y los restantes debe ser igual al total. Si hay varias pasarelas conectadas pregunta cuál usar. Confirma el plan completo y pasa confirm=true solo cuando ya aprobó.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto'),
     totalAmount: z.number().positive().describe('Total a cobrar (debe coincidir con la suma de los pagos)'),
@@ -122,32 +400,183 @@ export const createInstallmentPlanTool = tool({
       dueDate: z.string().describe('Fecha de cobro YYYY-MM-DD')
     })).min(1).describe('Pagos restantes programados'),
     remainingAutomatic: z.boolean().describe('true para cobrar automáticamente con tarjeta domiciliada; false para enviar invoices a pagar manualmente'),
-    channel: CHANNEL_PARAM,
+    gateway: GATEWAY_PARAM,
+    channel: OPTIONAL_CHANNEL_PARAM,
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente el plan')
   }),
-  execute: async ({ contactId, totalAmount, currency, concept, firstPayment, remainingPayments, remainingAutomatic, channel, confirm }) => {
+  execute: async ({ contactId, totalAmount, currency, concept, firstPayment, remainingPayments, remainingAutomatic, gateway, channel, confirm }) => {
     if (!confirm) {
-      return { ok: false, error: 'Falta confirmación del usuario. Resume el plan (total, primer pago, parcialidades con fechas, canal) y pide aprobación.' }
+      return { ok: false, error: 'Falta confirmación del usuario. Resume el plan (total, pasarela, primer pago, parcialidades con fechas y canal si aplica) y pide aprobación.' }
     }
     const contact = await getPaymentContact(contactId)
     if (!contact) return { ok: false, error: 'Contacto no encontrado' }
 
     try {
+      const selected = await selectPaymentGateway(gateway, 'installmentPlans')
+      if (!selected.ok) return selected
+
+      const planPayload = buildInstallmentPayload({ contact, totalAmount, currency, concept, firstPayment, remainingPayments })
+
+      if (selected.gateway.id === 'stripe') {
+        const result = await createStripePaymentPlan(planPayload, { baseUrl: await getPaymentBaseUrl() })
+        return { ok: true, gateway: selected.gateway.id, gatewayLabel: selected.gateway.label, flowId: result?.flowId || null, result }
+      }
+
+      if (selected.gateway.id === 'mercadopago') {
+        const result = await createMercadoPagoPaymentPlan(planPayload, { baseUrl: await getPaymentBaseUrl() })
+        return { ok: true, gateway: selected.gateway.id, gatewayLabel: selected.gateway.label, flowId: result?.flowId || null, result }
+      }
+
+      if (!channel) {
+        return { ok: false, error: 'Para enviar parcialidades por GoHighLevel falta elegir canal: email, WhatsApp, SMS o todos.' }
+      }
       const result = await createInstallmentPaymentFlow({
-        contact,
-        totalAmount,
-        currency: currency || undefined,
-        description: concept,
-        concept,
-        firstPayment: firstPayment
-          ? { enabled: true, amount: firstPayment.amount, date: firstPayment.date || undefined, method: firstPayment.method }
-          : { enabled: false },
+        ...planPayload,
         remainingPayments: remainingPayments.map((payment) => ({ amount: payment.amount, dueDate: payment.dueDate })),
         remainingAutomatic,
         channels: buildChannels(channel),
         source: 'ai_agent'
       })
-      return { ok: true, flowId: result?.flowId || result?.id || null, summary: result?.summary || null, result }
+      return { ok: true, gateway: selected.gateway.id, gatewayLabel: selected.gateway.label, flowId: result?.flowId || result?.id || null, summary: result?.summary || null, result }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  }
+})
+
+export const listSavedPaymentMethodsTool = tool({
+  name: 'list_saved_payment_methods',
+  description: 'Lista tarjetas guardadas de Stripe para un contacto. Úsala antes de cobrar una tarjeta guardada o activar una suscripción automática si el usuario no especificó paymentMethodId.',
+  parameters: z.object({
+    contactId: z.string().describe('ID del contacto')
+  }),
+  execute: async ({ contactId }) => {
+    const selected = await selectPaymentGateway('stripe', 'savedCardCharges')
+    if (!selected.ok) return selected
+
+    try {
+      const methods = await getStripeSavedPaymentMethods(contactId)
+      return {
+        ok: true,
+        gateway: selected.gateway.id,
+        gatewayLabel: selected.gateway.label,
+        total: methods.length,
+        methods: methods.map((method) => ({
+          id: method.id,
+          paymentMethodId: method.stripePaymentMethodId,
+          brand: method.brand,
+          last4: method.last4,
+          expMonth: method.expMonth,
+          expYear: method.expYear,
+          isDefault: method.isDefault
+        }))
+      }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  }
+})
+
+export const chargeSavedCardTool = tool({
+  name: 'charge_saved_card',
+  description: 'Cobra inmediatamente una tarjeta guardada de Stripe. Antes de llamarla: identifica contacto, lista tarjetas si falta paymentMethodId, resume monto/concepto/tarjeta y pide aprobación. Pasa confirm=true solo cuando el usuario confirme.',
+  parameters: z.object({
+    contactId: z.string().describe('ID del contacto'),
+    paymentMethodId: z.string().describe('ID de la tarjeta guardada (usa list_saved_payment_methods)'),
+    amount: z.number().positive().describe('Monto a cobrar'),
+    concept: z.string().describe('Concepto del cobro'),
+    dueDate: z.string().nullable().describe('Fecha relacionada YYYY-MM-DD (opcional)'),
+    confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente el cargo')
+  }),
+  execute: async ({ contactId, paymentMethodId, amount, concept, dueDate, confirm }) => {
+    if (!confirm) {
+      return { ok: false, error: 'Falta confirmación del usuario. Resume contacto, monto, concepto y tarjeta antes de cobrar.' }
+    }
+    const selected = await selectPaymentGateway('stripe', 'savedCardCharges')
+    if (!selected.ok) return selected
+
+    try {
+      const result = await createStripeSavedCardPayment({
+        contactId,
+        paymentMethodId,
+        amount,
+        title: concept,
+        description: concept,
+        dueDate: dueDate || undefined,
+        source: 'ai_agent_saved_card'
+      })
+      return {
+        ok: true,
+        gateway: selected.gateway.id,
+        gatewayLabel: selected.gateway.label,
+        payment: result.payment
+      }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  }
+})
+
+export const listSubscriptionsTool = tool({
+  name: 'list_subscriptions',
+  description: 'Lista suscripciones registradas con resumen de MRR, activas, pausadas y vencidas. Úsala antes de pausar/cancelar o para reportes de suscripciones.',
+  parameters: z.object({
+    status: z.string().nullable().describe('Filtrar por estatus: all | active | paused | past_due | cancelled')
+  }),
+  execute: async ({ status }) => {
+    try {
+      const result = await listSubscriptions({ status: status || 'all' })
+      return { ok: true, ...result }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  }
+})
+
+export const createSubscriptionTool = tool({
+  name: 'create_subscription',
+  description: 'Crea una suscripción recurrente. En Ristak las suscripciones automáticas por pasarela usan Stripe con tarjeta guardada; si no hay tarjeta guardada, usa list_saved_payment_methods o pide conectar/guardar tarjeta. Confirma todo antes de llamar.',
+  parameters: z.object({
+    contactId: z.string().describe('ID del contacto'),
+    name: z.string().describe('Nombre de la suscripción'),
+    description: z.string().nullable().describe('Descripción opcional'),
+    amount: z.number().positive().describe('Monto de cada ciclo'),
+    intervalType: z.enum(['daily', 'weekly', 'monthly', 'yearly']).describe('Frecuencia de cobro'),
+    intervalCount: z.number().int().min(1).max(24).nullable().describe('Cada cuántos intervalos se cobra (default 1)'),
+    startDate: z.string().nullable().describe('Fecha de inicio ISO 8601 o YYYY-MM-DD (opcional)'),
+    paymentMethodId: z.string().nullable().describe('ID de tarjeta guardada de Stripe; si falta, se usará la tarjeta default si existe'),
+    gateway: z.enum(['auto', 'stripe']).nullable().describe('Pasarela para la suscripción. Actualmente las suscripciones automáticas usan Stripe.'),
+    confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente la suscripción')
+  }),
+  execute: async ({ contactId, name, description, amount, intervalType, intervalCount, startDate, paymentMethodId, gateway, confirm }) => {
+    if (!confirm) {
+      return { ok: false, error: 'Falta confirmación del usuario. Resume contacto, monto, frecuencia, fecha inicial y tarjeta/pasarela antes de crear la suscripción.' }
+    }
+
+    const selected = await selectPaymentGateway(gateway || 'auto', 'subscriptions')
+    if (!selected.ok) return selected
+
+    try {
+      const subscription = await createSubscription({
+        contactId,
+        name,
+        description: description || '',
+        amount,
+        intervalType,
+        intervalCount: intervalCount || 1,
+        startDate: startDate || undefined,
+        paymentProvider: 'stripe',
+        paymentMethod: 'stripe_saved_card',
+        paymentMethodId: paymentMethodId || undefined,
+        stripePaymentMethodId: paymentMethodId || undefined,
+        source: 'ai_agent'
+      })
+      return {
+        ok: true,
+        gateway: selected.gateway.id,
+        gatewayLabel: selected.gateway.label,
+        subscription
+      }
     } catch (error) {
       return { ok: false, error: error.message }
     }
@@ -252,8 +681,13 @@ export const cancelScheduledPaymentTool = tool({
 
 export const paymentFlowTools = [
   listProductsTool,
+  getPaymentGatewaysTool,
   createPaymentLinkTool,
   createInstallmentPlanTool,
+  listSavedPaymentMethodsTool,
+  chargeSavedCardTool,
+  listSubscriptionsTool,
+  createSubscriptionTool,
   listScheduledPaymentsTool,
   rescheduleScheduledPaymentTool,
   cancelScheduledPaymentTool

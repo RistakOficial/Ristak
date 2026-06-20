@@ -47,14 +47,14 @@ test('los agentes especializados NO mezclan herramientas de otros dominios', () 
 
 test('el agente general sí tiene acceso a todos los dominios', () => {
   const names = getAgentCategory('general').tools.map((tool) => tool.name)
-  for (const required of ['create_appointment', 'record_payment', 'create_contact', 'create_cost', 'get_ads_metrics', 'list_social_profiles', 'create_payment_link', 'get_free_slots']) {
+  for (const required of ['create_appointment', 'record_payment', 'create_contact', 'create_cost', 'get_ads_metrics', 'list_social_profiles', 'create_payment_link', 'create_subscription', 'get_payment_gateways', 'get_free_slots']) {
     assert.ok(names.includes(required), `general sin ${required}`)
   }
 })
 
 test('pagos incluye los cobros avanzados portados del agente original', () => {
   const names = getAgentCategory('pagos').tools.map((tool) => tool.name)
-  for (const required of ['list_products', 'create_payment_link', 'create_installment_plan', 'list_scheduled_payments', 'reschedule_scheduled_payment', 'cancel_scheduled_payment']) {
+  for (const required of ['list_products', 'get_payment_gateways', 'create_payment_link', 'create_installment_plan', 'list_saved_payment_methods', 'charge_saved_card', 'list_subscriptions', 'create_subscription', 'list_scheduled_payments', 'reschedule_scheduled_payment', 'cancel_scheduled_payment']) {
     assert.ok(names.includes(required), `pagos sin ${required}`)
   }
 })
@@ -97,7 +97,23 @@ test('el ruteo inicial detecta la especialidad desde el primer mensaje', () => {
     'anuncios'
   )
   assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Revisa los anuncios de esta categoría y dime el ROI con pagos atribuidos' }),
+    'anuncios'
+  )
+  assert.equal(
     inferAgentCategoryFromMessage({ latestUserMessage: 'Cóbrale 500 a Juan con link de pago' }),
+    'pagos'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Crea un enlace de pago con Mercado Pago para Ana' }),
+    'pagos'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Hazle un plan de pagos en Stripe por 3 meses' }),
+    'pagos'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Crea una suscripción mensual para Luis' }),
     'pagos'
   )
   assert.equal(

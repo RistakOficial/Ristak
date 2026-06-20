@@ -241,7 +241,7 @@ Para temas que cruzan varias áreas sin una categoría dominante, transfiere a "
 
 const TRIAGE_INSTRUCTIONS = `Eres el recepcionista de los agentes IA de Ristak. Tu ÚNICO trabajo es leer el último mensaje del usuario (con el contexto de la conversación) y transferirlo al especialista correcto con la herramienta transfer_to_<agente>:
 - citas: agendar, reprogramar, cancelar o consultar citas, calendarios y horarios disponibles.
-- pagos: registrar/editar pagos, links de cobro, parcialidades, ingresos y transacciones.
+- pagos: registrar/editar pagos, links/enlaces de cobro, pasarelas, Stripe, Mercado Pago, suscripciones, tarjetas guardadas, parcialidades, ingresos y transacciones.
 - contactos: crear, editar, buscar, depurar o consultar contactos (CRM).
 - anuncios: métricas y análisis de campañas de Meta Ads, incluyendo pagos/ventas/ingresos atribuidos, ROAS, ROI, CAC, retorno y rentabilidad publicitaria.
 - redes: perfiles sociales conectados, bandeja y conversaciones de Facebook/Instagram.
@@ -287,12 +287,12 @@ export function inferAgentCategoryFromMessage({ latestUserMessage = '', messages
 
   const scores = {
     anuncios: scorePattern(text, [
-      /\b(meta ads|facebook ads|ads manager|publicidad|anuncios?|campan(?:a|as)|campañas?|adsets?|conjuntos? de anuncios?|roas|retorno|rentabilidad|cpc|cpm|ctr|cpl|cac|gasto publicitario|inversion ads|inversion publicitaria)\b/,
+      /\b(meta ads|facebook ads|ads manager|publicidad|anuncios?|campan(?:a|as)|campañas?|adsets?|conjuntos? de anuncios?|roas|roi|retorno|atribucion|atribución|rentabilidad|cpc|cpm|ctr|cpl|cac|gasto publicitario|inversion ads|inversion publicitaria)\b/,
       /\b(resultados?|rendimiento|performance|conversion(?:es)?|leads?|ventas?|ingresos?|utilidad|escala|escalar)\b.*\b(campan(?:a|as)|campañas?|anuncios?|ads|meta|facebook|instagram)\b/,
-      /\b(campan(?:a|as)|campañas?|anuncios?|ads|meta|facebook|instagram)\b.*\b(resultados?|rendimiento|performance|conversion(?:es)?|leads?|ventas?|ingresos?|utilidad|roas|retorno|rentabilidad)\b/
+      /\b(campan(?:a|as)|campañas?|anuncios?|ads|meta|facebook|instagram)\b.*\b(resultados?|rendimiento|performance|conversion(?:es)?|leads?|ventas?|ingresos?|utilidad|roas|roi|retorno|atribucion|atribución|rentabilidad)\b/
     ]),
     pagos: scorePattern(text, [
-      /\b(pagos?|cobros?|cobrar|cobrale|cóbrale|link de pago|links? de pago|parcialidades|domiciliacion|domiciliación|tarjeta|invoice|factura|ingresos?|transacciones?|deposito|depósito|transferencia|efectivo)\b/
+      /\b(pagos?|cobros?|cobrar|cobrale|cóbrale|registrar pago|registra(?:me)? (?:un )?pago|link de pago|links? de pago|enlace de pago|enlaces de pago|plan(?:es)? de pago|parcialidades|suscripcion(?:es)?|suscripción(?:es)?|subscription|stripe|mercado pago|mercadopago|pasarelas?|domiciliacion|domiciliación|tarjeta guardada|tarjeta|invoice|factura|ingresos?|transacciones?|deposito|depósito|transferencia|efectivo)\b/
     ]),
     citas: scorePattern(text, [
       /\b(citas?|agenda|agendar|reprograma|reprogramar|calendarios?|horarios?|disponibilidad|appointment|booking|no show|showed|asistencia)\b/
