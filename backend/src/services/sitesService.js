@@ -15266,7 +15266,7 @@ const RSTK_BASE_CSS = `
 	    padding:13px 14px;outline:none;transition:border-color .15s ease,box-shadow .15s ease;
 	  }
 	  .rstk-kind-form .rstk-field > input,.rstk-kind-form .rstk-field > textarea,.rstk-kind-form .rstk-field > select,.rstk-embedded-form .rstk-field > input,.rstk-embedded-form .rstk-field > textarea,.rstk-embedded-form .rstk-field > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
-	  .rstk-phone-input{display:grid;grid-template-columns:minmax(92px,.24fr) minmax(0,1fr);gap:8px;align-items:stretch}
+	  .rstk-phone-input{display:grid;grid-template-columns:minmax(132px,clamp(132px,24%,142px)) minmax(0,1fr);gap:8px;align-items:stretch;max-width:100%}
 	  .rstk-phone-input > select,.rstk-phone-input > input{min-width:0}
 	  .rstk-kind-form .rstk-field .rstk-phone-input > input,.rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > input,.rstk-embedded-form .rstk-field .rstk-phone-input > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
 	  textarea{resize:vertical;min-height:108px}
@@ -15412,6 +15412,9 @@ const RSTK_BASE_CSS = `
 
   @media (max-width:640px){
     .rstk-kind-landing .rstk-hero{padding:clamp(32px,8vw,56px) 20px}
+    .rstk-phone-input{grid-template-columns:minmax(124px,132px) minmax(0,1fr)}
+  }
+  @media (max-width:340px){
     .rstk-phone-input{grid-template-columns:1fr}
   }
 `

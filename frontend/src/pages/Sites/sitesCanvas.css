@@ -825,9 +825,10 @@
 }
 .rstkCanvas .rstk-phone-input {
   display: grid;
-  grid-template-columns: minmax(92px, .24fr) minmax(0, 1fr);
+  grid-template-columns: minmax(132px, clamp(132px, 24%, 142px)) minmax(0, 1fr);
   gap: 8px;
   align-items: stretch;
+  max-width: 100%;
 }
 .rstkCanvas .rstk-phone-input > select,
 .rstkCanvas .rstk-phone-input > input {
@@ -1116,6 +1117,10 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 
 @media (max-width: 640px) {
   .rstkCanvas .rstk-list-grid { grid-template-columns: 1fr; }
+  .rstkCanvas .rstk-phone-input { grid-template-columns: minmax(124px, 132px) minmax(0, 1fr); }
+}
+
+@media (max-width: 340px) {
   .rstkCanvas .rstk-phone-input { grid-template-columns: 1fr; }
 }
 

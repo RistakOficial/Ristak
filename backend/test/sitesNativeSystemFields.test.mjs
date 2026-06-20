@@ -190,6 +190,39 @@ test('native form URL validation renders a real URL validator', async () => {
   }
 })
 
+test('native phone country selector keeps a bounded readable width', async () => {
+  let site
+
+  try {
+    site = await createSite({
+      name: 'Formulario telefono',
+      slug: `form-phone-layout-${Date.now()}`,
+      siteType: 'standard_form',
+      status: 'published',
+      blankCanvas: true
+    })
+
+    const siteWithField = await createBlock(site.id, {
+      blockType: 'phone',
+      label: 'Telefono / WhatsApp',
+      placeholder: '10 digitos',
+      required: true,
+      settings: { internalName: 'phone', validation: 'phone', phoneCountrySelectorEnabled: true }
+    })
+
+    const html = await renderPublicSiteHtml(siteWithField, { preview: true })
+    assert.match(html, /class="rstk-phone-input"/)
+    assert.match(html, /data-phone-country-select/)
+    assert.match(html, /grid-template-columns:minmax\(132px,clamp\(132px,24%,142px\)\) minmax\(0,1fr\)/)
+    assert.match(html, /@media \(max-width:640px\)\{[\s\S]*\.rstk-phone-input\{grid-template-columns:minmax\(124px,132px\) minmax\(0,1fr\)\}/)
+    assert.match(html, /@media \(max-width:340px\)\{[\s\S]*\.rstk-phone-input\{grid-template-columns:1fr\}/)
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+  }
+})
+
 test('native form option rules redirect to site pages and external URLs with submit preference', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),
