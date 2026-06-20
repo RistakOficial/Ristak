@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react'
 import { Link, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import {
+  BellRing,
   BadgeDollarSign,
   CalendarDays,
   Code2,
@@ -28,6 +29,7 @@ import { UserAccessSettings } from './UserAccessSettings'
 import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
+import { NotificationSettings } from './NotificationSettings'
 import { MediaSettings } from './MediaSettings'
 import { CustomFields } from './CustomFields'
 import { VariableFields } from './VariableFields'
@@ -61,6 +63,7 @@ type SettingsIcon = React.ComponentType<{ size?: number; className?: string }>
 const settingsIcons: Record<string, SettingsIcon> = {
   '/settings/account': User,
   '/settings/users-access': Users,
+  '/settings/notifications': BellRing,
   '/settings/mobile-app': MonitorSmartphone,
   '/settings/calendars': CalendarDays,
   '/settings/payments': CreditCard,
@@ -157,6 +160,7 @@ export const Settings: React.FC = () => {
               <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/general" replace /></SettingsAccessGate>} />
               <Route path="developers" element={<SettingsAccessGate moduleKey="settings_api_access"><APIAccessSettings /></SettingsAccessGate>} />
               <Route path="api-access" element={<SettingsAccessGate moduleKey="settings_api_access"><Navigate to="../developers" replace /></SettingsAccessGate>} />
+              <Route path="notifications" element={<SettingsAccessGate moduleKey="settings_account"><NotificationSettings /></SettingsAccessGate>} />
               <Route path="mobile-app" element={<SettingsAccessGate moduleKey="settings_mobile"><MobileAppSettings /></SettingsAccessGate>} />
               <Route path="users-access" element={<SettingsAccessGate moduleKey="settings_users"><UserAccessSettings /></SettingsAccessGate>} />
               <Route path="account" element={<SettingsAccessGate moduleKey="settings_account"><AccountSettings /></SettingsAccessGate>} />

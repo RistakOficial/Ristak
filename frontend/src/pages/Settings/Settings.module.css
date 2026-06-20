@@ -1364,99 +1364,195 @@ body.dark .select:focus {
   font-weight: 700;
 }
 
-.notificationDeviceCard {
+.notificationOverviewGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+  gap: 14px;
+}
+
+.notificationDevicePanel,
+.notificationSummaryPanel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.notificationDevicePanel {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 13px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.055);
+  padding: 14px;
 }
 
 .notificationDeviceIcon,
-.notificationSettingIcon {
+.notificationRecipientIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  color: var(--color-primary);
-  background: rgba(var(--color-primary-rgb), 0.12);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-ctl);
+  color: var(--accent);
+  background: var(--accent-soft);
+  flex: 0 0 auto;
 }
 
-.notificationDeviceCard strong,
-.notificationSettingCard strong {
+.notificationDeviceText {
+  min-width: 0;
+}
+
+.notificationDeviceText strong,
+.notificationRecipientText strong {
   display: block;
-  color: var(--color-text-primary);
+  color: var(--text);
   font-size: 14px;
   font-weight: 500;
+  line-height: 1.25;
 }
 
-.notificationDeviceCard small,
-.notificationSettingCard small {
+.notificationDeviceText span,
+.notificationRecipientText small,
+.notificationEventHeading small,
+.notificationSummaryPanel span {
   display: block;
-  margin-top: 3px;
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   font-size: 12px;
-  line-height: 1.4;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
-.notificationSettingsGrid {
+.notificationSummaryPanel {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  overflow: hidden;
 }
 
-.notificationSettingCard {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 11px;
-  min-height: 104px;
-  padding: 13px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  color: var(--color-text-primary);
-  background: var(--color-background-primary);
-  text-align: left;
-  cursor: pointer;
+.notificationSummaryPanel > div {
+  min-width: 0;
+  padding: 14px;
+  border-left: 1px solid var(--border);
 }
 
-.notificationSettingCard:hover:not(:disabled) {
-  border-color: rgba(var(--color-primary-rgb), 0.28);
-  background: rgba(var(--color-primary-rgb), 0.045);
+.notificationSummaryPanel > div:first-child {
+  border-left: 0;
 }
 
-.notificationSettingCard:disabled {
-  cursor: wait;
-  opacity: 0.72;
-}
-
-.notificationSettingCardActive {
-  border-color: rgba(var(--color-primary-rgb), 0.36);
-  background: rgba(var(--color-primary-rgb), 0.07);
-}
-
-.notificationSettingCard i {
-  grid-column: 1 / -1;
-  width: fit-content;
-  min-height: 24px;
-  padding: 5px 8px;
-  border-radius: 999px;
-  color: var(--color-text-tertiary);
-  background: rgba(148, 163, 184, 0.12);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 500;
+.notificationSummaryPanel strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 21px;
+  font-weight: 700;
   line-height: 1;
 }
 
-.notificationSettingCardActive i {
-  color: var(--color-primary);
-  background: rgba(var(--color-primary-rgb), 0.14);
+.notificationMatrixHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+}
+
+.notificationMatrixWrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.notificationMatrix {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.notificationMatrix th {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-align: left;
+  text-transform: var(--label-transform);
+  vertical-align: top;
+}
+
+.notificationMatrix th:first-child {
+  width: 260px;
+}
+
+.notificationMatrix td {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.notificationMatrix tbody tr:first-child td {
+  border-top: 0;
+}
+
+.notificationMatrix tbody tr:hover td {
+  background: var(--surface-2);
+}
+
+.notificationEventHeading,
+.notificationRecipientCell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.notificationEventHeading {
+  align-items: flex-start;
+}
+
+.notificationEventHeading svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.notificationEventHeading strong {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-transform: none;
+}
+
+.notificationRecipientCell {
+  justify-content: space-between;
+}
+
+.notificationRecipientText {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.notificationRecipientText strong,
+.notificationRecipientText small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notificationChannelSelect {
+  min-width: 148px;
+}
+
+.notificationChannelLabel {
+  display: none;
 }
 
 .mobileGuideGrid {
@@ -1753,10 +1849,14 @@ body.dark .select:focus {
   .accountLocaleGrid,
   .developerInfoGrid,
   .developerDocsGrid,
-  .notificationSettingsGrid,
+  .notificationOverviewGrid,
   .mobileGuideGrid,
   .mobileStepList {
     grid-template-columns: 1fr;
+  }
+
+  .notificationMatrixHeader {
+    flex-direction: column;
   }
 
   .webhookEndpointRow {
@@ -1791,11 +1891,34 @@ body.dark .select:focus {
 
   .profileSummary,
   .lockedFieldRow,
-  .notificationDeviceCard,
+  .notificationDevicePanel,
   .storageUsageHeader,
   .storageUsageMeta {
     align-items: stretch;
+  }
+
+  .profileSummary,
+  .lockedFieldRow,
+  .storageUsageHeader,
+  .storageUsageMeta {
     flex-direction: column;
+  }
+
+  .notificationDevicePanel {
+    grid-template-columns: 1fr;
+  }
+
+  .notificationSummaryPanel {
+    grid-template-columns: 1fr;
+  }
+
+  .notificationSummaryPanel > div {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .notificationSummaryPanel > div:first-child {
+    border-top: 0;
   }
 
   .sectionActions {

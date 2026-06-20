@@ -20,6 +20,7 @@ export interface SettingsNavItem {
 export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/account', label: 'Cuenta', group: 'Cuenta', permissionKey: 'settings_account' },
   { to: '/settings/users-access', label: 'Usuarios', group: 'Cuenta', permissionKey: 'settings_users' },
+  { to: '/settings/notifications', label: 'Notificaciones', group: 'Cuenta', permissionKey: 'settings_account' },
   { to: '/settings/mobile-app', label: 'Aplicación móvil', group: 'Cuenta', permissionKey: 'settings_mobile' },
   { to: '/settings/highlevel', label: 'HighLevel', group: 'Integraciones', permissionKey: 'settings_integrations' },
   { to: '/settings/meta-ads', label: 'Meta', group: 'Integraciones', permissionKey: 'campaigns' },

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Bell, CalendarDays, Check, CheckCircle, ChevronDown, Clock, CreditCard, Database, Globe2, Loader2, Lock, MessageCircle, Save, Smartphone, Upload, User, X } from 'lucide-react'
-import { Button, Card, CustomSelect, Switch } from '@/components/common'
+import { Check, CheckCircle, ChevronDown, Clock, Database, Globe2, Loader2, Lock, Save, Upload, User, X } from 'lucide-react'
+import { Button, Card, CustomSelect } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -11,7 +11,6 @@ import { useAppConfig } from '@/hooks'
 import { apiUrl } from '@/services/apiBaseUrl'
 import apiClient from '@/services/apiClient'
 import mediaService from '@/services/mediaService'
-import { pushNotificationsService } from '@/services/pushNotificationsService'
 import {
   ACCOUNT_COUNTRY_CONFIG_KEY,
   ACCOUNT_CURRENCY_CONFIG_KEY,
@@ -136,15 +135,6 @@ const buildTimezoneDisplayInfo = (timeZone: string, atDate: Date): TimezoneDispl
   }
 }
 
-const getNotificationPermissionLabel = () => {
-  if (typeof window === 'undefined' || !('Notification' in window)) {
-    return 'Este celular no permite notificaciones de la app.'
-  }
-  if (Notification.permission === 'granted') return 'Este celular ya puede recibir notificaciones.'
-  if (Notification.permission === 'denied') return 'El celular bloqueó las notificaciones. Actívalas desde los ajustes del navegador.'
-  return 'Toca Activar para permitir notificaciones en este celular.'
-}
-
 const splitFallbackName = (value = '') => {
   const parts = value.trim().split(/\s+/).filter(Boolean)
   if (!parts.length) return { firstName: '', lastName: '' }
@@ -166,10 +156,6 @@ export const AccountSettings: React.FC = () => {
   const [accountCountry, setAccountCountry, savingAccountCountry] = useAppConfig<string>(ACCOUNT_COUNTRY_CONFIG_KEY, detectedLocaleDefaults.countryCode)
   const [accountCurrency, setAccountCurrency, savingAccountCurrency] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
   const [accountDialCode, setAccountDialCode, savingAccountDialCode] = useAppConfig<string>(ACCOUNT_DIAL_CODE_CONFIG_KEY, detectedLocaleDefaults.dialCode)
-  const [calendarPushEnabled, setCalendarPushEnabled, savingCalendarPush] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
-  const [chatPushEnabled, setChatPushEnabled, savingChatPush] = useAppConfig<boolean>('chat_push_notifications_enabled', true)
-  const [paymentPushEnabled, setPaymentPushEnabled, savingPaymentPush] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
-  const [pushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
   const [profilePhotoDraft, setProfilePhotoDraft] = useState('')
   const [isEditingPhoto, setIsEditingPhoto] = useState(false)
   const [profileDraft, setProfileDraft] = useState({
@@ -207,7 +193,6 @@ export const AccountSettings: React.FC = () => {
   const [savingAccountLocale, setSavingAccountLocale] = useState(false)
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null)
   const [storageStatusError, setStorageStatusError] = useState(false)
-  const [requestingPush, setRequestingPush] = useState(false)
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null)
   const customerTriggerRef = useRef<HTMLButtonElement>(null)
   const leadTriggerRef = useRef<HTMLButtonElement>(null)
@@ -666,40 +651,6 @@ export const AccountSettings: React.FC = () => {
       showToast('error', 'Error', 'No se pudieron guardar los nombres')
     } finally {
       setSavingLabels(false)
-    }
-  }
-
-  const handleRequestPushNotifications = async () => {
-    setRequestingPush(true)
-    try {
-      const result = await pushNotificationsService.subscribeToAppNotifications({
-        calendarIds: pushCalendarIds
-      })
-
-      if (result.status === 'subscribed') {
-        showToast('success', 'Notificaciones activadas', 'Este celular ya puede recibir notificaciones de Ristak.')
-      } else {
-        showToast('warning', 'No se activaron', result.reason)
-      }
-    } catch (error: any) {
-      showToast('error', 'No se activaron', error?.message || 'Intenta nuevamente.')
-    } finally {
-      setRequestingPush(false)
-    }
-  }
-
-  const handleToggleNotification = async (
-    enabled: boolean,
-    save: (value: boolean) => Promise<void>,
-    titleOn: string,
-    titleOff: string
-  ) => {
-    const nextValue = !enabled
-    try {
-      await save(nextValue)
-      showToast('success', nextValue ? titleOn : titleOff)
-    } catch (error: any) {
-      showToast('error', 'No se guardó', error?.message || 'Intenta nuevamente.')
     }
   }
 
@@ -1248,100 +1199,6 @@ export const AccountSettings: React.FC = () => {
                   <Save size={16} />
                   Guardar
                 </Button>
-              </div>
-            </section>
-
-            <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>
-              <div className={styles.accountSectionHeader}>
-                <div>
-                  <h3 className={styles.accountSectionTitle}>
-                    <Bell size={16} /> Notificaciones
-                  </h3>
-                  <p className={styles.accountSectionDescription}>
-                    Elige qué notificaciones quieres recibir en los celulares donde abras Ristak desde el icono de inicio.
-                  </p>
-                </div>
-              </div>
-
-              <div className={styles.notificationDeviceCard}>
-                <span className={styles.notificationDeviceIcon}>
-                  <Smartphone size={18} />
-                </span>
-                <div>
-                  <strong>Este celular</strong>
-                  <small>{getNotificationPermissionLabel()}</small>
-                </div>
-                <Button
-                  variant="secondary"
-                  onClick={handleRequestPushNotifications}
-                  loading={requestingPush}
-                  disabled={requestingPush}
-                >
-                  <Bell size={16} />
-                  Activar
-                </Button>
-              </div>
-
-              <div className={styles.notificationSettingsGrid}>
-                <div
-                  className={`${styles.notificationSettingCard} ${chatPushEnabled ? styles.notificationSettingCardActive : ''}`}
-                >
-                  <span className={styles.notificationSettingIcon}>
-                    <MessageCircle size={18} />
-                  </span>
-                  <span>
-                    <strong>Chat</strong>
-                    <small>Mensajes nuevos de WhatsApp.</small>
-                  </span>
-                  <span style={{ gridColumn: '1 / -1' }}>
-                    <Switch
-                      checked={chatPushEnabled}
-                      onChange={() => handleToggleNotification(chatPushEnabled, setChatPushEnabled, 'Notificaciones de chat encendidas', 'Notificaciones de chat apagadas')}
-                      disabled={savingChatPush}
-                      aria-label="Notificaciones de chat"
-                    />
-                  </span>
-                </div>
-
-                <div
-                  className={`${styles.notificationSettingCard} ${calendarPushEnabled ? styles.notificationSettingCardActive : ''}`}
-                >
-                  <span className={styles.notificationSettingIcon}>
-                    <CalendarDays size={18} />
-                  </span>
-                  <span>
-                    <strong>Citas</strong>
-                    <small>Cuando alguien agenda una cita.</small>
-                  </span>
-                  <span style={{ gridColumn: '1 / -1' }}>
-                    <Switch
-                      checked={calendarPushEnabled}
-                      onChange={() => handleToggleNotification(calendarPushEnabled, setCalendarPushEnabled, 'Notificaciones de citas encendidas', 'Notificaciones de citas apagadas')}
-                      disabled={savingCalendarPush}
-                      aria-label="Notificaciones de citas"
-                    />
-                  </span>
-                </div>
-
-                <div
-                  className={`${styles.notificationSettingCard} ${paymentPushEnabled ? styles.notificationSettingCardActive : ''}`}
-                >
-                  <span className={styles.notificationSettingIcon}>
-                    <CreditCard size={18} />
-                  </span>
-                  <span>
-                    <strong>Pagos</strong>
-                    <small>Cuando se registre un pago.</small>
-                  </span>
-                  <span style={{ gridColumn: '1 / -1' }}>
-                    <Switch
-                      checked={paymentPushEnabled}
-                      onChange={() => handleToggleNotification(paymentPushEnabled, setPaymentPushEnabled, 'Notificaciones de pagos encendidas', 'Notificaciones de pagos apagadas')}
-                      disabled={savingPaymentPush}
-                      aria-label="Notificaciones de pagos"
-                    />
-                  </span>
-                </div>
               </div>
             </section>
 

@@ -5,6 +5,7 @@ import webPush from 'web-push'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { shouldSuppressChatNotificationForConversationalAgent } from './conversationalAgentService.js'
+import { resolvePushNotificationTargetForEvent } from './notificationPreferencesService.js'
 
 const ENV_VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || ''
 const ENV_VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || ''
@@ -380,6 +381,23 @@ async function getBooleanPushConfig(key, fallback = false) {
   const raw = await getAppConfig(key).catch(() => null)
   if (raw === null || raw === undefined || raw === '') return fallback
   return ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase())
+}
+
+async function getPushPreferenceTarget(eventKey) {
+  return resolvePushNotificationTargetForEvent(eventKey).catch((error) => {
+    logger.warn(`[Push] No se pudo leer preferencias de notificaciones para ${eventKey}: ${error.message}`)
+    return { configured: false, userIds: null }
+  })
+}
+
+function getPushPreferenceOptions(target, extraOptions = {}) {
+  return target.configured
+    ? { ...extraOptions, userIds: target.userIds }
+    : extraOptions
+}
+
+function isPushPreferenceDisabled(target) {
+  return target.configured && Array.isArray(target.userIds) && target.userIds.length === 0
 }
 
 function getSubscriptionId(endpoint = '') {
@@ -853,6 +871,10 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
   if (config.calendarIds.length > 0 && !config.calendarIds.includes(calendarId)) {
     return { sent: 0, skipped: true, reason: 'calendar_filtered' }
   }
+  const preferenceTarget = await getPushPreferenceTarget('appointments')
+  if (isPushPreferenceDisabled(preferenceTarget)) {
+    return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
+  }
 
   const appointmentTitle = String(appointment.title || appointment.name || 'Nueva cita').trim()
   const calendarName = String(options.calendarName || appointment.calendarName || 'Calendario').trim()
@@ -867,7 +889,7 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
     url: `/phone/calendar?open=appointment&id=${encodeURIComponent(appointment.id || '')}`
   }
 
-  return sendAppNotificationPayload(payload, { calendarId })
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, { calendarId }))
 }
 
 export async function sendChatMessageNotification(message = {}) {
@@ -883,6 +905,10 @@ export async function sendChatMessageNotification(message = {}) {
   if (suppressByAgent) {
     return { sent: 0, skipped: true, reason: 'conversational_agent_attending' }
   }
+  const preferenceTarget = await getPushPreferenceTarget('conversations')
+  if (isPushPreferenceDisabled(preferenceTarget)) {
+    return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
+  }
 
   const senderName = getChatSenderName(message)
   const bodyText = getChatMessageBody(message)
@@ -897,7 +923,7 @@ export async function sendChatMessageNotification(message = {}) {
     category: 'chat'
   }
 
-  return sendAppNotificationPayload(payload)
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget))
 }
 
 export async function sendConversationalAgentPriorityNotification(signal = {}) {
@@ -908,6 +934,10 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
 
   const contactId = String(signal.contactId || '').trim()
   if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
+  const preferenceTarget = await getPushPreferenceTarget('conversations')
+  if (isPushPreferenceDisabled(preferenceTarget)) {
+    return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
+  }
 
   const contact = await db.get(
     'SELECT full_name, first_name, phone FROM contacts WHERE id = ?',
@@ -931,7 +961,7 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
     category: 'chat'
   }
 
-  return sendAppNotificationPayload(payload)
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget))
 }
 
 export async function sendPaymentNotification(payment = {}) {
@@ -939,6 +969,10 @@ export async function sendPaymentNotification(payment = {}) {
 
   const enabled = await getBooleanPushConfig('payment_push_notifications_enabled', true)
   if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
+  const preferenceTarget = await getPushPreferenceTarget('payments')
+  if (isPushPreferenceDisabled(preferenceTarget)) {
+    return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
+  }
 
   const amountLabel = formatPaymentAmount(payment.amount, payment.currency)
   const contactLabel = String(payment.contactName || payment.contact_name || 'Cliente').trim()
@@ -950,5 +984,5 @@ export async function sendPaymentNotification(payment = {}) {
     category: 'payment'
   }
 
-  return sendAppNotificationPayload(payload)
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget))
 }
