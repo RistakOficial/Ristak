@@ -22344,6 +22344,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
       if (!target) return
       if (dropdownRef.current?.contains(target)) return
       if (target.closest('[data-radix-popper-content-wrapper]')) return
+      if (target.closest('[data-ristak-dropdown-panel]')) return
       setOpen(false)
     }
 
@@ -22928,6 +22929,8 @@ const FunnelFixedPageDropdownItem: React.FC<FunnelFixedPageDropdownItemProps> = 
                 disabled={locked}
                 className={styles.pagesDropdownResultSelect}
                 aria-label={title}
+                portal
+                dropdownMinWidth={220}
                 onChange={handleResultDestinationChange}
                 onBlur={onSaveSite}
               >
