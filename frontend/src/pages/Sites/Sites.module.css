@@ -7326,6 +7326,22 @@
   align-content: start;
 }
 
+.sitesAnalyticsHeader {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(260px, 420px) minmax(220px, 1fr);
+  align-items: center;
+}
+
+.sitesAnalyticsTitleBlock {
+  min-width: 0;
+}
+
+.sitesAnalyticsHeaderTypePicker {
+  width: 100%;
+  min-width: 0;
+  justify-self: center;
+}
+
 .sitesAnalyticsHeaderActions {
   display: flex;
   flex-wrap: wrap;
@@ -7337,18 +7353,6 @@
   display: grid;
   gap: 12px;
   align-items: stretch;
-}
-
-.sitesAnalyticsTypePicker {
-  display: grid;
-  max-width: min(100%, 520px);
-  gap: 6px;
-}
-
-.sitesAnalyticsTypePicker > span {
-  color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  font-weight: 800;
 }
 
 .sitesAnalyticsTypeToggle {
@@ -20034,6 +20038,7 @@
 }
 
 @media (max-width: 1100px) {
+  .sitesAnalyticsHeader,
   .sitesAnalyticsFilters,
   .sitesAnalyticsFilterControls,
   .sitesAnalyticsGrid,
@@ -20042,6 +20047,11 @@
   .videoEngagementGrid,
   .videoStreamCharts {
     grid-template-columns: 1fr;
+  }
+
+  .sitesAnalyticsHeaderTypePicker {
+    max-width: min(100%, 420px);
+    justify-self: start;
   }
 
   .videoRetentionChart {

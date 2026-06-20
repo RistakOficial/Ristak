@@ -35286,23 +35286,12 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 
   return (
     <section className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`} aria-busy={loadingVideos || (isVideosView && loadingAnalytics)}>
-      <div className={styles.builderHeader}>
-        <div>
+      <div className={`${styles.builderHeader} ${styles.sitesAnalyticsHeader}`}>
+        <div className={styles.sitesAnalyticsTitleBlock}>
           <h2>Analíticas</h2>
           <p>Rendimiento individual de sitios, formularios y videos publicados en Stream.</p>
         </div>
-        <div className={styles.sitesAnalyticsHeaderActions}>
-          <DateRangePicker
-            startDate={startDate}
-            endDate={endDate}
-            onChange={onDateRangeChange}
-          />
-        </div>
-      </div>
-
-      <div className={styles.sitesAnalyticsFilters}>
-        <div className={styles.sitesAnalyticsTypePicker}>
-          <span>Tipo</span>
+        <div className={styles.sitesAnalyticsHeaderTypePicker}>
           <TabList
             tabs={sitesAnalyticsTypeTabs}
             activeTab={selectedSiteType}
@@ -35314,7 +35303,16 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
             className={styles.sitesAnalyticsTypeToggle}
           />
         </div>
+        <div className={styles.sitesAnalyticsHeaderActions}>
+          <DateRangePicker
+            startDate={startDate}
+            endDate={endDate}
+            onChange={onDateRangeChange}
+          />
+        </div>
+      </div>
 
+      <div className={styles.sitesAnalyticsFilters}>
         <div className={`${styles.sitesAnalyticsFilterControls} ${isVideosView ? styles.sitesAnalyticsFilterControlsVideo : ''}`}>
           <label className={styles.field}>
             <span>{siteFilterLabel}</span>
