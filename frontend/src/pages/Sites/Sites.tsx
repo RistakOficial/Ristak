@@ -760,6 +760,8 @@ const DEFAULT_VIDEO_PLAY_SIZE = 160
 const DEFAULT_VIDEO_PLAY_ICON_SIZE = 95
 const DEFAULT_VIDEO_PLAY_RADIUS = 0
 const DEFAULT_VIDEO_CONTROL_PANEL_RADIUS = 24
+const DEFAULT_VIDEO_TRICK_PROGRESS_RAMP_PERCENT = 35
+const DEFAULT_VIDEO_TRICK_PROGRESS_PEAK_PERCENT = 88
 const VIDEO_CONTROLS_IDLE_MS = 2600
 const VIDEO_CONTROLS_LEAVE_IDLE_MS = 650
 const VIDEO_PLAY_SIZE_MIN = 56
@@ -767,19 +769,27 @@ const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
 const VIDEO_PLAY_ICON_SIZE_MAX = 95
 const VIDEO_CONTROL_PANEL_RADIUS_MAX = 48
+const VIDEO_TRICK_PROGRESS_RAMP_MIN = 5
+const VIDEO_TRICK_PROGRESS_RAMP_MAX = 85
+const VIDEO_TRICK_PROGRESS_PEAK_MIN = 55
+const VIDEO_TRICK_PROGRESS_PEAK_MAX = 96
 const VIDEO_PREVIEW_MAX_SPAN_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
   videoControls: false,
-  videoControlBar: false,
-  videoControlBarInitiallyVisible: false,
+  videoControlBar: true,
+  videoControlBarInitiallyVisible: true,
   videoControlPlay: true,
   videoControlVolume: true,
   videoControlSpeed: true,
   videoControlSettings: true,
+  videoControlTime: true,
   videoControlPanelRadius: DEFAULT_VIDEO_CONTROL_PANEL_RADIUS,
+  videoTrickProgressEnabled: false,
+  videoTrickProgressRampPercent: DEFAULT_VIDEO_TRICK_PROGRESS_RAMP_PERCENT,
+  videoTrickProgressPeakPercent: DEFAULT_VIDEO_TRICK_PROGRESS_PEAK_PERCENT,
   videoPreviewEnabled: true,
   videoPreviewStart: 0,
   videoPreviewEnd: VIDEO_PREVIEW_DEFAULT_SECONDS,
@@ -2629,11 +2639,39 @@ const getVideoPlayRadiusValue = (settings: Record<string, unknown>, shape: Video
 const getVideoControlPanelRadiusValue = (settings: Record<string, unknown>) =>
   getSettingNumber(settings, 'videoControlPanelRadius', DEFAULT_VIDEO_CONTROL_PANEL_RADIUS, 0, VIDEO_CONTROL_PANEL_RADIUS_MAX)
 
+const shouldShowVideoControlBar = (settings: Record<string, unknown>) =>
+  settings.videoControlBar !== false
+
+const shouldShowVideoControlBarInitially = (settings: Record<string, unknown>) =>
+  settings.videoControlBarInitiallyVisible !== false
+
 const shouldShowVideoControlPlay = (settings: Record<string, unknown>) =>
   settings.videoControlPlay !== false
 
 const shouldShowVideoControlSettings = (settings: Record<string, unknown>) =>
   settings.videoControlSettings !== false
+
+const shouldShowVideoControlTime = (settings: Record<string, unknown>) =>
+  settings.videoControlTime !== false
+
+const getVideoTrickProgressRampPercent = (settings: Record<string, unknown>) =>
+  getSettingNumber(settings, 'videoTrickProgressRampPercent', DEFAULT_VIDEO_TRICK_PROGRESS_RAMP_PERCENT, VIDEO_TRICK_PROGRESS_RAMP_MIN, VIDEO_TRICK_PROGRESS_RAMP_MAX)
+
+const getVideoTrickProgressPeakPercent = (settings: Record<string, unknown>) => {
+  const rampPercent = getVideoTrickProgressRampPercent(settings)
+  const rawPeak = getSettingNumber(settings, 'videoTrickProgressPeakPercent', DEFAULT_VIDEO_TRICK_PROGRESS_PEAK_PERCENT, VIDEO_TRICK_PROGRESS_PEAK_MIN, VIDEO_TRICK_PROGRESS_PEAK_MAX)
+  return Math.min(VIDEO_TRICK_PROGRESS_PEAK_MAX, Math.max(rawPeak, rampPercent + 5))
+}
+
+const getVideoTrickProgressRatio = (settings: Record<string, unknown>, realRatio: number) => {
+  const ratio = Math.min(1, Math.max(0, Number.isFinite(realRatio) ? realRatio : 0))
+  if (settings.videoTrickProgressEnabled !== true) return ratio
+
+  const rampRatio = Math.min(0.95, Math.max(0.05, getVideoTrickProgressRampPercent(settings) / 100))
+  const peakRatio = Math.min(0.98, Math.max(rampRatio + 0.05, getVideoTrickProgressPeakPercent(settings) / 100))
+  if (ratio <= rampRatio) return (ratio / rampRatio) * peakRatio
+  return peakRatio + ((ratio - rampRatio) / (1 - rampRatio)) * (1 - peakRatio)
+}
 
 const getVideoSoundNoticeText = (settings: Record<string, unknown>) => {
   if (Object.prototype.hasOwnProperty.call(settings, 'videoSoundNoticeText')) {
@@ -22854,6 +22892,7 @@ const VideoSettingsElementPreview: React.FC<{
   const showControlVolume = settings.videoControlVolume !== false
   const showControlSpeed = settings.videoControlSpeed !== false
   const showControlSettings = shouldShowVideoControlSettings(settings)
+  const showControlTime = shouldShowVideoControlTime(settings)
   const controlPanelRadius = `${getVideoControlPanelRadiusValue(settings)}px`
 
   return (
@@ -22874,6 +22913,7 @@ const VideoSettingsElementPreview: React.FC<{
         <span className={styles.videoElementBarSample}>
           {showControlPlay && <span className={styles.videoElementBarPlay}><Play size={11} fill="currentColor" /></span>}
           <i />
+          {showControlTime && <em>0:12 / -2:18</em>}
           {showControlVolume && <span className={styles.videoElementBarVolume}><Volume2 size={12} /></span>}
           {showControlSpeed && (
             <span className={styles.videoElementBarSpeed}>
@@ -22911,9 +22951,10 @@ const VideoPlayerSettingsControls: React.FC<{
   const showCustomControls = controlsMode === 'clean'
   const showPlaybackSections = sections === 'all' || sections === 'playback'
   const showChromeSections = sections === 'all' || sections === 'chrome'
-  const showCustomControlBar = settings.videoControlBar === true
+  const showCustomControlBar = shouldShowVideoControlBar(settings)
   const playShape = getVideoPlayShape(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
+  const trickProgressEnabled = settings.videoTrickProgressEnabled === true
   const [metadataDuration, setMetadataDuration] = useState(0)
   const metadataSource = mediaUrl || getSettingString(settings, 'mediaUrl')
   const metadataPreviewEnabled = settings.videoPreviewEnabled !== false
@@ -23147,7 +23188,7 @@ const VideoPlayerSettingsControls: React.FC<{
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
-                  checked={settings.videoControlBarInitiallyVisible === true}
+                  checked={shouldShowVideoControlBarInitially(settings)}
                   disabled={!showCustomControlBar}
                   onChange={(event) => {
                     onPatchSettings({ videoControlBarInitiallyVisible: event.target.checked })
@@ -23209,6 +23250,61 @@ const VideoPlayerSettingsControls: React.FC<{
                 <span>Configuración</span>
               </label>
             </div>
+            <div className={styles.twoColumn}>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={shouldShowVideoControlTime(settings)}
+                  disabled={!showCustomControlBar}
+                  onChange={(event) => {
+                    onPatchSettings({ videoControlTime: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Marcador de tiempo</span>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={trickProgressEnabled}
+                  disabled={!showCustomControlBar}
+                  onChange={(event) => {
+                    onPatchSettings({ videoTrickProgressEnabled: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Reproductor truqueado</span>
+              </label>
+            </div>
+            {trickProgressEnabled && (
+              <div className={styles.videoTrickProgressBox}>
+                <div className={styles.videoTrickProgressHeader}>
+                  <span>Avance visual</span>
+                  <strong>{getVideoTrickProgressRampPercent(settings)}% real a {getVideoTrickProgressPeakPercent(settings)}% visible</strong>
+                </div>
+                <p>
+                  La barra corre rápido al inicio y desde ese punto se frena para volver al progreso natural.
+                </p>
+                <VideoDimensionSliderField
+                  label="Volver a normal en"
+                  value={getVideoTrickProgressRampPercent(settings)}
+                  min={VIDEO_TRICK_PROGRESS_RAMP_MIN}
+                  max={VIDEO_TRICK_PROGRESS_RAMP_MAX}
+                  unit="%"
+                  onChange={(value) => onPatchSettings({ videoTrickProgressRampPercent: value })}
+                  onCommit={onSave}
+                />
+                <VideoDimensionSliderField
+                  label="Marcador aparente"
+                  value={getVideoTrickProgressPeakPercent(settings)}
+                  min={VIDEO_TRICK_PROGRESS_PEAK_MIN}
+                  max={VIDEO_TRICK_PROGRESS_PEAK_MAX}
+                  unit="%"
+                  onChange={(value) => onPatchSettings({ videoTrickProgressPeakPercent: value })}
+                  onCommit={onSave}
+                />
+              </div>
+            )}
             <VideoDimensionSliderField
               label="Radio del panel"
               value={getVideoControlPanelRadiusValue(settings)}
@@ -27688,17 +27784,20 @@ const VideoPlayerPreview: React.FC<{
   const [isPreviewLooping, setIsPreviewLooping] = useState(false)
   const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
   const [progress, setProgress] = useState(0)
+  const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0)
+  const [durationSeconds, setDurationSeconds] = useState(0)
   const [detectedOrientation, setDetectedOrientation] = useState<Exclude<VideoOrientation, 'auto'> | ''>('')
-  const showControlBarInitially = settings.videoControlBarInitiallyVisible === true
+  const showControlBarInitially = shouldShowVideoControlBarInitially(settings)
   const [controlsVisible, setControlsVisible] = useState(showControlBarInitially)
   const controlsMode = getVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native' && !editorPlaybackDisabled
   const showOverlay = controlsMode === 'clean'
-  const showCustomControlBar = showOverlay && settings.videoControlBar === true
+  const showCustomControlBar = showOverlay && shouldShowVideoControlBar(settings)
   const showCustomPlayControl = shouldShowVideoControlPlay(settings)
   const showCustomVolume = settings.videoControlVolume !== false
   const showCustomSpeed = settings.videoControlSpeed !== false
   const showCustomSettings = shouldShowVideoControlSettings(settings)
+  const showCustomTime = shouldShowVideoControlTime(settings)
   const soundHint = settings.videoSoundHint !== false
   const soundNoticeText = getVideoSoundNoticeText(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
@@ -27761,10 +27860,21 @@ const VideoPlayerPreview: React.FC<{
   }, [])
   const getVisibleVideoProgressRatio = useCallback(() => {
     if (previewLoopRef.current && !hasStartedPlaybackRef.current) return 0
-    return getVideoProgressRatio()
-  }, [getVideoProgressRatio])
+    return getVideoTrickProgressRatio(settings, getVideoProgressRatio())
+  }, [getVideoProgressRatio, settings])
   const syncProgressFromVideo = useCallback(() => {
+    const video = videoRef.current
+    if (!video) {
+      setProgress(0)
+      setCurrentTimeSeconds(0)
+      setDurationSeconds(0)
+      return
+    }
+    const duration = Number.isFinite(video.duration) ? video.duration : 0
+    const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0
     setProgress(getVisibleVideoProgressRatio())
+    setCurrentTimeSeconds(previewLoopRef.current && !hasStartedPlaybackRef.current ? 0 : currentTime)
+    setDurationSeconds(duration > 0 ? duration : 0)
   }, [getVisibleVideoProgressRatio])
   const hideControlsAfter = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
     clearControlsHideTimer()
@@ -28197,7 +28307,9 @@ const VideoPlayerPreview: React.FC<{
     markUserPlaybackStarted()
     const nextProgress = Math.max(0, Math.min(1, ratio))
     video.currentTime = nextProgress * duration
-    setProgress(nextProgress)
+    setProgress(getVideoTrickProgressRatio(settings, nextProgress))
+    setCurrentTimeSeconds(video.currentTime)
+    setDurationSeconds(duration)
     syncVideoState()
     return true
   }
@@ -28254,6 +28366,12 @@ const VideoPlayerPreview: React.FC<{
     showControlsTemporarily()
     seekToProgressRatio(nextTime / duration)
   }
+  const displayedTimeSeconds = durationSeconds > 0
+    ? Math.min(durationSeconds, Math.max(0, progress * durationSeconds))
+    : currentTimeSeconds
+  const remainingTimeSeconds = Math.max(0, durationSeconds - displayedTimeSeconds)
+  const elapsedTimeLabel = formatSitesTimecode(displayedTimeSeconds)
+  const remainingTimeLabel = `-${formatSitesTimecode(remainingTimeSeconds)}`
 
   return (
     <div
@@ -28351,6 +28469,12 @@ const VideoPlayerPreview: React.FC<{
           >
             <span style={{ width: formatVideoProgressPercent(progress) }} />
           </div>
+          {showCustomTime && (
+            <span className="rstk-video-timecode" aria-label={`Tiempo del video ${elapsedTimeLabel}, queda ${formatSitesTimecode(remainingTimeSeconds)}`}>
+              <span>{elapsedTimeLabel}</span>
+              <span>{remainingTimeLabel}</span>
+            </span>
+          )}
           {showCustomVolume && (
             <button type="button" className="rstk-video-control-button" tabIndex={controlBarTabIndex} onClick={handleMuteToggle} aria-label={isMuted ? 'Activar sonido' : 'Silenciar video'}>
               {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}

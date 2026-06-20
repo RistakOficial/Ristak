@@ -587,19 +587,20 @@
 .rstkCanvas .rstk-video-speed-control {
   flex: 0 0 auto;
   position: relative;
-  min-width: 66px;
+  min-width: 88px;
   height: 30px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  gap: 6px;
   border-radius: 999px;
   background: rgba(255,255,255,.12);
   color: inherit;
-  padding: 0 20px 0 8px;
+  padding: 0 23px 0 10px;
 }
 .rstkCanvas .rstk-video-speed-no-settings {
-  min-width: 48px;
-  padding-left: 10px;
+  min-width: 64px;
+  padding-left: 12px;
 }
 .rstkCanvas .rstk-video-settings-icon {
   display: grid;
@@ -626,7 +627,7 @@
 .rstkCanvas .rstk-video-speed-control select {
   -webkit-appearance: none;
   appearance: none;
-  width: 34px;
+  width: 42px;
   min-width: 0;
   height: 100%;
   margin: 0;
@@ -645,6 +646,27 @@
   padding: 0;
 }
 .rstkCanvas .rstk-video-speed-control option { color: #111827; }
+.rstkCanvas .rstk-video-timecode {
+  flex: 0 0 auto;
+  min-width: 98px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.1);
+  color: inherit;
+  padding: 0 10px;
+  font-size: .72rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+.rstkCanvas .rstk-video-timecode span + span {
+  opacity: .68;
+}
 @supports (width: 1cqw) {
   .rstkCanvas .rstk-video-play-dot {
     width: min(var(--rstk-video-play-size, 160px), max(72px, min(15cqw, calc(100% - 32px))));
@@ -674,9 +696,17 @@
   }
 
   .rstkCanvas .rstk-video-speed-control {
-    min-width: max(54px, min(66px, 11cqw));
+    min-width: max(70px, min(88px, 14cqw));
     height: max(24px, min(30px, 5cqw));
-    padding-inline: max(6px, min(8px, 1.5cqw)) max(18px, min(20px, 3cqw));
+    padding-inline: max(8px, min(10px, 1.6cqw)) max(20px, min(23px, 3.2cqw));
+  }
+
+  .rstkCanvas .rstk-video-timecode {
+    min-width: max(76px, min(98px, 16cqw));
+    height: max(24px, min(30px, 5cqw));
+    gap: max(3px, min(5px, 1cqw));
+    padding-inline: max(7px, min(10px, 1.7cqw));
+    font-size: max(.62rem, min(.72rem, 1.4cqw));
   }
 
   .rstkCanvas .rstk-video-sound {

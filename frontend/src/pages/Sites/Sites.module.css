@@ -19178,6 +19178,17 @@
   opacity: 0.72;
 }
 
+.videoElementBarSample em {
+  flex: 0 0 auto;
+  color: currentColor;
+  font-size: 0.62rem;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  opacity: 0.82;
+  white-space: nowrap;
+}
+
 .videoElementBarVolume {
   display: grid;
   place-items: center;
@@ -19190,12 +19201,14 @@
 .videoElementBarSpeed {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: 5px;
+  min-width: 54px;
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, currentColor 14%, transparent);
   font-size: 0.66rem;
   font-weight: 650;
-  padding: 3px 7px;
+  padding: 4px 8px;
 }
 
 .videoElementBarSpeed small {
@@ -19382,6 +19395,42 @@
   box-shadow: 0 0 0 1px var(--design-control-border), var(--shadow-xs, none);
   cursor: ew-resize;
   pointer-events: auto;
+}
+
+.videoTrickProgressBox {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  padding: 10px;
+}
+
+.videoTrickProgressHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.videoTrickProgressHeader span {
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.videoTrickProgressHeader strong {
+  color: var(--text-mute);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-align: right;
+}
+
+.videoTrickProgressBox p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.76rem;
+  line-height: 1.35;
 }
 
 /* Sites editor responsive density: keep the top toolbar usable on short/small monitors. */
