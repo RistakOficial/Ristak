@@ -18448,6 +18448,13 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          delete video.dataset.rstkVideoPreviewing;
 	          host.classList.remove('rstk-video-is-previewing');
 	        };
+	        const restartFromBeginningForUserPlayback = () => {
+	          if (hasUserPlayed) return;
+	          const currentTime = Number(video.currentTime || 0);
+	          if (!Number.isFinite(currentTime) || currentTime <= 0.01) return;
+	          video.currentTime = 0;
+	          setProgressRatio(0);
+	        };
 	        const startPreviewLoop = () => {
 	          if (!previewEnabled || hasUserPlayed) return;
 	          const range = normalizePreviewRange(video);
@@ -18513,6 +18520,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        const togglePlayback = unmute => {
 	          const wasPreviewing = previewing;
 	          if (wasPreviewing) stopPreviewLoop();
+	          restartFromBeginningForUserPlayback();
 	          hasUserPlayed = true;
 	          hideSoundNotice();
 	          showControlsTemporarily();

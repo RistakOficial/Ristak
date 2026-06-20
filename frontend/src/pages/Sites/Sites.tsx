@@ -26378,6 +26378,14 @@ const VideoPlayerPreview: React.FC<{
     setHasStartedPlayback(true)
   }, [])
 
+  const resetInitialPlaybackToStart = useCallback(() => {
+    const video = videoRef.current
+    if (!video || hasStartedPlaybackRef.current) return
+    if (video.currentTime <= 0.01) return
+    video.currentTime = 0
+    setProgress(0)
+  }, [])
+
   const startPreviewLoop = useCallback(() => {
     const video = videoRef.current
     if (!video || !previewLoopEnabled || hasStartedPlaybackRef.current) return
@@ -26535,6 +26543,7 @@ const VideoPlayerPreview: React.FC<{
       showControlsTemporarily()
       return
     }
+    resetInitialPlaybackToStart()
     markUserPlaybackStarted()
     showControlsTemporarily()
     if (unmute) {

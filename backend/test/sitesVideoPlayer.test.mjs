@@ -252,6 +252,9 @@ test('video player renders configurable first-seconds preview loop settings', as
   assert.match(html, /const previewMaxSpan = 40/)
   assert.match(html, /rstkVideoPreviewing === 'true'/)
   assert.match(html, /rstkVideoPreviewing/)
+  assert.match(html, /const restartFromBeginningForUserPlayback = \(\) =>/)
+  assert.match(html, /video\.currentTime = 0/)
+  assert.match(html, /restartFromBeginningForUserPlayback\(\);\s+hasUserPlayed = true/)
   assert.doesNotMatch(html, /rstk-video-is-playing:hover \.rstk-video-play-dot/)
 
   const autoplayHtml = await renderPublicSiteHtml(baseSite({
