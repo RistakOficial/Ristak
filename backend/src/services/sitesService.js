@@ -10923,6 +10923,14 @@ function buildVideoActionsRuntimeScript(blocks = []) {
           target.removeAttribute('aria-hidden');
         }
       };
+      const hasRealPlaybackStarted = video => (
+        video && (video.autoplay || video.dataset.rstkVideoRealPlayed === 'true')
+      );
+      const markRealPlayback = video => {
+        if (!video || video.dataset.rstkVideoPreviewing === 'true') return false;
+        video.dataset.rstkVideoRealPlayed = 'true';
+        return true;
+      };
       const applyBeforeState = (action, targets) => {
         if (action.before === 'hidden') targets.forEach(target => setTargetHidden(target, true));
         if (action.before === 'visible') targets.forEach(target => setTargetHidden(target, false));
@@ -10949,9 +10957,10 @@ function buildVideoActionsRuntimeScript(blocks = []) {
         window.addEventListener('ristak:submitted', release, { once: true });
       };
       const syncState = state => {
-        const time = Number(state.video.currentTime || 0);
+        const realPlaybackStarted = hasRealPlaybackStarted(state.video);
+        const time = realPlaybackStarted ? Number(state.video.currentTime || 0) : 0;
         state.actions.forEach(action => {
-          const reached = time >= Number(action.timeSeconds || 0);
+          const reached = realPlaybackStarted && time >= Number(action.timeSeconds || 0);
           if (action.action === 'show_popup') {
             if (reached) {
               if (!state.triggered.has(action.id) && typeof window.ristakOpenSitePopup === 'function') {
@@ -11001,7 +11010,12 @@ function buildVideoActionsRuntimeScript(blocks = []) {
         if (!actions.length) return;
         const state = { video, actions, triggered: new Set(), openedPopups: new Set(), blockedForms: new Set(), completedForms: new Set() };
         const sync = () => syncState(state);
+        const handlePlay = () => {
+          markRealPlayback(video);
+          sync();
+        };
         ['loadedmetadata', 'timeupdate', 'seeked', 'play', 'pause'].forEach(eventName => video.addEventListener(eventName, sync, { passive: true }));
+        video.addEventListener('play', handlePlay, { passive: true });
         sync();
         attached.add(video);
       };
