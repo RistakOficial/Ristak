@@ -114,7 +114,7 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerType: 'text',
     headerText: 'Cita agendada',
     bodyText: 'Hola {{1}}, tu cita quedó agendada para {{2}}. Te enviaremos recordatorios relacionados con esta cita.',
-    footerText: 'Mensaje automático de Ristak',
+    footerText: 'Esto es un mensaje automático.',
     buttons: [],
     variableExamples: {
       '{{cita.fecha_hora}}': 'viernes, 19 de junio de 2026 9:00',
@@ -148,7 +148,7 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerType: 'text',
     headerText: 'Recordatorio',
     bodyText: 'Hola {{1}}, te recordamos tu cita de mañana {{2}} a las {{3}}. Responde si necesitas hacer algún cambio.',
-    footerText: 'Mensaje automático de Ristak',
+    footerText: 'Esto es un mensaje automático.',
     buttons: [],
     variableExamples: {
       '{{contact.first_name}}': 'María',
@@ -189,7 +189,7 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerType: 'none',
     headerText: '',
     bodyText: 'Hola {{1}}, tu cita es mañana a las {{2}}. Responde este mensaje para confirmar tu asistencia.',
-    footerText: 'Mensaje automático de Ristak',
+    footerText: 'Esto es un mensaje automático.',
     buttons: [],
     variableExamples: {
       '{{contact.first_name}}': 'María',
@@ -279,7 +279,7 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
       headerType: 'text',
       headerText: 'Pago pendiente',
       bodyText: 'Hola {{1}}, tienes pendiente el pago de {{2}} por {{3}}. Toca el botón para pagar de forma segura.',
-      footerText: 'Mensaje automático de Ristak',
+      footerText: 'Esto es un mensaje automático.',
       buttons: [
         {
           type: 'website',
@@ -331,7 +331,7 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
       headerType: 'text',
       headerText: 'Pago confirmado',
       bodyText: 'Hola {{1}}, recibimos tu pago de {{2}} por {{3}}. Gracias. Puedes descargar tu comprobante desde el botón.',
-      footerText: 'Mensaje automático de Ristak',
+      footerText: 'Esto es un mensaje automático.',
       buttons: [
         {
           type: 'website',
@@ -384,7 +384,7 @@ function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
       headerType: 'text',
       headerText: 'Cobro fallido',
       bodyText: 'Hola {{1}}, no pudimos procesar tu pago de {{2}} por {{3}}. Puedes intentar nuevamente desde el botón.',
-      footerText: 'Mensaje automático de Ristak',
+      footerText: 'Esto es un mensaje automático.',
       buttons: [
         {
           type: 'website',

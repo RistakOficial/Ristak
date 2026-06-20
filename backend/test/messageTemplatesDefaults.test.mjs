@@ -153,7 +153,7 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       assert.equal(scheduledTemplate.components[0].text, 'Cita agendada')
       assert.equal(scheduledTemplate.components[1].text, 'Hola {{1}}, tu cita quedó agendada para {{2}}. Te enviaremos recordatorios relacionados con esta cita.')
       assert.equal(scheduledTemplate.components[1].example.body_text[0][1], 'viernes, 19 de junio de 2026 9:00')
-      assert.equal(scheduledTemplate.components[2].text, 'Mensaje automático de Ristak')
+      assert.equal(scheduledTemplate.components[2].text, 'Esto es un mensaje automático.')
 
       const bundle = await getMessageTemplateBundle()
       const folder = bundle.folders.find((item) => item.id === DEFAULT_FOLDER_ID)
@@ -164,7 +164,7 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       assert.ok(localTemplate)
       assert.equal(localTemplate.folderId, DEFAULT_FOLDER_ID)
       assert.equal(localTemplate.ycloudStatus, 'PENDING')
-      assert.equal(localTemplate.footerText, 'Mensaje automático de Ristak')
+      assert.equal(localTemplate.footerText, 'Esto es un mensaje automático.')
       assert.equal(localTemplate.variableBindings.bodyText['1'].variableKey, 'contact.first_name')
       assert.equal(localTemplate.variableBindings.bodyText['2'].variableKey, 'cita.fecha')
       assert.equal(localTemplate.variableBindings.bodyText['3'].variableKey, 'cita.hora')
@@ -559,7 +559,7 @@ test('reintenta una plantilla default rechazada con nombre técnico nuevo sin du
       )
       assert.equal(requests[1].body.name, retryName)
       assert.equal(requests[1].body.components[0].text, 'Hola {{1}}, tu cita es mañana a las {{2}}. Responde este mensaje para confirmar tu asistencia.')
-      assert.equal(requests[1].body.components[1].text, 'Mensaje automático de Ristak')
+      assert.equal(requests[1].body.components[1].text, 'Esto es un mensaje automático.')
 
       const localRows = await db.all(
         'SELECT name, ycloud_template_name, ycloud_status, ycloud_template_id FROM whatsapp_message_templates WHERE name = ?',
