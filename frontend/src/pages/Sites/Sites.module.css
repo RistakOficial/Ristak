@@ -7335,13 +7335,35 @@
 
 .sitesAnalyticsFilters {
   display: grid;
-  grid-template-columns: minmax(180px, 0.72fr) minmax(220px, 1fr) minmax(240px, 1.2fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.sitesAnalyticsTypePicker {
+  display: grid;
+  max-width: min(100%, 520px);
+  gap: 6px;
+}
+
+.sitesAnalyticsTypePicker > span {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.sitesAnalyticsTypeToggle {
+  min-width: 0;
+}
+
+.sitesAnalyticsFilterControls {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr);
   gap: 12px;
   align-items: end;
 }
 
-.sitesAnalyticsFiltersCompact {
-  grid-template-columns: minmax(180px, 0.72fr) minmax(240px, 1fr);
+.sitesAnalyticsFilterControlsVideo {
+  grid-template-columns: minmax(220px, 0.9fr) minmax(260px, 1.25fr);
 }
 
 .sitesAnalyticsVideoSelect {
@@ -19879,6 +19901,7 @@
 
 @media (max-width: 1100px) {
   .sitesAnalyticsFilters,
+  .sitesAnalyticsFilterControls,
   .sitesAnalyticsGrid,
   .videoAggregateDashboard,
   .videoEngagementHero,

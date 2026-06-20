@@ -207,6 +207,11 @@ type LibraryFolderDefinition = SiteLibraryFolder & {
 const sitesAnalyticsSiteTypes: SitesAnalyticsSiteType[] = ['sites', 'forms', 'videos']
 const isSitesAnalyticsSiteType = (value?: string | null): value is SitesAnalyticsSiteType =>
   sitesAnalyticsSiteTypes.includes(value as SitesAnalyticsSiteType)
+const sitesAnalyticsTypeTabs = [
+  { value: 'sites', label: 'Sitios', icon: <LayoutTemplate size={14} /> },
+  { value: 'forms', label: 'Formularios', icon: <FormInput size={14} /> },
+  { value: 'videos', label: 'Videos', icon: <Video size={14} /> }
+]
 const SITE_LIBRARY_ROOT_ID = '__root__'
 const SITE_FORMS_FOLDER_ID = 'system-site-forms'
 const HTML_FORMS_FOLDER_ID = 'system-html-forms'
@@ -34429,47 +34434,55 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         </div>
       </div>
 
-      <div className={`${styles.sitesAnalyticsFilters} ${isVideosView ? '' : styles.sitesAnalyticsFiltersCompact}`}>
-        <label className={styles.field}>
+      <div className={styles.sitesAnalyticsFilters}>
+        <div className={styles.sitesAnalyticsTypePicker}>
           <span>Tipo</span>
-          <CustomSelect value={selectedSiteType} onChange={(event) => onSiteTypeChange(event.target.value as SitesAnalyticsSiteType)} portal>
-            <option value="sites">Sitios</option>
-            <option value="forms">Formularios</option>
-            <option value="videos">Videos</option>
-          </CustomSelect>
-        </label>
-        <label className={styles.field}>
-          <span>{siteFilterLabel}</span>
-          <CustomSelect value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)} disabled={sites.length === 0} portal>
-            <option value="">{siteFilterEmptyLabel}</option>
-            {sites.map(site => (
-              <option key={site.id} value={site.id}>{site.name}</option>
-            ))}
-          </CustomSelect>
-        </label>
-        {isVideosView && (
+          <TabList
+            tabs={sitesAnalyticsTypeTabs}
+            activeTab={selectedSiteType}
+            onTabChange={(value) => {
+              if (isSitesAnalyticsSiteType(value)) onSiteTypeChange(value)
+            }}
+            variant="compact"
+            fullWidth
+            className={styles.sitesAnalyticsTypeToggle}
+          />
+        </div>
+
+        <div className={`${styles.sitesAnalyticsFilterControls} ${isVideosView ? styles.sitesAnalyticsFilterControlsVideo : ''}`}>
           <label className={styles.field}>
-            <span>Video</span>
-            <CustomSelect
-              value={selectedVideoId}
-              onChange={(event) => onVideoChange(event.target.value)}
-              disabled={videos.length === 0}
-              className={styles.sitesAnalyticsVideoSelect}
-              portal
-            >
-              {videos.length === 0 ? (
-                <option value="">Sin videos</option>
-              ) : (
-                <>
-                  <option value="">Todos los videos</option>
-                  {videos.map(asset => (
-                    <option key={asset.id} value={asset.id}>{getSiteAnalyticsVideoLabel(asset, sitesById)}</option>
-                  ))}
-                </>
-              )}
+            <span>{siteFilterLabel}</span>
+            <CustomSelect value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)} disabled={sites.length === 0} portal>
+              <option value="">{siteFilterEmptyLabel}</option>
+              {sites.map(site => (
+                <option key={site.id} value={site.id}>{site.name}</option>
+              ))}
             </CustomSelect>
           </label>
-        )}
+          {isVideosView && (
+            <label className={styles.field}>
+              <span>Video</span>
+              <CustomSelect
+                value={selectedVideoId}
+                onChange={(event) => onVideoChange(event.target.value)}
+                disabled={videos.length === 0}
+                className={styles.sitesAnalyticsVideoSelect}
+                portal
+              >
+                {videos.length === 0 ? (
+                  <option value="">Sin videos</option>
+                ) : (
+                  <>
+                    <option value="">Todos los videos</option>
+                    {videos.map(asset => (
+                      <option key={asset.id} value={asset.id}>{getSiteAnalyticsVideoLabel(asset, sitesById)}</option>
+                    ))}
+                  </>
+                )}
+              </CustomSelect>
+            </label>
+          )}
+        </div>
       </div>
 
       <div className={styles.sitesAnalyticsKpis}>
