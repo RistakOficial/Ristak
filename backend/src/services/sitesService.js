@@ -10397,6 +10397,210 @@ function buildVideoTrackingAttributes({ enabled = false, block = {}, asset = nul
   })
 }
 
+const VIDEO_ACTION_KINDS = new Set(['show', 'hide', 'show_popup', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
+const VIDEO_ACTION_BEFORE_STATES = new Set(['hidden', 'visible', 'unchanged'])
+
+function normalizeVideoActionTime(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 0
+  return Math.max(0, Math.min(86399, Math.round(number)))
+}
+
+function getRecommendedVideoActionBefore(action) {
+  if (action === 'show' || action === 'show_popup') return 'hidden'
+  if (action === 'hide') return 'visible'
+  return 'unchanged'
+}
+
+function normalizeVideoActionRule(value, index = 0) {
+  if (!value || typeof value !== 'object') return null
+  const source = value
+  const action = VIDEO_ACTION_KINDS.has(cleanString(source.action)) ? cleanString(source.action) : 'show'
+  const targetBlockId = cleanString(source.targetBlockId || source.target_block_id)
+  if (!targetBlockId && action !== 'show_popup') return null
+  const before = VIDEO_ACTION_BEFORE_STATES.has(cleanString(source.before)) ? cleanString(source.before) : getRecommendedVideoActionBefore(action)
+  return {
+    id: cleanString(source.id) || `video-action-${index + 1}`,
+    timeSeconds: normalizeVideoActionTime(source.timeSeconds ?? source.time_seconds ?? source.time),
+    targetBlockId: action === 'show_popup' ? (targetBlockId || POPUP_SURFACE_ID) : targetBlockId,
+    action,
+    before,
+    value: cleanString(source.value)
+  }
+}
+
+function getVideoActionRulesFromSettings(settings = {}) {
+  const source = Array.isArray(settings.videoActions)
+    ? settings.videoActions
+    : Array.isArray(settings.video_actions)
+      ? settings.video_actions
+      : []
+  return source
+    .map(normalizeVideoActionRule)
+    .filter(Boolean)
+    .sort((a, b) => a.timeSeconds - b.timeSeconds)
+}
+
+function collectVideoActionTargetIds(blocks = [], ids = new Set()) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'video') {
+      getVideoActionRulesFromSettings(settings).forEach(rule => {
+        if (rule.targetBlockId && rule.targetBlockId !== POPUP_SURFACE_ID) ids.add(rule.targetBlockId)
+      })
+    }
+
+    if (Array.isArray(settings.embeddedBlocks) && settings.embeddedBlocks.length) {
+      collectVideoActionTargetIds(settings.embeddedBlocks, ids)
+    }
+  }
+  return ids
+}
+
+function collectVideoActionInitialHiddenTargetIds(blocks = [], ids = new Set()) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'video') {
+      getVideoActionRulesFromSettings(settings).forEach(rule => {
+        if (rule.action === 'show' && rule.before === 'hidden' && rule.targetBlockId && rule.targetBlockId !== POPUP_SURFACE_ID) {
+          ids.add(rule.targetBlockId)
+        }
+      })
+    }
+
+    if (Array.isArray(settings.embeddedBlocks) && settings.embeddedBlocks.length) {
+      collectVideoActionInitialHiddenTargetIds(settings.embeddedBlocks, ids)
+    }
+  }
+  return ids
+}
+
+function hasVideoActionRules(blocks = []) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'video' && getVideoActionRulesFromSettings(settings).length > 0) return true
+    if (Array.isArray(settings.embeddedBlocks) && hasVideoActionRules(settings.embeddedBlocks)) return true
+  }
+  return false
+}
+
+function renderVideoActionAttributes(block = {}, settings = {}) {
+  const rules = getVideoActionRulesFromSettings(settings)
+  if (!rules.length) return ''
+  return [
+    `data-rstk-video-action-source="${escapeHtml(block.id || '')}"`,
+    `data-rstk-video-actions="${escapeHtml(JSON.stringify(rules))}"`
+  ].join(' ')
+}
+
+function renderVideoActionTargetAttribute(block = {}, context = {}) {
+  if (!block?.id) return ''
+  const isTarget = Boolean(context.videoActionTargetIds?.has?.(block.id) || context.videoActionInitialHiddenTargetIds?.has?.(block.id))
+  if (!isTarget) return ''
+  const startsHidden = Boolean(context.videoActionInitialHiddenTargetIds?.has?.(block.id))
+  return ` data-rstk-video-action-target="${escapeHtml(block.id)}"${startsHidden ? ' data-rstk-video-action-hidden="true" aria-hidden="true"' : ''}`
+}
+
+function buildVideoActionsRuntimeScript(blocks = []) {
+  if (!hasVideoActionRules(blocks)) return ''
+
+  return `<style>[data-rstk-video-action-hidden="true"]{display:none!important}</style>
+  <script>
+    (() => {
+      if (window.ristakVideoActionsRuntimeLoaded) return;
+      window.ristakVideoActionsRuntimeLoaded = true;
+      const SOURCE_SELECTOR = 'video[data-rstk-video-actions]';
+      const POPUP_ID = ${JSON.stringify(POPUP_SURFACE_ID)};
+      const attached = new WeakSet();
+      const parseActions = video => {
+        try {
+          const parsed = JSON.parse(video.getAttribute('data-rstk-video-actions') || '[]');
+          return Array.isArray(parsed)
+            ? parsed
+              .filter(action => action && action.id && action.action && Number.isFinite(Number(action.timeSeconds)))
+              .map(action => ({ ...action, timeSeconds: Math.max(0, Number(action.timeSeconds) || 0) }))
+              .sort((a, b) => a.timeSeconds - b.timeSeconds)
+            : [];
+        } catch (_) {
+          return [];
+        }
+      };
+      const escapeSelectorValue = value => {
+        const text = String(value || '');
+        if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(text);
+        return text.replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\"');
+      };
+      const findTarget = id => {
+        const targetId = String(id || '');
+        if (!targetId) return null;
+        if (targetId === POPUP_ID) return document.querySelector('[data-rstk-site-popup]');
+        const escaped = escapeSelectorValue(targetId);
+        return document.querySelector('[data-rstk-video-action-target="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-block-id="' + escaped + '"]') ||
+          document.getElementById(targetId);
+      };
+      const setTargetHidden = (target, hidden) => {
+        if (!target) return;
+        if (hidden) {
+          target.setAttribute('data-rstk-video-action-hidden', 'true');
+          target.setAttribute('aria-hidden', 'true');
+        } else {
+          target.removeAttribute('data-rstk-video-action-hidden');
+          target.removeAttribute('aria-hidden');
+        }
+      };
+      const applyBeforeState = (action, target) => {
+        if (action.before === 'hidden') setTargetHidden(target, true);
+        if (action.before === 'visible') setTargetHidden(target, false);
+      };
+      const syncState = state => {
+        const time = Number(state.video.currentTime || 0);
+        state.actions.forEach(action => {
+          const reached = time >= Number(action.timeSeconds || 0);
+          if (action.action === 'show_popup') {
+            if (reached) {
+              if (!state.triggered.has(action.id) && typeof window.ristakOpenSitePopup === 'function') {
+                window.ristakOpenSitePopup();
+                state.openedPopups.add(action.id);
+              }
+              state.triggered.add(action.id);
+            } else {
+              state.triggered.delete(action.id);
+              if (state.openedPopups.has(action.id) && action.before === 'hidden' && typeof window.ristakCloseSitePopup === 'function') {
+                window.ristakCloseSitePopup();
+                state.openedPopups.delete(action.id);
+              }
+            }
+            return;
+          }
+          const target = findTarget(action.targetBlockId);
+          if (!target) return;
+          if (!reached) {
+            applyBeforeState(action, target);
+            return;
+          }
+          if (action.action === 'show') setTargetHidden(target, false);
+          if (action.action === 'hide') setTargetHidden(target, true);
+        });
+      };
+      const attach = video => {
+        if (!video || attached.has(video)) return;
+        const actions = parseActions(video);
+        if (!actions.length) return;
+        const state = { video, actions, triggered: new Set(), openedPopups: new Set() };
+        const sync = () => syncState(state);
+        ['loadedmetadata', 'timeupdate', 'seeked', 'play', 'pause'].forEach(eventName => video.addEventListener(eventName, sync, { passive: true }));
+        sync();
+        attached.add(video);
+      };
+      const attachAll = () => document.querySelectorAll(SOURCE_SELECTOR).forEach(attach);
+      attachAll();
+      const observer = new MutationObserver(attachAll);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    })();
+  </script>`
+}
+
 function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}) {
   const playbackId = tracking.enabled ? (tracking.playbackId || crypto.randomUUID()) : ''
   const stream = tracking.stream || getBunnyStreamMetadataFromUrl(embedUrl)
@@ -13041,11 +13245,14 @@ function renderBlockBackgroundVideo(block) {
   return `<video class="rstk-block-bg-video" src="${escapeHtml(src)}" autoplay muted loop playsinline aria-hidden="true"></video>`
 }
 
-function wrapRenderedBlock(block, html) {
+function wrapRenderedBlock(block, html, context = {}) {
   const style = renderBlockStyleVars(block)
   const className = renderBlockStyleClassName(block)
   const backgroundVideo = renderBlockBackgroundVideo(block)
-  return style || backgroundVideo ? `<div class="${escapeHtml(className)}"${style}>${backgroundVideo}${html}</div>` : html
+  const videoActionTargetAttr = renderVideoActionTargetAttribute(block, context)
+  return style || backgroundVideo || videoActionTargetAttr
+    ? `<div class="${escapeHtml(className)}"${videoActionTargetAttr}${style}>${backgroundVideo}${html}</div>`
+    : html
 }
 
 function renderPublicBlock(block, context = {}) {
@@ -13054,7 +13261,7 @@ function renderPublicBlock(block, context = {}) {
   const html = FIELD_BLOCK_TYPES.has(block.blockType)
     ? renderFieldBlock(block, false, blockPageId, context)
     : renderContentBlock(block, context)
-  const rendered = wrapRenderedBlock(block, html)
+  const rendered = wrapRenderedBlock(block, html, context)
 
   if (context.isInteractive) {
     return `<div class="rstk-interactive-page-content" data-interactive-page-content="${escapeHtml(blockPageId)}">${rendered}</div>`
@@ -13086,6 +13293,7 @@ function renderLandingSectionLane(lane, context = {}) {
   const settings = section.settings || {}
   const style = renderBlockStyleVars(section)
   const className = `${renderBlockStyleClassName(section)} rstk-section-lane`
+  const videoActionTargetAttr = renderVideoActionTargetAttribute(section, context)
   const hasHeading = cleanString(section.content) || cleanString(settings.subtitle)
   const heading = hasHeading
     ? `
@@ -13097,7 +13305,7 @@ function renderLandingSectionLane(lane, context = {}) {
     : ''
 
   return `
-    <section class="${escapeHtml(className)}"${style}>
+    <section class="${escapeHtml(className)}"${videoActionTargetAttr}${style}>
       ${renderBlockBackgroundVideo(section)}
       <div class="rstk-section-inner">
         ${heading}
@@ -13225,12 +13433,14 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     provider: options.tracking?.provider || 'html5_video',
     playbackId: trackingEnabled ? (options.tracking?.playbackId || crypto.randomUUID()) : ''
   })
+  const videoActionAttrs = renderVideoActionAttributes(block, settings)
   const videoSourceAttrs = [
     hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-preview="${previewLoopEnabled ? 'true' : 'false'}"`,
     `data-rstk-video-preview-start="${escapeHtml(String(previewRange.start))}"`,
     `data-rstk-video-preview-end="${escapeHtml(String(previewRange.end))}"`,
+    videoActionAttrs,
     trackingAttrs
   ].filter(Boolean).join(' ')
 
@@ -13428,10 +13638,10 @@ function renderContentBlock(block, context = {}) {
     const submitButtonContent = renderSubmitButtonContent(context.submitText, context.submitSubtitle)
     const renderEmbeddedItem = (item, pageId) => {
       if (FIELD_BLOCK_TYPES.has(item.blockType)) {
-        return wrapRenderedBlock(item, renderFieldBlock(item, false, pageId || getBlockPageId(item, embeddedPages), context))
+        return wrapRenderedBlock(item, renderFieldBlock(item, false, pageId || getBlockPageId(item, embeddedPages), context), context)
       }
 
-      return wrapRenderedBlock(item, renderContentBlock(item, context))
+      return wrapRenderedBlock(item, renderContentBlock(item, context), context)
     }
     const renderEmbeddedItems = () => {
       if (!embeddedItems.length) return '<p class="rstk-help">Agrega campos o contenido al formulario.</p>'
@@ -14304,6 +14514,7 @@ export async function getSitesFontFile(urlValue) {
 const RSTK_BASE_CSS = `
   *,*::before,*::after{box-sizing:border-box}
   [hidden]{display:none !important}
+  [data-rstk-video-action-hidden="true"]{display:none!important}
   html{-webkit-text-size-adjust:100%}
   body{
     margin:0;min-height:100vh;
@@ -15918,12 +16129,14 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	  const phoneLocale = await getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
   const popupBlocks = getPopupBlocks(site)
   const videoLookupBlocks = [...blocks, ...popupBlocks]
+  const videoActionTargetIds = collectVideoActionTargetIds(videoLookupBlocks)
+  const videoActionInitialHiddenTargetIds = collectVideoActionInitialHiddenTargetIds(videoLookupBlocks)
   const noTrack = !trackingEnabled || preview
   const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
     buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
     buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: true })
   ])
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
@@ -15955,6 +16168,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     })
     : ''
   const videoTrackingScript = !noTrack ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
+  const videoActionsScript = buildVideoActionsRuntimeScript(videoLookupBlocks)
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
   const paramPreservationScript = preview ? '' : buildParamPreservationScript()
@@ -15998,6 +16212,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     </main>
   </div>
   ${popupHtml}
+  ${videoActionsScript}
   ${paramPreservationScript}
   ${siteNavHtml ? `<script>${SITE_NAV_SCRIPT}</script>` : ''}
   <script>

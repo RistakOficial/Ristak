@@ -1705,6 +1705,39 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   -webkit-text-fill-color: transparent;
 }
 
+.rstkCanvas .rstkVideoActionHover {
+  outline: 2px solid var(--rstk-accent);
+  outline-offset: 4px;
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--rstk-accent) 18%, transparent);
+}
+
+.rstkCanvas .rstkVideoActionGhost {
+  opacity: 0.48;
+}
+
+.rstkCanvas .rstkVideoActionGhost.rstkSelActive {
+  opacity: 0.72;
+}
+
+.rstkCanvas .rstkVideoActionNote {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 92;
+  max-width: min(280px, calc(100% - 16px));
+  border: 1px solid color-mix(in srgb, var(--rstk-accent) 34%, var(--rstk-border));
+  border-radius: 999px;
+  background: var(--rstk-accent);
+  color: var(--rstk-accent-contrast);
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: left;
+  box-shadow: var(--rstk-shadow-soft);
+  pointer-events: none;
+}
+
 .rstkCanvas .rstkDropEmpty {
   min-height: 260px; display: grid; place-items: center; gap: 10px;
   color: var(--rstk-muted); text-align: center; border: 1.5px dashed var(--rstk-border);

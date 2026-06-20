@@ -6167,6 +6167,309 @@
   font-size: 0.88rem;
 }
 
+.videoActionPanel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.videoActionHeader {
+  display: grid;
+  gap: 12px;
+}
+
+.videoActionHeader h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.videoActionHeader p,
+.videoActionEmpty p,
+.videoActionHint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.videoActionEmpty {
+  display: grid;
+  justify-items: start;
+  gap: 9px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  padding: 14px;
+}
+
+.videoActionEmpty strong {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.videoActionRuleList {
+  display: grid;
+  gap: 9px;
+}
+
+.videoActionRule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  padding: 12px;
+  box-shadow: var(--shadow-xs);
+}
+
+.videoActionRuleCopy {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.videoActionRuleCopy strong {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.videoActionRuleMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.videoActionRuleMeta span {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  padding: 0 8px;
+  font-size: 0.72rem;
+  font-weight: 550;
+}
+
+.videoActionRuleControls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.videoActionIconControl {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
+.videoActionTimeline {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  padding: 10px;
+}
+
+.videoActionTimelineLabels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-mute);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.videoActionTimelineTrack {
+  position: relative;
+  min-height: 54px;
+}
+
+.videoActionTimelineLine {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}
+
+.videoActionMarkerInput {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+}
+
+.videoActionMarkerInput::-webkit-slider-runnable-track {
+  height: 2px;
+  background: transparent;
+}
+
+.videoActionMarkerInput::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  margin-top: -7px;
+  border: 2px solid var(--surface);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: var(--shadow-xs);
+  appearance: none;
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.videoActionMarkerInput::-moz-range-track {
+  height: 2px;
+  background: transparent;
+}
+
+.videoActionMarkerInput::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--surface);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: var(--shadow-xs);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.videoActionTimelineMarkerLabel {
+  position: absolute;
+  top: 34px;
+  left: var(--video-action-marker-left);
+  transform: translateX(-50%);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 2px 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.videoActionDialogContent {
+  display: grid;
+  gap: 0;
+}
+
+.videoActionSheet {
+  display: grid;
+  gap: 12px;
+}
+
+.videoActionStep {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  padding: 12px;
+}
+
+.videoActionStepHeader {
+  display: grid;
+  gap: 2px;
+}
+
+.videoActionStepHeader span {
+  color: var(--text-mute);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.videoActionStepHeader strong {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.videoActionQuickTimes,
+.videoActionChoiceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 7px;
+}
+
+.videoActionTargetList {
+  display: grid;
+  gap: 7px;
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.videoActionTargetChoice {
+  justify-content: space-between;
+  min-height: 46px;
+  text-align: left;
+}
+
+.videoActionTargetChoiceActive,
+.videoActionChoiceActive {
+  border-color: var(--accent) !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+}
+
+.videoActionTargetText {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.videoActionTargetText strong,
+.videoActionTargetText small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoActionTargetText strong {
+  color: inherit;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.videoActionTargetText small {
+  color: var(--text-mute);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.videoActionChoice {
+  justify-content: center;
+  min-height: 36px;
+}
+
+.videoActionSheetFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
 .createPanel {
   min-height: 520px;
   align-content: start;

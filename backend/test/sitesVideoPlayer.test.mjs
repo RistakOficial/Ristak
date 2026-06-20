@@ -272,6 +272,64 @@ test('video player renders configurable first-seconds preview loop settings', as
   assert.match(autoplayHtml, /data-rstk-video-preview-end="11"/)
 })
 
+test('video actions render public target state and runtime', async () => {
+  const site = baseSite({
+    videoActions: [
+      {
+        id: 'show-button-at-260',
+        timeSeconds: 260,
+        targetBlockId: 'button-target',
+        action: 'show',
+        before: 'hidden'
+      },
+      {
+        id: 'hide-button-at-520',
+        timeSeconds: 520,
+        targetBlockId: 'button-target',
+        action: 'hide',
+        before: 'visible'
+      }
+    ]
+  })
+  site.blocks.push({
+    id: 'button-target',
+    siteId: 'site_video_player',
+    blockType: 'button',
+    label: 'Botón Agendar llamada',
+    content: 'Agendar llamada',
+    placeholder: '',
+    required: false,
+    options: [],
+    sortOrder: 1,
+    settings: {
+      pageId: 'page-1',
+      buttonText: 'Agendar llamada',
+      buttonUrl: 'https://example.com/agenda'
+    },
+    createdAt: '',
+    updatedAt: ''
+  })
+
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+
+  assert.match(html, /data-rstk-video-action-source="video-block"/)
+  assert.match(html, /data-rstk-video-actions="/)
+  assert.match(html, /&quot;id&quot;:&quot;show-button-at-260&quot;/)
+  assert.match(html, /&quot;timeSeconds&quot;:260/)
+  assert.match(html, /&quot;targetBlockId&quot;:&quot;button-target&quot;/)
+  assert.match(html, /data-rstk-video-action-target="button-target" data-rstk-video-action-hidden="true" aria-hidden="true"/)
+  assert.match(html, /\[data-rstk-video-action-hidden="true"\]\{display:none!important\}/)
+  assert.match(html, /ristakVideoActionsRuntimeLoaded/)
+  assert.match(html, /video\[data-rstk-video-actions\]/)
+  assert.match(html, /timeupdate/)
+  assert.match(html, /setTargetHidden\(target, false\)/)
+  assert.match(html, /setTargetHidden\(target, true\)/)
+})
+
 test('video player uses the same visual signature for direct and Bunny Stream renders', async () => {
   const assetId = `site_parity_stream_${Date.now()}`
   const plainUrl = 'https://cdn.example.com/sites/plain-parity-video.mp4'
