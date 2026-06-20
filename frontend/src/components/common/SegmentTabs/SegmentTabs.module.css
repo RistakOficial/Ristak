@@ -27,7 +27,7 @@
   color: var(--text-dim);
   font-family: var(--font-body);
   font-size: var(--app-segment-font-size, var(--font-size-sm));
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
