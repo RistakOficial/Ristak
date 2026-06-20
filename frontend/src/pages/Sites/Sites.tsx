@@ -695,6 +695,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoPreviewEnabled: true,
   videoPreviewStart: 0,
   videoPreviewEnd: VIDEO_PREVIEW_DEFAULT_SECONDS,
+  videoDisableEditorPlayback: false,
   videoSoundHint: true,
   videoSoundNoticeText: DEFAULT_VIDEO_SOUND_NOTICE_TEXT,
   videoSoundNoticeHideAfter: DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER,
@@ -19765,17 +19766,30 @@ const VideoPlayerSettingsControls: React.FC<{
           />
         )}
 
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={Boolean(settings.videoLoop)}
-            onChange={(event) => {
-              onPatchSettings({ videoLoop: event.target.checked })
-              window.setTimeout(onSave, 0)
-            }}
-          />
-          <span>Repetir video</span>
-        </label>
+        <div className={styles.twoColumn}>
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={Boolean(settings.videoLoop)}
+              onChange={(event) => {
+                onPatchSettings({ videoLoop: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Repetir video</span>
+          </label>
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={settings.videoDisableEditorPlayback === true}
+              onChange={(event) => {
+                onPatchSettings({ videoDisableEditorPlayback: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>No reproducir mientras se edita</span>
+          </label>
+        </div>
       </section>
 
       {showCustomControls && (
@@ -23569,7 +23583,9 @@ const VideoPlayerPreview: React.FC<{
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
   const previewLoopRef = useRef(false)
-  const hasStartedPlaybackRef = useRef(Boolean(settings.videoAutoplay))
+  const editorPlaybackDisabled = editable && settings.videoDisableEditorPlayback === true
+  const autoplay = Boolean(settings.videoAutoplay) && !editorPlaybackDisabled
+  const hasStartedPlaybackRef = useRef(autoplay)
   const noTrackSrc = appendEditorNoTrackParam(src)
   const isHlsSource = isHlsVideoUrl(noTrackSrc)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -23579,7 +23595,7 @@ const VideoPlayerPreview: React.FC<{
   const showControlBarInitially = settings.videoControlBarInitiallyVisible === true
   const [controlsVisible, setControlsVisible] = useState(showControlBarInitially)
   const controlsMode = getVideoControlsMode(settings)
-  const showNativeControls = controlsMode === 'native'
+  const showNativeControls = controlsMode === 'native' && !editorPlaybackDisabled
   const showOverlay = controlsMode === 'clean'
   const showCustomControlBar = showOverlay && settings.videoControlBar === true
   const showCustomVolume = settings.videoControlVolume !== false
@@ -23590,8 +23606,7 @@ const VideoPlayerPreview: React.FC<{
   const soundNoticePersistent = soundNoticeHideAfter === 0
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
-  const autoplay = Boolean(settings.videoAutoplay)
-  const previewLoopEnabled = previewEnabled && !autoplay
+  const previewLoopEnabled = previewEnabled && !autoplay && !editorPlaybackDisabled
   const loop = Boolean(settings.videoLoop) || autoplay
   const speed = getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4)
   const [currentSpeed, setCurrentSpeed] = useState(speed)
@@ -23636,13 +23651,11 @@ const VideoPlayerPreview: React.FC<{
     hideControlsAfter(delay)
   }, [hideControlsAfter, showCustomControlBar])
   const handlePlayerActivity = useCallback(() => {
-    if (shouldLetEditorSelect) return
     showControlsTemporarily()
-  }, [shouldLetEditorSelect, showControlsTemporarily])
+  }, [showControlsTemporarily])
   const handlePlayerLeave = useCallback(() => {
-    if (shouldLetEditorSelect) return
     hideControlsAfter(VIDEO_CONTROLS_LEAVE_IDLE_MS)
-  }, [hideControlsAfter, shouldLetEditorSelect])
+  }, [hideControlsAfter])
   const className = [
     'rstk-video',
     'rstk-video-player',
@@ -23778,13 +23791,14 @@ const VideoPlayerPreview: React.FC<{
     stopPreviewLoop()
     video.playbackRate = speed
     video.muted = muted
+    if (editorPlaybackDisabled && !video.paused) video.pause()
     setCurrentSpeed(speed)
     setIsMuted(video.muted || video.volume === 0)
-    setIsPlaying(!video.paused)
+    setIsPlaying(!editorPlaybackDisabled && !video.paused)
     setProgress(0)
     hasStartedPlaybackRef.current = Boolean(autoplay)
     setHasStartedPlayback(Boolean(autoplay))
-  }, [speed, muted, noTrackSrc, autoplay, stopPreviewLoop])
+  }, [speed, muted, noTrackSrc, autoplay, editorPlaybackDisabled, stopPreviewLoop])
 
   useEffect(() => {
     const video = videoRef.current
@@ -23808,6 +23822,15 @@ const VideoPlayerPreview: React.FC<{
     const video = videoRef.current
     if (!video) return
     const duration = Number.isFinite(video.duration) ? video.duration : 0
+    if (editorPlaybackDisabled) {
+      if (!video.paused) video.pause()
+      stopPreviewLoop()
+      setIsPlaying(false)
+      setIsPreviewLooping(false)
+      setIsMuted(video.muted || video.volume === 0)
+      setProgress(duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0)
+      return
+    }
     if (previewLoopRef.current) {
       const range = getActivePreviewRange()
       if (duration > 0 && (video.currentTime >= range.end || video.currentTime < Math.max(0, range.start - 0.25))) {
@@ -23828,6 +23851,13 @@ const VideoPlayerPreview: React.FC<{
     const video = videoRef.current
     if (!video) return
     stopPreviewLoop()
+    if (editorPlaybackDisabled) {
+      if (!video.paused) video.pause()
+      setIsPlaying(false)
+      setIsPreviewLooping(false)
+      showControlsTemporarily()
+      return
+    }
     markUserPlaybackStarted()
     showControlsTemporarily()
     if (unmute) {
@@ -23849,6 +23879,14 @@ const VideoPlayerPreview: React.FC<{
   const togglePlayback = (unmute = false) => {
     const video = videoRef.current
     if (!video) return
+    if (editorPlaybackDisabled) {
+      stopPreviewLoop()
+      if (!video.paused) video.pause()
+      setIsPlaying(false)
+      setIsPreviewLooping(false)
+      showControlsTemporarily()
+      return
+    }
     if (video.paused || previewLoopRef.current) {
       void playVideo(unmute)
     } else {
@@ -23912,6 +23950,10 @@ const VideoPlayerPreview: React.FC<{
   const seekToProgressRatio = (ratio: number) => {
     const video = videoRef.current
     if (!video) return false
+    if (editorPlaybackDisabled) {
+      showControlsTemporarily()
+      return false
+    }
     const duration = Number.isFinite(video.duration) ? video.duration : 0
     if (duration <= 0) return false
     stopPreviewLoop()
