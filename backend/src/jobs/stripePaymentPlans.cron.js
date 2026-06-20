@@ -1,7 +1,8 @@
 import { processDueStripePaymentPlanCharges } from '../services/stripePaymentService.js'
 import { logger } from '../utils/logger.js'
 
-const STRIPE_PAYMENT_PLANS_INTERVAL_MS = 60 * 1000
+// Los planes se cobran por fecha, no por segundo exacto; 30 minutos evita ruido innecesario.
+const STRIPE_PAYMENT_PLANS_INTERVAL_MS = 30 * 60 * 1000
 
 let started = false
 let running = false
