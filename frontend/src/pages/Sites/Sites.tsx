@@ -1780,6 +1780,21 @@ const buildSitesChartPoints = (points: StreamChartPoint[] = [], mode: 'count' | 
   }))
 )
 
+const hasSitesChartValue = (points: StreamChartPoint[] = []) => (
+  points.some(point => Number(point.value || 0) > 0)
+)
+
+const selectSitesChartSource = (
+  primary: StreamChartPoint[] = [],
+  fallback: StreamChartPoint[] = [],
+  preferPrimary = false
+) => {
+  if (preferPrimary && primary.length) return primary
+  if (hasSitesChartValue(primary)) return primary
+  if (hasSitesChartValue(fallback)) return fallback
+  return primary.length ? primary : fallback
+}
+
 const clampSitesPercent = (value: unknown) => {
   const number = Number(value)
   if (!Number.isFinite(number)) return 0
@@ -33623,8 +33638,14 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const completionRate = selectedVideo ? firstPartySummary?.completionRatePercent ?? null : null
   const dropOffRate = selectedVideo ? firstPartySummary?.dropOffPercent ?? null : null
   const streamVideoId = getMediaStreamVideoId(selectedVideo)
-  const viewsChart = buildSitesChartPoints(analytics?.viewsChart || [], 'count')
-  const watchTimeChart = buildSitesChartPoints(analytics?.watchTimeChart || [], 'seconds')
+  const viewsChart = buildSitesChartPoints(
+    selectSitesChartSource(firstPartyTracking?.viewsChart || [], analytics?.viewsChart || [], readSitesNumber(firstPartySummary?.plays) > 0),
+    'count'
+  )
+  const watchTimeChart = buildSitesChartPoints(
+    selectSitesChartSource(firstPartyTracking?.watchTimeChart || [], analytics?.watchTimeChart || [], readSitesNumber(firstPartySummary?.watchedSeconds) > 0),
+    'seconds'
+  )
   const heatmap = analytics?.heatmap || []
   const retentionSegments = buildSitesRetentionSegments(firstPartyTracking?.retentionSegments || [], heatmap)
   const retentionCurvePoints = buildSitesRetentionCurvePoints(retentionSegments)

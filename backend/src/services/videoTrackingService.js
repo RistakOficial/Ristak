@@ -8,6 +8,9 @@ import {
   resolveTrackingIdentity
 } from './trackingIdentityService.js'
 
+const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
+const MAX_PLAYBACK_CHART_POINTS = 400
+
 const VIDEO_EVENTS = new Set([
   'video_ready',
   'video_play',
@@ -55,6 +58,13 @@ function clampNumber(value, min, max) {
   const number = numberOrNull(value)
   if (number === null) return null
   return Math.min(max, Math.max(min, number))
+}
+
+function boolValue(value) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes'
 }
 
 function parseEventDate(value) {
@@ -705,7 +715,8 @@ async function resolvePlaybackDateFilters(input = {}) {
   })
   return {
     dateFrom: range.startUtc,
-    dateTo: range.endUtc
+    dateTo: range.endUtc,
+    appliedTimezone: range.appliedTimezone
   }
 }
 
@@ -748,6 +759,122 @@ function roundMetric(value, decimals = 1) {
   if (!Number.isFinite(number)) return 0
   const factor = 10 ** decimals
   return Math.round(number * factor) / factor
+}
+
+function buildPlaybackPeriodExpression(hourly = false, timezone = 'UTC') {
+  if (!isPostgresRuntime) {
+    const format = hourly ? '%Y-%m-%dT%H:00:00' : '%Y-%m-%d'
+    return `strftime('${format}', datetime(vps.last_event_at, '-6 hours'))`
+  }
+
+  const safeTimezone = String(timezone || 'UTC').replace(/'/g, "''")
+  const format = hourly ? 'YYYY-MM-DD"T"HH24:00:00' : 'YYYY-MM-DD'
+  return `TO_CHAR((vps.last_event_at)::timestamptz AT TIME ZONE '${safeTimezone}', '${format}')`
+}
+
+function normalizePlaybackPeriodKey(value, hourly = false) {
+  const raw = cleanString(value, 40)
+  if (!raw) return ''
+
+  if (!hourly) {
+    const match = raw.match(/^\d{4}-\d{2}-\d{2}/)
+    return match ? match[0] : ''
+  }
+
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2})/)
+  if (match) return `${match[1]}T${match[2]}:00:00`
+
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toISOString().slice(0, 13) + ':00:00'
+}
+
+function addPlaybackPeriod(date, hourly = false, amount = 1) {
+  if (hourly) {
+    date.setUTCHours(date.getUTCHours() + amount, 0, 0, 0)
+  } else {
+    date.setUTCDate(date.getUTCDate() + amount)
+    date.setUTCHours(0, 0, 0, 0)
+  }
+}
+
+function playbackPeriodKeyFromDate(date, hourly = false) {
+  return hourly
+    ? date.toISOString().slice(0, 13) + ':00:00'
+    : date.toISOString().slice(0, 10)
+}
+
+function buildPlaybackPeriodKeys(input = {}, hourly = false) {
+  const rawStart = normalizePlaybackPeriodKey(input.rawDateFrom || input.dateFrom, hourly)
+  const rawEnd = normalizePlaybackPeriodKey(input.rawDateTo || input.dateTo, hourly)
+  if (!rawStart || !rawEnd) return []
+
+  const start = new Date(hourly ? rawStart : `${rawStart}T00:00:00Z`)
+  const end = new Date(hourly ? rawEnd : `${rawEnd}T00:00:00Z`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return []
+
+  if (!hourly) {
+    start.setUTCHours(0, 0, 0, 0)
+    end.setUTCHours(0, 0, 0, 0)
+  }
+
+  const keys = []
+  const cursor = new Date(start)
+  while (cursor <= end && keys.length < MAX_PLAYBACK_CHART_POINTS) {
+    keys.push(playbackPeriodKeyFromDate(cursor, hourly))
+    addPlaybackPeriod(cursor, hourly)
+  }
+  return keys
+}
+
+function buildEmptyPlaybackChartBucket(periodKey) {
+  return {
+    label: periodKey,
+    periodKey,
+    periodStart: periodKey,
+    periodEnd: periodKey,
+    views: 0,
+    watchTime: 0
+  }
+}
+
+function buildPlaybackPeriodCharts(rows = [], options = {}) {
+  const hourly = boolValue(options.hourly)
+  const buckets = new Map()
+
+  for (const periodKey of buildPlaybackPeriodKeys(options, hourly)) {
+    buckets.set(periodKey, buildEmptyPlaybackChartBucket(periodKey))
+  }
+
+  for (const row of rows) {
+    const periodKey = normalizePlaybackPeriodKey(row.period_key, hourly)
+    if (!periodKey) continue
+    if (!buckets.has(periodKey)) {
+      buckets.set(periodKey, buildEmptyPlaybackChartBucket(periodKey))
+    }
+    const bucket = buckets.get(periodKey)
+    bucket.views += Number(row.plays || 0)
+    bucket.watchTime += Number(row.watched_seconds || 0)
+  }
+
+  const sorted = [...buckets.values()].sort((a, b) => a.periodKey.localeCompare(b.periodKey))
+
+  return {
+    viewsChart: sorted.map(point => ({
+      label: point.label,
+      value: point.views,
+      periodKey: point.periodKey,
+      periodStart: point.periodStart,
+      periodEnd: point.periodEnd
+    })),
+    watchTimeChart: sorted.map(point => ({
+      label: point.label,
+      value: point.watchTime,
+      periodKey: point.periodKey,
+      periodStart: point.periodStart,
+      periodEnd: point.periodEnd
+    }))
+  }
 }
 
 function buildRetentionSegments(rows = [], segmentCount = 24) {
@@ -989,6 +1116,7 @@ export async function getVideoPlaybackAggregate(input = {}) {
 
 export async function getVideoPlaybackViewers(input = {}) {
   const dateFilters = await resolvePlaybackDateFilters(input)
+  const hourly = boolValue(input.hourly)
   const filters = {
     assetId: cleanString(input.assetId || input.mediaAssetId, 160),
     streamVideoId: cleanString(input.streamVideoId, 160),
@@ -1020,6 +1148,18 @@ export async function getVideoPlaybackViewers(input = {}) {
     ${where}
     ORDER BY vps.last_event_at DESC
     LIMIT 5000
+  `, params)
+
+  const periodExpression = buildPlaybackPeriodExpression(hourly, dateFilters.appliedTimezone)
+  const chartRows = await db.all(`
+    SELECT
+      ${periodExpression} as period_key,
+      COALESCE(SUM(play_count), 0) as plays,
+      COALESCE(SUM(watched_seconds), 0) as watched_seconds
+    FROM video_playback_sessions vps
+    ${where}
+    GROUP BY ${periodExpression}
+    ORDER BY period_key ASC
   `, params)
 
   const rows = await db.all(`
@@ -1089,6 +1229,13 @@ export async function getVideoPlaybackViewers(input = {}) {
       completionRatePercent: completionBase > 0 ? roundMetric((completions / completionBase) * 100) : 0,
       dropOffPercent: roundMetric(100 - clampPercent(avgProgressPercent))
     },
+    ...buildPlaybackPeriodCharts(chartRows, {
+      hourly,
+      rawDateFrom: input.dateFrom || input.date_from,
+      rawDateTo: input.dateTo || input.date_to,
+      dateFrom: dateFilters.dateFrom,
+      dateTo: dateFilters.dateTo
+    }),
     retentionSegments: buildRetentionSegments(analyticsRows),
     pages: buildPlaybackBreakdown(
       analyticsRows,

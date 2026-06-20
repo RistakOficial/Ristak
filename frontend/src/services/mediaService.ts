@@ -179,6 +179,8 @@ export interface FirstPartyVideoTracking {
     completionRatePercent: number
     dropOffPercent: number
   }
+  viewsChart: StreamChartPoint[]
+  watchTimeChart: StreamChartPoint[]
   retentionSegments: FirstPartyVideoRetentionSegment[]
   pages: FirstPartyVideoBreakdownItem[]
   blocks: FirstPartyVideoBreakdownItem[]

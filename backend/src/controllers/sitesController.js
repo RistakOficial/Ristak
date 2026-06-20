@@ -293,6 +293,7 @@ export async function getSitesVideoAnalyticsHandler(req, res) {
         assetId: req.params.assetId,
         dateFrom,
         dateTo,
+        hourly: req.query.hourly,
         limit: req.query.viewerLimit || req.query.viewer_limit || 50
       })
     ])

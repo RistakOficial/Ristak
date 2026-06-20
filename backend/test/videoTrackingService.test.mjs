@@ -83,6 +83,8 @@ test('video playback tracking links anonymous playback to contact after registra
     assert.equal(viewers.summary.playRatePercent, 100)
     assert.equal(Math.round(viewers.summary.avgProgressPercent), 42)
     assert.equal(Math.round(viewers.summary.dropOffPercent), 58)
+    assert.equal(viewers.viewsChart.reduce((total, point) => total + Number(point.value || 0), 0), 1)
+    assert.equal(viewers.watchTimeChart.reduce((total, point) => total + Number(point.value || 0), 0), 8)
     assert.ok(Array.isArray(viewers.retentionSegments))
     assert.equal(viewers.retentionSegments.length, 24)
     assert.equal(viewers.retentionSegments[0].retainedSessions, 1)
@@ -172,6 +174,18 @@ test('video playback aggregate sums selected assets from first-party tracking', 
     assert.equal(aggregate.byAssetId[assetB].plays, 1)
     assert.equal(aggregate.byAssetId[assetB].watchedSeconds, 20)
     assert.equal(aggregate.bySiteId[siteId].plays, 2)
+
+    const viewers = await getVideoPlaybackViewers({
+      assetId: assetA,
+      dateFrom: '2026-01-15',
+      dateTo: '2026-01-16',
+      limit: 10
+    })
+    assert.deepEqual(viewers.viewsChart.map(point => point.periodKey), ['2026-01-15', '2026-01-16'])
+    assert.equal(viewers.viewsChart[0].value, 1)
+    assert.equal(viewers.viewsChart[1].value, 0)
+    assert.equal(viewers.watchTimeChart[0].value, 10)
+    assert.equal(viewers.watchTimeChart[1].value, 0)
 
     const filtered = await getVideoPlaybackAggregate({
       assetIds: [assetA],
