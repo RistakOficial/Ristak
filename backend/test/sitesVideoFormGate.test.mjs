@@ -238,6 +238,8 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, /--rstk-submit-size:16px/)
     assert.doesNotMatch(html, /--rstk-submit-bg:#ef4444/)
     assert.match(html, /\.rstk-video-form-actions button\{[^}]*background:var\(--rstk-submit-bg,var\(--rstk-accent\)\)/)
+    assert.match(html, /\.rstk-video-form-fields\{[^}]*overflow-y:auto;overflow-x:hidden;[^}]*padding:2px 4px 4px/)
+    assert.match(html, /\.rstk-video-form-gate input,[^}]*\{box-sizing:border-box;width:100%;max-width:100%;min-width:0;/)
     assert.match(html, /data-completion-action="show_targets"/)
     assert.match(html, /data-repeat-mode="remember_visitor"/)
     assert.match(html, /data-storage-ttl-seconds="3888000"/)
