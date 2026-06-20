@@ -103,7 +103,7 @@ const DEFAULT_REPORTS_COLUMN_ORDER = [
 type ViewType = 'day' | 'month' | 'year'
 type ReportType = 'cashflow' | 'attribution' | 'campaigns'
 type DisplayMode = 'table' | 'metrics'
-type ReportMonthPreset = 'last12' | 'thisYear' | 'custom'
+type ReportMonthPreset = 'last12' | 'thisYear' | 'all' | 'custom'
 type ModalType = 'interesados' | 'sales' | 'appointments' | 'attendances' | 'customers'
 
 type MetricsLoadState = {
@@ -168,7 +168,7 @@ const scopeTabs = [
   }
 ]
 
-const viewTabs = [
+const viewTabs: Array<{ value: ViewType; label: string }> = [
   { value: 'day', label: 'Día' },
   { value: 'month', label: 'Mes' },
   { value: 'year', label: 'Año' }
@@ -192,7 +192,7 @@ const displayTabs = [
 const reportDisplayModes: DisplayMode[] = ['table', 'metrics']
 const reportViewTypes: ViewType[] = ['day', 'month', 'year']
 const reportTypes: ReportType[] = ['cashflow', 'attribution', 'campaigns']
-const reportMonthPresets: ReportMonthPreset[] = ['last12', 'thisYear', 'custom']
+const reportMonthPresets: ReportMonthPreset[] = ['last12', 'thisYear', 'all', 'custom']
 
 const isReportDisplayMode = (value?: string): value is DisplayMode =>
   reportDisplayModes.includes(value as DisplayMode)
@@ -242,8 +242,87 @@ const createEmptyMetricRow = (date: string): ReportMetricRow => ({
   profit: 0
 })
 
-const mergeMetricRowsByView = (metrics: ReportMetricRow[], viewType: ViewType) => {
+const getReportPeriodKeyFromDate = (date: Date, viewType: ViewType) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+
+  if (viewType === 'year') return String(year)
+  if (viewType === 'month') return `${year}-${month}`
+
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const buildCompleteMetricPeriods = (
+  range: { from: string; to: string },
+  viewType: ViewType
+) => {
+  const start = parseLocalDateString(range.from)
+  const end = parseLocalDateString(range.to)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+    return []
+  }
+
+  const periods: string[] = []
+  const cursor = viewType === 'year'
+    ? startOfYear(start.getFullYear())
+    : viewType === 'month'
+      ? startOfMonth(start.getFullYear(), start.getMonth())
+      : new Date(start.getFullYear(), start.getMonth(), start.getDate())
+  const last = viewType === 'year'
+    ? startOfYear(end.getFullYear())
+    : viewType === 'month'
+      ? startOfMonth(end.getFullYear(), end.getMonth())
+      : new Date(end.getFullYear(), end.getMonth(), end.getDate())
+
+  while (cursor <= last) {
+    periods.push(getReportPeriodKeyFromDate(cursor, viewType))
+    if (viewType === 'year') {
+      cursor.setFullYear(cursor.getFullYear() + 1)
+    } else if (viewType === 'month') {
+      cursor.setMonth(cursor.getMonth() + 1)
+    } else {
+      cursor.setDate(cursor.getDate() + 1)
+    }
+  }
+
+  return periods
+}
+
+const countYearBucketsInRange = (range: { start: Date; end: Date }) => (
+  Math.max(0, range.end.getFullYear() - range.start.getFullYear() + 1)
+)
+
+const shouldShowYearView = (
+  monthPreset: ReportMonthPreset,
+  baseRange: { start: Date; end: Date },
+  currentViewType: ViewType,
+  datePreset?: string,
+  selectedYearRange?: { start: number; end: number }
+) => {
+  const customDateRangeHasYears = countYearBucketsInRange(baseRange) > 1
+  const explicitYearRangeHasYears = Boolean(selectedYearRange && selectedYearRange.end > selectedYearRange.start)
+
+  return (
+    monthPreset === 'all' ||
+    (monthPreset === 'custom' && (customDateRangeHasYears || (currentViewType === 'year' && explicitYearRangeHasYears))) ||
+    (currentViewType === 'day' && datePreset === 'custom' && customDateRangeHasYears)
+  )
+}
+
+const mergeMetricRowsByView = (
+  metrics: ReportMetricRow[],
+  viewType: ViewType,
+  range?: { from: string; to: string }
+) => {
   const rowsByPeriod = new Map<string, ReportMetricRow>()
+
+  if (range) {
+    buildCompleteMetricPeriods(range, viewType).forEach(period => {
+      rowsByPeriod.set(period, createEmptyMetricRow(period))
+    })
+  }
 
   metrics.forEach((metric) => {
     const period = getMetricPeriodKey(metric.date, viewType)
@@ -281,11 +360,13 @@ const parseReportsPath = (pathname: string) => {
 const monthRangeOptions = [
   { value: 'last12', label: 'Últimos 12 meses' },
   { value: 'thisYear', label: 'Este año' },
+  { value: 'all', label: 'Todo el tiempo' },
   { value: 'custom', label: 'Rango personalizado' }
 ]
 
 const now = new Date()
 const currentYear = now.getFullYear()
+const allTimeStartYear = 2020
 const defaultYearRange = { start: currentYear - 2, end: currentYear }
 
 // Usar formatDateToISO en vez de toIsoDate para evitar problemas de zona horaria
@@ -307,6 +388,7 @@ const startOfMonth = (year: number, monthIndex: number) => new Date(year, monthI
 const endOfMonth = (year: number, monthIndex: number) => new Date(year, monthIndex + 1, 0, 23, 59, 59)
 const startOfYear = (year: number) => new Date(year, 0, 1, 0, 0, 0)
 const endOfYear = (year: number) => new Date(year, 11, 31, 23, 59, 59)
+const allTimeStart = () => startOfYear(allTimeStartYear)
 
 const calcDelta = (current: number, previous: number) => {
   if (previous === 0) {
@@ -739,6 +821,12 @@ const computeRangeForView = (
       return { from: toIsoDate(start), to: toIsoDate(end) }
     }
 
+    if (monthPreset === 'all') {
+      const start = allTimeStart()
+      const end = endOfMonth(currentYear, now.getMonth())
+      return { from: toIsoDate(start), to: toIsoDate(end) }
+    }
+
     if (monthPreset === 'custom') {
       const start = startOfMonth(baseRange.start.getFullYear(), baseRange.start.getMonth())
       const end = endOfMonth(baseRange.end.getFullYear(), baseRange.end.getMonth())
@@ -748,6 +836,13 @@ const computeRangeForView = (
     const end = endOfMonth(now.getFullYear(), now.getMonth())
     const start = startOfMonth(now.getFullYear(), now.getMonth() - 11)
     return { from: toIsoDate(start), to: toIsoDate(end) }
+  }
+
+  if (monthPreset === 'all') {
+    return {
+      from: toIsoDate(allTimeStart()),
+      to: toIsoDate(endOfYear(currentYear))
+    }
   }
 
   const start = startOfYear(yearRange.start)
@@ -1811,14 +1906,17 @@ export const Reports: React.FC = () => {
     displayMode?: DisplayMode
     viewType?: ViewType
     reportType?: ReportType
+    replace?: boolean
+    search?: string
   }) => {
     const nextDisplayMode = next.displayMode || displayMode
     const nextViewType = next.viewType || viewType
     const nextReportType = next.reportType || reportType
     const nextPath = buildReportsPath(nextDisplayMode, nextViewType, nextReportType)
 
-    if (location.pathname === nextPath) return
-    navigate({ pathname: nextPath, search: location.search })
+    const nextSearch = next.search ?? location.search
+    if (location.pathname === nextPath && location.search === nextSearch) return
+    navigate({ pathname: nextPath, search: nextSearch }, { replace: next.replace })
   }, [displayMode, location.pathname, location.search, navigate, reportType, viewType])
 
   const baseRange = {
@@ -1832,6 +1930,16 @@ export const Reports: React.FC = () => {
     monthPreset,
     yearRange
   )
+  const canShowYearView = shouldShowYearView(monthPreset, baseRange, viewType, dateRange.preset, yearRange)
+  const availableViewTabs = useMemo(
+    () => canShowYearView ? viewTabs : viewTabs.filter(tab => tab.value !== 'year'),
+    [canShowYearView]
+  )
+  useEffect(() => {
+    if (viewType !== 'year' || canShowYearView) return
+    setViewType('month')
+    navigateReportsView({ viewType: 'month', replace: true })
+  }, [canShowYearView, navigateReportsView, viewType])
 
   // 'all' = agrupa por fecha del evento
   // 'attribution' = agrupa por fecha de creación del contacto (todos los contactos)
@@ -2010,8 +2118,8 @@ export const Reports: React.FC = () => {
       isMetricDateCompatibleWithView(item.date, viewType)
     ))
 
-    return mergeMetricRowsByView(compatibleRows, viewType)
-  }, [metricsState, viewType])
+    return mergeMetricRowsByView(compatibleRows, viewType, apiRange)
+  }, [metricsState, viewType, apiRange.from, apiRange.to])
 
   const businessExpensesByPeriod = useMemo(() => {
     const expensesByPeriod: Record<string, number> = {}
@@ -2807,6 +2915,32 @@ export const Reports: React.FC = () => {
     setSearchParams(nextParams, { replace: true })
   }
 
+  const handleViewTypeChange = (value: string) => {
+    if (!isReportViewType(value)) return
+    if (value === 'year' && !canShowYearView) return
+
+    if (value === 'year' && monthPreset !== 'all') {
+      const nextYearRange = {
+        start: baseRange.start.getFullYear(),
+        end: baseRange.end.getFullYear()
+      }
+      setMonthPreset('custom')
+      setYearRange(nextYearRange)
+
+      const nextParams = new URLSearchParams(searchParams)
+      setSearchParam(nextParams, 'preset', 'custom', 'last12')
+      setSearchParam(nextParams, 'yearStart', nextYearRange.start, defaultYearRange.start)
+      setSearchParam(nextParams, 'yearEnd', nextYearRange.end, defaultYearRange.end)
+      setSearchParams(nextParams, { replace: true })
+
+      const nextSearch = nextParams.toString()
+      navigateReportsView({ viewType: value, search: nextSearch ? `?${nextSearch}` : '' })
+      return
+    }
+
+    navigateReportsView({ viewType: value })
+  }
+
   const handleYearRangeChange = (key: 'start' | 'end', delta: number) => {
     setYearRange(prev => {
       const updated = { ...prev, [key]: prev[key] + delta }
@@ -2879,7 +3013,12 @@ export const Reports: React.FC = () => {
                     })}
                   />
                 )}
-                {viewType === 'year' && (
+                {viewType === 'year' && monthPreset === 'all' && (
+                  <div className={styles.yearAllTimeChip}>
+                    Todo el tiempo
+                  </div>
+                )}
+                {viewType === 'year' && monthPreset !== 'all' && (
                   <div className={styles.yearControls}>
                     <div className={styles.yearControlGroup}>
                       <span>Inicio</span>
@@ -2920,11 +3059,9 @@ export const Reports: React.FC = () => {
 	                  variant="compact"
 	                />
 	                <TabList
-	                  tabs={viewTabs}
+	                  tabs={availableViewTabs}
 	                  activeTab={viewType}
-	                  onTabChange={(value) => {
-	                    if (isReportViewType(value)) navigateReportsView({ viewType: value })
-	                  }}
+	                  onTabChange={handleViewTypeChange}
 	                  variant="compact"
 	                />
               </div>

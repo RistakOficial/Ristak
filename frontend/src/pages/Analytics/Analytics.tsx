@@ -42,7 +42,7 @@ import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 import { readNumberParam, setSearchParam } from '../../utils/urlState'
 
 type ViewType = 'day' | 'month' | 'year'
-type MonthPreset = 'last12' | 'thisYear' | 'custom'
+type MonthPreset = 'last12' | 'thisYear' | 'all' | 'custom'
 type AnalyticsMainChartView = 'traffic' | 'visitors-registrations' | 'sessions-visitors' | 'identity-returning'
 type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers' | 'messages-appointments' | 'appointments-patients'
 
@@ -51,14 +51,14 @@ const monthNamesShort = [
   'jul', 'ago', 'sept', 'oct', 'nov', 'dic'
 ]
 
-const viewTabs = [
+const viewTabs: Array<{ value: ViewType; label: string }> = [
   { value: 'day', label: 'Día' },
   { value: 'month', label: 'Mes' },
   { value: 'year', label: 'Año' }
 ]
 
 const analyticsViewTypes: ViewType[] = ['day', 'month', 'year']
-const analyticsMonthPresets: MonthPreset[] = ['last12', 'thisYear', 'custom']
+const analyticsMonthPresets: MonthPreset[] = ['last12', 'thisYear', 'all', 'custom']
 const analyticsMainChartViews: AnalyticsMainChartView[] = ['traffic', 'visitors-registrations', 'sessions-visitors', 'identity-returning']
 const analyticsConversionChartViews: AnalyticsConversionChartView[] = ['registrations-customers', 'appointments-attendances', 'prospects-customers', 'messages-appointments', 'appointments-patients']
 const defaultAnalyticsViewType: ViewType = 'month'
@@ -82,17 +82,20 @@ const buildAnalyticsPath = (viewType: ViewType, mainChart: AnalyticsMainChartVie
 const monthRangeOptions = [
   { value: 'last12', label: 'Últimos 12 meses' },
   { value: 'thisYear', label: 'Este año' },
+  { value: 'all', label: 'Todo el tiempo' },
   { value: 'custom', label: 'Rango personalizado' }
 ]
 
 const now = new Date()
 const currentYear = now.getFullYear()
+const allTimeStartYear = 2020
 const defaultYearRange = { start: currentYear - 2, end: currentYear }
 
 const startOfMonth = (year: number, monthIndex: number) => new Date(year, monthIndex, 1, 0, 0, 0)
 const endOfMonth = (year: number, monthIndex: number) => new Date(year, monthIndex + 1, 0, 23, 59, 59)
 const startOfYear = (year: number) => new Date(year, 0, 1, 0, 0, 0)
 const endOfYear = (year: number) => new Date(year, 11, 31, 23, 59, 59)
+const allTimeStart = () => startOfYear(allTimeStartYear)
 
 const computeRangeForView = (
   viewType: ViewType,
@@ -114,6 +117,12 @@ const computeRangeForView = (
       return { from: formatDateToISO(start), to: formatDateToISO(end) }
     }
 
+    if (monthPreset === 'all') {
+      const start = allTimeStart()
+      const end = endOfMonth(currentYear, now.getMonth())
+      return { from: formatDateToISO(start), to: formatDateToISO(end) }
+    }
+
     if (monthPreset === 'custom') {
       const start = startOfMonth(baseRange.start.getFullYear(), baseRange.start.getMonth())
       const end = endOfMonth(baseRange.end.getFullYear(), baseRange.end.getMonth())
@@ -123,6 +132,13 @@ const computeRangeForView = (
     const end = endOfMonth(now.getFullYear(), now.getMonth())
     const start = startOfMonth(now.getFullYear(), now.getMonth() - 11)
     return { from: formatDateToISO(start), to: formatDateToISO(end) }
+  }
+
+  if (monthPreset === 'all') {
+    return {
+      from: formatDateToISO(allTimeStart()),
+      to: formatDateToISO(endOfYear(currentYear))
+    }
   }
 
   const start = startOfYear(yearRange.start)
@@ -552,6 +568,182 @@ const getPeriodPointMeta = (period: string, viewType: ViewType) => {
     periodStart: range.from,
     periodEnd: range.to
   }
+}
+
+const normalizePeriodKey = (period: string, viewType: ViewType): string | null => {
+  if (!period) return null
+  const sanitized = period.includes('T') ? period.split('T')[0] : period
+
+  if (viewType === 'year') {
+    const year = sanitized.slice(0, 4)
+    return /^\d{4}$/.test(year) ? year : null
+  }
+
+  if (viewType === 'month') {
+    const match = sanitized.match(/^(\d{4})-(\d{2})/)
+    return match ? `${match[1]}-${match[2]}` : null
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(sanitized)) return sanitized
+  const parsed = parseLocalDateString(sanitized)
+  return Number.isNaN(parsed.getTime()) ? null : getPeriodKeyFromDate(parsed, viewType)
+}
+
+const buildCompletePeriodItems = (
+  range: { from: string; to: string },
+  viewType: ViewType
+) => {
+  const start = parseLocalDateString(range.from)
+  const end = parseLocalDateString(range.to)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+    return []
+  }
+
+  const items: Array<{
+    period: string
+    label: string
+    periodStart: string
+    periodEnd: string
+  }> = []
+
+  const cursor = viewType === 'year'
+    ? startOfYear(start.getFullYear())
+    : viewType === 'month'
+      ? startOfMonth(start.getFullYear(), start.getMonth())
+      : new Date(start.getFullYear(), start.getMonth(), start.getDate())
+  const last = viewType === 'year'
+    ? startOfYear(end.getFullYear())
+    : viewType === 'month'
+      ? startOfMonth(end.getFullYear(), end.getMonth())
+      : new Date(end.getFullYear(), end.getMonth(), end.getDate())
+
+  while (cursor <= last) {
+    const period = getPeriodKeyFromDate(cursor, viewType)
+    const meta = getPeriodPointMeta(period, viewType)
+    items.push({
+      period,
+      label: formatPeriodLabel(period, viewType),
+      periodStart: meta.periodStart,
+      periodEnd: meta.periodEnd
+    })
+
+    if (viewType === 'year') {
+      cursor.setFullYear(cursor.getFullYear() + 1)
+    } else if (viewType === 'month') {
+      cursor.setMonth(cursor.getMonth() + 1)
+    } else {
+      cursor.setDate(cursor.getDate() + 1)
+    }
+  }
+
+  return items
+}
+
+const completeTrafficPeriods = (
+  data: TrafficPoint[],
+  viewType: ViewType,
+  range: { from: string; to: string }
+): TrafficPoint[] => {
+  const periods = buildCompletePeriodItems(range, viewType)
+  if (periods.length === 0) return data
+
+  const byPeriod = new Map(data.map(item => [item.periodKey || normalizePeriodKey(item.label, viewType) || item.label, item]))
+  return periods.map(item => ({
+    value: 0,
+    value2: 0,
+    ...getPeriodPointMeta(item.period, viewType),
+    ...byPeriod.get(item.period),
+    label: item.label
+  }))
+}
+
+const completeSessionTrendPeriods = (
+  data: SessionTrendPoint[],
+  viewType: ViewType,
+  range: { from: string; to: string }
+): SessionTrendPoint[] => {
+  const periods = buildCompletePeriodItems(range, viewType)
+  if (periods.length === 0) return data
+
+  const byPeriod = new Map(data.map(item => [item.periodKey || normalizePeriodKey(item.label, viewType) || item.label, item]))
+  return periods.map(item => ({
+    ...getPeriodPointMeta(item.period, viewType),
+    pageViews: 0,
+    uniqueVisitors: 0,
+    uniqueSessions: 0,
+    identifiedContacts: 0,
+    returningVisitors: 0,
+    ...byPeriod.get(item.period),
+    label: item.label
+  }))
+}
+
+const completeConversionTrendPeriods = (
+  data: ConversionTrendPoint[],
+  viewType: ViewType,
+  range: { from: string; to: string }
+): ConversionTrendPoint[] => {
+  const periods = buildCompletePeriodItems(range, viewType)
+  if (periods.length === 0) return data
+
+  const byPeriod = new Map(data.map(item => [item.periodKey || normalizePeriodKey(item.label, viewType) || item.label, item]))
+  return periods.map(item => ({
+    ...getPeriodPointMeta(item.period, viewType),
+    prospects: 0,
+    registrations: 0,
+    appointments: 0,
+    attendances: 0,
+    customers: 0,
+    ...byPeriod.get(item.period),
+    label: item.label
+  }))
+}
+
+const buildMessageTrendData = (
+  summary: MessageAnalyticsSummary | null,
+  viewType: ViewType,
+  range: { from: string; to: string }
+): TrafficPoint[] => {
+  const messagesByPeriod = new Map<string, number>()
+
+  ;(summary?.trend || []).forEach(item => {
+    const period = normalizePeriodKey(String(item.label || ''), viewType)
+    if (!period) return
+    messagesByPeriod.set(period, (messagesByPeriod.get(period) || 0) + Number(item.messages || 0))
+  })
+
+  return completeTrafficPeriods(
+    Array.from(messagesByPeriod.entries()).map(([period, messages]) => ({
+      label: formatPeriodLabel(period, viewType),
+      value: messages,
+      value2: 0,
+      ...getPeriodPointMeta(period, viewType)
+    })),
+    viewType,
+    range
+  )
+}
+
+const countYearBucketsInRange = (range: { start: Date; end: Date }) => (
+  Math.max(0, range.end.getFullYear() - range.start.getFullYear() + 1)
+)
+
+const shouldShowYearView = (
+  monthPreset: MonthPreset,
+  baseRange: { start: Date; end: Date },
+  currentViewType: ViewType,
+  datePreset?: string,
+  selectedYearRange?: { start: number; end: number }
+) => {
+  const customDateRangeHasYears = countYearBucketsInRange(baseRange) > 1
+  const explicitYearRangeHasYears = Boolean(selectedYearRange && selectedYearRange.end > selectedYearRange.start)
+
+  return (
+    monthPreset === 'all' ||
+    (monthPreset === 'custom' && (customDateRangeHasYears || (currentViewType === 'year' && explicitYearRangeHasYears))) ||
+    (currentViewType === 'day' && datePreset === 'custom' && customDateRangeHasYears)
+  )
 }
 
 const formatRangeLabel = (from: string, to: string) => {
@@ -1019,6 +1211,7 @@ const Analytics: React.FC = () => {
     mainChart?: AnalyticsMainChartView
     conversionChart?: AnalyticsConversionChartView
     replace?: boolean
+    search?: string
   }) => {
     navigate({
       pathname: buildAnalyticsPath(
@@ -1026,7 +1219,7 @@ const Analytics: React.FC = () => {
       next?.mainChart ?? selectedMainChartView,
       next?.conversionChart ?? selectedConversionChartView
       ),
-      search: location.search
+      search: next?.search ?? location.search
     }, { replace: next?.replace })
   }, [location.search, navigate, selectedConversionChartView, selectedMainChartView, viewType])
 
@@ -1084,6 +1277,17 @@ const Analytics: React.FC = () => {
   }
 
   const apiRange = computeRangeForView(viewType, baseRange, monthPreset, yearRange)
+  const canShowYearView = shouldShowYearView(monthPreset, baseRange, viewType, dateRange.preset, yearRange)
+  const availableViewTabs = React.useMemo(
+    () => canShowYearView ? viewTabs : viewTabs.filter(tab => tab.value !== 'year'),
+    [canShowYearView]
+  )
+  useEffect(() => {
+    if (viewType !== 'year' || canShowYearView) return
+    setViewType('month')
+    navigateAnalyticsView({ viewType: 'month', replace: true })
+  }, [canShowYearView, navigateAnalyticsView, viewType])
+
   const messageSummaryFilters = React.useMemo(() => ({
     channels: selectedFilters.message_channel || [],
     sources: selectedFilters.message_source || []
@@ -1209,10 +1413,14 @@ const Analytics: React.FC = () => {
           })
 
           // Preparar datos para gráfico de tráfico por período
-          setDailyTraffic(buildTrafficChartData(
-            currentSessions,
+          setDailyTraffic(completeTrafficPeriods(
+            buildTrafficChartData(
+              currentSessions,
+              viewType,
+              convertToLocalTime
+            ),
             viewType,
-            convertToLocalTime
+            { from: startDate, to: endDate }
           ))
 
           // Gráfico de conversiones (registros reales de contactos por fecha de creación)
@@ -1220,12 +1428,13 @@ const Analytics: React.FC = () => {
             .map(item => ({
               label: formatPeriodLabel(item.period, viewType),
               value: item.count,
+              value2: 0,
               periodKey: item.periodKey,
               periodStart: item.periodStart,
               periodEnd: item.periodEnd
             }))
 
-          setDailyConversions(conversionChartData)
+          setDailyConversions(completeTrafficPeriods(conversionChartData, viewType, { from: startDate, to: endDate }))
 
           // Guardar todas las sesiones y sesiones filtradas (ordenadas de más reciente a más vieja)
           const sortedSessions = [...currentSessions].sort((a, b) => {
@@ -1704,8 +1913,8 @@ const Analytics: React.FC = () => {
               avgPagePerSession: 0
             }
           })
-          setDailyTraffic([])
-          setDailyConversions([])
+          setDailyTraffic(completeTrafficPeriods([], viewType, { from: startDate, to: endDate }))
+          setDailyConversions(completeTrafficPeriods([], viewType, { from: startDate, to: endDate }))
           setContactConversionsByDate(contactConversionRows || [])
         }
       } catch {
@@ -2171,6 +2380,34 @@ const Analytics: React.FC = () => {
     setSearchParams(nextParams, { replace: true })
   }
 
+  const handleViewTypeChange = (value: string) => {
+    if (!isAnalyticsViewType(value)) return
+    if (value === 'year' && !canShowYearView) return
+
+    if (value === 'year' && monthPreset !== 'all') {
+      const nextYearRange = {
+        start: baseRange.start.getFullYear(),
+        end: baseRange.end.getFullYear()
+      }
+      setMonthPreset('custom')
+      setYearRange(nextYearRange)
+
+      const nextParams = new URLSearchParams(searchParams)
+      setSearchParam(nextParams, 'preset', 'custom', 'last12')
+      setSearchParam(nextParams, 'yearStart', nextYearRange.start, defaultYearRange.start)
+      setSearchParam(nextParams, 'yearEnd', nextYearRange.end, defaultYearRange.end)
+      setSearchParams(nextParams, { replace: true })
+
+      const nextSearch = nextParams.toString()
+      setViewType(value)
+      navigateAnalyticsView({ viewType: value, search: nextSearch ? `?${nextSearch}` : '' })
+      return
+    }
+
+    setViewType(value)
+    navigateAnalyticsView({ viewType: value })
+  }
+
   const handleYearRangeChange = (key: 'start' | 'end', delta: number) => {
     setYearRange(prev => {
       const updated = { ...prev, [key]: prev[key] + delta }
@@ -2190,12 +2427,8 @@ const Analytics: React.FC = () => {
   const sessionsForCharts = hasActiveFiltersForCharts ? sessions : allSessions
 
   const messageTrendData = React.useMemo<TrafficPoint[]>(() => (
-    (messageAnalytics?.trend || []).map(item => ({
-      label: formatPeriodLabel(item.label, viewType),
-      value: Number(item.messages || 0),
-      value2: 0
-    }))
-  ), [viewType, messageAnalytics])
+    buildMessageTrendData(messageAnalytics, viewType, apiRange)
+  ), [apiRange.from, apiRange.to, viewType, messageAnalytics])
 
   const mainChartOptions = React.useMemo<Array<{ value: AnalyticsMainChartView; label: string }>>(() => (
     [
@@ -2253,18 +2486,30 @@ const Analytics: React.FC = () => {
   }, [conversionChartOptions, navigateAnalyticsView, selectedConversionChartView])
 
   const sessionTrendData = React.useMemo(
-    () => buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
-    [sessionsForCharts, viewType, convertToLocalTime]
+    () => completeSessionTrendPeriods(
+      buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
+      viewType,
+      apiRange
+    ),
+    [sessionsForCharts, viewType, convertToLocalTime, apiRange.from, apiRange.to]
   )
 
   const contactCreatedConversionTrendData = React.useMemo(
-    () => aggregateContactConversionsByPeriod(contactConversionsByDate, viewType),
-    [contactConversionsByDate, viewType]
+    () => completeConversionTrendPeriods(
+      aggregateContactConversionsByPeriod(contactConversionsByDate, viewType),
+      viewType,
+      apiRange
+    ),
+    [contactConversionsByDate, viewType, apiRange.from, apiRange.to]
   )
 
   const filteredConversionTrendData = React.useMemo(
-    () => buildConversionTrendData(sessionsForCharts, viewType, convertToLocalTime),
-    [sessionsForCharts, viewType, convertToLocalTime]
+    () => completeConversionTrendPeriods(
+      buildConversionTrendData(sessionsForCharts, viewType, convertToLocalTime),
+      viewType,
+      apiRange
+    ),
+    [sessionsForCharts, viewType, convertToLocalTime, apiRange.from, apiRange.to]
   )
 
   const conversionTrendData = hasActiveFiltersForCharts
@@ -2549,10 +2794,16 @@ const Analytics: React.FC = () => {
                   />
                 )}
 
-                {viewType === 'year' && (
-                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.06)] p-2">
+                {viewType === 'year' && monthPreset === 'all' && (
+                  <div className="flex min-h-10 items-center rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--text-dim)]">
+                    Todo el tiempo
+                  </div>
+                )}
+
+                {viewType === 'year' && monthPreset !== 'all' && (
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-[var(--color-text-tertiary)]">Inicio</span>
+                      <span className="text-xs font-medium text-[var(--text-mute)]">Inicio</span>
                       <div className="flex items-center gap-1">
                         <Button variant="ghost" size="sm" aria-label="Disminuir año de inicio" onClick={() => handleYearRangeChange('start', -1)}>
                           <Minus size={16} />
@@ -2564,7 +2815,7 @@ const Analytics: React.FC = () => {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-[var(--color-text-tertiary)]">Fin</span>
+                      <span className="text-xs font-medium text-[var(--text-mute)]">Fin</span>
                       <div className="flex items-center gap-1">
                         <Button variant="ghost" size="sm" aria-label="Disminuir año de fin" onClick={() => handleYearRangeChange('end', -1)}>
                           <Minus size={16} />
@@ -2580,14 +2831,9 @@ const Analytics: React.FC = () => {
               </div>
 
               <TabList
-                tabs={viewTabs}
+                tabs={availableViewTabs}
                 activeTab={viewType}
-                onTabChange={(value) => {
-                  if (isAnalyticsViewType(value)) {
-                    setViewType(value)
-                    navigateAnalyticsView({ viewType: value })
-                  }
-                }}
+                onTabChange={handleViewTypeChange}
                 variant="compact"
               />
             </div>

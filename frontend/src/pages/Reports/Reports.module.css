@@ -181,6 +181,19 @@
   align-items: center;
 }
 
+.yearAllTimeChip {
+  min-height: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--spacing-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
 .yearControlGroup {
   display: flex;
   flex-direction: column;
