@@ -194,7 +194,7 @@ import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
 import { SITE_FONT_OPTIONS, normalizeSiteFontFamily } from './siteFonts'
 
-type SitesSection = 'landings' | 'forms' | 'leads' | 'analytics' | 'domains'
+type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
 type SitesAnalyticsSiteType = 'sites' | 'forms' | 'videos'
 type LibraryViewMode = 'gallery' | 'list' | 'table'
@@ -308,7 +308,6 @@ type FunnelPrimaryActionId = 'buy' | 'schedule' | 'form' | 'whatsapp' | 'downloa
 const sectionItems: Array<{ id: SitesSection; label: string; icon: React.ReactNode }> = [
   { id: 'landings', label: 'Sitios web', icon: <LayoutTemplate size={17} /> },
   { id: 'forms', label: 'Formularios', icon: <FormInput size={17} /> },
-  { id: 'leads', label: 'Respuestas', icon: <ListChecks size={17} /> },
   { id: 'analytics', label: 'Analíticas', icon: <BarChart3 size={17} /> },
   { id: 'domains', label: 'Dominios', icon: <Globe2 size={17} /> }
 ]
@@ -814,7 +813,6 @@ const FORM_FINAL_PAGE_IDS = new Set([FORM_THANK_YOU_PAGE_ID, FORM_DISQUALIFIED_P
 const sitesSectionPathById: Record<SitesSection, string> = {
   landings: 'web',
   forms: 'forms',
-  leads: 'responses',
   analytics: 'analytics',
   domains: 'domains'
 }
@@ -822,8 +820,8 @@ const sitesSectionByPath: Record<string, SitesSection> = {
   web: 'landings',
   landings: 'landings',
   forms: 'forms',
-  leads: 'leads',
-  responses: 'leads',
+  leads: 'forms',
+  responses: 'forms',
   analytics: 'analytics',
   analiticas: 'analytics',
   domains: 'domains'
@@ -1596,6 +1594,56 @@ const formatDate = (value?: string | null) => {
     hour: '2-digit',
     minute: '2-digit'
   }).format(date)
+}
+
+const formatSubmissionValue = (value: unknown) => {
+  if (Array.isArray(value)) return value.map(item => String(item ?? '').trim()).filter(Boolean).join(', ')
+  if (typeof value === 'object' && value !== null) return JSON.stringify(value)
+  return String(value ?? '').trim()
+}
+
+const getSubmissionRulesSummary = (submission: SiteSubmission) => {
+  const rules = submission.meta?.rules && typeof submission.meta.rules === 'object'
+    ? submission.meta.rules as Record<string, unknown>
+    : {}
+  const tags = Array.isArray(rules.tags) ? rules.tags.map(item => String(item)).filter(Boolean).join(', ') : ''
+  const categories = Array.isArray(rules.categories) ? rules.categories.map(item => String(item)).filter(Boolean).join(', ') : ''
+  return [tags, categories].filter(Boolean).join(' / ') || 'Sin reglas'
+}
+
+const getFormResponseLabelMap = (site?: PublicSite | null) => {
+  const labelMap = new Map<string, string>()
+  const blocks = [...(site?.blocks || [])].sort((a, b) => a.sortOrder - b.sortOrder)
+
+  blocks.forEach((block) => {
+    if (!fieldBlockTypes.has(block.blockType)) return
+    const label = String(block.label || block.content || block.placeholder || blockLabels[block.blockType] || 'Campo').trim()
+    labelMap.set(block.id, label)
+  })
+
+  return labelMap
+}
+
+const getSubmissionAnswerPreview = (submission: SiteSubmission, site?: PublicSite | null, maxItems = 3) => {
+  const labelMap = getFormResponseLabelMap(site)
+  const source = Object.keys(submission.responses || {}).length
+    ? submission.responses
+    : submission.rawFields || {}
+  const items = Object.entries(source)
+    .map(([key, value]) => ({
+      label: labelMap.get(key) || key,
+      value: formatSubmissionValue(value)
+    }))
+    .filter(item => item.value)
+
+  if (!items.length && submission.mappedFields && typeof submission.mappedFields === 'object') {
+    return Object.entries(submission.mappedFields)
+      .map(([key, value]) => ({ label: key, value: formatSubmissionValue(value) }))
+      .filter(item => item.value)
+      .slice(0, maxItems)
+  }
+
+  return items.slice(0, maxItems)
 }
 
 const formatSitesCompactNumber = (value?: number | null) => {
@@ -6401,8 +6449,11 @@ export const Sites: React.FC = () => {
   const [paletteSectionTarget, setPaletteSectionTarget] = useState<PaletteSectionTarget | null>(null)
   const [paletteDragPosition, setPaletteDragPosition] = useState<PaletteDragPosition | null>(null)
   const [videoActionHoverTargetId, setVideoActionHoverTargetId] = useState('')
-  const [leadRows, setLeadRows] = useState<LeadRow[]>([])
-  const [loadingLeads, setLoadingLeads] = useState(false)
+  const [formResponsesOpen, setFormResponsesOpen] = useState(false)
+  const [selectedResponsesFormId, setSelectedResponsesFormId] = useState('')
+  const [selectedResponsesSite, setSelectedResponsesSite] = useState<PublicSite | null>(null)
+  const [formResponseRows, setFormResponseRows] = useState<LeadRow[]>([])
+  const [loadingFormResponses, setLoadingFormResponses] = useState(false)
   const [siteVideoAssets, setSiteVideoAssets] = useState<MediaAsset[]>([])
   const [loadingSiteVideos, setLoadingSiteVideos] = useState(false)
   const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>(routeAnalyticsSiteType)
@@ -7563,10 +7614,26 @@ export const Sites: React.FC = () => {
   }, [device, navigate])
 
   useEffect(() => {
-    if (section === 'leads') {
-      loadLeads()
+    if (section !== 'forms') return
+
+    if (!forms.length) {
+      setSelectedResponsesFormId('')
+      setSelectedResponsesSite(null)
+      setFormResponseRows([])
+      return
     }
-  }, [section, sites.length])
+
+    setSelectedResponsesFormId(current => (
+      forms.some(form => form.id === current)
+        ? current
+        : forms.find(form => form.submissionsCount > 0)?.id || forms[0]?.id || ''
+    ))
+  }, [forms, section])
+
+  useEffect(() => {
+    if (section !== 'forms' || !formResponsesOpen || !selectedResponsesFormId) return
+    void loadFormResponses(selectedResponsesFormId)
+  }, [formResponsesOpen, section, selectedResponsesFormId])
 
   useEffect(() => {
     if (!hasUnsavedChanges) {
@@ -7691,28 +7758,60 @@ export const Sites: React.FC = () => {
     })
   }, [])
 
-  const loadLeads = async () => {
-    if (!sites.length) {
-      setLeadRows([])
+  const loadFormResponses = async (formId = selectedResponsesFormId) => {
+    if (!formId) {
+      setSelectedResponsesSite(null)
+      setFormResponseRows([])
       return
     }
 
-    setLoadingLeads(true)
+    setLoadingFormResponses(true)
     try {
-      const details = await Promise.all(sites.map(site => sitesService.getSite(site.id)))
-      const rows = details.flatMap(site =>
-        (site.submissions || []).map(submission => ({
+      const site = normalizeSiteForEditor(await sitesService.getSite(formId))
+      const rows = (site.submissions || [])
+        .map(submission => ({
           ...submission,
           siteName: site.name
         }))
-      )
-      rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      setLeadRows(rows)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+
+      setSelectedResponsesSite(site)
+      setFormResponseRows(rows)
+      setSites(current => current.map(item => item.id === site.id
+        ? { ...item, submissionsCount: site.submissionsCount, updatedAt: site.updatedAt }
+        : item
+      ))
     } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar los leads')
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar las respuestas')
     } finally {
-      setLoadingLeads(false)
+      setLoadingFormResponses(false)
     }
+  }
+
+  const openFormResponses = (site?: PublicSite) => {
+    const targetId = site?.id || selectedResponsesFormId || forms.find(form => form.submissionsCount > 0)?.id || forms[0]?.id || ''
+    if (!targetId) {
+      showToast('info', 'Sin formularios', 'Crea un formulario para ver sus respuestas.')
+      return
+    }
+
+    setFormResponsesOpen(true)
+    if (targetId !== selectedResponsesFormId) {
+      setSelectedResponsesSite(site || forms.find(form => form.id === targetId) || null)
+      setFormResponseRows([])
+    }
+    setSelectedResponsesFormId(targetId)
+    if (targetId === selectedResponsesFormId) {
+      void loadFormResponses(targetId)
+    }
+  }
+
+  const selectResponsesForm = (formId: string) => {
+    if (formId !== selectedResponsesFormId) {
+      setSelectedResponsesSite(forms.find(form => form.id === formId) || null)
+      setFormResponseRows([])
+    }
+    setSelectedResponsesFormId(formId)
   }
 
   const loadSiteVideos = async () => {
@@ -11143,8 +11242,6 @@ export const Sites: React.FC = () => {
                   navigateSitesCreateFlow(section, nextFlow)
                 }}
               />
-            ) : section === 'leads' ? (
-              <LeadsPanel rows={leadRows} loading={loadingLeads} onRefresh={loadLeads} />
             ) : section === 'analytics' ? (
               <SitesAnalyticsPanel
                 sites={analyticsSites}
@@ -11203,6 +11300,15 @@ export const Sites: React.FC = () => {
                 onPreview={(site) => void handlePreviewLibrarySite(site)}
                 onMoveToFolder={(site, folderId) => void handleMoveLibrarySite(site, folderId)}
                 onViewModeChange={handleLibraryViewChange}
+                responsesOpen={formResponsesOpen}
+                responseRows={formResponseRows}
+                responseFormId={selectedResponsesFormId}
+                responseSite={selectedResponsesSite}
+                loadingResponses={loadingFormResponses}
+                onOpenResponses={openFormResponses}
+                onCloseResponses={() => setFormResponsesOpen(false)}
+                onSelectResponsesForm={selectResponsesForm}
+                onRefreshResponses={() => void loadFormResponses(selectedResponsesFormId)}
                 onUpdateRoute={handleUpdateLibraryRoute}
                 onOpenSettings={(site) => { void openLibrarySettings(site) }}
                 onDelete={(site) => void handleDeleteSite(site)}
@@ -20521,6 +20627,15 @@ interface SitesLibraryPanelProps {
   onPreview: (site: PublicSite) => void
   onMoveToFolder: (site: PublicSite, folderId: string) => void
   onViewModeChange: (section: 'landings' | 'forms', viewMode: LibraryViewMode) => void
+  responsesOpen: boolean
+  responseRows: LeadRow[]
+  responseFormId: string
+  responseSite: PublicSite | null
+  loadingResponses: boolean
+  onOpenResponses: (site?: PublicSite) => void
+  onCloseResponses: () => void
+  onSelectResponsesForm: (siteId: string) => void
+  onRefreshResponses: () => void
   onUpdateRoute: (site: PublicSite, slug: string) => Promise<void>
   onOpenSettings: (site: PublicSite) => void
   onDelete: (site: PublicSite) => void
@@ -20619,6 +20734,15 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   onPreview,
   onMoveToFolder,
   onViewModeChange,
+  responsesOpen,
+  responseRows,
+  responseFormId,
+  responseSite,
+  loadingResponses,
+  onOpenResponses,
+  onCloseResponses,
+  onSelectResponsesForm,
+  onRefreshResponses,
   onUpdateRoute,
   onOpenSettings,
   onDelete
@@ -20804,6 +20928,12 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <Settings2 size={15} />
           Más ajustes
         </DropdownMenuItem>
+        {!isLanding(site) && (
+          <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onOpenResponses(site) }}>
+            <ListChecks size={15} />
+            Ver respuestas
+          </DropdownMenuItem>
+        )}
         {renderMoveItems(site)}
         <DropdownMenuSeparator />
         <DropdownMenuItem className={styles.pageMenuDanger} onSelect={(event) => { event.stopPropagation(); onDelete(site) }}>
@@ -20921,6 +21051,11 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <p>{getLibraryDescription(section)}</p>
         </div>
         <div className={styles.libraryHeaderActions}>
+          {!isLandingLibrary && (
+            <Button variant="secondary" size="sm" onClick={() => onOpenResponses()} leftIcon={<ListChecks size={16} />}>
+              Ver respuestas
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={() => setFolderCreateOpen(value => !value)} leftIcon={<FolderPlus size={16} />}>
             Nueva carpeta
           </Button>
@@ -20947,6 +21082,19 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             Cancelar
           </Button>
         </form>
+      )}
+
+      {!isLandingLibrary && responsesOpen && (
+        <FormResponsesQuickPanel
+          forms={sites}
+          selectedFormId={responseFormId}
+          selectedSite={responseSite}
+          rows={responseRows}
+          loading={loadingResponses}
+          onSelectForm={onSelectResponsesForm}
+          onRefresh={onRefreshResponses}
+          onClose={onCloseResponses}
+        />
       )}
 
       <div className={styles.explorerToolbar}>
@@ -32527,51 +32675,123 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   return null
 }
 
-const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () => void }> = ({ rows, loading, onRefresh }) => (
-  <section className={styles.dataPanel}>
-    <div className={styles.builderHeader}>
-      <div>
-        <h2>Respuestas</h2>
-        <p>Respuestas recibidas desde sitios web y formularios públicos.</p>
-      </div>
-      <Button variant="secondary" onClick={onRefresh} loading={loading}>
-        <RefreshCw size={16} />
-        Refrescar
-      </Button>
-    </div>
+const FormResponsesQuickPanel: React.FC<{
+  forms: PublicSite[]
+  selectedFormId: string
+  selectedSite: PublicSite | null
+  rows: LeadRow[]
+  loading: boolean
+  onSelectForm: (siteId: string) => void
+  onRefresh: () => void
+  onClose: () => void
+}> = ({
+  forms,
+  selectedFormId,
+  selectedSite,
+  rows,
+  loading,
+  onSelectForm,
+  onRefresh,
+  onClose
+}) => {
+  const selectedForm = forms.find(form => form.id === selectedFormId) || null
+  const displaySite = selectedSite || selectedForm
+  const submissionsCount = displaySite?.submissionsCount ?? selectedForm?.submissionsCount ?? rows.length
 
-    <div className={styles.leadsTable}>
-      <div className={styles.leadsHeader}>
-        <span>Lead</span>
-        <span>Sitio</span>
-        <span>Estado</span>
-        <span>Reglas</span>
-        <span>Fecha</span>
-      </div>
-      {rows.length === 0 ? (
-        <div className={styles.emptyState}>
-          <ListChecks size={24} />
-          <p>No hay respuestas todavía.</p>
+  return (
+    <section className={styles.formResponsesPanel}>
+      <div className={styles.formResponsesHeader}>
+        <div>
+          <span>Respuestas rápidas</span>
+          <h3>{displaySite?.name || 'Elige un formulario'}</h3>
+          <p>Selecciona un formulario y revisa sus envíos sin salir de la biblioteca.</p>
         </div>
-      ) : rows.map(row => {
-        const rules = row.meta?.rules && typeof row.meta.rules === 'object' ? row.meta.rules as Record<string, unknown> : {}
-        const tags = Array.isArray(rules.tags) ? rules.tags.join(', ') : ''
-        const categories = Array.isArray(rules.categories) ? rules.categories.join(', ') : ''
-        return (
-          <article key={row.id} className={styles.leadRow}>
-            <span>{row.contactName || row.contactEmail || row.contactPhone || 'Lead sin nombre'}</span>
-            <span>{row.siteName}</span>
-            <Badge variant={row.status === 'disqualified' ? 'warning' : 'success'}>
-              {row.status === 'disqualified' ? 'Descalificado' : 'Recibido'}
-            </Badge>
-            <span>{[tags, categories].filter(Boolean).join(' / ') || 'Sin reglas'}</span>
-            <span>{formatDate(row.createdAt)}</span>
-          </article>
-        )
-      })}
-    </div>
-  </section>
-)
+        <div className={styles.formResponsesActions}>
+          <Badge variant="info">{submissionsCount} envíos</Badge>
+          <Button variant="secondary" size="sm" loading={loading} onClick={onRefresh} leftIcon={<RefreshCw size={15} />}>
+            Refrescar
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onClose} leftIcon={<X size={15} />}>
+            Cerrar
+          </Button>
+        </div>
+      </div>
+
+      <label className={styles.formResponsesPicker} data-ristak-unstyled>
+        <span>Formulario</span>
+        <CustomSelect
+          value={selectedFormId}
+          onChange={(event) => onSelectForm(event.target.value)}
+          disabled={!forms.length || loading}
+        >
+          {forms.length ? forms.map(form => (
+            <option key={form.id} value={form.id}>
+              {form.name} · {form.submissionsCount || 0} envíos
+            </option>
+          )) : (
+            <option value="">Sin formularios</option>
+          )}
+        </CustomSelect>
+      </label>
+
+      <div className={styles.formResponsesSheet} data-ristak-table>
+        <table data-ristak-table-element>
+          <thead>
+            <tr>
+              <th>Lead</th>
+              <th>Respuestas</th>
+              <th>Estado</th>
+              <th>Reglas</th>
+              <th>Fecha</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => {
+              const answers = getSubmissionAnswerPreview(row, displaySite)
+              return (
+                <tr key={row.id}>
+                  <td>
+                    <div className={styles.formResponsesLead}>
+                      <strong>{row.contactName || row.contactEmail || row.contactPhone || 'Lead sin nombre'}</strong>
+                      <span>{[row.contactEmail, row.contactPhone].filter(Boolean).join(' · ') || row.domain || 'Sin contacto ligado'}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div className={styles.formResponsesAnswers}>
+                      {answers.length ? answers.map(answer => (
+                        <span key={`${row.id}-${answer.label}`}>
+                          <strong>{answer.label}</strong>
+                          {answer.value}
+                        </span>
+                      )) : (
+                        <em>Sin respuestas visibles</em>
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    <Badge variant={row.status === 'disqualified' ? 'warning' : 'success'}>
+                      {row.status === 'disqualified' ? 'Descalificado' : 'Recibido'}
+                    </Badge>
+                  </td>
+                  <td>{getSubmissionRulesSummary(row)}</td>
+                  <td>{formatDate(row.createdAt)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {!rows.length && (
+        <div className={styles.formResponsesEmpty}>
+          <ListChecks size={24} />
+          <strong>{loading ? 'Cargando respuestas...' : 'Sin respuestas todavía'}</strong>
+          <p>{loading ? 'Estamos consultando los envíos de este formulario.' : 'Cuando alguien responda este formulario, aparecerá aquí al instante al refrescar.'}</p>
+        </div>
+      )}
+    </section>
+  )
+}
 
 interface SitesAnalyticsPanelProps {
   sites: PublicSite[]

@@ -5139,6 +5139,178 @@
   font-size: 0.86rem;
 }
 
+.formResponsesPanel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  padding: 14px;
+}
+
+.formResponsesHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.formResponsesHeader > div:first-child {
+  min-width: 0;
+}
+
+.formResponsesHeader span {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.formResponsesHeader h3 {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.formResponsesHeader p {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 0.84rem;
+}
+
+.formResponsesActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.formResponsesPicker {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) minmax(220px, 420px);
+  align-items: center;
+  gap: 10px;
+}
+
+.formResponsesPicker > span {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.formResponsesSheet {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.formResponsesSheet table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+}
+
+.formResponsesSheet th {
+  background: var(--surface-2);
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  text-transform: var(--label-transform);
+  letter-spacing: var(--label-spacing);
+  border-bottom: 1px solid var(--border);
+  padding: 11px 14px;
+}
+
+.formResponsesSheet td {
+  max-width: 360px;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  vertical-align: top;
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+}
+
+.formResponsesSheet tr:hover td {
+  background: var(--surface-2);
+}
+
+.formResponsesLead,
+.formResponsesAnswers {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.formResponsesLead strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formResponsesLead span {
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formResponsesAnswers span {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-dim);
+}
+
+.formResponsesAnswers strong {
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.formResponsesAnswers em {
+  color: var(--text-mute);
+  font-style: normal;
+}
+
+.formResponsesEmpty {
+  min-height: 150px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text-mute);
+  text-align: center;
+  padding: 24px;
+}
+
+.formResponsesEmpty strong {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.formResponsesEmpty p {
+  max-width: 420px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.84rem;
+}
+
 @media (max-width: 860px) {
   .libraryHeader {
     align-items: stretch;
@@ -5181,6 +5353,19 @@
   .explorerListActions {
     grid-row: 1;
     grid-column: 2;
+  }
+
+  .formResponsesHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .formResponsesActions {
+    justify-content: flex-start;
+  }
+
+  .formResponsesPicker {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
