@@ -473,9 +473,10 @@ test('cobra automáticamente parcialidades vencidas con tarjeta guardada sin dup
        SET status = 'pending',
            payment_method = 'stripe_scheduled_card',
            due_date = '2000-01-01',
+           metadata_json = ?,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [ids.installmentPaymentId]
+      [JSON.stringify({ legacyScheduledPayment: true }), ids.installmentPaymentId]
     )
 
     const firstRun = await processDueStripePaymentPlanCharges({ limit: 5 })

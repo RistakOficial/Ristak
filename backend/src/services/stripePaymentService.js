@@ -3930,6 +3930,16 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
         }
       })
 
+      if (charged?.status === 'paid') {
+        await db.run(
+          `UPDATE payment_flows
+           SET first_payment_status = 'paid',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [row.flow_id]
+        )
+      }
+
       results.push({ flowId: row.flow_id, paymentId: row.payment_id, firstPayment: true, charged: charged?.status === 'paid', status: charged?.status })
     } catch (error) {
       logger.error(`[Stripe Planes] Error cobrando primer pago programado ${row.payment_id}: ${error.message}`)
@@ -3984,6 +3994,19 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
           ristak_installment_id: row.installment_id
         }
       })
+
+      await db.run(
+        `UPDATE installment_payments
+         SET status = ?,
+             stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          charged?.status === 'paid' ? 'paid' : (charged?.status || 'processing'),
+          charged?.stripe_payment_intent_id || null,
+          row.installment_id
+        ]
+      )
 
       results.push({ installmentId: row.installment_id, paymentId: row.payment_id, charged: charged?.status === 'paid', status: charged?.status })
     } catch (error) {
