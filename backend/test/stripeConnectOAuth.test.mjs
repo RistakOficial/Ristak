@@ -177,8 +177,9 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
     assert.equal(completed.config.connectWebhookStatus, 'active')
 
     assert.equal(webhookCreatePayload.url, 'https://app.example.com/api/stripe/webhook')
+    assert.equal(webhookCreatePayload.connect, true)
     assert.deepEqual(webhookCreatePayload.enabled_events.includes('payment_intent.succeeded'), true)
-    assert.deepEqual(webhookCreateOptions, { stripeAccount: 'acct_test_connected' })
+    assert.deepEqual(webhookCreateOptions, {})
 
     const testResult = await testStripePaymentConfig()
     assert.equal(testResult.connectionType, 'connect')
@@ -258,11 +259,14 @@ test('Stripe Connect OAuth conserva conexiones separadas para prueba y en vivo',
         },
         webhookEndpoints: {
           create: async (payload, options = {}) => {
-            assert.ok(options.stripeAccount)
+            assert.equal(payload.connect, true)
+            assert.deepEqual(options, {})
+            const accountId = payload.metadata?.stripe_account_id
+            assert.ok(accountId)
             return {
-              id: `we_${options.stripeAccount}`,
+              id: `we_${accountId}`,
               url: payload.url,
-              secret: `whsec_${options.stripeAccount}`
+              secret: `whsec_${accountId}`
             }
           },
           del: async () => ({ deleted: true })

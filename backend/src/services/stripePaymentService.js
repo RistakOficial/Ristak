@@ -844,7 +844,6 @@ async function ensureStripeConnectWebhookEndpoint({ stripe, connectedAccountId, 
   if (!cleanUrl) return { status: 'missing_url', endpointId: '', webhookUrl: '', webhookSecret: currentSecret, error: 'No se detectó URL pública.' }
 
   try {
-    const requestOptions = { stripeAccount: connectedAccountId }
     const endpointPayload = {
       enabled_events: STRIPE_WEBHOOK_EVENTS,
       description: 'Ristak payments webhook',
@@ -855,30 +854,33 @@ async function ensureStripeConnectWebhookEndpoint({ stripe, connectedAccountId, 
     }
 
     if (currentEndpointId) {
-      const endpoint = await stripe.webhookEndpoints.update(
-        currentEndpointId,
-        {
-          url: cleanUrl,
-          ...endpointPayload,
-          disabled: false
-        },
-        requestOptions
-      )
-      return {
-        status: currentSecret ? 'active' : 'needs_secret',
-        endpointId: endpoint.id,
-        webhookUrl: endpoint.url,
-        webhookSecret: currentSecret,
-        error: currentSecret ? '' : 'Stripe no vuelve a mostrar el signing secret de endpoints existentes.'
+      try {
+        const endpoint = await stripe.webhookEndpoints.update(
+          currentEndpointId,
+          {
+            url: cleanUrl,
+            ...endpointPayload,
+            disabled: false
+          }
+        )
+        return {
+          status: currentSecret ? 'active' : 'needs_secret',
+          endpointId: endpoint.id,
+          webhookUrl: endpoint.url,
+          webhookSecret: currentSecret,
+          error: currentSecret ? '' : 'Stripe no vuelve a mostrar el signing secret de endpoints existentes.'
+        }
+      } catch (error) {
+        logger.warn(`No se pudo actualizar webhook Stripe Connect ${currentEndpointId}; se creará uno nuevo: ${error.message}`)
       }
     }
 
     const created = await stripe.webhookEndpoints.create(
       {
         url: cleanUrl,
+        connect: true,
         ...endpointPayload
-      },
-      requestOptions
+      }
     )
 
     return {
@@ -1211,9 +1213,7 @@ async function disconnectStripeConnectAccount(config = {}) {
   })
   const stripe = getStripeInstance(platform.secretKey)
   if (config.connectWebhookEndpointId && config.connectedAccountId) {
-    await stripe.webhookEndpoints.del(config.connectWebhookEndpointId, {
-      stripeAccount: config.connectedAccountId
-    }).catch((error) => {
+    await stripe.webhookEndpoints.del(config.connectWebhookEndpointId).catch((error) => {
       logger.warn(`No se pudo borrar webhook Stripe Connect ${config.connectWebhookEndpointId}: ${error.message}`)
     })
   }
