@@ -16799,6 +16799,49 @@
   justify-content: flex-end;
 }
 
+.editorHistoryControls {
+  flex: 0 0 auto;
+  height: var(--editor-control-h, 40px);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--design-control-border);
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--design-control-bg);
+  color: var(--color-text-secondary);
+}
+
+.editorHistoryButton {
+  width: calc(var(--editor-control-h, 40px) - 8px);
+  height: calc(var(--editor-control-h, 40px) - 8px);
+  min-width: calc(var(--editor-control-h, 40px) - 8px);
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: calc(var(--design-control-radius, 8px) - 2px);
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.editorHistoryButton:hover:not(:disabled),
+.editorHistoryButton:focus-visible {
+  background: var(--design-control-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.editorHistoryButton:focus-visible {
+  outline: none;
+  box-shadow: var(--ristak-focus-ring, 0 0 0 3px var(--accent-soft));
+}
+
+.editorHistoryButton:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
 .pageFrame .containerFocused:has(.builder) .editorToolbarTop .backButton {
   height: var(--editor-control-h, 40px);
   min-height: var(--editor-control-h, 40px);

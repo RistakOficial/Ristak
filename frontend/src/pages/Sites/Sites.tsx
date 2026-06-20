@@ -72,6 +72,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Redo2,
   RefreshCw,
   Save,
   Search,
@@ -84,6 +85,7 @@ import {
   Trash2,
   Type,
   Underline,
+  Undo2,
   Unlink2,
   Upload,
   Video,
@@ -1375,13 +1377,17 @@ type EmbeddedFormCanvasEditorBridge = {
 }
 
 type EditorHistoryEntry = {
-  action: 'reorder' | 'delete'
+  action: 'reorder' | 'delete' | 'pages'
   siteId: string
   pageId?: string
   selectedBefore: string
   selectedAfter: string
   beforeBlockIds: string[]
   afterBlockIds: string[]
+  beforePages?: SitePage[]
+  afterPages?: SitePage[]
+  activePageBefore?: string
+  activePageAfter?: string
   deletedRootBlockId?: string
   deletedBlocks?: SiteBlock[]
   deletedCreatedBlockIds?: string[]
@@ -5536,6 +5542,7 @@ export const Sites: React.FC = () => {
   const [importedPreviewContexts, setImportedPreviewContexts] = useState<Record<string, SitesAIPreviewVisualContext>>({})
   const [loadingImportData, setLoadingImportData] = useState(false)
   const [savingImportMapping, setSavingImportMapping] = useState(false)
+  const [editorHistoryState, setEditorHistoryState] = useState({ undo: 0, redo: 0, busy: false })
   const selectedSiteRef = useRef<PublicSite | null>(null)
   const librarySettingsSiteRef = useRef<PublicSite | null>(null)
   const pendingAIGenerationSiteRef = useRef<PublicSite | null>(null)
@@ -5558,6 +5565,14 @@ export const Sites: React.FC = () => {
   const pendingEmbeddedFormSourceDraftsRef = useRef<Map<string, PublicSite>>(new Map())
   const pendingEmbeddedFormDeletedBlockIdsRef = useRef<Map<string, Set<string>>>(new Map())
   const savingPendingEditorRef = useRef(false)
+
+  function syncEditorHistoryState() {
+    setEditorHistoryState({
+      undo: undoStackRef.current.length,
+      redo: redoStackRef.current.length,
+      busy: historyBusyRef.current
+    })
+  }
 
   useEffect(() => {
     ensureSitesFontStylesheet()
@@ -5667,6 +5682,7 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     undoStackRef.current = []
     redoStackRef.current = []
+    syncEditorHistoryState()
   }, [selectedSite?.id])
 
   const handleImportedPreviewContextChange = useCallback((siteId: string, context: SitesAIPreviewVisualContext) => {
@@ -7103,6 +7119,7 @@ export const Sites: React.FC = () => {
     if (historyBusyRef.current) return
     undoStackRef.current = [...undoStackRef.current, cloneJson(entry)].slice(-MAX_SITES_EDITOR_HISTORY)
     redoStackRef.current = []
+    syncEditorHistoryState()
   }
 
   const applyEditorHistoryEntry = async (entry: EditorHistoryEntry, direction: 'undo' | 'redo') => {
@@ -7111,8 +7128,11 @@ export const Sites: React.FC = () => {
     if (!siteToEdit || siteToEdit.id !== entry.siteId) return false
 
     historyBusyRef.current = true
+    syncEditorHistoryState()
     try {
       let site: PublicSite | null = siteToEdit
+      let targetPageId = entry.pageId
+      let targetSelectedBlockId = direction === 'undo' ? entry.selectedBefore : entry.selectedAfter
 
       if (entry.action === 'reorder') {
         site = applyBlockOrderLocal(siteToEdit, direction === 'undo' ? entry.beforeBlockIds : entry.afterBlockIds, entry.pageId)
@@ -7154,6 +7174,58 @@ export const Sites: React.FC = () => {
           }
           markBlockOrderDirty(entry.pageId)
         }
+      } else if (entry.action === 'pages') {
+        const targetPages = direction === 'undo' ? entry.beforePages : entry.afterPages
+        if (!targetPages?.length) return false
+
+        const deletedBlocks = entry.deletedBlocks || []
+        const deletedIds = deletedBlocks.map(block => block.id)
+        let nextBlocks = siteToEdit.blocks || []
+
+        if (deletedIds.length) {
+          if (direction === 'undo') {
+            const existingIds = new Set(nextBlocks.map(block => block.id))
+            nextBlocks = [
+              ...nextBlocks,
+              ...deletedBlocks.filter(block => !existingIds.has(block.id)).map(block => cloneJson(block))
+            ]
+            for (const blockId of deletedIds) {
+              pendingDeletedBlockIdsRef.current.delete(blockId)
+              if (entry.deletedCreatedBlockIds?.includes(blockId)) {
+                pendingCreatedBlockIdsRef.current.add(blockId)
+                pendingBlockSaveIdsRef.current.add(blockId)
+              } else if (entry.deletedPendingSaveBlockIds?.includes(blockId)) {
+                pendingBlockSaveIdsRef.current.add(blockId)
+              }
+            }
+          } else {
+            nextBlocks = nextBlocks.filter(block => !deletedIds.includes(block.id))
+            markBlocksDeletedLocal(deletedIds)
+          }
+        }
+
+        const targetPageIds = new Set(targetPages.map(page => page.id))
+        const orphanedBlockIds: string[] = []
+        nextBlocks = nextBlocks.filter(block => {
+          if (isGlobalHeaderBlock(block) || isPopupBlock(block)) return true
+          const explicitPageId = getSettingString(block.settings || {}, 'pageId')
+          if (!explicitPageId || targetPageIds.has(explicitPageId)) return true
+          orphanedBlockIds.push(block.id)
+          return false
+        })
+        if (orphanedBlockIds.length) markBlocksDeletedLocal(orphanedBlockIds)
+
+        site = {
+          ...siteToEdit,
+          blocks: nextBlocks,
+          theme: {
+            ...(siteToEdit.theme || {}),
+            pages: normalizePagesForSave(targetPages)
+          }
+        }
+        targetPageId = direction === 'undo' ? entry.activePageBefore : entry.activePageAfter
+        targetSelectedBlockId = direction === 'undo' ? entry.selectedBefore : entry.selectedAfter
+        markEditorDirty({ site: true })
       }
 
       if (!site) return false
@@ -7162,16 +7234,16 @@ export const Sites: React.FC = () => {
       selectedSiteRef.current = normalizedSite
       setSelectedSite(normalizedSite)
       setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
-      if (entry.pageId) setActivePageId(entry.pageId)
-      setSelectedBlockId(direction === 'undo' ? entry.selectedBefore : entry.selectedAfter)
-      if (entry.pageId) {
+      if (targetPageId) setActivePageId(targetPageId)
+      setSelectedBlockId(targetSelectedBlockId)
+      if (targetPageId) {
         navigateSitesEditor({
           site: normalizedSite,
-          pageId: entry.pageId,
-          blockId: direction === 'undo' ? entry.selectedBefore : entry.selectedAfter
+          pageId: targetPageId,
+          blockId: targetSelectedBlockId
         })
       }
-      setHasUnsavedChanges(true)
+      if (entry.action !== 'pages') setHasUnsavedChanges(true)
       showToast(
         'info',
         direction === 'undo' ? 'Cambio deshecho' : 'Cambio rehecho',
@@ -7183,11 +7255,13 @@ export const Sites: React.FC = () => {
       return false
     } finally {
       historyBusyRef.current = false
+      syncEditorHistoryState()
     }
   }
 
   const handleEditorUndo = async () => {
     const entry = undoStackRef.current.pop()
+    syncEditorHistoryState()
     if (!entry) return
 
     const applied = await applyEditorHistoryEntry(entry, 'undo')
@@ -7196,10 +7270,12 @@ export const Sites: React.FC = () => {
     } else {
       undoStackRef.current = [...undoStackRef.current, entry].slice(-MAX_SITES_EDITOR_HISTORY)
     }
+    syncEditorHistoryState()
   }
 
   const handleEditorRedo = async () => {
     const entry = redoStackRef.current.pop()
+    syncEditorHistoryState()
     if (!entry) return
 
     const applied = await applyEditorHistoryEntry(entry, 'redo')
@@ -7208,6 +7284,7 @@ export const Sites: React.FC = () => {
     } else {
       redoStackRef.current = [...redoStackRef.current, entry].slice(-MAX_SITES_EDITOR_HISTORY)
     }
+    syncEditorHistoryState()
   }
 
   useEffect(() => {
@@ -7311,14 +7388,32 @@ export const Sites: React.FC = () => {
   const persistFunnelPages = async (nextPages: SitePage[], nextActivePageId?: string) => {
     const site = selectedSiteRef.current || selectedSite
     if (!site || !hasEditablePages(site)) return
+    const beforePages = normalizeFunnelPages(site)
     const orderedPages = getOrderedPagesForSite(site, nextPages)
     const finalPages = getSitePageMode(site) === 'website' ? ensureWebsiteSlugs(orderedPages) : orderedPages
+    const normalizedBeforePages = normalizePagesForSave(beforePages)
+    const normalizedAfterPages = normalizePagesForSave(finalPages)
     const targetPageId = nextActivePageId || activePageId
+    if (JSON.stringify(normalizedBeforePages) !== JSON.stringify(normalizedAfterPages)) {
+      pushEditorHistory({
+        action: 'pages',
+        siteId: site.id,
+        pageId: targetPageId,
+        selectedBefore: selectedBlockId,
+        selectedAfter: '',
+        beforeBlockIds: [],
+        afterBlockIds: [],
+        beforePages: normalizedBeforePages,
+        afterPages: normalizedAfterPages,
+        activePageBefore: activePageId,
+        activePageAfter: targetPageId
+      })
+    }
     applySelectedSiteLocal({
       ...site,
       theme: {
         ...(site.theme || {}),
-        pages: normalizePagesForSave(finalPages)
+        pages: normalizedAfterPages
       }
     }, {
       activePageId: targetPageId,
@@ -7536,46 +7631,53 @@ export const Sites: React.FC = () => {
       return
     }
 
-    const hasSubpages = idsToDelete.length > 1
-    showConfirm(
-      hasSubpages ? 'Eliminar página y subpáginas' : 'Eliminar página',
-      hasSubpages
-        ? 'Se eliminarán esta página, sus subpáginas y todos sus bloques. Esta acción no se puede deshacer.'
-        : 'Se eliminará esta página y todos sus bloques. Esta acción no se puede deshacer.',
-      () => {
-        const deletePage = async () => {
-          const pageIndex = pages.findIndex(page => page.id === pageId)
-          const nextPages = pages.filter(page => !idsToDeleteSet.has(page.id))
-          const currentSite = selectedSiteRef.current || site
-          const orderedPages = getOrderedPagesForSite(currentSite, nextPages)
-          const nextActive = idsToDeleteSet.has(activePageId)
-            ? orderedPages[Math.max(0, pageIndex - 1)]?.id || orderedPages[0]?.id
-            : activePageId
-          const pageBlockIds = (currentSite.blocks || [])
-            .filter(block => !isGlobalHeaderBlock(block) && idsToDeleteSet.has(getBlockPageId(block, pages)))
-            .map(block => block.id)
-          markBlocksDeletedLocal(pageBlockIds)
-          const nextSite = {
-            ...currentSite,
-            blocks: (currentSite.blocks || []).filter(block => !pageBlockIds.includes(block.id)),
-            theme: {
-              ...(currentSite.theme || {}),
-              pages: normalizePagesForSave(orderedPages)
-            }
-          }
-          applySelectedSiteLocal(nextSite, {
-            activePageId: nextActive || DEFAULT_FUNNEL_PAGE_ID,
-            selectedBlockId: '',
-            navigate: true
-          })
-          showToast('success', 'Página eliminada', `${getSiteTypeLabel(currentSite)} se actualizo. Guarda para conservar el cambio.`)
-        }
+    const pageIndex = pages.findIndex(page => page.id === pageId)
+    const nextPages = pages.filter(page => !idsToDeleteSet.has(page.id))
+    const currentSite = selectedSiteRef.current || site
+    const orderedPages = getOrderedPagesForSite(currentSite, nextPages)
+    const normalizedBeforePages = normalizePagesForSave(pages)
+    const normalizedAfterPages = normalizePagesForSave(orderedPages)
+    const nextActive = idsToDeleteSet.has(activePageId)
+      ? orderedPages[Math.max(0, pageIndex - 1)]?.id || orderedPages[0]?.id
+      : activePageId
+    const deletedBlocks = (currentSite.blocks || [])
+      .filter(block => !isGlobalHeaderBlock(block) && idsToDeleteSet.has(getBlockPageId(block, pages)))
+      .map(block => cloneJson(block))
+    const pageBlockIds = deletedBlocks.map(block => block.id)
+    const deletedCreatedBlockIds = pageBlockIds.filter(id => pendingCreatedBlockIdsRef.current.has(id))
+    const deletedPendingSaveBlockIds = pageBlockIds.filter(id => pendingBlockSaveIdsRef.current.has(id))
 
-        void deletePage()
-      },
-      'Eliminar',
-      'Cancelar'
-    )
+    markBlocksDeletedLocal(pageBlockIds)
+    pushEditorHistory({
+      action: 'pages',
+      siteId: currentSite.id,
+      pageId: nextActive || DEFAULT_FUNNEL_PAGE_ID,
+      selectedBefore: selectedBlockId,
+      selectedAfter: '',
+      beforeBlockIds: [],
+      afterBlockIds: [],
+      beforePages: normalizedBeforePages,
+      afterPages: normalizedAfterPages,
+      activePageBefore: activePageId,
+      activePageAfter: nextActive || DEFAULT_FUNNEL_PAGE_ID,
+      deletedBlocks,
+      deletedCreatedBlockIds,
+      deletedPendingSaveBlockIds
+    })
+    const nextSite = {
+      ...currentSite,
+      blocks: (currentSite.blocks || []).filter(block => !pageBlockIds.includes(block.id)),
+      theme: {
+        ...(currentSite.theme || {}),
+        pages: normalizedAfterPages
+      }
+    }
+    applySelectedSiteLocal(nextSite, {
+      activePageId: nextActive || DEFAULT_FUNNEL_PAGE_ID,
+      selectedBlockId: '',
+      navigate: true
+    })
+    showToast('success', 'Página eliminada', `${getSiteTypeLabel(currentSite)} se actualizo. Guarda para conservar el cambio.`)
   }
 
   const orderPagesByIds = (sourcePages: SitePage[], pageIds?: string[]) => {
@@ -7588,12 +7690,13 @@ export const Sites: React.FC = () => {
 
   const handleReorderPages = (sourcePageId: string, targetPageId: string, orderedPageIds?: string[]) => {
     if (!selectedSite || !canManagePages(selectedSite)) return
-    if (!sourcePageId || sourcePageId === targetPageId) return
+    const hasExplicitOrder = Boolean(orderedPageIds?.length)
+    if (!sourcePageId || (!hasExplicitOrder && sourcePageId === targetPageId)) return
     if (isStandardForm(selectedSite)) {
-      if (isFormFinalPageId(sourcePageId) || isFormFinalPageId(targetPageId)) return
+      if (isFormFinalPageId(sourcePageId) || (!hasExplicitOrder && isFormFinalPageId(targetPageId))) return
       const contentPages = getFormContentPages(pages)
       const oldIndex = contentPages.findIndex(page => page.id === sourcePageId)
-      const newIndex = contentPages.findIndex(page => page.id === targetPageId)
+      const newIndex = hasExplicitOrder ? oldIndex : contentPages.findIndex(page => page.id === targetPageId)
       if (oldIndex < 0 || newIndex < 0) return
       const nextContentPages = orderedPageIds?.length
         ? orderPagesByIds(contentPages, orderedPageIds)
@@ -7607,9 +7710,9 @@ export const Sites: React.FC = () => {
     if (getSitePageMode(selectedSite) === 'website') {
       const source = pages.find(page => page.id === sourcePageId)
       const target = pages.find(page => page.id === targetPageId)
-      if (!source || !target) return
+      if (!source || (!hasExplicitOrder && !target)) return
       // Only reorder among siblings (same parent); moving a page across levels is not allowed.
-      if ((source.parentPageId || '') !== (target.parentPageId || '')) return
+      if (!hasExplicitOrder && target && (source.parentPageId || '') !== (target.parentPageId || '')) return
       if (orderedPageIds?.length) {
         void persistFunnelPages(orderPagesByIds(pages, orderedPageIds), activePageId)
         return
@@ -7628,7 +7731,7 @@ export const Sites: React.FC = () => {
       return
     }
     const oldIndex = pages.findIndex(page => page.id === sourcePageId)
-    const newIndex = pages.findIndex(page => page.id === targetPageId)
+    const newIndex = hasExplicitOrder ? oldIndex : pages.findIndex(page => page.id === targetPageId)
     if (oldIndex < 0 || newIndex < 0) return
     const nextPages = orderedPageIds?.length ? orderPagesByIds(pages, orderedPageIds) : arrayMove(pages, oldIndex, newIndex)
     void persistFunnelPages(nextPages, activePageId)
@@ -9036,23 +9139,7 @@ export const Sites: React.FC = () => {
   }
 
   const requestDeleteBlock = (blockId: string) => {
-    const block = canvasBlocks.find(item => item.id === blockId) || popupBlocks.find(item => item.id === blockId) || blocks.find(item => item.id === blockId)
-    const deletesContainer = Boolean(block && isLanding(selectedSite) && isSectionBlock(block))
-    const deletedCount = getDeletedBlockIds(blockId).length
-    const targetLabel = deletesContainer ? 'contenedor' : 'elemento'
-    const detail = deletesContainer && deletedCount > 1
-      ? 'También se quitaran los elementos que esten dentro.'
-      : 'Se quitara del editor.'
-
-    showConfirm(
-      `Eliminar ${targetLabel}`,
-      `¿Seguro que quieres eliminar este ${targetLabel}? ${detail}`,
-      () => {
-        void handleDeleteBlock(blockId)
-      },
-      'Eliminar',
-      'Cancelar'
-    )
+    void handleDeleteBlock(blockId)
   }
 
   const persistCanvasBlockOrder = async (orderedBlocks: SiteBlock[], options: { popup?: boolean } = {}) => {
@@ -9632,6 +9719,28 @@ export const Sites: React.FC = () => {
                         <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
                       </div>
                     )}
+                    <div className={styles.editorHistoryControls} role="group" aria-label="Historial del editor">
+                      <button
+                        type="button"
+                        className={styles.editorHistoryButton}
+                        onClick={() => { void handleEditorUndo() }}
+                        disabled={editorAIGenerating || editorHistoryState.busy || editorHistoryState.undo === 0}
+                        aria-label="Deshacer cambio"
+                        title="Deshacer"
+                      >
+                        <Undo2 size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.editorHistoryButton}
+                        onClick={() => { void handleEditorRedo() }}
+                        disabled={editorAIGenerating || editorHistoryState.busy || editorHistoryState.redo === 0}
+                        aria-label="Rehacer cambio"
+                        title="Rehacer"
+                      >
+                        <Redo2 size={15} />
+                      </button>
+                    </div>
                     <span className={`${styles.editorSaveStatus} ${styles.editorSaveStatusBeforeDevice} ${editorSaveStatusClass}`} aria-live="polite">
                       {editorSaveStatus.icon}
                       <span>{editorSaveStatus.label}</span>
@@ -22271,12 +22380,17 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
     const sourcePageId = String(event.active.id)
     const targetPageId = event.over?.id ? String(event.over.id) : ''
     const finalOrderedPageIds = dragOrderedPageIdsRef.current || dragOrderedPageIds || orderedItems.map(item => item.page.id)
+    const initialOrderedPageIds = orderedItems.map(item => item.page.id)
+    const orderChanged = finalOrderedPageIds.length === initialOrderedPageIds.length
+      && finalOrderedPageIds.some((pageId, index) => pageId !== initialOrderedPageIds[index])
     setDraggingPageId(null)
     setDragOrderedPageIds(null)
     dragOrderedPageIdsRef.current = null
-    if (!canSortPageOver(sourcePageId, targetPageId)) return
+    const sourcePage = movablePages.find(page => page.id === sourcePageId)
+    if (!sourcePage || locked || isFixedPage(sourcePage)) return
+    if (!orderChanged && !canSortPageOver(sourcePageId, targetPageId)) return
     if (hasFixedPageSection && fixedPages.some(page => page.id === targetPageId)) return
-    onReorderPages(sourcePageId, targetPageId, finalOrderedPageIds)
+    onReorderPages(sourcePageId, targetPageId, orderChanged ? finalOrderedPageIds : undefined)
   }
 
   const handlePageDragCancel = () => {
