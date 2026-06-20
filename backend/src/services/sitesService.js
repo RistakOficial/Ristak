@@ -11901,6 +11901,11 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
       const PLAYERJS_URL = 'https://assets.mediadelivery.net/playerjs/playerjs-latest.min.js';
       const attached = new WeakSet();
       let playerJsLoader = null;
+      const FIT_ENTER_PX = 12;
+      const FIT_EXIT_PX = 28;
+      const FIT_SAFE_AREA_PX = 14;
+      const FIT_MAX_HEIGHT = 820;
+      const FIT_WIDE_MIN_WIDTH = 420;
 
       const clean = value => String(value || '').trim();
       const parseRule = value => {
@@ -12059,6 +12064,59 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(text);
         return text.replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\"');
       };
+      const cssPixel = value => {
+        const parsed = Number.parseFloat(String(value || ''));
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+      const visibleLayoutElement = element => {
+        if (!element || element.hidden) return false;
+        const style = window.getComputedStyle(element);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const layoutHeight = element => {
+        if (!element) return 0;
+        const rect = element.getBoundingClientRect();
+        return Math.ceil(Math.max(element.scrollHeight || 0, rect.height || 0));
+      };
+      const parseAspectRatio = value => {
+        const match = String(value || '').replace(/\\s+/g, '').match(/^(\\d+(?:\\.\\d+)?)\\/(\\d+(?:\\.\\d+)?)$/);
+        if (!match) return 0;
+        const width = Number(match[1]);
+        const height = Number(match[2]);
+        return Number.isFinite(width) && Number.isFinite(height) && height > 0 ? width / height : 0;
+      };
+      const naturalVideoGateWidth = host => {
+        const rect = host.getBoundingClientRect();
+        const parentWidth = host.parentElement ? host.parentElement.getBoundingClientRect().width || 0 : 0;
+        const mediaWidth = window.getComputedStyle(host).getPropertyValue('--rstk-media-width').trim();
+        const percent = mediaWidth.match(/^(\\d+(?:\\.\\d+)?)%$/);
+        if (percent && parentWidth > 0) return Math.max(1, parentWidth * Number(percent[1]) / 100);
+        const pixels = mediaWidth.match(/^(\\d+(?:\\.\\d+)?)px$/);
+        if (pixels) return Math.max(1, Number(pixels[1]));
+        return Math.max(1, rect.width || parentWidth || 1);
+      };
+      const videoGateAspectRatio = host => (
+        parseAspectRatio(window.getComputedStyle(host).getPropertyValue('--rstk-video-aspect-ratio')) ||
+        (host.classList.contains('rstk-video-portrait') ? 9 / 16 : 16 / 9)
+      );
+      const requiredVideoGateHeight = gate => {
+        const panel = gate.querySelector('.rstk-video-form-gate-panel');
+        const stack = gate.querySelector('[data-rstk-video-gate-stack]');
+        if (!panel || !stack) return 0;
+        const gateStyle = window.getComputedStyle(gate);
+        const panelStyle = window.getComputedStyle(panel);
+        const gatePaddingY = cssPixel(gateStyle.paddingTop) + cssPixel(gateStyle.paddingBottom);
+        const panelPaddingY = cssPixel(panelStyle.paddingTop) + cssPixel(panelStyle.paddingBottom);
+        const rowGap = cssPixel(panelStyle.rowGap || panelStyle.gap);
+        const rows = [
+          panel.querySelector('.rstk-video-form-gate-header'),
+          panel.querySelector('[data-rstk-video-gate-progress]'),
+          stack,
+          panel.querySelector('.rstk-video-form-actions'),
+          panel.querySelector('[data-rstk-video-gate-message]')
+        ].filter(visibleLayoutElement);
+        return rows.reduce((total, element) => total + layoutHeight(element), panelPaddingY) + rowGap * Math.max(0, rows.length - 1) + gatePaddingY;
+      };
       const findTarget = id => {
         const targetId = String(id || '');
         if (!targetId) return null;
@@ -12176,20 +12234,21 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         const triggerSeconds = Math.max(0, Number(gate.getAttribute('data-trigger-seconds') || 0) || 0);
         const completionAction = gate.getAttribute('data-completion-action') || 'continue_video';
         const completionRedirectUrl = gate.getAttribute('data-completion-redirect-url') || '';
-        const completionTargetIds = Array.isArray(parseJson(gate.getAttribute('data-completion-target-ids'))) ? parseJson(gate.getAttribute('data-completion-target-ids')) : [];
-        const state = {
-          host,
-          video,
-          iframe,
-          gate,
-          fields,
-          groups: [fields],
-          index: 0,
-          shown: false,
-          completed: false,
+          const completionTargetIds = Array.isArray(parseJson(gate.getAttribute('data-completion-target-ids'))) ? parseJson(gate.getAttribute('data-completion-target-ids')) : [];
+          const state = {
+            host,
+            video,
+            iframe,
+            gate,
+            fields,
+            groups: [fields],
+            index: 0,
+            shown: false,
+            completed: false,
           submitting: false,
           shouldResume: false,
-          player: null
+          player: null,
+          fitExpanded: false
         };
         const setMessage = text => {
           if (message) message.textContent = text || '';
@@ -12198,6 +12257,58 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           [backButton, nextButton, submitButton].forEach(button => {
             if (button) button.disabled = Boolean(disabled);
           });
+        };
+        const resetGateFit = () => {
+          state.fitExpanded = false;
+          host.classList.remove('rstk-video-form-gate-fit-expanded', 'rstk-video-form-gate-fit-wide');
+          host.style.removeProperty('--rstk-video-form-gate-fit-height');
+          host.style.removeProperty('--rstk-video-form-gate-fit-width');
+        };
+        const syncGateFit = () => {
+          if (!state.shown || gate.hidden) {
+            resetGateFit();
+            return false;
+          }
+          const width = naturalVideoGateWidth(host);
+          const naturalHeight = width / videoGateAspectRatio(host);
+          const requiredHeight = requiredVideoGateHeight(gate);
+          if (!requiredHeight || !Number.isFinite(requiredHeight)) {
+            resetGateFit();
+            return false;
+          }
+          const overflow = requiredHeight - naturalHeight;
+          const wasExpanded = state.fitExpanded;
+          const expanded = state.fitExpanded ? overflow > -FIT_EXIT_PX : overflow > FIT_ENTER_PX;
+          state.fitExpanded = expanded;
+          host.classList.toggle('rstk-video-form-gate-fit-expanded', expanded);
+          if (!expanded) {
+            host.classList.remove('rstk-video-form-gate-fit-wide');
+            host.style.removeProperty('--rstk-video-form-gate-fit-height');
+            host.style.removeProperty('--rstk-video-form-gate-fit-width');
+            return wasExpanded;
+          }
+          const viewportHeight = window.visualViewport && window.visualViewport.height ? window.visualViewport.height : window.innerHeight || 0;
+          const maxHeight = viewportHeight ? Math.max(naturalHeight, Math.min(FIT_MAX_HEIGHT, viewportHeight * 0.9)) : FIT_MAX_HEIGHT;
+          const fitHeight = Math.ceil(Math.min(maxHeight, Math.max(naturalHeight, requiredHeight + FIT_SAFE_AREA_PX)));
+          const nextHeight = fitHeight + 'px';
+          let changed = wasExpanded !== expanded || host.style.getPropertyValue('--rstk-video-form-gate-fit-height') !== nextHeight;
+          host.style.setProperty('--rstk-video-form-gate-fit-height', nextHeight);
+          const parentWidth = host.parentElement ? host.parentElement.getBoundingClientRect().width || width : width;
+          const wideWidth = host.classList.contains('rstk-video-portrait') && width < FIT_WIDE_MIN_WIDTH && parentWidth > width + 24
+            ? Math.ceil(Math.min(parentWidth, Math.max(width, FIT_WIDE_MIN_WIDTH)))
+            : 0;
+          const wasWide = host.classList.contains('rstk-video-form-gate-fit-wide');
+          host.classList.toggle('rstk-video-form-gate-fit-wide', wideWidth > 0);
+          changed = changed || wasWide !== (wideWidth > 0);
+          if (wideWidth > 0) {
+            const nextWidth = wideWidth + 'px';
+            changed = changed || host.style.getPropertyValue('--rstk-video-form-gate-fit-width') !== nextWidth;
+            host.style.setProperty('--rstk-video-form-gate-fit-width', nextWidth);
+          } else {
+            changed = changed || Boolean(host.style.getPropertyValue('--rstk-video-form-gate-fit-width'));
+            host.style.removeProperty('--rstk-video-form-gate-fit-width');
+          }
+          return changed;
         };
         const renderGroup = () => {
           const total = state.groups.length || 1;
@@ -12253,6 +12364,12 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           state.index = Math.max(0, Math.min(state.index, state.groups.length - 1));
           renderGroup();
         };
+        const refreshGateLayout = () => {
+          if (!state.shown) return;
+          packGroups();
+          const changed = syncGateFit();
+          if (changed) packGroups();
+        };
         const pausePlayer = () => {
           if (video && !video.paused) {
             state.shouldResume = true;
@@ -12272,14 +12389,15 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           }
           state.shouldResume = false;
         };
-        const showGate = () => {
-          if (state.completed || state.shown) return;
-          state.shown = true;
-          pausePlayer();
-          gate.hidden = false;
-          host.classList.add('rstk-video-gate-active');
-          setMessage('');
-          packGroups();
+          const showGate = () => {
+            if (state.completed || state.shown) return;
+            state.shown = true;
+            pausePlayer();
+            gate.hidden = false;
+            host.classList.add('rstk-video-gate-active');
+            setMessage('');
+            refreshGateLayout();
+            window.setTimeout(refreshGateLayout, 60);
           window.setTimeout(() => {
             const input = state.groups[state.index] && state.groups[state.index][0]
               ? state.groups[state.index][0].querySelector('input, textarea, select, button')
@@ -12287,26 +12405,28 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             if (input && typeof input.focus === 'function') input.focus({ preventScroll: true });
           }, 40);
         };
-        const completeGate = () => {
-          state.completed = true;
-          state.shown = false;
-          gate.hidden = true;
-          host.classList.remove('rstk-video-gate-active');
-          fields.forEach(field => { field.hidden = false; });
-          resumePlayer();
-        };
+          const completeGate = () => {
+            state.completed = true;
+            state.shown = false;
+            gate.hidden = true;
+            host.classList.remove('rstk-video-gate-active');
+            resetGateFit();
+            fields.forEach(field => { field.hidden = false; });
+            resumePlayer();
+          };
         const showCompletionMessage = text => {
           state.completed = true;
           state.shown = true;
           gate.hidden = false;
           host.classList.add('rstk-video-gate-active');
-          fields.forEach(field => { field.hidden = true; });
-          if (backButton) backButton.hidden = true;
-          if (nextButton) nextButton.hidden = true;
-          if (submitButton) submitButton.hidden = true;
-          if (progress) progress.hidden = true;
-          setMessage(text || 'Gracias. Tu información fue recibida.');
-        };
+            fields.forEach(field => { field.hidden = true; });
+            if (backButton) backButton.hidden = true;
+            if (nextButton) nextButton.hidden = true;
+            if (submitButton) submitButton.hidden = true;
+            if (progress) progress.hidden = true;
+            setMessage(text || 'Gracias. Tu información fue recibida.');
+            syncGateFit();
+          };
         const applyCompletionTargets = hidden => {
           completionTargetIds.map(findTarget).filter(Boolean).forEach(target => setTargetHidden(target, hidden));
         };
@@ -12334,11 +12454,12 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         };
         const storedCompletion = readStoredGateCompletion(gate);
         if (storedCompletion) applyCompletionAction(storedCompletion, { remembered: true });
-        const submitGate = async (rule = null, options = {}) => {
-          if (state.submitting) return true;
-          state.submitting = true;
-          setDisabled(true);
-          setMessage('Enviando...');
+          const submitGate = async (rule = null, options = {}) => {
+            if (state.submitting) return true;
+            state.submitting = true;
+            setDisabled(true);
+            setMessage('Enviando...');
+            syncGateFit();
           const url = new URL(window.location.href);
           const storedParams = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
           const params = Object.assign({}, storedParams, Object.fromEntries(url.searchParams.entries()));
@@ -12424,18 +12545,22 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             }
             applyCompletionAction(submission);
             return true;
-          } catch (error) {
-            setMessage(error.message || 'No se pudo enviar el formulario');
-            return false;
-          } finally {
-            state.submitting = false;
-            setDisabled(false);
-          }
-        };
-        const validateCurrentGroup = () => (state.groups[state.index] || []).every(validateField);
-        const continueFromGroup = async () => {
-          const currentFields = state.groups[state.index] || [];
-          if (!currentFields.every(validateField)) return;
+            } catch (error) {
+              setMessage(error.message || 'No se pudo enviar el formulario');
+              syncGateFit();
+              return false;
+            } finally {
+              state.submitting = false;
+              setDisabled(false);
+            }
+          };
+          const validateCurrentGroup = () => (state.groups[state.index] || []).every(validateField);
+          const continueFromGroup = async () => {
+            const currentFields = state.groups[state.index] || [];
+            if (!currentFields.every(validateField)) {
+              syncGateFit();
+              return;
+            }
           const rules = selectedRules(currentFields);
           const stopRule = blockingRule(rules);
           if (stopRule) {
@@ -12450,13 +12575,17 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           if (jump && jump.targetBlockId) {
             const targetIndex = state.groups.findIndex(group => group.some(field => field.getAttribute('data-block-id') === jump.targetBlockId));
             state.index = targetIndex >= 0 ? targetIndex : Math.min(state.index + 1, state.groups.length - 1);
-          } else {
-            state.index = Math.min(state.index + 1, state.groups.length - 1);
-          }
-          renderGroup();
-        };
-        const finalSubmit = async () => {
-          if (!validateCurrentGroup()) return;
+            } else {
+              state.index = Math.min(state.index + 1, state.groups.length - 1);
+            }
+            renderGroup();
+            syncGateFit();
+          };
+          const finalSubmit = async () => {
+            if (!validateCurrentGroup()) {
+              syncGateFit();
+              return;
+            }
           const rules = selectedRules(fields);
           const stopRule = blockingRule(rules);
           if (stopRule && !shouldSubmitRule(stopRule)) {
@@ -12465,10 +12594,11 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           }
           await submitGate(stopRule || null);
         };
-        backButton && backButton.addEventListener('click', () => {
-          state.index = Math.max(0, state.index - 1);
-          renderGroup();
-        });
+          backButton && backButton.addEventListener('click', () => {
+            state.index = Math.max(0, state.index - 1);
+            renderGroup();
+            syncGateFit();
+          });
         nextButton && nextButton.addEventListener('click', continueFromGroup);
         submitButton && submitButton.addEventListener('click', finalSubmit);
         gate.addEventListener('change', event => {
@@ -12476,11 +12606,14 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           if (!target || !target.closest || state.submitting) return;
           if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
           if (target.matches('input[type="checkbox"]') && !target.checked) return;
-          const field = target.closest('[data-rstk-video-form-field]');
-          if (!field) return;
-          const rule = readSelectedRules(field).find(item => item.action === 'disqualify') || null;
-          if (!rule) return;
-          if (!validateField(field)) return;
+            const field = target.closest('[data-rstk-video-form-field]');
+            if (!field) return;
+            const rule = readSelectedRules(field).find(item => item.action === 'disqualify') || null;
+            if (!rule) return;
+            if (!validateField(field)) {
+              syncGateFit();
+              return;
+            }
           submitGate(rule, {
             fieldId: field.getAttribute('data-block-id') || '',
             immediateDisqualify: true
@@ -12527,16 +12660,19 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             }).catch(() => {});
           }
         }
-        if (window.ResizeObserver) {
-          const resizeObserver = new ResizeObserver(() => {
-            if (state.shown) packGroups();
+          if (window.ResizeObserver) {
+            const resizeObserver = new ResizeObserver(() => {
+              if (state.shown) refreshGateLayout();
+            });
+            resizeObserver.observe(host);
+            resizeObserver.observe(gate);
+          }
+          window.addEventListener('resize', () => {
+            if (state.shown) refreshGateLayout();
           });
-          resizeObserver.observe(host);
-          resizeObserver.observe(gate);
-        }
-        window.addEventListener('resize', () => {
-          if (state.shown) packGroups();
-        });
+          window.visualViewport && window.visualViewport.addEventListener('resize', () => {
+            if (state.shown) refreshGateLayout();
+          });
         attached.add(gate);
       };
       const attachAll = () => document.querySelectorAll('[data-rstk-video-form-gate]').forEach(attachGate);
@@ -16937,8 +17073,8 @@ const RSTK_BASE_CSS = `
 	  .rstk-video iframe,.rstk-video video{height:100%}
 	  .rstk-video video{background:var(--rstk-video-bg,#000);object-fit:cover}
 	  .rstk-video-player{container-type:inline-size;isolation:isolate}
-	  .rstk-video-form-gate-previewing,.rstk-video-gate-active{aspect-ratio:auto;min-height:min(760px,max(520px,86svh))}
-	  .rstk-video-form-gate-previewing.rstk-video-portrait,.rstk-video-gate-active.rstk-video-portrait{min-height:min(800px,max(560px,88svh))}
+		  .rstk-video-form-gate-fit-expanded,.rstk-video-gate-active.rstk-video-form-gate-fit-expanded{aspect-ratio:auto;min-height:var(--rstk-video-form-gate-fit-height,min(760px,max(520px,86svh)))}
+		  .rstk-video-form-gate-fit-wide,.rstk-video-gate-active.rstk-video-form-gate-fit-wide{width:min(100%,var(--rstk-video-form-gate-fit-width,100%));margin-inline:auto}
 	  .rstk-video-custom-controls video{cursor:pointer}
 		  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:transparent;color:var(--rstk-video-play-color,#fff);cursor:pointer}
 		  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:0;border-radius:var(--rstk-video-play-radius,0);background:var(--rstk-video-player-color,#000000);color:var(--rstk-video-play-color,#fff);box-shadow:none;transition:opacity .18s ease,transform .18s ease}
@@ -17014,8 +17150,8 @@ const RSTK_BASE_CSS = `
 	  @keyframes rstkVideoFormGateFade{from{opacity:0}to{opacity:1}}
 	  @keyframes rstkVideoFormGateSlide{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 	  @container (max-width:460px){.rstk-video-form-gate{padding:8px}.rstk-video-form-gate-panel{gap:8px;padding:10px;border-radius:12px}.rstk-video-form-actions{justify-content:stretch}.rstk-video-form-actions button{flex:1 1 0;min-width:0;padding-inline:10px}.rstk-video-form-gate .rstk-phone-input{grid-template-columns:1fr}}
-	  @media (max-width:760px){.rstk-video-form-gate-previewing,.rstk-video-gate-active{width:100%;margin-inline:auto;min-height:min(720px,max(520px,82svh))}.rstk-video-form-gate-previewing.rstk-video-portrait,.rstk-video-gate-active.rstk-video-portrait{min-height:min(800px,max(560px,88svh))}}
-	  @supports not (height:1svh){.rstk-video-form-gate-previewing,.rstk-video-gate-active{min-height:min(760px,max(520px,86vh))}.rstk-video-form-gate-previewing.rstk-video-portrait,.rstk-video-gate-active.rstk-video-portrait{min-height:min(800px,max(560px,88vh))}}
+		  @media (max-width:760px){.rstk-video-form-gate-fit-expanded,.rstk-video-gate-active.rstk-video-form-gate-fit-expanded{width:min(100%,var(--rstk-video-form-gate-fit-width,100%));margin-inline:auto}}
+		  @supports not (height:1svh){.rstk-video-form-gate-fit-expanded,.rstk-video-gate-active.rstk-video-form-gate-fit-expanded{min-height:var(--rstk-video-form-gate-fit-height,min(760px,max(520px,86vh)))}}
 	  @supports (width:1cqw){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(104px,min(22cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))))}.rstk-video-control-bar{left:max(6px,min(12px,2cqw));right:max(6px,min(12px,2cqw));bottom:max(6px,min(12px,2cqw));gap:max(4px,min(8px,1.4cqw));padding:max(5px,min(7px,1.2cqw))}.rstk-video-control-button{width:max(24px,min(30px,5cqw));height:max(24px,min(30px,5cqw))}.rstk-video-speed-control{min-width:max(54px,min(66px,11cqw));height:max(24px,min(30px,5cqw));padding-inline:max(6px,min(8px,1.5cqw)) max(18px,min(20px,3cqw))}@media (max-width:760px){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(88px,min(18cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))))}}}
 	  @media (max-width:760px){.rstk-block-style .rstk-video-portrait{width:100%;margin-left:auto;margin-right:auto}}
 		  @keyframes rstkVideoSoundNotice{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}10%,18%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}28%,70%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0) scale(1)}86%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}100%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}}

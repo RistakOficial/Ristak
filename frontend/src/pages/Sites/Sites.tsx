@@ -777,6 +777,11 @@ const VIDEO_TRICK_PROGRESS_PEAK_MAX = 96
 const VIDEO_PREVIEW_MAX_SPAN_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
+const VIDEO_FORM_GATE_FIT_ENTER_PX = 12
+const VIDEO_FORM_GATE_FIT_EXIT_PX = 28
+const VIDEO_FORM_GATE_FIT_SAFE_AREA_PX = 14
+const VIDEO_FORM_GATE_FIT_MAX_HEIGHT = 820
+const VIDEO_FORM_GATE_FIT_WIDE_MIN_WIDTH = 420
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
   videoControls: false,
@@ -817,6 +822,20 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoPlayIconStyle: DEFAULT_VIDEO_PLAY_ICON_STYLE,
   videoPlayIconSize: DEFAULT_VIDEO_PLAY_ICON_SIZE,
   videoSoundColor: DEFAULT_VIDEO_PLAY_COLOR
+}
+
+interface VideoFormGateFitState {
+  expanded: boolean
+  wide: boolean
+  height: number
+  width: number
+}
+
+const EMPTY_VIDEO_FORM_GATE_FIT: VideoFormGateFitState = {
+  expanded: false,
+  wide: false,
+  height: 0,
+  width: 0
 }
 
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
@@ -2805,6 +2824,46 @@ const getResolvedVideoOrientation = (
 
 const getVideoAspectRatio = (orientation: Exclude<VideoOrientation, 'auto'>) =>
   orientation === 'portrait' ? DEFAULT_VIDEO_PORTRAIT_ASPECT_RATIO : DEFAULT_VIDEO_LANDSCAPE_ASPECT_RATIO
+
+const getVideoAspectRatioNumber = (orientation: Exclude<VideoOrientation, 'auto'>) =>
+  orientation === 'portrait' ? 9 / 16 : 16 / 9
+
+const readCssPixelValue = (value: string | null | undefined) => {
+  const parsed = Number.parseFloat(String(value || ''))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const isVisibleLayoutElement = (element: HTMLElement | null) => {
+  if (!element || element.hidden) return false
+  const style = window.getComputedStyle(element)
+  return style.display !== 'none' && style.visibility !== 'hidden'
+}
+
+const getLayoutElementHeight = (element: HTMLElement | null) => {
+  if (!element) return 0
+  const rectHeight = element.getBoundingClientRect().height
+  return Math.ceil(Math.max(element.scrollHeight || 0, rectHeight || 0))
+}
+
+const getNaturalVideoGateWidth = (player: HTMLElement) => {
+  const playerRect = player.getBoundingClientRect()
+  const parentWidth = player.parentElement?.getBoundingClientRect().width || 0
+  const mediaWidth = window.getComputedStyle(player).getPropertyValue('--rstk-media-width').trim()
+  const percentMatch = mediaWidth.match(/^(\d+(?:\.\d+)?)%$/)
+  if (percentMatch && parentWidth > 0) {
+    return Math.max(1, parentWidth * Number(percentMatch[1]) / 100)
+  }
+  const pxMatch = mediaWidth.match(/^(\d+(?:\.\d+)?)px$/)
+  if (pxMatch) return Math.max(1, Number(pxMatch[1]))
+  return Math.max(1, playerRect.width || parentWidth || 1)
+}
+
+const sameVideoFormGateFit = (left: VideoFormGateFitState, right: VideoFormGateFitState) => (
+  left.expanded === right.expanded &&
+  left.wide === right.wide &&
+  left.height === right.height &&
+  left.width === right.width
+)
 
 const withDefaultVideoPlayerSettings = (settings: Record<string, unknown> = {}) => ({
   ...DEFAULT_VIDEO_PLAYER_SETTINGS,
@@ -28053,6 +28112,76 @@ const VideoPlayerPreview: React.FC<{
     : []
   const gatePreviewQuestions = videoFormGateQuestions.length ? videoFormGateQuestions : embeddedGatePreviewQuestions
   const showGatePreview = selected && showVideoFormGatePreview && settings.videoFormGateEnabled === true && Boolean(site) && gatePreviewQuestions.length > 0
+  const [gateFit, setGateFit] = useState<VideoFormGateFitState>(EMPTY_VIDEO_FORM_GATE_FIT)
+  const gateFitRef = useRef<VideoFormGateFitState>(EMPTY_VIDEO_FORM_GATE_FIT)
+  const updateGateFit = useCallback((nextFit: VideoFormGateFitState) => {
+    setGateFit(currentFit => {
+      if (sameVideoFormGateFit(currentFit, nextFit)) return currentFit
+      gateFitRef.current = nextFit
+      return nextFit
+    })
+  }, [])
+  const resetGateFit = useCallback(() => {
+    gateFitRef.current = EMPTY_VIDEO_FORM_GATE_FIT
+    setGateFit(currentFit => sameVideoFormGateFit(currentFit, EMPTY_VIDEO_FORM_GATE_FIT) ? currentFit : EMPTY_VIDEO_FORM_GATE_FIT)
+  }, [])
+  const measureGateFit = useCallback(() => {
+    if (!showGatePreview) {
+      resetGateFit()
+      return
+    }
+    const player = playerRef.current
+    if (!player) {
+      resetGateFit()
+      return
+    }
+    const gate = player.querySelector<HTMLElement>('.rstk-video-form-gate-preview')
+    const panel = gate?.querySelector<HTMLElement>('.rstk-video-form-gate-panel') || null
+    const stack = panel?.querySelector<HTMLElement>('.rstk-video-form-field-stack') || null
+    if (!gate || !panel || !stack) {
+      resetGateFit()
+      return
+    }
+
+    const naturalWidth = getNaturalVideoGateWidth(player)
+    const naturalHeight = naturalWidth / getVideoAspectRatioNumber(resolvedOrientation)
+    const gateStyle = window.getComputedStyle(gate)
+    const panelStyle = window.getComputedStyle(panel)
+    const gatePaddingY = readCssPixelValue(gateStyle.paddingTop) + readCssPixelValue(gateStyle.paddingBottom)
+    const panelPaddingY = readCssPixelValue(panelStyle.paddingTop) + readCssPixelValue(panelStyle.paddingBottom)
+    const rowGap = readCssPixelValue(panelStyle.rowGap || panelStyle.gap)
+    const rows = [
+      panel.querySelector<HTMLElement>('.rstk-video-form-gate-header'),
+      panel.querySelector<HTMLElement>('.rstk-video-form-gate-progress'),
+      stack,
+      panel.querySelector<HTMLElement>('.rstk-video-form-actions'),
+      panel.querySelector<HTMLElement>('.rstk-submit-message')
+    ].filter(isVisibleLayoutElement)
+    const contentHeight = rows.reduce((total, element) => total + getLayoutElementHeight(element), panelPaddingY)
+    const requiredHeight = contentHeight + rowGap * Math.max(0, rows.length - 1) + gatePaddingY
+    const previousFit = gateFitRef.current
+    const overflow = requiredHeight - naturalHeight
+    const expanded = previousFit.expanded
+      ? overflow > -VIDEO_FORM_GATE_FIT_EXIT_PX
+      : overflow > VIDEO_FORM_GATE_FIT_ENTER_PX
+    const viewportHeight = window.visualViewport?.height || window.innerHeight || 0
+    const maxExpandedHeight = viewportHeight
+      ? Math.max(naturalHeight, Math.min(VIDEO_FORM_GATE_FIT_MAX_HEIGHT, viewportHeight * 0.9))
+      : VIDEO_FORM_GATE_FIT_MAX_HEIGHT
+    const height = expanded
+      ? Math.ceil(Math.min(maxExpandedHeight, Math.max(naturalHeight, requiredHeight + VIDEO_FORM_GATE_FIT_SAFE_AREA_PX)))
+      : 0
+    const parentWidth = player.parentElement?.getBoundingClientRect().width || naturalWidth
+    const targetWidth = expanded && resolvedOrientation === 'portrait' && naturalWidth < VIDEO_FORM_GATE_FIT_WIDE_MIN_WIDTH && parentWidth > naturalWidth + 24
+      ? Math.ceil(Math.min(parentWidth, Math.max(naturalWidth, VIDEO_FORM_GATE_FIT_WIDE_MIN_WIDTH)))
+      : 0
+    updateGateFit({
+      expanded,
+      wide: targetWidth > 0,
+      height,
+      width: targetWidth
+    })
+  }, [resolvedOrientation, resetGateFit, showGatePreview, updateGateFit])
   const isControlBarBlockedAtStart = useCallback(
     () => showCustomControlBar && !hasStartedPlaybackRef.current,
     [showCustomControlBar]
@@ -28163,8 +28292,45 @@ const VideoPlayerPreview: React.FC<{
     `rstk-video-${resolvedOrientation}`,
     `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`,
-    showGatePreview ? 'rstk-video-form-gate-previewing' : ''
+    showGatePreview ? 'rstk-video-form-gate-previewing' : '',
+    gateFit.expanded ? 'rstk-video-form-gate-fit-expanded' : '',
+    gateFit.wide ? 'rstk-video-form-gate-fit-wide' : ''
   ].filter(Boolean).join(' ')
+
+  useLayoutEffect(() => {
+    if (!showGatePreview) {
+      resetGateFit()
+      return undefined
+    }
+
+    let frame = 0
+    const scheduleMeasure = () => {
+      if (frame) window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        measureGateFit()
+      })
+    }
+
+    scheduleMeasure()
+    const player = playerRef.current
+    const gate = player?.querySelector<HTMLElement>('.rstk-video-form-gate-preview') || null
+    const panel = gate?.querySelector<HTMLElement>('.rstk-video-form-gate-panel') || null
+    const stack = gate?.querySelector<HTMLElement>('.rstk-video-form-field-stack') || null
+    const resizeObserver = 'ResizeObserver' in window ? new ResizeObserver(scheduleMeasure) : null
+    ;[player, gate, panel, stack].forEach(element => {
+      if (element && resizeObserver) resizeObserver.observe(element)
+    })
+    window.addEventListener('resize', scheduleMeasure)
+    window.visualViewport?.addEventListener('resize', scheduleMeasure)
+
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame)
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', scheduleMeasure)
+      window.visualViewport?.removeEventListener('resize', scheduleMeasure)
+    }
+  }, [gatePreviewQuestions, measureGateFit, resetGateFit, settings, showGatePreview])
 
   useEffect(() => {
     hasStartedPlaybackRef.current = hasStartedPlayback
@@ -28619,7 +28785,9 @@ const VideoPlayerPreview: React.FC<{
         ['--rstk-video-play-radius' as string]: playRadius,
         ['--rstk-video-play-icon-size' as string]: `${playIconSize}px`,
         ['--rstk-video-sound-color' as string]: soundColor,
-        ['--rstk-video-sound-cycle' as string]: soundNoticeCycle
+        ['--rstk-video-sound-cycle' as string]: soundNoticeCycle,
+        ...(gateFit.expanded && gateFit.height ? { ['--rstk-video-form-gate-fit-height' as string]: `${gateFit.height}px` } : {}),
+        ...(gateFit.wide && gateFit.width ? { ['--rstk-video-form-gate-fit-width' as string]: `${gateFit.width}px` } : {})
       } as React.CSSProperties}
       onPointerEnter={handlePlayerActivity}
       onPointerMove={handlePlayerActivity}
