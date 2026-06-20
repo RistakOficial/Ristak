@@ -242,15 +242,10 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.equal(result.message, 'No calificas para este video.')
     assert.equal(result.mappedFields.standard.email, email)
     assert.equal(result.mappedFields.custom.empresa_video, 'Ristak Labs')
-    assert.equal(result.capi.sent, true)
+    assert.equal(result.capi.sent, false)
+    assert.equal(result.capi.reason, 'video_form_disqualified')
     assert.equal(result.capi.eventName, 'CompleteRegistration')
-    assert.equal(metaCalls.length, 1)
-    const metaPayload = JSON.parse(metaCalls[0].body)
-    assert.equal(metaPayload.data[0].event_name, 'CompleteRegistration')
-    assert.equal(metaPayload.data[0].custom_data.conversion_type, 'video_form_gate_submit')
-    assert.equal(metaPayload.data[0].custom_data.video_block_id, videoBlock.id)
-    assert.equal(metaPayload.data[0].custom_data.predicted_ltv, 1500)
-    assert.equal(metaPayload.data[0].custom_data.video_gate, 'completed')
+    assert.equal(metaCalls.length, 0)
 
     const submission = await db.get('SELECT site_id, form_site_id, meta_json FROM public_site_submissions WHERE id = ?', [result.submissionId])
     assert.equal(submission.site_id, landingSite.id)
@@ -260,7 +255,7 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.equal(meta.videoFormGateBlockId, videoBlock.id)
     assert.equal(meta.formSiteId, formSite.id)
 
-    const forcedResult = await createSubmissionFromRequest(
+    const qualifiedResult = await createSubmissionFromRequest(
       {
         headers: { host: 'example.test', 'user-agent': 'node-test' },
         hostname: 'example.test',
@@ -286,8 +281,17 @@ test('video form gate renders inside the video player and posts as the source fo
       }
     )
 
-    assert.equal(forcedResult.status, 'received')
-    assert.notEqual(forcedResult.message, 'No calificas para este video.')
+    assert.equal(qualifiedResult.status, 'received')
+    assert.notEqual(qualifiedResult.message, 'No calificas para este video.')
+    assert.equal(qualifiedResult.capi.sent, true)
+    assert.equal(qualifiedResult.capi.eventName, 'CompleteRegistration')
+    assert.equal(metaCalls.length, 1)
+    const metaPayload = JSON.parse(metaCalls[0].body)
+    assert.equal(metaPayload.data[0].event_name, 'CompleteRegistration')
+    assert.equal(metaPayload.data[0].custom_data.conversion_type, 'video_form_gate_submit')
+    assert.equal(metaPayload.data[0].custom_data.video_block_id, videoBlock.id)
+    assert.equal(metaPayload.data[0].custom_data.predicted_ltv, 1500)
+    assert.equal(metaPayload.data[0].custom_data.video_gate, 'completed')
   } finally {
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)

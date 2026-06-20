@@ -12372,16 +12372,19 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             const gateMetaCustomData = parseJson(gate.getAttribute('data-meta-event-custom-data')) || {};
             const hasGateMetaEvent = gateMetaEventName && gateMetaEventName !== 'none';
             const metaEventName = submission.capi && submission.capi.eventName ? submission.capi.eventName : gateMetaEventName;
-            if (hasGateMetaEvent && window.ristakMetaTrackSiteEvent) {
-              window.ristakMetaTrackSiteEvent(metaEventName, metaEventId, Object.assign({}, gateMetaCustomData, {
-                status: submission.status || 'submitted',
-                conversion_type: 'video_form_gate_submit'
-              }));
-            } else if (window.ristakMetaTrackSiteSubmit) {
-              window.ristakMetaTrackSiteSubmit(metaEventId, {
-                status: submission.status || 'submitted',
-                conversion_type: 'video_form_gate_submit'
-              }, metaEventName);
+            const submissionDisqualified = submission.status === 'disqualified' || (submission.rules && submission.rules.disqualified === true);
+            if (!submissionDisqualified) {
+              if (hasGateMetaEvent && window.ristakMetaTrackSiteEvent) {
+                window.ristakMetaTrackSiteEvent(metaEventName, metaEventId, Object.assign({}, gateMetaCustomData, {
+                  status: submission.status || 'submitted',
+                  conversion_type: 'video_form_gate_submit'
+                }));
+              } else if (window.ristakMetaTrackSiteSubmit) {
+                window.ristakMetaTrackSiteSubmit(metaEventId, {
+                  status: submission.status || 'submitted',
+                  conversion_type: 'video_form_gate_submit'
+                }, metaEventName);
+              }
             }
             if (window.ristakNativeRememberContact && submission.contactId) {
               window.ristakNativeRememberContact({
@@ -20736,7 +20739,8 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     return { sent: false, reason: 'disabled' }
   }
 
-  const videoGateMetaConfig = normalizeBoolean(requestMeta?.meta?.videoFormGate || requestMeta?.meta?.video_form_gate) === 1
+  const isVideoGateSubmission = normalizeBoolean(requestMeta?.meta?.videoFormGate || requestMeta?.meta?.video_form_gate) === 1
+  const videoGateMetaConfig = isVideoGateSubmission
     ? getVideoFormGateMetaEventConfig(site, cleanString(requestMeta?.meta?.videoFormGateBlockId || requestMeta?.meta?.video_form_gate_block_id))
     : null
   const eventName = videoGateMetaConfig?.eventName || getFormSubmitMetaEventName(site, submittedPageId)
@@ -20745,6 +20749,23 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   const eventId = `site_${site.id}_${submissionId}`
   if (eventName === SITE_META_NO_EVENT) {
     return { sent: false, reason: 'no_event_configured', eventId, eventName }
+  }
+
+  const submissionRules = requestMeta?.meta?.rules && typeof requestMeta.meta.rules === 'object' ? requestMeta.meta.rules : {}
+  const videoGateDisqualified = isVideoGateSubmission && (
+    cleanString(submissionRules.status) === 'disqualified' ||
+    normalizeBoolean(submissionRules.disqualified) === 1
+  )
+  if (videoGateDisqualified) {
+    await logMetaEvent({
+      contactId,
+      eventType,
+      metaEventName: eventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Formulario de video descalificado'
+    })
+    return { sent: false, reason: 'video_form_disqualified', eventId, eventName }
   }
 
   const metaConfig = await getMetaConfig().catch(error => {

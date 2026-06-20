@@ -32505,7 +32505,7 @@ const VideoFormGateSettingsPanel: React.FC<{
               <div className={styles.panelSubheader}>Evento Meta al completar</div>
               <MetaVideoEventSettings
                 title="Meta Pixel + CAPI"
-                description="Se dispara cuando el visitante termina este formulario"
+                description="Solo se envía si la persona completa el formulario sin quedar descalificada"
                 siteMetaEnabled={Boolean(site.metaCapiEnabled)}
                 metaPixelConnected={metaPixelConnected}
                 eventEnabled={videoFormGateMetaEnabled}
@@ -32529,6 +32529,9 @@ const VideoFormGateSettingsPanel: React.FC<{
                 onChangeParameters={(metaEventParameters) => onPatchSettings({ videoFormGateMetaEventParameters: metaEventParameters })}
                 onCommit={onSave}
               />
+              <p className={styles.muted}>
+                Si una respuesta descalifica el formulario, no se enviará este evento personalizado de Meta.
+              </p>
             </div>
           )}
 
