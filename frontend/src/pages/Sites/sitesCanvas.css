@@ -1633,7 +1633,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   border-radius: 6px;
 }
 .rstkCanvas [data-rstk-edit]:focus { box-shadow: none; }
-.rstkCanvas [data-rstk-edit][data-empty="true"]::before {
+.rstkCanvas [data-rstk-edit][data-empty="true"]:not(:focus)::before {
   content: attr(data-placeholder); opacity: .45; pointer-events: none;
 }
 

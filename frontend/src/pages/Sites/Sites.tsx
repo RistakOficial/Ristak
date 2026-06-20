@@ -5212,6 +5212,7 @@ function FormEmbedEditorPanel({
   const activeFieldSettings = activeField?.settings || {}
   const activeBlockIsField = Boolean(activeField && fieldBlockTypes.has(activeField.blockType))
   const activeFieldSystemPreset = activeBlockIsField ? getSystemFormFieldPresetForBlock(activeField) : null
+  const showActiveFieldTypographyInEdit = shouldShowBlockTypographyInEdit(activeField)
   const activeFieldPageId = activeField ? getBlockPageId(activeField, pages) : activePage?.id || DEFAULT_FUNNEL_PAGE_ID
   const ruleFieldBlocks = fields.filter(field => fieldBlockTypes.has(field.blockType))
   const patchActiveField = (patch: Partial<SiteBlock>) => {
@@ -5222,6 +5223,16 @@ function FormEmbedEditorPanel({
     if (!activeField) return
     onPatchFieldSettings(activeField, patch)
   }
+  const activeFieldTypographyControls = showActiveFieldTypographyInEdit && activeField ? (
+    <InlineBlockStyleControls
+      site={site}
+      block={activeField}
+      blocks={fields}
+      mode="typography"
+      onPatchSettings={patchActiveFieldSettings}
+      onSave={onSave}
+    />
+  ) : null
   const changeActiveFieldType = (nextType: SiteBlockType) => {
     if (!activeField || !activeBlockIsField || activeFieldSystemPreset) return
     const nextSettings = {
@@ -5342,6 +5353,7 @@ function FormEmbedEditorPanel({
         <InspectorEmptyState>Selecciona un elemento del formulario para editarlo.</InspectorEmptyState>
       ) : !activeBlockIsField ? (
         <>
+          {activeFieldTypographyControls}
           <label className={styles.field}>
             <span>Página</span>
             <CustomSelect
@@ -5626,7 +5638,14 @@ function FormEmbedEditorPanel({
             )}
           </>
         ) : activeField ? (
-          <InlineBlockStyleControls site={site} block={activeField} blocks={fields} onPatchSettings={patchActiveFieldSettings} onSave={onSave} />
+          <InlineBlockStyleControls
+            site={site}
+            block={activeField}
+            blocks={fields}
+            mode={showActiveFieldTypographyInEdit ? 'design' : 'all'}
+            onPatchSettings={patchActiveFieldSettings}
+            onSave={onSave}
+          />
         ) : (
           <InspectorEmptyState>Selecciona un elemento, campo o el botón de envío dentro del formulario.</InspectorEmptyState>
         )}
@@ -11700,6 +11719,17 @@ type ImportedInlineEditorState = {
   left: number
 }
 
+const importedEmptySavableEditTypes = new Set<ImportedEditableSelection['editType']>([
+  'heading',
+  'text',
+  'form_label',
+  'placeholder'
+])
+
+const canImportedSelectionSaveEmptyValue = (selection: ImportedEditableSelection) => (
+  importedEmptySavableEditTypes.has(selection.editType)
+)
+
 type ImportedElementPopoverPosition = {
   top: number
   left: number
@@ -15744,7 +15774,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   ) => {
     if (selection.editType === 'section') return false
     const cleanValue = value.trim()
-    if (!cleanValue && !fileUpload) {
+    const allowEmptyValue = canImportedSelectionSaveEmptyValue(selection)
+    if (!cleanValue && !fileUpload && !allowEmptyValue) {
       setContentError('Escribe el nuevo contenido antes de guardar.')
       return false
     }
@@ -15755,7 +15786,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       const result = await sitesService.updateImportedContent(site.id, {
         editId: selection.editId,
         editType: selection.editType,
-        value: cleanValue || selection.value,
+        value: cleanValue || (allowEmptyValue ? '' : selection.value),
         pageId: activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID,
         ...(fileUpload || {}),
         ...(buttonPatch || {})
@@ -16481,7 +16512,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             element.textContent = originalValue
             return
           }
-          if (nextValue && nextValue !== originalValue.trim()) {
+          if (nextValue !== originalValue.trim()) {
             void saveEditableContent(selection, nextValue)
           }
         }
@@ -17234,7 +17265,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const canSaveInlineEditor = Boolean(
     inlineEditor &&
     inlineEditor.selection.editType !== 'section' &&
-    inlineEditor.value.trim() &&
+    (inlineEditor.value.trim() || canImportedSelectionSaveEmptyValue(inlineEditor.selection)) &&
     inlineEditor.value.trim() !== inlineEditor.selection.value.trim() &&
     !contentSaving
   )
@@ -23952,6 +23983,48 @@ const PaletteElementItem: React.FC<{
 // Inline, in-place text editing that renders as the real rstk element, so the
 // typography/gradients/spacing match the published page exactly. Content is set
 // imperatively to avoid React rewriting the DOM mid-edit (which jumps the caret).
+const inlineEditableInvisibleTextPattern = /[\u200B-\u200D\uFEFF]/g
+
+const normalizeInlineEditableText = (value: string, multiline: boolean) => {
+  const plainText = String(value || '')
+    .replace(inlineEditableInvisibleTextPattern, '')
+    .replace(/\u00a0/g, ' ')
+
+  return multiline
+    ? plainText.replace(/\r\n?/g, '\n')
+    : plainText.replace(/[\r\n]+/g, ' ')
+}
+
+const hasInlineEditableText = (value: string) => normalizeInlineEditableText(value, true).trim().length > 0
+
+const readInlineEditableText = (
+  element: HTMLElement,
+  multiline: boolean,
+  placeholder = '',
+  currentValue = ''
+) => {
+  const rawText = multiline ? element.innerText : element.textContent || ''
+  const nextText = normalizeInlineEditableText(rawText, multiline)
+  const placeholderText = normalizeInlineEditableText(placeholder, multiline).trim()
+
+  if (
+    placeholderText &&
+    !hasInlineEditableText(currentValue) &&
+    element.getAttribute('data-empty') === 'true' &&
+    nextText.trim() === placeholderText
+  ) {
+    return ''
+  }
+
+  return hasInlineEditableText(nextText) ? nextText : ''
+}
+
+const syncInlineEditableEmptyState = (element: HTMLElement, value: string) => {
+  const isEmpty = !hasInlineEditableText(value)
+  if (isEmpty && element.textContent) element.textContent = ''
+  element.setAttribute('data-empty', isEmpty ? 'true' : 'false')
+}
+
 interface InlineEditableProps {
   as?: 'h1' | 'h2' | 'p' | 'span' | 'div' | 'a' | 'strong'
   className?: string
@@ -23973,32 +24046,57 @@ const InlineEditable: React.FC<InlineEditableProps> = ({
     const el = ref.current
     if (editingRef.current) return
     if (el && el.textContent !== value) el.textContent = value
+    if (el) syncInlineEditableEmptyState(el, value)
   }, [value])
 
   const Tag = as as React.ElementType
+  const handleEditableChange = (element: HTMLElement) => {
+    const text = readInlineEditableText(element, Boolean(multiline), placeholder, value)
+    syncInlineEditableEmptyState(element, text)
+    onChange(text)
+    return text
+  }
+
   return (
     <Tag
       ref={ref}
       className={className}
-      contentEditable={!disabled}
+      contentEditable={disabled ? false : 'plaintext-only'}
       suppressContentEditableWarning
       spellCheck={false}
       role="textbox"
       data-rstk-edit=""
-      data-empty={value ? 'false' : 'true'}
+      data-empty={hasInlineEditableText(value) ? 'false' : 'true'}
       data-placeholder={placeholder || ''}
-      onFocus={() => {
+      onFocus={(event: React.FocusEvent<HTMLElement>) => {
         editingRef.current = true
+        syncInlineEditableEmptyState(event.currentTarget, readInlineEditableText(event.currentTarget, Boolean(multiline), placeholder, value))
       }}
       onInput={(event: React.FormEvent<HTMLElement>) => {
-        const text = event.currentTarget.textContent || ''
-        event.currentTarget.setAttribute('data-empty', text ? 'false' : 'true')
-        onChange(text)
+        handleEditableChange(event.currentTarget)
+      }}
+      onPaste={(event: React.ClipboardEvent<HTMLElement>) => {
+        event.preventDefault()
+        const pasteText = normalizeInlineEditableText(event.clipboardData.getData('text/plain'), Boolean(multiline))
+        if (!pasteText) return
+
+        const selection = event.currentTarget.ownerDocument.getSelection()
+        if (!selection?.rangeCount) return
+
+        const range = selection.getRangeAt(0)
+        range.deleteContents()
+        const textNode = event.currentTarget.ownerDocument.createTextNode(pasteText)
+        range.insertNode(textNode)
+        range.setStartAfter(textNode)
+        range.collapse(true)
+        selection.removeAllRanges()
+        selection.addRange(range)
+        handleEditableChange(event.currentTarget)
       }}
       onBlur={(event: React.FocusEvent<HTMLElement>) => {
         editingRef.current = false
-        const text = event.currentTarget.textContent || ''
-        event.currentTarget.setAttribute('data-empty', text ? 'false' : 'true')
+        const text = readInlineEditableText(event.currentTarget, Boolean(multiline), placeholder, value)
+        syncInlineEditableEmptyState(event.currentTarget, text)
         if (text !== value) onChange(text)
         onCommit?.()
       }}
@@ -24894,6 +24992,24 @@ const InlineButtonRouting: React.FC<{
 
 type TypographyTarget = 'text' | 'button'
 type TextDecorationToken = 'underline' | 'line-through'
+type InlineBlockStyleControlsMode = 'all' | 'typography' | 'design'
+
+const editTabTypographyBlockTypes = new Set<SiteBlockType>([
+  'headline',
+  'title',
+  'subheading',
+  'subtitle',
+  'description',
+  'text',
+  'benefits',
+  'testimonials',
+  'services',
+  'faq'
+])
+
+const shouldShowBlockTypographyInEdit = (block?: SiteBlock | null) => Boolean(
+  block && editTabTypographyBlockTypes.has(block.blockType)
+)
 
 const fontWeightEditorOptions = [
   { value: 'normal', label: 'Normal' },
@@ -25141,20 +25257,23 @@ const InlineBlockStyleControls: React.FC<{
   block: SiteBlock
   blocks: SiteBlock[]
   surfaceOnly?: boolean
+  mode?: InlineBlockStyleControlsMode
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ site, block, blocks, surfaceOnly = false, onPatchSettings, onSave }) => {
+}> = ({ site, block, blocks, surfaceOnly = false, mode = 'all', onPatchSettings, onSave }) => {
   const settings = getPanelStyleSettings(site, block, blocks)
   const defaultAccent = defaultAccentForSite(site)
   const isSection = block.blockType === SECTION_BLOCK_TYPE
   const isLandingContent = isLanding(site) && !isSection
-  const supportsButton = !surfaceOnly && (block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed')
-  const supportsField = !surfaceOnly && fieldBlockTypes.has(block.blockType)
+  const showTypographyControls = mode !== 'design'
+  const showDesignControls = mode !== 'typography'
+  const supportsButton = showDesignControls && !surfaceOnly && (block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed')
+  const supportsField = showDesignControls && !surfaceOnly && fieldBlockTypes.has(block.blockType)
   const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
-  const supportsTextStyle = !surfaceOnly && (supportsField || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'countdown', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType))
-  const supportsMedia = !surfaceOnly && (block.blockType === 'image' || block.blockType === 'video')
-  const supportsCards = !surfaceOnly && ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
-  const supportsCountdown = !surfaceOnly && block.blockType === 'countdown'
+  const supportsTextStyle = showTypographyControls && !surfaceOnly && (fieldBlockTypes.has(block.blockType) || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'countdown', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType))
+  const supportsMedia = showDesignControls && !surfaceOnly && (block.blockType === 'image' || block.blockType === 'video')
+  const supportsCards = showDesignControls && !surfaceOnly && ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
+  const supportsCountdown = showDesignControls && !surfaceOnly && block.blockType === 'countdown'
   const defaultBorderWidth = getBlockBorderWidthFallback(site, block)
   const blockTextPaint = getSettingPaint(settings, 'blockText', getPageTextPaint(site))
   const currentFontFamily = getSettingString(settings, 'fontFamily')
@@ -25489,111 +25608,115 @@ const InlineBlockStyleControls: React.FC<{
         </>
       )}
 
-      <div className={styles.panelSubheader}>{isSection ? 'Estilo de franja' : isLandingContent ? 'Estilo del contenedor' : 'Estilo del bloque'}</div>
-      <LinkedSpacingField
-        label={isSection ? 'Relleno de franja' : 'Relleno'}
-        base="blockPadding"
-        settings={settings}
-        min={SPACING_OVERLAP_MIN}
-        max={160}
-        fallback={getSettingNumber(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, 160)}
-        onChange={onPatchSettings}
-        onCommit={onSave}
-      />
-      <LinkedSpacingField
-        label={isSection ? 'Margen de franja' : 'Margen'}
-        base="blockMargin"
-        settings={settings}
-        min={SPACING_OVERLAP_MIN}
-        max={200}
-        fallback={getSettingNumber(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, 200)}
-        onChange={onPatchSettings}
-        onCommit={onSave}
-      />
-      {!isHardEmbed && (
+      {showDesignControls && (
         <>
-          <ColorField
-            label={isSection ? 'Fondo de franja' : 'Fondo del contenedor'}
-            value={getSettingPaint(settings, 'blockBg', 'transparent')}
-            allowGradient
-            onChange={(value) => onPatchSettings({ blockBg: value })}
+          <div className={styles.panelSubheader}>{isSection ? 'Estilo de franja' : isLandingContent ? 'Estilo del contenedor' : 'Estilo del bloque'}</div>
+          <LinkedSpacingField
+            label={isSection ? 'Relleno de franja' : 'Relleno'}
+            base="blockPadding"
+            settings={settings}
+            min={SPACING_OVERLAP_MIN}
+            max={160}
+            fallback={getSettingNumber(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, 160)}
+            onChange={onPatchSettings}
             onCommit={onSave}
           />
-          {isSection && (
-            <div className={styles.sectionBackgroundMedia}>
-              <div className={styles.twoColumn}>
-                <label className={styles.field}>
-                  <span>Tipo de fondo</span>
-                  <CustomSelect
-                    value={getSettingString(settings, 'blockBackgroundMediaType') || 'image'}
-                    onChange={(event) => onPatchSettings({ blockBackgroundMediaType: event.target.value })}
-                    onBlur={onSave}
-                  >
-                    <option value="image">Imagen</option>
-                    <option value="video">Video</option>
-                  </CustomSelect>
-                </label>
-                <label className={styles.field}>
-                  <span>Visualización</span>
-                  <CustomSelect
-                    value={getSettingString(settings, 'blockBackgroundFit') || 'cover'}
-                    onChange={(event) => onPatchSettings({ blockBackgroundFit: event.target.value })}
-                    onBlur={onSave}
-                  >
-                    <option value="cover">Cubrir</option>
-                    <option value="contain">Contener</option>
-                    <option value="full_width">Ancho completo</option>
-                    <option value="auto">Original</option>
-                  </CustomSelect>
-                </label>
-              </div>
-              <MediaUploadControl
-                kind={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'}
-                label={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'Elegir video de franja' : 'Elegir imagen de franja'}
-                moduleEntityId={site.id}
-                currentUrl={getSettingString(settings, 'blockBackgroundImage')}
-                onUploaded={(url) => onPatchSettings({
-                  blockBackgroundImage: url,
-                  blockBackgroundMediaType: getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'
-                })}
+          <LinkedSpacingField
+            label={isSection ? 'Margen de franja' : 'Margen'}
+            base="blockMargin"
+            settings={settings}
+            min={SPACING_OVERLAP_MIN}
+            max={200}
+            fallback={getSettingNumber(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, 200)}
+            onChange={onPatchSettings}
+            onCommit={onSave}
+          />
+          {!isHardEmbed && (
+            <>
+              <ColorField
+                label={isSection ? 'Fondo de franja' : 'Fondo del contenedor'}
+                value={getSettingPaint(settings, 'blockBg', 'transparent')}
+                allowGradient
+                onChange={(value) => onPatchSettings({ blockBg: value })}
                 onCommit={onSave}
               />
-              <label className={styles.field}>
-                <span>URL de fondo de franja</span>
-                <input
-                  value={getSettingString(settings, 'blockBackgroundImage')}
-                  placeholder={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'https://.../video.mp4' : 'https://...'}
-                  onChange={(event) => onPatchSettings({ blockBackgroundImage: event.target.value })}
-                  onBlur={onSave}
+              {isSection && (
+                <div className={styles.sectionBackgroundMedia}>
+                  <div className={styles.twoColumn}>
+                    <label className={styles.field}>
+                      <span>Tipo de fondo</span>
+                      <CustomSelect
+                        value={getSettingString(settings, 'blockBackgroundMediaType') || 'image'}
+                        onChange={(event) => onPatchSettings({ blockBackgroundMediaType: event.target.value })}
+                        onBlur={onSave}
+                      >
+                        <option value="image">Imagen</option>
+                        <option value="video">Video</option>
+                      </CustomSelect>
+                    </label>
+                    <label className={styles.field}>
+                      <span>Visualización</span>
+                      <CustomSelect
+                        value={getSettingString(settings, 'blockBackgroundFit') || 'cover'}
+                        onChange={(event) => onPatchSettings({ blockBackgroundFit: event.target.value })}
+                        onBlur={onSave}
+                      >
+                        <option value="cover">Cubrir</option>
+                        <option value="contain">Contener</option>
+                        <option value="full_width">Ancho completo</option>
+                        <option value="auto">Original</option>
+                      </CustomSelect>
+                    </label>
+                  </div>
+                  <MediaUploadControl
+                    kind={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'}
+                    label={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'Elegir video de franja' : 'Elegir imagen de franja'}
+                    moduleEntityId={site.id}
+                    currentUrl={getSettingString(settings, 'blockBackgroundImage')}
+                    onUploaded={(url) => onPatchSettings({
+                      blockBackgroundImage: url,
+                      blockBackgroundMediaType: getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'
+                    })}
+                    onCommit={onSave}
+                  />
+                  <label className={styles.field}>
+                    <span>URL de fondo de franja</span>
+                    <input
+                      value={getSettingString(settings, 'blockBackgroundImage')}
+                      placeholder={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'https://.../video.mp4' : 'https://...'}
+                      onChange={(event) => onPatchSettings({ blockBackgroundImage: event.target.value })}
+                      onBlur={onSave}
+                    />
+                  </label>
+                </div>
+              )}
+              <div className={styles.twoColumn}>
+                <DimensionField
+                  label="Radio"
+                  value={getSettingNumber(settings, 'blockRadius', 8, 0, 48)}
+                  min={0}
+                  max={48}
+                  onChange={(value) => onPatchSettings({ blockRadius: value })}
+                  onCommit={onSave}
                 />
-              </label>
-            </div>
+                <DimensionField
+                  label="Grosor borde"
+                  value={getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, 12)}
+                  min={0}
+                  max={12}
+                  onChange={(value) => onPatchSettings({ blockBorderWidth: value })}
+                  onCommit={onSave}
+                />
+              </div>
+              <ColorField
+                label="Color borde"
+                value={getSettingPaint(settings, 'blockBorderColor', '#dbe3ef')}
+                allowGradient
+                onChange={(value) => onPatchSettings({ blockBorderColor: value })}
+                onCommit={onSave}
+              />
+            </>
           )}
-          <div className={styles.twoColumn}>
-            <DimensionField
-              label="Radio"
-              value={getSettingNumber(settings, 'blockRadius', 8, 0, 48)}
-              min={0}
-              max={48}
-              onChange={(value) => onPatchSettings({ blockRadius: value })}
-              onCommit={onSave}
-            />
-            <DimensionField
-              label="Grosor borde"
-              value={getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, 12)}
-              min={0}
-              max={12}
-              onChange={(value) => onPatchSettings({ blockBorderWidth: value })}
-              onCommit={onSave}
-            />
-          </div>
-          <ColorField
-            label="Color borde"
-            value={getSettingPaint(settings, 'blockBorderColor', '#dbe3ef')}
-            allowGradient
-            onChange={(value) => onPatchSettings({ blockBorderColor: value })}
-            onCommit={onSave}
-          />
         </>
       )}
     </div>
@@ -28876,7 +28999,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const isPrimaryTextBlock = ['headline', 'title'].includes(block.blockType)
   const isSecondaryTextBlock = ['subheading', 'subtitle', 'description'].includes(block.blockType)
   const systemFieldPreset = getSystemFormFieldPresetForBlock(block)
-  const showBlockNameFirst = isField || block.blockType === SECTION_BLOCK_TYPE || block.blockType === 'countdown'
+  const showTypographyInEdit = shouldShowBlockTypographyInEdit(block)
+  const showBlockNameFirst = showTypographyInEdit || isField || block.blockType === SECTION_BLOCK_TYPE || block.blockType === 'countdown'
   const isMediaBlock = block.blockType === 'image' || block.blockType === 'video'
   const showContentField = block.blockType !== 'calendar_embed' && block.blockType !== 'button' && !isMediaBlock
   const contentLabel = isField
@@ -28912,6 +29036,16 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       <input value={block.label} onChange={(event) => onPatchBlock({ label: event.target.value })} onBlur={onSave} />
     </label>
   )
+  const editTypographyControls = showTypographyInEdit ? (
+    <InlineBlockStyleControls
+      site={site}
+      block={block}
+      blocks={blocks}
+      mode="typography"
+      onPatchSettings={onPatchSettings}
+      onSave={onSave}
+    />
+  ) : null
   const contentField = showContentField ? (
     <label className={styles.field}>
       <span>{contentLabel}</span>
@@ -29049,6 +29183,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const editContent = (
     <>
       {showBlockNameFirst && blockNameField}
+      {showBlockNameFirst && editTypographyControls}
 
       {contentField}
 
@@ -29084,6 +29219,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       )}
 
       {!showBlockNameFirst && blockNameField}
+      {!showBlockNameFirst && editTypographyControls}
 
       {hasListCopy && (
         <label className={styles.field}>
@@ -29111,6 +29247,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         site={site}
         block={block}
         blocks={blocks}
+        mode={showTypographyInEdit ? 'design' : 'all'}
         onPatchSettings={onPatchSettings}
         onSave={onSave}
       />
