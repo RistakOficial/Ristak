@@ -80,6 +80,12 @@ function cleanEnum(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback
 }
 
+function roundMoney(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 0
+  return Math.round(parsed * 100) / 100
+}
+
 function parseStoredSettings(rawValue) {
   if (!rawValue) return {}
   try {
@@ -143,6 +149,47 @@ export function normalizePaymentSettings(input = {}) {
       applyToStripe: cleanBoolean(taxes.applyToStripe, DEFAULT_PAYMENT_SETTINGS.taxes.applyToStripe),
       applyToHighLevel: cleanBoolean(taxes.applyToHighLevel, DEFAULT_PAYMENT_SETTINGS.taxes.applyToHighLevel)
     }
+  }
+}
+
+export function calculatePaymentTax(amount, rawTaxes = {}, { provider = 'stripe' } = {}) {
+  const taxes = normalizePaymentSettings({ taxes: rawTaxes }).taxes
+  const baseAmount = roundMoney(amount)
+  const rateValue = roundMoney(taxes.rateValue)
+
+  if (!taxes.enabled || baseAmount <= 0 || rateValue <= 0) return null
+  if (provider === 'stripe' && !taxes.applyToStripe) return null
+  if (provider === 'highlevel' && !taxes.applyToHighLevel) return null
+
+  const isPercentage = taxes.rateType === 'percentage'
+  const inclusive = taxes.calculationMode === 'inclusive'
+  let subtotalAmount = baseAmount
+  let taxAmount = 0
+  let totalAmount = baseAmount
+
+  if (inclusive) {
+    taxAmount = isPercentage
+      ? baseAmount - (baseAmount / (1 + (rateValue / 100)))
+      : Math.min(rateValue, baseAmount)
+    subtotalAmount = baseAmount - taxAmount
+  } else {
+    taxAmount = isPercentage
+      ? baseAmount * (rateValue / 100)
+      : rateValue
+    totalAmount = baseAmount + taxAmount
+  }
+
+  return {
+    enabled: true,
+    taxName: taxes.taxName,
+    rateType: taxes.rateType,
+    rateValue,
+    calculationMode: taxes.calculationMode,
+    fiscalId: taxes.fiscalId,
+    provider: taxes.provider,
+    subtotalAmount: roundMoney(subtotalAmount),
+    taxAmount: roundMoney(taxAmount),
+    totalAmount: roundMoney(totalAmount)
   }
 }
 

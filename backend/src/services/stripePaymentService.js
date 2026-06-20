@@ -10,7 +10,7 @@ import {
   getCentralStripeConnectStatus,
   isLicenseEnforced
 } from './licenseService.js'
-import { getPublicPaymentSettings } from './paymentSettingsService.js'
+import { calculatePaymentTax, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
 
 const CONFIG_KEYS = {
   enabled: 'stripe_enabled',
@@ -925,6 +925,7 @@ async function findPaymentByPublicId(publicPaymentId) {
 function mapPublicPayment(row, config, baseUrl = '', settings = null) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
+  const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
   const publicPaymentId = row.public_payment_id
   return {
     id: row.id,
@@ -949,6 +950,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
     stripePaymentIntentId: row.stripe_payment_intent_id || null,
     publishableKey: config?.publishableKey || '',
     stripeAccountId: config?.connectUsesPlatformAccountHeader ? config.connectedAccountId || '' : '',
+    tax,
     settings: settings || null
   }
 }
@@ -1159,6 +1161,9 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
     throw error
   }
 
+  const paymentSettings = await getPublicPaymentSettings()
+  const tax = calculatePaymentTax(amount, paymentSettings.taxes, { provider: 'stripe' })
+  const chargeAmount = tax?.totalAmount || Math.round(amount * 100) / 100
   const publicPaymentId = createPublicId()
   const id = createId('stripe_payment')
   const currency = normalizeCurrency(input.currency || config.defaultCurrency)
@@ -1175,7 +1180,8 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
     stripeCustomerId: stripeCustomerId || '',
     source: cleanString(input.source || 'ristak'),
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
-    ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {})
+    ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    ...(tax ? { tax } : {})
   }
 
   await db.run(
@@ -1187,7 +1193,7 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
     [
       id,
       contactId,
-      Math.round(amount * 100) / 100,
+      chargeAmount,
       currency,
       'sent',
       'stripe',
@@ -1204,8 +1210,6 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
       JSON.stringify(metadata)
     ]
   )
-
-  const paymentSettings = await getPublicPaymentSettings()
 
   return {
     payment: mapPublicPayment(await findPaymentByPublicId(publicPaymentId), config, baseUrl, paymentSettings),
@@ -1289,6 +1293,8 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
 
   const currency = normalizeCurrency(row.currency || config.defaultCurrency)
   const rowMetadata = parseJson(row.metadata_json, {})
+  const paymentSettings = await getPaymentSettings()
+  const shouldSendReceipt = paymentSettings.automations.receiptDeliveryEnabled !== false
   const paymentPlanMetadata = rowMetadata.paymentPlan && typeof rowMetadata.paymentPlan === 'object'
     ? rowMetadata.paymentPlan
     : null
@@ -1312,7 +1318,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
       ...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
       ...(savePaymentMethod && stripeCustomerId ? { setup_future_usage: 'off_session' } : {}),
       description: row.title || row.description || 'Pago Ristak',
-      receipt_email: row.contact_email || undefined,
+      receipt_email: shouldSendReceipt ? row.contact_email || undefined : undefined,
       metadata
     },
     requestOptions
@@ -1730,6 +1736,8 @@ async function chargeStripePaymentRowWithSavedMethod({
   const planMetadata = metadata.paymentPlan && typeof metadata.paymentPlan === 'object'
     ? metadata.paymentPlan
     : {}
+  const paymentSettings = await getPaymentSettings()
+  const shouldSendReceipt = paymentSettings.automations.receiptDeliveryEnabled !== false
   const description = cleanString(row.description || row.title || 'Pago Ristak')
 
   try {
@@ -1743,7 +1751,7 @@ async function chargeStripePaymentRowWithSavedMethod({
         confirm: true,
         payment_method_types: ['card'],
         description,
-        receipt_email: cleanString(metadata.contactEmail || savedMethod.contact_email) || undefined,
+        receipt_email: shouldSendReceipt ? cleanString(metadata.contactEmail || savedMethod.contact_email) || undefined : undefined,
         metadata: {
           ristak_payment_id: row.id,
           contact_id: row.contact_id || '',

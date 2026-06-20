@@ -93,6 +93,18 @@ export interface PublicStripePayment {
   stripePaymentIntentId?: string | null
   publishableKey: string
   stripeAccountId?: string
+  tax?: {
+    enabled: boolean
+    taxName: string
+    rateType: 'percentage' | 'fixed'
+    rateValue: number
+    calculationMode: 'exclusive' | 'inclusive'
+    fiscalId?: string
+    provider?: 'jigsaw'
+    subtotalAmount: number
+    taxAmount: number
+    totalAmount: number
+  } | null
   settings?: PublicPaymentSettings | null
 }
 

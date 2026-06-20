@@ -253,15 +253,16 @@ export const PublicPayment: React.FC = () => {
 
   const checkoutSettings = payment.settings?.checkout
   const receiptSettings = payment.settings?.receipt
-  const taxSettings = payment.settings?.taxes
+  const taxDetails = payment.tax
   const logoUrl = checkoutSettings?.logoUrl || receiptSettings?.logoUrl || ''
   const supportItems = [
     checkoutSettings?.supportEmail,
     checkoutSettings?.supportPhone
   ].filter(Boolean)
-  const taxLabel = taxSettings?.enabled
-    ? `${taxSettings.taxName || 'Impuesto'} ${taxSettings.rateType === 'percentage' ? `${taxSettings.rateValue}%` : formatCurrency(taxSettings.rateValue || 0, payment.currency)}`
+  const taxLabel = taxDetails?.enabled
+    ? `${taxDetails.taxName || 'Impuesto'} ${taxDetails.rateType === 'percentage' ? `${taxDetails.rateValue}%` : formatCurrency(taxDetails.rateValue || 0, payment.currency)}`
     : ''
+  const hasTaxBreakdown = Boolean(taxDetails?.enabled && taxDetails.taxAmount > 0)
 
   return (
     <main className={styles.page}>
@@ -320,10 +321,16 @@ export const PublicPayment: React.FC = () => {
                 <span>Vencimiento</span>
                 <strong>{formatDate(payment.dueDate)}</strong>
               </div>
-              {taxLabel && (
+              {hasTaxBreakdown && (
                 <div className={styles.detailRow}>
-                  <span>Impuestos</span>
-                  <strong>{taxSettings?.calculationMode === 'inclusive' ? `${taxLabel} incluido` : taxLabel}</strong>
+                  <span>Subtotal</span>
+                  <strong>{formatCurrency(taxDetails?.subtotalAmount || 0, payment.currency)}</strong>
+                </div>
+              )}
+              {hasTaxBreakdown && (
+                <div className={styles.detailRow}>
+                  <span>{taxDetails?.calculationMode === 'inclusive' ? 'Impuesto incluido' : 'Impuesto'}</span>
+                  <strong>{taxLabel} · {formatCurrency(taxDetails?.taxAmount || 0, payment.currency)}</strong>
                 </div>
               )}
               <div className={styles.detailRow}>
@@ -380,6 +387,12 @@ export const PublicPayment: React.FC = () => {
                     <span>Total pagado</span>
                     <strong>{formatCurrency(payment.amount, payment.currency)}</strong>
                   </div>
+                  {hasTaxBreakdown && (
+                    <div>
+                      <span>Impuesto</span>
+                      <strong>{formatCurrency(taxDetails?.taxAmount || 0, payment.currency)}</strong>
+                    </div>
+                  )}
                   <div>
                     <span>Referencia</span>
                     <strong>{payment.publicPaymentId}</strong>
