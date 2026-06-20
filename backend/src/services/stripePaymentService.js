@@ -1306,11 +1306,31 @@ async function getStripeContact(contactId) {
   )
 }
 
+async function getStoredStripePaymentMethodRows(contactId, mode) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) return []
+
+  return db.all(
+    `SELECT *
+     FROM stripe_payment_methods
+     WHERE contact_id = ? AND mode = ?
+     ORDER BY is_default DESC, updated_at DESC`,
+    [cleanContactId, normalizeMode(mode)]
+  )
+}
+
+async function getPreferredStripeCustomerIdForMode(contactId, mode) {
+  const rows = await getStoredStripePaymentMethodRows(contactId, mode)
+  return cleanString(rows[0]?.stripe_customer_id)
+}
+
 async function ensureStripeCustomerForContact(stripe, contactId, fallback = {}, requestOptions = undefined) {
   const contact = await getStripeContact(contactId)
   if (!contact) return null
 
-  const existingCustomerId = cleanString(contact.stripe_customer_id)
+  const stripeMode = normalizeMode(fallback.stripeMode || fallback.mode)
+  const modeCustomerId = await getPreferredStripeCustomerIdForMode(contact.id, stripeMode)
+  const existingCustomerId = modeCustomerId || cleanString(contact.stripe_customer_id)
   if (existingCustomerId) {
     try {
       await stripe.customers.retrieve(existingCustomerId, requestOptions)
@@ -1500,7 +1520,7 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
   const paymentUrl = buildPaymentUrl(baseUrl, publicPaymentId)
   const contactId = cleanString(input.contactId) || null
   const stripeCustomerId = contactId
-    ? await ensureStripeCustomerForContact(stripe, contactId, input, requestOptions)
+    ? await ensureStripeCustomerForContact(stripe, contactId, { ...input, stripeMode: config.mode }, requestOptions)
     : null
   const metadata = {
     contactName: cleanString(input.contactName),
@@ -1581,7 +1601,8 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     ? await ensureStripeCustomerForContact(stripe, row.contact_id, {
         contactName: row.contact_name,
         contactEmail: row.contact_email,
-        contactPhone: row.contact_phone
+        contactPhone: row.contact_phone,
+        stripeMode: config.mode
       }, requestOptions)
     : cleanString(row.contact_stripe_customer_id)
 
@@ -2078,7 +2099,13 @@ export async function createStripeRecurringSubscription(input = {}) {
     throw error
   }
 
-  const stripeCustomerId = await ensureStripeCustomerForContact(stripe, contactId, input, requestOptions)
+  const stripeCustomerId = cleanString(savedMethod.stripe_customer_id)
+    || await ensureStripeCustomerForContact(stripe, contactId, { ...input, stripeMode: config.mode }, requestOptions)
+  if (!stripeCustomerId) {
+    const error = new Error('No encontramos el cliente de Stripe para esta tarjeta guardada.')
+    error.status = 422
+    throw error
+  }
   const metadata = {
     ristak_subscription_id: ristakSubscriptionId,
     ristak_contact_id: contactId,
@@ -2383,42 +2410,42 @@ export async function getStripeSavedPaymentMethods(contactId) {
     throw error
   }
 
-  const stripeCustomerId = cleanString(contact.stripe_customer_id)
-  if (!stripeCustomerId) return []
+  const storedRows = await getStoredStripePaymentMethodRows(contact.id, config.mode)
+  const customerIds = [
+    ...new Set([
+      ...storedRows.map((row) => cleanString(row.stripe_customer_id)),
+      cleanString(contact.stripe_customer_id)
+    ].filter(Boolean))
+  ]
 
-  try {
-    const methods = await stripe.paymentMethods.list(
-      {
-        customer: stripeCustomerId,
-        type: 'card',
-        limit: 20
-      },
-      requestOptions
-    )
-
-    for (const method of methods.data || []) {
-      await upsertStripePaymentMethod({
-        stripe,
-        contactId: contact.id,
-        customerId: stripeCustomerId,
-        paymentMethodId: method.id,
-        mode: config.mode,
-        makeDefault: false,
+  for (const stripeCustomerId of customerIds) {
+    try {
+      const methods = await stripe.paymentMethods.list(
+        {
+          customer: stripeCustomerId,
+          type: 'card',
+          limit: 20
+        },
         requestOptions
-      })
+      )
+
+      for (const method of methods.data || []) {
+        await upsertStripePaymentMethod({
+          stripe,
+          contactId: contact.id,
+          customerId: stripeCustomerId,
+          paymentMethodId: method.id,
+          mode: config.mode,
+          makeDefault: false,
+          requestOptions
+        })
+      }
+    } catch (error) {
+      if (error?.statusCode !== 404) throw error
     }
-  } catch (error) {
-    if (error?.statusCode === 404) return []
-    throw error
   }
 
-  const rows = await db.all(
-    `SELECT *
-     FROM stripe_payment_methods
-     WHERE contact_id = ? AND mode = ?
-     ORDER BY is_default DESC, updated_at DESC`,
-    [contact.id, config.mode]
-  )
+  const rows = await getStoredStripePaymentMethodRows(contact.id, config.mode)
 
   return (rows || []).map(mapStripePaymentMethod).filter(Boolean)
 }
