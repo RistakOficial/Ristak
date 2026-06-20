@@ -158,6 +158,7 @@ import { aiAgentService } from '@/services/aiAgentService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import mediaService, {
+  isMediaUploadCancelledError,
   type FirstPartyVideoRetentionSegment,
   type FirstPartyVideoViewer,
   type MediaAsset,
@@ -20118,13 +20119,14 @@ const SitesMediaPickerModal: React.FC<{
     }
 
     setUploading(true)
-    const taskId = uploadQueue.addTask(file)
+    const { id: taskId, signal } = uploadQueue.addTask(file)
     try {
       const uploaded = await mediaService.uploadFile({
         file,
         module: 'sites',
         moduleEntityId,
         isPublic: true,
+        signal,
         onProgress: ({ percent }) => uploadQueue.setTaskProgress(taskId, percent)
       })
       uploadQueue.finishTask(taskId, 'complete', 'Subida completa')
@@ -20133,8 +20135,12 @@ const SitesMediaPickerModal: React.FC<{
       onClose()
       showToast('success', kind === 'image' ? 'Imagen seleccionada' : 'Video seleccionado', 'El archivo ya quedó puesto en el editor.')
     } catch (error) {
-      uploadQueue.finishTask(taskId, 'error', error instanceof Error ? error.message : 'No se pudo subir')
-      showToast('error', 'No se pudo subir', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+      if (isMediaUploadCancelledError(error)) {
+        uploadQueue.finishTask(taskId, 'error', 'Subida cancelada')
+      } else {
+        uploadQueue.finishTask(taskId, 'error', error instanceof Error ? error.message : 'No se pudo subir')
+        showToast('error', 'No se pudo subir', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+      }
     } finally {
       setUploading(false)
     }
@@ -20283,6 +20289,7 @@ const SitesMediaPickerModal: React.FC<{
         <MediaUploadTray
           tasks={uploadQueue.tasks}
           scope="modal"
+          onCancelTask={uploadQueue.cancelTask}
           onDismissTask={uploadQueue.dismissTask}
           onClearFinished={uploadQueue.clearFinished}
         />

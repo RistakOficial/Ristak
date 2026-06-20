@@ -15,6 +15,7 @@ export interface MediaUploadTask {
 export interface MediaUploadTrayProps {
   tasks: MediaUploadTask[]
   scope?: 'page' | 'modal'
+  onCancelTask?: (taskId: string) => void
   onDismissTask?: (taskId: string) => void
   onClearFinished?: () => void
 }
@@ -48,6 +49,7 @@ function getTaskIcon(task: MediaUploadTask) {
 export function MediaUploadTray({
   tasks,
   scope = 'page',
+  onCancelTask,
   onDismissTask,
   onClearFinished
 }: MediaUploadTrayProps) {
@@ -85,6 +87,7 @@ export function MediaUploadTray({
       <div className={styles.list}>
         {tasks.map((task) => {
           const progress = task.progress === null ? 100 : task.progress
+          const canCancel = task.status === 'uploading' || task.status === 'processing'
           const canDismiss = task.status === 'complete' || task.status === 'error'
 
           return (
@@ -98,6 +101,11 @@ export function MediaUploadTray({
                 </span>
               </span>
               <span className={styles.percent}>{getTaskStatusLabel(task)}</span>
+              {canCancel && onCancelTask ? (
+                <button type="button" className={styles.dismissButton} onClick={() => onCancelTask(task.id)} aria-label={`Cancelar subida de ${task.filename}`} title="Cancelar subida">
+                  <X size={14} />
+                </button>
+              ) : null}
               {canDismiss && onDismissTask ? (
                 <button type="button" className={styles.dismissButton} onClick={() => onDismissTask(task.id)} aria-label={`Quitar ${task.filename}`}>
                   <X size={14} />

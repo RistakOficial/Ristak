@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MediaUploadTask, MediaUploadTaskStatus } from '@/components/common/MediaUploadTray'
+import { MEDIA_UPLOAD_CANCELLED_MESSAGE } from '@/services/mediaService'
 
 function createUploadTaskId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -10,9 +11,19 @@ function createUploadTaskId() {
 
 export function useMediaUploadQueue() {
   const [tasks, setTasks] = useState<MediaUploadTask[]>([])
+  const controllersRef = useRef(new Map<string, AbortController>())
+
+  useEffect(() => () => {
+    controllersRef.current.forEach((controller) => {
+      if (!controller.signal.aborted) controller.abort()
+    })
+    controllersRef.current.clear()
+  }, [])
 
   const addTask = useCallback((file: File) => {
     const id = createUploadTaskId()
+    const controller = new AbortController()
+    controllersRef.current.set(id, controller)
     setTasks((current) => [
       {
         id,
@@ -23,7 +34,7 @@ export function useMediaUploadQueue() {
       },
       ...current
     ])
-    return id
+    return { id, signal: controller.signal }
   }, [])
 
   const updateTask = useCallback((taskId: string, patch: Partial<MediaUploadTask>) => {
@@ -39,6 +50,7 @@ export function useMediaUploadQueue() {
   }, [updateTask])
 
   const finishTask = useCallback((taskId: string, status: MediaUploadTaskStatus, message?: string) => {
+    controllersRef.current.delete(taskId)
     updateTask(taskId, {
       status,
       progress: status === 'error' ? null : 100,
@@ -47,11 +59,34 @@ export function useMediaUploadQueue() {
   }, [updateTask])
 
   const dismissTask = useCallback((taskId: string) => {
+    controllersRef.current.delete(taskId)
     setTasks((current) => current.filter((task) => task.id !== taskId))
   }, [])
 
+  const cancelTask = useCallback((taskId: string) => {
+    const controller = controllersRef.current.get(taskId)
+    if (controller && !controller.signal.aborted) {
+      controller.abort()
+    }
+    setTasks((current) => current.map((task) => {
+      if (task.id !== taskId || (task.status !== 'uploading' && task.status !== 'processing')) {
+        return task
+      }
+      return {
+        ...task,
+        progress: null,
+        status: 'error',
+        message: MEDIA_UPLOAD_CANCELLED_MESSAGE
+      }
+    }))
+  }, [])
+
   const clearFinished = useCallback(() => {
-    setTasks((current) => current.filter((task) => task.status === 'uploading' || task.status === 'processing'))
+    setTasks((current) => current.filter((task) => {
+      const active = task.status === 'uploading' || task.status === 'processing'
+      if (!active) controllersRef.current.delete(task.id)
+      return active
+    }))
   }, [])
 
   return {
@@ -61,6 +96,7 @@ export function useMediaUploadQueue() {
     setTaskProgress,
     finishTask,
     dismissTask,
+    cancelTask,
     clearFinished
   }
 }

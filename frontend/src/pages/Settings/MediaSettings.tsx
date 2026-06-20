@@ -51,6 +51,7 @@ import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { useNotification } from '@/contexts/NotificationContext'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import mediaService, {
+  isMediaUploadCancelledError,
   type MediaAsset,
   type MediaDownloadEntry,
   type MediaMoveEntry,
@@ -986,18 +987,24 @@ export const MediaSettings: React.FC = () => {
     let failedCount = 0
     try {
       for (const file of files) {
-        const taskId = uploadQueue.addTask(file)
+        const { id: taskId, signal } = uploadQueue.addTask(file)
         try {
           const uploaded = await mediaService.uploadFile({
             file,
             module: 'media',
             isPublic: true,
+            signal,
             onProgress: ({ percent }) => uploadQueue.setTaskProgress(taskId, percent)
           })
           uploadQueue.finishTask(taskId, 'complete', 'Subida completa')
           lastUploaded = uploaded
           successCount += 1
         } catch (uploadError) {
+          if (isMediaUploadCancelledError(uploadError)) {
+            uploadQueue.finishTask(taskId, 'error', 'Subida cancelada')
+            continue
+          }
+
           failedCount += 1
           uploadQueue.finishTask(
             taskId,
@@ -1469,6 +1476,7 @@ export const MediaSettings: React.FC = () => {
       <MediaUploadTray
         tasks={uploadQueue.tasks}
         scope="page"
+        onCancelTask={uploadQueue.cancelTask}
         onDismissTask={uploadQueue.dismissTask}
         onClearFinished={uploadQueue.clearFinished}
       />

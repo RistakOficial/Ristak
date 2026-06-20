@@ -71,12 +71,24 @@ export interface MediaUploadProgress {
   percent: number
 }
 
+export const MEDIA_UPLOAD_CANCELLED_MESSAGE = 'La subida se canceló.'
+
+export function isMediaUploadCancelledError(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+  const payload = error as { name?: unknown; message?: unknown }
+  return (
+    payload.name === 'AbortError' ||
+    payload.message === MEDIA_UPLOAD_CANCELLED_MESSAGE
+  )
+}
+
 export interface UploadMediaFileInput {
   file: File
   module?: string
   moduleEntityId?: string
   isPublic?: boolean
   onProgress?: (progress: MediaUploadProgress) => void
+  signal?: AbortSignal
 }
 
 export interface MediaMoveEntry {
@@ -308,15 +320,25 @@ function extractApiErrorMessage(payload: unknown, status: number, statusText: st
 function postFormWithProgress<T>(
   endpoint: string,
   body: FormData,
-  onProgress?: (progress: MediaUploadProgress) => void
+  onProgress?: (progress: MediaUploadProgress) => void,
+  signal?: AbortSignal
 ): Promise<T> {
   if (!onProgress || typeof XMLHttpRequest === 'undefined') {
-    return apiClient.postForm<T>(endpoint, body)
+    return apiClient.postForm<T>(endpoint, body, { signal })
   }
 
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createMediaUploadCancelledError())
+      return
+    }
+
     const xhr = new XMLHttpRequest()
+    const abortRequest = () => xhr.abort()
+    const cleanup = () => signal?.removeEventListener('abort', abortRequest)
+
     xhr.open('POST', buildApiUrl(endpoint))
+    signal?.addEventListener('abort', abortRequest, { once: true })
 
     Object.entries(getAuthHeaders()).forEach(([key, value]) => {
       xhr.setRequestHeader(key, value)
@@ -332,6 +354,7 @@ function postFormWithProgress<T>(
     }
 
     xhr.onload = () => {
+      cleanup()
       let payload: unknown = null
       if (xhr.responseText) {
         try {
@@ -349,10 +372,22 @@ function postFormWithProgress<T>(
       reject(new Error(extractApiErrorMessage(payload, xhr.status, xhr.statusText)))
     }
 
-    xhr.onerror = () => reject(new Error('No se pudo conectar con el servidor.'))
-    xhr.onabort = () => reject(new Error('La subida se canceló.'))
+    xhr.onerror = () => {
+      cleanup()
+      reject(new Error('No se pudo conectar con el servidor.'))
+    }
+    xhr.onabort = () => {
+      cleanup()
+      reject(createMediaUploadCancelledError())
+    }
     xhr.send(body)
   })
+}
+
+function createMediaUploadCancelledError() {
+  const error = new Error(MEDIA_UPLOAD_CANCELLED_MESSAGE)
+  error.name = 'AbortError'
+  return error
 }
 
 export const mediaService = {
@@ -362,7 +397,7 @@ export const mediaService = {
     formData.append('module', input.module || 'other')
     formData.append('isPublic', String(input.isPublic ?? true))
     if (input.moduleEntityId) formData.append('moduleEntityId', input.moduleEntityId)
-    return postFormWithProgress<MediaAsset>('/media/upload', formData, input.onProgress)
+    return postFormWithProgress<MediaAsset>('/media/upload', formData, input.onProgress, input.signal)
   },
 
   uploadDataUrl(input: {
