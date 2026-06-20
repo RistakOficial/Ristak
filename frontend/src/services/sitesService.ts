@@ -236,6 +236,7 @@ export interface SiteTheme {
   formFieldPaddingX?: number
   formFieldPaddingY?: number
   formFieldWidth?: number
+  formContentAlign?: 'left' | 'center' | 'right'
   formChoiceStyle?: 'native' | 'cards' | 'pills' | 'minimal'
   formChoiceSelectedBg?: string
   formChoiceSelectedBorder?: string

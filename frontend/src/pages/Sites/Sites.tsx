@@ -2940,6 +2940,7 @@ type ButtonStylePresetId = string
 type SocialPlatform = 'facebook' | 'instagram' | 'tiktok' | 'threads'
 type FormChoiceStyle = NonNullable<SiteTheme['formChoiceStyle']>
 type FormSelectStyle = NonNullable<SiteTheme['formSelectStyle']>
+type FormContentAlign = NonNullable<SiteTheme['formContentAlign']>
 
 const horizontalAlignOptions: Array<{ value: HorizontalAlign; label: string; icon: React.ReactNode }> = [
   { value: 'left', label: 'Izquierda', icon: <AlignLeft size={14} /> },
@@ -2952,6 +2953,9 @@ const buttonAlignOptions: Array<{ value: ButtonAlign; label: string; icon: React
   ...horizontalAlignOptions.filter(option => option.value !== 'justify'),
   { value: 'full', label: 'Completo', icon: <Maximize2 size={14} /> }
 ]
+
+const formContentAlignOptions: Array<{ value: FormContentAlign; label: string; icon: React.ReactNode }> =
+  horizontalAlignOptions.filter((option): option is { value: FormContentAlign; label: string; icon: React.ReactNode } => option.value !== 'justify')
 
 const buttonIconOptions: Array<{ value: ButtonIconName; label: string }> = [
   { value: '', label: 'Sin icono' },
@@ -5743,6 +5747,7 @@ const EMBEDDED_FORM_PROXY_THEME_KEYS: Array<keyof SiteTheme> = [
   'formFieldPaddingX',
   'formFieldPaddingY',
   'formFieldWidth',
+  'formContentAlign',
   'formChoiceStyle',
   'formChoiceSelectedBg',
   'formChoiceSelectedBorder',
@@ -29572,41 +29577,58 @@ const FormFieldGlobalStyleControls: React.FC<{
         <DimensionField label="Relleno vertical" value={getThemeNumber(theme, 'formFieldPaddingY', 13, 6, 36)} min={6} max={36} onChange={(value) => onPatchTheme({ formFieldPaddingY: value })} onCommit={onSaveSite} />
         <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, 240, 900)} min={240} max={900} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
       </div>
+      <AlignmentControl
+        label="Alineación del contenido"
+        value={theme.formContentAlign || 'left'}
+        options={formContentAlignOptions}
+        onChange={(value) => onPatchTheme({ formContentAlign: value as FormContentAlign })}
+        onCommit={onSaveSite}
+      />
     </>
   )
 }
 
 const FormOptionGlobalStyleControls: React.FC<{
   site: PublicSite
+  showChoiceControls?: boolean
+  showSelectControls?: boolean
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
-}> = ({ site, onPatchTheme, onSaveSite }) => {
+}> = ({ site, showChoiceControls = true, showSelectControls = true, onPatchTheme, onSaveSite }) => {
   const theme = site.theme || {}
   const defaultAccent = defaultAccentForSite(site)
   const accentRgb = cssColorToHex(defaultAccent, '#111827').replace('#', '').match(/.{2}/g)?.map(hex => parseInt(hex, 16)).join(', ') || '17, 24, 39'
   const defaultChoiceSelectedBg = `rgba(${accentRgb}, 0.10)`
 
+  if (!showChoiceControls && !showSelectControls) return null
+
   return (
     <>
       <div className={styles.panelSubheader}>Diseño global de opciones</div>
       <div className={styles.twoColumn}>
-        <label className={styles.field}>
-          <span>Radio y checks</span>
-          <CustomSelect value={normalizeFormChoiceStyle(theme.formChoiceStyle)} onChange={(event) => onPatchTheme({ formChoiceStyle: event.target.value as FormChoiceStyle })} onBlur={onSaveSite}>
-            {formChoiceStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </CustomSelect>
-        </label>
-        <label className={styles.field}>
-          <span>Desplegable</span>
-          <CustomSelect value={normalizeFormSelectStyle(theme.formSelectStyle)} onChange={(event) => onPatchTheme({ formSelectStyle: event.target.value as FormSelectStyle })} onBlur={onSaveSite}>
-            {formSelectStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </CustomSelect>
-        </label>
+        {showChoiceControls && (
+          <label className={styles.field}>
+            <span>Radio y checks</span>
+            <CustomSelect value={normalizeFormChoiceStyle(theme.formChoiceStyle)} onChange={(event) => onPatchTheme({ formChoiceStyle: event.target.value as FormChoiceStyle })} onBlur={onSaveSite}>
+              {formChoiceStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </CustomSelect>
+          </label>
+        )}
+        {showSelectControls && (
+          <label className={styles.field}>
+            <span>Desplegable</span>
+            <CustomSelect value={normalizeFormSelectStyle(theme.formSelectStyle)} onChange={(event) => onPatchTheme({ formSelectStyle: event.target.value as FormSelectStyle })} onBlur={onSaveSite}>
+              {formSelectStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </CustomSelect>
+          </label>
+        )}
       </div>
-      <div className={styles.twoColumn}>
-        <ColorField label="Opción activa" value={getThemePaint(theme, 'formChoiceSelectedBg', defaultChoiceSelectedBg)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBg: value })} onCommit={onSaveSite} />
-        <ColorField label="Borde activo" value={getThemePaint(theme, 'formChoiceSelectedBorder', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBorder: value })} onCommit={onSaveSite} />
-      </div>
+      {showChoiceControls && (
+        <div className={styles.twoColumn}>
+          <ColorField label="Opción activa" value={getThemePaint(theme, 'formChoiceSelectedBg', defaultChoiceSelectedBg)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBg: value })} onCommit={onSaveSite} />
+          <ColorField label="Borde activo" value={getThemePaint(theme, 'formChoiceSelectedBorder', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBorder: value })} onCommit={onSaveSite} />
+        </div>
+      )}
     </>
   )
 }
@@ -29795,6 +29817,13 @@ const FormGlobalStyleControls: React.FC<{
       </div>
       <DimensionField label="Relleno vertical" value={getThemeNumber(theme, 'formFieldPaddingY', 13, 6, 36)} min={6} max={36} onChange={(value) => onPatchTheme({ formFieldPaddingY: value })} onCommit={onSaveSite} />
       <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, 240, 900)} min={240} max={900} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
+      <AlignmentControl
+        label="Alineación del contenido"
+        value={theme.formContentAlign || 'left'}
+        options={formContentAlignOptions}
+        onChange={(value) => onPatchTheme({ formContentAlign: value as FormContentAlign })}
+        onCommit={onSaveSite}
+      />
 
       <div className={styles.twoColumn}>
         <label className={styles.field}>
@@ -32417,6 +32446,9 @@ const VideoFormGateSettingsPanel: React.FC<{
   const repeatMode = getVideoFormGateRepeatMode(settings)
   const completionTargetIds = getVideoFormGateCompletionTargetIds(settings)
   const needsCompletionTargets = finalAction === 'show_targets' || finalAction === 'hide_targets'
+  const hasDesignableFields = questions.length > 0
+  const hasRadioOrCheckboxFields = questions.some(question => question.blockType === 'radio' || question.blockType === 'checkboxes')
+  const hasDropdownFields = questions.some(question => question.blockType === 'dropdown')
   const videoFormGateMetaEnabled = settings.videoFormGateMetaEnabled === true
   const videoFormGateMetaEventName = videoFormGateMetaEnabled
     ? normalizeMetaEventName(getSettingString(settings, 'videoFormGateMetaEventName'), 'Lead')
@@ -32873,8 +32905,18 @@ const VideoFormGateSettingsPanel: React.FC<{
                   onCommit={onSave}
                 />
               </div>
-              <FormFieldGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
-              <FormOptionGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
+              {hasDesignableFields && (
+                <FormFieldGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
+              )}
+              {(hasRadioOrCheckboxFields || hasDropdownFields) && (
+                <FormOptionGlobalStyleControls
+                  site={videoGateSite}
+                  showChoiceControls={hasRadioOrCheckboxFields}
+                  showSelectControls={hasDropdownFields}
+                  onPatchTheme={patchVideoGateTheme}
+                  onSaveSite={onSave}
+                />
+              )}
               <FormSubmitGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
             </div>
           )}

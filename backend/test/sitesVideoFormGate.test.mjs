@@ -78,6 +78,8 @@ test('video form gate renders inside the video player and posts as the source fo
         submitRadius: 30,
         submitText: 'Enviar video',
         nextText: 'Siguiente video',
+        submitAlign: 'left',
+        formContentAlign: 'center',
         finalMessages: {
           disqualified: 'No calificas para este video.'
         }
@@ -217,6 +219,8 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, /ristakVideoFormGateRuntimeLoaded/)
     assert.match(html, /data-trigger-seconds="3"/)
     assert.match(html, /--rstk-video-form-gate-video-bg:rgba\(255, 255, 255, 0\.2\)/)
+    assert.match(html, /--rstk-form-content-align:center/)
+    assert.match(html, /--rstk-submit-justify:start/)
     assert.match(html, /rstk-video-gate-active\{aspect-ratio:auto;min-height:/)
     assert.match(html, /--rstk-video-form-panel-bg:#ffffff/)
     assert.match(html, /--rstk-form-field-bg:#ffffff/)

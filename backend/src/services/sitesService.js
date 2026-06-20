@@ -16987,14 +16987,14 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-gate-anim-fade:not([hidden]){animation:rstkVideoFormGateFade .22s ease-out both}
 	  .rstk-video-form-gate-anim-slide_up:not([hidden]){animation:rstkVideoFormGateSlide .24s ease-out both}
 	  .rstk-video-form-gate-anim-instant:not([hidden]){animation:none}
-	  .rstk-video-form-gate-panel{width:min(100%,680px);height:100%;max-width:100%;max-height:100%;min-height:0;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;gap:clamp(8px,1.8cqw,14px);overflow:hidden;border:var(--rstk-video-form-panel-border-width,0) solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:clamp(10px,2.4cqw,20px);background:var(--rstk-video-form-panel-bg,var(--rstk-block-bg,var(--rstk-surface)));color:var(--rstk-ink);box-shadow:0 24px 70px -42px rgba(0,0,0,.66);padding:clamp(12px,3cqw,24px)}
-	  .rstk-video-form-gate-header{display:grid;gap:4px;text-align:left}
+	  .rstk-video-form-gate-panel{width:min(100%,680px);height:100%;max-width:100%;max-height:100%;min-height:0;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;gap:clamp(8px,1.8cqw,14px);overflow:hidden;border:var(--rstk-video-form-panel-border-width,0) solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:clamp(10px,2.4cqw,20px);background:var(--rstk-video-form-panel-bg,var(--rstk-block-bg,var(--rstk-surface)));color:var(--rstk-ink);box-shadow:0 24px 70px -42px rgba(0,0,0,.66);padding:clamp(12px,3cqw,24px);text-align:var(--rstk-form-content-align,left)}
+	  .rstk-video-form-gate-header{display:grid;gap:4px;text-align:var(--rstk-form-content-align,left)}
 	  .rstk-video-form-gate-header strong{display:block;color:var(--rstk-ink);font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(1rem,3.2cqw,1.5rem);font-weight:800;line-height:1.1}
 	  .rstk-video-form-gate-header p{margin:0;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.78rem,2.1cqw,.95rem);line-height:1.35}
-	  .rstk-video-form-gate-progress{min-height:18px;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.72rem,1.8cqw,.86rem);font-weight:700;text-align:left}
-	  .rstk-video-form-fields{min-height:0;overflow:auto;overscroll-behavior:contain;padding-right:2px}
-	  .rstk-video-form-field-stack{display:grid;gap:clamp(8px,2cqw,14px);min-width:0}
-	  .rstk-video-form-field{display:grid;gap:clamp(5px,1.3cqw,8px);min-width:0;text-align:left}
+	  .rstk-video-form-gate-progress{min-height:18px;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.72rem,1.8cqw,.86rem);font-weight:700;text-align:var(--rstk-form-content-align,left)}
+	  .rstk-video-form-fields{min-height:0;display:grid;overflow:auto;overscroll-behavior:contain;padding-right:2px}
+	  .rstk-video-form-field-stack{display:grid;width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);gap:clamp(8px,2cqw,14px);min-width:0}
+	  .rstk-video-form-field{display:grid;gap:clamp(5px,1.3cqw,8px);min-width:0;text-align:var(--rstk-form-content-align,left)}
 	  .rstk-video-form-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,.98rem);font-style:var(--rstk-form-font-style,normal);font-weight:650;text-decoration:var(--rstk-form-text-decoration,none);line-height:1.25}
 	  .rstk-video-form-field .rstk-help{color:var(--rstk-form-help-color,var(--rstk-muted));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.74rem,1.9cqw,.9rem);line-height:1.3}
 	  .rstk-video-form-gate input,.rstk-video-form-gate textarea,.rstk-video-form-gate select{min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border:var(--rstk-form-field-border-width,1px) solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.86rem,2.4cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
@@ -17005,11 +17005,11 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-gate .rstk-option{min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
 	  .rstk-video-form-gate .rstk-option:has(input:checked){border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-bg,color-mix(in srgb,var(--rstk-accent) 8%,transparent))}
 	  .rstk-video-form-gate .rstk-error{margin:0;color:#dc2626;font-size:clamp(.72rem,1.8cqw,.84rem);font-weight:700}
-	  .rstk-video-form-actions{display:flex;align-items:center;justify-content:var(--rstk-submit-justify,flex-end);gap:8px;min-width:0}
-	  .rstk-video-form-actions button{box-sizing:border-box;width:var(--rstk-submit-width,auto);max-width:100%;min-width:min(128px,46%);min-height:clamp(38px,7.5cqw,var(--rstk-submit-height,48px));border:var(--rstk-submit-border-width,1px) solid var(--rstk-submit-border,var(--rstk-accent));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.1cqw,var(--rstk-submit-size,.98rem));font-weight:var(--rstk-btn-weight,800);cursor:pointer;padding:var(--rstk-submit-pad-y,9px) var(--rstk-submit-pad-x,14px)}
+	  .rstk-video-form-actions{display:flex;align-items:center;justify-content:var(--rstk-submit-justify,center);gap:8px;min-width:0}
+	  .rstk-video-form-actions button{box-sizing:border-box;width:var(--rstk-submit-width,fit-content);max-width:100%;min-width:min(128px,46%);min-height:clamp(38px,7.5cqw,var(--rstk-submit-height,48px));border:var(--rstk-submit-border-width,1px) solid var(--rstk-submit-border,var(--rstk-accent));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.1cqw,var(--rstk-submit-size,.98rem));font-weight:var(--rstk-btn-weight,800);cursor:pointer;flex:0 1 var(--rstk-submit-width,fit-content);padding:var(--rstk-submit-pad-y,9px) var(--rstk-submit-pad-x,14px)}
 	  .rstk-video-form-actions .rstk-secondary{background:transparent;color:var(--rstk-ink);border:1px solid var(--rstk-form-field-border,var(--rstk-input-border))}
 	  .rstk-video-form-actions button:disabled{opacity:.62;cursor:not-allowed}
-	  .rstk-video-form-gate .rstk-submit-message{min-height:18px;margin:0;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.74rem,1.8cqw,.88rem);font-weight:650;text-align:left}
+	  .rstk-video-form-gate .rstk-submit-message{min-height:18px;margin:0;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.74rem,1.8cqw,.88rem);font-weight:650;text-align:var(--rstk-form-content-align,left)}
 	  @keyframes rstkVideoFormGateFade{from{opacity:0}to{opacity:1}}
 	  @keyframes rstkVideoFormGateSlide{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 	  @container (max-width:460px){.rstk-video-form-gate{padding:8px}.rstk-video-form-gate-panel{gap:8px;padding:10px;border-radius:12px}.rstk-video-form-actions{justify-content:stretch}.rstk-video-form-actions button{flex:1 1 0;min-width:0;padding-inline:10px}.rstk-video-form-gate .rstk-phone-input{grid-template-columns:1fr}}
@@ -17033,8 +17033,8 @@ const RSTK_BASE_CSS = `
   .rstk-site-panel-footer .rstk-site-panel-links{justify-content:center}
 
   .rstk-field{display:grid;gap:8px;text-align:left}
-  .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style,.rstk-embedded-form > .rstk-options,.rstk-embedded-form > .rstk-actions{width:min(100%,var(--rstk-form-field-width,560px));justify-self:center}
-  .rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style > .rstk-field{text-align:left}
+  .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style,.rstk-embedded-form > .rstk-options,.rstk-embedded-form > .rstk-actions{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);text-align:var(--rstk-form-content-align,left)}
+  .rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style > .rstk-field{text-align:var(--rstk-form-content-align,left)}
   .rstk-embedded-form > .rstk-help{width:min(100%,620px);justify-self:center}
   .rstk-embedded-pages,.rstk-embedded-pages [data-embedded-page-content]{width:min(100%,var(--rstk-form-field-width,560px));justify-self:center;display:grid;gap:14px}
   .rstk-block-style.rstk-field,.rstk-block-style > .rstk-field{width:min(100%,var(--rstk-field-width,100%));justify-self:center}
@@ -17406,6 +17406,7 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
   const defaultButtonRadius = Number.parseInt(v.btnRadius, 10) || 12
   const submitAlign = blockButtonAlign({ buttonAlign: theme.submitAlign }, 'center')
   const submitWidth = themeNumber(theme, 'submitWidth', 0, 0, 100)
+  const formContentAlign = ['center', 'right'].includes(cleanString(theme.formContentAlign)) ? cleanString(theme.formContentAlign) : 'left'
 
   return `
 	    --rstk-form-font:${formFont};
@@ -17427,6 +17428,8 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
 	    --rstk-form-field-pad-x:${themeNumber(theme, 'formFieldPaddingX', 14, 6, 48)}px;
 	    --rstk-form-field-pad-y:${themeNumber(theme, 'formFieldPaddingY', 13, 6, 36)}px;
 	    --rstk-form-field-width:${themeNumber(theme, 'formFieldWidth', 560, 240, 900)}px;
+	    --rstk-form-content-align:${formContentAlign};
+	    --rstk-form-field-justify:${justifyForAlign(formContentAlign)};
 	    --rstk-form-choice-selected-bg:${choiceSelectedBg};
 	    --rstk-form-choice-selected-border:${paintFallbackColor(choiceSelectedBorder, accent)};
 	    --rstk-submit-bg:${submitBg};

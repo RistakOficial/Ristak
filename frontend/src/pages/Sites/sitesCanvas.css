@@ -419,11 +419,12 @@
   color: var(--rstk-ink);
   box-shadow: 0 24px 70px -42px rgba(0, 0, 0, .66);
   padding: clamp(12px, 3cqw, 24px);
+  text-align: var(--rstk-form-content-align, left);
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-header {
   display: grid;
   gap: 4px;
-  text-align: left;
+  text-align: var(--rstk-form-content-align, left);
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-header strong {
   display: block;
@@ -444,16 +445,19 @@
   color: var(--rstk-form-help-color, var(--rstk-muted));
   font-size: clamp(.72rem, 1.8cqw, .86rem);
   font-weight: 700;
-  text-align: left;
+  text-align: var(--rstk-form-content-align, left);
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-fields {
   min-height: 0;
+  display: grid;
   overflow: auto;
   overscroll-behavior: contain;
   padding-right: 2px;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field-stack {
   display: grid;
+  width: min(100%, var(--rstk-form-field-width, 560px));
+  justify-self: var(--rstk-form-field-justify, center);
   gap: clamp(8px, 2cqw, 14px);
   min-width: 0;
 }
@@ -461,7 +465,7 @@
   display: grid;
   gap: clamp(5px, 1.3cqw, 8px);
   min-width: 0;
-  text-align: left;
+  text-align: var(--rstk-form-content-align, left);
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field > label {
   color: var(--rstk-form-label-color, var(--rstk-ink));
@@ -532,12 +536,12 @@
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: var(--rstk-submit-justify, center);
   gap: 8px;
   min-width: 0;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions button {
-  width: auto;
+  width: var(--rstk-submit-width, fit-content);
   min-width: min(128px, 46%);
   min-height: clamp(38px, 7.5cqw, var(--rstk-submit-height, 48px));
   border: var(--rstk-submit-border-width, 1px) solid var(--rstk-submit-border, var(--rstk-accent));
@@ -548,6 +552,7 @@
   font-size: clamp(.84rem, 2.1cqw, var(--rstk-submit-size, .98rem));
   font-weight: var(--rstk-btn-weight, 800);
   cursor: default;
+  flex: 0 1 var(--rstk-submit-width, fit-content);
   padding: 9px 14px;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-submit-message {
@@ -556,7 +561,7 @@
   color: var(--rstk-form-help-color, var(--rstk-muted));
   font-size: clamp(.74rem, 1.8cqw, .88rem);
   font-weight: 650;
-  text-align: left;
+  text-align: var(--rstk-form-content-align, left);
 }
 @container (max-width: 460px) {
   .rstkCanvas .rstk-video-form-gate-preview {
@@ -974,11 +979,12 @@
 .rstkCanvas .rstk-embedded-form > .rstk-options,
 .rstkCanvas .rstk-embedded-form > .rstk-actions {
   width: min(100%, var(--rstk-form-field-width, 560px));
-  justify-self: center;
+  justify-self: var(--rstk-form-field-justify, center);
+  text-align: var(--rstk-form-content-align, left);
 }
 .rstkCanvas .rstk-embedded-form > .rstk-field,
 .rstkCanvas .rstk-embedded-form > .rstk-block-style > .rstk-field {
-  text-align: left;
+  text-align: var(--rstk-form-content-align, left);
 }
 .rstkCanvas .rstk-embedded-form > .rstk-help {
   width: min(100%, 620px);
