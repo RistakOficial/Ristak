@@ -10,6 +10,7 @@ import {
   getCentralStripeConnectStatus,
   isLicenseEnforced
 } from './licenseService.js'
+import { getPublicPaymentSettings } from './paymentSettingsService.js'
 
 const CONFIG_KEYS = {
   enabled: 'stripe_enabled',
@@ -921,7 +922,7 @@ async function findPaymentByPublicId(publicPaymentId) {
   )
 }
 
-function mapPublicPayment(row, config, baseUrl = '') {
+function mapPublicPayment(row, config, baseUrl = '', settings = null) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
   const publicPaymentId = row.public_payment_id
@@ -947,7 +948,8 @@ function mapPublicPayment(row, config, baseUrl = '') {
     },
     stripePaymentIntentId: row.stripe_payment_intent_id || null,
     publishableKey: config?.publishableKey || '',
-    stripeAccountId: config?.connectUsesPlatformAccountHeader ? config.connectedAccountId || '' : ''
+    stripeAccountId: config?.connectUsesPlatformAccountHeader ? config.connectedAccountId || '' : '',
+    settings: settings || null
   }
 }
 
@@ -1203,8 +1205,10 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
     ]
   )
 
+  const paymentSettings = await getPublicPaymentSettings()
+
   return {
-    payment: mapPublicPayment(await findPaymentByPublicId(publicPaymentId), config, baseUrl),
+    payment: mapPublicPayment(await findPaymentByPublicId(publicPaymentId), config, baseUrl, paymentSettings),
     paymentUrl,
     publicPaymentId
   }
@@ -1220,7 +1224,8 @@ export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = 
     row = await findPaymentByPublicId(publicPaymentId)
   }
 
-  return mapPublicPayment(row, config, baseUrl)
+  const paymentSettings = await getPublicPaymentSettings()
+  return mapPublicPayment(row, config, baseUrl, paymentSettings)
 }
 
 export async function createStripePaymentIntent(publicPaymentId, options = {}) {

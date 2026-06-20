@@ -1,0 +1,641 @@
+.page {
+  --payment-panel-gap: 18px;
+}
+
+.setupHeader {
+  margin: 18px 0 20px;
+}
+
+.setupTabs {
+  flex-wrap: wrap;
+  overflow: visible;
+  row-gap: 8px;
+}
+
+.setupTabs :global([data-segdir]) {
+  flex: 1 1 154px;
+}
+
+.twoColumnLayout,
+.singleColumnLayout {
+  display: grid;
+  gap: var(--payment-panel-gap);
+  min-width: 0;
+}
+
+.twoColumnLayout {
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.8fr);
+  align-items: start;
+}
+
+.singleColumnLayout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sectionCard,
+.previewCard,
+.receiptPreview,
+.jigsawCard,
+.noticeCard {
+  min-width: 0;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 18px;
+}
+
+.sectionHeader h2,
+.sectionHeader h3,
+.stripeConnectBox h3,
+.jigsawCard h3,
+.receiptPreview h3,
+.webhookList h3 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.sectionHeader p,
+.stripeConnectBox p,
+.jigsawCard p,
+.receiptPreview p {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.formGrid,
+.settingsMatrix {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.formField span {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.formField input,
+.formField textarea,
+.copyField input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+
+.formField input,
+.copyField input {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.formField textarea {
+  min-height: 92px;
+  resize: vertical;
+  padding: 10px 12px;
+  line-height: 1.5;
+}
+
+.formField input:focus,
+.formField textarea:focus,
+.copyField input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.formField small {
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.switchStack,
+.stripePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.switchStack {
+  margin-top: 18px;
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+
+.switchRow:first-child {
+  border-top: 0;
+}
+
+.switchRow > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.switchRow strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.switchRow span {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.previewCard,
+.receiptPreview,
+.jigsawCard {
+  position: sticky;
+  top: 18px;
+}
+
+.previewPaymentHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.previewPaymentHeader img,
+.receiptTop img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  border-radius: var(--radius-ctl);
+  border: 1px solid var(--border);
+  background: var(--surface-solid);
+}
+
+.previewPaymentHeader > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-ctl);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+.previewPaymentHeader strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.previewPaymentHeader p {
+  margin: 5px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.previewInvoice,
+.receiptRows,
+.taxPreview {
+  display: grid;
+  gap: 0;
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.previewInvoice > div,
+.receiptRows > div,
+.taxPreview > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-solid);
+}
+
+.previewInvoice > div:first-child,
+.receiptRows > div:first-child,
+.taxPreview > div:first-child {
+  border-top: 0;
+}
+
+.previewInvoice span,
+.receiptRows span,
+.taxPreview span {
+  color: var(--text-mute);
+  font-size: 12px;
+}
+
+.previewInvoice strong,
+.receiptRows strong,
+.taxPreview strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.previewButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  margin-top: 16px;
+  border-radius: var(--radius-ctl);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.previewTrust {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.receiptTop,
+.jigsawHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.receiptTop > svg,
+.jigsawHeader > svg {
+  color: var(--accent);
+}
+
+.receiptTerms,
+.receiptFooter {
+  margin: 14px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.receiptFooter {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settingsMatrix {
+  align-items: stretch;
+}
+
+.settingsMatrix .switchRow {
+  min-height: 76px;
+  padding: 0;
+  border-top: 0;
+}
+
+.summaryStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.summaryStrip > div,
+.noticeCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.summaryStrip svg,
+.noticeCard svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.summaryStrip strong,
+.noticeCard strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.summaryStrip span,
+.noticeCard p {
+  display: block;
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.gatewayList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.gatewayItem {
+  border-color: var(--border);
+}
+
+.gatewayItemActive {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-xs);
+}
+
+.gatewayItem :global([data-ristak-card-content]) {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.gatewayItem strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.gatewayItem p {
+  margin: 5px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.gatewayItemActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.modeSelector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+}
+
+.modeSelector span {
+  color: var(--text-mute);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.modeSelector .modeActive {
+  color: var(--text);
+}
+
+.stripeConnectBox {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid);
+}
+
+.actionsRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.inlineWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-ctl);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.inlineWarning svg {
+  flex: 0 0 auto;
+  color: var(--warn);
+}
+
+.connectionSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.connectionSummary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid);
+}
+
+.connectionSummary span {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.connectionSummary strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.copyField {
+  display: flex;
+  gap: 10px;
+}
+
+.copyField input {
+  flex: 1;
+}
+
+.manualDetails {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid);
+  padding: 0;
+}
+
+.manualDetails summary {
+  cursor: pointer;
+  padding: 14px 16px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.manualDetails[open] {
+  padding-bottom: 16px;
+}
+
+.manualDetails[open] summary {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.manualDetails .formGrid,
+.manualDetails .actionsRow,
+.webhookList {
+  margin-left: 16px;
+  margin-right: 16px;
+}
+
+.webhookList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.webhookRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.webhookRow div {
+  min-width: 0;
+}
+
+.webhookRow strong {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.webhookRow span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.jigsawCard h3 {
+  margin-bottom: 8px;
+}
+
+.taxPreview {
+  margin-top: 16px;
+}
+
+.spinIcon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1040px) {
+  .twoColumnLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .previewCard,
+  .receiptPreview,
+  .jigsawCard {
+    position: static;
+  }
+
+  .summaryStrip,
+  .connectionSummary {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 780px) {
+  .sectionHeader,
+  .stripeConnectBox,
+  .gatewayItem :global([data-ristak-card-content]) {
+    flex-direction: column;
+  }
+
+  .formGrid,
+  .settingsMatrix,
+  .gatewayList {
+    grid-template-columns: 1fr;
+  }
+
+  .gatewayItemActions,
+  .actionsRow,
+  .copyField {
+    width: 100%;
+  }
+
+  .copyField {
+    flex-direction: column;
+  }
+}

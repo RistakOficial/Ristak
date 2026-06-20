@@ -1,16 +1,53 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Card, Button, NumberInput } from '@/components/common'
-import { Badge } from '@/components/common/Badge'
-import { AlertTriangle, ArrowLeft, CheckCircle, Clock, Copy, CreditCard, ExternalLink, KeyRound, Loader2, ShieldCheck, Unplug } from 'lucide-react'
+import {
+  AlertTriangle,
+  BellRing,
+  Building2,
+  CheckCircle,
+  Clock,
+  Copy,
+  CreditCard,
+  ExternalLink,
+  FileCheck2,
+  KeyRound,
+  Loader2,
+  Paintbrush,
+  Percent,
+  ReceiptText,
+  ShieldCheck,
+  Sparkles,
+  Unplug,
+  WalletCards
+} from 'lucide-react'
+import {
+  Badge,
+  Button,
+  Card,
+  CustomSelect,
+  NumberInput,
+  PageContainer,
+  PageHeader,
+  SegmentTabs,
+  Switch
+} from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
 import { invalidateIntegrationsStatus } from '@/services/integrationsService'
+import {
+  defaultPaymentSettings,
+  paymentSettingsService,
+  type PaymentAutomationSettings,
+  type PaymentCheckoutSettings,
+  type PaymentReceiptSettings,
+  type PaymentSettings,
+  type PaymentTaxSettings
+} from '@/services/paymentSettingsService'
 import { stripePaymentsService, type StripePaymentConfig, type StripeWebhookEndpoint } from '@/services/stripePaymentsService'
-import styles from './HighLevelIntegration.module.css'
+import styles from './PaymentsConfiguration.module.css'
 
-type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip' | 'gigstacK'
-type PaymentGatewayCategoryId = 'charge' | 'tax'
+type PaymentsSectionId = 'checkout' | 'receipt' | 'automations' | 'gateways' | 'taxes'
+type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip'
 
 interface PaymentGatewayOption {
   id: PaymentGatewayId
@@ -19,45 +56,17 @@ interface PaymentGatewayOption {
   status: 'connected' | 'available' | 'soon'
 }
 
-interface PaymentGatewayCategory {
-  id: PaymentGatewayCategoryId
-  title: string
-  description: string
-  options: PaymentGatewayOption[]
-}
-
-const HIGHLIGHT_GATEWAY_OPTION: PaymentGatewayOption = {
-  id: 'highlevel',
-  name: 'GoHighLevel',
-  description: 'Usa la conexión activa para cobros, links, domiciliación y parcialidades.',
-  status: 'connected'
-}
-
-const UPCOMING_CHARGE_GATEWAYS: PaymentGatewayOption[] = [
-  {
-    id: 'mercado-libre',
-    name: 'Mercado Libre',
-    description: 'Para preparar cobros con Mercado Pago dentro del flujo de Ristak.',
-    status: 'soon'
-  },
-  {
-    id: 'clip',
-    name: 'Clip',
-    description: 'Para ventas con terminal o links de pago conectados a Clip.',
-    status: 'soon'
-  }
+const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.ReactNode }> = [
+  { id: 'checkout', label: 'Página de cobro', icon: <CreditCard size={17} /> },
+  { id: 'receipt', label: 'Comprobante', icon: <ReceiptText size={17} /> },
+  { id: 'automations', label: 'Automatizaciones', icon: <BellRing size={17} /> },
+  { id: 'gateways', label: 'Pasarelas', icon: <WalletCards size={17} /> },
+  { id: 'taxes', label: 'Impuestos', icon: <Percent size={17} /> }
 ]
 
-const TAX_GATEWAYS: PaymentGatewayOption[] = [
-  {
-    id: 'gigstacK',
-    name: 'GigstacK',
-    description: 'Para organizar tu manejo de impuestos y documentación fiscal en el flujo de pagos.',
-    status: 'soon'
-  }
-]
+const sectionIds = sectionItems.map((item) => item.id)
+const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercado-libre', 'clip']
 
-const paymentGatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercado-libre', 'clip', 'gigstacK']
 const STRIPE_WEBHOOK_EVENTS = [
   {
     name: 'payment_intent.succeeded',
@@ -89,12 +98,28 @@ const STRIPE_WEBHOOK_EVENTS = [
   }
 ]
 
-const isPaymentGatewayId = (value?: string): value is PaymentGatewayId => paymentGatewayIds.includes(value as PaymentGatewayId)
-const parsePaymentGatewayRoute = (pathname: string) => {
+const isPaymentsSectionId = (value?: string): value is PaymentsSectionId =>
+  sectionIds.includes(value as PaymentsSectionId)
+
+const isPaymentGatewayId = (value?: string): value is PaymentGatewayId =>
+  gatewayIds.includes(value as PaymentGatewayId)
+
+const getPaymentRouteSegment = (pathname: string) => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
   const paymentsIndex = segments.indexOf('payments')
-  const gateway = paymentsIndex >= 0 ? segments[paymentsIndex + 1] : ''
-  return isPaymentGatewayId(gateway) ? gateway : ''
+  return paymentsIndex >= 0 ? segments[paymentsIndex + 1] : ''
+}
+
+const getInitialSection = (pathname: string): PaymentsSectionId => {
+  const segment = getPaymentRouteSegment(pathname)
+  if (isPaymentsSectionId(segment)) return segment
+  if (isPaymentGatewayId(segment)) return 'gateways'
+  return 'checkout'
+}
+
+const getInitialGateway = (pathname: string): PaymentGatewayId => {
+  const segment = getPaymentRouteSegment(pathname)
+  return isPaymentGatewayId(segment) ? segment : 'stripe'
 }
 
 async function copyTextToClipboard(text: string) {
@@ -123,23 +148,29 @@ async function copyTextToClipboard(text: string) {
   return copied
 }
 
+const compactMoney = new Intl.NumberFormat('es-MX', {
+  style: 'currency',
+  currency: 'MXN',
+  maximumFractionDigits: 0
+})
+
 export const PaymentsConfiguration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
-  const routeGateway = parsePaymentGatewayRoute(location.pathname)
   const { showToast } = useNotification()
   const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
 
-  const selectedGateway = routeGateway
-  const isGatewayDetail = Boolean(routeGateway)
+  const [activeSection, setActiveSection] = useState<PaymentsSectionId>(() => getInitialSection(location.pathname))
+  const [selectedGateway, setSelectedGateway] = useState<PaymentGatewayId>(() => getInitialGateway(location.pathname))
+  const [settings, setSettings] = useState<PaymentSettings>(defaultPaymentSettings)
+  const [loadingSettings, setLoadingSettings] = useState(false)
+  const [savingSettings, setSavingSettings] = useState(false)
   const [paymentTitle, setPaymentTitle] = useState('PAGO')
   const [paymentNumberPrefix, setPaymentNumberPrefix] = useState('INV-')
   const [paymentDueDays, setPaymentDueDays] = useState(7)
-  const [paymentTermsNotes, setPaymentTermsNotes] = useState('')
   const [transferInfoUrl, setTransferInfoUrl] = useState('')
   const [cardSetupAmount, setCardSetupAmount] = useState(25)
   const [ghlInvoiceMode, setGhlInvoiceMode] = useState<'live' | 'test'>('live')
-  const [loadingPaymentConfig, setLoadingPaymentConfig] = useState(false)
   const [stripeConfig, setStripeConfig] = useState<StripePaymentConfig | null>(null)
   const [stripeMode, setStripeMode] = useState<'test' | 'live'>('test')
   const [stripeDefaultCurrency, setStripeDefaultCurrency] = useState('MXN')
@@ -154,17 +185,27 @@ export const PaymentsConfiguration: React.FC = () => {
   const [syncingStripeConnect, setSyncingStripeConnect] = useState(false)
   const [disconnectingStripe, setDisconnectingStripe] = useState(false)
 
-  useEffect(() => {
-    if (loadingHighLevelConnection) return
-
-    if (highLevelConnected) {
-      loadPaymentConfig()
-    }
-  }, [highLevelConnected, loadingHighLevelConnection])
+  const checkout = settings.checkout
+  const receipt = settings.receipt
+  const automations = settings.automations
+  const taxes = settings.taxes
 
   useEffect(() => {
+    const nextSection = getInitialSection(location.pathname)
+    setActiveSection(nextSection)
+    const routeGateway = getInitialGateway(location.pathname)
+    if (routeGateway) setSelectedGateway(routeGateway)
+  }, [location.pathname])
+
+  useEffect(() => {
+    loadPaymentSettings()
     loadStripeConfig()
   }, [])
+
+  useEffect(() => {
+    if (loadingHighLevelConnection) return
+    if (highLevelConnected) loadHighLevelPaymentConfig()
+  }, [highLevelConnected, loadingHighLevelConnection])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -174,6 +215,9 @@ export const PaymentsConfiguration: React.FC = () => {
     const message = params.get('stripe_message') || ''
 
     const finishStripeReturn = async () => {
+      setActiveSection('gateways')
+      setSelectedGateway('stripe')
+
       if (status === 'success' || status === 'warning') {
         setSyncingStripeConnect(true)
         try {
@@ -196,11 +240,11 @@ export const PaymentsConfiguration: React.FC = () => {
         await loadStripeConfig()
       }
 
-      navigate(location.pathname, { replace: true })
+      navigate('/settings/payments/gateways', { replace: true })
     }
 
     void finishStripeReturn()
-  }, [location.pathname, location.search, navigate])
+  }, [location.search, navigate, showToast])
 
   const stripeGatewayOption: PaymentGatewayOption = useMemo(() => ({
     id: 'stripe',
@@ -211,31 +255,31 @@ export const PaymentsConfiguration: React.FC = () => {
     status: stripeConfig?.configured ? 'connected' : 'available'
   }), [stripeConfig?.configured, stripeConfig?.mode])
 
-  const gatewayCategories: PaymentGatewayCategory[] = [
+  const gatewayOptions: PaymentGatewayOption[] = [
+    ...(highLevelConnected
+      ? [{
+        id: 'highlevel' as const,
+        name: 'GoHighLevel',
+        description: 'Usa la conexión activa para cobros, links, domiciliación y parcialidades.',
+        status: 'connected' as const
+      }]
+      : []),
+    stripeGatewayOption,
     {
-      id: 'charge',
-      title: highLevelConnected ? 'Pasarela para cobrar' : 'Conecta tu pasarela de pago',
-      description: highLevelConnected
-        ? 'Selecciona qué conexión debe usar Ristak para cobrar. Las nuevas pasarelas se activarán cuando estén listas.'
-        : 'Escoge la opción que quieres usar. Por ahora están en lista de espera y aparecerán como disponibles cuando se liberen.',
-      options: [
-        ...(highLevelConnected
-          ? [HIGHLIGHT_GATEWAY_OPTION]
-          : []),
-        stripeGatewayOption,
-        ...UPCOMING_CHARGE_GATEWAYS
-      ]
+      id: 'mercado-libre',
+      name: 'Mercado Pago',
+      description: 'Para preparar cobros con Mercado Pago dentro del flujo de Ristak.',
+      status: 'soon'
     },
     {
-      id: 'tax',
-      title: 'Impuestos',
-      description: 'Configura tu proveedor de herramientas fiscales para mantener un flujo de cobro consistente.',
-      options: TAX_GATEWAYS
+      id: 'clip',
+      name: 'Clip',
+      description: 'Para ventas con terminal o links de pago conectados a Clip.',
+      status: 'soon'
     }
   ]
-  const allGatewayOptions = gatewayCategories.flatMap((category) => category.options)
 
-  const selectedGatewayOption = allGatewayOptions.find((gateway) => gateway.id === selectedGateway)
+  const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === selectedGateway)
   const showHighLevelSettings = highLevelConnected && selectedGateway === 'highlevel'
   const showStripeSettings = selectedGateway === 'stripe'
   const stripeWebhookEndpoints = stripeConfig?.webhookEndpoints || []
@@ -245,12 +289,49 @@ export const PaymentsConfiguration: React.FC = () => {
   const stripeWebhookReady = stripeConfig?.connectWebhookStatus === 'active' && stripeConfig?.hasWebhookSecret
   const stripeOAuthConnected = Boolean(stripeConfig?.configured && stripeIsConnect && stripeConfig?.connectedAccountId)
   const stripeConnected = Boolean(stripeConfig?.configured)
-  const pageTitle = isGatewayDetail && selectedGatewayOption ? selectedGatewayOption.name : 'Pagos'
-  const pageSubtitle = isGatewayDetail && selectedGatewayOption
-    ? selectedGatewayOption.description
-    : 'Elige qué pasarela de pago usará Ristak para cobrar y dar seguimiento a tus pagos.'
+  const isLoadingPage = loadingSettings || loadingHighLevelConnection || loadingStripeConfig
 
-  const loadPaymentConfig = async () => {
+  const setCheckoutValue = <K extends keyof PaymentCheckoutSettings>(key: K, value: PaymentCheckoutSettings[K]) => {
+    setSettings((current) => ({
+      ...current,
+      checkout: { ...current.checkout, [key]: value }
+    }))
+  }
+
+  const setReceiptValue = <K extends keyof PaymentReceiptSettings>(key: K, value: PaymentReceiptSettings[K]) => {
+    setSettings((current) => ({
+      ...current,
+      receipt: { ...current.receipt, [key]: value }
+    }))
+  }
+
+  const setAutomationValue = <K extends keyof PaymentAutomationSettings>(key: K, value: PaymentAutomationSettings[K]) => {
+    setSettings((current) => ({
+      ...current,
+      automations: { ...current.automations, [key]: value }
+    }))
+  }
+
+  const setTaxValue = <K extends keyof PaymentTaxSettings>(key: K, value: PaymentTaxSettings[K]) => {
+    setSettings((current) => ({
+      ...current,
+      taxes: { ...current.taxes, [key]: value }
+    }))
+  }
+
+  const loadPaymentSettings = async () => {
+    setLoadingSettings(true)
+    try {
+      const nextSettings = await paymentSettingsService.getSettings()
+      setSettings(nextSettings)
+    } catch (error: any) {
+      showToast('warning', 'Configuración local', error.message || 'Usaremos valores por defecto mientras se carga pagos.')
+    } finally {
+      setLoadingSettings(false)
+    }
+  }
+
+  const loadHighLevelPaymentConfig = async () => {
     try {
       const response = await fetch('/api/highlevel/config')
       const config = await response.json()
@@ -258,48 +339,78 @@ export const PaymentsConfiguration: React.FC = () => {
       if (config.invoiceTitle) setPaymentTitle(config.invoiceTitle)
       if (config.invoiceNumberPrefix) setPaymentNumberPrefix(config.invoiceNumberPrefix)
       if (config.invoiceDueDays) setPaymentDueDays(config.invoiceDueDays)
-      if (config.invoiceTermsNotes) setPaymentTermsNotes(config.invoiceTermsNotes)
       if (config.transferInfoUrl) setTransferInfoUrl(config.transferInfoUrl)
       if (config.cardSetupAmount) setCardSetupAmount(Number(config.cardSetupAmount))
       setGhlInvoiceMode(config.ghlInvoiceMode === 'test' ? 'test' : 'live')
+
+      setSettings((current) => ({
+        ...current,
+        receipt: {
+          ...current.receipt,
+          logoUrl: current.receipt.logoUrl || config.companyLogoUrl || '',
+          businessName: current.receipt.businessName || config.businessName || '',
+          businessEmail: current.receipt.businessEmail || config.businessEmail || '',
+          businessPhone: current.receipt.businessPhone || config.businessPhone || '',
+          businessAddress: current.receipt.businessAddress || [config.businessAddress, config.businessCity, config.businessState, config.businessCountry]
+            .filter(Boolean)
+            .join(', '),
+          businessWebsite: current.receipt.businessWebsite || config.companyWebsite || '',
+          terms: current.receipt.terms || config.invoiceTermsNotes || ''
+        },
+        checkout: {
+          ...current.checkout,
+          logoUrl: current.checkout.logoUrl || config.companyLogoUrl || ''
+        }
+      }))
     } catch {
       // Usar valores por defecto si no hay configuración todavía.
     }
   }
 
-  const handleSavePaymentConfig = async () => {
-    setLoadingPaymentConfig(true)
-    try {
-      const response = await fetch('/api/highlevel/invoice-config', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          invoiceTitle: paymentTitle.trim(),
-          invoiceNumberPrefix: paymentNumberPrefix.trim(),
-          invoiceTermsNotes: paymentTermsNotes.trim() || null,
-          invoiceDueDays: paymentDueDays,
-          transferInfoUrl: transferInfoUrl.trim() || null,
-          cardSetupAmount,
-          ghlInvoiceMode
-        })
+  const saveHighLevelInvoiceConfig = async (nextSettings: PaymentSettings) => {
+    if (!highLevelConnected) return
+
+    const response = await fetch('/api/highlevel/invoice-config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        invoiceTitle: paymentTitle.trim(),
+        invoiceNumberPrefix: paymentNumberPrefix.trim(),
+        invoiceTermsNotes: nextSettings.receipt.terms.trim() || null,
+        invoiceDueDays: paymentDueDays,
+        transferInfoUrl: transferInfoUrl.trim() || null,
+        cardSetupAmount,
+        ghlInvoiceMode
       })
+    })
 
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Error al guardar configuración')
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error || 'Error al guardar configuración de GoHighLevel')
+    }
+
+    window.dispatchEvent(new CustomEvent('ristak-payment-config-changed', {
+      detail: { ghlInvoiceMode }
+    }))
+  }
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true)
+    try {
+      const savedSettings = await paymentSettingsService.saveSettings(settings)
+      setSettings(savedSettings)
+      try {
+        await saveHighLevelInvoiceConfig(savedSettings)
+        showToast('success', 'Pagos guardado', 'La configuración de cobro, comprobante, automatizaciones e impuestos quedó actualizada.')
+      } catch (highLevelError: any) {
+        showToast('warning', 'Pagos guardado', highLevelError.message || 'La configuración global se guardó, pero GoHighLevel necesita revisión.')
       }
-
-      showToast('success', 'Configuración guardada', 'Los pagos de GoHighLevel ya usan estos datos.')
-      window.dispatchEvent(new CustomEvent('ristak-payment-config-changed', {
-        detail: { ghlInvoiceMode }
-      }))
-      await loadPaymentConfig()
     } catch (error: any) {
       showToast('error', 'No se pudo guardar', error.message || 'Revisa la configuración de pagos.')
     } finally {
-      setLoadingPaymentConfig(false)
+      setSavingSettings(false)
     }
   }
 
@@ -409,626 +520,974 @@ export const PaymentsConfiguration: React.FC = () => {
     showToast('error', 'No se pudieron copiar', 'Selecciona los eventos manualmente en Stripe.')
   }
 
-  const handleSelectGateway = (gateway: PaymentGatewayOption) => {
-    navigate(`/settings/payments/${gateway.id}`)
+  const handleSectionChange = (sectionId: string) => {
+    if (!isPaymentsSectionId(sectionId)) return
+    setActiveSection(sectionId)
+    navigate(sectionId === 'checkout' ? '/settings/payments' : `/settings/payments/${sectionId}`)
+  }
 
-    if (gateway.status === 'soon') {
+  const handleSelectGateway = (gateway: PaymentGatewayOption) => {
+    setSelectedGateway(gateway.id)
+    if (gateway.id === 'stripe' || gateway.id === 'highlevel') {
+      navigate(`/settings/payments/${gateway.id}`)
+    } else {
+      navigate('/settings/payments/gateways')
       showToast('info', 'Próximamente', `${gateway.name} todavía no está disponible para conectar.`)
     }
   }
 
-  return (
-    <div className={styles.integrationContainer}>
-      <Card className={styles.mainCard}>
-        <div className={styles.pageHeader}>
-          <div className={styles.headerContent}>
-            <div className={styles.headerLeft}>
-              <div className={styles.logoContainer}>
-                <CreditCard size={22} />
-              </div>
-              <div>
-                <h2 className={styles.pageTitle}>{pageTitle}</h2>
-                <p className={styles.pageSubtitle}>{pageSubtitle}</p>
-              </div>
-            </div>
-            <div className={styles.headerRight}>
-              {isGatewayDetail && (
-                <Button variant="secondary" onClick={() => navigate('/settings/payments')}>
-                  <ArrowLeft size={16} />
-                  Pasarelas
-                </Button>
-              )}
-              {loadingHighLevelConnection ? (
-                <Badge variant="warning">
-                  <Loader2 size={16} className={styles.spinIcon} />
-                  <span>Revisando conexión</span>
-                </Badge>
-              ) : stripeConnected ? (
-                <Badge variant="success">
-                  <CheckCircle size={16} />
-                  <span>Stripe conectado</span>
-                </Badge>
-              ) : highLevelConnected ? (
-                <Badge variant="success">
-                  <CheckCircle size={16} />
-                  <span>GoHighLevel conectado</span>
-                </Badge>
-              ) : (
-                <Badge variant="warning">
-                  <Clock size={16} />
-                  <span>Pasarela pendiente</span>
-                </Badge>
-              )}
-            </div>
+  const renderField = (
+    label: string,
+    control: React.ReactNode,
+    hint?: React.ReactNode
+  ) => (
+    <label className={styles.formField}>
+      <span>{label}</span>
+      {control}
+      {hint ? <small>{hint}</small> : null}
+    </label>
+  )
+
+  const renderSwitchRow = (
+    label: string,
+    description: string,
+    checked: boolean,
+    onChange: (next: boolean) => void
+  ) => (
+    <div className={styles.switchRow}>
+      <div>
+        <strong>{label}</strong>
+        <span>{description}</span>
+      </div>
+      <Switch checked={checked} onChange={onChange} aria-label={label} />
+    </div>
+  )
+
+  const renderCheckoutSection = () => (
+    <div className={styles.twoColumnLayout}>
+      <Card className={styles.sectionCard}>
+        <div className={styles.sectionHeader}>
+          <div>
+            <h2>Diseño de la página de cobro</h2>
+            <p>Controla el logo, el texto principal y el soporte visible antes de pagar.</p>
           </div>
+          <Badge variant="info">
+            <Paintbrush size={14} />
+            Editable
+          </Badge>
         </div>
 
-        <div className={`${styles.section} ${styles.paymentsConfigurationSection}`}>
-          {!isGatewayDetail && (
-            <>
-              {gatewayCategories.map((category) => (
-                <section key={category.id} className={styles.gatewayCategorySection}>
-                  <div className={styles.sectionHeader}>
-                    <div>
-                      <h3 className={styles.sectionTitle}>{category.title}</h3>
-                      <p className={styles.sectionDescription}>{category.description}</p>
-                    </div>
-                  </div>
-
-                  <div className={styles.gatewayGrid}>
-                    {category.options.map((gateway) => {
-                      const isSelected = selectedGateway === gateway.id
-                      const isConnected = gateway.status === 'connected'
-                      const isAvailable = gateway.status === 'available'
-
-                      return (
-                        <button
-                          key={gateway.id}
-                          type="button"
-                          className={`${styles.gatewayCard} ${isSelected ? styles.gatewayCardSelected : ''}`}
-                          onClick={() => handleSelectGateway(gateway)}
-                          aria-pressed={isSelected}
-                        >
-                          <span className={styles.gatewayCardHeader}>
-                            <span className={styles.gatewayCardName}>{gateway.name}</span>
-                            <Badge variant={isConnected ? 'success' : isAvailable ? 'info' : 'warning'}>
-                              {isConnected ? 'Conectado' : isAvailable ? 'Configurar' : 'Próximamente'}
-                            </Badge>
-                          </span>
-                          <span className={styles.gatewayCardDescription}>{gateway.description}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </section>
-              ))}
-
-              {!loadingHighLevelConnection && !highLevelConnected && !stripeConfig?.configured && (
-                <div className={styles.gatewayNotice}>
-                  <h4>Conecta Stripe para cobrar con tarjeta</h4>
-                  <p>
-                    GoHighLevel no está activo en esta cuenta, pero Stripe ya se puede configurar desde su propia pantalla.
-                  </p>
-                </div>
-              )}
-            </>
+        <div className={styles.formGrid}>
+          {renderField(
+            'Logo del negocio',
+            <input
+              type="url"
+              value={checkout.logoUrl}
+              onChange={(event) => setCheckoutValue('logoUrl', event.target.value)}
+              placeholder="https://tu-dominio.com/logo.png"
+            />,
+            'Se mostrará en la parte superior del link de cobro.'
           )}
+          {renderField(
+            'Título de cobro',
+            <input
+              type="text"
+              value={checkout.headline}
+              onChange={(event) => setCheckoutValue('headline', event.target.value)}
+              placeholder="Pago seguro"
+            />
+          )}
+          {renderField(
+            'Texto de ayuda',
+            <textarea
+              value={checkout.description}
+              onChange={(event) => setCheckoutValue('description', event.target.value)}
+              placeholder="Explica qué va a revisar el cliente antes de pagar."
+            />
+          )}
+          {renderField(
+            'Texto del botón',
+            <input
+              type="text"
+              value={checkout.buttonLabel}
+              onChange={(event) => setCheckoutValue('buttonLabel', event.target.value)}
+              placeholder="Pagar ahora"
+            />
+          )}
+          {renderField(
+            'Email de soporte',
+            <input
+              type="email"
+              value={checkout.supportEmail}
+              onChange={(event) => setCheckoutValue('supportEmail', event.target.value)}
+              placeholder="pagos@tu-negocio.com"
+            />
+          )}
+          {renderField(
+            'Teléfono de soporte',
+            <input
+              type="tel"
+              value={checkout.supportPhone}
+              onChange={(event) => setCheckoutValue('supportPhone', event.target.value)}
+              placeholder="+52 656 000 0000"
+            />
+          )}
+        </div>
 
-          {isGatewayDetail && selectedGatewayOption?.status === 'soon' && (
-            <div className={styles.gatewayNotice}>
-              <h4>{selectedGatewayOption.name} estará disponible próximamente</h4>
-              <p>
-                Esta opción todavía no cobra ni guarda datos reales. La dejamos visible para que elijas el camino que quieres usar cuando se libere.
-              </p>
+        {renderSwitchRow(
+          'Mostrar sello de pago seguro',
+          'Aparece junto al formulario para reforzar confianza antes de pagar.',
+          checkout.showSecureBadge,
+          (next) => setCheckoutValue('showSecureBadge', next)
+        )}
+      </Card>
+
+      <Card className={styles.previewCard}>
+        <div className={styles.previewPaymentHeader}>
+          {checkout.logoUrl ? <img src={checkout.logoUrl} alt="" /> : <span>{(receipt.businessName || 'R').slice(0, 1)}</span>}
+          <div>
+            <strong>{checkout.headline || 'Pago seguro'}</strong>
+            <p>{checkout.description || 'Revisa el resumen y completa tu pago con tarjeta.'}</p>
+          </div>
+        </div>
+        <div className={styles.previewInvoice}>
+          <div>
+            <span>Concepto</span>
+            <strong>Plan mensual</strong>
+          </div>
+          <div>
+            <span>Total</span>
+            <strong>{compactMoney.format(2490)}</strong>
+          </div>
+          <div>
+            <span>Vencimiento</span>
+            <strong>8 jul 2026</strong>
+          </div>
+        </div>
+        <div className={styles.previewButton}>
+          <CreditCard size={16} />
+          {checkout.buttonLabel || 'Pagar ahora'}
+        </div>
+        {checkout.showSecureBadge && (
+          <p className={styles.previewTrust}>
+            <ShieldCheck size={15} />
+            Pago procesado de forma segura.
+          </p>
+        )}
+      </Card>
+    </div>
+  )
+
+  const renderReceiptSection = () => (
+    <div className={styles.twoColumnLayout}>
+      <Card className={styles.sectionCard}>
+        <div className={styles.sectionHeader}>
+          <div>
+            <h2>Comprobante de pago</h2>
+            <p>Edita lo que verá el cliente cuando el pago quede confirmado.</p>
+          </div>
+          <Badge variant="success">
+            <FileCheck2 size={14} />
+            Post pago
+          </Badge>
+        </div>
+
+        <div className={styles.formGrid}>
+          {renderField(
+            'Logo del comprobante',
+            <input
+              type="url"
+              value={receipt.logoUrl}
+              onChange={(event) => setReceiptValue('logoUrl', event.target.value)}
+              placeholder="https://tu-dominio.com/logo.png"
+            />
+          )}
+          {renderField(
+            'Título del comprobante',
+            <input
+              type="text"
+              value={receipt.title}
+              onChange={(event) => setReceiptValue('title', event.target.value)}
+              placeholder="Comprobante de pago"
+            />
+          )}
+          {renderField(
+            'Mensaje inicial',
+            <textarea
+              value={receipt.intro}
+              onChange={(event) => setReceiptValue('intro', event.target.value)}
+              placeholder="Tu pago fue recibido correctamente."
+            />
+          )}
+          {renderField(
+            'Mensaje final',
+            <textarea
+              value={receipt.footer}
+              onChange={(event) => setReceiptValue('footer', event.target.value)}
+              placeholder="Gracias por tu pago."
+            />
+          )}
+          {renderField(
+            'Nombre del negocio',
+            <input
+              type="text"
+              value={receipt.businessName}
+              onChange={(event) => setReceiptValue('businessName', event.target.value)}
+              placeholder="Nombre comercial"
+            />
+          )}
+          {renderField(
+            'Email del negocio',
+            <input
+              type="email"
+              value={receipt.businessEmail}
+              onChange={(event) => setReceiptValue('businessEmail', event.target.value)}
+              placeholder="facturacion@tu-negocio.com"
+            />
+          )}
+          {renderField(
+            'Teléfono del negocio',
+            <input
+              type="tel"
+              value={receipt.businessPhone}
+              onChange={(event) => setReceiptValue('businessPhone', event.target.value)}
+              placeholder="+52 656 000 0000"
+            />
+          )}
+          {renderField(
+            'Sitio web',
+            <input
+              type="url"
+              value={receipt.businessWebsite}
+              onChange={(event) => setReceiptValue('businessWebsite', event.target.value)}
+              placeholder="https://tu-negocio.com"
+            />
+          )}
+          {renderField(
+            'Dirección fiscal o comercial',
+            <textarea
+              value={receipt.businessAddress}
+              onChange={(event) => setReceiptValue('businessAddress', event.target.value)}
+              placeholder="Calle, ciudad, estado, país"
+            />
+          )}
+          {renderField(
+            'Términos y condiciones',
+            <textarea
+              value={receipt.terms}
+              onChange={(event) => setReceiptValue('terms', event.target.value)}
+              placeholder="Políticas de pago, reembolso, facturación o condiciones del servicio."
+            />,
+            'También se sincroniza como nota de términos para invoices de GoHighLevel cuando esté conectado.'
+          )}
+        </div>
+
+        <div className={styles.switchStack}>
+          {renderSwitchRow('Mostrar datos del negocio', 'Incluye nombre, contacto y dirección en el comprobante.', receipt.showBusinessInfo, (next) => setReceiptValue('showBusinessInfo', next))}
+          {renderSwitchRow('Mostrar datos del cliente', 'Incluye nombre, email y referencia del pago.', receipt.showCustomerInfo, (next) => setReceiptValue('showCustomerInfo', next))}
+          {renderSwitchRow('Mostrar términos', 'Agrega términos al final del comprobante.', receipt.showTerms, (next) => setReceiptValue('showTerms', next))}
+        </div>
+      </Card>
+
+      <Card className={styles.receiptPreview}>
+        <div className={styles.receiptTop}>
+          {receipt.logoUrl ? <img src={receipt.logoUrl} alt="" /> : <ReceiptText size={24} />}
+          <Badge variant="success">
+            <CheckCircle size={14} />
+            Pagado
+          </Badge>
+        </div>
+        <h3>{receipt.title || 'Comprobante de pago'}</h3>
+        <p>{receipt.intro || 'Tu pago fue recibido correctamente.'}</p>
+        <div className={styles.receiptRows}>
+          {receipt.showBusinessInfo && (
+            <div>
+              <span>Negocio</span>
+              <strong>{receipt.businessName || 'Tu negocio'}</strong>
             </div>
           )}
-
-          {isGatewayDetail && selectedGateway === 'highlevel' && !highLevelConnected && (
-            <div className={styles.gatewayNotice}>
-              <h4>GoHighLevel no está conectado</h4>
-              <p>
-                Conecta GoHighLevel primero para administrar sus invoices desde esta pantalla.
-              </p>
+          {receipt.showCustomerInfo && (
+            <div>
+              <span>Cliente</span>
+              <strong>María López</strong>
             </div>
           )}
+          <div>
+            <span>Referencia</span>
+            <strong>PAY-1048</strong>
+          </div>
+          <div>
+            <span>Total</span>
+            <strong>{compactMoney.format(2490)}</strong>
+          </div>
+        </div>
+        {receipt.showTerms && receipt.terms && (
+          <p className={styles.receiptTerms}>{receipt.terms}</p>
+        )}
+        {receipt.footer && <p className={styles.receiptFooter}>{receipt.footer}</p>}
+      </Card>
+    </div>
+  )
 
-          {showStripeSettings && (
-            <>
-              <div className={styles.sectionHeader}>
+  const renderAutomationsSection = () => (
+    <div className={styles.singleColumnLayout}>
+      <Card className={styles.sectionCard}>
+        <div className={styles.sectionHeader}>
+          <div>
+            <h2>Recordatorios y acciones de pago</h2>
+            <p>Define el comportamiento estándar antes del vencimiento y después de recibir el pago.</p>
+          </div>
+          <Badge variant="warning">
+            <BellRing size={14} />
+            Reglas
+          </Badge>
+        </div>
+
+        <div className={styles.settingsMatrix}>
+          {renderSwitchRow('Recordatorios antes del vencimiento', 'Activa avisos antes de que llegue la fecha de pago.', automations.remindersEnabled, (next) => setAutomationValue('remindersEnabled', next))}
+          {renderField(
+            'Días antes del vencimiento',
+            <NumberInput
+              min="1"
+              max="60"
+              value={automations.reminderDaysBefore}
+              onValueChange={(value) => setAutomationValue('reminderDaysBefore', Math.trunc(value) || 1)}
+            />
+          )}
+          {renderField(
+            'Canal de recordatorio',
+            <CustomSelect
+              value={automations.reminderChannel}
+              onValueChange={(value) => setAutomationValue('reminderChannel', value as PaymentAutomationSettings['reminderChannel'])}
+              options={[
+                { value: 'whatsapp', label: 'WhatsApp' },
+                { value: 'email', label: 'Email' },
+                { value: 'both', label: 'WhatsApp y email' }
+              ]}
+            />
+          )}
+          {renderSwitchRow('Enviar comprobante al pagar', 'Prepara el envío del comprobante cuando el pago se confirme.', automations.receiptDeliveryEnabled, (next) => setAutomationValue('receiptDeliveryEnabled', next))}
+          {renderField(
+            'Acción después del pago',
+            <CustomSelect
+              value={automations.afterPaymentAction}
+              onValueChange={(value) => setAutomationValue('afterPaymentAction', value as PaymentAutomationSettings['afterPaymentAction'])}
+              options={[
+                { value: 'send_receipt', label: 'Enviar comprobante' },
+                { value: 'start_automation', label: 'Iniciar automatización' },
+                { value: 'tag_contact', label: 'Etiquetar contacto' },
+                { value: 'none', label: 'No hacer nada' }
+              ]}
+            />
+          )}
+          {renderField(
+            'Mensaje después del pago',
+            <textarea
+              value={automations.afterPaymentMessage}
+              onChange={(event) => setAutomationValue('afterPaymentMessage', event.target.value)}
+              placeholder="Mensaje que recibirá el cliente cuando el pago entre."
+            />
+          )}
+          {renderSwitchRow('Seguimiento si falla el cobro', 'Deja una regla preparada para avisar cuando un pago falla.', automations.failedPaymentEnabled, (next) => setAutomationValue('failedPaymentEnabled', next))}
+          {renderField(
+            'Horas después de un fallo',
+            <NumberInput
+              min="1"
+              max="168"
+              value={automations.failedPaymentDelayHours}
+              onValueChange={(value) => setAutomationValue('failedPaymentDelayHours', Math.trunc(value) || 1)}
+            />
+          )}
+        </div>
+      </Card>
+
+      <div className={styles.summaryStrip}>
+        <div>
+          <Clock size={17} />
+          <strong>{automations.reminderDaysBefore} días antes</strong>
+          <span>Recordatorio por {automations.reminderChannel === 'both' ? 'WhatsApp y email' : automations.reminderChannel}</span>
+        </div>
+        <div>
+          <CheckCircle size={17} />
+          <strong>{automations.receiptDeliveryEnabled ? 'Comprobante activo' : 'Comprobante apagado'}</strong>
+          <span>Acción: {automations.afterPaymentAction.replace('_', ' ')}</span>
+        </div>
+        <div>
+          <AlertTriangle size={17} />
+          <strong>{automations.failedPaymentEnabled ? `${automations.failedPaymentDelayHours} h tras fallo` : 'Sin seguimiento'}</strong>
+          <span>Regla estándar para cobros rechazados</span>
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderGatewaysSection = () => (
+    <div className={styles.singleColumnLayout}>
+      <Card className={styles.sectionCard}>
+        <div className={styles.sectionHeader}>
+          <div>
+            <h2>Pasarela de pagos</h2>
+            <p>Elige con qué proveedor se cobran links, tarjetas y parcialidades.</p>
+          </div>
+          <Badge variant={stripeConnected || highLevelConnected ? 'success' : 'warning'}>
+            {stripeConnected || highLevelConnected ? <CheckCircle size={14} /> : <KeyRound size={14} />}
+            {stripeConnected || highLevelConnected ? 'Conectada' : 'Pendiente'}
+          </Badge>
+        </div>
+
+        <div className={styles.gatewayList}>
+          {gatewayOptions.map((gateway) => {
+            const isSelected = selectedGateway === gateway.id
+            const isConnected = gateway.status === 'connected'
+            const isAvailable = gateway.status === 'available'
+
+            return (
+              <Card key={gateway.id} className={`${styles.gatewayItem} ${isSelected ? styles.gatewayItemActive : ''}`} padding="md">
                 <div>
-                  <h3 className={styles.sectionTitle}>Stripe</h3>
-                  <p className={styles.sectionDescription}>
-                    Conecta la cuenta de Stripe con OAuth desde el Installer para cobrar sin copiar llaves ni configurar webhooks a mano.
-                  </p>
+                  <strong>{gateway.name}</strong>
+                  <p>{gateway.description}</p>
                 </div>
-                {loadingStripeConfig || syncingStripeConnect ? (
-                  <Badge variant="warning">
-                    <Loader2 size={16} className={styles.spinIcon} />
-                    <span>{syncingStripeConnect ? 'Sincronizando' : 'Cargando'}</span>
+                <div className={styles.gatewayItemActions}>
+                  <Badge variant={isConnected ? 'success' : isAvailable ? 'info' : 'warning'}>
+                    {isConnected ? 'Conectado' : isAvailable ? 'Configurar' : 'Próximamente'}
                   </Badge>
-                ) : stripeConnected ? (
-                  <Badge variant="success">
-                    <ShieldCheck size={16} />
-                    <span>Conectado</span>
-                  </Badge>
-                ) : !stripeModeOauthReady ? (
-                  <Badge variant="warning">
-                    <AlertTriangle size={16} />
-                    <span>Falta plataforma</span>
-                  </Badge>
-                ) : (
-                  <Badge variant="info">
-                    <KeyRound size={16} />
-                    <span>Listo para OAuth</span>
-                  </Badge>
+                  <Button type="button" variant={isSelected ? 'primary' : 'secondary'} size="sm" onClick={() => handleSelectGateway(gateway)}>
+                    {isSelected ? 'Seleccionado' : 'Elegir'}
+                  </Button>
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+      </Card>
+
+      {selectedGatewayOption?.status === 'soon' && (
+        <Card className={styles.noticeCard}>
+          <AlertTriangle size={18} />
+          <div>
+            <strong>{selectedGatewayOption.name} estará disponible próximamente</strong>
+            <p>La dejamos visible para que el flujo ya tenga espacio sin mezclarlo con impuestos ni comprobantes.</p>
+          </div>
+        </Card>
+      )}
+
+      {selectedGateway === 'highlevel' && !highLevelConnected && (
+        <Card className={styles.noticeCard}>
+          <AlertTriangle size={18} />
+          <div>
+            <strong>GoHighLevel no está conectado</strong>
+            <p>Conecta GoHighLevel primero para administrar sus invoices desde esta pantalla.</p>
+          </div>
+        </Card>
+      )}
+
+      {showHighLevelSettings && (
+        <Card className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
+            <div>
+              <h2>GoHighLevel Invoices</h2>
+              <p>Personaliza cómo se generan documentos, vencimientos y cargos de domiciliación.</p>
+            </div>
+          </div>
+
+          <div className={styles.formGrid}>
+            <div className={styles.modeSelector}>
+              <span className={ghlInvoiceMode === 'test' ? styles.modeActive : ''}>Prueba</span>
+              <Switch checked={ghlInvoiceMode === 'live'} onChange={(next) => setGhlInvoiceMode(next ? 'live' : 'test')} aria-label="Cambiar modo de GoHighLevel invoices" />
+              <span className={ghlInvoiceMode === 'live' ? styles.modeActive : ''}>En vivo</span>
+            </div>
+            {renderField(
+              'Título del documento',
+              <input
+                type="text"
+                value={paymentTitle}
+                onChange={(event) => setPaymentTitle(event.target.value)}
+                placeholder="PAGO, FACTURA, INVOICE"
+              />
+            )}
+            {renderField(
+              'Prefijo de número de pago',
+              <input
+                type="text"
+                value={paymentNumberPrefix}
+                onChange={(event) => setPaymentNumberPrefix(event.target.value)}
+                placeholder="INV-"
+              />
+            )}
+            {renderField(
+              'Días para vencimiento',
+              <NumberInput
+                min="1"
+                value={paymentDueDays}
+                onValueChange={(value) => setPaymentDueDays(Math.trunc(value) || 7)}
+              />
+            )}
+            {renderField(
+              'URL para transferencias',
+              <input
+                type="url"
+                value={transferInfoUrl}
+                onChange={(event) => setTransferInfoUrl(event.target.value)}
+                placeholder="https://tu-sitio.com/como-transferir"
+              />
+            )}
+            {renderField(
+              'Monto para domiciliar tarjeta',
+              <NumberInput
+                min="1"
+                step="0.01"
+                value={cardSetupAmount}
+                onValueChange={(value) => setCardSetupAmount(value || 25)}
+              />,
+              'Se cobra cuando hace falta guardar o autorizar una tarjeta antes de activar parcialidades automáticas.'
+            )}
+          </div>
+        </Card>
+      )}
+
+      {showStripeSettings && (
+        <Card className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
+            <div>
+              <h2>Stripe</h2>
+              <p>Conecta la cuenta con OAuth o usa credenciales manuales como respaldo.</p>
+            </div>
+            {loadingStripeConfig || syncingStripeConnect ? (
+              <Badge variant="warning">
+                <Loader2 size={14} className={styles.spinIcon} />
+                {syncingStripeConnect ? 'Sincronizando' : 'Cargando'}
+              </Badge>
+            ) : stripeConnected ? (
+              <Badge variant="success">
+                <ShieldCheck size={14} />
+                Conectado
+              </Badge>
+            ) : !stripeModeOauthReady ? (
+              <Badge variant="warning">
+                <AlertTriangle size={14} />
+                Falta plataforma
+              </Badge>
+            ) : (
+              <Badge variant="info">
+                <KeyRound size={14} />
+                Listo para OAuth
+              </Badge>
+            )}
+          </div>
+
+          <div className={styles.stripePanel}>
+            <div className={styles.modeSelector}>
+              <span className={stripeMode === 'test' ? styles.modeActive : ''}>Prueba</span>
+              <Switch
+                checked={stripeMode === 'live'}
+                onChange={(next) => setStripeMode(next ? 'live' : 'test')}
+                disabled={savingStripeConfig || testingStripeConfig || connectingStripe}
+                aria-label="Cambiar modo de Stripe"
+              />
+              <span className={stripeMode === 'live' ? styles.modeActive : ''}>En vivo</span>
+            </div>
+
+            <div className={styles.stripeConnectBox}>
+              <div>
+                <h3>{stripeOAuthConnected ? stripeAccountLabel || 'Cuenta Stripe conectada' : stripeConnected ? 'Stripe configurado manualmente' : 'Conectar con Stripe'}</h3>
+                <p>
+                  {stripeOAuthConnected
+                    ? `Ristak cobra en modo ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'} usando Stripe Connect.`
+                    : stripeConnected
+                      ? 'Esta instalación usa llaves guardadas manualmente. Puedes reconectar con OAuth para automatizar cuenta y webhook.'
+                      : 'Se abrirá Stripe, autorizas Ristak y regresas aquí con la cuenta lista.'}
+                </p>
+              </div>
+              <div className={styles.actionsRow}>
+                <Button
+                  type="button"
+                  onClick={handleConnectStripe}
+                  disabled={connectingStripe || syncingStripeConnect || disconnectingStripe || !stripeModeOauthReady}
+                >
+                  {connectingStripe ? (
+                    <>
+                      <Loader2 size={18} className={styles.spinIcon} />
+                      Abriendo...
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink size={18} />
+                      {stripeOAuthConnected ? 'Reconectar Stripe' : 'Conectar con Stripe'}
+                    </>
+                  )}
+                </Button>
+                {stripeConnected && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleTestStripeConfig}
+                    disabled={testingStripeConfig || connectingStripe || syncingStripeConnect || disconnectingStripe}
+                  >
+                    {testingStripeConfig ? (
+                      <>
+                        <Loader2 size={18} className={styles.spinIcon} />
+                        Probando...
+                      </>
+                    ) : (
+                      'Probar API'
+                    )}
+                  </Button>
                 )}
               </div>
+            </div>
 
-              <div className={styles.sectionContent}>
-                <div className={styles.formField}>
-                  <label className={styles.label}>Modo para conectar</label>
-                  <div className={styles.toggleContainer}>
-                    <span className={`${styles.toggleLabel} ${stripeMode === 'test' ? styles.toggleLabelActive : ''}`}>
-                      Prueba
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setStripeMode(stripeMode === 'live' ? 'test' : 'live')}
-                      className={`${styles.toggle} ${stripeMode === 'live' ? styles.toggleActive : ''}`}
-                      disabled={savingStripeConfig || testingStripeConfig || connectingStripe}
-                      aria-pressed={stripeMode === 'live'}
-                      aria-label="Cambiar modo de Stripe"
-                    >
-                      <span className={styles.toggleThumb} />
-                    </button>
-                    <span className={`${styles.toggleLabel} ${stripeMode === 'live' ? styles.toggleLabelActive : ''}`}>
-                      En vivo
-                    </span>
-                  </div>
-                  <p className={styles.hint}>
-                    Prueba usa el OAuth de desarrollo de Stripe. En vivo usa la aplicación de producción para cobros reales.
-                  </p>
+            {!stripeModeOauthReady && (
+              <div className={styles.inlineWarning}>
+                <AlertTriangle size={16} />
+                <span>
+                  Falta configurar Stripe Connect para {stripeMode === 'live' ? 'modo en vivo' : 'modo prueba'}:
+                  {' '}
+                  {(stripeConfig?.connectMissingEnv || []).join(', ') || `STRIPE_CONNECT_${stripeMode.toUpperCase()}_CLIENT_ID / SECRET_KEY / PUBLISHABLE_KEY`}.
+                </span>
+              </div>
+            )}
+
+            {stripeOAuthConnected && (
+              <div className={styles.connectionSummary}>
+                <div>
+                  <span>Cuenta</span>
+                  <strong>{stripeConfig?.connectedAccountPreview || stripeConfig?.connectedAccountId || 'Stripe'}</strong>
                 </div>
-
-                <div className={styles.stripeConnectPanel}>
-                  <div className={styles.stripeConnectMain}>
-                    <div>
-                      <h4>{stripeOAuthConnected ? stripeAccountLabel || 'Cuenta Stripe conectada' : stripeConnected ? 'Stripe configurado manualmente' : 'Conectar con Stripe'}</h4>
-                      <p>
-                        {stripeOAuthConnected
-                          ? `Ristak cobra en modo ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'} usando Stripe Connect${stripeConfig?.connectManagedByPortal ? ' administrado por el Installer' : ''}.`
-                          : stripeConnected
-                            ? 'Esta instalación usa llaves guardadas manualmente. Puedes reconectar con OAuth para automatizar la cuenta y el webhook.'
-                          : 'Se abrirá Stripe, el usuario inicia sesión, autoriza Ristak y regresa aquí con la cuenta lista.'}
-                      </p>
-                    </div>
-                    <div className={styles.stripeConnectActions}>
-                      <Button
-                        onClick={handleConnectStripe}
-                        disabled={connectingStripe || syncingStripeConnect || disconnectingStripe || !stripeModeOauthReady}
-                      >
-                        {connectingStripe ? (
-                          <>
-                            <Loader2 size={18} className={styles.spinIcon} />
-                            Abriendo...
-                          </>
-                        ) : (
-                          <>
-                            <ExternalLink size={18} />
-                            {stripeOAuthConnected ? 'Reconectar Stripe' : 'Conectar con Stripe'}
-                          </>
-                        )}
-                      </Button>
-                      {stripeConnected && (
-                        <Button
-                          variant="secondary"
-                          onClick={handleTestStripeConfig}
-                          disabled={testingStripeConfig || connectingStripe || syncingStripeConnect || disconnectingStripe}
-                        >
-                          {testingStripeConfig ? (
-                            <>
-                              <Loader2 size={18} className={styles.spinIcon} />
-                              Probando...
-                            </>
-                          ) : (
-                            'Probar API'
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-
-                  {!stripeModeOauthReady && (
-                    <div className={styles.stripeWebhookAlert}>
-                      <AlertTriangle size={16} />
-                      <span>
-                        Falta configurar Stripe Connect para {stripeMode === 'live' ? 'modo en vivo' : 'modo prueba'}:
-                        {' '}
-                        {(stripeConfig?.connectMissingEnv || []).join(', ') || `STRIPE_CONNECT_${stripeMode.toUpperCase()}_CLIENT_ID / SECRET_KEY / PUBLISHABLE_KEY`}.
-                      </span>
-                    </div>
-                  )}
-
-                  {stripeOAuthConnected && (
-                    <div className={styles.stripeConnectionSummary}>
-                      <div>
-                        <span>Cuenta</span>
-                        <strong>{stripeConfig?.connectedAccountPreview || stripeConfig?.connectedAccountId || 'Stripe'}</strong>
-                      </div>
-                      <div>
-                        <span>Email</span>
-                        <strong>{stripeConfig?.connectAccountEmail || 'Sin email visible'}</strong>
-                      </div>
-                      <div>
-                        <span>Scope</span>
-                        <strong>{stripeConfig?.connectScope || 'read_write'}</strong>
-                      </div>
-                      <div>
-                        <span>Webhook</span>
-                        <strong>{stripeWebhookReady ? 'Automático' : 'Pendiente'}</strong>
-                      </div>
-                    </div>
-                  )}
-
-                  {stripeOAuthConnected && !stripeWebhookReady && (
-                    <div className={styles.stripeWebhookAlert}>
-                      <AlertTriangle size={16} />
-                      <span>{stripeConfig?.connectWebhookLastError || 'Stripe conectó, pero falta confirmar el webhook automático para recibir pagos y reembolsos en tiempo real.'}</span>
-                    </div>
-                  )}
-
-                  {stripeConfig?.connectWebhookUrl && (
-                    <div className={styles.stripeWebhookEndpointCopy}>
-                      <input
-                        type="text"
-                        readOnly
-                        value={stripeConfig.connectWebhookUrl}
-                        className={styles.input}
-                        onFocus={(event) => event.target.select()}
-                        aria-label="Webhook automático de Stripe Connect"
-                      />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => handleCopyStripeWebhookEndpoint({
-                          source: 'connect',
-                          label: 'Stripe Connect',
-                          description: 'Webhook creado automáticamente por Ristak.',
-                          url: stripeConfig.connectWebhookUrl || ''
-                        })}
-                      >
-                        <Copy size={16} />
-                        Copiar
-                      </Button>
-                    </div>
-                  )}
+                <div>
+                  <span>Email</span>
+                  <strong>{stripeConfig?.connectAccountEmail || 'Sin email visible'}</strong>
                 </div>
+                <div>
+                  <span>Scope</span>
+                  <strong>{stripeConfig?.connectScope || 'read_write'}</strong>
+                </div>
+                <div>
+                  <span>Webhook</span>
+                  <strong>{stripeWebhookReady ? 'Automático' : 'Pendiente'}</strong>
+                </div>
+              </div>
+            )}
 
-                <details className={styles.stripeManualDetails}>
-                  <summary>Configuración manual de respaldo</summary>
-                  <p className={styles.hint}>
-                    Úsala sólo si esta instalación no puede usar Stripe Connect. El flujo recomendado es el botón de OAuth.
-                  </p>
+            {stripeOAuthConnected && !stripeWebhookReady && (
+              <div className={styles.inlineWarning}>
+                <AlertTriangle size={16} />
+                <span>{stripeConfig?.connectWebhookLastError || 'Stripe conectó, pero falta confirmar el webhook automático para recibir pagos y reembolsos en tiempo real.'}</span>
+              </div>
+            )}
 
-                  <div className={styles.formField}>
-                    <label className={styles.label}>Nombre de cuenta</label>
-                    <input
-                      type="text"
-                      value={stripeAccountLabel}
-                      onChange={(event) => setStripeAccountLabel(event.target.value)}
-                      placeholder="ej: Stripe Principal"
-                      className={styles.input}
-                      autoComplete="off"
-                    />
-                    <p className={styles.hint}>Sólo sirve para identificar esta conexión dentro de Ristak.</p>
-                  </div>
+            {stripeConfig?.connectWebhookUrl && (
+              <div className={styles.copyField}>
+                <input
+                  type="text"
+                  readOnly
+                  value={stripeConfig.connectWebhookUrl}
+                  onFocus={(event) => event.target.select()}
+                  aria-label="Webhook automático de Stripe Connect"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => handleCopyStripeWebhookEndpoint({
+                    source: 'connect',
+                    label: 'Stripe Connect',
+                    description: 'Webhook creado automáticamente por Ristak.',
+                    url: stripeConfig.connectWebhookUrl || ''
+                  })}
+                >
+                  <Copy size={16} />
+                  Copiar
+                </Button>
+              </div>
+            )}
 
-                  <div className={styles.formField}>
-                    <label className={styles.label}>Moneda principal</label>
-                    <input
-                      type="text"
-                      value={stripeDefaultCurrency}
-                      onChange={(event) => setStripeDefaultCurrency(event.target.value.toUpperCase().slice(0, 3))}
-                      placeholder="MXN"
-                      className={styles.input}
-                      autoComplete="off"
-                    />
-                    <p className={styles.hint}>Los cobros pueden enviar otra moneda desde el modal, pero esta queda como default.</p>
-                  </div>
-
-                  <div className={styles.formField}>
-                  <label className={styles.label}>Publishable key</label>
+            <details className={styles.manualDetails}>
+              <summary>Configuración manual de respaldo</summary>
+              <div className={styles.formGrid}>
+                {renderField(
+                  'Nombre de cuenta',
+                  <input
+                    type="text"
+                    value={stripeAccountLabel}
+                    onChange={(event) => setStripeAccountLabel(event.target.value)}
+                    placeholder="Stripe Principal"
+                    autoComplete="off"
+                  />
+                )}
+                {renderField(
+                  'Moneda principal',
+                  <input
+                    type="text"
+                    value={stripeDefaultCurrency}
+                    onChange={(event) => setStripeDefaultCurrency(event.target.value.toUpperCase().slice(0, 3))}
+                    placeholder="MXN"
+                    autoComplete="off"
+                  />
+                )}
+                {renderField(
+                  'Publishable key',
                   <input
                     type="text"
                     value={stripePublishableKey}
                     onChange={(event) => setStripePublishableKey(event.target.value)}
                     placeholder="pk_test_..."
-                    className={styles.input}
                     autoComplete="off"
                     spellCheck={false}
                   />
-                  <p className={styles.hint}>Esta llave puede usarse en la página pública para cargar Stripe Elements.</p>
-                </div>
-
-                <div className={styles.formField}>
-                  <label className={styles.label}>Secret key</label>
+                )}
+                {renderField(
+                  'Secret key',
                   <input
                     type="password"
                     value={stripeSecretKey}
                     onChange={(event) => setStripeSecretKey(event.target.value)}
                     placeholder={stripeConfig?.hasSecretKey ? stripeConfig.secretKeyPreview : 'sk_test_...'}
-                    className={styles.input}
                     autoComplete="new-password"
                     spellCheck={false}
                   />
-                  <p className={styles.hint}>Se guarda cifrada y sólo la usa el backend para crear PaymentIntents.</p>
-                </div>
-
-                <div className={`${styles.formField} ${styles.stripeWebhookField}`}>
-                  <label className={styles.label}>Endpoint URL para Stripe</label>
-                  <div className={styles.stripeWebhookEndpointList}>
-                    {stripeWebhookEndpoints.map((endpoint) => (
-                      <div key={endpoint.url} className={styles.stripeWebhookEndpointRow}>
-                        <div className={styles.stripeWebhookEndpointMeta}>
-                          <p>{endpoint.label}</p>
-                          <span>{endpoint.description}</span>
-                        </div>
-                        <div className={styles.stripeWebhookEndpointCopy}>
-                          <input
-                            type="text"
-                            readOnly
-                            value={endpoint.url}
-                            className={styles.input}
-                            onFocus={(event) => event.target.select()}
-                            aria-label={`Endpoint URL de ${endpoint.label}`}
-                          />
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={() => handleCopyStripeWebhookEndpoint(endpoint)}
-                          >
-                            <Copy size={16} />
-                            Copiar
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <p className={styles.hint}>
-                    En Stripe pega una de estas URLs en Developers → Webhooks como Endpoint URL. La página pública de Ristak cobra con PaymentIntent, aunque visualmente use una plantilla de invoice.
-                  </p>
-                  <div className={styles.stripeWebhookEventsBlock}>
-                    <div className={styles.stripeWebhookEventsHeader}>
-                      <span>Eventos que debes seleccionar</span>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={handleCopyStripeWebhookEvents}
-                      >
-                        <Copy size={16} />
-                        Copiar eventos
-                      </Button>
-                    </div>
-                    <div className={styles.stripeWebhookEventsList}>
-                      {STRIPE_WEBHOOK_EVENTS.map((event) => (
-                        <div key={event.name} className={styles.stripeWebhookEventItem}>
-                          <code>{event.name}</code>
-                          <span>{event.description}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className={styles.formField}>
-                  <label className={styles.label}>Webhook signing secret</label>
+                )}
+                {renderField(
+                  'Webhook signing secret',
                   <input
                     type="password"
                     value={stripeWebhookSecret}
                     onChange={(event) => setStripeWebhookSecret(event.target.value)}
                     placeholder={stripeConfig?.hasWebhookSecret ? stripeConfig.webhookSecretPreview : 'whsec_...'}
-                    className={styles.input}
                     autoComplete="new-password"
                     spellCheck={false}
                   />
-                  <p className={styles.hint}>Después de crear el endpoint en Stripe, copia aquí el signing secret para validar eventos reales.</p>
-                </div>
-
-                  <div className={styles.actions}>
-                    <Button
-                      variant="secondary"
-                      onClick={handleTestStripeConfig}
-                      disabled={testingStripeConfig || savingStripeConfig || !stripeSecretKey.trim()}
-                    >
-                      {testingStripeConfig ? (
-                        <>
-                          <Loader2 size={18} className={styles.spinIcon} />
-                          Probando...
-                        </>
-                      ) : (
-                        'Probar conexión manual'
-                      )}
-                    </Button>
-                    <Button
-                      onClick={handleSaveStripeConfig}
-                      disabled={savingStripeConfig || testingStripeConfig}
-                    >
-                      {savingStripeConfig ? (
-                        <>
-                          <Loader2 size={18} className={styles.spinIcon} />
-                          Guardando...
-                        </>
-                      ) : (
-                        'Guardar manual'
-                      )}
-                    </Button>
-                  </div>
-                </details>
+                )}
               </div>
 
-              {stripeConnected && (
-                <div className={styles.actions}>
-                  <Button
-                    variant="secondary"
-                    onClick={handleDisconnectStripe}
-                    disabled={disconnectingStripe || connectingStripe || testingStripeConfig}
-                  >
-                    {disconnectingStripe ? (
-                      <>
-                        <Loader2 size={18} className={styles.spinIcon} />
-                        Desconectando...
-                      </>
-                    ) : (
-                      <>
-                        <Unplug size={18} />
-                        Desconectar Stripe
-                      </>
-                    )}
-                  </Button>
+              {stripeWebhookEndpoints.length > 0 && (
+                <div className={styles.webhookList}>
+                  <h3>Endpoints sugeridos</h3>
+                  {stripeWebhookEndpoints.map((endpoint) => (
+                    <div key={endpoint.url} className={styles.webhookRow}>
+                      <div>
+                        <strong>{endpoint.label}</strong>
+                        <span>{endpoint.description}</span>
+                      </div>
+                      <Button type="button" variant="secondary" size="sm" onClick={() => handleCopyStripeWebhookEndpoint(endpoint)}>
+                        <Copy size={15} />
+                        Copiar
+                      </Button>
+                    </div>
+                  ))}
+                  <div className={styles.actionsRow}>
+                    <Button type="button" variant="secondary" onClick={handleCopyStripeWebhookEvents}>
+                      <Copy size={16} />
+                      Copiar eventos
+                    </Button>
+                  </div>
                 </div>
               )}
-            </>
-          )}
 
-          {showHighLevelSettings && (
-            <>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <h3 className={styles.sectionTitle}>GoHighLevel Invoices</h3>
-                  <p className={styles.sectionDescription}>
-                    Personaliza cómo se ven tus pagos y documentos de GoHighLevel.
-                  </p>
-                </div>
-              </div>
-
-              <div className={styles.sectionContent}>
-                <div className={styles.formField}>
-                  <label className={styles.label}>Modo de GoHighLevel Invoices</label>
-                  <div className={styles.toggleContainer}>
-                    <span className={`${styles.toggleLabel} ${ghlInvoiceMode === 'test' ? styles.toggleLabelActive : ''}`}>
-                      Prueba
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setGhlInvoiceMode(ghlInvoiceMode === 'live' ? 'test' : 'live')}
-                      className={`${styles.toggle} ${ghlInvoiceMode === 'live' ? styles.toggleActive : ''}`}
-                      disabled={loadingPaymentConfig}
-                      aria-pressed={ghlInvoiceMode === 'live'}
-                      aria-label="Cambiar modo de GoHighLevel invoices"
-                    >
-                      <span className={styles.toggleThumb} />
-                    </button>
-                    <span className={`${styles.toggleLabel} ${ghlInvoiceMode === 'live' ? styles.toggleLabelActive : ''}`}>
-                      En vivo
-                    </span>
-                  </div>
-                  <p className={styles.hint}>
-                    En modo prueba, los cobros, links y parcialidades se crean para simular pagos sin afectar ventas reales.
-                  </p>
-                </div>
-
-                <div className={styles.formField}>
-                  <label className={styles.label}>Título del Documento</label>
-                  <input
-                    type="text"
-                    value={paymentTitle}
-                    onChange={(e) => setPaymentTitle(e.target.value)}
-                    placeholder="ej: PAGO, FACTURA, INVOICE"
-                    className={styles.input}
-                  />
-                  <p className={styles.hint}>
-                    Este título aparecerá en la parte superior del documento
-                  </p>
-                </div>
-
-                <div className={styles.formField}>
-                  <label className={styles.label}>Prefijo de Número de Pago</label>
-                  <input
-                    type="text"
-                    value={paymentNumberPrefix}
-                    onChange={(e) => setPaymentNumberPrefix(e.target.value)}
-                    placeholder="ej: INV-, PAY-, FACT-"
-                    className={styles.input}
-                  />
-                  <p className={styles.hint}>
-                    Prefijo que se agregará antes del número de pago
-                  </p>
-                </div>
-
-                <div className={styles.formField}>
-                  <label className={styles.label}>Días para Vencimiento</label>
-                  <NumberInput
-                    min="1"
-                    value={paymentDueDays}
-                    onValueChange={(value) => setPaymentDueDays(Math.trunc(value) || 7)}
-                    className={styles.input}
-                  />
-                  <p className={styles.hint}>
-                    Número de días desde la fecha de emisión hasta el vencimiento
-                  </p>
-                </div>
-
-                <div className={styles.formField}>
-                  <label className={styles.label}>Términos y Condiciones</label>
-                  <textarea
-                    value={paymentTermsNotes}
-                    onChange={(e) => setPaymentTermsNotes(e.target.value)}
-                    placeholder="Escribe tus términos y condiciones aquí..."
-                    className={`${styles.input} ${styles.textareaInput}`}
-                  />
-                  <p className={styles.hint}>
-                    Estos términos aparecerán al final del documento de pago
-                  </p>
-                </div>
-
-                <div className={styles.formField}>
-                  <label className={styles.label}>URL con Información para Transferencias</label>
-                  <input
-                    type="url"
-                    value={transferInfoUrl}
-                    onChange={(e) => setTransferInfoUrl(e.target.value)}
-                    placeholder="ej: https://tu-sitio.com/como-transferir"
-                    className={styles.input}
-                  />
-                  <p className={styles.hint}>
-                    Este enlace aparecerá en el registro de pagos manuales para que el cajero lo copie y envíe al cliente
-                  </p>
-                </div>
-
-                <div className={styles.formField}>
-                  <label className={styles.label}>Monto para Domiciliar Tarjeta (MXN)</label>
-                  <NumberInput
-                    min="1"
-                    step="0.01"
-                    value={cardSetupAmount}
-                    onValueChange={(value) => setCardSetupAmount(value || 25)}
-                    className={styles.input}
-                  />
-                  <p className={styles.hint}>
-                    Se cobra solo cuando hace falta guardar o autorizar una tarjeta antes de activar parcialidades automáticas
-                  </p>
-                </div>
-              </div>
-
-              <div className={styles.actions}>
+              <div className={styles.actionsRow}>
                 <Button
-                  onClick={handleSavePaymentConfig}
-                  disabled={loadingPaymentConfig}
+                  type="button"
+                  variant="secondary"
+                  onClick={handleTestStripeConfig}
+                  disabled={testingStripeConfig || savingStripeConfig || !stripeSecretKey.trim()}
                 >
-                  {loadingPaymentConfig ? (
+                  {testingStripeConfig ? (
+                    <>
+                      <Loader2 size={18} className={styles.spinIcon} />
+                      Probando...
+                    </>
+                  ) : (
+                    'Probar conexión manual'
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleSaveStripeConfig}
+                  disabled={savingStripeConfig || testingStripeConfig}
+                >
+                  {savingStripeConfig ? (
                     <>
                       <Loader2 size={18} className={styles.spinIcon} />
                       Guardando...
                     </>
                   ) : (
-                    'Guardar configuración de GoHighLevel'
+                    'Guardar manual'
                   )}
                 </Button>
               </div>
-            </>
+            </details>
+
+            {stripeConnected && (
+              <div className={styles.actionsRow}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleDisconnectStripe}
+                  disabled={disconnectingStripe || connectingStripe || testingStripeConfig}
+                >
+                  {disconnectingStripe ? (
+                    <>
+                      <Loader2 size={18} className={styles.spinIcon} />
+                      Desconectando...
+                    </>
+                  ) : (
+                    <>
+                      <Unplug size={18} />
+                      Desconectar Stripe
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+    </div>
+  )
+
+  const renderTaxesSection = () => (
+    <div className={styles.twoColumnLayout}>
+      <Card className={styles.sectionCard}>
+        <div className={styles.sectionHeader}>
+          <div>
+            <h2>Impuestos</h2>
+            <p>Define la tasa, si va incluida o separada, y conecta herramientas fiscales.</p>
+          </div>
+          <Badge variant={taxes.enabled ? 'success' : 'neutral'}>
+            <Percent size={14} />
+            {taxes.enabled ? 'Activo' : 'Apagado'}
+          </Badge>
+        </div>
+
+        <div className={styles.switchStack}>
+          {renderSwitchRow('Cobrar impuestos', 'Activa el cálculo de impuesto como regla estándar de pagos.', taxes.enabled, (next) => setTaxValue('enabled', next))}
+          {renderSwitchRow('Aplicar a Stripe', 'Usa esta regla para links de cobro con Stripe.', taxes.applyToStripe, (next) => setTaxValue('applyToStripe', next))}
+          {renderSwitchRow('Aplicar a GoHighLevel', 'Usa esta regla cuando generes invoices de GoHighLevel.', taxes.applyToHighLevel, (next) => setTaxValue('applyToHighLevel', next))}
+        </div>
+
+        <div className={styles.formGrid}>
+          {renderField(
+            'Nombre del impuesto',
+            <input
+              type="text"
+              value={taxes.taxName}
+              onChange={(event) => setTaxValue('taxName', event.target.value)}
+              placeholder="IVA"
+            />
+          )}
+          {renderField(
+            'Tipo de tasa',
+            <CustomSelect
+              value={taxes.rateType}
+              onValueChange={(value) => setTaxValue('rateType', value as PaymentTaxSettings['rateType'])}
+              options={[
+                { value: 'percentage', label: 'Porcentaje' },
+                { value: 'fixed', label: 'Monto fijo' }
+              ]}
+            />
+          )}
+          {renderField(
+            taxes.rateType === 'percentage' ? 'Tasa impositiva' : 'Monto fijo',
+            <NumberInput
+              min="0"
+              step="0.01"
+              value={taxes.rateValue}
+              onValueChange={(value) => setTaxValue('rateValue', value)}
+            />,
+            taxes.rateType === 'percentage' ? 'Ejemplo: 16 para IVA 16%.' : 'Monto que se suma o se reporta como impuesto.'
+          )}
+          {renderField(
+            'Modo de cálculo',
+            <CustomSelect
+              value={taxes.calculationMode}
+              onValueChange={(value) => setTaxValue('calculationMode', value as PaymentTaxSettings['calculationMode'])}
+              options={[
+                { value: 'exclusive', label: 'Se suma al total' },
+                { value: 'inclusive', label: 'Ya incluido en el precio' }
+              ]}
+            />
+          )}
+          {renderField(
+            'RFC / ID fiscal',
+            <input
+              type="text"
+              value={taxes.fiscalId}
+              onChange={(event) => setTaxValue('fiscalId', event.target.value)}
+              placeholder="RFC o identificador fiscal"
+            />
           )}
         </div>
       </Card>
+
+      <Card className={styles.jigsawCard}>
+        <div className={styles.jigsawHeader}>
+          <Sparkles size={22} />
+          <Badge variant="warning">Próximamente</Badge>
+        </div>
+        <h3>Jigsaw</h3>
+        <p>Jigsaw vive aquí, en impuestos, para preparar el flujo fiscal sin contaminar la lista de pasarelas de cobro.</p>
+        {renderSwitchRow('Preparar conexión con Jigsaw', 'Deja marcada la intención de conectar Jigsaw cuando se libere.', taxes.jigsawEnabled, (next) => setTaxValue('jigsawEnabled', next))}
+        <div className={styles.taxPreview}>
+          <div>
+            <span>Subtotal</span>
+            <strong>{compactMoney.format(2490)}</strong>
+          </div>
+          <div>
+            <span>{taxes.taxName || 'IVA'} {taxes.rateType === 'percentage' ? `${taxes.rateValue}%` : ''}</span>
+            <strong>{taxes.calculationMode === 'inclusive' ? 'Incluido' : compactMoney.format(taxes.rateType === 'percentage' ? 398 : taxes.rateValue)}</strong>
+          </div>
+          <div>
+            <span>Total mostrado</span>
+            <strong>{compactMoney.format(taxes.calculationMode === 'inclusive' ? 2490 : 2888)}</strong>
+          </div>
+        </div>
+      </Card>
     </div>
+  )
+
+  return (
+    <PageContainer size="wide" className={styles.page}>
+      <PageHeader
+        eyebrow="Configuración"
+        title="Pagos"
+        subtitle="Configura el cobro, comprobante, automatizaciones, pasarelas e impuestos desde un solo setup."
+        actions={(
+          <>
+            <Badge variant={stripeConnected || highLevelConnected ? 'success' : 'warning'}>
+              {isLoadingPage ? <Loader2 size={14} className={styles.spinIcon} /> : stripeConnected || highLevelConnected ? <CheckCircle size={14} /> : <Clock size={14} />}
+              {isLoadingPage ? 'Cargando' : stripeConnected ? 'Stripe conectado' : highLevelConnected ? 'GoHighLevel conectado' : 'Pasarela pendiente'}
+            </Badge>
+            <Button type="button" onClick={handleSaveSettings} disabled={savingSettings || loadingSettings}>
+              {savingSettings ? (
+                <>
+                  <Loader2 size={18} className={styles.spinIcon} />
+                  Guardando...
+                </>
+              ) : (
+                'Guardar configuración'
+              )}
+            </Button>
+          </>
+        )}
+      />
+
+      <div className={styles.setupHeader}>
+        <SegmentTabs
+          aria-label="Setup de configuración de pagos"
+          className={styles.setupTabs}
+          tabs={sectionItems.map((item) => ({
+            id: item.id,
+            label: item.label,
+            icon: item.icon
+          }))}
+          value={activeSection}
+          onChange={handleSectionChange}
+        />
+      </div>
+
+      {activeSection === 'checkout' && renderCheckoutSection()}
+      {activeSection === 'receipt' && renderReceiptSection()}
+      {activeSection === 'automations' && renderAutomationsSection()}
+      {activeSection === 'gateways' && renderGatewaysSection()}
+      {activeSection === 'taxes' && renderTaxesSection()}
+    </PageContainer>
   )
 }

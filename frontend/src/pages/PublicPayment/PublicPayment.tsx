@@ -137,7 +137,7 @@ const PublicPaymentForm: React.FC<{
           ) : (
             <>
               <CreditCard size={16} />
-              Pagar {formatCurrency(payment.amount, payment.currency)}
+              {payment.settings?.checkout?.buttonLabel || 'Pagar'} {formatCurrency(payment.amount, payment.currency)}
             </>
           )}
         </button>
@@ -251,15 +251,36 @@ export const PublicPayment: React.FC = () => {
 
   if (!payment) return null
 
+  const checkoutSettings = payment.settings?.checkout
+  const receiptSettings = payment.settings?.receipt
+  const taxSettings = payment.settings?.taxes
+  const logoUrl = checkoutSettings?.logoUrl || receiptSettings?.logoUrl || ''
+  const supportItems = [
+    checkoutSettings?.supportEmail,
+    checkoutSettings?.supportPhone
+  ].filter(Boolean)
+  const taxLabel = taxSettings?.enabled
+    ? `${taxSettings.taxName || 'Impuesto'} ${taxSettings.rateType === 'percentage' ? `${taxSettings.rateValue}%` : formatCurrency(taxSettings.rateValue || 0, payment.currency)}`
+    : ''
+
   return (
     <main className={styles.page}>
       <div className={styles.shell}>
         <header className={styles.header}>
           <div className={styles.brand}>
+            {logoUrl && (
+              <img className={styles.brandLogo} src={logoUrl} alt="" />
+            )}
             <span className={styles.eyebrow}>Ristak Payments</span>
-            <h1 className={styles.title}>{payment.title || 'Pago pendiente'}</h1>
+            <h1 className={styles.title}>
+              {isPaid
+                ? receiptSettings?.title || 'Comprobante de pago'
+                : checkoutSettings?.headline || payment.title || 'Pago pendiente'}
+            </h1>
             <p className={styles.subtitle}>
-              Revisa los datos del cobro y paga de forma segura con Stripe. Ristak no ve ni guarda el número de tu tarjeta.
+              {isPaid
+                ? receiptSettings?.intro || 'Tu pago fue recibido correctamente.'
+                : checkoutSettings?.description || 'Revisa los datos del cobro y paga de forma segura con Stripe. Ristak no ve ni guarda el número de tu tarjeta.'}
             </p>
           </div>
           <span className={`${styles.statusBadge} ${status.className}`}>
@@ -299,19 +320,32 @@ export const PublicPayment: React.FC = () => {
                 <span>Vencimiento</span>
                 <strong>{formatDate(payment.dueDate)}</strong>
               </div>
+              {taxLabel && (
+                <div className={styles.detailRow}>
+                  <span>Impuestos</span>
+                  <strong>{taxSettings?.calculationMode === 'inclusive' ? `${taxLabel} incluido` : taxLabel}</strong>
+                </div>
+              )}
               <div className={styles.detailRow}>
                 <span>Referencia</span>
                 <strong>{payment.publicPaymentId}</strong>
               </div>
             </div>
+
+            {checkoutSettings?.showSecureBadge && !isPaid && (
+              <p className={styles.secureNotice}>
+                <ShieldCheck size={16} />
+                <span>Pago procesado de forma segura.</span>
+              </p>
+            )}
           </aside>
 
           <section className={styles.payPanel} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
-              <h2>{isPaid ? 'Pago confirmado' : 'Pagar con tarjeta'}</h2>
+              <h2>{isPaid ? receiptSettings?.title || 'Pago confirmado' : 'Pagar con tarjeta'}</h2>
               <p>
                 {isPaid
-                  ? 'Este invoice ya aparece como pagado en Ristak.'
+                  ? receiptSettings?.intro || 'Este invoice ya aparece como pagado en Ristak.'
                   : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
@@ -324,10 +358,48 @@ export const PublicPayment: React.FC = () => {
             )}
 
             {isPaid ? (
-              <p className={`${styles.message} ${styles.messageSuccess}`}>
-                <CheckCircle2 size={16} />
-                <span>Listo. El pago fue recibido y el invoice quedó marcado como pagado.</span>
-              </p>
+              <div className={styles.receiptBox}>
+                <p className={`${styles.message} ${styles.messageSuccess}`}>
+                  <CheckCircle2 size={16} />
+                  <span>Listo. El pago fue recibido y el invoice quedó marcado como pagado.</span>
+                </p>
+                <div className={styles.receiptRows}>
+                  {receiptSettings?.showBusinessInfo && (
+                    <div>
+                      <span>Negocio</span>
+                      <strong>{receiptSettings.businessName || 'Negocio'}</strong>
+                    </div>
+                  )}
+                  {receiptSettings?.showCustomerInfo !== false && (
+                    <div>
+                      <span>Cliente</span>
+                      <strong>{payment.contact?.name || 'Cliente'}</strong>
+                    </div>
+                  )}
+                  <div>
+                    <span>Total pagado</span>
+                    <strong>{formatCurrency(payment.amount, payment.currency)}</strong>
+                  </div>
+                  <div>
+                    <span>Referencia</span>
+                    <strong>{payment.publicPaymentId}</strong>
+                  </div>
+                </div>
+                {receiptSettings?.showBusinessInfo && (
+                  <div className={styles.businessInfo}>
+                    {receiptSettings.businessEmail && <span>{receiptSettings.businessEmail}</span>}
+                    {receiptSettings.businessPhone && <span>{receiptSettings.businessPhone}</span>}
+                    {receiptSettings.businessAddress && <span>{receiptSettings.businessAddress}</span>}
+                    {receiptSettings.businessWebsite && <span>{receiptSettings.businessWebsite}</span>}
+                  </div>
+                )}
+                {receiptSettings?.showTerms && receiptSettings.terms && (
+                  <p className={styles.termsBlock}>{receiptSettings.terms}</p>
+                )}
+                {receiptSettings?.footer && (
+                  <p className={styles.receiptFooter}>{receiptSettings.footer}</p>
+                )}
+              </div>
             ) : isClosed ? (
               <p className={`${styles.message} ${styles.messageError}`}>
                 <AlertCircle size={16} />
@@ -366,7 +438,7 @@ export const PublicPayment: React.FC = () => {
                     ) : (
                       <>
                         <CreditCard size={16} />
-                        Iniciar pago
+                        {checkoutSettings?.buttonLabel || 'Iniciar pago'}
                       </>
                     )}
                   </button>
@@ -375,6 +447,12 @@ export const PublicPayment: React.FC = () => {
             )}
           </section>
         </section>
+
+        {supportItems.length > 0 && !isPaid && (
+          <p className={styles.supportLine}>
+            ¿Necesitas ayuda con tu pago? {supportItems.join(' · ')}
+          </p>
+        )}
       </div>
     </main>
   )

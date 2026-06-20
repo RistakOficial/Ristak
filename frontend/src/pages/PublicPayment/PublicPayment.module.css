@@ -26,6 +26,17 @@
   gap: 6px;
 }
 
+.brandLogo {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  padding: 6px;
+  margin-bottom: 6px;
+}
+
 .eyebrow {
   font: var(--label-font);
   font-size: 11px;
@@ -182,6 +193,22 @@
   word-break: break-word;
 }
 
+.secureNotice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.secureNotice svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
 .payPanel {
   padding: 24px;
 }
@@ -305,6 +332,82 @@
   border-color: var(--pos);
   background: var(--pos-soft);
   color: var(--pos);
+}
+
+.receiptBox {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.receiptRows {
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  overflow: hidden;
+}
+
+.receiptRows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-solid);
+}
+
+.receiptRows > div:first-child {
+  border-top: 0;
+}
+
+.receiptRows span {
+  color: var(--text-mute);
+  font-size: 12px;
+}
+
+.receiptRows strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.businessInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.termsBlock,
+.receiptFooter,
+.supportLine {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.termsBlock {
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.receiptFooter {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.supportLine {
+  padding-top: 16px;
+  text-align: center;
 }
 
 .statePanel {

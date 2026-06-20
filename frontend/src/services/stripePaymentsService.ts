@@ -1,4 +1,5 @@
 import { apiUrl } from './apiBaseUrl'
+import type { PublicPaymentSettings } from './paymentSettingsService'
 
 export interface StripePaymentConfig {
   enabled: boolean
@@ -92,6 +93,7 @@ export interface PublicStripePayment {
   stripePaymentIntentId?: string | null
   publishableKey: string
   stripeAccountId?: string
+  settings?: PublicPaymentSettings | null
 }
 
 export interface StripePaymentIntentResponse {

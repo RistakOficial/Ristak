@@ -43,11 +43,16 @@ import {
   updateMessageTemplateView,
   updateTemplateFolderView
 } from '../controllers/messageTemplatesController.js';
+import {
+  getPaymentSettingsView,
+  savePaymentSettingsView
+} from '../controllers/paymentSettingsController.js';
 
 const router = express.Router();
 const requireAccountAccess = requireModuleAccess('settings_account');
 const requireCustomFieldsAccess = requireModuleAccess('settings_custom_fields');
 const requireWhatsAppAccess = requireModuleAccess('settings_whatsapp');
+const requirePaymentsAccess = requireModuleAccess('settings_payments');
 
 router.use(requireAuth);
 
@@ -82,6 +87,10 @@ router.get('/trigger-links/:triggerLinkId/events', requireCustomFieldsAccess, li
 
 // GET /api/settings/notifications
 router.get('/notifications', requireAccountAccess, getNotificationsView);
+
+// Payment settings
+router.get('/payments', requirePaymentsAccess, getPaymentSettingsView);
+router.post('/payments', requirePaymentsAccess, savePaymentSettingsView);
 
 // WhatsApp message templates
 router.get('/message-templates', requireWhatsAppAccess, getMessageTemplatesView);
