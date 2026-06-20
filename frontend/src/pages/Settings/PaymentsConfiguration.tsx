@@ -557,6 +557,8 @@ export const PaymentsConfiguration: React.FC = () => {
   const stripeWebhookReady = stripeConfig?.connectWebhookStatus === 'active' && stripeConfig?.hasWebhookSecret
   const stripeOAuthConnected = Boolean(stripeConfig?.configured && stripeIsConnect && stripeConfig?.connectedAccountId)
   const stripeConnected = Boolean(stripeConfig?.configured)
+  const stripeShowConnectSetup = !stripeDualModeConnected
+  const stripeShowManualFallback = !stripeOAuthConnected
   const isLoadingPage = loadingSettings || loadingHighLevelConnection || loadingStripeConfig
 
   const setCheckoutValue = <K extends keyof PaymentCheckoutSettings>(key: K, value: PaymentCheckoutSettings[K]) => {
@@ -1962,36 +1964,38 @@ export const PaymentsConfiguration: React.FC = () => {
               {switchingStripeMode && <Loader2 size={14} className={styles.spinIcon} />}
             </div>
 
-            <div className={styles.stripeWizardIntro}>
-              <div className={styles.stripeWizardCopy}>
-                <h3>Conexión guiada en dos pasos</h3>
-                <p>Primero se conecta el modo prueba para validar el flujo sin dinero real. Al regresar, Ristak abrirá Stripe otra vez para conectar el modo en vivo.</p>
-              </div>
-              <div className={styles.stripeWizardSteps} aria-label="Pasos para conectar Stripe">
-                <div className={stripeTestConnected ? styles.stripeWizardStepDone : stripeWizardStep === 'test' ? styles.stripeWizardStepActive : styles.stripeWizardStep}>
-                  <span>1</span>
-                  <div>
-                    <strong>Modo prueba</strong>
-                    <small>{stripeTestConnected ? 'Conectado' : 'Sin pagos reales'}</small>
+            {stripeShowConnectSetup && (
+              <div className={styles.stripeWizardIntro}>
+                <div className={styles.stripeWizardCopy}>
+                  <h3>Conexión guiada en dos pasos</h3>
+                  <p>Primero se conecta el modo prueba para validar el flujo sin dinero real. Al regresar, Ristak abrirá Stripe otra vez para conectar el modo en vivo.</p>
+                </div>
+                <div className={styles.stripeWizardSteps} aria-label="Pasos para conectar Stripe">
+                  <div className={stripeTestConnected ? styles.stripeWizardStepDone : stripeWizardStep === 'test' ? styles.stripeWizardStepActive : styles.stripeWizardStep}>
+                    <span>1</span>
+                    <div>
+                      <strong>Modo prueba</strong>
+                      <small>{stripeTestConnected ? 'Conectado' : 'Sin pagos reales'}</small>
+                    </div>
+                  </div>
+                  <ArrowRight size={17} className={styles.stripeWizardArrow} aria-hidden="true" />
+                  <div className={stripeLiveConnected ? styles.stripeWizardStepDone : stripeWizardStep === 'live' ? styles.stripeWizardStepActive : styles.stripeWizardStep}>
+                    <span>2</span>
+                    <div>
+                      <strong>Modo en vivo</strong>
+                      <small>{stripeLiveConnected ? 'Conectado' : 'Pagos reales'}</small>
+                    </div>
                   </div>
                 </div>
-                <ArrowRight size={17} className={styles.stripeWizardArrow} aria-hidden="true" />
-                <div className={stripeLiveConnected ? styles.stripeWizardStepDone : stripeWizardStep === 'live' ? styles.stripeWizardStepActive : styles.stripeWizardStep}>
-                  <span>2</span>
-                  <div>
-                    <strong>Modo en vivo</strong>
-                    <small>{stripeLiveConnected ? 'Conectado' : 'Pagos reales'}</small>
-                  </div>
-                </div>
               </div>
-            </div>
+            )}
 
             <div className={styles.stripeConnectBox}>
               <div>
                 <h3>{stripeDualModeConnected ? stripeAccountLabel || 'Stripe conectado en ambos modos' : stripeOAuthConnected ? stripeAccountLabel || 'Cuenta Stripe conectada' : stripeConnected ? 'Stripe configurado manualmente' : 'Conectar con Stripe'}</h3>
                 <p>
                   {stripeDualModeConnected
-                    ? `Ristak está listo para pruebas y cobros reales. El switch controla el modo activo; ahora está en ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'}.`
+                    ? `Ristak está listo para pruebas y cobros reales. El modo activo ahora está en ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'}.`
                     : stripeOAuthConnected
                       ? `Ristak tiene conectado el modo ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'}. Completa ambos modos para evitar confusión al probar.`
                     : stripeConnected
@@ -1999,42 +2003,27 @@ export const PaymentsConfiguration: React.FC = () => {
                       : 'Al hacer clic se abrirá Stripe primero en modo prueba; al terminar se abrirá de nuevo para modo en vivo.'}
                 </p>
               </div>
-              <div className={styles.actionsRow}>
-                <Button
-                  type="button"
-                  onClick={handleConnectStripe}
-                  disabled={connectingStripe || syncingStripeConnect || disconnectingStripe || !stripeDualOauthReady}
-                >
-                  {connectingStripe ? (
-                    <>
-                      <Loader2 size={18} className={styles.spinIcon} />
-                      {stripeWizardStep === 'live' ? 'Abriendo live...' : 'Abriendo test...'}
-                    </>
-                  ) : (
-                    <>
-                      <ExternalLink size={18} />
-                      {stripeDualModeConnected ? 'Reconectar ambos modos' : 'Conectar con Stripe'}
-                    </>
-                  )}
-                </Button>
-                {stripeConnected && (
+              {stripeShowConnectSetup && (
+                <div className={styles.actionsRow}>
                   <Button
                     type="button"
-                    variant="secondary"
-                    onClick={handleTestStripeConfig}
-                    disabled={testingStripeConfig || connectingStripe || syncingStripeConnect || disconnectingStripe}
+                    onClick={handleConnectStripe}
+                    disabled={connectingStripe || syncingStripeConnect || disconnectingStripe || !stripeDualOauthReady}
                   >
-                    {testingStripeConfig ? (
+                    {connectingStripe ? (
                       <>
                         <Loader2 size={18} className={styles.spinIcon} />
-                        Probando...
+                        {stripeWizardStep === 'live' ? 'Abriendo live...' : 'Abriendo test...'}
                       </>
                     ) : (
-                      'Probar API'
+                      <>
+                        <ExternalLink size={18} />
+                        Conectar con Stripe
+                      </>
                     )}
                   </Button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             {!stripeDualOauthReady && (
@@ -2065,156 +2054,129 @@ export const PaymentsConfiguration: React.FC = () => {
                   <span>Modo en vivo</span>
                   <strong>{stripeLiveConnected ? 'Conectado' : 'Pendiente'}</strong>
                 </div>
-                <div>
-                  <span>Webhook</span>
-                  <strong>{stripeWebhookReady ? 'Automático' : 'Pendiente'}</strong>
-                </div>
               </div>
             )}
 
             {stripeOAuthConnected && !stripeWebhookReady && (
               <div className={styles.inlineWarning}>
                 <AlertTriangle size={16} />
-                <span>{stripeConfig?.connectWebhookLastError || 'Stripe conectó, pero falta confirmar el webhook automático para recibir pagos y reembolsos en tiempo real.'}</span>
+                <span>Stripe conectó, pero falta terminar la sincronización automática para recibir pagos y reembolsos en tiempo real.</span>
               </div>
             )}
 
-            {stripeConfig?.connectWebhookUrl && (
-              <div className={styles.copyField}>
-                <input
-                  type="text"
-                  readOnly
-                  value={stripeConfig.connectWebhookUrl}
-                  onFocus={(event) => event.target.select()}
-                  aria-label="Webhook automático de Stripe Connect"
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => handleCopyStripeWebhookEndpoint({
-                    source: 'connect',
-                    label: 'Stripe Connect',
-                    description: 'Webhook creado automáticamente por Ristak.',
-                    url: stripeConfig.connectWebhookUrl || ''
-                  })}
-                >
-                  <Copy size={16} />
-                  Copiar
-                </Button>
-              </div>
-            )}
+            {stripeShowManualFallback && (
+              <details className={styles.manualDetails}>
+                <summary>Configuración manual de respaldo</summary>
+                <div className={styles.formGrid}>
+                  {renderField(
+                    'Nombre de cuenta',
+                    <input
+                      type="text"
+                      value={stripeAccountLabel}
+                      onChange={(event) => setStripeAccountLabel(event.target.value)}
+                      placeholder="Stripe Principal"
+                      autoComplete="off"
+                    />
+                  )}
+                  {renderField(
+                    'Moneda de cuenta',
+                    <div className={styles.currencyNote}>
+                      <span>Moneda de cuenta</span>
+                      <strong>{accountCurrency}</strong>
+                    </div>
+                  )}
+                  {renderField(
+                    'Publishable key',
+                    <input
+                      type="text"
+                      value={stripePublishableKey}
+                      onChange={(event) => setStripePublishableKey(event.target.value)}
+                      placeholder="pk_test_..."
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  )}
+                  {renderField(
+                    'Secret key',
+                    <input
+                      type="password"
+                      value={stripeSecretKey}
+                      onChange={(event) => setStripeSecretKey(event.target.value)}
+                      placeholder={stripeConfig?.hasSecretKey ? stripeConfig.secretKeyPreview : 'sk_test_...'}
+                      autoComplete="new-password"
+                      spellCheck={false}
+                    />
+                  )}
+                  {renderField(
+                    'Webhook signing secret',
+                    <input
+                      type="password"
+                      value={stripeWebhookSecret}
+                      onChange={(event) => setStripeWebhookSecret(event.target.value)}
+                      placeholder={stripeConfig?.hasWebhookSecret ? stripeConfig.webhookSecretPreview : 'whsec_...'}
+                      autoComplete="new-password"
+                      spellCheck={false}
+                    />
+                  )}
+                </div>
 
-            <details className={styles.manualDetails}>
-              <summary>Configuración manual de respaldo</summary>
-              <div className={styles.formGrid}>
-                {renderField(
-                  'Nombre de cuenta',
-                  <input
-                    type="text"
-                    value={stripeAccountLabel}
-                    onChange={(event) => setStripeAccountLabel(event.target.value)}
-                    placeholder="Stripe Principal"
-                    autoComplete="off"
-                  />
-                )}
-                {renderField(
-                  'Moneda de cuenta',
-                  <div className={styles.currencyNote}>
-                    <span>Moneda de cuenta</span>
-                    <strong>{accountCurrency}</strong>
-                  </div>
-                )}
-                {renderField(
-                  'Publishable key',
-                  <input
-                    type="text"
-                    value={stripePublishableKey}
-                    onChange={(event) => setStripePublishableKey(event.target.value)}
-                    placeholder="pk_test_..."
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                )}
-                {renderField(
-                  'Secret key',
-                  <input
-                    type="password"
-                    value={stripeSecretKey}
-                    onChange={(event) => setStripeSecretKey(event.target.value)}
-                    placeholder={stripeConfig?.hasSecretKey ? stripeConfig.secretKeyPreview : 'sk_test_...'}
-                    autoComplete="new-password"
-                    spellCheck={false}
-                  />
-                )}
-                {renderField(
-                  'Webhook signing secret',
-                  <input
-                    type="password"
-                    value={stripeWebhookSecret}
-                    onChange={(event) => setStripeWebhookSecret(event.target.value)}
-                    placeholder={stripeConfig?.hasWebhookSecret ? stripeConfig.webhookSecretPreview : 'whsec_...'}
-                    autoComplete="new-password"
-                    spellCheck={false}
-                  />
-                )}
-              </div>
-
-              {stripeWebhookEndpoints.length > 0 && (
-                <div className={styles.webhookList}>
-                  <h3>Endpoints sugeridos</h3>
-                  {stripeWebhookEndpoints.map((endpoint) => (
-                    <div key={endpoint.url} className={styles.webhookRow}>
-                      <div>
-                        <strong>{endpoint.label}</strong>
-                        <span>{endpoint.description}</span>
+                {stripeWebhookEndpoints.length > 0 && (
+                  <div className={styles.webhookList}>
+                    <h3>Endpoints sugeridos</h3>
+                    {stripeWebhookEndpoints.map((endpoint) => (
+                      <div key={endpoint.url} className={styles.webhookRow}>
+                        <div>
+                          <strong>{endpoint.label}</strong>
+                          <span>{endpoint.description}</span>
+                        </div>
+                        <Button type="button" variant="secondary" size="sm" onClick={() => handleCopyStripeWebhookEndpoint(endpoint)}>
+                          <Copy size={15} />
+                          Copiar
+                        </Button>
                       </div>
-                      <Button type="button" variant="secondary" size="sm" onClick={() => handleCopyStripeWebhookEndpoint(endpoint)}>
-                        <Copy size={15} />
-                        Copiar
+                    ))}
+                    <div className={styles.actionsRow}>
+                      <Button type="button" variant="secondary" onClick={handleCopyStripeWebhookEvents}>
+                        <Copy size={16} />
+                        Copiar eventos
                       </Button>
                     </div>
-                  ))}
-                  <div className={styles.actionsRow}>
-                    <Button type="button" variant="secondary" onClick={handleCopyStripeWebhookEvents}>
-                      <Copy size={16} />
-                      Copiar eventos
-                    </Button>
                   </div>
-                </div>
-              )}
+                )}
 
-              <div className={styles.actionsRow}>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={handleTestStripeConfig}
-                  disabled={testingStripeConfig || savingStripeConfig || !stripeSecretKey.trim()}
-                >
-                  {testingStripeConfig ? (
-                    <>
-                      <Loader2 size={18} className={styles.spinIcon} />
-                      Probando...
-                    </>
-                  ) : (
-                    'Probar conexión manual'
-                  )}
-                </Button>
-                <Button
-                  type="button"
-                  onClick={handleSaveStripeConfig}
-                  disabled={savingStripeConfig || testingStripeConfig}
-                >
-                  {savingStripeConfig ? (
-                    <>
-                      <Loader2 size={18} className={styles.spinIcon} />
-                      Guardando...
-                    </>
-                  ) : (
-                    'Guardar manual'
-                  )}
-                </Button>
-              </div>
-            </details>
+                <div className={styles.actionsRow}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleTestStripeConfig}
+                    disabled={testingStripeConfig || savingStripeConfig || !stripeSecretKey.trim()}
+                  >
+                    {testingStripeConfig ? (
+                      <>
+                        <Loader2 size={18} className={styles.spinIcon} />
+                        Probando...
+                      </>
+                    ) : (
+                      'Probar conexión manual'
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleSaveStripeConfig}
+                    disabled={savingStripeConfig || testingStripeConfig}
+                  >
+                    {savingStripeConfig ? (
+                      <>
+                        <Loader2 size={18} className={styles.spinIcon} />
+                        Guardando...
+                      </>
+                    ) : (
+                      'Guardar manual'
+                    )}
+                  </Button>
+                </div>
+              </details>
+            )}
 
             {stripeConnected && (
               <div className={styles.actionsRow}>
