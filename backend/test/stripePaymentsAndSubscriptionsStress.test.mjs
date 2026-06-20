@@ -517,7 +517,7 @@ test('planes Stripe: tarjeta con requires_action marca error y evita reintentos 
   }
 })
 
-test('suscripciones Stripe: crea, sube/baja precio, pausa, reanuda, cancela y elimina', async () => {
+test('suscripciones Stripe: crea, sube/baja precio, pausa, reanuda, cancela y conserva historial', async () => {
   const { contactId, contact, savedMethodId, stripeCustomerId, stripePaymentMethodId } = await seedContactWithSavedCard('subscription_lifecycle')
   const { stripe, calls } = createStripeMock()
   setStripeFactoryForTest(() => stripe)
@@ -616,11 +616,44 @@ test('suscripciones Stripe: crea, sube/baja precio, pausa, reanuda, cancela y el
     assert.equal(cancelled.status, 'cancelled')
     assert.equal(calls.subscriptionsCancel.length, 1)
 
+    await assert.rejects(
+      () => deleteSubscription(created.id),
+      /ya tiene cobros registrados|conservar el historial/i
+    )
+
+    const preserved = await getSubscription(created.id)
+    assert.equal(preserved.status, 'cancelled')
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanupContact(contactId)
+  }
+})
+
+test('suscripciones: elimina una suscripcion local sin cobros registrados', async () => {
+  const { contactId, contact } = await seedContactWithSavedCard('subscription_delete_empty')
+
+  try {
+    await configureStripe()
+
+    const created = await createSubscription({
+      contactId,
+      contactName: contact.name,
+      contactEmail: contact.email,
+      contactPhone: contact.phone,
+      name: 'Suscripcion sin cobros',
+      description: 'Borrable porque no tiene historial de pagos',
+      amount: 100,
+      intervalType: 'monthly',
+      intervalCount: 1,
+      paymentMethod: 'manual',
+      paymentProvider: 'manual'
+    })
+
+    assert.equal(created.status, 'active')
     const deleted = await deleteSubscription(created.id)
     assert.equal(deleted, true)
     assert.equal(await getSubscription(created.id), null)
   } finally {
-    setStripeFactoryForTest(null)
     await cleanupContact(contactId)
   }
 })

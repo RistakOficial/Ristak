@@ -3515,7 +3515,7 @@ export const actionInvoiceSchedule = async (req, res) => {
     });
   } catch (error) {
     logger.error(`Error aplicando acción a invoice schedule ${req.params.scheduleId}: ${error.message}`);
-    res.status(500).json({
+    res.status(error.status || 500).json({
       success: false,
       error: error.message || 'Error al aplicar acción al plan de pago'
     });
