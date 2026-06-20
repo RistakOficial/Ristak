@@ -839,7 +839,14 @@ function mapStripeAccountForConfig(account = {}) {
   }
 }
 
-async function ensureStripeConnectWebhookEndpoint({ stripe, connectedAccountId, webhookUrl, currentEndpointId = '', currentSecret = '' }) {
+async function ensureStripeConnectWebhookEndpoint({
+  stripe,
+  connectedAccountId,
+  webhookUrl,
+  currentEndpointId = '',
+  currentSecret = '',
+  listenToConnectedAccountEvents = false
+}) {
   const cleanUrl = cleanString(webhookUrl)
   if (!cleanUrl) return { status: 'missing_url', endpointId: '', webhookUrl: '', webhookSecret: currentSecret, error: 'No se detectó URL pública.' }
 
@@ -852,6 +859,7 @@ async function ensureStripeConnectWebhookEndpoint({ stripe, connectedAccountId, 
         stripe_account_id: connectedAccountId
       }
     }
+    const connectPayload = listenToConnectedAccountEvents ? { connect: true } : {}
 
     if (currentEndpointId) {
       try {
@@ -860,6 +868,7 @@ async function ensureStripeConnectWebhookEndpoint({ stripe, connectedAccountId, 
           {
             url: cleanUrl,
             ...endpointPayload,
+            ...connectPayload,
             disabled: false
           }
         )
@@ -878,8 +887,8 @@ async function ensureStripeConnectWebhookEndpoint({ stripe, connectedAccountId, 
     const created = await stripe.webhookEndpoints.create(
       {
         url: cleanUrl,
-        connect: true,
-        ...endpointPayload
+        ...endpointPayload,
+        ...connectPayload
       }
     )
 
@@ -1183,12 +1192,15 @@ export async function completeStripeConnectOAuth({ code = '', state = '', baseUr
   const raw = await readRawConfig()
   const currentModeConnection = decryptStoredConnection(getConnectModeConnection(raw, finalMode))
   const webhookUrl = `${cleanString(baseUrl || savedState.redirectUri).replace(/\/api\/stripe\/connect\/callback$/, '').replace(/\/+$/, '')}/api/stripe/webhook`
+  const oauthAccessToken = cleanString(oauthData.access_token)
+  const webhookStripe = oauthAccessToken ? getStripeInstance(oauthAccessToken) : stripe
   const webhook = await ensureStripeConnectWebhookEndpoint({
-    stripe,
+    stripe: webhookStripe,
     connectedAccountId,
     webhookUrl,
     currentEndpointId: currentModeConnection?.webhookEndpointId || '',
-    currentSecret: currentModeConnection?.webhookSecret || ''
+    currentSecret: currentModeConnection?.webhookSecret || '',
+    listenToConnectedAccountEvents: !oauthAccessToken
   })
 
   const config = await saveStripeConnectConnection({

@@ -103,6 +103,17 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
     setStripeFactoryForTest((secretKey) => {
       if (secretKey === 'sk_test_connected_access') {
         return {
+          webhookEndpoints: {
+            create: async (payload, options = {}) => {
+              webhookCreatePayload = payload
+              webhookCreateOptions = options
+              return {
+                id: 'we_test_123',
+                url: payload.url,
+                secret: 'whsec_test_123'
+              }
+            }
+          },
           balance: {
             retrieve: async (_params = {}, options = {}) => {
               balanceOptions = options
@@ -134,13 +145,7 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
         },
         webhookEndpoints: {
           create: async (payload, options = {}) => {
-            webhookCreatePayload = payload
-            webhookCreateOptions = options
-            return {
-              id: 'we_test_123',
-              url: payload.url,
-              secret: 'whsec_test_123'
-            }
+            throw new Error(`No debe crear el webhook OAuth con la plataforma: ${payload?.url || ''}`)
           },
           del: async () => ({ deleted: true })
         }
@@ -177,7 +182,7 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
     assert.equal(completed.config.connectWebhookStatus, 'active')
 
     assert.equal(webhookCreatePayload.url, 'https://app.example.com/api/stripe/webhook')
-    assert.equal(webhookCreatePayload.connect, true)
+    assert.equal(webhookCreatePayload.connect, undefined)
     assert.deepEqual(webhookCreatePayload.enabled_events.includes('payment_intent.succeeded'), true)
     assert.deepEqual(webhookCreateOptions, {})
 
@@ -231,6 +236,19 @@ test('Stripe Connect OAuth conserva conexiones separadas para prueba y en vivo',
     setStripeFactoryForTest((secretKey) => {
       if (secretKey === 'sk_test_connected_access' || secretKey === 'sk_live_connected_access') {
         return {
+          webhookEndpoints: {
+            create: async (payload, options = {}) => {
+              assert.equal(payload.connect, undefined)
+              assert.deepEqual(options, {})
+              const accountId = payload.metadata?.stripe_account_id
+              assert.ok(accountId)
+              return {
+                id: `we_${accountId}`,
+                url: payload.url,
+                secret: `whsec_${accountId}`
+              }
+            }
+          },
           balance: {
             retrieve: async () => {
               balanceSecrets.push(secretKey)
@@ -259,15 +277,7 @@ test('Stripe Connect OAuth conserva conexiones separadas para prueba y en vivo',
         },
         webhookEndpoints: {
           create: async (payload, options = {}) => {
-            assert.equal(payload.connect, true)
-            assert.deepEqual(options, {})
-            const accountId = payload.metadata?.stripe_account_id
-            assert.ok(accountId)
-            return {
-              id: `we_${accountId}`,
-              url: payload.url,
-              secret: `whsec_${accountId}`
-            }
+            throw new Error(`No debe crear el webhook OAuth con la plataforma: ${payload?.url || ''}`)
           },
           del: async () => ({ deleted: true })
         }
