@@ -1085,7 +1085,11 @@ const Analytics: React.FC = () => {
           getWhatsAppAnalyticsSummary(startDate, endDate, viewType).catch(() => null)
         ])
 
-        setWebTrackingConfigured(Boolean(trackingConfig?.isConfigured) || currentSessions.length > 0)
+        setWebTrackingConfigured(Boolean(
+          trackingConfig?.isConfigured ||
+          trackingConfig?.hasPublicSites ||
+          currentSessions.length > 0
+        ))
         setWhatsAppAnalytics(whatsAppSummary)
         setContactConversionsByDate(contactConversionRows || [])
 
@@ -2055,10 +2059,41 @@ const Analytics: React.FC = () => {
     }
   ]
 
-  const metricSections = [
-    { title: 'Tráfico del sitio', metrics: webMetrics },
-    { title: 'WhatsApp', metrics: whatsAppMetricCards }
-  ]
+  const hasWebAnalyticsData = Boolean(
+    metrics.pageViews > 0 ||
+    metrics.uniqueVisitors > 0 ||
+    metrics.registros > 0 ||
+    metrics.returningUsers > 0 ||
+    dailyTraffic.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
+  )
+  const hasWhatsAppAnalyticsData = Boolean(
+    whatsAppAnalytics?.status?.hasData ||
+    (whatsAppMetrics?.inboundMessages || 0) > 0 ||
+    (whatsAppMetrics?.conversations || 0) > 0 ||
+    (whatsAppMetrics?.contacts || 0) > 0 ||
+    (whatsAppAnalytics?.trend || []).some(item => (item.messages || 0) > 0)
+  )
+  const showWebAnalyticsBlocks = Boolean(webTrackingConfigured || hasWebAnalyticsData)
+  const showWhatsAppAnalyticsBlocks = Boolean(
+    whatsAppAnalytics?.status?.connected ||
+    hasWhatsAppAnalyticsData
+  )
+
+  const metricSections: Array<{ title: string; metrics: typeof webMetrics }> = []
+  if (showWebAnalyticsBlocks) {
+    metricSections.push({ title: 'Tráfico del sitio', metrics: webMetrics })
+  }
+  if (showWhatsAppAnalyticsBlocks) {
+    metricSections.push({ title: 'WhatsApp', metrics: whatsAppMetricCards })
+  }
+  const sourceGridClassName = metricSections.length > 1 ? 'grid gap-4 xl:grid-cols-2' : 'grid gap-4'
+  const analyticsSubtitle = showWebAnalyticsBlocks && showWhatsAppAnalyticsBlocks
+    ? 'Tráfico del sitio, mensajes de WhatsApp y conversiones por rango.'
+    : showWebAnalyticsBlocks
+      ? 'Tráfico del sitio y conversiones por rango.'
+      : showWhatsAppAnalyticsBlocks
+        ? 'Mensajes de WhatsApp y conversiones por rango.'
+        : 'Conecta una fuente para ver analíticas por rango.'
 
   const handleMonthPresetChange = (value: string) => {
     if (!isAnalyticsMonthPreset(value)) return
@@ -2114,13 +2149,21 @@ const Analytics: React.FC = () => {
   }, [selectedFilters, webTrackingConfigured])
 
   const conversionChartOptions = React.useMemo<Array<{ value: AnalyticsConversionChartView; label: string }>>(() => {
-    return [
+    const options: Array<{ value: AnalyticsConversionChartView; label: string }> = [
       { value: 'registrations-customers', label: `Registros vs ${customersLabel}` },
-      { value: 'prospects-customers', label: `${leadsLabel} vs ${customersLabel}` },
-      { value: 'messages-appointments', label: 'Mensajes vs Citas' },
-      { value: 'appointments-patients', label: `Citas vs ${customersLabel}` }
+      { value: 'prospects-customers', label: `${leadsLabel} vs ${customersLabel}` }
     ]
-  }, [customersLabel, leadsLabel])
+
+    if (showWhatsAppAnalyticsBlocks) {
+      options.push({ value: 'messages-appointments', label: 'Mensajes vs Citas' })
+    }
+
+    options.push(
+      { value: 'appointments-patients', label: `Citas vs ${customersLabel}` }
+    )
+
+    return options
+  }, [customersLabel, leadsLabel, showWhatsAppAnalyticsBlocks])
 
   useEffect(() => {
     const validValues = conversionChartOptions.map(opt => opt.value)
@@ -2271,7 +2314,6 @@ const Analytics: React.FC = () => {
     }
   }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, periodLabel, selectedConversionChartView, whatsAppTrendData])
 
-  const showWebAnalyticsBlocks = webTrackingConfigured
   const webChartHasData = webChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   const whatsAppChartHasData = whatsAppChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   const conversionChartHasData = conversionChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
@@ -2368,7 +2410,7 @@ const Analytics: React.FC = () => {
         <div className="flex flex-col gap-4">
           <PageHeader
             title="Analíticas"
-            subtitle="Tráfico del sitio, mensajes de WhatsApp y conversiones por rango."
+            subtitle={analyticsSubtitle}
           />
 
           {/* Filtro en árbol, selector de fechas y vista */}
@@ -2475,30 +2517,34 @@ const Analytics: React.FC = () => {
         </div>
 
         {/* Métricas por canal */}
-        <div className="grid gap-4 xl:grid-cols-2">
-          {metricSections.map((section) => (
-            <section key={section.title} className="flex min-w-0 flex-col gap-3" aria-label={section.title}>
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="font-display text-sm font-semibold text-[var(--text)]">{section.title}</h2>
-              </div>
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                {section.metrics.map((metric) => (
-                  <KpiCard
-                    key={metric.title}
-                    title={metric.title}
-                    value={metric.value}
-                    delta={metric.delta}
-                    icon={metric.icon}
-                    loading={analyticsRefreshing}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
+        {metricSections.length > 0 && (
+          <div className={sourceGridClassName}>
+            {metricSections.map((section) => (
+              <section key={section.title} className="flex min-w-0 flex-col gap-3" aria-label={section.title}>
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="font-display text-sm font-semibold text-[var(--text)]">{section.title}</h2>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                  {section.metrics.map((metric) => (
+                    <KpiCard
+                      key={metric.title}
+                      title={metric.title}
+                      value={metric.value}
+                      delta={metric.delta}
+                      icon={metric.icon}
+                      loading={analyticsRefreshing}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
 
         {/* Gráficas por canal */}
-        <div className="grid gap-4 xl:grid-cols-2">
+        {metricSections.length > 0 && (
+        <div className={sourceGridClassName}>
+          {showWebAnalyticsBlocks && (
           <Card variant="glass" className="p-6">
             <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0 flex-1">
@@ -2563,7 +2609,9 @@ const Analytics: React.FC = () => {
               )}
             </div>
           </Card>
+          )}
 
+          {showWhatsAppAnalyticsBlocks && (
           <Card variant="glass" className="p-6">
             <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0 flex-1">
@@ -2612,7 +2660,9 @@ const Analytics: React.FC = () => {
               )}
             </div>
           </Card>
+          )}
         </div>
+        )}
 
         {/* Grid de Gráficas: Conversión y Distribución */}
         <div className="grid gap-4 lg:grid-cols-2">

@@ -1358,6 +1358,10 @@ export async function getTrackingConfig(req, res) {
     const includeMetaPixel = includeMetaPixelPref === null || includeMetaPixelPref === undefined
       ? true
       : (includeMetaPixelPref === '1' || includeMetaPixelPref === 1 || includeMetaPixelPref === true || includeMetaPixelPref === 'true')
+    const publicSitesRow = await db.get(
+      "SELECT COUNT(*) as total FROM public_sites WHERE status = 'published'"
+    ).catch(() => ({ total: 0 }))
+    const hasPublicSites = Number(publicSitesRow?.total || 0) > 0
     const trackingSnippet = trackingDomain
       ? buildTrackingSnippet({
         trackingDomain,
@@ -1373,6 +1377,7 @@ export async function getTrackingConfig(req, res) {
       showAnalytics,
       visitorSource,
       hasMetaPixel,
+      hasPublicSites,
       metaPixelId: hasMetaPixel ? metaConfig.pixel_id : null,
       includeMetaPixel,
       trackingSnippet

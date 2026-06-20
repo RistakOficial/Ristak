@@ -103,6 +103,7 @@ interface TrackingConfig {
   isConfigured: boolean
   hasHighLevel: boolean
   showAnalytics: boolean
+  hasPublicSites?: boolean
   trackingSnippet?: string | null
 }
 
