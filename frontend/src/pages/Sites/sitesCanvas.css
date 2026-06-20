@@ -407,6 +407,11 @@
   pointer-events: auto;
   transform: translateY(0);
 }
+.rstkCanvas .rstk-video-controls-start-hidden.rstk-video-controls-hidden .rstk-video-control-bar:focus-within {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+}
 .rstkCanvas .rstk-video-custom-controls.rstk-video-is-playing.rstk-video-controls-hidden video {
   cursor: none;
 }

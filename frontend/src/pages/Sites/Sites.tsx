@@ -24110,6 +24110,11 @@ const VideoPlayerPreview: React.FC<{
   const showOverlayLayer = showOverlay && (!isPlaying || isPreviewLooping)
   const showSoundNotice = showOverlay && soundHint && !hasStartedPlayback
   const shouldHideControlBarAtStart = showCustomControlBar && !showControlBarInitially && !hasStartedPlayback
+  const controlBarTabIndex = shouldHideControlBarAtStart ? -1 : undefined
+  const isControlBarBlockedAtStart = useCallback(
+    () => showCustomControlBar && !showControlBarInitially && !hasStartedPlaybackRef.current,
+    [showControlBarInitially, showCustomControlBar]
+  )
   const clearControlsHideTimer = useCallback(() => {
     if (!controlsHideTimerRef.current) return
     window.clearTimeout(controlsHideTimerRef.current)
@@ -24121,22 +24126,36 @@ const VideoPlayerPreview: React.FC<{
     const duration = Number.isFinite(video.duration) ? video.duration : 0
     return duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0
   }, [])
-  const syncProgressFromVideo = useCallback(() => {
-    setProgress(getVideoProgressRatio())
+  const getVisibleVideoProgressRatio = useCallback(() => {
+    if (previewLoopRef.current && !hasStartedPlaybackRef.current) return 0
+    return getVideoProgressRatio()
   }, [getVideoProgressRatio])
+  const syncProgressFromVideo = useCallback(() => {
+    setProgress(getVisibleVideoProgressRatio())
+  }, [getVisibleVideoProgressRatio])
   const hideControlsAfter = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
     clearControlsHideTimer()
-    if (!showCustomControlBar || (!isPlaying && !shouldHideControlBarAtStart)) return
+    if (!showCustomControlBar) return
+    if (isControlBarBlockedAtStart()) {
+      setControlsVisible(false)
+      return
+    }
+    if (!isPlaying) return
     controlsHideTimerRef.current = window.setTimeout(() => {
       setControlsVisible(false)
       controlsHideTimerRef.current = null
     }, delay)
-  }, [clearControlsHideTimer, isPlaying, shouldHideControlBarAtStart, showCustomControlBar])
+  }, [clearControlsHideTimer, isControlBarBlockedAtStart, isPlaying, showCustomControlBar])
   const showControlsTemporarily = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
     if (!showCustomControlBar) return
+    if (isControlBarBlockedAtStart()) {
+      clearControlsHideTimer()
+      setControlsVisible(false)
+      return
+    }
     setControlsVisible(true)
     hideControlsAfter(delay)
-  }, [hideControlsAfter, showCustomControlBar])
+  }, [clearControlsHideTimer, hideControlsAfter, isControlBarBlockedAtStart, showCustomControlBar])
   const handlePlayerActivity = useCallback(() => {
     showControlsTemporarily()
   }, [showControlsTemporarily])
@@ -24183,6 +24202,7 @@ const VideoPlayerPreview: React.FC<{
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
     showCustomControlBar ? (controlsVisible ? 'rstk-video-controls-visible' : 'rstk-video-controls-hidden') : '',
+    shouldHideControlBarAtStart ? 'rstk-video-controls-start-hidden' : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
     isPlaying ? 'rstk-video-is-playing' : '',
     isPreviewLooping ? 'rstk-video-is-previewing' : '',
@@ -24205,7 +24225,8 @@ const VideoPlayerPreview: React.FC<{
       window.cancelAnimationFrame(progressAnimationFrameRef.current)
       progressAnimationFrameRef.current = null
     }
-    if (!isPlaying && !isPreviewLooping) {
+    const shouldAnimateProgress = isPlaying && hasStartedPlayback
+    if (!shouldAnimateProgress) {
       syncProgressFromVideo()
       return undefined
     }
@@ -24226,7 +24247,7 @@ const VideoPlayerPreview: React.FC<{
         progressAnimationFrameRef.current = null
       }
     }
-  }, [isPlaying, isPreviewLooping, syncProgressFromVideo])
+  }, [hasStartedPlayback, isPlaying, syncProgressFromVideo])
 
   useEffect(() => () => clearControlsHideTimer(), [clearControlsHideTimer])
 
@@ -24285,6 +24306,7 @@ const VideoPlayerPreview: React.FC<{
     if (video.currentTime < range.start || video.currentTime >= range.end) {
       video.currentTime = range.start
     }
+    setProgress(0)
     setIsMuted(true)
     setIsPreviewLooping(true)
     void video.play().then(() => {
@@ -24653,18 +24675,22 @@ const VideoPlayerPreview: React.FC<{
         </span>
       )}
       {showCustomControlBar && (
-        <div className="rstk-video-control-bar" onClick={(event) => {
-          if (!shouldLetEditorSelect) event.stopPropagation()
-        }}>
+        <div
+          className="rstk-video-control-bar"
+          aria-hidden={shouldHideControlBarAtStart ? true : undefined}
+          onClick={(event) => {
+            if (!shouldLetEditorSelect) event.stopPropagation()
+          }}
+        >
           {showCustomPlayControl && (
-            <button type="button" className="rstk-video-control-button" onClick={handleControlPlayClick} aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}>
+            <button type="button" className="rstk-video-control-button" tabIndex={controlBarTabIndex} onClick={handleControlPlayClick} aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}>
               {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play className="rstk-video-control-play-icon" size={15} fill="currentColor" />}
             </button>
           )}
           <div
             className="rstk-video-progress"
             role="slider"
-            tabIndex={0}
+            tabIndex={shouldHideControlBarAtStart ? -1 : 0}
             aria-label="Progreso del video"
             aria-valuemin={0}
             aria-valuemax={100}
@@ -24678,7 +24704,7 @@ const VideoPlayerPreview: React.FC<{
             <span style={{ width: formatVideoProgressPercent(progress) }} />
           </div>
           {showCustomVolume && (
-            <button type="button" className="rstk-video-control-button" onClick={handleMuteToggle} aria-label={isMuted ? 'Activar sonido' : 'Silenciar video'}>
+            <button type="button" className="rstk-video-control-button" tabIndex={controlBarTabIndex} onClick={handleMuteToggle} aria-label={isMuted ? 'Activar sonido' : 'Silenciar video'}>
               {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
             </button>
           )}
@@ -24689,7 +24715,7 @@ const VideoPlayerPreview: React.FC<{
                   <Settings2 size={14} />
                 </span>
               )}
-              <select value={String(currentSpeed)} onChange={handleSpeedChange}>
+              <select value={String(currentSpeed)} tabIndex={controlBarTabIndex} onChange={handleSpeedChange}>
                 {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
