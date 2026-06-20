@@ -79,6 +79,12 @@ interface PaymentGatewayOption {
   status: 'connected' | 'available' | 'soon'
 }
 
+const gatewayStatusCopy: Record<PaymentGatewayOption['status'], { label: string; variant: 'success' | 'warning' | 'neutral' }> = {
+  connected: { label: 'Conectada', variant: 'success' },
+  available: { label: 'Sin conexión', variant: 'neutral' },
+  soon: { label: 'Próximamente', variant: 'warning' }
+}
+
 const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.ReactNode }> = [
   { id: 'checkout', label: 'Página de cobro', icon: <CreditCard size={17} /> },
   { id: 'receipt', label: 'Comprobante', icon: <ReceiptText size={17} /> },
@@ -1516,8 +1522,8 @@ export const PaymentsConfiguration: React.FC = () => {
             <WalletCards size={16} />
             Pasarelas
           </Button>
-          <Badge variant={selectedGatewayOption?.status === 'connected' ? 'success' : selectedGatewayOption?.status === 'soon' ? 'warning' : 'info'}>
-            {selectedGatewayOption?.status === 'connected' ? 'Conectada' : selectedGatewayOption?.status === 'soon' ? 'Próximamente' : 'Configurable'}
+          <Badge variant={selectedGatewayOption ? gatewayStatusCopy[selectedGatewayOption.status].variant : 'neutral'}>
+            {selectedGatewayOption ? gatewayStatusCopy[selectedGatewayOption.status].label : 'Sin conexión'}
           </Badge>
         </div>
       )}
@@ -1539,17 +1545,18 @@ export const PaymentsConfiguration: React.FC = () => {
             {gatewayOptions.map((gateway) => {
               const isConnected = gateway.status === 'connected'
               const isAvailable = gateway.status === 'available'
+              const statusCopy = gatewayStatusCopy[gateway.status]
 
               return (
                 <Card key={gateway.id} className={styles.gatewayItem} padding="md">
-                  <div>
-                    <strong>{gateway.name}</strong>
+                  <div className={styles.gatewayItemCopy}>
+                    <div className={styles.gatewayItemTitleRow}>
+                      <strong>{gateway.name}</strong>
+                      <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
+                    </div>
                     <p>{gateway.description}</p>
                   </div>
                   <div className={styles.gatewayItemActions}>
-                    <Badge variant={isConnected ? 'success' : isAvailable ? 'info' : 'warning'}>
-                      {isConnected ? 'Conectado' : isAvailable ? 'Configurar' : 'Próximamente'}
-                    </Badge>
                     <Button type="button" variant={isConnected || isAvailable ? 'primary' : 'secondary'} size="sm" onClick={() => handleSelectGateway(gateway)}>
                       {isConnected ? 'Abrir' : isAvailable ? 'Configurar' : 'Ver estado'}
                     </Button>
