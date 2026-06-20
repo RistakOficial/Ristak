@@ -6447,18 +6447,18 @@ function FormEmbedEditorPanel({
   )
 }
 
-const hydrateFormSitesForBuilder = async (list: PublicSite[]) => {
-  const formSites = list.filter(site => isFormSite(site))
-  if (!formSites.length) return list
+const hydrateSitesForBuilder = async (list: PublicSite[]) => {
+  const builderSites = list.filter(site => isLanding(site) || isFormSite(site))
+  if (!builderSites.length) return list
 
-  const hydratedForms = await Promise.all(formSites.map(async (site) => {
+  const hydratedSites = await Promise.all(builderSites.map(async (site) => {
     try {
       return normalizeSiteForEditor(await sitesService.getSite(site.id))
     } catch {
       return site
     }
   }))
-  const hydratedById = new Map(hydratedForms.map(site => [site.id, site]))
+  const hydratedById = new Map(hydratedSites.map(site => [site.id, site]))
 
   return list.map(site => hydratedById.get(site.id) || site)
 }
@@ -7774,7 +7774,7 @@ export const Sites: React.FC = () => {
         sitesService.getDomain(),
         sitesService.listFolders()
       ])
-      const builderSites = await hydrateFormSitesForBuilder(list)
+      const builderSites = await hydrateSitesForBuilder(list)
       setSites(builderSites)
       setSiteFolders(folders)
       setDomainConfig(nextDomainConfig)
@@ -9357,7 +9357,7 @@ export const Sites: React.FC = () => {
     try {
       const importData = await sitesService.updateImportMapping(importReview.site.id, formMappings)
       setSelectedImportData(importData)
-      const refreshedSites = await hydrateFormSitesForBuilder(await sitesService.listSites())
+      const refreshedSites = await hydrateSitesForBuilder(await sitesService.listSites())
       setSites(refreshedSites)
       setImportReview(null)
       showToast('success', 'Ruta de datos guardada', 'Ristak ya sabe donde guardar cada dato de este HTML.')
