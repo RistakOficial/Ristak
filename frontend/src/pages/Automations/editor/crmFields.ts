@@ -32,7 +32,7 @@ export const CRM_FIELD_CATEGORIES: CrmFieldCategory[] = [
   { id: 'contact', label: 'Contacto' },
   { id: 'tags', label: 'Etiquetas' },
   { id: 'conversation', label: 'Conversación' },
-  { id: 'appointments', label: 'Citas / agenda' },
+  { id: 'appointments', label: 'Citas' },
   { id: 'payments', label: 'Pagos' },
   { id: 'forms', label: 'Formularios' },
   { id: 'links', label: 'Clics de disparo' },

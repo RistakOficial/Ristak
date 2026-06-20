@@ -336,7 +336,7 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
   },
   {
     id: 'appointments',
-    label: 'Calendarios y citas',
+    label: 'Citas',
     baseLabel: 'tiene una cita agendada',
     params: [
       {
