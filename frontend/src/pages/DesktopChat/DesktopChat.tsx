@@ -4252,6 +4252,25 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
+  const renderComposerAgentControl = () => (
+    <div className={styles.agentComposerWrap}>
+      <button
+        type="button"
+        className={styles.agentComposerButton}
+        data-active={conversationAgentActive ? 'true' : undefined}
+        data-enabled={conversationAgentEnabled ? 'true' : undefined}
+        onClick={handleOpenComposerAgentMenu}
+        disabled={!activeContact || conversationAgentBusy}
+        aria-label={conversationAgentActive ? 'Abrir acciones del agente conversacional' : 'Asignar agente conversacional'}
+        aria-expanded={agentComposerMenuOpen}
+        title={conversationAgentActive ? 'Agente conversacional activo' : 'Asignar agente conversacional'}
+      >
+        {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
+      </button>
+      {renderComposerAgentMenu()}
+    </div>
+  )
+
   const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind, size: 'sm' | 'md') => {
     const iconSize = size === 'sm' ? 13 : 14
     if (kind === 'whatsapp') return <FaWhatsapp className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
@@ -5137,6 +5156,7 @@ export const DesktopChat: React.FC = () => {
 	                          aria-label="Canal de envío"
 	                        />
 	                      </div>
+	                      {renderComposerAgentControl()}
 	                      <label className={styles.emailSubjectField}>
 	                        <span>Asunto</span>
 	                        <input
@@ -5190,22 +5210,7 @@ export const DesktopChat: React.FC = () => {
 	                  </>
 	                ) : (
 	                  <>
-	                    <div className={styles.agentComposerWrap}>
-	                      <button
-	                        type="button"
-	                        className={styles.agentComposerButton}
-	                        data-active={conversationAgentActive ? 'true' : undefined}
-	                        data-enabled={conversationAgentEnabled ? 'true' : undefined}
-	                        onClick={handleOpenComposerAgentMenu}
-	                        disabled={!activeContact || conversationAgentBusy}
-	                        aria-label={conversationAgentActive ? 'Abrir acciones del agente conversacional' : 'Asignar agente conversacional'}
-	                        aria-expanded={agentComposerMenuOpen}
-	                        title={conversationAgentActive ? 'Agente conversacional activo' : 'Asignar agente conversacional'}
-	                      >
-	                        {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
-	                      </button>
-	                      {renderComposerAgentMenu()}
-	                    </div>
+	                    {renderComposerAgentControl()}
 	                    <div className={styles.composerChannelSelect}>
 	                      <CustomSelect
 	                        value={composerRouteValue}
