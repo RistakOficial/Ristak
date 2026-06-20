@@ -14,6 +14,11 @@ const DEFAULT_PAYMENT_SETTINGS = {
   },
   receipt: {
     logoUrl: '',
+    invoiceTemplate: 'classic',
+    invoicePalette: 'graphite',
+    invoiceAccentColor: '#111827',
+    invoicePaperColor: '#ffffff',
+    invoiceTextColor: '#111827',
     title: 'Comprobante de pago',
     intro: 'Tu pago fue recibido correctamente.',
     footer: 'Gracias por tu pago.',
@@ -53,6 +58,11 @@ const DEFAULT_PAYMENT_SETTINGS = {
 
 function cleanString(value, maxLength = 500) {
   return String(value || '').trim().slice(0, maxLength)
+}
+
+function cleanHexColor(value, fallback) {
+  const normalized = String(value || '').trim()
+  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized : fallback
 }
 
 function cleanLongString(value, maxLength = 3000) {
@@ -114,6 +124,11 @@ export function normalizePaymentSettings(input = {}) {
     },
     receipt: {
       logoUrl: cleanString(receipt.logoUrl, 1000),
+      invoiceTemplate: cleanEnum(receipt.invoiceTemplate, ['classic', 'executive', 'accent', 'ledger'], DEFAULT_PAYMENT_SETTINGS.receipt.invoiceTemplate),
+      invoicePalette: cleanEnum(receipt.invoicePalette, ['graphite', 'sage', 'indigo', 'terracotta', 'champagne', 'custom'], DEFAULT_PAYMENT_SETTINGS.receipt.invoicePalette),
+      invoiceAccentColor: cleanHexColor(receipt.invoiceAccentColor, DEFAULT_PAYMENT_SETTINGS.receipt.invoiceAccentColor),
+      invoicePaperColor: cleanHexColor(receipt.invoicePaperColor, DEFAULT_PAYMENT_SETTINGS.receipt.invoicePaperColor),
+      invoiceTextColor: cleanHexColor(receipt.invoiceTextColor, DEFAULT_PAYMENT_SETTINGS.receipt.invoiceTextColor),
       title: cleanString(receipt.title, 120) || DEFAULT_PAYMENT_SETTINGS.receipt.title,
       intro: cleanLongString(receipt.intro, 420) || DEFAULT_PAYMENT_SETTINGS.receipt.intro,
       footer: cleanLongString(receipt.footer, 420),

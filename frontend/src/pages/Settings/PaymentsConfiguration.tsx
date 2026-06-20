@@ -47,6 +47,14 @@ import {
   type PaymentTaxSettings
 } from '@/services/paymentSettingsService'
 import { stripePaymentsService, type StripePaymentConfig, type StripeWebhookEndpoint } from '@/services/stripePaymentsService'
+import {
+  buildInvoiceStyleVars,
+  invoicePaletteOptions,
+  invoiceTemplateOptions,
+  resolveInvoiceDesign,
+  type PaymentInvoicePaletteId,
+  type PaymentInvoiceTemplateId
+} from '@/utils/paymentInvoiceDesign'
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'automations' | 'gateways' | 'taxes'
@@ -157,6 +165,13 @@ const compactMoney = new Intl.NumberFormat('es-MX', {
   currency: 'MXN',
   maximumFractionDigits: 0
 })
+
+const invoiceTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
+  classic: 'documentThemeClassic',
+  executive: 'documentThemeExecutive',
+  accent: 'documentThemeAccent',
+  ledger: 'documentThemeLedger'
+}
 
 export const PaymentsConfiguration: React.FC = () => {
   const navigate = useNavigate()
@@ -318,6 +333,13 @@ export const PaymentsConfiguration: React.FC = () => {
     setSettings((current) => ({
       ...current,
       receipt: { ...current.receipt, [key]: value }
+    }))
+  }
+
+  const patchReceiptValues = (patch: Partial<PaymentReceiptSettings>) => {
+    setSettings((current) => ({
+      ...current,
+      receipt: { ...current.receipt, ...patch }
     }))
   }
 
@@ -629,6 +651,22 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
+  const handleInvoiceTemplateSelect = (templateId: PaymentInvoiceTemplateId) => {
+    setReceiptValue('invoiceTemplate', templateId)
+  }
+
+  const handleInvoicePaletteSelect = (paletteId: Exclude<PaymentInvoicePaletteId, 'custom'>) => {
+    const palette = invoicePaletteOptions.find((option) => option.id === paletteId)
+    if (!palette) return
+
+    patchReceiptValues({
+      invoicePalette: palette.id,
+      invoiceAccentColor: palette.accentColor,
+      invoicePaperColor: palette.paperColor,
+      invoiceTextColor: palette.textColor
+    })
+  }
+
   const renderField = (
     label: string,
     control: React.ReactNode,
@@ -817,6 +855,12 @@ export const PaymentsConfiguration: React.FC = () => {
       ? previewBaseAmount + previewTaxAmount
       : previewBaseAmount
     const previewTaxLabel = taxes.taxName || 'Impuesto'
+    const invoiceDesign = resolveInvoiceDesign(receipt)
+    const invoiceSheetClassName = [
+      styles.documentSheet,
+      styles[invoiceTemplateClassById[invoiceDesign.template.id]]
+    ].filter(Boolean).join(' ')
+    const invoiceStyleVars = buildInvoiceStyleVars(receipt)
 
     return (
       <div className={styles.twoColumnLayout}>
@@ -989,8 +1033,86 @@ export const PaymentsConfiguration: React.FC = () => {
             </Badge>
           </div>
 
+          <div className={styles.documentDesignPanel}>
+            <div className={styles.designGroup}>
+              <span>Diseño</span>
+              <div className={styles.templateChooser}>
+                {invoiceTemplateOptions.map((template) => {
+                  const active = invoiceDesign.template.id === template.id
+
+                  return (
+                    <button
+                      key={template.id}
+                      type="button"
+                      className={active ? styles.templateOptionActive : styles.templateOption}
+                      onClick={() => handleInvoiceTemplateSelect(template.id)}
+                      aria-pressed={active}
+                    >
+                      <span className={`${styles.templateMini} ${styles[invoiceTemplateClassById[template.id]]}`} style={invoiceStyleVars}>
+                        <i />
+                        <b />
+                        <em />
+                      </span>
+                      <strong>{template.label}</strong>
+                      <small>{template.description}</small>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className={styles.designGroup}>
+              <span>Paleta</span>
+              <div className={styles.paletteChooser}>
+                {invoicePaletteOptions.map((palette) => {
+                  const active = receipt.invoicePalette === palette.id
+
+                  return (
+                    <button
+                      key={palette.id}
+                      type="button"
+                      className={active ? styles.paletteOptionActive : styles.paletteOption}
+                      onClick={() => handleInvoicePaletteSelect(palette.id)}
+                      aria-pressed={active}
+                    >
+                      <span style={{ '--palette-accent': palette.accentColor, '--palette-paper': palette.paperColor, '--palette-ink': palette.textColor } as React.CSSProperties} />
+                      <strong>{palette.label}</strong>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className={styles.colorControls}>
+              <label>
+                <span>Acento</span>
+                <input
+                  type="color"
+                  value={invoiceDesign.accentColor}
+                  onChange={(event) => patchReceiptValues({ invoicePalette: 'custom', invoiceAccentColor: event.target.value })}
+                />
+              </label>
+              <label>
+                <span>Papel</span>
+                <input
+                  type="color"
+                  value={invoiceDesign.paperColor}
+                  onChange={(event) => patchReceiptValues({ invoicePalette: 'custom', invoicePaperColor: event.target.value })}
+                />
+              </label>
+              <label>
+                <span>Texto</span>
+                <input
+                  type="color"
+                  value={invoiceDesign.textColor}
+                  onChange={(event) => patchReceiptValues({ invoicePalette: 'custom', invoiceTextColor: event.target.value })}
+                />
+              </label>
+            </div>
+          </div>
+
           <div className={styles.documentViewport}>
-            <article className={styles.documentSheet} aria-label="Vista previa del invoice descargable">
+            <article className={invoiceSheetClassName} style={invoiceStyleVars} aria-label="Vista previa del invoice descargable">
               <header className={styles.documentSheetHeader}>
                 <div className={styles.documentIdentity}>
                   {receipt.logoUrl ? (
@@ -1011,6 +1133,25 @@ export const PaymentsConfiguration: React.FC = () => {
               </header>
 
               {receipt.intro && <p className={styles.documentIntro}>{receipt.intro}</p>}
+
+              <section className={styles.documentPaymentMeta} aria-label="Datos del pago">
+                <div>
+                  <span>Estado</span>
+                  <strong>Pagado</strong>
+                </div>
+                <div>
+                  <span>Vencimiento</span>
+                  <strong>8 jul 2026</strong>
+                </div>
+                <div>
+                  <span>Pasarela</span>
+                  <strong>Stripe</strong>
+                </div>
+                <div>
+                  <span>Moneda</span>
+                  <strong>MXN</strong>
+                </div>
+              </section>
 
               <section className={styles.documentParties}>
                 {receipt.showBusinessInfo && (

@@ -9,9 +9,21 @@ import {
   type StripePaymentIntentResponse
 } from '@/services/stripePaymentsService'
 import { formatCurrency } from '@/utils/format'
+import {
+  buildInvoiceStyleVars,
+  resolveInvoiceDesign,
+  type PaymentInvoiceTemplateId
+} from '@/utils/paymentInvoiceDesign'
 import styles from './PublicPayment.module.css'
 
 type StripePromise = ReturnType<typeof loadStripe>
+
+const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
+  classic: 'printThemeClassic',
+  executive: 'printThemeExecutive',
+  accent: 'printThemeAccent',
+  ledger: 'printThemeLedger'
+}
 
 function formatDate(value?: string | null) {
   if (!value) return 'Sin vencimiento'
@@ -282,6 +294,13 @@ export const PublicPayment: React.FC = () => {
   const subtotalAmount = hasTaxBreakdown ? taxDetails?.subtotalAmount || 0 : payment.amount
   const taxAmount = hasTaxBreakdown ? taxDetails?.taxAmount || 0 : 0
   const totalAmount = hasTaxBreakdown ? taxDetails?.totalAmount || payment.amount : payment.amount
+  const invoiceDesign = resolveInvoiceDesign(receiptSettings)
+  const invoiceStyleVars = buildInvoiceStyleVars(receiptSettings)
+  const printSheetClassName = [
+    styles.printSheet,
+    styles[printTemplateClassById[invoiceDesign.template.id]]
+  ].filter(Boolean).join(' ')
+  const paymentModeLabel = payment.paymentMode === 'live' ? 'Producción' : 'Prueba'
 
   return (
     <main className={styles.page}>
@@ -406,12 +425,24 @@ export const PublicPayment: React.FC = () => {
                     <span>Total pagado</span>
                     <strong>{formatCurrency(totalAmount, payment.currency)}</strong>
                   </div>
+                  <div>
+                    <span>Fecha de pago</span>
+                    <strong>{formatDate(payment.paidAt || new Date().toISOString())}</strong>
+                  </div>
+                  <div>
+                    <span>Vencimiento</span>
+                    <strong>{formatDate(payment.dueDate)}</strong>
+                  </div>
                   {hasTaxBreakdown && (
                     <div>
                       <span>Impuesto</span>
                       <strong>{formatCurrency(taxAmount, payment.currency)}</strong>
                     </div>
                   )}
+                  <div>
+                    <span>Pasarela</span>
+                    <strong>Stripe · {paymentModeLabel}</strong>
+                  </div>
                   <div>
                     <span>Referencia</span>
                     <strong>{payment.publicPaymentId}</strong>
@@ -493,7 +524,7 @@ export const PublicPayment: React.FC = () => {
 
       {isPaid && (
         <article className={styles.printDocument} aria-label="Comprobante de pago para PDF">
-          <section className={styles.printSheet}>
+          <section className={printSheetClassName} style={invoiceStyleVars}>
             <header className={styles.printHeader}>
               <div className={styles.printIdentity}>
                 {invoiceLogoUrl && <img src={invoiceLogoUrl} alt="" />}
@@ -512,6 +543,25 @@ export const PublicPayment: React.FC = () => {
             </header>
 
             {receiptSettings?.intro && <p className={styles.printIntro}>{receiptSettings.intro}</p>}
+
+            <section className={styles.printPaymentMeta}>
+              <div>
+                <span>Estado</span>
+                <strong>Pagado</strong>
+              </div>
+              <div>
+                <span>Fecha de pago</span>
+                <strong>{formatDate(payment.paidAt || new Date().toISOString())}</strong>
+              </div>
+              <div>
+                <span>Vencimiento</span>
+                <strong>{formatDate(payment.dueDate)}</strong>
+              </div>
+              <div>
+                <span>Pasarela</span>
+                <strong>Stripe · {paymentModeLabel}</strong>
+              </div>
+            </section>
 
             <section className={styles.printParties}>
               {showBusinessInfo && (

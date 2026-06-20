@@ -512,8 +512,13 @@
   .printSheet {
     width: 100%;
     min-height: 100%;
-    background: Canvas;
-    color: CanvasText;
+    padding: 0;
+    border-top: 5px solid var(--invoice-accent, ButtonBorder);
+    background: var(--invoice-paper, Canvas);
+    color: var(--invoice-ink, CanvasText);
+    color-scheme: light;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 
   .printHeader {
@@ -522,7 +527,7 @@
     justify-content: space-between;
     gap: 24px;
     padding-bottom: 18px;
-    border-bottom: 2px solid ButtonBorder;
+    border-bottom: 2px solid var(--invoice-accent, ButtonBorder);
   }
 
   .printIdentity {
@@ -536,14 +541,15 @@
     width: 64px;
     height: 64px;
     object-fit: contain;
-    border: 1px solid ButtonBorder;
+    border: 1px solid var(--invoice-border, ButtonBorder);
     padding: 6px;
   }
 
   .printIdentity strong,
+  .printPaymentMeta strong,
   .printParties strong {
     display: block;
-    color: CanvasText;
+    color: var(--invoice-ink, CanvasText);
     font-size: 13px;
     font-weight: 700;
     overflow-wrap: anywhere;
@@ -562,6 +568,15 @@
     white-space: pre-wrap;
   }
 
+  .printIdentity p,
+  .printParties p,
+  .printIntro,
+  .printDescription,
+  .printTerms p,
+  .printFooter {
+    color: var(--invoice-ink, CanvasText);
+  }
+
   .printMeta {
     display: flex;
     flex-direction: column;
@@ -572,18 +587,19 @@
 
   .printMeta h1 {
     margin: 0 0 4px;
-    color: CanvasText;
+    color: var(--invoice-ink, CanvasText);
     font-size: 22px;
     font-weight: 700;
     line-height: 1.15;
   }
 
   .printMeta span,
+  .printPaymentMeta span,
   .printParties span,
   .printLineHeader span,
   .printTotals span,
   .printTerms strong {
-    color: GrayText;
+    color: color-mix(in srgb, var(--invoice-ink, CanvasText) 62%, transparent);
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0;
@@ -594,20 +610,39 @@
     margin-top: 16px;
   }
 
+  .printPaymentMeta {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 18px;
+    break-inside: avoid;
+  }
+
+  .printPaymentMeta > div {
+    padding: 10px;
+    border: 1px solid var(--invoice-border, ButtonBorder);
+    background: var(--invoice-soft, Canvas);
+  }
+
+  .printPaymentMeta strong {
+    margin-top: 4px;
+    font-size: 11px;
+  }
+
   .printParties {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 24px;
     margin-top: 20px;
     padding: 14px 0;
-    border-top: 1px solid ButtonBorder;
-    border-bottom: 1px solid ButtonBorder;
+    border-top: 1px solid var(--invoice-border, ButtonBorder);
+    border-bottom: 1px solid var(--invoice-border, ButtonBorder);
   }
 
   .printLines {
     display: grid;
     margin-top: 22px;
-    border: 1px solid ButtonBorder;
+    border: 1px solid var(--invoice-border, ButtonBorder);
     break-inside: avoid;
   }
 
@@ -621,7 +656,8 @@
 
   .printLineHeader {
     padding: 9px 10px;
-    border-bottom: 1px solid ButtonBorder;
+    border-bottom: 1px solid var(--invoice-border, ButtonBorder);
+    background: var(--invoice-soft, Canvas);
   }
 
   .printLineItem {
@@ -631,7 +667,7 @@
   .printLineItem strong,
   .printLineItem span,
   .printTotals strong {
-    color: CanvasText;
+    color: var(--invoice-ink, CanvasText);
     font-size: 11px;
     font-weight: 600;
     overflow-wrap: anywhere;
@@ -662,11 +698,11 @@
     justify-content: space-between;
     gap: 16px;
     padding-bottom: 7px;
-    border-bottom: 1px solid ButtonBorder;
+    border-bottom: 1px solid var(--invoice-border, ButtonBorder);
   }
 
   .printTotals > div:last-child {
-    border-bottom: 2px solid ButtonBorder;
+    border-bottom: 2px solid var(--invoice-accent, ButtonBorder);
   }
 
   .printTotals > div:last-child strong {
@@ -677,19 +713,73 @@
   .printTerms {
     margin-top: 24px;
     padding-top: 12px;
-    border-top: 1px solid ButtonBorder;
+    border-top: 1px solid var(--invoice-border, ButtonBorder);
     break-inside: auto;
   }
 
   .printTerms p {
-    color: CanvasText;
+    color: var(--invoice-ink, CanvasText);
   }
 
   .printFooter {
     margin-top: 20px;
     padding-top: 10px;
-    border-top: 1px solid ButtonBorder;
+    border-top: 1px solid var(--invoice-border, ButtonBorder);
     font-weight: 600;
+  }
+
+  .printThemeExecutive {
+    border-top: 0;
+  }
+
+  .printThemeExecutive .printHeader {
+    padding: 18px;
+    border: 1px solid var(--invoice-border);
+    background: var(--invoice-soft);
+  }
+
+  .printThemeAccent {
+    border-top: 0;
+  }
+
+  .printThemeAccent .printHeader {
+    margin: 0 0 20px;
+    padding: 24px;
+    border-bottom: 0;
+    background: var(--invoice-accent);
+    color: var(--invoice-on-accent);
+  }
+
+  .printThemeAccent .printIdentity img {
+    border-color: color-mix(in srgb, var(--invoice-on-accent) 48%, transparent);
+    background: color-mix(in srgb, var(--invoice-on-accent) 10%, transparent);
+  }
+
+  .printThemeAccent .printIdentity strong,
+  .printThemeAccent .printIdentity p,
+  .printThemeAccent .printMeta h1,
+  .printThemeAccent .printMeta span {
+    color: var(--invoice-on-accent);
+  }
+
+  .printThemeAccent .printLineHeader {
+    background: var(--invoice-accent);
+  }
+
+  .printThemeAccent .printLineHeader span {
+    color: var(--invoice-on-accent);
+  }
+
+  .printThemeLedger {
+    border-top: 2px solid var(--invoice-accent);
+  }
+
+  .printThemeLedger .printPaymentMeta > div,
+  .printThemeLedger .printLines {
+    background-image: linear-gradient(var(--invoice-border), var(--invoice-border));
+    background-size: 100% 1px;
+    background-repeat: no-repeat;
+    background-position: bottom left;
   }
 
   .button,

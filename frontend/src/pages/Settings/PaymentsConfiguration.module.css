@@ -430,6 +430,173 @@
   margin-bottom: 16px;
 }
 
+.documentDesignPanel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.designGroup {
+  display: grid;
+  gap: 9px;
+}
+
+.designGroup > span,
+.colorControls span {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.templateChooser {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.templateOption,
+.templateOptionActive,
+.paletteOption,
+.paletteOptionActive {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.templateOption,
+.templateOptionActive {
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+  border-radius: var(--radius-ctl);
+  text-align: left;
+}
+
+.templateOption:hover,
+.templateOptionActive,
+.paletteOption:hover,
+.paletteOptionActive {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.templateOptionActive,
+.paletteOptionActive {
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.templateMini {
+  display: grid;
+  grid-template-rows: 11px 6px 6px;
+  gap: 3px;
+  min-height: 35px;
+  padding: 5px;
+  border: 1px solid var(--invoice-border);
+  border-radius: 3px;
+  background: var(--invoice-paper);
+}
+
+.templateMini i,
+.templateMini b,
+.templateMini em {
+  display: block;
+  border-radius: 1px;
+}
+
+.templateMini i {
+  width: 55%;
+  background: var(--invoice-accent);
+}
+
+.templateMini b,
+.templateMini em {
+  background: var(--invoice-soft);
+}
+
+.templateMini em {
+  width: 72%;
+}
+
+.templateOption strong,
+.templateOptionActive strong,
+.paletteOption strong,
+.paletteOptionActive strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.templateOption small,
+.templateOptionActive small {
+  display: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.paletteChooser {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.paletteOption,
+.paletteOptionActive {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  min-width: 0;
+  padding: 7px 4px;
+  border-radius: var(--radius-ctl);
+}
+
+.paletteOption > span,
+.paletteOptionActive > span {
+  width: 32px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background:
+    linear-gradient(90deg, var(--palette-accent) 0 34%, var(--palette-paper) 34% 68%, var(--palette-ink) 68%);
+}
+
+.paletteOption strong,
+.paletteOptionActive strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.colorControls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.colorControls label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.colorControls input {
+  width: 100%;
+  min-height: 30px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
 .documentViewport {
   max-height: 760px;
   overflow: auto;
@@ -444,12 +611,13 @@
   min-height: 720px;
   margin: 0 auto;
   padding: 26px;
-  border: 1px solid ButtonBorder;
+  border: 1px solid var(--invoice-border, ButtonBorder);
   border-radius: 2px;
-  background: Canvas;
-  color: CanvasText;
+  background: var(--invoice-paper, Canvas);
+  color: var(--invoice-ink, CanvasText);
   color-scheme: light;
   font-family: var(--font-body);
+  box-shadow: var(--shadow-xs);
 }
 
 .documentSheetHeader {
@@ -458,7 +626,7 @@
   flex-direction: column;
   gap: 18px;
   padding-bottom: 20px;
-  border-bottom: 2px solid ButtonBorder;
+  border-bottom: 2px solid var(--invoice-accent, ButtonBorder);
 }
 
 .documentIdentity {
@@ -476,10 +644,10 @@
   width: 58px;
   height: 58px;
   flex: 0 0 auto;
-  border: 1px solid ButtonBorder;
+  border: 1px solid var(--invoice-border, ButtonBorder);
   border-radius: 2px;
-  background: Canvas;
-  color: GrayText;
+  background: var(--invoice-paper, Canvas);
+  color: var(--invoice-accent, GrayText);
   object-fit: contain;
 }
 
@@ -488,9 +656,10 @@
 }
 
 .documentIdentity strong,
+.documentPaymentMeta strong,
 .documentParties strong {
   display: block;
-  color: CanvasText;
+  color: var(--invoice-ink, CanvasText);
   font-size: 14px;
   font-weight: 700;
   overflow-wrap: anywhere;
@@ -502,7 +671,7 @@
 .documentIntro,
 .documentFooter {
   margin: 4px 0 0;
-  color: CanvasText;
+  color: var(--invoice-ink, CanvasText);
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -520,7 +689,7 @@
 .documentMeta h4 {
   margin: 0 0 4px;
   max-width: 100%;
-  color: CanvasText;
+  color: var(--invoice-ink, CanvasText);
   font-family: Arial, Helvetica, sans-serif;
   font-size: 18px;
   font-weight: 700;
@@ -529,11 +698,12 @@
 }
 
 .documentMeta span,
+.documentPaymentMeta span,
 .documentParties span,
 .documentLineHead span,
 .documentTotals span,
 .documentTerms strong {
-  color: GrayText;
+  color: color-mix(in srgb, var(--invoice-ink, CanvasText) 62%, transparent);
   font: var(--label-font);
   font-size: 10px;
   font-weight: 700;
@@ -545,20 +715,38 @@
   margin-top: 18px;
 }
 
+.documentPaymentMeta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.documentPaymentMeta > div {
+  padding: 10px;
+  border: 1px solid var(--invoice-border, ButtonBorder);
+  background: var(--invoice-soft, Canvas);
+}
+
+.documentPaymentMeta strong {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
 .documentParties {
   display: grid;
   grid-template-columns: 1fr;
   gap: 18px;
   margin-top: 22px;
   padding: 16px 0;
-  border-top: 1px solid ButtonBorder;
-  border-bottom: 1px solid ButtonBorder;
+  border-top: 1px solid var(--invoice-border, ButtonBorder);
+  border-bottom: 1px solid var(--invoice-border, ButtonBorder);
 }
 
 .documentLines {
   display: grid;
   margin-top: 22px;
-  border: 1px solid ButtonBorder;
+  border: 1px solid var(--invoice-border, ButtonBorder);
 }
 
 .documentLineHead,
@@ -571,8 +759,8 @@
 
 .documentLineHead {
   padding: 10px 12px;
-  border-bottom: 1px solid ButtonBorder;
-  background: Canvas;
+  border-bottom: 1px solid var(--invoice-border, ButtonBorder);
+  background: var(--invoice-soft, Canvas);
 }
 
 .documentLineRow {
@@ -582,7 +770,7 @@
 .documentLineRow strong,
 .documentLineRow span,
 .documentTotals strong {
-  color: CanvasText;
+  color: var(--invoice-ink, CanvasText);
   font-size: 12px;
   font-weight: 600;
   overflow-wrap: anywhere;
@@ -607,11 +795,11 @@
   justify-content: space-between;
   gap: 14px;
   padding-bottom: 8px;
-  border-bottom: 1px solid ButtonBorder;
+  border-bottom: 1px solid var(--invoice-border, ButtonBorder);
 }
 
 .documentTotals > div:last-child {
-  border-bottom: 2px solid ButtonBorder;
+  border-bottom: 2px solid var(--invoice-accent, ButtonBorder);
 }
 
 .documentTotals > div:last-child strong {
@@ -622,7 +810,7 @@
 .documentTerms {
   margin-top: 24px;
   padding-top: 14px;
-  border-top: 1px solid ButtonBorder;
+  border-top: 1px solid var(--invoice-border, ButtonBorder);
 }
 
 .documentTerms p {
@@ -633,9 +821,82 @@
 .documentFooter {
   margin-top: 22px;
   padding-top: 12px;
-  border-top: 1px solid ButtonBorder;
-  color: CanvasText;
+  border-top: 1px solid var(--invoice-border, ButtonBorder);
+  color: var(--invoice-ink, CanvasText);
   font-weight: 600;
+}
+
+.documentThemeClassic {
+  border-top: 5px solid var(--invoice-accent);
+}
+
+.documentThemeExecutive {
+  border-radius: 6px;
+}
+
+.documentThemeExecutive .documentSheetHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 18px;
+  border: 1px solid var(--invoice-border);
+  background: var(--invoice-soft);
+}
+
+.documentThemeExecutive .documentMeta {
+  padding-top: 12px;
+  border-top: 1px solid var(--invoice-border);
+}
+
+.documentThemeAccent {
+  overflow: hidden;
+  border-color: var(--invoice-accent);
+}
+
+.documentThemeAccent .documentSheetHeader {
+  margin: -26px -26px 22px;
+  padding: 26px;
+  border-bottom: 0;
+  background: var(--invoice-accent);
+  color: var(--invoice-on-accent);
+}
+
+.documentThemeAccent .documentIdentity > span,
+.documentThemeAccent .documentIdentity img {
+  border-color: color-mix(in srgb, var(--invoice-on-accent) 48%, transparent);
+  background: color-mix(in srgb, var(--invoice-on-accent) 10%, transparent);
+  color: var(--invoice-on-accent);
+}
+
+.documentThemeAccent .documentIdentity strong,
+.documentThemeAccent .documentIdentity p,
+.documentThemeAccent .documentMeta h4,
+.documentThemeAccent .documentMeta span {
+  color: var(--invoice-on-accent);
+}
+
+.documentThemeAccent .documentLineHead {
+  background: var(--invoice-accent);
+}
+
+.documentThemeAccent .documentLineHead span {
+  color: var(--invoice-on-accent);
+}
+
+.documentThemeLedger {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.documentThemeLedger .documentSheetHeader {
+  border-top: 2px solid var(--invoice-accent);
+}
+
+.documentThemeLedger .documentPaymentMeta > div,
+.documentThemeLedger .documentLines {
+  background-image: linear-gradient(var(--invoice-border), var(--invoice-border));
+  background-size: 100% 1px;
+  background-repeat: no-repeat;
+  background-position: bottom left;
 }
 
 .settingsMatrix {
@@ -938,10 +1199,17 @@
 
   .formGrid,
   .settingsMatrix,
-  .gatewayList {
+  .gatewayList,
+  .templateChooser,
+  .colorControls {
     grid-template-columns: 1fr;
   }
 
+  .paletteChooser {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .documentPaymentMeta,
   .documentParties {
     grid-template-columns: 1fr;
   }

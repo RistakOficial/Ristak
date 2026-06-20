@@ -12,6 +12,11 @@ export interface PaymentCheckoutSettings {
 
 export interface PaymentReceiptSettings {
   logoUrl: string
+  invoiceTemplate: 'classic' | 'executive' | 'accent' | 'ledger'
+  invoicePalette: 'graphite' | 'sage' | 'indigo' | 'terracotta' | 'champagne' | 'custom'
+  invoiceAccentColor: string
+  invoicePaperColor: string
+  invoiceTextColor: string
   title: string
   intro: string
   footer: string
@@ -71,6 +76,11 @@ export const defaultPaymentSettings: PaymentSettings = {
   },
   receipt: {
     logoUrl: '',
+    invoiceTemplate: 'classic',
+    invoicePalette: 'graphite',
+    invoiceAccentColor: '#111827',
+    invoicePaperColor: '#ffffff',
+    invoiceTextColor: '#111827',
     title: 'Comprobante de pago',
     intro: 'Tu pago fue recibido correctamente.',
     footer: 'Gracias por tu pago.',
