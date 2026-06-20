@@ -23787,6 +23787,7 @@ const VideoPlayerPreview: React.FC<{
   editable?: boolean
   selected?: boolean
 }> = ({ src, label, settings, editable = false, selected = false }) => {
+  const playerRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
   const previewLoopRef = useRef(false)
@@ -23883,6 +23884,40 @@ const VideoPlayerPreview: React.FC<{
   const handlePlayerLeave = useCallback(() => {
     hideControlsAfter(VIDEO_CONTROLS_LEAVE_IDLE_MS)
   }, [hideControlsAfter])
+
+  useEffect(() => {
+    if (!showCustomControlBar || (!isPlaying && !isPreviewLooping)) return undefined
+    const player = playerRef.current
+    if (!player) return undefined
+
+    const listeningDocuments = new Set<Document>()
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (target && player.contains(target)) return
+      clearControlsHideTimer()
+      setControlsVisible(false)
+    }
+    const addDocumentListener = (doc: Document | null | undefined) => {
+      if (!doc || listeningDocuments.has(doc)) return
+      doc.addEventListener('pointerdown', handleOutsidePointerDown, true)
+      listeningDocuments.add(doc)
+    }
+
+    addDocumentListener(player.ownerDocument)
+    try {
+      const ownerWindow = player.ownerDocument.defaultView
+      const parentWindow = ownerWindow?.parent
+      if (parentWindow && parentWindow !== ownerWindow) addDocumentListener(parentWindow.document)
+    } catch {
+      // Cross-origin parents cannot be observed; the local document still covers this player.
+    }
+
+    return () => {
+      listeningDocuments.forEach(doc => {
+        doc.removeEventListener('pointerdown', handleOutsidePointerDown, true)
+      })
+    }
+  }, [clearControlsHideTimer, isPlaying, isPreviewLooping, showCustomControlBar])
   const className = [
     'rstk-video',
     'rstk-video-player',
@@ -24299,6 +24334,7 @@ const VideoPlayerPreview: React.FC<{
 
   return (
     <div
+      ref={playerRef}
       className={className}
       style={{
         ['--rstk-video-bg' as string]: playerBackground,
