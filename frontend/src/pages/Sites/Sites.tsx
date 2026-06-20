@@ -3688,7 +3688,6 @@ const normalizeVideoActionRule = (value: unknown, index = 0): VideoActionRule | 
   const sourceTargetBlockIds = getVideoActionTargetIdsFromSource(source)
   const targetBlockIds = action === 'show_popup' ? [POPUP_SURFACE_ID] : sourceTargetBlockIds
   const targetBlockId = targetBlockIds[0] || ''
-  if (videoActionTargetKinds.has(action) && !targetBlockId) return null
   const before = isVideoActionBeforeState(source.before) ? source.before : getRecommendedVideoActionBefore(action)
   const id = getSettingString(source, 'id') || `video-action-${index + 1}`
   const targetPageId = getSettingString(source, 'targetPageId') || getSettingString(source, 'target_page_id')
@@ -28950,10 +28949,6 @@ const VideoActionsPanel: React.FC<{
   const [videoDurationSeconds, setVideoDurationSeconds] = useState(0)
   const timelineMaxSeconds = useMemo(() => getVideoActionTimelineMax(rules, videoDurationSeconds), [rules, videoDurationSeconds])
 
-  const firstTargetId = useMemo(() => {
-    return contentTargets[0]?.id || ''
-  }, [contentTargets])
-
   useEffect(() => {
     const visibleRuleIds = new Set(rules.map(rule => rule.id))
     setTimeInputs(current => Object.fromEntries(Object.entries(current).filter(([ruleId]) => visibleRuleIds.has(ruleId))))
@@ -29011,12 +29006,8 @@ const VideoActionsPanel: React.FC<{
 
   const openNewRule = useCallback(() => {
     const timeSeconds = Math.min(timelineMaxSeconds, getCurrentEditorVideoTime(block.id))
-    const defaultAction: VideoActionKind = firstTargetId ? 'show' : hasPopupTarget ? 'show_popup' : pageTargets.length ? 'site_page' : 'redirect'
-    const targetBlockIds = defaultAction === 'show_popup'
-      ? [POPUP_SURFACE_ID]
-      : firstTargetId
-        ? [firstTargetId]
-        : []
+    const defaultAction: VideoActionKind = contentTargets.length ? 'show' : hasPopupTarget ? 'show_popup' : pageTargets.length ? 'site_page' : 'redirect'
+    const targetBlockIds = defaultAction === 'show_popup' ? [POPUP_SURFACE_ID] : []
     const nextRule = normalizeVideoActionRule({
       id: makeVideoActionId(),
       timeSeconds,
@@ -29032,7 +29023,7 @@ const VideoActionsPanel: React.FC<{
     setExpandedRuleId(nextRule.id)
     setTimeInputs(current => ({ ...current, [nextRule.id]: formatVideoActionTime(timeSeconds) }))
     seekEditorVideoToTime(block.id, timeSeconds)
-  }, [block.id, firstTargetId, hasPopupTarget, pageTargets, patchRules, rules, timelineMaxSeconds])
+  }, [block.id, contentTargets.length, hasPopupTarget, pageTargets, patchRules, rules, timelineMaxSeconds])
 
   const getTargetOptionsForAction = useCallback((action: VideoActionKind) => {
     if (action === 'open_form') return formTargets
@@ -29044,11 +29035,13 @@ const VideoActionsPanel: React.FC<{
     const previousRecommended = getRecommendedVideoActionBefore(rule.action)
     const nextBefore = rule.before === previousRecommended ? getRecommendedVideoActionBefore(action) : rule.before
     const candidateTargets = getTargetOptionsForAction(action)
+    const candidateTargetIds = new Set(candidateTargets.map(target => target.id))
     const currentTargetIds = getVideoActionTargetIds(rule).filter(targetId => targetId !== POPUP_SURFACE_ID)
+    const validCurrentTargetIds = currentTargetIds.filter(targetId => candidateTargetIds.has(targetId))
     const nextTargetIds = action === 'show_popup'
       ? [POPUP_SURFACE_ID]
       : videoActionTargetKinds.has(action)
-        ? (currentTargetIds.length && candidateTargets.some(target => target.id === currentTargetIds[0]) ? currentTargetIds : (candidateTargets[0]?.id ? [candidateTargets[0].id] : []))
+        ? (videoActionMultiTargetKinds.has(action) ? validCurrentTargetIds : validCurrentTargetIds.slice(0, 1))
         : []
 
     patchRule(rule.id, {
