@@ -6517,6 +6517,7 @@ export const Sites: React.FC = () => {
   const [paletteSectionTarget, setPaletteSectionTarget] = useState<PaletteSectionTarget | null>(null)
   const [paletteDragPosition, setPaletteDragPosition] = useState<PaletteDragPosition | null>(null)
   const [videoActionHoverTargetId, setVideoActionHoverTargetId] = useState('')
+  const [videoFormGatePreviewBlockId, setVideoFormGatePreviewBlockId] = useState('')
   const [formResponsesOpen, setFormResponsesOpen] = useState(false)
   const [selectedResponsesFormId, setSelectedResponsesFormId] = useState('')
   const [selectedResponsesSite, setSelectedResponsesSite] = useState<PublicSite | null>(null)
@@ -11509,6 +11510,7 @@ export const Sites: React.FC = () => {
                               paletteDragging={paletteDragging}
                               videoActionHoverTargetId={videoActionHoverTargetId}
                               videoActionHiddenNotes={videoActionHiddenNotes}
+                              videoFormGatePreviewBlockId={videoFormGatePreviewBlockId}
                               embeddedFormEditor={embeddedFormEditorBridge}
                               onSelectPopup={() => selectEditorBlock(POPUP_SELECTED_ID)}
                               onClosePopup={() => selectEditorBlock(PAGE_SELECTED_ID)}
@@ -11556,6 +11558,7 @@ export const Sites: React.FC = () => {
                                         paletteDragging={paletteDragging}
                                         videoActionHoverTargetId={videoActionHoverTargetId}
                                         videoActionHiddenNotes={videoActionHiddenNotes}
+                                        videoFormGatePreviewBlockId={videoFormGatePreviewBlockId}
                                         embeddedFormEditor={embeddedFormEditorBridge}
                                         onSelectBlock={selectEditorBlock}
                                         onDeleteBlock={requestDeleteBlock}
@@ -11600,6 +11603,7 @@ export const Sites: React.FC = () => {
                                           canMoveDown={moveState.canMoveDown}
                                           videoActionHoverTargetId={videoActionHoverTargetId}
                                           videoActionHiddenNotes={videoActionHiddenNotes}
+                                          showVideoFormGatePreview={videoFormGatePreviewBlockId === block.id}
                                           embeddedFormEditor={embeddedFormEditorBridge}
                                           onSelect={() => selectEditorBlock(block.id)}
                                           onDelete={() => requestDeleteBlock(block.id)}
@@ -11697,6 +11701,7 @@ export const Sites: React.FC = () => {
                     onSaveCategory={(block) => handleSaveBlockCategory(block)}
                     onCustomFieldCreated={handleCustomFieldCreated}
                     onVideoActionTargetHover={setVideoActionHoverTargetId}
+                    onVideoFormGatePreviewChange={setVideoFormGatePreviewBlockId}
                     onSave={() => handleSaveBlock()}
                   />
                 )}
@@ -26167,6 +26172,7 @@ interface SortableCanvasBlockProps {
   selected: boolean
   videoActionHoverTargetId?: string
   videoActionHiddenNotes?: Map<string, string>
+  showVideoFormGatePreview?: boolean
   site: PublicSite
   forms: PublicSite[]
   calendars: CalendarType[]
@@ -26205,6 +26211,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   selected,
   videoActionHoverTargetId = '',
   videoActionHiddenNotes,
+  showVideoFormGatePreview = false,
   site,
   forms,
   calendars,
@@ -26302,6 +26309,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         pages={pages}
         activePageId={activePageId}
         selected={selected}
+        showVideoFormGatePreview={showVideoFormGatePreview}
         embeddedFormEditor={embeddedFormEditor?.parentBlockId === block.id ? embeddedFormEditor : undefined}
         onPatchBlock={onPatchBlock}
         onPatchSettings={onPatchSettings}
@@ -26323,6 +26331,7 @@ interface PopupCanvasSurfaceProps {
   selected: boolean
   videoActionHoverTargetId?: string
   videoActionHiddenNotes?: Map<string, string>
+  videoFormGatePreviewBlockId?: string
   palettePreviewBlock: SiteBlock | null
   paletteInsertIndex: number | null
   paletteSectionTarget: PaletteSectionTarget | null
@@ -26352,6 +26361,7 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
   selected,
   videoActionHoverTargetId = '',
   videoActionHiddenNotes,
+  videoFormGatePreviewBlockId = '',
   palettePreviewBlock,
   paletteInsertIndex,
   paletteSectionTarget,
@@ -26450,6 +26460,7 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
               activePageId={activePageId}
               videoActionHoverTargetId={videoActionHoverTargetId}
               videoActionHiddenNotes={videoActionHiddenNotes}
+              videoFormGatePreviewBlockId={videoFormGatePreviewBlockId}
               palettePreviewBlock={palettePreviewBlock}
               paletteInsertIndex={paletteInsertIndex}
               paletteSectionTarget={paletteSectionTarget}
@@ -26482,6 +26493,7 @@ interface LandingCanvasSectionsProps {
   activePageId: string
   videoActionHoverTargetId?: string
   videoActionHiddenNotes?: Map<string, string>
+  videoFormGatePreviewBlockId?: string
   palettePreviewBlock: SiteBlock | null
   paletteInsertIndex: number | null
   paletteSectionTarget: PaletteSectionTarget | null
@@ -26508,6 +26520,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
   activePageId,
   videoActionHoverTargetId = '',
   videoActionHiddenNotes,
+  videoFormGatePreviewBlockId = '',
   palettePreviewBlock,
   paletteInsertIndex,
   paletteSectionTarget,
@@ -26553,6 +26566,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
                 activePageId={activePageId}
                 videoActionHoverTargetId={videoActionHoverTargetId}
                 videoActionHiddenNotes={videoActionHiddenNotes}
+                showVideoFormGatePreview={videoFormGatePreviewBlockId === block.id}
                 canMoveUp={moveState.canMoveUp}
                 canMoveDown={moveState.canMoveDown}
                 embeddedFormEditor={embeddedFormEditor}
@@ -26586,6 +26600,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	              activePageId={activePageId}
                 videoActionHoverTargetId={videoActionHoverTargetId}
                 videoActionHiddenNotes={videoActionHiddenNotes}
+                videoFormGatePreviewBlockId={videoFormGatePreviewBlockId}
 	              palettePreviewBlock={palettePreviewBlock}
 	              paletteInsertIndex={paletteInsertIndex}
 	              paletteSectionTarget={paletteSectionTarget}
@@ -26618,9 +26633,10 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
               forms={forms}
               calendars={calendars}
               pages={pages}
-	              activePageId={activePageId}
+              activePageId={activePageId}
               videoActionHoverTargetId={videoActionHoverTargetId}
               videoActionHiddenNotes={videoActionHiddenNotes}
+              videoFormGatePreviewBlockId={videoFormGatePreviewBlockId}
 	              paletteDragging={paletteDragging}
 	              palettePreviewBlock={palettePreviewBlock}
 	              paletteInsertIndex={paletteInsertIndex}
@@ -26654,6 +26670,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	          activePageId={activePageId}
           videoActionHoverTargetId={videoActionHoverTargetId}
           videoActionHiddenNotes={videoActionHiddenNotes}
+          videoFormGatePreviewBlockId={videoFormGatePreviewBlockId}
 	          palettePreviewBlock={palettePreviewBlock}
 	          paletteInsertIndex={paletteInsertIndex}
 	          paletteSectionTarget={paletteSectionTarget}
@@ -26684,6 +26701,7 @@ interface LandingSectionRenderProps {
   activePageId: string
   videoActionHoverTargetId?: string
   videoActionHiddenNotes?: Map<string, string>
+  videoFormGatePreviewBlockId?: string
   paletteDragging?: boolean
   palettePreviewBlock?: SiteBlock | null
   paletteInsertIndex?: number | null
@@ -26711,6 +26729,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
   activePageId,
   videoActionHoverTargetId = '',
   videoActionHiddenNotes,
+  videoFormGatePreviewBlockId = '',
   paletteDragging,
   palettePreviewBlock,
   paletteInsertIndex,
@@ -26772,6 +26791,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
                     activePageId={activePageId}
                     videoActionHoverTargetId={videoActionHoverTargetId}
                     videoActionHiddenNotes={videoActionHiddenNotes}
+                    showVideoFormGatePreview={videoFormGatePreviewBlockId === block.id}
                     canMoveUp={moveState.canMoveUp}
                     canMoveDown={moveState.canMoveDown}
                     embeddedFormEditor={embeddedFormEditor}
@@ -26812,6 +26832,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
   activePageId,
   videoActionHoverTargetId = '',
   videoActionHiddenNotes,
+  videoFormGatePreviewBlockId = '',
   paletteDragging,
   palettePreviewBlock,
   paletteInsertIndex,
@@ -26931,9 +26952,10 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
           forms={forms}
           calendars={calendars}
           pages={pages}
-	          activePageId={activePageId}
+          activePageId={activePageId}
           videoActionHoverTargetId={videoActionHoverTargetId}
           videoActionHiddenNotes={videoActionHiddenNotes}
+          videoFormGatePreviewBlockId={videoFormGatePreviewBlockId}
 	          paletteDragging={paletteDragging}
 	          palettePreviewBlock={palettePreviewBlock}
 	          paletteInsertIndex={paletteInsertIndex}
@@ -27805,6 +27827,7 @@ interface CanvasPreviewBlockProps {
   pages?: SitePage[]
   activePageId?: string
   selected?: boolean
+  showVideoFormGatePreview?: boolean
   embeddedFormEditor?: EmbeddedFormCanvasEditorBridge | null
   onPatchBlock?: (patch: Partial<SiteBlock>) => void
   onPatchSettings?: (patch: Record<string, unknown>) => void
@@ -27911,9 +27934,10 @@ const VideoPlayerPreview: React.FC<{
   site?: PublicSite
   settings: Record<string, unknown>
   videoFormGateQuestions?: SiteBlock[]
+  showVideoFormGatePreview?: boolean
   editable?: boolean
   selected?: boolean
-}> = ({ src, label, site, settings, videoFormGateQuestions = [], editable = false, selected = false }) => {
+}> = ({ src, label, site, settings, videoFormGateQuestions = [], showVideoFormGatePreview = false, editable = false, selected = false }) => {
   const playerRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
@@ -27987,7 +28011,7 @@ const VideoPlayerPreview: React.FC<{
     ? (settings.videoFormGateEmbeddedBlocks as SiteBlock[]).filter(item => fieldBlockTypes.has(item.blockType))
     : []
   const gatePreviewQuestions = videoFormGateQuestions.length ? videoFormGateQuestions : embeddedGatePreviewQuestions
-  const showGatePreview = selected && settings.videoFormGateEnabled === true && Boolean(site) && gatePreviewQuestions.length > 0
+  const showGatePreview = selected && showVideoFormGatePreview && settings.videoFormGateEnabled === true && Boolean(site) && gatePreviewQuestions.length > 0
   const isControlBarBlockedAtStart = useCallback(
     () => showCustomControlBar && !hasStartedPlaybackRef.current,
     [showCustomControlBar]
@@ -28666,9 +28690,10 @@ const BunnyStreamStoragePreview: React.FC<{
   site?: PublicSite
   settings: Record<string, unknown>
   videoFormGateQuestions?: SiteBlock[]
+  showVideoFormGatePreview?: boolean
   editable?: boolean
   selected?: boolean
-}> = ({ embedUrl, label, site, settings, videoFormGateQuestions = [], editable = false, selected = false }) => {
+}> = ({ embedUrl, label, site, settings, videoFormGateQuestions = [], showVideoFormGatePreview = false, editable = false, selected = false }) => {
   const streamVideoId = useMemo(() => getBunnyStreamVideoIdFromUrl(embedUrl), [embedUrl])
   const [storageUrl, setStorageUrl] = useState('')
   const [resolved, setResolved] = useState(false)
@@ -28720,6 +28745,7 @@ const BunnyStreamStoragePreview: React.FC<{
         site={site}
         settings={settings}
         videoFormGateQuestions={videoFormGateQuestions}
+        showVideoFormGatePreview={showVideoFormGatePreview}
         editable={editable}
         selected={selected}
       />
@@ -28743,6 +28769,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   pages = [],
   activePageId = DEFAULT_FUNNEL_PAGE_ID,
   selected = false,
+  showVideoFormGatePreview = false,
   embeddedFormEditor,
   onPatchBlock,
   onPatchSettings,
@@ -28912,6 +28939,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
           site={site}
           settings={settings}
           videoFormGateQuestions={videoFormGateQuestions}
+          showVideoFormGatePreview={showVideoFormGatePreview}
           editable={editable}
           selected={selected}
         />
@@ -28925,6 +28953,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               site={site}
               settings={settings}
               videoFormGateQuestions={videoFormGateQuestions}
+              showVideoFormGatePreview={showVideoFormGatePreview}
               editable={editable}
               selected={selected}
             />
@@ -29428,6 +29457,7 @@ interface PropertiesPanelProps {
   onSaveCategory: (block: SiteBlock) => void
   onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onVideoActionTargetHover?: (blockId: string) => void
+  onVideoFormGatePreviewChange?: (blockId: string) => void
   onSave: () => void
 }
 
@@ -30809,6 +30839,7 @@ const VideoActionsPanel: React.FC<{
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
   onTargetHover?: (blockId: string) => void
+  onVideoFormGatePreviewChange?: (blockId: string) => void
 }> = ({
   site,
   block,
@@ -30827,7 +30858,8 @@ const VideoActionsPanel: React.FC<{
   onSaveSite,
   onPatchSettings,
   onSave,
-  onTargetHover
+  onTargetHover,
+  onVideoFormGatePreviewChange
 }) => {
   const settings = block.settings || {}
   const allRules = useMemo(() => getVideoActionRules(settings), [settings])
@@ -30864,6 +30896,7 @@ const VideoActionsPanel: React.FC<{
   const [timeInputs, setTimeInputs] = useState<Record<string, string>>({})
   const [videoDurationSeconds, setVideoDurationSeconds] = useState(0)
   const timelineMaxSeconds = useMemo(() => getVideoActionTimelineMax(rules, videoDurationSeconds), [rules, videoDurationSeconds])
+  const openVideoFormRuleExpanded = rules.some(rule => rule.id === expandedRuleId && rule.action === 'open_video_form')
 
   const buildVideoFormGateSettingsPatch = useCallback((nextRules: VideoActionRule[]) => {
     if (!enableVideoFormGateAction) return {}
@@ -30909,6 +30942,12 @@ const VideoActionsPanel: React.FC<{
     const visibleRuleIds = new Set(rules.map(rule => rule.id))
     setTimeInputs(current => Object.fromEntries(Object.entries(current).filter(([ruleId]) => visibleRuleIds.has(ruleId))))
   }, [rules])
+
+  useEffect(() => {
+    if (!onVideoFormGatePreviewChange) return undefined
+    onVideoFormGatePreviewChange(openVideoFormRuleExpanded ? block.id : '')
+    return () => onVideoFormGatePreviewChange('')
+  }, [block.id, onVideoFormGatePreviewChange, openVideoFormRuleExpanded])
 
   useEffect(() => {
     let timeoutId = 0
@@ -31426,6 +31465,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onSaveCategory,
   onCustomFieldCreated,
   onVideoActionTargetHover,
+  onVideoFormGatePreviewChange,
   onSave
 }) => {
   if (surfaceSelectionId === POPUP_SELECTED_ID) {
@@ -31758,6 +31798,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       onPatchSettings={onPatchSettings}
       onSave={onSave}
       onTargetHover={onVideoActionTargetHover}
+      onVideoFormGatePreviewChange={onVideoFormGatePreviewChange}
     />
   ) : null
 
