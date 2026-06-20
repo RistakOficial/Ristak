@@ -5902,7 +5902,6 @@ export const Sites: React.FC = () => {
   const formCanvasActionSubtitle = editorSite && activePage && isFormSite(editorSite)
     ? getFormPageActionSubtitle(editorSite, pages, activePage.id)
     : undefined
-  const seoValidation = editorSite ? getSeoValidationState(editorSite) : null
   const editorSaveStatus = useMemo(() => {
     if (saving) {
       return {
@@ -6001,7 +6000,7 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     setSeoModalOpen(false)
     setHeaderModalOpen(false)
-  }, [editorSite?.id])
+  }, [editorSite?.id, formEditMode, formEditSourceSite?.id])
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent(SITES_EDITOR_ACTIVE_EVENT, {
@@ -7340,6 +7339,19 @@ export const Sites: React.FC = () => {
     const next = { ...current, theme: { ...(current.theme || {}), ...patch } }
     selectedSiteRef.current = next
     setSelectedSite(next)
+  }
+
+  const patchEmbeddedFormSourceSite = (patch: Partial<PublicSite>) => {
+    if (!formEditSourceSite) {
+      updateSelectedSite(patch)
+      return
+    }
+    const sourceForm = pendingEmbeddedFormSourceDraftsRef.current.get(formEditSourceSite.id) || formEditSourceSite
+    if (!editorPatchHasChanges(sourceForm as unknown as Record<string, unknown>, patch as Record<string, unknown>)) return
+    syncEmbeddedFormSourceDraft({
+      ...sourceForm,
+      ...patch
+    })
   }
 
   const patchEmbeddedFormSourceTheme = (patch: Partial<SiteTheme>) => {
@@ -9646,6 +9658,17 @@ export const Sites: React.FC = () => {
       onSaveSite={() => handleSaveSite(undefined, { silent: true })}
     />
   ) : null
+  const editorToolbarSettingsSite = formEditMode ? formEditSourceSite : editorSite
+  const editorToolbarSettingsPages = formEditMode && formEditSourceSite ? formEditPages : pages
+  const editorToolbarSettingsActivePage = formEditMode && formEditSourceSite ? activeEmbeddedFormPage : activePage
+  const editorToolbarSettingsSeoIssues = editorToolbarSettingsSite ? getSeoValidationState(editorToolbarSettingsSite).totalIssues : 0
+  const patchEditorToolbarSettingsSite = formEditMode && formEditSourceSite ? patchEmbeddedFormSourceSite : updateSelectedSite
+  const patchEditorToolbarSettingsTheme = formEditMode && formEditSourceSite ? patchEmbeddedFormSourceTheme : patchSiteTheme
+  const saveEditorToolbarSettingsSite = () => (
+    formEditMode && formEditSourceSite && formEditBlock
+      ? handleSaveBlock(formEditBlock.id)
+      : handleSaveSite(undefined, { silent: true })
+  )
 
   if (loading) {
     return <Loading page="sites" />
@@ -9691,14 +9714,14 @@ export const Sites: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  {!formEditMode && (
+                  {editorToolbarSettingsSite && (
                     <div className={styles.editorToolbarTools} aria-label="Herramientas de edición">
-                      {editorPageSelector && (
+                      {!formEditMode && editorPageSelector && (
                         <div className={styles.editorPageSelectorSlot}>
                           {editorPageSelector}
                         </div>
                       )}
-                      {canConfigurePopup && (
+                      {!formEditMode && canConfigurePopup && (
                         <button
                           type="button"
                           className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
@@ -9711,20 +9734,20 @@ export const Sites: React.FC = () => {
                         </button>
                       )}
                       <EditorSettingsDropdown
-                        site={editorSite}
-                        pages={pages}
-                        activePage={activePage}
+                        site={editorToolbarSettingsSite}
+                        pages={editorToolbarSettingsPages}
+                        activePage={editorToolbarSettingsActivePage}
                         domainConfig={domainConfig}
-                        seoIssues={seoValidation?.totalIssues || 0}
+                        seoIssues={editorToolbarSettingsSeoIssues}
                         metaPixelConnected={metaPixelConnected}
                         disabled={editorAIGenerating}
-                        canEditHeader={hasEditablePages(editorSite)}
-                        routeValue={getRouteEditorValue(editorSite)}
-                        routePlaceholder={editorSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
-                        onRouteChange={(value) => updateSelectedSite({ slug: normalizeRouteEditorInput(value, domainConfig) })}
-                        onPatchSite={updateSelectedSite}
-                        onPatchTheme={patchSiteTheme}
-                        onSaveSite={() => handleSaveSite(undefined, { silent: true })}
+                        canEditHeader={hasEditablePages(editorToolbarSettingsSite)}
+                        routeValue={getRouteEditorValue(editorToolbarSettingsSite)}
+                        routePlaceholder={editorToolbarSettingsSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
+                        onRouteChange={(value) => patchEditorToolbarSettingsSite({ slug: normalizeRouteEditorInput(value, domainConfig) })}
+                        onPatchSite={patchEditorToolbarSettingsSite}
+                        onPatchTheme={patchEditorToolbarSettingsTheme}
+                        onSaveSite={saveEditorToolbarSettingsSite}
                         onOpenSeo={() => setSeoModalOpen(true)}
                         onOpenHeader={() => setHeaderModalOpen(true)}
                       />
@@ -9824,24 +9847,24 @@ export const Sites: React.FC = () => {
           )}
         </header>
 
-        {editorSite && seoModalOpen && (
+        {editorToolbarSettingsSite && seoModalOpen && (
           <SeoOptimizationModal
-            site={editorSite}
+            site={editorToolbarSettingsSite}
             onClose={() => setSeoModalOpen(false)}
-            onPatchSite={updateSelectedSite}
-            onPatchTheme={patchSiteTheme}
-            onSave={() => handleSaveSite(undefined, { silent: true })}
+            onPatchSite={patchEditorToolbarSettingsSite}
+            onPatchTheme={patchEditorToolbarSettingsTheme}
+            onSave={saveEditorToolbarSettingsSite}
           />
         )}
 
-        {editorSite && hasEditablePages(editorSite) && headerModalOpen && (
+        {editorToolbarSettingsSite && hasEditablePages(editorToolbarSettingsSite) && headerModalOpen && (
           <HeaderToolbarModal
-            site={editorSite}
-            pages={pages}
-            activePage={activePage}
+            site={editorToolbarSettingsSite}
+            pages={editorToolbarSettingsPages}
+            activePage={editorToolbarSettingsActivePage}
             onClose={() => setHeaderModalOpen(false)}
-            onPatchTheme={patchSiteTheme}
-            onSaveSite={() => handleSaveSite(undefined, { silent: true })}
+            onPatchTheme={patchEditorToolbarSettingsTheme}
+            onSaveSite={saveEditorToolbarSettingsSite}
           />
         )}
 
@@ -22089,7 +22112,7 @@ const EditorSettingsDropdown: React.FC<{
         disabled={disabled}
         aria-expanded={open}
         onClick={() => setOpen(current => !current)}
-        title="Ajustes del sitio"
+        title={isFormSite(props.site) ? 'Ajustes del formulario' : 'Ajustes del sitio'}
       >
         <Settings2 size={15} />
         <span>Ajustes</span>
