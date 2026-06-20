@@ -5959,7 +5959,7 @@ export const Sites: React.FC = () => {
     () => isImportedHtmlSite(editorSite) && importedHtmlHasPopup(selectedImportData),
     [editorSite, selectedImportData]
   )
-  const canConfigurePopup = Boolean(editorSite && isLanding(editorSite))
+  const canConfigurePopup = Boolean(editorSite && hasEditablePages(editorSite))
   const popupSurfaceSelected = canConfigurePopup && (selectedBlockId === POPUP_SELECTED_ID || popupBlocks.some(block => block.id === selectedBlockId))
   const editableCanvasBlocks = popupSurfaceSelected ? popupBlocks : canvasBlocks
   const activeDragBlock = editableCanvasBlocks.find(block => block.id === activeDragId) || null
@@ -6058,8 +6058,8 @@ export const Sites: React.FC = () => {
     [canvasBlocks, editorSite]
   )
   const popupSectionLanes = useMemo(
-    () => editorSite && isLanding(editorSite) ? buildLandingSectionLanes(popupBlocks) : [],
-    [editorSite, popupBlocks]
+    () => editorSite && canConfigurePopup ? buildLandingSectionLanes(popupBlocks) : [],
+    [canConfigurePopup, editorSite, popupBlocks]
   )
   const paletteElementBlocks = useMemo(() => {
     if (!editorSite) return []
@@ -9807,7 +9807,7 @@ export const Sites: React.FC = () => {
                         <button
                           type="button"
                           className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${headerModalOpen ? styles.headerToolbarButtonActive : ''}`}
-                          onClick={() => setHeaderModalOpen(true)}
+                          onClick={() => setHeaderModalOpen(current => !current)}
                           disabled={editorAIGenerating}
                           title="Configurar Headers"
                           aria-label="Configurar Headers"
@@ -9844,7 +9844,7 @@ export const Sites: React.FC = () => {
                         onPatchTheme={patchEditorToolbarSettingsTheme}
                         onSaveSite={saveEditorToolbarSettingsSite}
                         onOpenSeo={() => setSeoModalOpen(true)}
-                        onOpenHeader={() => setHeaderModalOpen(true)}
+                        onOpenHeader={() => setHeaderModalOpen(current => !current)}
                       />
                     </div>
                   )}
