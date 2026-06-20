@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
 import {
+  getMessageAnalyticsSummary,
   getWhatsAppApiAnalyticsSummary,
   getWhatsAppApiSourceBreakdown
 } from '../src/services/originDistributionService.js'
@@ -14,6 +15,9 @@ async function cleanup(marker) {
     `origin_${marker}%`,
     `%${marker}%`
   ]).catch(() => undefined)
+  await db.run('DELETE FROM meta_social_messages WHERE id LIKE ? OR contact_id LIKE ?', [`origin_${marker}%`, `origin_${marker}%`]).catch(() => undefined)
+  await db.run('DELETE FROM meta_social_contacts WHERE id LIKE ? OR contact_id LIKE ?', [`origin_${marker}%`, `origin_${marker}%`]).catch(() => undefined)
+  await db.run('DELETE FROM email_messages WHERE id LIKE ? OR contact_id LIKE ?', [`origin_${marker}%`, `origin_${marker}%`]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [`phone_${marker}`]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id LIKE ? OR phone LIKE ?', [`origin_${marker}%`, `%${marker}%`]).catch(() => undefined)
 }
@@ -163,6 +167,119 @@ test('WhatsApp analytics summary returns card metrics and trend for the selected
     assert.deepEqual(summary.trend, [{ label: '2099-06', messages: 3 }])
     assert.equal(summary.status.connected, true)
     assert.equal(summary.status.hasData, true)
+  } finally {
+    await cleanup(marker)
+  }
+})
+
+test('message analytics summary combines WhatsApp, Messenger, Instagram and Email inbound messages', async () => {
+  const marker = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const range = {
+    startUtc: '2099-07-01T00:00:00.000Z',
+    endUtc: '2099-07-31T23:59:59.999Z',
+    appliedTimezone: 'UTC'
+  }
+  const contactIds = {
+    whatsapp: `origin_${marker}_msg_whatsapp`,
+    messenger: `origin_${marker}_msg_messenger`,
+    instagram: `origin_${marker}_msg_instagram`,
+    email: `origin_${marker}_msg_email`
+  }
+
+  await cleanup(marker)
+
+  try {
+    for (const [index, [channel, id]] of Object.entries(contactIds).entries()) {
+      await insertContact({
+        id,
+        phone: `+52157000${marker.slice(-4)}${index + 1}`,
+        source: channel,
+        createdAt: '2099-07-10T18:00:00.000Z'
+      })
+    }
+
+    await insertInboundMessage({
+      id: `origin_${marker}_wa`,
+      contactId: contactIds.whatsapp,
+      phone: `+52157000${marker.slice(-4)}1`,
+      timestamp: '2099-07-10T18:00:00.000Z',
+      sourceId: `meta_ad_${marker}`
+    })
+
+    await db.run(`
+      INSERT INTO meta_social_messages (
+        id, platform, meta_message_id, contact_id, sender_id, direction,
+        message_type, message_text, message_timestamp, referral_json,
+        created_at, updated_at
+      )
+      VALUES (?, 'messenger', ?, ?, ?, 'inbound', 'text', 'Hola Messenger', ?, ?, ?, ?)
+    `, [
+      `origin_${marker}_messenger`,
+      `meta_${marker}_messenger`,
+      contactIds.messenger,
+      `sender_${marker}_messenger`,
+      '2099-07-11T18:00:00.000Z',
+      JSON.stringify({ source: 'ADS', source_id: `meta_ad_${marker}` }),
+      '2099-07-11T18:00:00.000Z',
+      '2099-07-11T18:00:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO meta_social_messages (
+        id, platform, meta_message_id, contact_id, sender_id, direction,
+        message_type, message_text, message_timestamp, created_at, updated_at
+      )
+      VALUES (?, 'instagram', ?, ?, ?, 'inbound', 'text', 'Hola Instagram', ?, ?, ?)
+    `, [
+      `origin_${marker}_instagram`,
+      `meta_${marker}_instagram`,
+      contactIds.instagram,
+      `sender_${marker}_instagram`,
+      '2099-07-12T18:00:00.000Z',
+      '2099-07-12T18:00:00.000Z',
+      '2099-07-12T18:00:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO email_messages (
+        id, contact_id, direction, status, from_email, to_email, subject,
+        message_text, message_timestamp, created_at, updated_at
+      )
+      VALUES (?, ?, 'inbound', 'received', ?, 'owner@example.com', 'Pregunta', 'Hola Email', ?, ?, ?)
+    `, [
+      `origin_${marker}_email`,
+      contactIds.email,
+      `lead_${marker}@example.com`,
+      '2099-07-13T18:00:00.000Z',
+      '2099-07-13T18:00:00.000Z',
+      '2099-07-13T18:00:00.000Z'
+    ])
+
+    const summary = await getMessageAnalyticsSummary(range, { groupBy: 'month' })
+
+    assert.equal(summary.metrics.inboundMessages, 4)
+    assert.equal(summary.metrics.conversations, 4)
+    assert.equal(summary.metrics.contacts, 4)
+    assert.deepEqual(summary.trend, [{ label: '2099-07', messages: 4 }])
+
+    const channels = new Map(summary.filters.channels.map(item => [item.value, item.count]))
+    assert.equal(channels.get('whatsapp'), 1)
+    assert.equal(channels.get('messenger'), 1)
+    assert.equal(channels.get('instagram'), 1)
+    assert.equal(channels.get('email'), 1)
+
+    const sources = new Map(summary.filters.sources.map(item => [item.value, item.count]))
+    assert.equal(sources.get('Meta Ads'), 1)
+    assert.equal(sources.get('Messenger'), 1)
+    assert.equal(sources.get('Instagram'), 1)
+    assert.equal(sources.get('Email'), 1)
+
+    const filtered = await getMessageAnalyticsSummary(range, {
+      groupBy: 'month',
+      filters: { channels: ['instagram'] }
+    })
+    assert.equal(filtered.metrics.inboundMessages, 1)
+    assert.equal(filtered.metrics.conversations, 1)
   } finally {
     await cleanup(marker)
   }

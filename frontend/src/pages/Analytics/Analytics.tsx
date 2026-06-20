@@ -29,11 +29,11 @@ import {
   getContactsByDate,
   getContactConversionsByDate,
   getContactConversionContacts,
-  getWhatsAppAnalyticsSummary,
+  getMessageAnalyticsSummary,
   type ContactsByDate,
   type ContactConversionListType,
   type ContactConversionsByDate,
-  type WhatsAppAnalyticsSummary
+  type MessageAnalyticsSummary
 } from '../../services/analyticsService'
 import { trackingService, type TrackingSession } from '../../services/trackingService'
 import type { ContactListItem } from '../../services/reportsService'
@@ -348,6 +348,16 @@ const CONVERSION_STAGES: ConversionStage[] = [
   'customer'
 ]
 
+const MESSAGE_FILTER_FIELDS = new Set(['message_channel', 'message_source'])
+
+const isMessageFilterField = (field: string) => MESSAGE_FILTER_FIELDS.has(field)
+
+const hasSelectedFilters = (filters: Record<string, string[]>) =>
+  Object.values(filters).some(values => values.length > 0)
+
+const hasSelectedWebFilters = (filters: Record<string, string[]>) =>
+  Object.entries(filters).some(([field, values]) => !isMessageFilterField(field) && values.length > 0)
+
 const toNumber = (value: unknown): number => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
   if (typeof value === 'string') {
@@ -412,6 +422,37 @@ const getSiteTypeLabel = (siteType?: string | null) => {
   if (siteType === 'standard_form') return 'Formulario'
   return 'Sin tipo'
 }
+
+const normalizeTrafficChannelValue = (channel?: string | null) => {
+  const normalized = String(channel || '').trim().toLowerCase()
+  if (!normalized) return 'direct'
+  if (['paid', 'cpc', 'ppc', 'sem', 'ads', 'ad'].some(token => normalized.includes(token))) return 'paid'
+  if (normalized.includes('organic')) return 'organic'
+  if (normalized.includes('social')) return 'social'
+  if (normalized.includes('email') || normalized.includes('correo')) return 'email'
+  if (normalized.includes('referral')) return 'referral'
+  if (normalized.includes('direct')) return 'direct'
+  return normalized
+}
+
+const getTrafficChannelLabel = (channel?: string | null) => {
+  const value = normalizeTrafficChannelValue(channel)
+  if (value === 'paid') return 'Pagado'
+  if (value === 'organic') return 'Orgánico'
+  if (value === 'social') return 'Social'
+  if (value === 'email') return 'Email'
+  if (value === 'referral') return 'Referido'
+  if (value === 'direct') return 'Directo'
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+const getMessageFilterData = (summary?: MessageAnalyticsSummary | null) => ({
+  messageChannels: summary?.filters?.channels || [],
+  messageSources: summary?.filters?.sources || []
+})
+
+const hasAvailableFilterOptions = (data: Record<string, unknown>) =>
+  Object.values(data).some(value => Array.isArray(value) && value.length > 0)
 
 const getNativeFormId = (session: Session) => {
   if (session.form_site_id) return session.form_site_id
@@ -784,7 +825,7 @@ const mergeVisitorRegistrationData = (
   })
 }
 
-const mergeWhatsAppWithAppointments = (
+const mergeMessagesWithAppointments = (
   waData: TrafficPoint[],
   convData: ConversionTrendPoint[]
 ): TrafficPoint[] => {
@@ -934,7 +975,7 @@ const Analytics: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [hasLoadedAnalytics, setHasLoadedAnalytics] = useState(false)
   const [webTrackingConfigured, setWebTrackingConfigured] = useState(false)
-  const [whatsAppAnalytics, setWhatsAppAnalytics] = useState<WhatsAppAnalyticsSummary | null>(null)
+  const [messageAnalytics, setMessageAnalytics] = useState<MessageAnalyticsSummary | null>(null)
 
   const leadLabel = appLabels.lead?.trim() || 'Prospecto'
   const leadsLabel = appLabels.leads?.trim() || `${leadLabel}s`
@@ -1043,6 +1084,14 @@ const Analytics: React.FC = () => {
   }
 
   const apiRange = computeRangeForView(viewType, baseRange, monthPreset, yearRange)
+  const messageSummaryFilters = React.useMemo(() => ({
+    channels: selectedFilters.message_channel || [],
+    sources: selectedFilters.message_source || []
+  }), [selectedFilters.message_channel, selectedFilters.message_source])
+  const messageSummaryFilterKey = React.useMemo(
+    () => JSON.stringify(messageSummaryFilters),
+    [messageSummaryFilters]
+  )
 
   // Cargar datos cuando cambie el rango de fechas
   useEffect(() => {
@@ -1074,7 +1123,7 @@ const Analytics: React.FC = () => {
           prevContactsData,
           contactConversionRows,
           trackingConfig,
-          whatsAppSummary
+          messageSummary
         ] = await Promise.all([
           getSessionsByDateRange(startDate, endDate, { payload: 'analytics' }),
           getSessionMetricsByDateRange(prevStartDate, prevEndDate),
@@ -1082,7 +1131,7 @@ const Analytics: React.FC = () => {
           getContactsByDate(prevStartDate, prevEndDate),
           getContactConversionsByDate(startDate, endDate),
           trackingService.getTrackingConfig().catch(() => null),
-          getWhatsAppAnalyticsSummary(startDate, endDate, viewType).catch(() => null)
+          getMessageAnalyticsSummary(startDate, endDate, viewType, messageSummaryFilters).catch(() => null)
         ])
 
         setWebTrackingConfigured(Boolean(
@@ -1090,7 +1139,7 @@ const Analytics: React.FC = () => {
           trackingConfig?.hasPublicSites ||
           currentSessions.length > 0
         ))
-        setWhatsAppAnalytics(whatsAppSummary)
+        setMessageAnalytics(messageSummary)
         setContactConversionsByDate(contactConversionRows || [])
 
         if (currentSessions.length > 0) {
@@ -1198,7 +1247,9 @@ const Analytics: React.FC = () => {
             os: [],
             placements: [],
             conversions: [],
+            trafficChannels: [],
             trackingSources: [],
+            ...getMessageFilterData(messageSummary),
             siteTypes: [],
             nativeSites: [],
             nativeForms: [],
@@ -1253,6 +1304,7 @@ const Analytics: React.FC = () => {
           const browsersMap: { [key: string]: Set<string> } = {}
           const osMap: { [key: string]: Set<string> } = {}
           const placementsMap: { [key: string]: Set<string> } = {}
+          const trafficChannelsMap: { [key: string]: Set<string> } = {}
           const trackingSourceMap: { [key: string]: Set<string> } = {}
           const siteTypesMap: { [key: string]: Set<string> } = {}
           const nativeSitesMap: { [key: string]: { name: string; visitors: Set<string> } } = {}
@@ -1267,6 +1319,10 @@ const Analytics: React.FC = () => {
             const visitorId = session.visitor_id
             const conversionStage = getSessionConversionStage(session)
             const trackingSource = getTrackingSourceValue(session)
+            const trafficChannel = normalizeTrafficChannelValue(session.channel)
+
+            if (!trafficChannelsMap[trafficChannel]) trafficChannelsMap[trafficChannel] = new Set()
+            trafficChannelsMap[trafficChannel].add(visitorId)
 
             if (!trackingSourceMap[trackingSource]) trackingSourceMap[trackingSource] = new Set()
             trackingSourceMap[trackingSource].add(visitorId)
@@ -1462,6 +1518,10 @@ const Analytics: React.FC = () => {
             .map(([name, visitorSet]) => ({ name, count: visitorSet.size }))
             .sort((a, b) => b.count - a.count)
 
+          filterData.trafficChannels = Object.entries(trafficChannelsMap)
+            .map(([value, visitorSet]) => ({ value, name: getTrafficChannelLabel(value), count: visitorSet.size }))
+            .sort((a, b) => b.count - a.count)
+
           filterData.trackingSources = Object.entries(trackingSourceMap)
             .map(([value, visitorSet]) => ({ value, name: getTrackingSourceLabel(value), count: visitorSet.size }))
             .sort((a, b) => b.count - a.count)
@@ -1617,10 +1677,11 @@ const Analytics: React.FC = () => {
           setTopVisitors(topVisitorsList)
         } else {
           // Reset si no hay datos
+          const messageFilterData = getMessageFilterData(messageSummary)
           setOriginalRegistros(0)
           setAllSessions([])
           setSessions([])
-          setAvailableFilterData({})
+          setAvailableFilterData(hasAvailableFilterOptions(messageFilterData) ? messageFilterData : {})
           setPlatformsData([])
           setPlacementsData([])
           setDevicesData([])
@@ -1649,7 +1710,7 @@ const Analytics: React.FC = () => {
         }
       } catch {
         setWebTrackingConfigured(false)
-        setWhatsAppAnalytics(null)
+        setMessageAnalytics(null)
         setContactConversionsByDate([])
       } finally {
         setLoading(false)
@@ -1658,7 +1719,7 @@ const Analytics: React.FC = () => {
     }
 
     fetchAnalytics()
-  }, [apiRange.from, apiRange.to, viewType, convertToLocalTime, conversionFilters])
+  }, [apiRange.from, apiRange.to, viewType, convertToLocalTime, conversionFilters, messageSummaryFilterKey, messageSummaryFilters])
 
   // Efecto para filtrar sesiones cuando cambian los filtros seleccionados
   useEffect(() => {
@@ -1668,6 +1729,7 @@ const Analytics: React.FC = () => {
       const filtered = allSessions.filter((session: Session) => {
         for (const [field, values] of Object.entries(selectedFilters)) {
           if (values.length === 0) continue
+          if (isMessageFilterField(field)) continue
 
           let fieldMatch = false
 
@@ -1739,6 +1801,9 @@ const Analytics: React.FC = () => {
               case 'tracking_source':
                 if (getTrackingSourceValue(session) === value) fieldMatch = true
                 break
+              case 'channel':
+                if (normalizeTrafficChannelValue(session.channel) === value) fieldMatch = true
+                break
               case 'site_type':
                 if ((session.site_type || 'unknown') === value) fieldMatch = true
                 break
@@ -1778,8 +1843,7 @@ const Analytics: React.FC = () => {
     }
 
     // Detectar si hay filtros activos
-    const hasActiveFilters = Object.keys(selectedFilters).length > 0 &&
-      Object.values(selectedFilters).some(arr => arr.length > 0)
+    const hasActiveFilters = hasSelectedWebFilters(selectedFilters)
 
     // BUG FIX: Si no hay filtros activos, usar allSessions en vez de sessions
     const sessionsToProcess = hasActiveFilters ? sessions : allSessions
@@ -2003,7 +2067,7 @@ const Analytics: React.FC = () => {
 
   }, [sessions, allSessions, selectedFilters, viewType, convertToLocalTime])
 
-  const whatsAppMetrics = whatsAppAnalytics?.metrics
+  const messageMetrics = messageAnalytics?.metrics
 
   const webMetrics = [
     {
@@ -2032,28 +2096,28 @@ const Analytics: React.FC = () => {
     }
   ]
 
-  const whatsAppMetricCards = [
+  const messageMetricCards = [
     {
       title: 'Mensajes Entrantes',
-      value: formatChartNumber(whatsAppMetrics?.inboundMessages || 0),
+      value: formatChartNumber(messageMetrics?.inboundMessages || 0),
       delta: 0,
       icon: MessageCircle
     },
     {
       title: 'Conversaciones',
-      value: formatChartNumber(whatsAppMetrics?.conversations || 0),
+      value: formatChartNumber(messageMetrics?.conversations || 0),
       delta: 0,
       icon: Users
     },
     {
-      title: 'Contactos WhatsApp',
-      value: formatChartNumber(whatsAppMetrics?.contacts || 0),
+      title: 'Contactos nuevos',
+      value: formatChartNumber(messageMetrics?.contacts || 0),
       delta: 0,
       icon: UserCheck
     },
     {
       title: 'Con Atribución',
-      value: `${(whatsAppMetrics?.attributionRate || 0).toFixed(1)}%`,
+      value: `${(messageMetrics?.attributionRate || 0).toFixed(1)}%`,
       delta: 0,
       icon: Target
     }
@@ -2066,33 +2130,33 @@ const Analytics: React.FC = () => {
     metrics.returningUsers > 0 ||
     dailyTraffic.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   )
-  const hasWhatsAppAnalyticsData = Boolean(
-    whatsAppAnalytics?.status?.hasData ||
-    (whatsAppMetrics?.inboundMessages || 0) > 0 ||
-    (whatsAppMetrics?.conversations || 0) > 0 ||
-    (whatsAppMetrics?.contacts || 0) > 0 ||
-    (whatsAppAnalytics?.trend || []).some(item => (item.messages || 0) > 0)
+  const hasMessageAnalyticsData = Boolean(
+    messageAnalytics?.status?.hasData ||
+    (messageMetrics?.inboundMessages || 0) > 0 ||
+    (messageMetrics?.conversations || 0) > 0 ||
+    (messageMetrics?.contacts || 0) > 0 ||
+    (messageAnalytics?.trend || []).some(item => (item.messages || 0) > 0)
   )
   const showWebAnalyticsBlocks = Boolean(webTrackingConfigured || hasWebAnalyticsData)
-  const showWhatsAppAnalyticsBlocks = Boolean(
-    whatsAppAnalytics?.status?.connected ||
-    hasWhatsAppAnalyticsData
+  const showMessageAnalyticsBlocks = Boolean(
+    messageAnalytics?.status?.connected ||
+    hasMessageAnalyticsData
   )
 
   const metricSections: Array<{ title: string; metrics: typeof webMetrics }> = []
   if (showWebAnalyticsBlocks) {
     metricSections.push({ title: 'Tráfico del sitio', metrics: webMetrics })
   }
-  if (showWhatsAppAnalyticsBlocks) {
-    metricSections.push({ title: 'WhatsApp', metrics: whatsAppMetricCards })
+  if (showMessageAnalyticsBlocks) {
+    metricSections.push({ title: 'Mensajes', metrics: messageMetricCards })
   }
   const sourceGridClassName = metricSections.length > 1 ? 'grid gap-4 xl:grid-cols-2' : 'grid gap-4'
-  const analyticsSubtitle = showWebAnalyticsBlocks && showWhatsAppAnalyticsBlocks
-    ? 'Tráfico del sitio, mensajes de WhatsApp y conversiones por rango.'
+  const analyticsSubtitle = showWebAnalyticsBlocks && showMessageAnalyticsBlocks
+    ? 'Tráfico del sitio, mensajes y conversiones por rango.'
     : showWebAnalyticsBlocks
       ? 'Tráfico del sitio y conversiones por rango.'
-      : showWhatsAppAnalyticsBlocks
-        ? 'Mensajes de WhatsApp y conversiones por rango.'
+      : showMessageAnalyticsBlocks
+        ? 'Mensajes y conversiones por rango.'
         : 'Conecta una fuente para ver analíticas por rango.'
 
   const handleMonthPresetChange = (value: string) => {
@@ -2122,16 +2186,16 @@ const Analytics: React.FC = () => {
   }
 
   const periodLabel = viewType === 'year' ? 'año' : viewType === 'month' ? 'mes' : 'fecha'
-  const hasActiveFiltersForCharts = webTrackingConfigured && Object.values(selectedFilters).some(values => values.length > 0)
+  const hasActiveFiltersForCharts = showWebAnalyticsBlocks && hasSelectedWebFilters(selectedFilters)
   const sessionsForCharts = hasActiveFiltersForCharts ? sessions : allSessions
 
-  const whatsAppTrendData = React.useMemo<TrafficPoint[]>(() => (
-    (whatsAppAnalytics?.trend || []).map(item => ({
+  const messageTrendData = React.useMemo<TrafficPoint[]>(() => (
+    (messageAnalytics?.trend || []).map(item => ({
       label: formatPeriodLabel(item.label, viewType),
       value: Number(item.messages || 0),
       value2: 0
     }))
-  ), [viewType, whatsAppAnalytics])
+  ), [viewType, messageAnalytics])
 
   const mainChartOptions = React.useMemo<Array<{ value: AnalyticsMainChartView; label: string }>>(() => (
     [
@@ -2142,11 +2206,25 @@ const Analytics: React.FC = () => {
     ]
   ), [])
 
+  const showAnalyticsFilters = Boolean(
+    (showWebAnalyticsBlocks || showMessageAnalyticsBlocks) &&
+    hasAvailableFilterOptions(availableFilterData)
+  )
+
   useEffect(() => {
-    if (!webTrackingConfigured && Object.keys(selectedFilters).length > 0) {
-      setSelectedFilters({})
+    if (!hasSelectedFilters(selectedFilters)) return
+
+    const nextFilters = Object.fromEntries(
+      Object.entries(selectedFilters).filter(([field, values]) => {
+        if (!values.length) return false
+        return isMessageFilterField(field) ? showMessageAnalyticsBlocks : showWebAnalyticsBlocks
+      })
+    )
+
+    if (Object.keys(nextFilters).length !== Object.keys(selectedFilters).length) {
+      setSelectedFilters(nextFilters)
     }
-  }, [selectedFilters, webTrackingConfigured])
+  }, [selectedFilters, setSelectedFilters, showMessageAnalyticsBlocks, showWebAnalyticsBlocks])
 
   const conversionChartOptions = React.useMemo<Array<{ value: AnalyticsConversionChartView; label: string }>>(() => {
     const options: Array<{ value: AnalyticsConversionChartView; label: string }> = [
@@ -2154,7 +2232,7 @@ const Analytics: React.FC = () => {
       { value: 'prospects-customers', label: `${leadsLabel} vs ${customersLabel}` }
     ]
 
-    if (showWhatsAppAnalyticsBlocks) {
+    if (showMessageAnalyticsBlocks) {
       options.push({ value: 'messages-appointments', label: 'Mensajes vs Citas' })
     }
 
@@ -2163,7 +2241,7 @@ const Analytics: React.FC = () => {
     )
 
     return options
-  }, [customersLabel, leadsLabel, showWhatsAppAnalyticsBlocks])
+  }, [customersLabel, leadsLabel, showMessageAnalyticsBlocks])
 
   useEffect(() => {
     const validValues = conversionChartOptions.map(opt => opt.value)
@@ -2243,15 +2321,15 @@ const Analytics: React.FC = () => {
     }
   }, [dailyConversions, dailyTraffic, periodLabel, selectedMainChartView, sessionTrendData])
 
-  const whatsAppChartConfig = React.useMemo<ChartMetricConfig>(() => ({
-    title: 'Mensajes de WhatsApp',
+  const messageChartConfig = React.useMemo<ChartMetricConfig>(() => ({
+    title: 'Mensajes',
     description: `Mensajes recibidos por ${periodLabel}`,
     label1: 'Mensajes',
     color: ANALYTICS_CHART_COLORS.messages,
     color2: ANALYTICS_CHART_COLORS.appointments,
-    data: whatsAppTrendData,
-    emptyMessage: 'Sin mensajes de WhatsApp disponibles en este rango'
-  }), [periodLabel, whatsAppTrendData])
+    data: messageTrendData,
+    emptyMessage: 'Sin mensajes disponibles en este rango'
+  }), [periodLabel, messageTrendData])
 
   const conversionChartConfig = React.useMemo<ChartMetricConfig>(() => {
     switch (selectedConversionChartView) {
@@ -2280,12 +2358,12 @@ const Analytics: React.FC = () => {
       case 'messages-appointments':
         return {
           title: 'Mensajes vs Citas',
-          description: `Cuántos mensajes de WhatsApp llegan versus citas agendadas por ${periodLabel}`,
+          description: `Cuántos mensajes llegan versus citas agendadas por ${periodLabel}`,
           label1: 'Mensajes',
           label2: 'Citas',
           color: ANALYTICS_CHART_COLORS.messages,
           color2: ANALYTICS_CHART_COLORS.appointments,
-          data: mergeWhatsAppWithAppointments(whatsAppTrendData, conversionTrendData),
+          data: mergeMessagesWithAppointments(messageTrendData, conversionTrendData),
           emptyMessage: 'Sin mensajes o citas disponibles'
         }
       case 'appointments-patients':
@@ -2312,10 +2390,10 @@ const Analytics: React.FC = () => {
           emptyMessage: `Sin registros o ${customersLabelLower} disponibles`
         }
     }
-  }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, periodLabel, selectedConversionChartView, whatsAppTrendData])
+  }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, periodLabel, selectedConversionChartView, messageTrendData])
 
   const webChartHasData = webChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
-  const whatsAppChartHasData = whatsAppChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
+  const messageChartHasData = messageChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   const conversionChartHasData = conversionChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
 
   const getConversionClickConfig = useCallback((seriesKey: ChartSeriesKey): {
@@ -2427,7 +2505,7 @@ const Analytics: React.FC = () => {
 
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex flex-wrap items-center gap-3">
-                {showWebAnalyticsBlocks && (
+                {showAnalyticsFilters && (
                   <TreeFilter
                     availableData={availableFilterData}
                     selectedFilters={selectedFilters}
@@ -2611,20 +2689,20 @@ const Analytics: React.FC = () => {
           </Card>
           )}
 
-          {showWhatsAppAnalyticsBlocks && (
+          {showMessageAnalyticsBlocks && (
           <Card variant="glass" className="p-6">
             <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0 flex-1">
-                <h2 className="font-display text-lg font-semibold text-[var(--text)]">{whatsAppChartConfig.title}</h2>
+                <h2 className="font-display text-lg font-semibold text-[var(--text)]">{messageChartConfig.title}</h2>
                 <p className="mt-1 text-sm text-[var(--text-mute)]">
-                  {whatsAppChartConfig.description}
+                  {messageChartConfig.description}
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-3 lg:justify-end">
                 <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--text-dim)]">
                   <span className="inline-flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: whatsAppChartConfig.color }} />
-                    <span className="font-medium">{whatsAppChartConfig.label1}</span>
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: messageChartConfig.color }} />
+                    <span className="font-medium">{messageChartConfig.label1}</span>
                   </span>
                 </div>
               </div>
@@ -2632,30 +2710,30 @@ const Analytics: React.FC = () => {
 
             <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
               {loading && !hasLoadedAnalytics ? (
-                <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando mensajes de WhatsApp">
+                <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando mensajes">
                   {[48, 70, 58, 84, 62, 74].map((height, index) => (
                     <span
-                      key={`analytics-whatsapp-chart-skeleton-${index}`}
+                      key={`analytics-message-chart-skeleton-${index}`}
                       className="min-w-0 flex-1 animate-pulse rounded-t-lg bg-[var(--app-skeleton-base)]"
                       style={{ height: `${height}%` }}
                       aria-hidden="true"
                     />
                   ))}
                 </div>
-              ) : whatsAppChartHasData ? (
+              ) : messageChartHasData ? (
                 <AreaChart
-                  data={whatsAppChartConfig.data}
+                  data={messageChartConfig.data}
                   height={340}
                   showGrid
-                  color={whatsAppChartConfig.color}
-                  color2={whatsAppChartConfig.color2}
-                  legendLabels={{ label1: whatsAppChartConfig.label1 }}
+                  color={messageChartConfig.color}
+                  color2={messageChartConfig.color2}
+                  legendLabels={{ label1: messageChartConfig.label1 }}
                   formatValue={formatTrafficAxis}
                   formatTooltipValue={formatTrafficTooltip}
                 />
               ) : (
                 <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] px-4 text-center text-sm text-[var(--text-mute)]">
-                  {whatsAppChartConfig.emptyMessage}
+                  {messageChartConfig.emptyMessage}
                 </div>
               )}
             </div>

@@ -6,7 +6,7 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js'
 import { fetchAppointmentsForContacts, fetchPaymentsForContacts, getGroupExpression } from '../services/analyticsService.js'
-import { getWhatsAppApiAnalyticsSummary } from '../services/originDistributionService.js'
+import { getMessageAnalyticsSummary, getWhatsAppApiAnalyticsSummary } from '../services/originDistributionService.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { getNoTrackReason } from '../utils/noTracking.js'
 import fetch from 'node-fetch'
@@ -2204,6 +2204,31 @@ export async function getWhatsAppSummary(req, res) {
     res.json({ success: true, data })
   } catch (error) {
     logger.error('Error obteniendo resumen de WhatsApp para analíticas:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+}
+
+/**
+ * GET /api/tracking/messages-summary
+ * Resumen de mensajes entrantes por canal para Analíticas.
+ */
+export async function getMessagesSummary(req, res) {
+  try {
+    const { start, end, groupBy = 'day', channels = '', sources = '' } = req.query
+
+    if (!start || !end) {
+      return res.status(400).json({ error: 'Se requieren parámetros start y end' })
+    }
+
+    const range = await resolveDateRangeWithGHLTimezone({ startDate: start, endDate: end })
+    const data = await getMessageAnalyticsSummary(range, {
+      groupBy,
+      filters: { channels, sources }
+    })
+
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error('Error obteniendo resumen de mensajes para analíticas:', error)
     res.status(500).json({ error: 'Internal server error' })
   }
 }

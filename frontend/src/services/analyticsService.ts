@@ -43,7 +43,13 @@ export interface ContactConversionsByDate {
 
 export type ContactConversionListType = 'registrations' | 'prospects' | 'appointments' | 'attendances' | 'customers'
 
-export interface WhatsAppAnalyticsSummary {
+export interface MessageAnalyticsFilterOption {
+  name: string
+  value: string
+  count: number
+}
+
+export interface MessageAnalyticsSummary {
   metrics?: {
     inboundMessages?: number
     conversations?: number
@@ -51,11 +57,18 @@ export interface WhatsAppAnalyticsSummary {
     attributionRate?: number
   }
   trend?: Array<{ label: string; messages?: number }>
+  filters?: {
+    channels?: MessageAnalyticsFilterOption[]
+    sources?: MessageAnalyticsFilterOption[]
+  }
   status?: {
     connected?: boolean
     hasData?: boolean
+    channels?: Record<string, boolean>
   }
 }
+
+export type WhatsAppAnalyticsSummary = MessageAnalyticsSummary
 
 /**
  * Obtiene conteo de contactos con visitor_id por fecha de creación
@@ -77,15 +90,29 @@ export async function getContactConversionsByDate(startDate: string, endDate: st
 }
 
 /**
- * Obtiene resumen y tendencia de mensajes entrantes de WhatsApp.
+ * Obtiene resumen y tendencia de mensajes entrantes por canal.
+ */
+export async function getMessageAnalyticsSummary(
+  startDate: string,
+  endDate: string,
+  groupBy: 'day' | 'month' | 'year' = 'day',
+  filters: { channels?: string[]; sources?: string[] } = {}
+): Promise<MessageAnalyticsSummary> {
+  const params = new URLSearchParams({ start: startDate, end: endDate, groupBy })
+  if (filters.channels?.length) params.set('channels', filters.channels.join(','))
+  if (filters.sources?.length) params.set('sources', filters.sources.join(','))
+  return apiClient.get<MessageAnalyticsSummary>(`/tracking/messages-summary?${params.toString()}`)
+}
+
+/**
+ * Alias legacy para superficies que sigan pidiendo WhatsApp explícitamente.
  */
 export async function getWhatsAppAnalyticsSummary(
   startDate: string,
   endDate: string,
   groupBy: 'day' | 'month' | 'year' = 'day'
 ): Promise<WhatsAppAnalyticsSummary> {
-  const params = new URLSearchParams({ start: startDate, end: endDate, groupBy })
-  return apiClient.get<WhatsAppAnalyticsSummary>(`/tracking/whatsapp-summary?${params.toString()}`)
+  return getMessageAnalyticsSummary(startDate, endDate, groupBy, { channels: ['whatsapp'] })
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   getVisitorsList,
   getContactsByDate,
   getContactConversionsByDate,
+  getMessagesSummary,
   getWhatsAppSummary,
   getContactConversionsList
 } from '../controllers/trackingController.js'
@@ -76,6 +77,9 @@ router.get('/contact-conversions-by-date', getContactConversionsByDate)
 
 // Obtener resumen de mensajes WhatsApp por rango
 router.get('/whatsapp-summary', getWhatsAppSummary)
+
+// Obtener resumen de mensajes por canal
+router.get('/messages-summary', getMessagesSummary)
 
 // Obtener contactos de una bolita del gráfico de conversiones
 router.get('/contact-conversions-list', getContactConversionsList)

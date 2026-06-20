@@ -1,4 +1,5 @@
 import { db } from '../config/database.js'
+import { DateTime } from 'luxon'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { formatPlacementName } from '../utils/placementName.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
@@ -11,11 +12,90 @@ const toRanked = (bucketMap, limit = 10) =>
 
 const GENERIC_SOURCES = new Set(['Directo', 'Desconocido', 'Otro'])
 const isPostgres = Boolean(process.env.DATABASE_URL)
+const MESSAGE_CHANNEL_LABELS = {
+  whatsapp: 'WhatsApp',
+  messenger: 'Messenger',
+  instagram: 'Instagram DM',
+  email: 'Email'
+}
 
 const hasText = (value) => {
   if (value === null || value === undefined) return false
   const text = String(value).trim()
   return Boolean(text) && text !== 'null' && text !== 'undefined'
+}
+
+const parseJsonSafe = (value, fallback = null) => {
+  if (!hasText(value)) return fallback
+  if (typeof value === 'object') return value
+
+  try {
+    return JSON.parse(String(value))
+  } catch {
+    return fallback
+  }
+}
+
+const normalizeMessageChannel = (value, fallback = 'whatsapp') => {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized.includes('instagram') || normalized === 'ig') return 'instagram'
+  if (normalized.includes('messenger') || normalized === 'facebook' || normalized === 'fb') return 'messenger'
+  if (normalized.includes('email') || normalized.includes('correo') || normalized.includes('smtp')) return 'email'
+  if (normalized.includes('whatsapp') || normalized === 'wa' || normalized.includes('ycloud')) return 'whatsapp'
+  return fallback
+}
+
+const getMessageChannelLabel = (channel) =>
+  MESSAGE_CHANNEL_LABELS[normalizeMessageChannel(channel)] || 'Mensajes'
+
+const getMetaMessageIdentity = (message = {}) => {
+  if (hasText(message.contact_id)) return `contact:${message.contact_id}`
+  if (hasText(message.sender_id)) return `meta:${normalizeMessageChannel(message.platform, 'messenger')}:${message.sender_id}`
+  if (hasText(message.meta_social_contact_id)) return `meta-profile:${message.meta_social_contact_id}`
+  return `message:${message.id}`
+}
+
+const getEmailMessageIdentity = (message = {}) => {
+  if (hasText(message.contact_id)) return `contact:${message.contact_id}`
+  if (hasText(message.from_email)) return `email:${String(message.from_email).trim().toLowerCase()}`
+  return `message:${message.id}`
+}
+
+const getMetaMessageIdentitySql = (alias = 'msg') => `
+  CASE
+    WHEN COALESCE(${alias}.contact_id, '') != '' THEN 'contact:' || ${alias}.contact_id
+    WHEN COALESCE(${alias}.sender_id, '') != '' THEN 'meta:' || COALESCE(${alias}.platform, 'messenger') || ':' || ${alias}.sender_id
+    WHEN COALESCE(${alias}.meta_social_contact_id, '') != '' THEN 'meta-profile:' || ${alias}.meta_social_contact_id
+    ELSE 'message:' || ${alias}.id
+  END
+`
+
+const getEmailMessageIdentitySql = (alias = 'msg') => `
+  CASE
+    WHEN COALESCE(${alias}.contact_id, '') != '' THEN 'contact:' || ${alias}.contact_id
+    WHEN COALESCE(${alias}.from_email, '') != '' THEN 'email:' || LOWER(${alias}.from_email)
+    ELSE 'message:' || ${alias}.id
+  END
+`
+
+function readNestedValue(source, paths = []) {
+  for (const path of paths) {
+    const value = path.reduce((current, key) => (
+      current && typeof current === 'object' ? current[key] : undefined
+    ), source)
+    if (hasText(value)) return value
+  }
+  return null
+}
+
+function resolveMetaSurface(value) {
+  if (!hasText(value)) return null
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized.includes('instagram') || normalized === 'ig') return 'Instagram'
+  if (normalized.includes('messenger') || normalized.includes('m.me')) return 'Messenger'
+  if (normalized.includes('facebook') || normalized === 'fb') return 'Facebook'
+  if (normalized.includes('audience_network') || normalized.includes('audience network')) return 'Audience Network'
+  return null
 }
 
 const resolveWhatsAppApiSource = (message = {}) => {
@@ -51,6 +131,77 @@ const resolveWhatsAppApiSource = (message = {}) => {
     ? contactPlatform
     : 'WhatsApp'
 }
+
+const resolveMetaMessageSource = (message = {}) => {
+  const channel = normalizeMessageChannel(message.platform, 'messenger')
+  const channelLabel = getMessageChannelLabel(channel)
+  const referral = parseJsonSafe(message.referral_json, {})
+  const referralSourceUrl = readNestedValue(referral, [
+    ['referral_url'],
+    ['referer_uri'],
+    ['source_url'],
+    ['ads_context_data', 'source_url']
+  ])
+  const referralSourceId = readNestedValue(referral, [
+    ['source_id'],
+    ['ad_id'],
+    ['ads_context_data', 'ad_id'],
+    ['ads_context_data', 'source_id']
+  ])
+  const referralSourceType = readNestedValue(referral, [
+    ['source'],
+    ['type'],
+    ['ads_context_data', 'source']
+  ])
+  const referralSourceApp = readNestedValue(referral, [
+    ['source_app'],
+    ['sourceApp'],
+    ['entry_point'],
+    ['entryPoint'],
+    ['ads_context_data', 'source_app'],
+    ['ads_context_data', 'entry_point']
+  ])
+  const referralPlatform = readNestedValue(referral, [
+    ['platform'],
+    ['publisher_platform'],
+    ['source_platform'],
+    ['ads_context_data', 'platform'],
+    ['ads_context_data', 'publisher_platform'],
+    ['ads_context_data', 'source_platform']
+  ])
+  const explicitSurface = [
+    referralSourceUrl,
+    referralSourceApp,
+    referralPlatform,
+    message.platform
+  ].map(resolveMetaSurface).find(Boolean)
+
+  if (explicitSurface) {
+    return explicitSurface
+  }
+
+  const attributedPlatform = normalizeWhatsAppAttributionPlatform({
+    referral_source_url: referralSourceUrl,
+    referral_source_type: referralSourceType,
+    referral_source_id: referralSourceId,
+    referral_source_app: referralSourceApp,
+    source_app: referralSourceApp,
+    source_platform: referralPlatform,
+    source: referralPlatform || referralSourceType
+  })
+
+  if (attributedPlatform && !GENERIC_SOURCES.has(attributedPlatform) && attributedPlatform !== 'WhatsApp') {
+    return attributedPlatform
+  }
+
+  if (hasText(referralSourceId) || String(referralSourceType || '').toLowerCase().includes('ad')) {
+    return 'Meta Ads'
+  }
+
+  return channelLabel
+}
+
+const resolveEmailMessageSource = () => 'Email'
 
 const getWhatsAppApiIdentity = (message = {}) => {
   if (hasText(message.contact_id)) return `contact:${message.contact_id}`
@@ -111,6 +262,7 @@ async function getWhatsAppApiOriginMessages(range) {
       msg.whatsapp_api_contact_id,
       msg.contact_id,
       msg.phone,
+      COALESCE(msg.message_timestamp, msg.created_at) as message_timestamp,
       COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as detected_ctwa_clid,
       COALESCE(attr.detected_source_id, msg.detected_source_id) as detected_source_id,
       COALESCE(attr.detected_source_url, msg.detected_source_url) as detected_source_url,
@@ -129,6 +281,300 @@ async function getWhatsAppApiOriginMessages(range) {
     WHERE ${conditions.join(' AND ')}
     ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC, msg.id ASC
   `, [range.startUtc, range.endUtc])
+}
+
+function parseMessageDateTime(value) {
+  if (!hasText(value)) return null
+
+  const text = String(value).trim()
+  let parsed = DateTime.fromISO(text, { zone: 'utc' })
+  if (!parsed.isValid) parsed = DateTime.fromSQL(text, { zone: 'utc' })
+  if (!parsed.isValid) parsed = DateTime.fromJSDate(new Date(text), { zone: 'utc' })
+
+  return parsed.isValid ? parsed : null
+}
+
+function formatMessagePeriod(value, groupBy = 'day', timezone = 'UTC') {
+  const parsed = parseMessageDateTime(value)
+  if (!parsed) return null
+
+  const zoned = parsed.setZone(timezone || 'UTC')
+  if (!zoned.isValid) return null
+  if (groupBy === 'year') return zoned.toFormat('yyyy')
+  if (groupBy === 'month') return zoned.toFormat('yyyy-MM')
+  return zoned.toFormat('yyyy-MM-dd')
+}
+
+function normalizeMessageFilters(filters = {}) {
+  const normalizeList = (value) => {
+    if (Array.isArray(value)) {
+      return value.map(item => String(item || '').trim()).filter(Boolean)
+    }
+    if (!hasText(value)) return []
+    return String(value)
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+
+  return {
+    channels: normalizeList(filters.channels).map(channel => normalizeMessageChannel(channel)),
+    sources: normalizeList(filters.sources)
+  }
+}
+
+function applyMessageFilters(messages, rawFilters = {}) {
+  const filters = normalizeMessageFilters(rawFilters)
+  const selectedChannels = new Set(filters.channels)
+  const selectedSources = new Set(filters.sources.map(source => source.toLowerCase()))
+
+  return messages.filter(message => {
+    if (selectedChannels.size > 0 && !selectedChannels.has(message.channel)) return false
+    if (selectedSources.size > 0 && !selectedSources.has(String(message.source || '').toLowerCase())) return false
+    return true
+  })
+}
+
+function toMessageFilterOptions(messages) {
+  const channels = new Map()
+  const sources = new Map()
+
+  const add = (map, key, label, identity) => {
+    if (!hasText(key) || !hasText(label)) return
+    if (!map.has(key)) {
+      map.set(key, { name: label, value: key, identities: new Set() })
+    }
+    map.get(key).identities.add(identity)
+  }
+
+  messages.forEach(message => {
+    add(channels, message.channel, message.channelLabel, message.identity)
+    add(sources, message.source, message.source, message.identity)
+  })
+
+  const format = (map) => Array.from(map.values())
+    .map(item => ({ name: item.name, value: item.value, count: item.identities.size }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+
+  return {
+    channels: format(channels),
+    sources: format(sources)
+  }
+}
+
+async function getMetaMessageRows(range) {
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  const timestampColumn = 'COALESCE(msg.message_timestamp, msg.created_at)'
+  const conditions = [
+    "LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'",
+    `${timestampColumn} >= ?`,
+    `${timestampColumn} <= ?`
+  ]
+
+  if (hiddenCondition) {
+    conditions.push(`(msg.contact_id IS NULL OR ${hiddenCondition})`)
+  }
+
+  return db.all(`
+    SELECT
+      msg.id,
+      msg.platform,
+      msg.meta_social_contact_id,
+      msg.contact_id,
+      msg.sender_id,
+      msg.referral_json,
+      ${timestampColumn} as message_timestamp
+    FROM meta_social_messages msg
+    LEFT JOIN contacts c ON c.id = msg.contact_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY ${timestampColumn} ASC, msg.id ASC
+  `, [range.startUtc, range.endUtc]).catch(() => [])
+}
+
+async function getEmailMessageRows(range) {
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  const timestampColumn = 'COALESCE(msg.message_timestamp, msg.created_at)'
+  const conditions = [
+    "LOWER(COALESCE(msg.direction, 'outbound')) = 'inbound'",
+    `${timestampColumn} >= ?`,
+    `${timestampColumn} <= ?`
+  ]
+
+  if (hiddenCondition) {
+    conditions.push(`(msg.contact_id IS NULL OR ${hiddenCondition})`)
+  }
+
+  return db.all(`
+    SELECT
+      msg.id,
+      msg.contact_id,
+      msg.from_email,
+      ${timestampColumn} as message_timestamp
+    FROM email_messages msg
+    LEFT JOIN contacts c ON c.id = msg.contact_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY ${timestampColumn} ASC, msg.id ASC
+  `, [range.startUtc, range.endUtc]).catch(() => [])
+}
+
+async function getMessageAnalyticsRows(range) {
+  const [whatsappMessages, metaMessages, emailMessages] = await Promise.all([
+    getWhatsAppApiOriginMessages(range).catch(() => []),
+    getMetaMessageRows(range),
+    getEmailMessageRows(range)
+  ])
+
+  const rows = []
+
+  whatsappMessages.forEach(message => {
+    const identity = getWhatsAppApiIdentity(message)
+    const source = resolveWhatsAppApiSource(message)
+    rows.push({
+      id: `whatsapp:${message.id}`,
+      channel: 'whatsapp',
+      channelLabel: 'WhatsApp',
+      source,
+      identity,
+      timestamp: message.message_timestamp,
+      attributed: source && source !== 'WhatsApp' && !GENERIC_SOURCES.has(source)
+    })
+  })
+
+  metaMessages.forEach(message => {
+    const channel = normalizeMessageChannel(message.platform, 'messenger')
+    const source = resolveMetaMessageSource(message)
+    rows.push({
+      id: `meta:${message.id}`,
+      channel,
+      channelLabel: getMessageChannelLabel(channel),
+      source,
+      identity: getMetaMessageIdentity(message),
+      timestamp: message.message_timestamp,
+      attributed: source === 'Meta Ads'
+    })
+  })
+
+  emailMessages.forEach(message => {
+    const source = resolveEmailMessageSource(message)
+    rows.push({
+      id: `email:${message.id}`,
+      channel: 'email',
+      channelLabel: 'Email',
+      source,
+      identity: getEmailMessageIdentity(message),
+      timestamp: message.message_timestamp,
+      attributed: false
+    })
+  })
+
+  return rows
+}
+
+async function getMessageFirstSeenCount(range) {
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  const hiddenSql = hiddenCondition ? `AND (msg.contact_id IS NULL OR ${hiddenCondition})` : ''
+  const whatsappTimestamp = 'COALESCE(msg.message_timestamp, msg.created_at)'
+  const metaTimestamp = 'COALESCE(msg.message_timestamp, msg.created_at)'
+  const emailTimestamp = 'COALESCE(msg.message_timestamp, msg.created_at)'
+
+  const row = await db.get(`
+    SELECT COUNT(*) as total
+    FROM (
+      SELECT identity, MIN(first_seen_at) as first_seen_at
+      FROM (
+        SELECT ${getWhatsAppApiIdentitySql('msg')} as identity, MIN(${whatsappTimestamp}) as first_seen_at
+        FROM whatsapp_api_messages msg
+        LEFT JOIN contacts c ON c.id = msg.contact_id
+        WHERE LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'
+          ${hiddenSql}
+        GROUP BY identity
+
+        UNION ALL
+
+        SELECT ${getMetaMessageIdentitySql('msg')} as identity, MIN(${metaTimestamp}) as first_seen_at
+        FROM meta_social_messages msg
+        LEFT JOIN contacts c ON c.id = msg.contact_id
+        WHERE LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'
+          ${hiddenSql}
+        GROUP BY identity
+
+        UNION ALL
+
+        SELECT ${getEmailMessageIdentitySql('msg')} as identity, MIN(${emailTimestamp}) as first_seen_at
+        FROM email_messages msg
+        LEFT JOIN contacts c ON c.id = msg.contact_id
+        WHERE LOWER(COALESCE(msg.direction, 'outbound')) = 'inbound'
+          ${hiddenSql}
+        GROUP BY identity
+      ) all_first_seen
+      GROUP BY identity
+    ) first_seen
+    WHERE first_seen_at >= ? AND first_seen_at <= ?
+  `, [range.startUtc, range.endUtc]).catch(() => ({ total: 0 }))
+
+  return Number(row?.total || 0)
+}
+
+async function getMessageConnectionStatus() {
+  const [phoneRows, metaConfig, metaContactRows, emailConfigRow] = await Promise.all([
+    db.get('SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers').catch(() => ({ total: 0 })),
+    db.get('SELECT page_id, instagram_account_id FROM meta_config LIMIT 1').catch(() => null),
+    db.get('SELECT COUNT(*) as total FROM meta_social_contacts').catch(() => ({ total: 0 })),
+    db.get("SELECT config_value FROM app_config WHERE config_key = 'email_smtp_config'").catch(() => null)
+  ])
+
+  const emailConfig = parseJsonSafe(emailConfigRow?.config_value, {})
+  return {
+    whatsapp: Number(phoneRows?.total || 0) > 0,
+    messenger: hasText(metaConfig?.page_id) || Number(metaContactRows?.total || 0) > 0,
+    instagram: hasText(metaConfig?.instagram_account_id) || Number(metaContactRows?.total || 0) > 0,
+    email: Boolean(emailConfig?.connected)
+  }
+}
+
+export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filters = {} } = {}) {
+  const normalizedGroupBy = ['day', 'month', 'year'].includes(groupBy) ? groupBy : 'day'
+  const normalizedFilters = normalizeMessageFilters(filters)
+  const hasActiveFilters = normalizedFilters.channels.length > 0 || normalizedFilters.sources.length > 0
+  const allMessages = await getMessageAnalyticsRows(range)
+  const filteredMessages = applyMessageFilters(allMessages, normalizedFilters)
+  const identities = new Set()
+  const attributedIdentities = new Set()
+  const trendMap = new Map()
+
+  filteredMessages.forEach(message => {
+    identities.add(message.identity)
+    if (message.attributed) attributedIdentities.add(message.identity)
+
+    const period = formatMessagePeriod(message.timestamp, normalizedGroupBy, range.appliedTimezone)
+    if (!period) return
+    trendMap.set(period, (trendMap.get(period) || 0) + 1)
+  })
+
+  const connectionStatus = await getMessageConnectionStatus()
+  const connected = Object.values(connectionStatus).some(Boolean)
+  const firstSeenCount = hasActiveFilters ? identities.size : await getMessageFirstSeenCount(range)
+
+  return {
+    metrics: {
+      inboundMessages: filteredMessages.length,
+      conversations: identities.size,
+      contacts: firstSeenCount,
+      attributionRate: identities.size > 0 ? Number(((attributedIdentities.size / identities.size) * 100).toFixed(1)) : 0
+    },
+    trend: Array.from(trendMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([label, messages]) => ({ label, messages })),
+    filters: toMessageFilterOptions(allMessages),
+    status: {
+      connected,
+      hasData: allMessages.length > 0,
+      channels: connectionStatus
+    }
+  }
 }
 
 export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } = {}) {

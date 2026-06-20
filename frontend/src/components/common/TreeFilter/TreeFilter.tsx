@@ -13,7 +13,8 @@ import {
   Monitor,
   MapPin,
   UserCheck,
-  Layers
+  Layers,
+  MessageCircle
 } from 'lucide-react'
 import { AdHierarchyMenu } from './AdHierarchyMenu'
 import { HelpTooltip } from '../HelpTooltip'
@@ -65,6 +66,9 @@ interface TreeFilterProps {
     countries?: Array<{ name: string; count: number }>
     placements?: Array<{ name: string; count: number }>
     conversions?: Array<{ stage: string; name: string; count: number }>
+    trafficChannels?: Array<{ name: string; value: string; count: number }>
+    messageChannels?: Array<{ name: string; value: string; count: number }>
+    messageSources?: Array<{ name: string; value: string; count: number }>
     trackingSources?: Array<{ name: string; value: string; count: number }>
     siteTypes?: Array<{ name: string; value: string; count: number }>
     nativeSites?: Array<{ name: string; value: string; count: number }>
@@ -142,6 +146,54 @@ export function TreeFilter({
           id: `tracking_source_${source.value}`,
           label: source.name,
           field: 'tracking_source',
+          value: source.value,
+          count: source.count
+        }))
+      })
+    }
+
+    // Categoría: Canales de tráfico
+    if (availableData.trafficChannels?.length) {
+      tree.push({
+        id: 'traffic_channels',
+        label: 'Canales de tráfico',
+        icon: Share2,
+        children: availableData.trafficChannels.map(channel => ({
+          id: `traffic_channel_${channel.value}`,
+          label: channel.name,
+          field: 'channel',
+          value: channel.value,
+          count: channel.count
+        }))
+      })
+    }
+
+    // Categoría: Canales de mensajes
+    if (availableData.messageChannels?.length) {
+      tree.push({
+        id: 'message_channels',
+        label: 'Canales de mensajes',
+        icon: MessageCircle,
+        children: availableData.messageChannels.map(channel => ({
+          id: `message_channel_${channel.value}`,
+          label: channel.name,
+          field: 'message_channel',
+          value: channel.value,
+          count: channel.count
+        }))
+      })
+    }
+
+    // Categoría: Fuentes de mensajes
+    if (availableData.messageSources?.length) {
+      tree.push({
+        id: 'message_sources',
+        label: 'Fuentes de mensajes',
+        icon: Share2,
+        children: availableData.messageSources.map(source => ({
+          id: `message_source_${source.value}`,
+          label: source.name,
+          field: 'message_source',
           value: source.value,
           count: source.count
         }))
