@@ -693,7 +693,8 @@ const DEFAULT_GOAL_WORKFLOW_CONFIG = {
     owner: 'human',
     calendarId: null,
     url: '',
-    trackingParam: DEFAULT_GOAL_TRACKING_PARAM
+    trackingParam: DEFAULT_GOAL_TRACKING_PARAM,
+    allowOverlappingAppointments: false
   },
   sales: {
     owner: 'human',
@@ -818,7 +819,13 @@ export function normalizeAgentGoalWorkflow(input) {
       owner: normalizeGoalOwner(appointments.owner, DEFAULT_GOAL_WORKFLOW_CONFIG.appointments.owner),
       calendarId: String(appointments.calendarId || '').trim() || null,
       url: normalizeGoalUrl(appointments.url),
-      trackingParam: normalizeTrackingParam(appointments.trackingParam)
+      trackingParam: normalizeTrackingParam(appointments.trackingParam),
+      allowOverlappingAppointments: toBoolean(
+        appointments.allowOverlappingAppointments ??
+        appointments.allow_overlapping_appointments ??
+        appointments.allowOverlaps ??
+        appointments.allow_overlaps
+      )
     },
     sales: {
       owner: normalizeGoalOwner(sales.owner, DEFAULT_GOAL_WORKFLOW_CONFIG.sales.owner),

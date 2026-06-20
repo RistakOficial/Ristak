@@ -121,6 +121,11 @@ const salesPaymentModeOptions: Array<{ value: AgentSalesPaymentMode; label: stri
   { value: 'deposit', label: 'Solicitar anticipo' }
 ]
 
+const appointmentOverlapOptions: Array<{ value: BinaryChoice; label: string }> = [
+  { value: 'no', label: 'No, cuidar horarios únicos' },
+  { value: 'yes', label: 'Sí, permitir mismo horario' }
+]
+
 const completionModeOptions: Array<{ value: AgentCompletionMode; label: string }> = [
   { value: 'notify_only', label: 'Sacarlo del chat del bot y avisarme' },
   { value: 'assign_user', label: 'Asignar a un usuario y avisar' }
@@ -207,7 +212,8 @@ const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
     owner: 'human',
     calendarId: null,
     url: '',
-    trackingParam: DEFAULT_GOAL_TRACKING_PARAM
+    trackingParam: DEFAULT_GOAL_TRACKING_PARAM,
+    allowOverlappingAppointments: false
   },
   sales: {
     owner: 'human',
@@ -2415,28 +2421,54 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             <div className={styles.agentOpsGrid}>
 
               {agent.successAction === 'book_appointment' && (
-                <div className={styles.field}>
-                  <label className={styles.label}>Calendario</label>
-                  <CustomSelect
-                    value={agent.defaultCalendarId || ''}
-                    onChange={(event) => {
-                      const calendarId = event.target.value || null
-                      onChange({
-                        defaultCalendarId: calendarId,
-                        goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
-                          appointments: { ...goalWorkflow.appointments, owner: 'ai', calendarId }
+                <>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Calendario</label>
+                    <CustomSelect
+                      value={agent.defaultCalendarId || ''}
+                      onChange={(event) => {
+                        const calendarId = event.target.value || null
+                        onChange({
+                          defaultCalendarId: calendarId,
+                          goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
+                            appointments: { ...goalWorkflow.appointments, owner: 'ai', calendarId }
+                          })
                         })
-                      })
-                    }}
-                    portal
-                  >
-                    <option value="">Que elija entre calendarios activos</option>
-                    {calendars.map((calendar) => (
-                      <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
-                    ))}
-                  </CustomSelect>
-                  <p className={styles.helper}>Sólo agenda con horarios reales.</p>
-                </div>
+                      }}
+                      portal
+                    >
+                      <option value="">Que elija entre calendarios activos</option>
+                      {calendars.map((calendar) => (
+                        <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
+                      ))}
+                    </CustomSelect>
+                    <p className={styles.helper}>Sólo agenda con horarios reales.</p>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label}>Empalme de citas</label>
+                    <CustomSelect
+                      value={goalWorkflow.appointments.allowOverlappingAppointments ? 'yes' : 'no'}
+                      onChange={(event) => {
+                        updateGoalWorkflow({
+                          appointments: {
+                            ...goalWorkflow.appointments,
+                            owner: 'ai',
+                            allowOverlappingAppointments: event.target.value === 'yes'
+                          }
+                        })
+                      }}
+                      portal
+                    >
+                      {appointmentOverlapOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                    <p className={styles.helper}>
+                      Si está apagado, la IA sólo ofrece horarios sin otra cita. Si está prendido, puede agendar varias personas en el mismo horario.
+                    </p>
+                  </div>
+                </>
               )}
 
               {agent.successAction === 'send_goal_url' && (agent.objective === 'citas' || agent.objective === 'ventas') && (

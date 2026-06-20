@@ -65,6 +65,13 @@ test('getLocalFreeSlots respeta el cupo por slot en calendarios HighLevel', asyn
       'un calendario HighLevel con cupo 2 debe conservar el slot tras una cita'
     )
 
+    slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC', { appointmentLimit: 1 })
+    assert.equal(
+      slots[0]?.slots.includes(expectedSlot),
+      false,
+      'el agente puede forzar horarios únicos aunque el calendario permita cupo mayor'
+    )
+
     await createLocalAppointment({
       id: secondAppointmentId,
       calendarId,
@@ -84,6 +91,12 @@ test('getLocalFreeSlots respeta el cupo por slot en calendarios HighLevel', asyn
       slots[0]?.slots.includes(expectedSlot),
       false,
       'el slot se oculta cuando alcanza el cupo importado de HighLevel'
+    )
+
+    slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC', { ignoreAppointmentConflicts: true })
+    assert.ok(
+      slots[0]?.slots.includes(expectedSlot),
+      'el agente puede permitir empalmes y conservar el horario aunque ya tenga citas'
     )
   } finally {
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)

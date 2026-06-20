@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { DateTime } from 'luxon'
 
 import { db } from '../src/config/database.js'
+import { getAccountTimezone } from '../src/utils/dateUtils.js'
 import { CHEAPEST_OPENAI_MODEL } from '../src/config/openAIModels.js'
 import { APPOINTMENT_CONFIRMATION_MODEL } from '../src/agents/appointmentConfirmationAgent.js'
 import {
@@ -27,6 +30,10 @@ import {
   updateConversationalAgent
 } from '../src/services/conversationalAgentService.js'
 import { createTriggerLink } from '../src/services/triggerLinksService.js'
+import {
+  createLocalAppointment,
+  upsertLocalCalendar
+} from '../src/services/localCalendarService.js'
 import {
   buildReplyPartDelaySchedule,
   buildPendingReplyContextMessage,
@@ -184,7 +191,8 @@ test('normaliza flujo por enlace con parametro de seguimiento', () => {
     appointments: {
       owner: 'url',
       url: 'agenda.test/reserva',
-      trackingParam: 'booking-ref!'
+      trackingParam: 'booking-ref!',
+      allowOverlappingAppointments: true
     },
     sales: {
       owner: 'url',
@@ -215,6 +223,7 @@ test('normaliza flujo por enlace con parametro de seguimiento', () => {
   assert.equal(workflow.appointments.owner, 'url')
   assert.equal(workflow.appointments.url, 'https://agenda.test/reserva')
   assert.equal(workflow.appointments.trackingParam, 'booking-ref')
+  assert.equal(workflow.appointments.allowOverlappingAppointments, true)
   assert.equal(workflow.sales.owner, 'url')
   assert.equal(workflow.sales.paymentMode, 'deposit')
   assert.equal(workflow.sales.trackingParam, 'order_id')
@@ -251,6 +260,135 @@ test('normaliza venta completa como modo default sin forzar moneda fija', () => 
   assert.equal(workflow.deposit.enabled, true)
   assert.equal(workflow.deposit.amount, 500)
   assert.equal(workflow.deposit.currency, '')
+})
+
+test('agenda conversacional respeta la politica de empalme de citas', async () => {
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_conv_overlap_${suffix}`
+  const appointmentId = `rstk_appt_conv_overlap_${suffix}`
+  const contactId = `rstk_contact_conv_overlap_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 30 }).startOf('day')
+  const nextMonday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  const dateKey = nextMonday.toISODate()
+  const slotStart = nextMonday
+    .set({ hour: 15, minute: 0, second: 0, millisecond: 0 })
+    .toUTC()
+    .toJSDate()
+  const slotEnd = new Date(slotStart.getTime() + 60 * 60000)
+  const expectedSlot = slotStart.toISOString()
+  const includesExpectedSlot = (days = []) => days
+    .flatMap((day) => Array.isArray(day.slots) ? day.slots : [])
+    .some((slot) => Math.abs(new Date(slot).getTime() - slotStart.getTime()) < 1000)
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: 'loc_conv_overlap_test',
+      name: 'Calendario agente empalme',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [
+        {
+          daysOfTheWeek: [1],
+          hours: [{ openHour: 15, openMinute: 0, closeHour: 17, closeMinute: 0 }]
+        }
+      ]
+    }, {
+      source: 'ristak',
+      syncStatus: 'synced'
+    })
+
+    await createLocalAppointment({
+      id: appointmentId,
+      calendarId,
+      contactId: 'contact_existing_overlap',
+      locationId: 'loc_conv_overlap_test',
+      title: 'Cita existente',
+      source: 'ristak',
+      startTime: slotStart.toISOString(),
+      endTime: slotEnd.toISOString(),
+      appointmentStatus: 'confirmed'
+    }, {
+      locationId: 'loc_conv_overlap_test',
+      syncStatus: 'synced'
+    })
+
+    const blockedCtx = {
+      contactId,
+      dryRun: true,
+      actions: [],
+      config: {
+        objective: 'citas',
+        successAction: 'book_appointment',
+        goalWorkflow: {
+          appointments: {
+            owner: 'ai',
+            calendarId,
+            allowOverlappingAppointments: false
+          }
+        }
+      }
+    }
+    const blockedTools = createConversationalTools(blockedCtx)
+    const blockedFreeSlots = blockedTools.find((item) => item.name === 'get_free_slots')
+    const blockedBook = blockedTools.find((item) => item.name === 'book_appointment')
+    assert.ok(blockedFreeSlots)
+    assert.ok(blockedBook)
+
+    const unavailable = await blockedFreeSlots.invoke(null, JSON.stringify({ calendarId, startDate: dateKey, endDate: dateKey }))
+    assert.equal(unavailable.overlapPolicy, 'blocked')
+    assert.equal(includesExpectedSlot(unavailable.slots), false)
+
+    const blockedAppointment = await blockedBook.invoke(null, JSON.stringify({
+      calendarId,
+      startTime: expectedSlot,
+      title: 'Cita nueva',
+      notes: 'Debe bloquearse'
+    }))
+    assert.equal(blockedAppointment.ok, false)
+    assert.equal(blockedAppointment.overlapBlocked, true)
+    assert.match(blockedAppointment.error, /no permite empalmar citas/)
+
+    const allowedCtx = {
+      ...blockedCtx,
+      actions: [],
+      config: {
+        ...blockedCtx.config,
+        goalWorkflow: {
+          appointments: {
+            owner: 'ai',
+            calendarId,
+            allowOverlappingAppointments: true
+          }
+        }
+      }
+    }
+    const allowedTools = createConversationalTools(allowedCtx)
+    const allowedFreeSlots = allowedTools.find((item) => item.name === 'get_free_slots')
+    const allowedBook = allowedTools.find((item) => item.name === 'book_appointment')
+    assert.ok(allowedFreeSlots)
+    assert.ok(allowedBook)
+
+    const available = await allowedFreeSlots.invoke(null, JSON.stringify({ calendarId, startDate: dateKey, endDate: dateKey }))
+    assert.equal(available.overlapPolicy, 'allowed')
+    assert.ok(includesExpectedSlot(available.slots))
+
+    const allowedAppointment = await allowedBook.invoke(null, JSON.stringify({
+      calendarId,
+      startTime: expectedSlot,
+      title: 'Cita nueva',
+      notes: 'Puede empalmar'
+    }))
+    assert.equal(allowedAppointment.ok, true)
+    assert.equal(allowedAppointment.simulated, true)
+    assert.equal(allowedAppointment.appointment.startTime, expectedSlot)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
 })
 
 test('tool de avance bloquea la meta si falta validar anticipo configurado', async () => {

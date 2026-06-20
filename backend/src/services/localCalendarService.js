@@ -1538,7 +1538,18 @@ function getSlotAppointmentLimit(calendar = {}) {
   return Math.max(1, toInt(calendar.appoinmentPerSlot ?? calendar.appointmentPerSlot ?? calendar.appoinment_per_slot, 1))
 }
 
-export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone) {
+function getEffectiveSlotAppointmentLimit(calendar = {}, options = {}) {
+  if (options.ignoreAppointmentConflicts) return Number.POSITIVE_INFINITY
+
+  const overrideLimit = Number(options.appointmentLimit)
+  if (Number.isFinite(overrideLimit) && overrideLimit > 0) {
+    return Math.max(1, Math.trunc(overrideLimit))
+  }
+
+  return getSlotAppointmentLimit(calendar)
+}
+
+export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone, options = {}) {
   const calendar = await getLocalCalendar(calendarId)
   if (!calendar) return []
 
@@ -1557,7 +1568,7 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
 
   const durationMinutes = Math.max(1, toInt(calendar.slotDuration, 60))
   const intervalMinutes = Math.max(1, toInt(calendar.slotInterval, durationMinutes))
-  const appointmentLimit = getSlotAppointmentLimit(calendar)
+  const appointmentLimit = getEffectiveSlotAppointmentLimit(calendar, options)
   const nowMs = Date.now()
   const slotsByDate = []
 
@@ -1592,7 +1603,7 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
           new Date(event.startTime).getTime(),
           new Date(event.endTime || event.startTime).getTime()
         )).length
-        const hasConflict = overlappingAppointments >= appointmentLimit
+        const hasConflict = Number.isFinite(appointmentLimit) && overlappingAppointments >= appointmentLimit
 
         if (!hasConflict && slotStartMs >= nowMs) {
           const slotIso = slot.toUTC().toISO()

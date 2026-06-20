@@ -5,7 +5,8 @@ import { PUBLIC_URL } from '../../config/constants.js'
 import { invokeController, toToolResult } from '../invokeController.js'
 import { createAppointment } from '../../controllers/calendarsController.js'
 import { updateContact } from '../../controllers/contactsController.js'
-import { listCalendarsTool, getFreeSlotsTool } from '../tools/appointmentTools.js'
+import { listCalendarsTool } from '../tools/appointmentTools.js'
+import { getLocalFreeSlots } from '../../services/localCalendarService.js'
 import { createSinglePaymentLink } from '../../services/paymentFlowService.js'
 import { getBusinessProfileSnapshot } from '../../services/aiAgentService.js'
 import { buildTriggerLinkPublicUrl, getTriggerLink } from '../../services/triggerLinksService.js'
@@ -51,6 +52,22 @@ function getConfiguredGoalUrl(config = {}) {
 
 function getConfiguredTriggerLink(config = {}) {
   return config.goalWorkflow?.triggerLink || {}
+}
+
+function toBoolean(value) {
+  return [true, 1, '1', 'true', 'yes', 'on'].includes(
+    typeof value === 'string' ? value.trim().toLowerCase() : value
+  )
+}
+
+function allowAppointmentOverlaps(config = {}) {
+  const appointments = config.goalWorkflow?.appointments || {}
+  return toBoolean(
+    appointments.allowOverlappingAppointments ??
+    appointments.allow_overlapping_appointments ??
+    appointments.allowOverlaps ??
+    appointments.allow_overlaps
+  )
 }
 
 function getSalesPaymentMode(config = {}) {
@@ -396,6 +413,39 @@ export function createConversationalTools(ctx) {
     }
   })
 
+  const getFreeSlotsForAgentTool = tool({
+    name: 'get_free_slots',
+    description: allowAppointmentOverlaps(config)
+      ? 'Obtiene horarios de atención de un calendario para agendar. Este agente SÍ tiene permitido empalmar citas, así que puede devolver horarios aunque ya exista otra cita en ese mismo horario.'
+      : 'Obtiene horarios libres de un calendario en un rango de fechas. Este agente NO puede empalmar citas: sólo devuelve horarios sin otra cita activa en ese horario.',
+    parameters: z.object({
+      calendarId: z.string().describe('ID del calendario (usa list_calendars)'),
+      startDate: z.string().describe('Fecha inicial YYYY-MM-DD'),
+      endDate: z.string().describe('Fecha final YYYY-MM-DD')
+    }),
+    execute: async ({ calendarId, startDate, endDate }) => {
+      const overlapsAllowed = allowAppointmentOverlaps(config)
+      const slots = await getLocalFreeSlots(calendarId, startDate, endDate, null, {
+        ignoreAppointmentConflicts: overlapsAllowed,
+        appointmentLimit: overlapsAllowed ? undefined : 1
+      })
+
+      if (!Array.isArray(slots) || !slots.length) {
+        return { ok: true, total: 0, slots: [], note: 'Sin horarios disponibles en ese rango (o el calendario no existe).' }
+      }
+
+      return {
+        ok: true,
+        total: slots.reduce((total, day) => total + (Array.isArray(day.slots) ? day.slots.length : 0), 0),
+        overlapPolicy: overlapsAllowed ? 'allowed' : 'blocked',
+        note: overlapsAllowed
+          ? 'Empalme permitido: estos horarios respetan horas de atención, pero pueden coincidir con citas existentes.'
+          : 'Empalme bloqueado: estos horarios no tienen otra cita activa encima.',
+        slots
+      }
+    }
+  })
+
   const bookAppointmentTool = tool({
     name: 'book_appointment',
     description: 'Agenda la cita del contacto en un horario REAL obtenido con get_free_slots y confirmado por la persona. Calcula el fin con la duración del calendario automáticamente. Nunca la uses sin que la persona haya confirmado el horario.',
@@ -448,6 +498,34 @@ export function createConversationalTools(ctx) {
 
       const durationMinutes = Number(calendar.slot_duration) > 0 ? Number(calendar.slot_duration) : 60
       const end = new Date(start.getTime() + durationMinutes * 60000)
+
+      if (!allowAppointmentOverlaps(config)) {
+        const conflict = await db.get(`
+          SELECT id, title, start_time, end_time, appointment_status, status
+          FROM appointments
+          WHERE calendar_id = ? AND deleted_at IS NULL
+            AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'noshow')
+            AND start_time < ?
+            AND COALESCE(end_time, start_time) > ?
+          ORDER BY start_time ASC LIMIT 1
+        `, [calendarId, end.toISOString(), start.toISOString()])
+
+        if (conflict) {
+          return {
+            ok: false,
+            overlapBlocked: true,
+            error: 'Ese horario ya tiene una cita. Esta configuración no permite empalmar citas; usa get_free_slots y ofrece otro horario libre.',
+            existingAppointment: {
+              id: conflict.id,
+              title: conflict.title,
+              startTime: conflict.start_time,
+              endTime: conflict.end_time,
+              status: conflict.appointment_status || conflict.status
+            }
+          }
+        }
+      }
+
       const contact = await db.get('SELECT full_name, phone FROM contacts WHERE id = ?', [ctx.contactId])
       const finalTitle = title || `Cita - ${contact?.full_name || contact?.phone || 'WhatsApp'}`
 
@@ -815,7 +893,7 @@ export function createConversationalTools(ctx) {
 
   // Disponibilidad y agenda: lectura siempre (para responder horarios reales);
   // escritura solo si el negocio configuró agenda directa.
-  tools.push(listCalendarsTool, getFreeSlotsTool)
+  tools.push(listCalendarsTool, getFreeSlotsForAgentTool)
   if (!ctx.followUpMode) {
     if (config?.successAction === 'book_appointment') tools.push(bookAppointmentTool)
     if (config?.successAction === 'ready_to_buy') tools.push(createPaymentLinkTool)

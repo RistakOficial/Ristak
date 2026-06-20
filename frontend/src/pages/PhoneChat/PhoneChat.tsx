@@ -303,7 +303,8 @@ const DEFAULT_PHONE_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     owner: 'human',
     calendarId: null,
     url: '',
-    trackingParam: 'ristak_goal_id'
+    trackingParam: 'ristak_goal_id',
+    allowOverlappingAppointments: false
   },
   sales: {
     owner: 'human',

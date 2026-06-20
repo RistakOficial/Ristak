@@ -81,6 +81,7 @@ export interface AgentGoalWorkflowConfig {
     calendarId: string | null
     url: string
     trackingParam: string
+    allowOverlappingAppointments: boolean
   }
   sales: {
     owner: AgentGoalOwner
@@ -388,7 +389,8 @@ const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     owner: 'human',
     calendarId: null,
     url: '',
-    trackingParam: 'ristak_goal_id'
+    trackingParam: 'ristak_goal_id',
+    allowOverlappingAppointments: false
   },
   sales: {
     owner: 'human',
@@ -472,6 +474,21 @@ function normalizeAgentConfig<T extends ConversationalAgentConfig | null | undef
 }
 
 function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
+  const appointments = (agent.goalWorkflow?.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']> & {
+    allow_overlapping_appointments?: unknown
+    allowOverlaps?: unknown
+    allow_overlaps?: unknown
+  }
+  const allowOverlappingAppointments = [
+    appointments.allowOverlappingAppointments,
+    appointments.allow_overlapping_appointments,
+    appointments.allowOverlaps,
+    appointments.allow_overlaps
+  ].some((value) => {
+    const normalized = String(value || '').trim().toLowerCase()
+    return value === true || value === 1 || ['1', 'true', 'yes', 'on'].includes(normalized)
+  })
+
   return {
     ...agent,
     aiProvider: normalizeConversationalAIProvider(agent.aiProvider),
@@ -493,7 +510,8 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
       ...((agent.goalWorkflow || {}) as Partial<AgentGoalWorkflowConfig>),
       appointments: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.appointments,
-        ...((agent.goalWorkflow?.appointments || {}) as Partial<AgentGoalWorkflowConfig['appointments']>)
+        ...appointments,
+        allowOverlappingAppointments
       },
       sales: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.sales,

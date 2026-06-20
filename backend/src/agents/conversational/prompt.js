@@ -1562,6 +1562,18 @@ function actionSupportsDeposit(config = {}) {
   )
 }
 
+function appointmentOverlapsAllowed(config = {}) {
+  const appointments = config.goalWorkflow?.appointments || {}
+  return [
+    appointments.allowOverlappingAppointments,
+    appointments.allow_overlapping_appointments,
+    appointments.allowOverlaps,
+    appointments.allow_overlaps
+  ].some((value) => [true, 1, '1', 'true', 'yes', 'on'].includes(
+    typeof value === 'string' ? value.trim().toLowerCase() : value
+  ))
+}
+
 function getAccountCurrencyLabel(accountLocale = {}) {
   const currency = String(accountLocale?.currency || '').trim().toUpperCase()
   return currency || 'moneda configurada en la cuenta'
@@ -1646,9 +1658,13 @@ function buildGoalWorkflowSection(config = {}, accountLocale = {}) {
 - Cuando la persona quiera agendar, ejecuta send_goal_url y manda el enlace devuelto.
 - La cita sólo queda confirmada cuando llega el ID real de la cita desde ese enlace.`)
     } else if (appointments.owner === 'ai') {
+      const overlapInstruction = appointmentOverlapsAllowed(config)
+        ? 'Empalme de citas: PERMITIDO. Puedes ofrecer y agendar un horario aunque ya exista otra cita en ese mismo horario, siempre que esté dentro de los horarios de atención.'
+        : 'Empalme de citas: NO permitido. Sólo ofrece y agenda horarios libres, sin otra cita activa encima.'
       sections.push(`## Flujo de agenda configurado
 - Este agente debe intentar agendar por IA.
 - Calendario configurado: ${appointments.calendarId || config.defaultCalendarId || 'sin calendario fijo; usa list_calendars para elegir uno activo'}.
+- ${overlapInstruction}
 - Antes de crear la cita, confirma día y hora exactos con la persona.
 - Usa book_appointment sólo con un horario real devuelto por get_free_slots.`)
     } else {
