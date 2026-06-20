@@ -47,7 +47,7 @@ test('los agentes especializados NO mezclan herramientas de otros dominios', () 
 
 test('el agente general sí tiene acceso a todos los dominios', () => {
   const names = getAgentCategory('general').tools.map((tool) => tool.name)
-  for (const required of ['create_appointment', 'record_payment', 'create_contact', 'create_cost', 'get_ads_metrics', 'list_social_profiles', 'create_payment_link', 'create_subscription', 'get_payment_gateways', 'get_free_slots']) {
+  for (const required of ['create_appointment', 'record_payment', 'create_contact', 'add_contact_phone', 'create_cost', 'set_manual_business_expense', 'get_ads_metrics', 'search_ads', 'list_social_profiles', 'list_inbox_messages', 'create_payment_link', 'create_subscription', 'get_payment_gateways', 'get_free_slots']) {
     assert.ok(names.includes(required), `general sin ${required}`)
   }
 })
@@ -72,6 +72,15 @@ test('ningún agente tiene herramientas de creación de anuncios en Meta (retira
 test('citas incluye disponibilidad de horarios (get_free_slots)', () => {
   const names = getAgentCategory('citas').tools.map((tool) => tool.name)
   assert.ok(names.includes('get_free_slots'))
+})
+
+test('contactos, anuncios, redes y costos incluyen herramientas operativas esperadas', () => {
+  assert.ok(getAgentCategory('contactos').tools.map((tool) => tool.name).includes('add_contact_phone'))
+  assert.ok(getAgentCategory('contactos').tools.map((tool) => tool.name).includes('list_inbox_messages'))
+  assert.ok(getAgentCategory('anuncios').tools.map((tool) => tool.name).includes('search_ads'))
+  assert.ok(getAgentCategory('redes').tools.map((tool) => tool.name).includes('list_inbox_messages'))
+  assert.ok(getAgentCategory('costos').tools.map((tool) => tool.name).includes('list_manual_business_expenses'))
+  assert.ok(getAgentCategory('costos').tools.map((tool) => tool.name).includes('set_manual_business_expense'))
 })
 
 test('getAgentCategory normaliza y rechaza categorías inválidas', () => {
@@ -101,6 +110,10 @@ test('el ruteo inicial detecta la especialidad desde el primer mensaje', () => {
     'anuncios'
   )
   assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Busca el anuncio de webinar avanzado y compara su retorno' }),
+    'anuncios'
+  )
+  assert.equal(
     inferAgentCategoryFromMessage({ latestUserMessage: 'Cóbrale 500 a Juan con link de pago' }),
     'pagos'
   )
@@ -125,12 +138,28 @@ test('el ruteo inicial detecta la especialidad desde el primer mensaje', () => {
     'contactos'
   )
   assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Cámbiale el nombre al contacto de Luis y agrégale este número' }),
+    'contactos'
+  )
+  assert.equal(
     inferAgentCategoryFromMessage({ latestUserMessage: 'Revisa los DMs de Instagram de la bandeja social' }),
+    'redes'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: '¿Quién me mandó mensaje nuevo y cuál fue el último mensaje?' }),
     'redes'
   )
   assert.equal(
     inferAgentCategoryFromMessage({ latestUserMessage: 'Configura costos variables y comisiones por venta' }),
     'costos'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Este mes gasté 5000, súmalo a los costos variables del mes' }),
+    'costos'
+  )
+  assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Dime las citas de hoy, confirma una y cancela la otra' }),
+    'citas'
   )
   assert.equal(
     inferAgentCategoryFromMessage({ latestUserMessage: 'Hola' }),

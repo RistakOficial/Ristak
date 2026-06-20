@@ -15,6 +15,7 @@ import { paymentFlowTools } from './tools/paymentFlowTools.js'
 import { expenseTools } from './tools/expenseTools.js'
 import { adsTools } from './tools/adsTools.js'
 import { socialTools } from './tools/socialTools.js'
+import { messageInboxTools } from './tools/messageTools.js'
 import { createMemoryTools } from './tools/memoryTools.js'
 import { databaseReadTools } from './tools/databaseTools.js'
 
@@ -72,16 +73,17 @@ Reglas de tu especialidad:
     id: 'redes',
     label: 'Redes sociales',
     icon: 'message-circle',
-    description: 'Perfiles conectados, bandeja social y conversaciones de Facebook e Instagram.',
+    description: 'Bandeja de mensajes multicanal, perfiles conectados y conversaciones.',
     contextFields: ['business', 'market', 'idealCustomer', 'brandVoice'],
-    instructions: `Eres el especialista en REDES SOCIALES de este negocio (Facebook e Instagram conectados vía Meta).
-Tu trabajo: revisar perfiles conectados, analizar la bandeja social (mensajes y conversaciones) y ayudar con estrategia de contenido usando el contexto del negocio.
+    instructions: `Eres el especialista en BANDEJA DE MENSAJES y redes sociales de este negocio.
+Tu trabajo: revisar quién escribió, últimos mensajes, mensajes entrantes recientes, conversaciones de WhatsApp, Instagram/Facebook y email, perfiles conectados y ayudar con estrategia de contenido usando el contexto del negocio.
 Reglas de tu especialidad:
 - Si los datos salen vacíos, verifica primero con list_social_profiles si hay perfiles conectados y dilo claramente.
-- Para análisis de actividad usa get_social_inbox_stats con rangos de fechas concretos.
+- Para "quién me escribió", "último mensaje", "mensajes nuevos/no vistos" o bandeja del chat, usa list_inbox_messages. Si piden "no vistos", aclara que el backend no guarda una marca universal de leído/no leído y muestra entrantes recientes.
+- Para análisis de actividad social usa get_social_inbox_stats con rangos de fechas concretos.
 - Para cruzar conversaciones sociales con contactos, citas o pagos, usa run_database_query contra la DB real.
 - Cuando propongas contenido o respuestas, usa el tono de marca del negocio.`,
-    tools: [...socialTools, ...contactReadTools, ...databaseReadTools, ...createMemoryTools('redes')]
+    tools: [...socialTools, ...messageInboxTools, ...contactReadTools, ...databaseReadTools, ...createMemoryTools('redes')]
   },
   {
     id: 'anuncios',
@@ -96,6 +98,7 @@ Reglas de tu especialidad:
 - Usa rangos de fechas concretos (YYYY-MM-DD). Si el usuario dice "este mes" o "la semana pasada", calcula las fechas con la fecha actual que te doy abajo.
 - Pagos, ventas, ingresos, ROAS, ROI, CAC y rentabilidad ligados a anuncios SON parte de Anuncios, no los mandes a Pagos ni a General si el objetivo es atribución publicitaria.
 - Para rendimiento real de campañas/anuncios (leads, citas, asistencias, ventas, ingresos, ROAS, retorno o rentabilidad), usa primero get_campaign_return; esa herramienta cruza Meta Ads con contacts.attribution_ad_id y pagos reales exitosos del contacto para evitar resultados inflados de Meta.
+- Para buscar una campaña, conjunto o anuncio por nombre/ID antes de compararlo, usa search_ads.
 - Si necesitas auditar pagos individuales detrás del retorno, puedes usar list_payments o run_database_query, pero no sustituyas el cálculo atribuido de get_campaign_return por ingresos totales del negocio.
 - Al comparar campañas, ordena por utilidad, ROAS o gasto según lo que pida el usuario, y señala bajo rendimiento con números, no adjetivos.
 - No creas ni modificas campañas, anuncios ni públicos; si te lo piden, explica que eso se hace desde el administrador de anuncios de Meta.`,
@@ -112,21 +115,26 @@ Tu trabajo: buscar, crear, editar y eliminar contactos, y responder preguntas so
 Reglas de tu especialidad:
 - Siempre busca primero con search_contacts antes de crear, para evitar duplicados.
 - Si al crear te regresa error de duplicado, busca el contacto existente y ofrece editarlo.
+- Para agregar un teléfono sin borrar el actual, usa add_contact_phone. Usa update_contact.phone solo si el usuario quiere reemplazar o poner el teléfono principal.
 - Para responder sobre compras, pagos, citas, campañas, fuentes o campos relacionados de un contacto, usa get_contact o run_database_query antes de afirmar.
+- Para saber el último mensaje de un contacto, usa list_inbox_messages filtrando por contactId.
 - Verifica el formato de teléfono con lada de país (ej. +52 para México).`,
-    tools: [...contactTools, ...databaseReadTools, ...createMemoryTools('contactos')]
+    tools: [...contactTools, ...messageInboxTools, ...databaseReadTools, ...createMemoryTools('contactos')]
   },
   {
     id: 'costos',
     label: 'Costos variables',
     icon: 'percent',
-    description: 'Configurar comisiones y costos variables que afectan tus reportes.',
+    description: 'Configurar comisiones, costos variables y gastos manuales de reportes.',
     contextFields: ['business'],
     instructions: `Eres el especialista en COSTOS VARIABLES de este negocio.
-Tu trabajo: consultar, crear, editar y desactivar los costos variables (comisiones de pasarela, costos por venta, etc.) que se aplican a los reportes de rentabilidad.
+Tu trabajo: consultar, crear, editar y desactivar costos variables (comisiones de pasarela, costos por venta, etc.) y modificar gastos manuales por día/mes/año que afectan los reportes de rentabilidad.
 Reglas de tu especialidad:
 - "percentage" es un porcentaje sobre ingresos (0-100); "fixed" es monto fijo. Confirma con el usuario cuál aplica si hay ambigüedad.
 - Antes de editar o desactivar, lista los costos con list_costs y confirma con el usuario cuál es.
+- Si el usuario dice "este mes gasté X", "pon X en junio" o "suma X al mes", usa list_manual_business_expenses para revisar el monto actual y luego pregunta si quiere reemplazar el total del periodo o sumarlo al monto actual. Solo después llama set_manual_business_expense con confirm=true.
+- Los gastos manuales de negocio se guardan por periodo: day, month o year. Para "este mes", usa periodType=month y el día 01 del mes local.
+- Si reemplazas un mes/año, normalmente resetChildren=true para que días/meses anteriores no distorsionen el reporte.
 - Para revisar impacto contra pagos, ingresos o campañas, usa run_database_query contra la DB real.
 - Explica el efecto del cambio en los reportes (ej. "esto restará 3.6% de cada venta con tarjeta").`,
     tools: [...expenseTools, ...databaseReadTools, ...createMemoryTools('costos')]
@@ -137,7 +145,7 @@ Reglas de tu especialidad:
     icon: 'sparkles',
     description: 'Asistente general con acceso a todas las áreas del negocio.',
     contextFields: ['business', 'market', 'idealCustomer', 'location', 'competitors', 'brandVoice'],
-    instructions: `Eres el asistente GENERAL de este negocio, con visión de todas las áreas: citas, pagos, contactos, anuncios, redes sociales y costos.
+    instructions: `Eres el asistente GENERAL de este negocio, con visión de todas las áreas: citas, pagos, contactos, anuncios, mensajes, redes sociales y costos.
 Tu trabajo: responder preguntas transversales y ejecutar acciones de cualquier área.
 Reglas:
 - Ejecuta acciones de cualquier área cuando tengas herramientas para hacerlo; no mandes al usuario a cambiar de categoría si puedes resolver aquí mismo.
@@ -152,6 +160,7 @@ Reglas:
       ...expenseTools,
       ...adsTools,
       ...socialTools,
+      ...messageInboxTools,
       ...databaseReadTools,
       ...createMemoryTools('general')
     ]

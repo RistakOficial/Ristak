@@ -30,6 +30,16 @@ function validateDateOnly(value, label) {
   return text
 }
 
+function maybeValidateDateOnly(value, label) {
+  if (!value) return null
+  return validateDateOnly(value, label)
+}
+
+function normalizeSearchEntity(value) {
+  const entity = String(value || 'all').trim().toLowerCase()
+  return ['campaign', 'adset', 'ad', 'all'].includes(entity) ? entity : 'all'
+}
+
 function escapeSqlLiteral(value) {
   return String(value || 'UTC').replace(/'/g, "''")
 }
@@ -327,6 +337,159 @@ export const getCampaignReturnTool = tool({
   })
 })
 
+export async function searchAds({ query = '', startDate = null, endDate = null, entity = 'all', limit = 25 } = {}) {
+  const safeQuery = String(query || '').trim().toLowerCase()
+  const safeStartDate = maybeValidateDateOnly(startDate, 'startDate')
+  const safeEndDate = maybeValidateDateOnly(endDate, 'endDate')
+  const safeEntity = normalizeSearchEntity(entity)
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 25))
+  const like = `%${safeQuery}%`
+
+  const buildDateClause = (params) => {
+    const conditions = []
+    if (safeStartDate) {
+      conditions.push('date >= ?')
+      params.push(safeStartDate)
+    }
+    if (safeEndDate) {
+      conditions.push('date <= ?')
+      params.push(safeEndDate)
+    }
+    return conditions.length ? `AND ${conditions.join(' AND ')}` : ''
+  }
+
+  const unions = []
+  const params = []
+
+  if (safeEntity === 'all' || safeEntity === 'campaign') {
+    const localParams = [like, like]
+    const dateClause = buildDateClause(localParams)
+    unions.push(`
+      SELECT
+        'campaign' AS entity_type,
+        campaign_id AS entity_id,
+        campaign_name AS entity_name,
+        campaign_id AS campaign_id,
+        campaign_name AS campaign_name,
+        NULL AS adset_id,
+        NULL AS adset_name,
+        NULL AS ad_id,
+        NULL AS ad_name,
+        SUM(spend) AS spend,
+        SUM(clicks) AS clicks,
+        SUM(reach) AS reach,
+        MIN(date) AS first_date,
+        MAX(date) AS last_date
+      FROM meta_ads
+      WHERE (LOWER(COALESCE(campaign_name, '')) LIKE ? OR LOWER(COALESCE(campaign_id, '')) LIKE ?)
+        ${dateClause}
+      GROUP BY campaign_id, campaign_name
+    `)
+    params.push(...localParams)
+  }
+
+  if (safeEntity === 'all' || safeEntity === 'adset') {
+    const localParams = [like, like]
+    const dateClause = buildDateClause(localParams)
+    unions.push(`
+      SELECT
+        'adset' AS entity_type,
+        adset_id AS entity_id,
+        adset_name AS entity_name,
+        MAX(campaign_id) AS campaign_id,
+        MAX(campaign_name) AS campaign_name,
+        adset_id AS adset_id,
+        adset_name AS adset_name,
+        NULL AS ad_id,
+        NULL AS ad_name,
+        SUM(spend) AS spend,
+        SUM(clicks) AS clicks,
+        SUM(reach) AS reach,
+        MIN(date) AS first_date,
+        MAX(date) AS last_date
+      FROM meta_ads
+      WHERE (LOWER(COALESCE(adset_name, '')) LIKE ? OR LOWER(COALESCE(adset_id, '')) LIKE ?)
+        ${dateClause}
+      GROUP BY adset_id, adset_name
+    `)
+    params.push(...localParams)
+  }
+
+  if (safeEntity === 'all' || safeEntity === 'ad') {
+    const localParams = [like, like]
+    const dateClause = buildDateClause(localParams)
+    unions.push(`
+      SELECT
+        'ad' AS entity_type,
+        ad_id AS entity_id,
+        ad_name AS entity_name,
+        MAX(campaign_id) AS campaign_id,
+        MAX(campaign_name) AS campaign_name,
+        MAX(adset_id) AS adset_id,
+        MAX(adset_name) AS adset_name,
+        ad_id AS ad_id,
+        ad_name AS ad_name,
+        SUM(spend) AS spend,
+        SUM(clicks) AS clicks,
+        SUM(reach) AS reach,
+        MIN(date) AS first_date,
+        MAX(date) AS last_date
+      FROM meta_ads
+      WHERE (LOWER(COALESCE(ad_name, '')) LIKE ? OR LOWER(COALESCE(ad_id, '')) LIKE ?)
+        ${dateClause}
+      GROUP BY ad_id, ad_name
+    `)
+    params.push(...localParams)
+  }
+
+  const rows = await db.all(
+    `SELECT *
+     FROM (${unions.join('\nUNION ALL\n')}) matches
+     WHERE COALESCE(entity_id, '') != ''
+     ORDER BY spend DESC, last_date DESC
+     LIMIT ?`,
+    [...params, safeLimit]
+  )
+
+  return {
+    ok: true,
+    query: safeQuery,
+    entity: safeEntity,
+    startDate: safeStartDate,
+    endDate: safeEndDate,
+    total: rows.length,
+    results: rows.map((row) => ({
+      entityType: row.entity_type,
+      id: row.entity_id,
+      name: row.entity_name || row.entity_id,
+      campaignId: row.campaign_id,
+      campaignName: row.campaign_name,
+      adsetId: row.adset_id,
+      adsetName: row.adset_name,
+      adId: row.ad_id,
+      adName: row.ad_name,
+      spend: roundMoney(row.spend),
+      clicks: Number(row.clicks || 0),
+      reach: Number(row.reach || 0),
+      firstDate: row.first_date,
+      lastDate: row.last_date
+    }))
+  }
+}
+
+export const searchAdsTool = tool({
+  name: 'search_ads',
+  description: 'Busca campañas, conjuntos de anuncios o anuncios de Meta por nombre o ID en la tabla meta_ads. Úsala cuando el usuario diga "busca este anuncio/campaña" antes de comparar rendimiento.',
+  parameters: z.object({
+    query: z.string().describe('Texto del nombre o ID a buscar'),
+    startDate: z.string().nullable().describe('Fecha inicial YYYY-MM-DD para limitar la búsqueda'),
+    endDate: z.string().nullable().describe('Fecha final YYYY-MM-DD para limitar la búsqueda'),
+    entity: z.enum(['campaign', 'adset', 'ad', 'all']).nullable().describe('Tipo de entidad a buscar; default all'),
+    limit: z.number().int().min(1).max(100).nullable().describe('Máximo de resultados (default 25)')
+  }),
+  execute: async ({ query, startDate, endDate, entity, limit }) => searchAds({ query, startDate, endDate, entity: entity || 'all', limit })
+})
+
 export const listCampaignsTool = tool({
   name: 'list_ad_campaigns',
   description: 'Lista las campañas de Meta Ads con actividad en un rango de fechas, con su gasto total y última fecha con datos.',
@@ -362,4 +525,4 @@ export const listCampaignsTool = tool({
   }
 })
 
-export const adsTools = [getAdsStatusTool, getAdsMetricsTool, getCampaignReturnTool, listCampaignsTool]
+export const adsTools = [getAdsStatusTool, searchAdsTool, getAdsMetricsTool, getCampaignReturnTool, listCampaignsTool]

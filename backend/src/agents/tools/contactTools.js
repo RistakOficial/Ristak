@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { db } from '../../config/database.js'
 import { createContact, updateContact, deleteContact } from '../../controllers/contactsController.js'
 import { invokeController, toToolResult } from '../invokeController.js'
+import { listContactPhoneNumbers, recordContactPhoneNumber } from '../../services/contactIdentityService.js'
+import { normalizePhoneForStorage } from '../../utils/phoneUtils.js'
 
 const CONTACT_SUMMARY_FIELDS = (row) => ({
   id: row.id,
@@ -12,6 +14,86 @@ const CONTACT_SUMMARY_FIELDS = (row) => ({
   source: row.source,
   createdAt: row.created_at
 })
+
+function cleanText(value) {
+  return String(value || '').trim()
+}
+
+function mapContactPhone(row) {
+  return {
+    id: row.id || null,
+    phone: row.phone,
+    label: row.label || '',
+    isPrimary: Boolean(row.isPrimary || row.is_primary),
+    source: row.source || ''
+  }
+}
+
+export async function addContactPhoneNumber({ contactId, phone, label = null, isPrimary = false, confirmMove = false } = {}) {
+  const cleanContactId = cleanText(contactId)
+  const contact = await db.get('SELECT id, phone, full_name FROM contacts WHERE id = ?', [cleanContactId])
+  if (!contact) return { ok: false, error: 'Contacto no encontrado' }
+
+  const normalizedPhone = normalizePhoneForStorage(phone) || cleanText(phone)
+  if (!normalizedPhone) return { ok: false, error: 'Teléfono inválido' }
+
+  const existingPhone = await db.get(
+    `SELECT cpn.contact_id, c.full_name
+     FROM contact_phone_numbers cpn
+     LEFT JOIN contacts c ON c.id = cpn.contact_id
+     WHERE cpn.phone = ?
+     LIMIT 1`,
+    [normalizedPhone]
+  ).catch(() => null)
+
+  if (existingPhone?.contact_id && existingPhone.contact_id !== cleanContactId && !confirmMove) {
+    return {
+      ok: false,
+      error: `Ese teléfono ya está ligado a ${existingPhone.full_name || existingPhone.contact_id}. Pide confirmación explícita antes de moverlo o fusionar referencias.`,
+      existingContactId: existingPhone.contact_id,
+      existingContactName: existingPhone.full_name || null
+    }
+  }
+
+  const existingMain = await db.get(
+    'SELECT id, full_name FROM contacts WHERE phone = ? AND id != ? LIMIT 1',
+    [normalizedPhone, cleanContactId]
+  ).catch(() => null)
+  if (existingMain && !confirmMove) {
+    return {
+      ok: false,
+      error: `Ese teléfono ya es principal de ${existingMain.full_name || existingMain.id}. Pide confirmación explícita antes de moverlo.`,
+      existingContactId: existingMain.id,
+      existingContactName: existingMain.full_name || null
+    }
+  }
+
+  const shouldBePrimary = Boolean(isPrimary) || !cleanText(contact.phone)
+  await recordContactPhoneNumber({
+    contactId: cleanContactId,
+    phone: normalizedPhone,
+    label: label || (shouldBePrimary ? 'Principal' : 'Adicional'),
+    isPrimary: shouldBePrimary,
+    source: 'ai_agent',
+    mergeConflicts: Boolean(confirmMove)
+  })
+
+  if (shouldBePrimary) {
+    await db.run(
+      'UPDATE contacts SET phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [normalizedPhone, cleanContactId]
+    )
+  }
+
+  const phones = await listContactPhoneNumbers(cleanContactId)
+  return {
+    ok: true,
+    contactId: cleanContactId,
+    phone: normalizedPhone,
+    isPrimary: shouldBePrimary,
+    phones: phones.map(mapContactPhone)
+  }
+}
 
 export const searchContactsTool = tool({
   name: 'search_contacts',
@@ -150,6 +232,25 @@ export const deleteContactTool = tool({
   }
 })
 
+export const addContactPhoneTool = tool({
+  name: 'add_contact_phone',
+  description: 'Agrega un teléfono adicional a un contacto sin reemplazar el teléfono principal, salvo que isPrimary=true. Si el número pertenece a otro contacto, pide confirmación explícita y pasa confirmMove=true.',
+  parameters: z.object({
+    contactId: z.string().describe('ID real del contacto (usa search_contacts antes)'),
+    phone: z.string().describe('Teléfono con lada, ej. +52 555 123 4567'),
+    label: z.string().nullable().describe('Etiqueta del número, ej. WhatsApp, Trabajo, Casa'),
+    isPrimary: z.boolean().nullable().describe('true si debe ser el teléfono principal del contacto'),
+    confirmMove: z.boolean().nullable().describe('true solo si el usuario confirmó mover/fusionar un número que ya estaba en otro contacto')
+  }),
+  execute: async ({ contactId, phone, label, isPrimary, confirmMove }) => addContactPhoneNumber({
+    contactId,
+    phone,
+    label,
+    isPrimary: Boolean(isPrimary),
+    confirmMove: Boolean(confirmMove)
+  })
+})
+
 export const contactReadTools = [searchContactsTool, getContactTool]
-export const contactWriteTools = [createContactTool, updateContactTool, deleteContactTool]
+export const contactWriteTools = [createContactTool, updateContactTool, addContactPhoneTool, deleteContactTool]
 export const contactTools = [...contactReadTools, ...contactWriteTools]

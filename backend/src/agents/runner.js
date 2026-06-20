@@ -244,8 +244,8 @@ const TRIAGE_INSTRUCTIONS = `Eres el recepcionista de los agentes IA de Ristak. 
 - pagos: registrar/editar pagos, links/enlaces de cobro, pasarelas, Stripe, Mercado Pago, suscripciones, tarjetas guardadas, parcialidades, ingresos y transacciones.
 - contactos: crear, editar, buscar, depurar o consultar contactos (CRM).
 - anuncios: métricas y análisis de campañas de Meta Ads, incluyendo pagos/ventas/ingresos atribuidos, ROAS, ROI, CAC, retorno y rentabilidad publicitaria.
-- redes: perfiles sociales conectados, bandeja y conversaciones de Facebook/Instagram.
-- costos: comisiones y costos variables de los reportes.
+- redes: bandeja de mensajes multicanal, mensajes nuevos/recientes, perfiles sociales conectados y conversaciones de Facebook/Instagram.
+- costos: comisiones, costos variables y gastos manuales mensuales/anuales de los reportes.
 - general: preguntas que cruzan varias áreas, dudas del negocio en general o cualquier cosa que no encaje arriba.
 
 Reglas:
@@ -287,7 +287,7 @@ export function inferAgentCategoryFromMessage({ latestUserMessage = '', messages
 
   const scores = {
     anuncios: scorePattern(text, [
-      /\b(meta ads|facebook ads|ads manager|publicidad|anuncios?|campan(?:a|as)|campañas?|adsets?|conjuntos? de anuncios?|roas|roi|retorno|atribucion|atribución|rentabilidad|cpc|cpm|ctr|cpl|cac|gasto publicitario|inversion ads|inversion publicitaria)\b/,
+      /\b(meta ads|facebook ads|ads manager|publicidad|anuncios?|campan(?:a|as)|campañas?|adsets?|conjuntos? de anuncios?|buscar anuncio|busca(?:r|me)? (?:el |los |las )?(?:anuncio|anuncios|campana|campaña|campanas|campañas)|roas|roi|retorno|atribucion|atribución|rentabilidad|cpc|cpm|ctr|cpl|cac|gasto publicitario|inversion ads|inversion publicitaria)\b/,
       /\b(resultados?|rendimiento|performance|conversion(?:es)?|leads?|ventas?|ingresos?|utilidad|escala|escalar)\b.*\b(campan(?:a|as)|campañas?|anuncios?|ads|meta|facebook|instagram)\b/,
       /\b(campan(?:a|as)|campañas?|anuncios?|ads|meta|facebook|instagram)\b.*\b(resultados?|rendimiento|performance|conversion(?:es)?|leads?|ventas?|ingresos?|utilidad|roas|roi|retorno|atribucion|atribución|rentabilidad)\b/
     ]),
@@ -295,16 +295,16 @@ export function inferAgentCategoryFromMessage({ latestUserMessage = '', messages
       /\b(pagos?|cobros?|cobrar|cobrale|cóbrale|registrar pago|registra(?:me)? (?:un )?pago|link de pago|links? de pago|enlace de pago|enlaces de pago|plan(?:es)? de pago|parcialidades|suscripcion(?:es)?|suscripción(?:es)?|subscription|stripe|mercado pago|mercadopago|pasarelas?|domiciliacion|domiciliación|tarjeta guardada|tarjeta|invoice|factura|ingresos?|transacciones?|deposito|depósito|transferencia|efectivo)\b/
     ]),
     citas: scorePattern(text, [
-      /\b(citas?|agenda|agendar|reprograma|reprogramar|calendarios?|horarios?|disponibilidad|appointment|booking|no show|showed|asistencia)\b/
+      /\b(citas?|agenda|agendar|reprograma|reprogramar|cancela(?:r)? (?:una )?cita|confirma(?:r)? (?:una )?cita|confirmaron|cancelaron|calendarios?|horarios?|disponibilidad|appointment|booking|no show|showed|asistencia)\b/
     ]),
     contactos: scorePattern(text, [
-      /\b(contactos?|clientes?|prospectos?|leads?|crm|campo personalizado|custom fields?|telefono|teléfono|email|correo)\b/
+      /\b(contactos?|clientes?|prospectos?|leads?|crm|campo personalizado|custom fields?|telefono|teléfono|agrega(?:r|me)? (?:un )?(?:numero|número|telefono|teléfono)|cambia(?:r)? (?:el )?(?:nombre|correo|email|telefono|teléfono)|email|correo)\b/
     ]),
     redes: scorePattern(text, [
-      /\b(redes sociales|bandeja social|inbox|dm|dms|mensajes? de instagram|mensajes? de facebook|conversaciones? de instagram|conversaciones? de facebook|perfiles? conectados?|pagina de facebook|página de facebook|instagram conectado|facebook conectado)\b/
+      /\b(redes sociales|bandeja(?: de mensajes| social)?|inbox|mensajes?|mensaje nuevo|mensajes? nuevos|no leidos|no leídos|quien me escribio|quién me escribió|quien me mando|quién me mandó|ultimo mensaje|último mensaje|dm|dms|whatsapp|email|correo entrante|mensajes? de instagram|mensajes? de facebook|conversaciones? de instagram|conversaciones? de facebook|perfiles? conectados?|pagina de facebook|página de facebook|instagram conectado|facebook conectado)\b/
     ]),
     costos: scorePattern(text, [
-      /\b(costos? variables?|comisiones?|margen|rentabilidad neta|gastos variables?|pasarela|stripe fee|fee|costo por venta)\b/
+      /\b(costos? variables?|comisiones?|margen|rentabilidad neta|gastos variables?|gastos? manuales?|este mes gaste|este mes gasté|gaste .* este mes|gasté .* este mes|sumalo al mes|súmalo al mes|reemplaza(?:r)? (?:el )?(?:gasto|costo)|pasarela|stripe fee|fee|costo por venta)\b/
     ])
   }
 
