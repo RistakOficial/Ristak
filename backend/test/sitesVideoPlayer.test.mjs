@@ -167,6 +167,27 @@ test('video player default preset uses large rectangular solid play button', asy
   assert.equal(signature.hasSoundNotice, true)
   assert.equal(signature.soundText, 'Haz clic para activar el sonido')
   assert.match(html, /<\/button>\s*<span class="rstk-video-sound\b/)
+  assert.match(signature.classes, /\brstk-video-landscape\b/)
+  assert.match(signature.style, /--rstk-video-aspect-ratio:16 \/ 9/)
+})
+
+test('video player portrait format uses vertical ratio and contained desktop width', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoOrientation: 'portrait'
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.match(signature.classes, /\brstk-video-portrait\b/)
+  assert.doesNotMatch(signature.classes, /\brstk-video-landscape\b/)
+  assert.match(signature.style, /--rstk-video-aspect-ratio:9 \/ 16/)
+  assert.match(signature.style, /--rstk-media-width:44%/)
+  assert.match(html, /\.rstk-video\{aspect-ratio:var\(--rstk-video-aspect-ratio,16\/9\)/)
+  assert.match(html, /\.rstk-video-portrait\{aspect-ratio:var\(--rstk-video-aspect-ratio,9\/16\)/)
+  assert.match(html, /@media \(max-width:760px\)\{\.rstk-block-style \.rstk-video-portrait\{width:100%;margin-left:auto;margin-right:auto\}\}/)
 })
 
 test('video player custom bar can hide individual controls and keep editable panel radius', async () => {
@@ -291,6 +312,7 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     'rstk-video-controls-hidden',
     'rstk-video-sound-hint',
     'rstk-video-is-muted',
+    'rstk-video-landscape',
     'rstk-video-play-shape-rectangle',
     'rstk-video-play-spark'
   ].join(' ')
@@ -358,6 +380,7 @@ test('video player uses the same visual signature for direct and Bunny Stream re
       'rstk-video-has-control-bar',
       'rstk-video-controls-hidden',
       'rstk-video-is-muted',
+      'rstk-video-landscape',
       'rstk-video-play-shape-rectangle',
       'rstk-video-play-spark'
     ].join(' '))
@@ -409,6 +432,60 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     assert.match(visibleInitialSignature.classes, /\brstk-video-controls-visible\b/)
     assert.doesNotMatch(visibleInitialSignature.classes, /\brstk-video-controls-hidden\b/)
     assert.deepEqual(getVideoPlayerVisualSignature(streamVisibleHtml), visibleInitialSignature)
+  } finally {
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
+})
+
+test('video player auto orientation uses portrait dimensions from storage assets', async () => {
+  const assetId = `site_portrait_stream_${Date.now()}`
+  const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
+  const streamVideoId = `stream-${assetId}`
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, width, height, duration, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'portrait.mp4', 'portrait.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 720, 1280, 12, 'ready', 'bunny', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `sites/${assetId}.mp4`,
+        storageUrl,
+        'site_video_player',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId,
+            video: {
+              width: 720,
+              height: 1280,
+              length: 12
+            }
+          }
+        })
+      ]
+    )
+
+    const html = await renderPublicSiteHtml(baseSite({
+      mediaUrl: storageUrl
+    }), {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+    const signature = getVideoPlayerVisualSignature(html)
+
+    assert.match(signature.classes, /\brstk-video-portrait\b/)
+    assert.doesNotMatch(signature.classes, /\brstk-video-landscape\b/)
+    assert.match(signature.style, /--rstk-video-aspect-ratio:9 \/ 16/)
+    assert.match(signature.style, /--rstk-media-width:44%/)
+    assert.match(html, new RegExp(`data-rstk-media-asset-id="${escapeRegExp(assetId)}"`))
+    assert.match(html, new RegExp(`data-rstk-stream-video-id="${escapeRegExp(streamVideoId)}"`))
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }
@@ -511,10 +588,10 @@ test('live Bunny Stream iframe uses the same editable video frame settings', asy
     preview: false
   })
 
-  assert.match(html, /class="rstk-video rstk-video-stream-frame" style="[^"]*--rstk-video-bg:#101010/)
-  assert.match(html, /class="rstk-video rstk-video-stream-frame" style="[^"]*--rstk-video-radius:22px/)
-  assert.match(html, /class="rstk-video rstk-video-stream-frame" style="[^"]*--rstk-video-border-color:var\(--rstk-border\)/)
-  assert.match(html, /class="rstk-video rstk-video-stream-frame" style="[^"]*--rstk-video-border-width:4px/)
+  assert.match(html, /class="[^"]*\brstk-video-stream-frame\b[^"]*\brstk-video-landscape\b[^"]*" style="[^"]*--rstk-video-bg:#101010/)
+  assert.match(html, /class="[^"]*\brstk-video-stream-frame\b[^"]*" style="[^"]*--rstk-video-radius:22px/)
+  assert.match(html, /class="[^"]*\brstk-video-stream-frame\b[^"]*" style="[^"]*--rstk-video-border-color:var\(--rstk-border\)/)
+  assert.match(html, /class="[^"]*\brstk-video-stream-frame\b[^"]*" style="[^"]*--rstk-video-border-width:4px/)
   assert.match(html, new RegExp(`src="https://player\\.mediadelivery\\.net/embed/123456/${escapeRegExp(streamVideoId)}\\?rstk_play_id=[^"]+"`))
   assert.match(html, /data-rstk-video-track="true"/)
   assert.match(html, /data-rstk-video-provider="bunny_stream"/)

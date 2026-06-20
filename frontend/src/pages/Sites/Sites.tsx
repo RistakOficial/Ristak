@@ -640,6 +640,12 @@ const videoControlsModeOptions = [
   { value: 'none', label: 'Sin reproductor visible' }
 ] as const
 type VideoControlsMode = typeof videoControlsModeOptions[number]['value']
+const videoOrientationOptions = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'landscape', label: 'Horizontal' },
+  { value: 'portrait', label: 'Vertical' }
+] as const
+type VideoOrientation = typeof videoOrientationOptions[number]['value']
 const videoPlayIconOptions = [
   { value: 'solid', label: 'Triángulo sólido' },
   { value: 'outline', label: 'Círculo lineal' },
@@ -670,6 +676,10 @@ const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
 const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
+const DEFAULT_VIDEO_ORIENTATION: VideoOrientation = 'auto'
+const DEFAULT_VIDEO_LANDSCAPE_ASPECT_RATIO = '16 / 9'
+const DEFAULT_VIDEO_PORTRAIT_ASPECT_RATIO = '9 / 16'
+const DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH = 44
 const LEGACY_VIDEO_PLAY_SIZE = 82
 const LEGACY_VIDEO_PLAY_ICON_SIZE = 32
 const LEGACY_VIDEO_PLAY_RADIUS = 999
@@ -708,6 +718,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoAutoplay: false,
   videoLoop: false,
   videoDefaultSpeed: 1,
+  videoOrientation: DEFAULT_VIDEO_ORIENTATION,
   videoFit: 'cover',
   videoPlayerBackground: DEFAULT_VIDEO_PLAYER_BACKGROUND,
   videoPlayerRadius: 18,
@@ -2342,15 +2353,85 @@ const formatVideoProgressPercent = (value: number) => {
   return `${Number((safe * 100).toFixed(3))}%`
 }
 
+const isVideoOrientation = (value: unknown): value is VideoOrientation =>
+  videoOrientationOptions.some(option => option.value === value)
+
+const getVideoOrientationFromDimensions = (width?: unknown, height?: unknown): Exclude<VideoOrientation, 'auto'> | '' => {
+  const numericWidth = Number(width)
+  const numericHeight = Number(height)
+  if (!Number.isFinite(numericWidth) || !Number.isFinite(numericHeight) || numericWidth <= 0 || numericHeight <= 0) return ''
+  return numericHeight > numericWidth ? 'portrait' : 'landscape'
+}
+
+const getVideoOrientationFromAsset = (asset?: MediaAsset | null): Exclude<VideoOrientation, 'auto'> | '' => {
+  if (!asset) return ''
+  const directOrientation = getVideoOrientationFromDimensions(asset.width, asset.height)
+  if (directOrientation) return directOrientation
+
+  const stream = asset.metadata?.stream
+  if (stream && typeof stream === 'object') {
+    const video = (stream as { video?: unknown }).video
+    if (video && typeof video === 'object') {
+      return getVideoOrientationFromDimensions(
+        (video as { width?: unknown }).width,
+        (video as { height?: unknown }).height
+      )
+    }
+  }
+
+  return ''
+}
+
+const getVideoOrientation = (settings: Record<string, unknown> = {}): VideoOrientation => {
+  const value = getSettingString(settings, 'videoOrientation')
+  return isVideoOrientation(value) ? value : DEFAULT_VIDEO_ORIENTATION
+}
+
+const getResolvedVideoOrientation = (
+  settings: Record<string, unknown> = {},
+  detectedOrientation: Exclude<VideoOrientation, 'auto'> | '' = ''
+): Exclude<VideoOrientation, 'auto'> => {
+  const configured = getVideoOrientation(settings)
+  if (configured !== 'auto') return configured
+  return detectedOrientation || 'landscape'
+}
+
+const getVideoAspectRatio = (orientation: Exclude<VideoOrientation, 'auto'>) =>
+  orientation === 'portrait' ? DEFAULT_VIDEO_PORTRAIT_ASPECT_RATIO : DEFAULT_VIDEO_LANDSCAPE_ASPECT_RATIO
+
 const withDefaultVideoPlayerSettings = (settings: Record<string, unknown> = {}) => ({
   ...DEFAULT_VIDEO_PLAYER_SETTINGS,
   ...settings
 })
 
-const withUploadedVideoSettings = (settings: Record<string, unknown> = {}, mediaUrl: string) => ({
-  ...withDefaultVideoPlayerSettings(settings),
-  mediaUrl
-})
+const withUploadedVideoSettings = (
+  settings: Record<string, unknown> = {},
+  mediaUrl: string,
+  asset?: MediaAsset | null
+) => {
+  const orientation = getVideoOrientationFromAsset(asset)
+  const currentMediaWidth = Number(settings.mediaWidth)
+  const shouldSetPortraitWidth = orientation === 'portrait' && (!Number.isFinite(currentMediaWidth) || currentMediaWidth >= 90)
+
+  return {
+    ...withDefaultVideoPlayerSettings(settings),
+    mediaUrl,
+    ...(orientation ? { videoOrientation: orientation } : {}),
+    ...(shouldSetPortraitWidth ? { mediaWidth: DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH } : {})
+  }
+}
+
+const getVideoOrientationPatch = (
+  settings: Record<string, unknown>,
+  nextOrientation: VideoOrientation
+) => {
+  const currentMediaWidth = Number(settings.mediaWidth)
+  const shouldSetPortraitWidth = nextOrientation === 'portrait' && (!Number.isFinite(currentMediaWidth) || currentMediaWidth >= 90)
+  return {
+    videoOrientation: nextOrientation,
+    ...(shouldSetPortraitWidth ? { mediaWidth: DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH } : {})
+  }
+}
 
 const isPhoneCountrySelectorEnabled = (block: SiteBlock) => {
   const settings = block.settings || {}
@@ -4522,10 +4603,10 @@ function FormEmbedEditorPanel({
             label={mediaKind === 'image' ? 'Elegir imagen' : 'Elegir video'}
             moduleEntityId={site.id}
             currentUrl={mediaUrl}
-            onUploaded={(url) => patchActiveField({
+            onUploaded={(url, asset) => patchActiveField({
               content: url,
               settings: mediaKind === 'video'
-                ? withUploadedVideoSettings(activeFieldSettings, url)
+                ? withUploadedVideoSettings(activeFieldSettings, url, asset)
                 : { ...activeFieldSettings, mediaUrl: url }
             })}
             onCommit={onSave}
@@ -19145,7 +19226,7 @@ const SitesMediaPickerModal: React.FC<{
   kind: 'image' | 'video'
   moduleEntityId?: string
   onClose: () => void
-  onSelect: (url: string) => void
+  onSelect: (url: string, asset?: MediaAsset) => void
 }> = ({ kind, moduleEntityId, onClose, onSelect }) => {
   const inputRef = useRef<HTMLInputElement>(null)
   const uploadQueue = useMediaUploadQueue()
@@ -19207,6 +19288,7 @@ const SitesMediaPickerModal: React.FC<{
       return
     }
 
+    let selectedAsset = asset
     if (kind === 'video') {
       setSyncingAssetId(asset.id)
       try {
@@ -19214,6 +19296,7 @@ const SitesMediaPickerModal: React.FC<{
           module: 'sites',
           moduleEntityId
         })
+        selectedAsset = synced
         setAssets(current => current.map(item => item.id === synced.id ? synced : item))
         const streamMetadata = synced.metadata?.stream
         const streamStatus = streamMetadata && typeof streamMetadata === 'object'
@@ -19229,7 +19312,7 @@ const SitesMediaPickerModal: React.FC<{
       }
     }
 
-    onSelect(url)
+    onSelect(url, selectedAsset)
     onClose()
   }
 
@@ -19258,7 +19341,7 @@ const SitesMediaPickerModal: React.FC<{
       })
       uploadQueue.finishTask(taskId, 'complete', 'Subida completa')
       setAssets(current => [uploaded, ...current.filter(asset => asset.id !== uploaded.id)].slice(0, mediaPickerAssetLimit))
-      onSelect(getMediaPickerAssetUrl(uploaded))
+      onSelect(getMediaPickerAssetUrl(uploaded), uploaded)
       onClose()
       showToast('success', kind === 'image' ? 'Imagen seleccionada' : 'Video seleccionado', 'El archivo ya quedó puesto en el editor.')
     } catch (error) {
@@ -19425,7 +19508,7 @@ const MediaUploadControl: React.FC<{
   label?: string
   moduleEntityId?: string
   currentUrl?: string
-  onUploaded: (url: string) => void
+  onUploaded: (url: string, asset?: MediaAsset) => void
   onCommit?: () => void
 }> = ({ kind, label, moduleEntityId, currentUrl, onUploaded }) => {
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -19712,14 +19795,31 @@ const VideoPlayerSettingsControls: React.FC<{
             ))}
           </CustomSelect>
         </label>
-        <label className={styles.field}>
-          <span>Ajuste del video</span>
-          <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
-            <option value="cover">Cubrir espacio</option>
-            <option value="contain">Mostrar completo</option>
-            <option value="fill">Estirar</option>
-          </CustomSelect>
-        </label>
+        <div className={styles.twoColumn}>
+          <label className={styles.field}>
+            <span>Formato</span>
+            <CustomSelect
+              value={getVideoOrientation(settings)}
+              onChange={(event) => {
+                const nextOrientation = isVideoOrientation(event.target.value) ? event.target.value : DEFAULT_VIDEO_ORIENTATION
+                onPatchSettings(getVideoOrientationPatch(settings, nextOrientation))
+              }}
+              onBlur={onSave}
+            >
+              {videoOrientationOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+          <label className={styles.field}>
+            <span>Ajuste</span>
+            <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
+              <option value="cover">Cubrir espacio</option>
+              <option value="contain">Mostrar completo</option>
+              <option value="fill">Estirar</option>
+            </CustomSelect>
+          </label>
+        </div>
         <div className={styles.twoColumn}>
           <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
           <ColorField
@@ -23700,6 +23800,7 @@ const VideoPlayerPreview: React.FC<{
   const [isPreviewLooping, setIsPreviewLooping] = useState(false)
   const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
   const [progress, setProgress] = useState(0)
+  const [detectedOrientation, setDetectedOrientation] = useState<Exclude<VideoOrientation, 'auto'> | ''>('')
   const showControlBarInitially = settings.videoControlBarInitiallyVisible === true
   const [controlsVisible, setControlsVisible] = useState(showControlBarInitially)
   const controlsMode = getVideoControlsMode(settings)
@@ -23722,6 +23823,12 @@ const VideoPlayerPreview: React.FC<{
   const [currentSpeed, setCurrentSpeed] = useState(speed)
   const [hasStartedPlayback, setHasStartedPlayback] = useState(Boolean(autoplay))
   const fit = getSettingString(settings, 'videoFit') || 'cover'
+  const resolvedOrientation = getResolvedVideoOrientation(settings, detectedOrientation)
+  const aspectRatio = getVideoAspectRatio(resolvedOrientation)
+  const hasConfiguredMediaWidth = Number.isFinite(Number(settings.mediaWidth))
+  const portraitMediaWidth = resolvedOrientation === 'portrait' && !hasConfiguredMediaWidth
+    ? `${DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH}%`
+    : ''
   const playerBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
   const playerRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
   const playerBorderColor = visibleVideoBorderColor(getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT)
@@ -23786,6 +23893,7 @@ const VideoPlayerPreview: React.FC<{
     isPlaying ? 'rstk-video-is-playing' : '',
     isPreviewLooping ? 'rstk-video-is-previewing' : '',
     isMuted ? 'rstk-video-is-muted' : '',
+    `rstk-video-${resolvedOrientation}`,
     `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
@@ -23793,6 +23901,10 @@ const VideoPlayerPreview: React.FC<{
   useEffect(() => {
     hasStartedPlaybackRef.current = hasStartedPlayback
   }, [hasStartedPlayback])
+
+  useEffect(() => {
+    setDetectedOrientation('')
+  }, [noTrackSrc])
 
   useEffect(() => {
     if (progressAnimationFrameRef.current) {
@@ -23850,6 +23962,13 @@ const VideoPlayerPreview: React.FC<{
     const duration = videoRef.current?.duration
     return normalizeVideoPreviewRange(settings, Number.isFinite(duration) ? duration : undefined)
   }, [settings])
+
+  const syncDetectedOrientation = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    const nextOrientation = getVideoOrientationFromDimensions(video.videoWidth, video.videoHeight)
+    if (nextOrientation) setDetectedOrientation(nextOrientation)
+  }, [])
 
   const stopPreviewLoop = useCallback(() => {
     previewLoopRef.current = false
@@ -24000,6 +24119,11 @@ const VideoPlayerPreview: React.FC<{
     setIsPreviewLooping(!video.paused && previewLoopRef.current)
     setIsMuted(video.muted || video.volume === 0)
     syncProgressFromVideo()
+  }
+
+  const handleLoadedMetadata = () => {
+    syncDetectedOrientation()
+    syncVideoState()
   }
 
   const playVideo = async (unmute = false) => {
@@ -24181,6 +24305,8 @@ const VideoPlayerPreview: React.FC<{
         ['--rstk-video-radius' as string]: playerRadius,
         ['--rstk-video-border-color' as string]: playerBorderColor,
         ['--rstk-video-border-width' as string]: playerBorderWidth,
+        ['--rstk-video-aspect-ratio' as string]: aspectRatio,
+        ...(portraitMediaWidth ? { ['--rstk-media-width' as string]: portraitMediaWidth } : {}),
         ['--rstk-video-player-color' as string]: playerColor,
         ['--rstk-video-play-color' as string]: playColor,
         ['--rstk-video-control-radius' as string]: controlPanelRadius,
@@ -24213,7 +24339,7 @@ const VideoPlayerPreview: React.FC<{
         onPlay={syncVideoState}
         onPause={syncVideoState}
         onTimeUpdate={syncVideoState}
-        onLoadedMetadata={syncVideoState}
+        onLoadedMetadata={handleLoadedMetadata}
         onVolumeChange={syncVideoState}
         onEnded={syncVideoState}
         onClick={handleVideoClick}
@@ -26988,8 +27114,8 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           label={mediaKind === 'image' ? 'Elegir imagen' : 'Elegir video'}
           moduleEntityId={site.id}
           currentUrl={getSettingString(settings, 'mediaUrl')}
-          onUploaded={(url) => onPatchSettings(mediaKind === 'video'
-            ? withUploadedVideoSettings(settings, url)
+          onUploaded={(url, asset) => onPatchSettings(mediaKind === 'video'
+            ? withUploadedVideoSettings(settings, url, asset)
             : { mediaUrl: url })}
           onCommit={onSave}
         />

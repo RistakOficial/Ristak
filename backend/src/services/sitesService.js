@@ -10401,7 +10401,9 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}) 
   const playbackId = tracking.enabled ? (tracking.playbackId || crypto.randomUUID()) : ''
   const stream = tracking.stream || getBunnyStreamMetadataFromUrl(embedUrl)
   const trackedEmbedUrl = playbackId ? appendBunnyStreamPlaybackId(embedUrl, playbackId) : embedUrl
-  const frameStyle = renderVideoFrameStyle(settings)
+  const orientation = normalizeVideoOrientation(settings, getVideoOrientationFromAsset(tracking.asset))
+  const frameStyle = renderVideoFrameStyle(settings, orientation)
+  const classes = `rstk-video rstk-video-stream-frame rstk-video-${orientation}`
   const trackingAttrs = buildVideoTrackingAttributes({
     enabled: tracking.enabled,
     block,
@@ -10410,7 +10412,7 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}) 
     provider: 'bunny_stream',
     playbackId
   })
-  return `<div class="rstk-video rstk-video-stream-frame" style="${frameStyle}"><iframe src="${escapeHtml(trackedEmbedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"${trackingAttrs ? ` ${trackingAttrs}` : ''}></iframe></div>`
+  return `<div class="${classes}" style="${frameStyle}"><iframe src="${escapeHtml(trackedEmbedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"${trackingAttrs ? ` ${trackingAttrs}` : ''}></iframe></div>`
 }
 
 function collectVideoStorageUrlsFromBlocks(blocks = [], urls = new Set()) {
@@ -12455,6 +12457,10 @@ const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
 const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
+const VIDEO_ORIENTATIONS = new Set(['auto', 'landscape', 'portrait'])
+const DEFAULT_VIDEO_LANDSCAPE_ASPECT_RATIO = '16 / 9'
+const DEFAULT_VIDEO_PORTRAIT_ASPECT_RATIO = '9 / 16'
+const DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH = 44
 const VIDEO_CONTROLS_IDLE_MS = 2600
 const VIDEO_CONTROLS_LEAVE_IDLE_MS = 650
 const VIDEO_SPEED_OPTIONS = ['0.75', '1', '1.25', '1.5', '2']
@@ -12554,7 +12560,44 @@ function getVideoSoundNoticeHideAfter(settings = {}) {
   return Math.min(12, Math.max(3, value))
 }
 
-function getVideoFrameStyleVars(settings = {}) {
+function getVideoOrientationFromDimensions(width, height) {
+  const numericWidth = Number(width)
+  const numericHeight = Number(height)
+  if (!Number.isFinite(numericWidth) || !Number.isFinite(numericHeight) || numericWidth <= 0 || numericHeight <= 0) return ''
+  return numericHeight > numericWidth ? 'portrait' : 'landscape'
+}
+
+function getVideoOrientationFromAsset(asset = null) {
+  if (!asset) return ''
+  const directOrientation = getVideoOrientationFromDimensions(asset.width, asset.height)
+  if (directOrientation) return directOrientation
+
+  const streamVideo = asset.metadata?.stream?.video
+  if (streamVideo && typeof streamVideo === 'object') {
+    return getVideoOrientationFromDimensions(streamVideo.width, streamVideo.height)
+  }
+
+  return ''
+}
+
+function normalizeVideoOrientation(settings = {}, detectedOrientation = '') {
+  const requested = cleanString(settings.videoOrientation)
+  if (requested === 'portrait' || requested === 'landscape') return requested
+  if (VIDEO_ORIENTATIONS.has(requested) && detectedOrientation) return detectedOrientation
+  return detectedOrientation || 'landscape'
+}
+
+function getVideoAspectRatio(orientation) {
+  return orientation === 'portrait' ? DEFAULT_VIDEO_PORTRAIT_ASPECT_RATIO : DEFAULT_VIDEO_LANDSCAPE_ASPECT_RATIO
+}
+
+function shouldUseDefaultPortraitMediaWidth(settings = {}, orientation = '') {
+  const mediaWidth = Number(settings.mediaWidth)
+  return orientation === 'portrait' && !Number.isFinite(mediaWidth)
+}
+
+function getVideoFrameStyleVars(settings = {}, detectedOrientation = '') {
+  const orientation = normalizeVideoOrientation(settings, detectedOrientation)
   const playerBackground = normalizeCssPaint(settings.videoPlayerBackground, DEFAULT_VIDEO_PLAYER_BACKGROUND) || DEFAULT_VIDEO_PLAYER_BACKGROUND
   const rawPlayerRadius = Number(settings.videoPlayerRadius ?? 18)
   const playerRadius = Number.isFinite(rawPlayerRadius) ? Math.min(80, Math.max(0, rawPlayerRadius)) : 18
@@ -12567,12 +12610,14 @@ function getVideoFrameStyleVars(settings = {}) {
     `--rstk-video-bg:${escapeHtml(playerBackground)}`,
     `--rstk-video-radius:${escapeHtml(String(playerRadius))}px`,
     `--rstk-video-border-color:${escapeHtml(playerBorderColor)}`,
-    `--rstk-video-border-width:${escapeHtml(String(playerBorderWidth))}px`
+    `--rstk-video-border-width:${escapeHtml(String(playerBorderWidth))}px`,
+    `--rstk-video-aspect-ratio:${escapeHtml(getVideoAspectRatio(orientation))}`,
+    ...(shouldUseDefaultPortraitMediaWidth(settings, orientation) ? [`--rstk-media-width:${DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH}%`] : [])
   ]
 }
 
-function renderVideoFrameStyle(settings = {}) {
-  return getVideoFrameStyleVars(settings).join(';')
+function renderVideoFrameStyle(settings = {}, detectedOrientation = '') {
+  return getVideoFrameStyleVars(settings, detectedOrientation).join(';')
 }
 
 function roundVideoPreviewSecond(value) {
@@ -13132,6 +13177,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const rawSpeed = Number(settings.videoDefaultSpeed || 1)
   const speed = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1
   const fit = ['cover', 'contain', 'fill'].includes(cleanString(settings.videoFit)) ? cleanString(settings.videoFit) : 'cover'
+  const orientation = normalizeVideoOrientation(settings, getVideoOrientationFromAsset(options.tracking?.asset))
   const playerColor = normalizeCssPaint(settings.videoPlayerColor, DEFAULT_VIDEO_PLAYER_COLOR) || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = normalizeCssPaint(settings.videoPlayColor, '#ffffff') || '#ffffff'
   const controlPanelRadius = normalizeVideoControlPanelRadius(settings)
@@ -13151,11 +13197,12 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     showCustomControlBar ? (showControlBarInitially ? 'rstk-video-controls-visible' : 'rstk-video-controls-hidden') : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
     muted ? 'rstk-video-is-muted' : '',
+    `rstk-video-${orientation}`,
     `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
   const styleVars = [
-    ...getVideoFrameStyleVars(settings),
+    ...getVideoFrameStyleVars(settings, orientation),
     `--rstk-video-player-color:${escapeHtml(playerColor)}`,
     `--rstk-video-play-color:${escapeHtml(playColor)}`,
     `--rstk-video-control-radius:${escapeHtml(String(controlPanelRadius))}px`,
@@ -13310,7 +13357,8 @@ function renderContentBlock(block, context = {}) {
         }, settings)
       }
 
-      return `<div class="rstk-video rstk-video-embed-frame" style="${renderVideoFrameStyle(settings)}"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+      const iframeOrientation = normalizeVideoOrientation(settings)
+      return `<div class="rstk-video rstk-video-embed-frame rstk-video-${iframeOrientation}" style="${renderVideoFrameStyle(settings, iframeOrientation)}"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
     }
 
     return `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
@@ -14399,9 +14447,10 @@ const RSTK_BASE_CSS = `
   .rstk-check-body strong{font-weight:650;font-size:1rem}
   .rstk-check-body span{color:var(--rstk-muted);font-size:.92rem}
 
-  .rstk-media,.rstk-video{width:100%;margin:0;overflow:hidden;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius)));background:var(--rstk-block-bg,var(--rstk-surface2))}
+  .rstk-media,.rstk-video{width:var(--rstk-media-width,100%);margin-top:0;margin-bottom:0;margin-left:var(--rstk-media-margin-left,0);margin-right:var(--rstk-media-margin-right,0);overflow:hidden;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius)));background:var(--rstk-block-bg,var(--rstk-surface2))}
   .rstk-media img,.rstk-video iframe,.rstk-video video{width:100%;display:block;border:0}
-  .rstk-video{aspect-ratio:16/9;position:relative;border-width:var(--rstk-video-border-width,var(--rstk-block-border-width,1px));border-color:var(--rstk-video-border-color,var(--rstk-block-border,var(--rstk-border)));border-radius:var(--rstk-video-radius,var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius))));background:var(--rstk-video-bg,var(--rstk-block-bg,var(--rstk-surface2)))}
+  .rstk-video{aspect-ratio:var(--rstk-video-aspect-ratio,16/9);position:relative;border-width:var(--rstk-video-border-width,var(--rstk-block-border-width,1px));border-color:var(--rstk-video-border-color,var(--rstk-block-border,var(--rstk-border)));border-radius:var(--rstk-video-radius,var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius))));background:var(--rstk-video-bg,var(--rstk-block-bg,var(--rstk-surface2)))}
+	  .rstk-video-portrait{aspect-ratio:var(--rstk-video-aspect-ratio,9/16)}
 	  .rstk-video iframe,.rstk-video video{height:100%}
 	  .rstk-video video{background:var(--rstk-video-bg,#000);object-fit:cover}
 	  .rstk-video-player{container-type:inline-size;isolation:isolate}
@@ -14446,6 +14495,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-speed-control select{-webkit-appearance:none;appearance:none;width:34px;min-width:0;height:100%;margin:0;border:0!important;border-radius:0;background:transparent!important;background-image:none!important;box-shadow:none!important;color:inherit;cursor:pointer;font:inherit;font-size:.76rem;font-weight:750;line-height:1;outline:0;padding:0}
 	  .rstk-video-speed-control option{color:#111827}
 	  @supports (width:1cqw){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(104px,min(22cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))))}.rstk-video-control-bar{left:max(6px,min(12px,2cqw));right:max(6px,min(12px,2cqw));bottom:max(6px,min(12px,2cqw));gap:max(4px,min(8px,1.4cqw));padding:max(5px,min(7px,1.2cqw))}.rstk-video-control-button{width:max(24px,min(30px,5cqw));height:max(24px,min(30px,5cqw))}.rstk-video-speed-control{min-width:max(54px,min(66px,11cqw));height:max(24px,min(30px,5cqw));padding-inline:max(6px,min(8px,1.5cqw)) max(18px,min(20px,3cqw))}@media (max-width:760px){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(88px,min(18cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))))}}}
+	  @media (max-width:760px){.rstk-block-style .rstk-video-portrait{width:100%;margin-left:auto;margin-right:auto}}
 		  @keyframes rstkVideoSoundNotice{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}10%,18%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}28%,70%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0) scale(1)}86%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}100%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}}
 		  @keyframes rstkVideoSoundNoticeOpen{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}45%{opacity:1;transform:translateY(0) scale(1)}100%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0) scale(1)}}
 		  @keyframes rstkVideoSoundText{0%,17%,76%,100%{opacity:0;transform:translateX(10px)}26%,68%{opacity:1;transform:translateX(0)}}
@@ -16026,6 +16076,20 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        );
 	        return { start, end };
 	      };
+	      const syncVideoOrientation = (host, video) => {
+	        const width = Number(video.videoWidth);
+	        const height = Number(video.videoHeight);
+	        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+	        const orientation = height > width ? 'portrait' : 'landscape';
+	        host.classList.toggle('rstk-video-portrait', orientation === 'portrait');
+	        host.classList.toggle('rstk-video-landscape', orientation === 'landscape');
+	        host.style.setProperty('--rstk-video-aspect-ratio', orientation === 'portrait' ? '9 / 16' : '16 / 9');
+	        const parentStyle = host.closest('.rstk-block-style')?.style;
+	        const hasConfiguredWidth = Boolean(host.style.getPropertyValue('--rstk-media-width') || parentStyle?.getPropertyValue('--rstk-media-width'));
+	        if (orientation === 'portrait' && !hasConfiguredWidth) {
+	          host.style.setProperty('--rstk-media-width', '${DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH}%');
+	        }
+	      };
 	      document.querySelectorAll('.rstk-video-player').forEach(host => {
 	        const video = host.querySelector('video');
 	        if (!video) return;
@@ -16318,10 +16382,16 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          }
 	          sync();
 	        });
-	        video.addEventListener('loadedmetadata', startPreviewLoop);
+	        video.addEventListener('loadedmetadata', () => {
+	          syncVideoOrientation(host, video);
+	          startPreviewLoop();
+	        });
 	        video.addEventListener('canplay', startPreviewLoop);
 	        ['pause', 'timeupdate', 'loadedmetadata', 'volumechange', 'ended'].forEach(eventName => video.addEventListener(eventName, sync));
-	        if (video.readyState >= 1) startPreviewLoop();
+	        if (video.readyState >= 1) {
+	          syncVideoOrientation(host, video);
+	          startPreviewLoop();
+	        }
 	        sync();
 	      });
 	    })();

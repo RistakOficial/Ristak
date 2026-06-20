@@ -277,9 +277,10 @@
 .rstkCanvas .rstk-check-body strong { font-weight: 650; font-size: 1rem; }
 .rstkCanvas .rstk-check-body span { color: var(--rstk-muted); font-size: .92rem; }
 
-.rstkCanvas .rstk-media, .rstkCanvas .rstk-video { width: 100%; margin: 0; overflow: hidden; border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border)); border-radius: var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius))); background: var(--rstk-block-bg, var(--rstk-surface2)); }
+.rstkCanvas .rstk-media, .rstkCanvas .rstk-video { width: var(--rstk-media-width, 100%); margin-top: 0; margin-bottom: 0; margin-left: var(--rstk-media-margin-left, 0); margin-right: var(--rstk-media-margin-right, 0); overflow: hidden; border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border)); border-radius: var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius))); background: var(--rstk-block-bg, var(--rstk-surface2)); }
 .rstkCanvas .rstk-media img, .rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { width: 100%; display: block; border: 0; }
-.rstkCanvas .rstk-video { aspect-ratio: 16/9; position: relative; border-width: var(--rstk-video-border-width, var(--rstk-block-border-width, 1px)); border-color: var(--rstk-video-border-color, var(--rstk-block-border, var(--rstk-border))); border-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius)))); background: var(--rstk-video-bg, var(--rstk-block-bg, var(--rstk-surface2))); }
+.rstkCanvas .rstk-video { aspect-ratio: var(--rstk-video-aspect-ratio, 16/9); position: relative; border-width: var(--rstk-video-border-width, var(--rstk-block-border-width, 1px)); border-color: var(--rstk-video-border-color, var(--rstk-block-border, var(--rstk-border))); border-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius)))); background: var(--rstk-video-bg, var(--rstk-block-bg, var(--rstk-surface2))); }
+.rstkCanvas .rstk-video-portrait { aspect-ratio: var(--rstk-video-aspect-ratio, 9/16); }
 .rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { height: 100%; }
 .rstkCanvas .rstk-video video { background: var(--rstk-video-bg, #000); object-fit: cover; }
 .rstkCanvas .rstk-video-player {
@@ -586,6 +587,14 @@
       width: min(var(--rstk-video-play-icon-size, 95px), max(36px, min(7cqw, calc(100% - 20px))));
       height: min(var(--rstk-video-play-icon-size, 95px), max(36px, min(7cqw, calc(100% - 20px))));
     }
+  }
+}
+
+@media (max-width: 760px) {
+  .rstkCanvas .rstk-block-style .rstk-video-portrait {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
   }
 }
 @keyframes rstkVideoSoundNotice {
