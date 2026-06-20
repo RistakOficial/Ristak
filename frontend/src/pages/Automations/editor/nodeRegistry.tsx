@@ -172,9 +172,9 @@ export interface MessageBlock {
   /** Bloque de plantilla de WhatsApp */
   templateId?: string
   templateName?: string
-  /** Valores de las variables {{n}} de la plantilla (aceptan {{contact.x}}) */
+  /** Legacy: las plantillas usan sus parámetros guardados en Configuración */
   templateVariables?: Record<string, string>
-  /** Archivo del encabezado (imagen/video/documento) si la plantilla lo pide */
+  /** Legacy: el encabezado se toma de la plantilla guardada */
   headerMediaUrl?: string
 }
 

@@ -272,6 +272,131 @@ test('guarda en el chat el texto renderizado de plantillas enviadas por YCloud',
   })
 })
 
+test('automatización usa parámetros predeterminados de la plantilla y no variables editadas en el bloque', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const suffix = randomUUID()
+    const templateId = `template_automation_defaults_${suffix}`
+    const templateName = `seguimiento_defaults_${suffix.replace(/-/g, '_')}`
+    const contactId = `contact_template_defaults_${suffix}`
+    const automationId = `automation_template_defaults_${suffix}`
+    const phone = `+52157${Date.now().toString().slice(-8)}`
+    const components = [
+      {
+        type: 'BODY',
+        text: 'Hola {{1}}, ya tenemos tu información.'
+      }
+    ]
+    const flow = {
+      nodes: [
+        {
+          id: 'start',
+          type: 'start',
+          label: 'Cuando...',
+          config: {
+            triggers: [
+              { id: 'trigger-contact-created', type: 'trigger-contact-created', config: { source: '' } }
+            ]
+          }
+        },
+        {
+          id: 'send-whatsapp-template',
+          type: 'channel-whatsapp',
+          label: 'WhatsApp',
+          config: {
+            sender: 'default',
+            messageType: 'template',
+            templateId,
+            templateName,
+            messageBlocks: [
+              {
+                id: 'template-block',
+                type: 'template',
+                templateId,
+                templateName,
+                templateVariables: {
+                  1: 'Valor viejo que ya no debe usarse'
+                }
+              }
+            ]
+          }
+        }
+      ],
+      edges: [
+        { id: 'edge-start-send', sourceNodeId: 'start', targetNodeId: 'send-whatsapp-template' }
+      ],
+      settings: { allowReentry: true }
+    }
+
+    try {
+      await db.run(
+        `INSERT INTO whatsapp_message_templates (
+          id, name, description, category, language, status,
+          header_enabled, header_type, body_text, footer_text, buttons_json,
+          variables_json, variable_examples_json, variable_bindings_json,
+          ycloud_template_id, ycloud_status, ycloud_raw_payload_json,
+          created_at, updated_at
+        ) VALUES (?, ?, '', 'utility', 'es_MX', 'active', 0, 'none', ?, '', '[]', ?, ?, ?, ?, 'APPROVED', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `local_${templateId}`,
+        templateName,
+        'Hola {{1}}, ya tenemos tu información.',
+        JSON.stringify(['{{1}}']),
+        JSON.stringify({ '{{1}}': 'Ana' }),
+        JSON.stringify({ bodyText: { 1: { variableKey: 'contact.first_name', mergeField: '{{contact.first_name}}', label: 'Nombre', example: 'Ana' } } }),
+        templateId,
+        JSON.stringify({ id: templateId, name: templateName, status: 'APPROVED' })
+      ])
+      await db.run(
+        `INSERT INTO whatsapp_api_templates (
+          id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
+        ) VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
+        [
+          templateId,
+          templateId,
+          'waba_ycloud_buttons_test',
+          templateName,
+          'es_MX',
+          JSON.stringify(components),
+          JSON.stringify({ components })
+        ]
+      )
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [contactId, phone, `template-defaults-${suffix}@example.com`, 'Claudia Plantilla', 'Claudia', '{}']
+      )
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, 'Test plantilla WhatsApp defaults', JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      await handleAutomationEvent('contact-created', { contactId })
+
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'template')
+      const bodyComponent = captures[0].template.components.find(component => component.type === 'body')
+      assert.equal(bodyComponent.parameters[0].text, 'Claudia')
+      assert.equal(JSON.stringify(captures[0]).includes('Valor viejo que ya no debe usarse'), false)
+
+      const enrollment = await db.get(
+        'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, contactId]
+      )
+      assert.equal(enrollment.status, 'completed')
+    } finally {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+      await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_id = ?', [templateId])
+      await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ? OR to_phone = ?', [contactId, phone, phone])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, phone])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+      await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [`local_${templateId}`])
+    }
+  })
+})
+
 test('automatización de WhatsApp queda esperando botón y continúa por la salida elegida', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const suffix = randomUUID()

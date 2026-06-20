@@ -46,6 +46,14 @@ const newTemplateBlock = (): MessageBlock => ({
   templateName: ''
 })
 
+const sanitizeTemplateBlock = (block: MessageBlock): MessageBlock => {
+  if (block.type !== 'template') return block
+  const cleanBlock = { ...block }
+  delete cleanBlock.templateVariables
+  delete cleanBlock.headerMediaUrl
+  return cleanBlock
+}
+
 export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config: Config) => void }> = ({
   config,
   onChange
@@ -76,22 +84,23 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const rawBlocks = Array.isArray(config.messageBlocks) ? (config.messageBlocks as MessageBlock[]) : []
   const templateBlocks =
     rawBlocks.some((block) => block.type === 'template') || !str(config.templateId)
-      ? rawBlocks.filter((block) => block.type === 'template' || block.type === 'delay')
+      ? rawBlocks.filter((block) => block.type === 'template' || block.type === 'delay').map(sanitizeTemplateBlock)
       : [
-          {
+          sanitizeTemplateBlock({
             id: 'tpl_legacy',
             type: 'template' as const,
             templateId: str(config.templateId),
             templateName: str(config.templateName)
-          }
+          })
         ]
 
   const firstTemplateBlock = (blocks: MessageBlock[]) => blocks.find((block) => block.type === 'template')
 
   const setTemplateBlocks = (messageBlocks: MessageBlock[]) => {
-    const firstTemplate = firstTemplateBlock(messageBlocks)
+    const nextBlocks = messageBlocks.map(sanitizeTemplateBlock)
+    const firstTemplate = firstTemplateBlock(nextBlocks)
     set({
-      messageBlocks,
+      messageBlocks: nextBlocks,
       templateId: str(firstTemplate?.templateId),
       templateName: str(firstTemplate?.templateName)
     })

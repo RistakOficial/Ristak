@@ -2251,6 +2251,7 @@ async function sendWhatsAppBlocks(node, ctx) {
   let fromPhone
 
   if (str(config.messageType) === 'template') {
+    const { buildDefaultMessageTemplateSendComponents } = await import('./messageTemplatesService.js')
     const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
     const sequence = blocks.filter((block) => block.type === 'template' || block.type === 'delay')
     // Compatibilidad: configs viejas con un solo templateId suelto
@@ -2266,56 +2267,24 @@ async function sendWhatsAppBlocks(node, ctx) {
         )
         if (seconds > 0) await sleep(seconds * 1000)
       } else if (str(block.templateId) || str(block.templateName)) {
-        // Variables {{n}}: se rellenan con datos del contacto si traen tokens
-        const rawVariables = block.templateVariables || {}
-        const variables = {}
-        Object.entries(rawVariables).forEach(([key, value]) => {
-          const rendered = renderTemplate(String(value ?? ''), ctx, { preserveUnknown: true }).trim()
-          if (rendered) variables[key] = rendered
+        const components = await buildDefaultMessageTemplateSendComponents({
+          templateId: str(block.templateId),
+          templateName: str(block.templateName),
+          language: str(block.language || config.language),
+          variableOptions: {
+            contactId: ctx.contact?.id,
+            phone: to,
+            userId: ctx.userId,
+            publicBaseUrl: ctx.publicBaseUrl,
+            extraVariables: buildVariableMap(ctx)
+          }
         })
-
-        // Encabezado multimedia: el archivo subido se publica y va como link
-        let components
-        const headerUrl = str(block.headerMediaUrl)
-        if (headerUrl) {
-          const { saveWhatsAppImageDataUrl, buildLocalMediaUrl } = await import('./whatsappApiService.js')
-          const { extractMediaAssetIdFromUrl, getMediaAssetDataUrl } = await import('./mediaStorageService.js')
-          let link = headerUrl
-          const mediaAssetId = extractMediaAssetIdFromUrl(headerUrl)
-          const assetMatch = /\/api\/automations\/assets\/([\w-]+)/.exec(headerUrl)
-          if (mediaAssetId) {
-            const media = await getMediaAssetDataUrl(mediaAssetId)
-            if (media.mimeType.startsWith('image/')) {
-              const localMedia = await saveWhatsAppImageDataUrl(media.dataUrl)
-              link = buildLocalMediaUrl(localMedia)
-            }
-          } else if (assetMatch) {
-            const row = await db.get('SELECT * FROM automation_assets WHERE id = ?', [assetMatch[1]])
-            if (row && row.content_type.startsWith('image/')) {
-              const media = await saveWhatsAppImageDataUrl(`data:${row.content_type};base64,${row.content_base64}`)
-              link = buildLocalMediaUrl(media)
-            }
-          }
-          if (link && /^https?:/.test(link)) {
-            components = [
-              { type: 'header', parameters: [{ type: 'image', image: { link } }] },
-              ...(Object.keys(variables).length
-                ? [{
-                    type: 'body',
-                    parameters: Object.keys(variables)
-                      .sort((a, b) => Number(a) - Number(b))
-                      .map((key) => ({ type: 'text', text: variables[key] }))
-                  }]
-                : [])
-            ]
-          }
-        }
 
         await sendWhatsAppApiTemplateMessage({
           to,
           templateId: str(block.templateId) || undefined,
           templateName: str(block.templateName) || undefined,
-          ...(components ? { components } : { variables }),
+          ...(components.length ? { components } : {}),
           contactId: ctx.contact?.id,
           phoneNumberId
         })

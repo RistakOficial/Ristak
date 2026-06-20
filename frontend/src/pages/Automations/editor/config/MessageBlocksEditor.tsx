@@ -38,8 +38,7 @@ import { genId } from '../flowUtils'
 import automationsService from '@/services/automationsService'
 import { MessageComposer } from '../composer/MessageComposer'
 import { CatalogSelect, NumberTextInput, TextInput, Toggle } from './configPrimitives'
-import { WhatsAppTemplatePreview, templateInputs, useWhatsAppTemplate } from './WhatsAppTemplatePreview'
-import { VariableTextInput } from '../composer/MessageComposer'
+import { WhatsAppTemplatePreview } from './WhatsAppTemplatePreview'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -185,72 +184,6 @@ const DelayPopover: React.FC<{
   )
 }
 
-/** Lo que la plantilla pide llenar: variables {{n}} y archivo del encabezado */
-const TemplateBlockInputs: React.FC<{
-  block: MessageBlock
-  onPatch: (patch: Partial<MessageBlock>) => void
-  onUploadHeader: (file: File) => void
-  uploading: boolean
-}> = ({ block, onPatch, onUploadHeader, uploading }) => {
-  const template = useWhatsAppTemplate(block.templateId || '')
-  const { variables, headerFormat } = templateInputs(template)
-  const values = block.templateVariables || {}
-
-  if (!template) return null
-  return (
-    <div style={{ marginTop: 8 }}>
-      {headerFormat && (
-        <>
-          <div className={styles.delayPopoverLabel}>
-            {headerFormat === 'IMAGE' ? 'Imagen' : headerFormat === 'VIDEO' ? 'Video' : 'Documento'} del encabezado
-          </div>
-          {block.headerMediaUrl && headerFormat === 'IMAGE' && (
-            <img src={block.headerMediaUrl} alt="Encabezado" className={styles.mediaPreviewImage} />
-          )}
-          {block.headerMediaUrl && headerFormat !== 'IMAGE' && (
-            <a href={block.headerMediaUrl} target="_blank" rel="noreferrer" className={styles.mediaPreviewFile}>
-              <Link2 size={12} /> Ver archivo del encabezado
-            </a>
-          )}
-          <label className={styles.mediaUploadButton}>
-            {uploading ? <Loader2 size={13} className={styles.mediaUploadSpinner} /> : <Upload size={13} />}
-            {uploading ? 'Subiendo…' : block.headerMediaUrl ? 'Cambiar archivo' : 'Cargar archivo del encabezado'}
-            <input
-              type="file"
-              accept={headerFormat === 'IMAGE' ? 'image/*' : headerFormat === 'VIDEO' ? 'video/*' : '.pdf,.doc,.docx'}
-              style={{ display: 'none' }}
-              disabled={uploading}
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file) onUploadHeader(file)
-                event.target.value = ''
-              }}
-            />
-          </label>
-        </>
-      )}
-
-      {variables.length > 0 && (
-        <div style={{ marginTop: headerFormat ? 8 : 0 }}>
-          <div className={styles.delayPopoverLabel}>Valores de las variables</div>
-          {variables.map((number) => (
-            <div key={number} style={{ marginBottom: 6 }}>
-              <VariableTextInput
-                value={values[number] || ''}
-                onChange={(compiled) =>
-                  onPatch({ templateVariables: { ...values, [number]: compiled } })
-                }
-                placeholder={`Variable ${number} (texto o variable del contacto)`}
-                aria-label={`Variable ${number}`}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 /** Envoltorio arrastrable de un bloque: asa + basura al hover, animación dnd-kit */
 const SortableBlock: React.FC<{
   id: string
@@ -350,7 +283,7 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
       image.src = url
     })
 
-  const uploadFile = (index: number, blockId: string, file: File, target: 'url' | 'headerMediaUrl' = 'url') => {
+  const uploadFile = (index: number, blockId: string, file: File) => {
     setUploading((current) => ({ ...current, [blockId]: true }))
     setUploadErrors((current) => ({ ...current, [blockId]: '' }))
     void compressImageInBrowser(file).then((prepared) => {
@@ -358,7 +291,7 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
       reader.onload = () => {
         void automationsService
           .uploadAsset(String(reader.result), prepared.name)
-          .then((asset) => updateBlock(index, { [target]: asset.url }))
+          .then((asset) => updateBlock(index, { url: asset.url }))
           .catch((error: Error) => {
             setUploadErrors((current) => ({ ...current, [blockId]: error.message || 'No se pudo subir el archivo' }))
           })
@@ -506,20 +439,16 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
                 <CatalogSelect
                   catalog="whatsappTemplates"
                   value={block.templateId || ''}
-                  onChange={(templateId, templateName) => updateBlock(index, { templateId, templateName })}
+                  onChange={(templateId, templateName) => updateBlock(index, {
+                    templateId,
+                    templateName,
+                    templateVariables: undefined,
+                    headerMediaUrl: undefined
+                  })}
                   placeholder="Selecciona la plantilla aprobada"
                   aria-label="Plantilla"
                 />
-                {/* Lo que la plantilla envía de verdad: texto, variables y botones */}
                 {block.templateId && <WhatsAppTemplatePreview templateId={block.templateId} />}
-                {block.templateId && (
-                  <TemplateBlockInputs
-                    block={block}
-                    onPatch={(patch) => updateBlock(index, patch)}
-                    uploading={Boolean(uploading[block.id])}
-                    onUploadHeader={(file) => uploadFile(index, block.id, file, 'headerMediaUrl')}
-                  />
-                )}
               </div>
             </SortableBlock>
           )

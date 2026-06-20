@@ -9,6 +9,7 @@ import {
   syncWhatsAppApiTemplatesFromYCloud,
   upsertWhatsAppApiTemplateSnapshot
 } from './whatsappApiService.js'
+import { renderTemplateVariables } from './templateVariablesService.js'
 import { logger } from '../utils/logger.js'
 
 const TEMPLATE_CATEGORIES = new Set(['utility', 'marketing', 'authentication', 'service'])
@@ -1488,22 +1489,174 @@ export async function syncAllMessageTemplatesWithYCloud() {
   return getMessageTemplateBundle()
 }
 
-function buildSendComponentsFromTemplate(template) {
-  const components = []
-  const headerExamples = getVariableExamplesForTarget(template, 'headerText', 'el encabezado')
-  if (headerExamples.length) {
-    components.push({
-      type: 'header',
-      parameters: headerExamples.map((example) => ({ type: 'text', text: example }))
-    })
+async function findMessageTemplateForSendDefaults({ templateId, templateName, language } = {}) {
+  const cleanTemplateId = cleanString(templateId)
+  const cleanTemplateName = cleanString(templateName)
+  const cleanLanguage = cleanString(language)
+
+  if (cleanTemplateId) {
+    const direct = await db.get(`
+      SELECT *
+      FROM whatsapp_message_templates
+      WHERE id = ?
+        OR ycloud_template_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `, [cleanTemplateId, cleanTemplateId])
+    if (direct) return mapTemplate(direct)
+
+    const apiTemplate = await db.get(`
+      SELECT id, official_template_id, name, language
+      FROM whatsapp_api_templates
+      WHERE id = ? OR official_template_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `, [cleanTemplateId, cleanTemplateId])
+
+    if (apiTemplate) {
+      const fromSnapshot = await db.get(`
+        SELECT *
+        FROM whatsapp_message_templates
+        WHERE language = ?
+          AND (
+            ycloud_template_id = ?
+            OR ycloud_template_id = ?
+            OR ycloud_template_name = ?
+            OR name = ?
+          )
+        ORDER BY
+          CASE
+            WHEN ycloud_template_id = ? OR ycloud_template_id = ? THEN 0
+            WHEN ycloud_template_name = ? THEN 1
+            ELSE 2
+          END,
+          updated_at DESC
+        LIMIT 1
+      `, [
+        apiTemplate.language,
+        apiTemplate.id,
+        apiTemplate.official_template_id,
+        apiTemplate.name,
+        apiTemplate.name,
+        apiTemplate.id,
+        apiTemplate.official_template_id,
+        apiTemplate.name
+      ])
+      if (fromSnapshot) return mapTemplate(fromSnapshot)
+    }
   }
 
-  const bodyExamples = getVariableExamplesForTarget(template, 'bodyText', 'el cuerpo')
-  if (bodyExamples.length) {
-    components.push({
-      type: 'body',
-      parameters: bodyExamples.map((example) => ({ type: 'text', text: example }))
-    })
+  if (!cleanTemplateName) return null
+  const params = [cleanTemplateName, cleanTemplateName]
+  const languageClause = cleanLanguage ? 'AND language = ?' : ''
+  if (cleanLanguage) params.push(cleanLanguage)
+
+  const byName = await db.get(`
+    SELECT *
+    FROM whatsapp_message_templates
+    WHERE (ycloud_template_name = ? OR name = ?)
+      ${languageClause}
+    ORDER BY
+      CASE WHEN ycloud_template_name = ? THEN 0 ELSE 1 END,
+      updated_at DESC
+    LIMIT 1
+  `, [...params, cleanTemplateName])
+
+  return byName ? mapTemplate(byName) : null
+}
+
+function bindingFallback(template, index) {
+  return cleanString(template?.variableExamples?.[`{{${index}}}`]) ||
+    cleanString(template?.variableExamples?.[String(index)])
+}
+
+async function renderSendBindingValue(template, binding = {}, index, variableOptions = {}) {
+  const mergeField = cleanString(binding.mergeField) ||
+    (cleanString(binding.variableKey) ? `{{${cleanString(binding.variableKey)}}}` : '')
+  const fallback = cleanString(binding.example) || bindingFallback(template, index)
+  if (!mergeField) return fallback
+
+  const rendered = cleanString(await renderTemplateVariables(mergeField, variableOptions))
+  return rendered || fallback
+}
+
+async function buildTextSendParametersFromTemplate(template, target, variableOptions = {}) {
+  const indexes = extractNumericVariableIndexes(template?.[target])
+  if (!indexes.length) return []
+
+  const bindings = template.variableBindings?.[target] || {}
+  const parameters = []
+  for (const index of indexes) {
+    const value = await renderSendBindingValue(template, bindings[String(index)] || {}, index, variableOptions)
+    if (!value) {
+      throw new Error(`Configura el dato dinámico y el ejemplo para {{${index}}} en la plantilla ${template.name}.`)
+    }
+    parameters.push({ type: 'text', text: value })
+  }
+  return parameters
+}
+
+function buildMediaHeaderSendComponent(template) {
+  const headerType = cleanString(template?.headerType).toLowerCase()
+  if (!['image', 'video', 'document'].includes(headerType)) return null
+
+  const link = cleanString(template.headerMediaUrl, 2048)
+  if (!link) {
+    throw new Error(`Agrega el archivo de encabezado predeterminado en la plantilla ${template.name}.`)
+  }
+
+  return {
+    type: 'header',
+    parameters: [{
+      type: headerType,
+      [headerType]: { link }
+    }]
+  }
+}
+
+export async function buildDefaultMessageTemplateSendComponents({
+  templateId,
+  templateName,
+  language,
+  variableOptions = {}
+} = {}) {
+  const template = await findMessageTemplateForSendDefaults({ templateId, templateName, language })
+  if (!template) return []
+
+  const components = []
+  const mediaHeader = buildMediaHeaderSendComponent(template)
+  if (mediaHeader) {
+    components.push(mediaHeader)
+  } else {
+    const headerParameters = await buildTextSendParametersFromTemplate(template, 'headerText', variableOptions)
+    if (headerParameters.length) {
+      components.push({ type: 'header', parameters: headerParameters })
+    }
+  }
+
+  const bodyParameters = await buildTextSendParametersFromTemplate(template, 'bodyText', variableOptions)
+  if (bodyParameters.length) {
+    components.push({ type: 'body', parameters: bodyParameters })
+  }
+
+  return components
+}
+
+async function buildSendComponentsFromTemplate(template) {
+  const components = []
+  const mediaHeader = buildMediaHeaderSendComponent(template)
+  if (mediaHeader) {
+    components.push(mediaHeader)
+  } else {
+    const headerParameters = await buildTextSendParametersFromTemplate(template, 'headerText')
+    if (headerParameters.length) {
+      components.push({ type: 'header', parameters: headerParameters })
+    }
+  }
+
+  const bodyParameters = await buildTextSendParametersFromTemplate(template, 'bodyText')
+  if (bodyParameters.length) {
+    components.push({ type: 'body', parameters: bodyParameters })
   }
 
   return components
@@ -1524,7 +1677,7 @@ export async function sendMessageTemplateTest(id, payload = {}) {
       from: payload.from,
       templateName: getYCloudTemplateName(template),
       language: template.language,
-      components: buildSendComponentsFromTemplate(template),
+      components: await buildSendComponentsFromTemplate(template),
       externalId: payload.externalId
     })
     return {
