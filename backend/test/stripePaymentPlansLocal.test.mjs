@@ -7,6 +7,12 @@ import {
   getInvoiceSchedule,
   updateInvoiceSchedule
 } from '../src/controllers/highlevelController.js'
+import {
+  processDueStripePaymentPlanCharges,
+  saveStripePaymentConfig,
+  setStripeFactoryForTest
+} from '../src/services/stripePaymentService.js'
+import { initializeMasterKey } from '../src/utils/encryption.js'
 
 function createResponse() {
   return {
@@ -29,6 +35,7 @@ async function cleanup(ids) {
   await db.run('DELETE FROM payment_flows WHERE id = ?', [ids.flowId]).catch(() => undefined)
   await db.run('DELETE FROM payments WHERE id IN (?, ?, ?)', [ids.cardSetupPaymentId, ids.firstPaymentId, ids.installmentPaymentId]).catch(() => undefined)
   await db.run('DELETE FROM payments WHERE metadata_json LIKE ?', [`%${ids.flowId}%`]).catch(() => undefined)
+  await db.run('DELETE FROM stripe_payment_methods WHERE contact_id = ?', [ids.contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [ids.contactId]).catch(() => undefined)
 }
 
@@ -367,6 +374,143 @@ test('permite restar pagos pendientes de un plan Stripe local', async () => {
     assert.equal(installment.status, 'deleted')
     assert.equal(linkedInstallmentPayment.status, 'deleted')
   } finally {
+    await cleanup(ids)
+  }
+})
+
+test('cobra automáticamente parcialidades vencidas con tarjeta guardada sin duplicar', async () => {
+  const ids = await seedStripePlan()
+  const createCalls = []
+  const stripeCustomerId = `cus_test_${Date.now()}`
+  const stripePaymentMethodId = `pm_test_${Date.now()}`
+
+  setStripeFactoryForTest(() => ({
+    paymentIntents: {
+      create: async (params, options) => {
+        createCalls.push({ params, options })
+        return {
+          id: `pi_test_${createCalls.length}`,
+          status: 'succeeded',
+          amount: params.amount,
+          amount_received: params.amount,
+          currency: params.currency,
+          customer: params.customer,
+          payment_method: params.payment_method,
+          latest_charge: `ch_test_${createCalls.length}`,
+          metadata: params.metadata
+        }
+      }
+    },
+    paymentMethods: {
+      retrieve: async (paymentMethodId) => ({
+        id: paymentMethodId,
+        type: 'card',
+        card: {
+          brand: 'visa',
+          last4: '4242',
+          exp_month: 12,
+          exp_year: 2035,
+          funding: 'credit',
+          country: 'MX'
+        }
+      }),
+      list: async () => ({ data: [] })
+    }
+  }))
+
+  try {
+    await initializeMasterKey()
+    await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'test',
+      publishableKey: 'pk_test_local_automatic_plan',
+      secretKey: 'sk_test_local_automatic_plan',
+      defaultCurrency: 'MXN'
+    })
+
+    await db.run(
+      `UPDATE contacts
+       SET stripe_customer_id = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [stripeCustomerId, ids.contactId]
+    )
+
+    await db.run(
+      `INSERT INTO stripe_payment_methods (
+        id, contact_id, stripe_customer_id, stripe_payment_method_id,
+        brand, last4, exp_month, exp_year, funding, country, mode, is_default,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'visa', '4242', 12, 2035, 'credit', 'MX', 'test', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [`stripe_pm_${Date.now()}`, ids.contactId, stripeCustomerId, stripePaymentMethodId]
+    )
+
+    await db.run(
+      `UPDATE payment_flows
+       SET current_state = 'installment_plan_active',
+           stripe_customer_id = ?,
+           stripe_payment_method_id = ?,
+           stripe_payment_method_label = 'VISA 4242',
+           card_setup_status = 'paid',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [stripeCustomerId, stripePaymentMethodId, ids.flowId]
+    )
+
+    await db.run(
+      `UPDATE installment_payments
+       SET status = 'processing',
+           payment_method = 'stripe_saved_card',
+           due_date = '2000-01-01',
+           updated_at = datetime('now', '-20 minutes')
+       WHERE id = ?`,
+      [ids.installmentId]
+    )
+
+    await db.run(
+      `UPDATE payments
+       SET status = 'pending',
+           payment_method = 'stripe_scheduled_card',
+           due_date = '2000-01-01',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [ids.installmentPaymentId]
+    )
+
+    const firstRun = await processDueStripePaymentPlanCharges({ limit: 5 })
+    assert.equal(firstRun.length, 1)
+    assert.equal(firstRun[0].charged, true)
+    assert.equal(createCalls.length, 1)
+    assert.equal(createCalls[0].params.customer, stripeCustomerId)
+    assert.equal(createCalls[0].params.payment_method, stripePaymentMethodId)
+    assert.equal(createCalls[0].params.off_session, true)
+    assert.equal(createCalls[0].params.confirm, true)
+    assert.equal(createCalls[0].options.idempotencyKey, `ristak:${ids.installmentPaymentId}:off-session-charge`)
+
+    const payment = await db.get(
+      'SELECT status, stripe_payment_intent_id, stripe_charge_id FROM payments WHERE id = ?',
+      [ids.installmentPaymentId]
+    )
+    const installment = await db.get(
+      'SELECT status, stripe_payment_intent_id FROM installment_payments WHERE id = ?',
+      [ids.installmentId]
+    )
+    const mirroredPlan = await db.get('SELECT status, schedule_json FROM payment_plans WHERE id = ?', [ids.flowId])
+    const mirroredSchedule = JSON.parse(mirroredPlan.schedule_json || '{}')
+
+    assert.equal(payment.status, 'paid')
+    assert.equal(payment.stripe_payment_intent_id, 'pi_test_1')
+    assert.equal(payment.stripe_charge_id, 'ch_test_1')
+    assert.equal(installment.status, 'paid')
+    assert.equal(installment.stripe_payment_intent_id, 'pi_test_1')
+    assert.equal(mirroredPlan.status, 'active')
+    assert.equal(mirroredSchedule.installments[0].status, 'paid')
+
+    const secondRun = await processDueStripePaymentPlanCharges({ limit: 5 })
+    assert.equal(secondRun.length, 0)
+    assert.equal(createCalls.length, 1)
+  } finally {
+    setStripeFactoryForTest(null)
     await cleanup(ids)
   }
 })

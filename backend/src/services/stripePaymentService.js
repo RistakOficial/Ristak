@@ -171,6 +171,27 @@ function timestampPlaceholder() {
   return isPostgresRuntime ? '?::timestamp' : '?'
 }
 
+function dateOnlySql(expression) {
+  return isPostgresRuntime ? `(${expression})::date` : `DATE(${expression})`
+}
+
+function dateOnlyPlaceholder() {
+  return isPostgresRuntime ? '?::date' : 'DATE(?)'
+}
+
+function staleProcessingSql(column) {
+  return isPostgresRuntime
+    ? `${column} < CURRENT_TIMESTAMP - INTERVAL '10 minutes'`
+    : `${column} < datetime('now', '-10 minutes')`
+}
+
+function stripeRequestOptionsWithIdempotency(requestOptions, idempotencyKey) {
+  return {
+    ...(requestOptions || {}),
+    idempotencyKey
+  }
+}
+
 function normalizeCurrency(value) {
   const currency = cleanString(value || DEFAULT_CURRENCY).toUpperCase()
   return /^[A-Z]{3}$/.test(currency) ? currency : DEFAULT_CURRENCY
@@ -1730,7 +1751,7 @@ async function chargeStripePaymentRowWithSavedMethod({
           ...extraMetadata
         }
       },
-      requestOptions
+      stripeRequestOptionsWithIdempotency(requestOptions, `ristak:${row.id}:off-session-charge`)
     )
 
     await updatePaymentFromIntent(intent, { stripe, config, requestOptions })
@@ -3328,6 +3349,11 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
   const { stripe, config, requestOptions } = await getStripeClient()
   const dueDate = todayDateOnly()
   const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
+  const firstPaymentDueDateSql = dateOnlySql('COALESCE(f.first_payment_date, p.due_date, p.date)')
+  const installmentDueDateSql = dateOnlySql('i.due_date')
+  const dueDatePlaceholder = dateOnlyPlaceholder()
+  const staleFirstPaymentSql = staleProcessingSql('f.updated_at')
+  const staleInstallmentSql = staleProcessingSql('i.updated_at')
   const firstPaymentRows = await db.all(
     `SELECT
        f.id AS flow_id,
@@ -3340,11 +3366,14 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
      WHERE f.payment_provider = 'stripe'
        AND f.current_state = ?
        AND f.first_payment_invoice_id IS NOT NULL
-       AND f.first_payment_status IN ('pending', 'scheduled')
+       AND (
+         f.first_payment_status IN ('pending', 'scheduled')
+         OR (f.first_payment_status = 'processing' AND ${staleFirstPaymentSql})
+       )
        AND f.first_payment_method IN ('card', 'payment_link', 'direct_card', 'saved_card')
        AND f.stripe_payment_method_id IS NOT NULL
-       AND substr(COALESCE(f.first_payment_date, p.due_date, p.date), 1, 10) <= ?
-       AND p.status IN ('pending', 'scheduled')
+       AND ${firstPaymentDueDateSql} <= ${dueDatePlaceholder}
+       AND p.status IN ('pending', 'scheduled', 'processing')
      ORDER BY COALESCE(f.first_payment_date, p.due_date, p.date) ASC
      LIMIT ?`,
     [STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueDate, normalizedLimit]
@@ -3367,16 +3396,21 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
      WHERE f.payment_provider = 'stripe'
        AND f.current_state = ?
        AND i.automatic = 1
-       AND i.status = 'scheduled'
+       AND (
+         i.status = 'scheduled'
+         OR (i.status = 'processing' AND ${staleInstallmentSql})
+       )
        AND i.payment_id IS NOT NULL
-       AND substr(i.due_date, 1, 10) <= ?
+       AND ${installmentDueDateSql} <= ${dueDatePlaceholder}
      ORDER BY i.due_date ASC, i.sequence ASC
      LIMIT ?`,
     [STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, dueDate, normalizedLimit]
   )
 
   const results = []
+  const touchedFlowIds = new Set()
   for (const row of firstPaymentRows || []) {
+    touchedFlowIds.add(row.flow_id)
     try {
       const savedMethod = await resolveStripeSavedMethod(row.contact_id, row.stripe_payment_method_id, config)
       if (!savedMethod) {
@@ -3419,6 +3453,7 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
   }
 
   for (const row of rows || []) {
+    touchedFlowIds.add(row.flow_id)
     if (row.payment_status === 'paid') {
       await db.run(
         `UPDATE installment_payments
@@ -3471,6 +3506,10 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
       )
       results.push({ installmentId: row.installment_id, paymentId: row.payment_id, error: error.message })
     }
+  }
+
+  for (const flowId of touchedFlowIds) {
+    await persistStripePaymentPlanMirror(flowId)
   }
 
   return results
