@@ -37,6 +37,7 @@ import { getMetaConfig } from './metaAdsService.js'
 import { createSession, getVisitorIdentityExpression, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
 
 export const SITE_TYPES = new Set(['standard_form', 'interactive_form', 'landing_page'])
+const FORM_SITE_TYPES = new Set(['standard_form', 'interactive_form'])
 export const SITE_STATUSES = new Set(['draft', 'published', 'archived'])
 const SITE_LIBRARY_FOLDER_SECTIONS = new Set(['landings', 'forms'])
 const SITE_LIBRARY_HTML_FORMS_FOLDER_ID = 'system-html-forms'
@@ -3450,6 +3451,95 @@ function mapBlock(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
+}
+
+function isNativeFormSite(site) {
+  return FORM_SITE_TYPES.has(cleanString(site?.siteType || site?.site_type))
+}
+
+function getSystemFieldKeyForBlock(block) {
+  const blockType = cleanString(block?.blockType || block?.block_type)
+  if (!FIELD_BLOCK_TYPES.has(blockType)) return ''
+  return getNativeSystemFieldKey({
+    settings: isPlainObject(block?.settings) ? block.settings : {}
+  })
+}
+
+function makeDuplicateSystemFieldError(fieldKey) {
+  const error = new Error(`${getNativeSystemFieldLabel(fieldKey)} ya existe en este formulario`)
+  error.status = 409
+  error.code = 'duplicate_system_form_field'
+  return error
+}
+
+function assertUniqueSystemFieldBlocks(blocks = []) {
+  const seen = new Map()
+  for (const block of blocks) {
+    const fieldKey = getSystemFieldKeyForBlock(block)
+    if (!fieldKey) continue
+    if (seen.has(fieldKey)) {
+      throw makeDuplicateSystemFieldError(fieldKey)
+    }
+    seen.set(fieldKey, block.id || '')
+  }
+}
+
+function getEmbeddedSystemFieldBlockArrays(settings = {}) {
+  return [
+    settings.embeddedBlocks,
+    settings.embedded_blocks,
+    settings.videoFormGateEmbeddedBlocks,
+    settings.video_form_gate_embedded_blocks
+  ].filter(Array.isArray)
+}
+
+function assertUniqueSystemFieldsInBlockSettings(settings = {}) {
+  for (const blockArray of getEmbeddedSystemFieldBlockArrays(settings)) {
+    assertUniqueSystemFieldBlocks(
+      blockArray.map((block, index) => ({
+        id: cleanString(block?.id) || `__embedded_system_field_${index}__`,
+        blockType: block?.blockType || block?.block_type,
+        settings: isPlainObject(block?.settings) ? block.settings : {}
+      }))
+    )
+  }
+}
+
+async function assertUniqueSystemFieldForInput(siteId, site, input, blockType, blockId = '') {
+  const settings = isPlainObject(input?.settings) ? input.settings : {}
+  assertUniqueSystemFieldsInBlockSettings(settings)
+  if (!isNativeFormSite(site)) return
+  const fieldKey = getSystemFieldKeyForBlock({ blockType, settings })
+  if (!fieldKey) return
+
+  const existingBlocks = await listSiteBlocks(siteId)
+  const finalBlocks = [
+    ...existingBlocks.filter(block => cleanString(block.id) !== cleanString(blockId)),
+    { id: cleanString(blockId) || '__new_system_field__', blockType, settings }
+  ]
+  assertUniqueSystemFieldBlocks(finalBlocks)
+}
+
+async function assertUniqueSystemFieldsForRestore(siteId, site, inputBlocks = []) {
+  for (const input of inputBlocks) {
+    assertUniqueSystemFieldsInBlockSettings(isPlainObject(input.settings) ? input.settings : {})
+  }
+
+  if (!isNativeFormSite(site)) return
+  const finalBlocksById = new Map((await listSiteBlocks(siteId)).map(block => [block.id, block]))
+
+  inputBlocks.forEach((input, index) => {
+    const id = cleanString(input.id) || `__new_system_field_${index}__`
+    const blockType = validateBlockType(input.blockType || input.block_type)
+    const settings = isPlainObject(input.settings) ? input.settings : {}
+    finalBlocksById.set(id, {
+      id,
+      blockType,
+      settings
+    })
+  })
+
+  assertUniqueSystemFieldBlocks([...finalBlocksById.values()])
 }
 
 function mapSubmission(row) {
@@ -9922,6 +10012,8 @@ export async function createBlock(siteId, input = {}) {
   }
   const isField = FIELD_BLOCK_TYPES.has(blockType)
   const options = Array.isArray(input.options) ? input.options : []
+  const settings = isPlainObject(input.settings) ? input.settings : {}
+  await assertUniqueSystemFieldForInput(siteId, site, { settings }, blockType)
 
   await db.run(`
     INSERT INTO public_site_blocks (
@@ -9937,7 +10029,7 @@ export async function createBlock(siteId, input = {}) {
     cleanString(input.placeholder),
     normalizeBoolean(input.required),
     jsonString(options),
-    jsonString(input.settings || {}),
+    jsonString(settings),
     Number(last?.max_order || -1) + 1
   ])
 
@@ -9954,6 +10046,13 @@ export async function updateBlock(siteId, blockId, input = {}) {
   const blockType = input.blockType || input.block_type
     ? validateBlockType(input.blockType || input.block_type)
     : existing.block_type
+  const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
+  const nextSettings = input.settings === undefined
+    ? parseJson(existing.settings_json, {})
+    : isPlainObject(input.settings)
+      ? input.settings
+      : {}
+  await assertUniqueSystemFieldForInput(siteId, site, { settings: nextSettings }, blockType, blockId)
 
   await db.run(`
     UPDATE public_site_blocks SET
@@ -9973,7 +10072,7 @@ export async function updateBlock(siteId, blockId, input = {}) {
     input.placeholder === undefined ? existing.placeholder : cleanString(input.placeholder),
     input.required === undefined ? normalizeBoolean(existing.required) : normalizeBoolean(input.required),
     input.options === undefined ? existing.options_json : jsonString(Array.isArray(input.options) ? input.options : []),
-    input.settings === undefined ? existing.settings_json : jsonString(input.settings || {}),
+    jsonString(nextSettings),
     blockId,
     siteId
   ])
@@ -10021,6 +10120,7 @@ export async function restoreBlocks(siteId, inputBlocks = []) {
   if (!blocks.length) {
     return getSite(siteId, { includeBlocks: true, includeSubmissions: true })
   }
+  await assertUniqueSystemFieldsForRestore(siteId, site, blocks)
 
   for (const input of blocks) {
     const id = cleanString(input.id) || crypto.randomUUID()

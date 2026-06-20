@@ -630,7 +630,14 @@ systemFormFieldPresets.forEach(preset => {
     .forEach(alias => systemFormFieldPresetByLegacyAlias.set(alias, preset))
 })
 
-const getSystemFormFieldPresetForBlock = (block?: SiteBlock | null) => {
+type SystemFormFieldBlockLike = {
+  blockType?: SiteBlockType
+  label?: string
+  placeholder?: string
+  settings?: Record<string, unknown>
+}
+
+const getSystemFormFieldPresetForBlock = (block?: SystemFormFieldBlockLike | null) => {
   const explicitPreset = getSystemFormFieldPreset(block?.settings?.systemFieldKey || block?.settings?.system_field_key)
   if (explicitPreset || !block) return explicitPreset
 
@@ -649,6 +656,15 @@ const getSystemFormFieldPresetForBlock = (block?: SiteBlock | null) => {
 
   return null
 }
+
+const getUsedSystemFormFieldKeys = (blocks: SystemFormFieldBlockLike[] = []) => new Set(
+  blocks
+    .map(block => getSystemFormFieldPresetForBlock(block)?.key)
+    .filter((key): key is SystemFormFieldKey => Boolean(key))
+)
+
+const hasSystemFormFieldKey = (blocks: SystemFormFieldBlockLike[] = [], key?: SystemFormFieldKey | null) =>
+  Boolean(key && getUsedSystemFormFieldKeys(blocks).has(key))
 
 const buildSystemFormFieldSettings = (preset: SystemFormFieldPreset, currentSettings: Record<string, unknown> = {}) => ({
   ...currentSettings,
@@ -705,6 +721,33 @@ const systemFormFieldPaletteItems: PaletteItem[] = systemFormFieldPresets.map(pr
     systemFieldKey: preset.key
   }
 }))
+
+const getSystemFormFieldPresetForPaletteItem = (item: PaletteItem) =>
+  getSystemFormFieldPreset(item.initialSettings?.systemFieldKey || item.initialSettings?.system_field_key)
+
+const getAvailableSystemFormFieldPaletteItems = (
+  items: PaletteItem[],
+  blocks: SystemFormFieldBlockLike[] = []
+) => {
+  const usedSystemKeys = getUsedSystemFormFieldKeys(blocks)
+  return items.filter(item => {
+    const preset = getSystemFormFieldPresetForPaletteItem(item)
+    return !preset || !usedSystemKeys.has(preset.key)
+  })
+}
+
+const getDuplicateSystemFormFieldPreset = (
+  block: SystemFormFieldBlockLike,
+  existingBlocks: SystemFormFieldBlockLike[] = []
+) => {
+  const preset = getSystemFormFieldPresetForBlock(block)
+  return hasSystemFormFieldKey(existingBlocks, preset?.key) ? preset : null
+}
+
+const getDuplicateSystemFormFieldMessage = (preset: SystemFormFieldPreset) => ({
+  title: 'Campo ya agregado',
+  message: `${preset.label} ya esta en este formulario. Editalo o eliminalo para volverlo a agregar.`
+})
 
 const videoSpeedOptions: Array<{ value: string; label: string }> = [
   { value: '0.75', label: '0.75x' },
@@ -6019,6 +6062,7 @@ function FormModePalette({
   freeFieldTypes = embeddedFormFreeFieldTypes,
   contentTypes = embeddedFormContentTypes,
   systemItems = systemFormFieldPaletteItems,
+  systemScopeBlocks = [],
   onAddField,
   onPaletteDragStart,
   onPaletteDragMove,
@@ -6032,13 +6076,15 @@ function FormModePalette({
   freeFieldTypes?: SiteBlockType[]
   contentTypes?: SiteBlockType[]
   systemItems?: PaletteItem[]
+  systemScopeBlocks?: SystemFormFieldBlockLike[]
   onAddField: (blockType: SiteBlockType, initialSettings?: Record<string, unknown>) => void
   onPaletteDragStart: (payload: PaletteDragPayload, position: PaletteDragPosition | null) => void
   onPaletteDragMove: (position: PaletteDragPosition | null) => void
   onPaletteDragEnd: () => void
 }) {
+  const availableSystemItems = getAvailableSystemFormFieldPaletteItems(systemItems, systemScopeBlocks)
   const sections: Array<{ label: string; items: PaletteItem[] }> = [
-    { label: 'Sistema', items: systemItems },
+    { label: 'Sistema', items: availableSystemItems },
     {
       label: 'Campos libres',
       items: freeFieldTypes.map(blockType => ({
@@ -6055,7 +6101,7 @@ function FormModePalette({
         blockType
       }))
     }
-  ]
+  ].filter(section => section.items.length > 0)
 
   return (
     <div className={styles.formModePalette}>
@@ -9086,9 +9132,15 @@ export const Sites: React.FC = () => {
     const newRootId = idMap.get(pageId) as string
 
     const clonedBlocks: SiteBlock[] = []
+    const skippedSystemLabels = new Set<string>()
     for (const oldId of subtreeIds) {
       const sourceBlocks = blocks.filter(block => !isGlobalHeaderBlock(block) && getBlockPageId(block, pages) === oldId)
       for (const block of sourceBlocks) {
+        const systemPreset = getSystemFormFieldPresetForBlock(block)
+        if (systemPreset && hasSystemFormFieldKey([...(site.blocks || []), ...clonedBlocks], systemPreset.key)) {
+          skippedSystemLabels.add(systemPreset.label)
+          continue
+        }
         clonedBlocks.push(createLocalBlockFromPayload(site, cloneBlockForPage(block, idMap.get(oldId) as string), (site.blocks || []).length + clonedBlocks.length))
       }
     }
@@ -9110,7 +9162,14 @@ export const Sites: React.FC = () => {
       selectedBlockId: '',
       navigate: true
     })
-    showToast('success', subtreeIds.length > 1 ? 'Página y subpáginas duplicadas' : 'Página duplicada', 'Ya está lista para editar. Guarda para conservarla.')
+    const skippedCopy = [...skippedSystemLabels].join(', ')
+    showToast(
+      'success',
+      subtreeIds.length > 1 ? 'Página y subpáginas duplicadas' : 'Página duplicada',
+      skippedCopy
+        ? `Se duplico sin repetir ${skippedCopy}. Guarda para conservarla.`
+        : 'Ya está lista para editar. Guarda para conservarla.'
+    )
   }
 
   const handleDeletePage = async (pageId: string) => {
@@ -9790,6 +9849,11 @@ export const Sites: React.FC = () => {
     )
   }
 
+  const warnDuplicateSystemFormField = (preset: SystemFormFieldPreset) => {
+    const duplicateMessage = getDuplicateSystemFormFieldMessage(preset)
+    showToast('warning', duplicateMessage.title, duplicateMessage.message)
+  }
+
   const handleAddBlock = async (blockType: SiteBlockType, addOptions: AddBlockOptions | number = {}) => {
     if (!selectedSite) return
     try {
@@ -9797,6 +9861,13 @@ export const Sites: React.FC = () => {
       const previousBlockIds = new Set((selectedSite.blocks || []).map(block => block.id))
       const initialSettings = options.initialSettings || {}
       const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, selectedSite), initialSettings)
+      const duplicateSystemPreset = isFormSite(selectedSite)
+        ? getDuplicateSystemFormFieldPreset(payload, selectedSite.blocks || [])
+        : null
+      if (duplicateSystemPreset) {
+        warnDuplicateSystemFormField(duplicateSystemPreset)
+        return
+      }
       let blockIdsBeforeContent = previousBlockIds
       let autoCreatedSection: SiteBlock | null = null
       if (popupSurfaceSelected) {
@@ -10044,6 +10115,13 @@ export const Sites: React.FC = () => {
       const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
       const initialSettings = options.initialSettings || {}
       const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, siteForAdd), initialSettings)
+      const duplicateSystemPreset = isFormSite(siteForAdd)
+        ? getDuplicateSystemFormFieldPreset(payload, siteForAdd.blocks || [])
+        : null
+      if (duplicateSystemPreset) {
+        warnDuplicateSystemFormField(duplicateSystemPreset)
+        return
+      }
       const blocksToAdd: SiteBlock[] = []
       let orderPageId: string | undefined = hasEditablePages(siteForAdd) ? activePage?.id : undefined
 
@@ -10436,6 +10514,12 @@ export const Sites: React.FC = () => {
     if (!embeddedFormBlockTypeSet.has(blockType)) return
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
+    const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, context.sourceSite), initialSettings)
+    const duplicateSystemPreset = getDuplicateSystemFormFieldPreset(payload, context.fields)
+    if (duplicateSystemPreset) {
+      warnDuplicateSystemFormField(duplicateSystemPreset)
+      return
+    }
     const nextField = createEmbeddedFieldBlock(context.sourceSite, blockType, context.fields.length, context.activePageId, initialSettings, context.fields)
     const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, context.activePageId)
     const boundedIndex = Number.isFinite(Number(insertIndex))
@@ -10539,6 +10623,12 @@ export const Sites: React.FC = () => {
     if (!videoFormGateBlockTypeSet.has(blockType)) return
     const context = getCurrentVideoFormGateContext()
     if (!context) return
+    const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, context.sourceSite), initialSettings)
+    const duplicateSystemPreset = getDuplicateSystemFormFieldPreset(payload, context.fields)
+    if (duplicateSystemPreset) {
+      warnDuplicateSystemFormField(duplicateSystemPreset)
+      return
+    }
     const nextField = createEmbeddedFieldBlock(
       context.sourceSite,
       blockType,
@@ -10802,7 +10892,13 @@ export const Sites: React.FC = () => {
 
       let clonedSectionId = ''
       const clonedBlocks: SiteBlock[] = []
+      const skippedSystemLabels = new Set<string>()
       for (const block of sourceGroup) {
+        const systemPreset = getSystemFormFieldPresetForBlock(block)
+        if (systemPreset && hasSystemFormFieldKey([...sortedSiteBlocks, ...clonedBlocks], systemPreset.key)) {
+          skippedSystemLabels.add(systemPreset.label)
+          continue
+        }
         const settingsPatch: Record<string, unknown> = {}
         if (isSectionBlock(scopedSourceBlock) && block.id !== scopedSourceBlock.id && clonedSectionId) {
           settingsPatch.sectionId = clonedSectionId
@@ -10816,7 +10912,11 @@ export const Sites: React.FC = () => {
         clonedBlocks.push(clonedBlock)
         if (isSectionBlock(block) && block.id === scopedSourceBlock.id) clonedSectionId = clonedBlock.id
       }
-      if (!clonedBlocks.length) return
+      if (!clonedBlocks.length) {
+        const skippedPreset = getSystemFormFieldPresetForBlock(scopedSourceBlock)
+        if (skippedPreset) warnDuplicateSystemFormField(skippedPreset)
+        return
+      }
 
       const beforeBlockIds = sourceBlocks.map(block => block.id)
       const nextScopedBlocks = [
@@ -10855,7 +10955,14 @@ export const Sites: React.FC = () => {
         afterBlockIds,
         createdBlocks: clonedBlocks.map(block => cloneJson(block))
       })
-      showToast('success', clonedBlocks.length > 1 ? 'Contenedor duplicado' : 'Bloque duplicado', 'La copia quedo justo debajo. Guarda para conservarla.')
+      const skippedCopy = [...skippedSystemLabels].join(', ')
+      showToast(
+        'success',
+        clonedBlocks.length > 1 ? 'Contenedor duplicado' : 'Bloque duplicado',
+        skippedCopy
+          ? `La copia quedo sin repetir ${skippedCopy}. Guarda para conservarla.`
+          : 'La copia quedo justo debajo. Guarda para conservarla.'
+      )
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo duplicar el bloque')
     }
@@ -11851,6 +11958,7 @@ export const Sites: React.FC = () => {
                     <FormModePalette
                       fieldsCount={formEditVisibleFields.length}
                       activePageTitle={activeEmbeddedFormPage?.title || 'Formulario'}
+                      systemScopeBlocks={formEditFields}
                       onAddField={(blockType, initialSettings) => handleAddEmbeddedFormField(blockType, undefined, initialSettings || {})}
                       onPaletteDragStart={(payload, position) => {
                         setActivePaletteDragPayload(payload)
@@ -11867,6 +11975,7 @@ export const Sites: React.FC = () => {
                     <Palette
                       blockTypes={videoFormGateBlockTypes}
                       existingBlocks={videoFormGateEditBlocks}
+                      systemScopeBlocks={videoFormGateEditBlocks}
                       elements={videoFormGateEditBlocks}
                       selectedElementId={activeVideoFormGateSubmitSelected ? '' : activeVideoFormGateBlockId}
                       onAdd={(blockType, options) => handleAddVideoFormGateBlock(blockType, undefined, options?.initialSettings || {})}
@@ -11899,6 +12008,7 @@ export const Sites: React.FC = () => {
 	                  <Palette
 		                    blockTypes={popupSurfaceSelected ? getPopupPaletteBlockTypes(editorSite) : isLanding(editorSite) ? landingBlockTypes : formBlockTypes}
 		                    existingBlocks={editableCanvasBlocks}
+                        systemScopeBlocks={isFormSite(editorSite) ? blocks : editableCanvasBlocks}
                         elements={paletteElementBlocks}
                         selectedElementId={selectedBlockId}
 		                    onAdd={handleAddBlockManually}
@@ -26251,6 +26361,7 @@ const EditablePageTitle: React.FC<{
 const Palette: React.FC<{
   blockTypes: SiteBlockType[]
   existingBlocks?: SiteBlock[]
+  systemScopeBlocks?: SiteBlock[]
   elements?: SiteBlock[]
   selectedElementId?: string
   onAdd: (blockType: SiteBlockType, options?: AddBlockOptions) => void
@@ -26265,6 +26376,7 @@ const Palette: React.FC<{
 }> = ({
   blockTypes,
   existingBlocks = [],
+  systemScopeBlocks,
   elements = [],
   selectedElementId = '',
   onAdd,
@@ -26281,10 +26393,16 @@ const Palette: React.FC<{
   const elementSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
   const allowed = new Set(blockTypes)
   const existingPanelTypes = new Set(existingBlocks.filter(isPanelBlock).map(block => block.blockType))
+  const usedSystemKeys = getUsedSystemFormFieldKeys(systemScopeBlocks || existingBlocks)
   const groups = paletteGroups
     .map(group => ({
       label: group.label,
-      items: group.items.filter(item => allowed.has(item.blockType) && (!PANEL_BLOCK_TYPES.has(item.blockType) || !existingPanelTypes.has(item.blockType)))
+      items: group.items.filter(item => {
+        const preset = getSystemFormFieldPresetForPaletteItem(item)
+        return allowed.has(item.blockType) &&
+          (!PANEL_BLOCK_TYPES.has(item.blockType) || !existingPanelTypes.has(item.blockType)) &&
+          (!preset || !usedSystemKeys.has(preset.key))
+      })
     }))
     .filter(group => group.items.length > 0)
   const handleElementDragEnd = (event: DragEndEvent) => {

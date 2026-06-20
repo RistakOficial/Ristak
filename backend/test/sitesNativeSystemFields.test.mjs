@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
-import { createBlock, createSite, createSubmissionFromRequest, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
+import { createBlock, createSite, createSubmissionFromRequest, deleteSite, renderPublicSiteHtml, restoreBlocks } from '../src/services/sitesService.js'
 import { parseContactCustomFields } from '../src/utils/contactCustomFields.js'
 
 const DOMAIN_KEYS = {
@@ -530,6 +530,117 @@ test('site blocks keep the editor provided id when manually saved', async () => 
     })
 
     assert.ok(siteWithBlock.blocks.some(block => block.id === blockId))
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+  }
+})
+
+test('native form system fields cannot be added twice', async () => {
+  let site
+
+  try {
+    site = await createSite({
+      name: 'Formulario sistema unico',
+      slug: `system-unique-${Date.now()}`,
+      siteType: 'standard_form',
+      status: 'draft',
+      blankCanvas: true
+    })
+
+    await createBlock(site.id, {
+      blockType: 'short_text',
+      label: 'Nombre completo',
+      settings: { systemFieldKey: 'full_name', internalName: 'full_name' }
+    })
+
+    await assert.rejects(
+      () => createBlock(site.id, {
+        blockType: 'short_text',
+        label: 'Nombre completo copia',
+        settings: { systemFieldKey: 'full_name', internalName: 'full_name' }
+      }),
+      error => error?.status === 409 && error?.code === 'duplicate_system_form_field'
+    )
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+  }
+})
+
+test('manual block restore rejects repeated native system fields', async () => {
+  let site
+
+  try {
+    site = await createSite({
+      name: 'Formulario restore unico',
+      slug: `restore-system-unique-${Date.now()}`,
+      siteType: 'standard_form',
+      status: 'draft',
+      blankCanvas: true
+    })
+
+    await assert.rejects(
+      () => restoreBlocks(site.id, [
+        {
+          id: crypto.randomUUID(),
+          blockType: 'email',
+          label: 'Correo',
+          settings: { systemFieldKey: 'email', internalName: 'email', validation: 'email' }
+        },
+        {
+          id: crypto.randomUUID(),
+          blockType: 'email',
+          label: 'Correo alterno',
+          settings: { systemFieldKey: 'email', internalName: 'email', validation: 'email' }
+        }
+      ]),
+      error => error?.status === 409 && error?.code === 'duplicate_system_form_field'
+    )
+  } finally {
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+  }
+})
+
+test('embedded form settings reject repeated system fields', async () => {
+  let site
+
+  try {
+    site = await createSite({
+      name: 'Landing formulario embebido unico',
+      slug: `embedded-system-unique-${Date.now()}`,
+      siteType: 'landing_page',
+      status: 'draft',
+      blankCanvas: true
+    })
+
+    await assert.rejects(
+      () => createBlock(site.id, {
+        blockType: 'form_embed',
+        label: 'Formulario',
+        settings: {
+          embeddedBlocks: [
+            {
+              id: crypto.randomUUID(),
+              blockType: 'phone',
+              label: 'Telefono',
+              settings: { systemFieldKey: 'phone', internalName: 'phone', validation: 'phone' }
+            },
+            {
+              id: crypto.randomUUID(),
+              blockType: 'phone',
+              label: 'Telefono alterno',
+              settings: { systemFieldKey: 'phone', internalName: 'phone', validation: 'phone' }
+            }
+          ]
+        }
+      }),
+      error => error?.status === 409 && error?.code === 'duplicate_system_form_field'
+    )
   } finally {
     if (site?.id) {
       await deleteSite(site.id).catch(() => undefined)
