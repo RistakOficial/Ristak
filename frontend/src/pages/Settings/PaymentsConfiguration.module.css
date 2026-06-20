@@ -1007,11 +1007,20 @@
   background: var(--warn-soft);
 }
 
+.automationQrFallbackIcon {
+  flex: 0 0 auto;
+  color: var(--warn);
+}
+
 .automationQrFallback > div {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+.automationQrNotice {
+  justify-content: flex-start;
 }
 
 .automationQrFallback strong {

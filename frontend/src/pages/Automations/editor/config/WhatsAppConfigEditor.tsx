@@ -12,9 +12,13 @@ import { MessageBlocksEditor } from './MessageBlocksEditor'
 import { useNotification } from '@/contexts/NotificationContext'
 import { whatsappApiService } from '@/services/whatsappApiService'
 import {
+  WHATSAPP_QR_PRECAUTION_MESSAGE,
+  WHATSAPP_QR_PRECAUTION_TITLE,
   WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
   WHATSAPP_QR_FALLBACK_TITLE,
-  buildWhatsAppQrFallbackMessage
+  buildWhatsAppQrFallbackMessage,
+  getWhatsAppStatusConnectionAvailability,
+  type WhatsAppConnectionAvailability
 } from '@/utils/whatsappQrFallbackWarning'
 import type { MessageBlock } from '../nodeRegistry'
 import { genId } from '../flowUtils'
@@ -28,6 +32,12 @@ import styles from '../AutomationEditor.module.css'
 type Config = Record<string, unknown>
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
+
+const defaultWhatsAppAvailability: WhatsAppConnectionAvailability = {
+  hasApiConnected: false,
+  hasQrConnected: false,
+  canShowQrFallbackSwitch: false
+}
 
 const newTemplateBlock = (): MessageBlock => ({
   id: genId('tpl'),
@@ -45,24 +55,17 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
   const allowQrFallback = config.sendViaQr === true || str(config.transport) === 'qr'
-  const [hasQrConnected, setHasQrConnected] = useState(false)
+  const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
 
   useEffect(() => {
     let mounted = true
     whatsappApiService.getStatus()
       .then((status) => {
         if (!mounted) return
-        const phoneHasQr = (status.phoneNumbers || []).some((phone) => (
-          phone.qr_send_enabled === true &&
-          String(phone.qr_status || '').toLowerCase() === 'connected'
-        ))
-        const sessionHasQr = (status.qr?.sessions || []).some((session) => (
-          String(session.status || '').toLowerCase() === 'connected'
-        ))
-        setHasQrConnected(phoneHasQr || sessionHasQr)
+        setWhatsappAvailability(getWhatsAppStatusConnectionAvailability(status))
       })
       .catch(() => {
-        if (mounted) setHasQrConnected(false)
+        if (mounted) setWhatsappAvailability(defaultWhatsAppAvailability)
       })
     return () => {
       mounted = false
@@ -191,7 +194,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
 
         {messageType === 'text' && (
           <>
-            {(hasQrConnected || allowQrFallback) && (
+            {whatsappAvailability.canShowQrFallbackSwitch && (
               <div className={styles.qrModeBox}>
                 <Toggle
                   checked={allowQrFallback}
@@ -209,13 +212,20 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
                     Usar QR si WhatsApp API no está disponible
                   </div>
                   <span className={styles.configHelp}>
-                    Primero se intenta WhatsApp API. Si la API no está disponible o Meta restringe el envío, se usa un número conectado por QR como respaldo.
+                    Primero se intenta WhatsApp API. Si la API no está disponible o Meta restringe el envío, se usa un número conectado por QR como respaldo. {WHATSAPP_QR_PRECAUTION_MESSAGE}
                   </span>
                 </div>
               </div>
             )}
 
-            {allowQrFallback && !hasQrConnected && (
+            {whatsappAvailability.hasQrConnected && !whatsappAvailability.canShowQrFallbackSwitch && (
+              <div className={styles.configWarning}>
+                <AlertTriangle size={12} />
+                {WHATSAPP_QR_PRECAUTION_TITLE}: sólo hay QR conectado para WhatsApp. {WHATSAPP_QR_PRECAUTION_MESSAGE} Conecta WhatsApp API para activar QR como respaldo.
+              </div>
+            )}
+
+            {allowQrFallback && !whatsappAvailability.hasQrConnected && (
               <div className={styles.configWarning}>
                 <AlertTriangle size={12} />
                 Esta automatización permite respaldo por QR, pero ahora no hay ningún número conectado por QR.

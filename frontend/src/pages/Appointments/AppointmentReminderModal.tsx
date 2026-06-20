@@ -14,9 +14,12 @@ import {
 } from '@/services/appointmentRemindersService'
 import type { MessageTemplate } from '@/services/messageTemplatesService'
 import {
+  WHATSAPP_QR_PRECAUTION_MESSAGE,
+  WHATSAPP_QR_PRECAUTION_TITLE,
   WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
   WHATSAPP_QR_FALLBACK_TITLE,
-  buildWhatsAppQrFallbackMessage
+  buildWhatsAppQrFallbackMessage,
+  getWhatsAppSenderConnectionAvailability
 } from '@/utils/whatsappQrFallbackWarning'
 import styles from './AppointmentReminderModal.module.css'
 
@@ -187,8 +190,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   const channel = channels[0]
   const isConfirmation = draft.messageType === 'confirmation'
-  const hasQrConnected = senders.some(sender => sender.qrConnected)
-  const hasApiConnected = senders.some(sender => sender.apiEnabled)
+  const whatsappAvailability = getWhatsAppSenderConnectionAvailability(senders)
+  const hasQrConnected = whatsappAvailability.hasQrConnected
+  const hasApiConnected = whatsappAvailability.hasApiConnected
 
   const visibleTemplates = useMemo(() => (
     templates
@@ -574,8 +578,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                 portal
               />
               <span className={styles.helpText}>
-                Los recordatorios por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada,
-                el envío queda detenido salvo que actives el respaldo por QR.
+                {whatsappAvailability.canShowQrFallbackSwitch
+                  ? 'Los recordatorios por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido salvo que actives el respaldo por QR.'
+                  : 'Los recordatorios por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido hasta que Meta la apruebe y WhatsApp API esté disponible.'}
               </span>
             </div>
 
@@ -595,17 +600,38 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
             {selectedTemplate && !selectedTemplateApproved && !draft.qrFallbackEnabled && (
               <div className={styles.templateNotice}>
-                Esta plantilla todavía no está aprobada por WhatsApp API. No se enviará hasta que Meta la apruebe o actives el respaldo por QR.
+                {whatsappAvailability.canShowQrFallbackSwitch
+                  ? 'Esta plantilla todavía no está aprobada por WhatsApp API. No se enviará hasta que Meta la apruebe o actives el respaldo por QR.'
+                  : 'Esta plantilla todavía no está aprobada por WhatsApp API. No se enviará hasta que Meta la apruebe y WhatsApp API esté disponible.'}
               </div>
             )}
 
-            {!hasApiConnected && selectedTemplateApproved && !draft.qrFallbackEnabled && (
+            {!hasApiConnected && !hasQrConnected && selectedTemplateApproved && !draft.qrFallbackEnabled && (
               <div className={styles.templateNotice}>
                 La plantilla está lista, pero WhatsApp API no está disponible ahora. Con QR apagado, este recordatorio esperará a que la API vuelva.
               </div>
             )}
 
-            {hasQrConnected && (
+            {hasQrConnected && !whatsappAvailability.canShowQrFallbackSwitch && (
+              <div className={`${styles.qrFallbackBox} ${styles.qrFallbackNotice}`}>
+                <div className={styles.qrFallbackCopy}>
+                  <div className={styles.qrFallbackTitle}>
+                    <span
+                      className={styles.qrRiskIcon}
+                      title="Precaución: el envío por QR usa una aplicación de terceros no validada por Meta y puede aumentar el riesgo de bloqueo del número."
+                    >
+                      <ShieldAlert size={17} aria-hidden="true" />
+                    </span>
+                    {WHATSAPP_QR_PRECAUTION_TITLE}
+                  </div>
+                  <span className={styles.helpText}>
+                    Sólo hay QR conectado para WhatsApp. {WHATSAPP_QR_PRECAUTION_MESSAGE} Conecta WhatsApp API para activar QR como respaldo controlado.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {whatsappAvailability.canShowQrFallbackSwitch && (
               <div className={styles.qrFallbackBox}>
                 <div className={styles.qrFallbackCopy}>
                   <div className={styles.qrFallbackTitle}>
@@ -619,7 +645,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                   </div>
                   <span className={styles.helpText}>
                     Si WhatsApp API no está disponible o la plantilla sigue en revisión, rechazada o pausada,
-                    Ristak intentará mandar el texto de esta plantilla por QR.
+                    Ristak intentará mandar el texto de esta plantilla por QR. {WHATSAPP_QR_PRECAUTION_MESSAGE}
                   </span>
                 </div>
                 <Switch

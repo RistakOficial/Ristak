@@ -327,13 +327,17 @@
 
 .qrFallbackBox {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--warn);
   border-radius: var(--radius-ctl);
-  background: var(--surface-2);
+  background: var(--warn-soft);
   padding: 0.85rem;
+}
+
+.qrFallbackNotice {
+  justify-content: flex-start;
 }
 
 .qrFallbackCopy {
@@ -353,7 +357,7 @@
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  color: var(--neg);
+  color: var(--warn);
 }
 
 .footer {
