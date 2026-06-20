@@ -3880,6 +3880,7 @@ export const getContactJourney = async (req, res) => {
   try {
     const { id } = req.params
     const includeBusinessMessages = String(req.query?.includeBusinessMessages || '').toLowerCase() === 'true'
+    const refreshExternalStatuses = String(req.query?.refreshExternalStatuses ?? 'true').toLowerCase() !== 'false'
     const outboundMessageDirectionPlaceholders = OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.map(() => '?').join(', ')
 
     // Verificar que el contacto existe y obtener info de atribución completa
@@ -3910,7 +3911,9 @@ export const getContactJourney = async (req, res) => {
     const whatsappApiMessageContactMatch = buildWhatsAppApiMessageContactMatch(id, contactPhoneCandidates)
 
     const journey = []
-    await refreshHighLevelConversationMessageStatuses(id)
+    if (refreshExternalStatuses) {
+      await refreshHighLevelConversationMessageStatuses(id)
+    }
 
     const successfulPaymentsCondition = `
       contact_id = ?

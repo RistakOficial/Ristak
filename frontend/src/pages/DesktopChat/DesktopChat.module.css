@@ -855,6 +855,25 @@
   --chat-message-surface-padding: 18px 18px 12px;
 }
 
+.cacheRefreshPill {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  box-shadow: var(--shadow-xs);
+}
+
 .messageGroup {
   display: flex;
   flex-direction: column;

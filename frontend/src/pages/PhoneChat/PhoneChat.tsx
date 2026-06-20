@@ -1517,12 +1517,41 @@ function areMessagesEquivalent(left: ChatMessage[], right: ChatMessage[]) {
   return left.every((message, index) => getMessageSignature(message) === getMessageSignature(right[index]))
 }
 
-function getJourneySignature(journey: JourneyEvent[]) {
-  try {
-    return JSON.stringify(journey)
-  } catch {
-    return String(journey.length)
-  }
+function getJourneyEventSignature(event: JourneyEvent) {
+  const data = event.data || {}
+  return [
+    event.type,
+    event.date,
+    data.whatsapp_api_message_id,
+    data.whatsapp_message_id,
+    data.meta_social_message_id,
+    data.meta_message_id,
+    data.email_message_id,
+    data.smtp_message_id,
+    data.appointment_id,
+    data.id,
+    data.message_text,
+    data.message_type,
+    data.direction,
+    data.status,
+    data.error_message,
+    data.media_url,
+    data.media_mime_type,
+    data.media_filename,
+    data.media_duration_ms,
+    data.subject,
+    data.amount,
+    data.title,
+    data.start_time,
+    data.end_time,
+    data.source
+  ].map(compactCompareValue).join('\u001f')
+}
+
+function areJourneyEventsEquivalent(left: JourneyEvent[], right: JourneyEvent[]) {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((event, index) => getJourneyEventSignature(event) === getJourneyEventSignature(right[index]))
 }
 
 function getMediaPathExtension(value = '') {
@@ -4291,7 +4320,7 @@ export const PhoneChat: React.FC = () => {
       const cachedJourney = Array.isArray(cachedConversation.data.journey) ? cachedConversation.data.journey : []
       const cachedMessages = Array.isArray(cachedConversation.data.messages) ? cachedConversation.data.messages : []
       setContactJourney((currentJourney) => (
-        getJourneySignature(currentJourney) === getJourneySignature(cachedJourney) ? currentJourney : cachedJourney
+        areJourneyEventsEquivalent(currentJourney, cachedJourney) ? currentJourney : cachedJourney
       ))
       setMessages((currentMessages) => (
         areMessagesEquivalent(currentMessages, cachedMessages) ? currentMessages : cachedMessages
@@ -4307,12 +4336,12 @@ export const PhoneChat: React.FC = () => {
 
     try {
       const [journey, scheduledMessages] = await Promise.all([
-        contactsService.getContactJourney(contactId, { includeBusinessMessages: true }),
+        contactsService.getContactJourney(contactId, { includeBusinessMessages: true, refreshExternalStatuses: false }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => [])
       ])
       if (!isCurrentConversationLoad()) return
       setContactJourney((currentJourney) => (
-        getJourneySignature(currentJourney) === getJourneySignature(journey) ? currentJourney : journey
+        areJourneyEventsEquivalent(currentJourney, journey) ? currentJourney : journey
       ))
       const journeyMessages = journey
         .map(getJourneyMessage)

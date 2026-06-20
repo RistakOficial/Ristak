@@ -180,6 +180,13 @@ interface DesktopChatMessage {
   }
 }
 
+interface ConversationCacheSnapshot {
+  journey: JourneyEvent[]
+  messages: DesktopChatMessage[]
+  contactInfo: Contact | null
+  agentState: ConversationAgentState | null
+}
+
 interface DesktopDraftAttachment {
   id: string
   kind: DraftAttachmentKind
@@ -237,8 +244,11 @@ const CHAT_REQUEST_TIMEOUT_MS = 20000
 const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
 const CHAT_REMOVED_STATE_KEY = 'ristak_desktop_chat_removed_state_v1'
 const CHAT_CACHE_KEY = 'ristak_desktop_chat_list_cache_v1'
+const CHAT_CONVERSATION_CACHE_KEY_PREFIX = 'ristak_desktop_chat_conversation_cache_v1'
 const CHAT_CACHE_MAX_AGE_MS = 30 * 60 * 1000
 const CHAT_CACHE_STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_REFRESH_INTERVAL_MS = 20000
 const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'archivar'
 const BULK_CHAT_RESTORE_CONFIRM_WORD = 'restaurar'
@@ -800,6 +810,148 @@ function writeCachedChatList(chats: DesktopChatContact[]) {
     }))
   } catch {
     // Cache best-effort: si el navegador no deja guardar, la red sigue siendo la fuente.
+  }
+}
+
+function compactCompareValue(value: unknown) {
+  if (value === null || value === undefined) return ''
+  return String(value)
+}
+
+function getDesktopMessageSignature(message: DesktopChatMessage) {
+  const attachment = message.attachment
+  return [
+    message.id,
+    message.text,
+    message.subject,
+    message.date,
+    message.direction,
+    message.status,
+    message.errorReason,
+    message.scheduledAt,
+    message.scheduledMessageId,
+    message.sentAt,
+    message.deliveredAt,
+    message.readAt,
+    message.businessPhone,
+    message.businessPhoneNumberId,
+    message.transport,
+    message.routingReason,
+    attachment?.type,
+    attachment?.url,
+    attachment?.dataUrl,
+    attachment?.name,
+    attachment?.mimeType,
+    attachment?.durationMs,
+    attachment?.isGif
+  ].map(compactCompareValue).join('\u001f')
+}
+
+function areDesktopMessagesEquivalent(left: DesktopChatMessage[], right: DesktopChatMessage[]) {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((message, index) => getDesktopMessageSignature(message) === getDesktopMessageSignature(right[index]))
+}
+
+function getJourneyEventSignature(event: JourneyEvent) {
+  const data = event.data || {}
+  return [
+    event.type,
+    event.date,
+    data.whatsapp_api_message_id,
+    data.whatsapp_message_id,
+    data.meta_social_message_id,
+    data.meta_message_id,
+    data.email_message_id,
+    data.smtp_message_id,
+    data.appointment_id,
+    data.id,
+    data.message_text,
+    data.message_type,
+    data.direction,
+    data.status,
+    data.error_message,
+    data.media_url,
+    data.media_mime_type,
+    data.media_filename,
+    data.media_duration_ms,
+    data.subject,
+    data.amount,
+    data.title,
+    data.start_time,
+    data.end_time,
+    data.source
+  ].map(compactCompareValue).join('\u001f')
+}
+
+function areJourneyEventsEquivalent(left: JourneyEvent[], right: JourneyEvent[]) {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((event, index) => getJourneyEventSignature(event) === getJourneyEventSignature(right[index]))
+}
+
+function getConversationCacheKey(locationId: string | null | undefined, contactId: string) {
+  return [
+    CHAT_CONVERSATION_CACHE_KEY_PREFIX,
+    encodeURIComponent(locationId || 'default'),
+    encodeURIComponent(contactId)
+  ].join(':')
+}
+
+function normalizeCachedContact(value: unknown): Contact | null {
+  if (!value || typeof value !== 'object') return null
+  const contact = value as Contact
+  return typeof contact.id === 'string' && contact.id.trim() ? contact : null
+}
+
+function readCachedConversation(locationId: string | null | undefined, contactId: string): ConversationCacheSnapshot | null {
+  if (typeof window === 'undefined' || !contactId) return null
+
+  const cacheKey = getConversationCacheKey(locationId, contactId)
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(cacheKey) || 'null')
+    if (!parsed || typeof parsed !== 'object') return null
+    const cacheAgeMs = Date.now() - Number(parsed.storedAt || 0)
+    if (cacheAgeMs > CHAT_CONVERSATION_CACHE_MAX_AGE_MS) {
+      window.localStorage.removeItem(cacheKey)
+      return null
+    }
+
+    const journey = Array.isArray(parsed.journey) ? parsed.journey : []
+    const messages = Array.isArray(parsed.messages) ? parsed.messages : []
+    const contactInfo = parsed.contactInfo && typeof parsed.contactInfo === 'object' ? normalizeCachedContact(parsed.contactInfo) : null
+    const agentState = parsed.agentState && typeof parsed.agentState === 'object' ? parsed.agentState as ConversationAgentState : null
+
+    return { journey, messages, contactInfo, agentState }
+  } catch {
+    window.localStorage.removeItem(cacheKey)
+    return null
+  }
+}
+
+function writeCachedConversation(
+  locationId: string | null | undefined,
+  contactId: string,
+  snapshot: ConversationCacheSnapshot
+) {
+  if (typeof window === 'undefined' || !contactId) return
+
+  const cacheKey = getConversationCacheKey(locationId, contactId)
+  try {
+    const payload = JSON.stringify({
+      storedAt: Date.now(),
+      journey: snapshot.journey,
+      messages: snapshot.messages.slice(-320),
+      contactInfo: snapshot.contactInfo,
+      agentState: snapshot.agentState
+    })
+    if (payload.length > CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS) {
+      window.localStorage.removeItem(cacheKey)
+      return
+    }
+    window.localStorage.setItem(cacheKey, payload)
+  } catch {
+    window.localStorage.removeItem(cacheKey)
   }
 }
 
@@ -1376,6 +1528,13 @@ function getScheduledChatMessageBubble(message: ScheduledChatMessage): DesktopCh
   }
 }
 
+function buildConversationMessages(journey: JourneyEvent[], scheduledMessages: ScheduledChatMessage[]) {
+  const journeyMessages = journey.map(getJourneyMessage).filter((message): message is DesktopChatMessage => Boolean(message))
+  const scheduledBubbles = scheduledMessages.map(getScheduledChatMessageBubble).filter((message): message is DesktopChatMessage => Boolean(message))
+  return [...journeyMessages, ...scheduledBubbles]
+    .sort((left, right) => Date.parse(left.date) - Date.parse(right.date))
+}
+
 function isMessageScheduled(message: DesktopChatMessage) {
   return String(message.status || '').trim().toLowerCase() === 'scheduled' || Boolean(message.scheduledAt && message.scheduledMessageId)
 }
@@ -1701,6 +1860,7 @@ export const DesktopChat: React.FC = () => {
   const selectAllChatCheckboxRef = useRef<HTMLInputElement | null>(null)
   const chatsRef = useRef<DesktopChatContact[]>([])
   const activeContactIdRef = useRef('')
+  const conversationLoadGenerationRef = useRef(0)
   const chatLiveRefreshTimeoutRef = useRef<number | null>(null)
   const chatLiveRefreshInFlightRef = useRef(false)
   const chatLiveRefreshQueuedRef = useRef(false)
@@ -1726,6 +1886,7 @@ export const DesktopChat: React.FC = () => {
 
   const [messages, setMessages] = useState<DesktopChatMessage[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
+  const [messagesRefreshing, setMessagesRefreshing] = useState(false)
   const [messagesError, setMessagesError] = useState('')
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [contactInfoData, setContactInfoData] = useState<Contact | null>(null)
@@ -2240,10 +2401,42 @@ export const DesktopChat: React.FC = () => {
     }
   }, [])
 
-  const loadConversation = useCallback(async (contactId: string, options: { silent?: boolean } = {}) => {
+  const loadConversation = useCallback(async (
+    contactId: string,
+    options: { silent?: boolean; useCache?: boolean; showCacheRefresh?: boolean } = {}
+  ) => {
     if (!contactId) return
+    const loadGeneration = conversationLoadGenerationRef.current + 1
+    conversationLoadGenerationRef.current = loadGeneration
+    const isCurrentConversationLoad = () => (
+      conversationLoadGenerationRef.current === loadGeneration &&
+      activeContactIdRef.current === contactId
+    )
     const silent = options.silent === true
-    if (!silent) {
+    const useCache = options.useCache !== false && !silent
+    const cachedConversation = useCache ? readCachedConversation(locationId, contactId) : null
+    const showedCachedConversation = Boolean(cachedConversation)
+
+    if (cachedConversation) {
+      setContactJourney((current) => (
+        areJourneyEventsEquivalent(current, cachedConversation.journey) ? current : cachedConversation.journey
+      ))
+      setMessages((current) => (
+        areDesktopMessagesEquivalent(current, cachedConversation.messages) ? current : cachedConversation.messages
+      ))
+      setContactInfoData(cachedConversation.contactInfo)
+      setConversationAgentState(cachedConversation.agentState)
+      if (cachedConversation.agentState) {
+        setAgentStates((current) => ({ ...current, [contactId]: cachedConversation.agentState as ConversationAgentState }))
+      }
+      setMessagesLoading(false)
+      setContactInfoLoading(options.showCacheRefresh !== false)
+      setMessagesRefreshing(options.showCacheRefresh !== false)
+    } else if (!silent) {
+      setMessages([])
+      setContactJourney([])
+      setContactInfoData(null)
+      setMessagesRefreshing(false)
       setMessagesLoading(true)
       setContactInfoLoading(true)
       setConversationAgentState(null)
@@ -2251,25 +2444,37 @@ export const DesktopChat: React.FC = () => {
     setMessagesError('')
     try {
       const [journey, scheduledMessages, details, agentState] = await Promise.all([
-        contactsService.getContactJourney(contactId, { includeBusinessMessages: true }),
+        contactsService.getContactJourney(contactId, { includeBusinessMessages: true, refreshExternalStatuses: false }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => []),
         contactsService.getContactDetails(contactId).catch(() => null),
         conversationalAgentService.getState(contactId).catch(() => null)
       ])
-      const journeyMessages = journey.map(getJourneyMessage).filter((message): message is DesktopChatMessage => Boolean(message))
-      const scheduledBubbles = scheduledMessages.map(getScheduledChatMessageBubble).filter((message): message is DesktopChatMessage => Boolean(message))
-      setContactJourney(journey)
+      if (!isCurrentConversationLoad()) return
+
+      const nextMessages = buildConversationMessages(journey, scheduledMessages)
+      setContactJourney((current) => (
+        areJourneyEventsEquivalent(current, journey) ? current : journey
+      ))
       setContactInfoData(details)
       setConversationAgentState(agentState)
       setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
-      setMessages([...journeyMessages, ...scheduledBubbles].sort((left, right) => Date.parse(left.date) - Date.parse(right.date)))
+      setMessages((current) => (
+        areDesktopMessagesEquivalent(current, nextMessages) ? current : nextMessages
+      ))
+      writeCachedConversation(locationId, contactId, {
+        journey,
+        messages: nextMessages,
+        contactInfo: details,
+        agentState
+      })
       setChats((current) => {
         const next = current.map((contact) => contact.id === contactId ? { ...contact, unreadCount: 0 } : contact)
         writeCachedChatList(next)
         return next
       })
     } catch {
-      if (!silent) {
+      if (!isCurrentConversationLoad()) return
+      if (!silent && !showedCachedConversation) {
         setMessages([])
         setContactJourney([])
         setContactInfoData(null)
@@ -2277,12 +2482,12 @@ export const DesktopChat: React.FC = () => {
         setMessagesError('No se pudo cargar la conversación.')
       }
     } finally {
-      if (!silent) {
-        setMessagesLoading(false)
-        setContactInfoLoading(false)
-      }
+      if (!isCurrentConversationLoad()) return
+      setMessagesLoading(false)
+      setMessagesRefreshing(false)
+      setContactInfoLoading(false)
     }
-  }, [])
+  }, [locationId])
 
   const loadSupportData = useCallback(async () => {
     setCalendarsLoading(true)
@@ -2368,7 +2573,7 @@ export const DesktopChat: React.FC = () => {
       Promise.all([
         loadChats({ silent: true }),
         shouldRefreshOpenConversation
-          ? loadConversation(openContactId, { silent: true })
+          ? loadConversation(openContactId, { silent: true, useCache: false })
           : Promise.resolve()
       ])
         .finally(() => {
@@ -2418,6 +2623,7 @@ export const DesktopChat: React.FC = () => {
       setContactJourney([])
       setContactInfoData(null)
       setConversationAgentState(null)
+      setMessagesRefreshing(false)
       return
     }
     setInfoPanelView('summary')
@@ -5050,6 +5256,12 @@ export const DesktopChat: React.FC = () => {
               </header>
 
               <ChatMessageSurface className={styles.messagePane}>
+                {messagesRefreshing && !messagesLoading ? (
+                  <div className={styles.cacheRefreshPill} role="status" aria-live="polite">
+                    <Loader2 size={13} className={styles.spin} aria-hidden="true" />
+                    Actualizando conversación
+                  </div>
+                ) : null}
                 {messagesLoading ? (
                   <div className={styles.stateBlock} role="status" aria-live="polite" aria-label="Cargando conversación">
                     <Loader2 size={18} className={styles.spin} aria-hidden="true" />

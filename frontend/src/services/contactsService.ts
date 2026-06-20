@@ -27,6 +27,7 @@ export interface JourneyEvent {
 
 interface ContactJourneyOptions {
   includeBusinessMessages?: boolean
+  refreshExternalStatuses?: boolean
 }
 
 interface ContactChartData {
@@ -329,8 +330,12 @@ export const contactsService = {
 
   async getContactJourney(id: string, options: ContactJourneyOptions = {}): Promise<JourneyEvent[]> {
     try {
+      const params: Record<string, string> = {}
+      if (options.includeBusinessMessages) params.includeBusinessMessages = 'true'
+      if (options.refreshExternalStatuses === false) params.refreshExternalStatuses = 'false'
+
       const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
-        params: options.includeBusinessMessages ? { includeBusinessMessages: 'true' } : undefined
+        params: Object.keys(params).length > 0 ? params : undefined
       })
 
       if (!Array.isArray(data)) {
