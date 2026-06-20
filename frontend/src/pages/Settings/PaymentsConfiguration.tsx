@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
+  ArrowRight,
   BellRing,
   CheckCircle,
   Clock,
@@ -27,6 +28,7 @@ import {
   Button,
   Card,
   CustomSelect,
+  Modal,
   NumberInput,
   PageContainer,
   PageHeader,
@@ -71,6 +73,13 @@ import styles from './PaymentsConfiguration.module.css'
 type PaymentsSectionId = 'checkout' | 'receipt' | 'automations' | 'gateways' | 'taxes'
 type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip'
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
+type StripeConnectMode = 'test' | 'live'
+
+interface StripeConnectWizardState {
+  active: boolean
+  step: StripeConnectMode
+  startedAt: number
+}
 
 interface PaymentGatewayOption {
   id: PaymentGatewayId
@@ -96,6 +105,9 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
 const sectionIds = sectionItems.map((item) => item.id)
 const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercado-libre', 'clip']
 const defaultStripeConnectMode: StripePaymentConfig['mode'] = 'live'
+const STRIPE_CONNECT_WIZARD_KEY = 'ristak:stripe-connect-dual-wizard'
+const STRIPE_MODE_VERIFICATION_PENDING_KEY = 'ristak:stripe-mode-verification-pending'
+const STRIPE_MODE_VERIFICATION_DONE_KEY = 'ristak:stripe-mode-verification-done'
 
 const STRIPE_WEBHOOK_EVENTS = [
   {
@@ -133,6 +145,101 @@ const isPaymentsSectionId = (value?: string): value is PaymentsSectionId =>
 
 const isPaymentGatewayId = (value?: string): value is PaymentGatewayId =>
   gatewayIds.includes(value as PaymentGatewayId)
+
+const isStripeConnectMode = (value?: string | null): value is StripeConnectMode =>
+  value === 'test' || value === 'live'
+
+function readLocalJson<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const raw = window.localStorage.getItem(key)
+    return raw ? JSON.parse(raw) as T : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function writeLocalJson(key: string, value: unknown) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Si storage falla, el flujo OAuth sigue por query params.
+  }
+}
+
+function removeLocalValue(key: string) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(key)
+  } catch {
+    // No bloquea el flujo.
+  }
+}
+
+function readStripeConnectWizardState(): StripeConnectWizardState | null {
+  const state = readLocalJson<StripeConnectWizardState | null>(STRIPE_CONNECT_WIZARD_KEY, null)
+  if (!state?.active || !isStripeConnectMode(state.step)) return null
+  if (!Number.isFinite(Number(state.startedAt)) || Date.now() - Number(state.startedAt) > 30 * 60 * 1000) {
+    removeLocalValue(STRIPE_CONNECT_WIZARD_KEY)
+    return null
+  }
+  return state
+}
+
+function setStripeConnectWizardState(step: StripeConnectMode) {
+  writeLocalJson(STRIPE_CONNECT_WIZARD_KEY, {
+    active: true,
+    step,
+    startedAt: Date.now()
+  })
+}
+
+function clearStripeConnectWizardState() {
+  removeLocalValue(STRIPE_CONNECT_WIZARD_KEY)
+}
+
+function hasCompletedStripeModeVerification() {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(STRIPE_MODE_VERIFICATION_DONE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function markStripeModeVerificationPending() {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(STRIPE_MODE_VERIFICATION_PENDING_KEY, '1')
+  } catch {
+    // No bloquea el flujo.
+  }
+}
+
+function clearStripeModeVerificationPending() {
+  removeLocalValue(STRIPE_MODE_VERIFICATION_PENDING_KEY)
+}
+
+function isStripeModeVerificationPending() {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(STRIPE_MODE_VERIFICATION_PENDING_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function markStripeModeVerificationDone() {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(STRIPE_MODE_VERIFICATION_DONE_KEY, '1')
+  } catch {
+    // No bloquea el flujo.
+  } finally {
+    clearStripeModeVerificationPending()
+  }
+}
 
 const getPaymentRouteSegment = (pathname: string) => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -264,6 +371,10 @@ export const PaymentsConfiguration: React.FC = () => {
   const [testingStripeConfig, setTestingStripeConfig] = useState(false)
   const [connectingStripe, setConnectingStripe] = useState(false)
   const [syncingStripeConnect, setSyncingStripeConnect] = useState(false)
+  const [switchingStripeMode, setSwitchingStripeMode] = useState(false)
+  const [stripeWizardStep, setStripeWizardStep] = useState<StripeConnectMode | null>(() => readStripeConnectWizardState()?.step || null)
+  const [stripeModeVerificationOpen, setStripeModeVerificationOpen] = useState(false)
+  const [stripeVerificationMode, setStripeVerificationMode] = useState<StripeConnectMode>('test')
   const [disconnectingStripe, setDisconnectingStripe] = useState(false)
   const [uploadingReceiptLogo, setUploadingReceiptLogo] = useState(false)
   const [receiptLogoUploadProgress, setReceiptLogoUploadProgress] = useState(0)
@@ -303,22 +414,69 @@ export const PaymentsConfiguration: React.FC = () => {
   }, [highLevelConnected, loadingHighLevelConnection])
 
   useEffect(() => {
+    if (!stripeConfig?.configured || stripeConfig.connectionType !== 'connect') return
+    if (!isStripeModeVerificationPending() || hasCompletedStripeModeVerification()) return
+
+    setStripeVerificationMode('test')
+    setStripeModeVerificationOpen(true)
+  }, [stripeConfig?.configured, stripeConfig?.connectionType])
+
+  useEffect(() => {
     const params = new URLSearchParams(location.search)
     const status = params.get('stripe_connect')
     if (!status) return
 
     const message = params.get('stripe_message') || ''
+    const returnedMode = isStripeConnectMode(params.get('stripe_mode')) ? params.get('stripe_mode') as StripeConnectMode : null
+    const returnedWizardStep = isStripeConnectMode(params.get('stripe_step')) ? params.get('stripe_step') as StripeConnectMode : null
+    const storedWizard = readStripeConnectWizardState()
+    const wizardActive = params.get('stripe_setup') === 'dual' || Boolean(storedWizard)
+    const wizardStep = returnedWizardStep || storedWizard?.step || returnedMode
 
     const finishStripeReturn = async () => {
       setActiveSection('gateways')
       setSelectedGateway('stripe')
+      let syncedConfig: StripePaymentConfig | null = null
 
       if (status === 'success' || status === 'warning') {
         setSyncingStripeConnect(true)
         try {
           const config = await stripePaymentsService.syncConnect()
+          syncedConfig = config
           applyStripeConfig(config)
           invalidateIntegrationsStatus()
+          if (wizardActive && (wizardStep === 'test' || returnedMode === 'test')) {
+            setStripeConnectWizardState('live')
+            setStripeWizardStep('live')
+            setStripeMode('live')
+            setConnectingStripe(true)
+            try {
+              const response = await stripePaymentsService.createConnectUrl({
+                mode: 'live',
+                returnPath: '/settings/payments/stripe?stripe_setup=dual&stripe_step=live',
+                appUrl: window.location.origin
+              })
+              window.location.assign(response.url)
+              return
+            } catch (error: any) {
+              clearStripeConnectWizardState()
+              setStripeWizardStep(null)
+              setConnectingStripe(false)
+              showToast('error', 'Faltó conectar modo en vivo', error.message || 'El modo prueba quedó conectado, pero no pudimos abrir Stripe en vivo.')
+            }
+          }
+
+          if (wizardActive && (wizardStep === 'live' || returnedMode === 'live')) {
+            clearStripeConnectWizardState()
+            setStripeWizardStep(null)
+            setStripeMode('live')
+            if (!hasCompletedStripeModeVerification()) {
+              markStripeModeVerificationPending()
+              setStripeVerificationMode('test')
+              setStripeModeVerificationOpen(true)
+            }
+          }
+
           if (status === 'success') {
             showToast('success', 'Stripe conectado', message || 'La cuenta quedó lista para cobrar desde Ristak.')
           } else {
@@ -331,8 +489,18 @@ export const PaymentsConfiguration: React.FC = () => {
           setSyncingStripeConnect(false)
         }
       } else {
+        if (wizardActive) {
+          clearStripeConnectWizardState()
+          setStripeWizardStep(null)
+        }
         showToast('error', 'No se pudo conectar Stripe', message || 'Intenta conectar la cuenta de nuevo.')
         await loadStripeConfig()
+      }
+
+      if (wizardActive && syncedConfig?.configured && (wizardStep === 'live' || returnedMode === 'live') && !hasCompletedStripeModeVerification()) {
+        markStripeModeVerificationPending()
+        setStripeVerificationMode('test')
+        setStripeModeVerificationOpen(true)
       }
 
       navigate('/settings/payments/stripe', { replace: true })
@@ -378,8 +546,14 @@ export const PaymentsConfiguration: React.FC = () => {
   const stripeWebhookEndpoints = stripeConfig?.webhookEndpoints || []
   const stripeConnectionType = stripeConfig?.connectionType || 'manual'
   const stripeIsConnect = stripeConnectionType === 'connect'
+  const stripeModeConnections = stripeConfig?.connectModes
+  const stripeTestConnected = Boolean(stripeModeConnections?.test?.connected)
+  const stripeLiveConnected = Boolean(stripeModeConnections?.live?.connected)
+  const stripeDualModeConnected = Boolean(stripeTestConnected && stripeLiveConnected)
   const stripeModeOauthReady = stripeConfig?.connectOauthReadyByMode?.[stripeMode] ?? stripeConfig?.connectOauthReady ?? false
-  const stripeSelectedModeLabel = stripeMode === 'live' ? 'en vivo' : 'prueba'
+  const stripeTestOauthReady = stripeConfig?.connectOauthReadyByMode?.test ?? stripeConfig?.connectOauthReady ?? false
+  const stripeLiveOauthReady = stripeConfig?.connectOauthReadyByMode?.live ?? stripeConfig?.connectOauthReady ?? false
+  const stripeDualOauthReady = Boolean(stripeTestOauthReady && stripeLiveOauthReady)
   const stripeWebhookReady = stripeConfig?.connectWebhookStatus === 'active' && stripeConfig?.hasWebhookSecret
   const stripeOAuthConnected = Boolean(stripeConfig?.configured && stripeIsConnect && stripeConfig?.connectedAccountId)
   const stripeConnected = Boolean(stripeConfig?.configured)
@@ -662,19 +836,83 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
+  const handleStripeModeChange = async (nextLive: boolean) => {
+    const nextMode: StripeConnectMode = nextLive ? 'live' : 'test'
+    const previousMode = stripeMode
+
+    if (nextMode === previousMode) return
+
+    if (!stripeIsConnect || !stripeConfig?.configured) {
+      setStripeMode(nextMode)
+      return
+    }
+
+    if (!stripeConfig.connectModes?.[nextMode]?.connected) {
+      showToast('warning', 'Modo no conectado', `Primero conecta Stripe en modo ${nextMode === 'live' ? 'en vivo' : 'prueba'}.`)
+      return
+    }
+
+    setStripeMode(nextMode)
+    setSwitchingStripeMode(true)
+    try {
+      const config = await stripePaymentsService.setConnectMode(nextMode)
+      applyStripeConfig(config)
+      invalidateIntegrationsStatus()
+      showToast('success', 'Modo Stripe actualizado', `Ristak quedó en modo ${nextMode === 'live' ? 'en vivo' : 'prueba'}.`)
+    } catch (error: any) {
+      setStripeMode(previousMode)
+      showToast('error', 'No se pudo cambiar el modo', error.message || 'Intenta de nuevo.')
+    } finally {
+      setSwitchingStripeMode(false)
+    }
+  }
+
   const handleConnectStripe = async () => {
+    if (!stripeDualOauthReady) {
+      showToast('warning', 'Falta preparar Stripe Connect', 'Configura OAuth de Stripe para modo prueba y modo en vivo en el Installer.')
+      return
+    }
+
     setConnectingStripe(true)
+    setStripeWizardStep('test')
+    setStripeConnectWizardState('test')
+    setStripeMode('test')
     try {
       const response = await stripePaymentsService.createConnectUrl({
-        mode: stripeMode,
-        returnPath: '/settings/payments/stripe',
+        mode: 'test',
+        returnPath: '/settings/payments/stripe?stripe_setup=dual&stripe_step=test',
         appUrl: window.location.origin
       })
       window.location.assign(response.url)
     } catch (error: any) {
+      clearStripeConnectWizardState()
+      setStripeWizardStep(null)
       showToast('error', 'No se pudo abrir Stripe', error.message || 'Revisa Stripe Connect en el Installer o las variables locales de esta instalación.')
       setConnectingStripe(false)
     }
+  }
+
+  const handleCompleteStripeModeVerification = async () => {
+    if (stripeVerificationMode !== 'live') return
+
+    if (stripeIsConnect && stripeConfig?.connectModes?.live?.connected && stripeMode !== 'live') {
+      setSwitchingStripeMode(true)
+      try {
+        const config = await stripePaymentsService.setConnectMode('live')
+        applyStripeConfig(config)
+      } catch (error: any) {
+        showToast('error', 'No se pudo activar en vivo', error.message || 'Intenta confirmar de nuevo.')
+        setSwitchingStripeMode(false)
+        return
+      } finally {
+        setSwitchingStripeMode(false)
+      }
+    }
+
+    markStripeModeVerificationDone()
+    setStripeModeVerificationOpen(false)
+    setStripeVerificationMode('test')
+    showToast('success', 'Modo en vivo confirmado', 'Ya puedes usar Stripe sabiendo cuándo pruebas y cuándo cobras real.')
   }
 
   const handleDisconnectStripe = async () => {
@@ -1686,7 +1924,7 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.sectionHeader}>
             <div>
               <h2>Stripe</h2>
-              <p>Conecta la cuenta con OAuth o usa credenciales manuales como respaldo.</p>
+              <p>Conecta Stripe en modo prueba y en modo en vivo para separar validaciones de cobros reales.</p>
             </div>
             {loadingStripeConfig || syncingStripeConnect ? (
               <Badge variant="warning">
@@ -1716,39 +1954,66 @@ export const PaymentsConfiguration: React.FC = () => {
               <span className={stripeMode === 'test' ? styles.modeActive : ''}>Prueba</span>
               <Switch
                 checked={stripeMode === 'live'}
-                onChange={(next) => setStripeMode(next ? 'live' : 'test')}
-                disabled={savingStripeConfig || testingStripeConfig || connectingStripe}
+                onChange={handleStripeModeChange}
+                disabled={savingStripeConfig || testingStripeConfig || connectingStripe || switchingStripeMode || syncingStripeConnect}
                 aria-label="Cambiar modo de Stripe"
               />
               <span className={stripeMode === 'live' ? styles.modeActive : ''}>En vivo</span>
+              {switchingStripeMode && <Loader2 size={14} className={styles.spinIcon} />}
+            </div>
+
+            <div className={styles.stripeWizardIntro}>
+              <div className={styles.stripeWizardCopy}>
+                <h3>Conexión guiada en dos pasos</h3>
+                <p>Primero se conecta el modo prueba para validar el flujo sin dinero real. Al regresar, Ristak abrirá Stripe otra vez para conectar el modo en vivo.</p>
+              </div>
+              <div className={styles.stripeWizardSteps} aria-label="Pasos para conectar Stripe">
+                <div className={stripeTestConnected ? styles.stripeWizardStepDone : stripeWizardStep === 'test' ? styles.stripeWizardStepActive : styles.stripeWizardStep}>
+                  <span>1</span>
+                  <div>
+                    <strong>Modo prueba</strong>
+                    <small>{stripeTestConnected ? 'Conectado' : 'Sin pagos reales'}</small>
+                  </div>
+                </div>
+                <ArrowRight size={17} className={styles.stripeWizardArrow} aria-hidden="true" />
+                <div className={stripeLiveConnected ? styles.stripeWizardStepDone : stripeWizardStep === 'live' ? styles.stripeWizardStepActive : styles.stripeWizardStep}>
+                  <span>2</span>
+                  <div>
+                    <strong>Modo en vivo</strong>
+                    <small>{stripeLiveConnected ? 'Conectado' : 'Pagos reales'}</small>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className={styles.stripeConnectBox}>
               <div>
-                <h3>{stripeOAuthConnected ? stripeAccountLabel || 'Cuenta Stripe conectada' : stripeConnected ? 'Stripe configurado manualmente' : 'Conectar con Stripe'}</h3>
+                <h3>{stripeDualModeConnected ? stripeAccountLabel || 'Stripe conectado en ambos modos' : stripeOAuthConnected ? stripeAccountLabel || 'Cuenta Stripe conectada' : stripeConnected ? 'Stripe configurado manualmente' : 'Conectar con Stripe'}</h3>
                 <p>
-                  {stripeOAuthConnected
-                    ? `Ristak cobra en modo ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'} usando Stripe Connect.`
+                  {stripeDualModeConnected
+                    ? `Ristak está listo para pruebas y cobros reales. El switch controla el modo activo; ahora está en ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'}.`
+                    : stripeOAuthConnected
+                      ? `Ristak tiene conectado el modo ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'}. Completa ambos modos para evitar confusión al probar.`
                     : stripeConnected
                       ? 'Esta instalación usa llaves guardadas manualmente. Puedes reconectar con OAuth para automatizar cuenta y webhook.'
-                      : `Se abrirá Stripe en modo ${stripeSelectedModeLabel}, autorizas Ristak y regresas aquí con la cuenta lista.`}
+                      : 'Al hacer clic se abrirá Stripe primero en modo prueba; al terminar se abrirá de nuevo para modo en vivo.'}
                 </p>
               </div>
               <div className={styles.actionsRow}>
                 <Button
                   type="button"
                   onClick={handleConnectStripe}
-                  disabled={connectingStripe || syncingStripeConnect || disconnectingStripe || !stripeModeOauthReady}
+                  disabled={connectingStripe || syncingStripeConnect || disconnectingStripe || !stripeDualOauthReady}
                 >
                   {connectingStripe ? (
                     <>
                       <Loader2 size={18} className={styles.spinIcon} />
-                      Abriendo...
+                      {stripeWizardStep === 'live' ? 'Abriendo live...' : 'Abriendo test...'}
                     </>
                   ) : (
                     <>
                       <ExternalLink size={18} />
-                      {stripeOAuthConnected ? 'Reconectar Stripe' : 'Conectar con Stripe'}
+                      {stripeDualModeConnected ? 'Reconectar ambos modos' : 'Conectar con Stripe'}
                     </>
                   )}
                 </Button>
@@ -1772,13 +2037,16 @@ export const PaymentsConfiguration: React.FC = () => {
               </div>
             </div>
 
-            {!stripeModeOauthReady && (
+            {!stripeDualOauthReady && (
               <div className={styles.inlineWarning}>
                 <AlertTriangle size={16} />
                 <span>
-                  Falta configurar Stripe Connect para modo {stripeSelectedModeLabel}:
+                  Falta configurar Stripe Connect para ambos modos. Revisa:
                   {' '}
-                  {(stripeConfig?.connectMissingEnv || []).join(', ') || `STRIPE_CONNECT_${stripeMode.toUpperCase()}_CLIENT_ID / SECRET_KEY / PUBLISHABLE_KEY`}.
+                  {!stripeTestOauthReady ? 'modo prueba' : ''}
+                  {!stripeTestOauthReady && !stripeLiveOauthReady ? ' y ' : ''}
+                  {!stripeLiveOauthReady ? 'modo en vivo' : ''}
+                  .
                 </span>
               </div>
             )}
@@ -1795,16 +2063,16 @@ export const PaymentsConfiguration: React.FC = () => {
             {stripeOAuthConnected && (
               <div className={styles.connectionSummary}>
                 <div>
-                  <span>Cuenta</span>
+                  <span>Cuenta activa</span>
                   <strong>{stripeConfig?.connectedAccountPreview || stripeConfig?.connectedAccountId || 'Stripe'}</strong>
                 </div>
                 <div>
-                  <span>Email</span>
-                  <strong>{stripeConfig?.connectAccountEmail || 'Sin email visible'}</strong>
+                  <span>Modo prueba</span>
+                  <strong>{stripeTestConnected ? 'Conectado' : 'Pendiente'}</strong>
                 </div>
                 <div>
-                  <span>Scope</span>
-                  <strong>{stripeConfig?.connectScope || 'read_write'}</strong>
+                  <span>Modo en vivo</span>
+                  <strong>{stripeLiveConnected ? 'Conectado' : 'Pendiente'}</strong>
                 </div>
                 <div>
                   <span>Webhook</span>
@@ -1985,6 +2253,70 @@ export const PaymentsConfiguration: React.FC = () => {
     </div>
   )
 
+  const renderStripeModeVerification = () => (
+    <Modal
+      isOpen={stripeModeVerificationOpen}
+      onClose={() => undefined}
+      title="Confirma cómo usar Stripe"
+      size="md"
+      showCloseButton={false}
+      contentClassName={styles.stripeVerificationContent}
+    >
+      <div className={styles.stripeVerificationPanel}>
+        <Badge variant="warning">
+          <AlertTriangle size={14} />
+          Verificación obligatoria
+        </Badge>
+        <div>
+          <h3>Antes de avanzar, confirma el modo de cobro</h3>
+          <p>Stripe ya quedó conectado. Este paso asegura que sabes cuándo estás probando y cuándo estás aceptando dinero real.</p>
+        </div>
+
+        <div className={styles.stripeModeExplainer}>
+          <div>
+            <strong>Modo prueba</strong>
+            <span>No procesa pagos reales. Úsalo para validar links, automatizaciones y webhooks.</span>
+          </div>
+          <div>
+            <strong>Modo en vivo</strong>
+            <span>Permite aceptar pagos reales de clientes. Todo lo que cobres aquí sí mueve dinero.</span>
+          </div>
+        </div>
+
+        <div className={styles.stripeVerificationSwitchCard}>
+          <ArrowRight size={22} className={styles.stripeVerificationArrow} aria-hidden="true" />
+          <div className={styles.modeSelector}>
+            <span className={stripeVerificationMode === 'test' ? styles.modeActive : ''}>Prueba</span>
+            <Switch
+              checked={stripeVerificationMode === 'live'}
+              onChange={(next) => setStripeVerificationMode(next ? 'live' : 'test')}
+              aria-label="Confirmar cambio de modo prueba a modo en vivo"
+            />
+            <span className={stripeVerificationMode === 'live' ? styles.modeActive : ''}>En vivo</span>
+          </div>
+          <small>Mueve el switch a en vivo para confirmar que entiendes la diferencia.</small>
+        </div>
+
+        <div className={styles.stripeVerificationActions}>
+          <Button
+            type="button"
+            onClick={handleCompleteStripeModeVerification}
+            disabled={stripeVerificationMode !== 'live' || switchingStripeMode}
+          >
+            {switchingStripeMode ? (
+              <>
+                <Loader2 size={18} className={styles.spinIcon} />
+                Activando...
+              </>
+            ) : (
+              'Entendido, usar modo en vivo'
+            )}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+
   const renderTaxesSection = () => (
     <div className={styles.twoColumnLayout}>
       <Card className={styles.sectionCard}>
@@ -2119,6 +2451,7 @@ export const PaymentsConfiguration: React.FC = () => {
       {activeSection === 'automations' && renderAutomationsSection()}
       {activeSection === 'gateways' && renderGatewaysSection()}
       {activeSection === 'taxes' && renderTaxesSection()}
+      {renderStripeModeVerification()}
     </PageContainer>
   )
 }

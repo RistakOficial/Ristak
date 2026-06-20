@@ -6,6 +6,7 @@ import { initializeMasterKey } from '../src/utils/encryption.js'
 import {
   completeStripeConnectOAuth,
   createStripeConnectOAuthUrl,
+  setStripeConnectActiveMode,
   setStripeConnectFetchForTest,
   setStripeFactoryForTest,
   syncStripeConnectFromCentral,
@@ -17,6 +18,9 @@ const STRIPE_ENV_KEYS = [
   'STRIPE_CONNECT_TEST_CLIENT_ID',
   'STRIPE_CONNECT_TEST_SECRET_KEY',
   'STRIPE_CONNECT_TEST_PUBLISHABLE_KEY',
+  'STRIPE_CONNECT_LIVE_CLIENT_ID',
+  'STRIPE_CONNECT_LIVE_SECRET_KEY',
+  'STRIPE_CONNECT_LIVE_PUBLISHABLE_KEY',
   'LICENSE_SERVER_URL',
   'CLIENT_ID',
   'LICENSE_KEY',
@@ -180,6 +184,141 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
     assert.equal(testResult.connectionType, 'connect')
     assert.equal(testResult.connectedAccountId, 'acct_test_connected')
     assert.deepEqual(balanceOptions, {})
+  })
+})
+
+test('Stripe Connect OAuth conserva conexiones separadas para prueba y en vivo', async () => {
+  await initializeMasterKey()
+
+  await snapshotStripeConfig(async () => {
+    process.env.STRIPE_CONNECT_TEST_CLIENT_ID = 'ca_test_client'
+    process.env.STRIPE_CONNECT_TEST_SECRET_KEY = 'sk_test_platform'
+    process.env.STRIPE_CONNECT_TEST_PUBLISHABLE_KEY = 'pk_test_platform'
+    process.env.STRIPE_CONNECT_LIVE_CLIENT_ID = 'ca_live_client'
+    process.env.STRIPE_CONNECT_LIVE_SECRET_KEY = 'sk_live_platform'
+    process.env.STRIPE_CONNECT_LIVE_PUBLISHABLE_KEY = 'pk_live_platform'
+
+    const oauthByCode = {
+      ac_test_code: {
+        scope: 'read_write',
+        stripe_user_id: 'acct_test_connected',
+        livemode: false,
+        token_type: 'bearer',
+        access_token: 'sk_test_connected_access',
+        refresh_token: 'rt_test_connected',
+        stripe_publishable_key: 'pk_test_connected'
+      },
+      ac_live_code: {
+        scope: 'read_write',
+        stripe_user_id: 'acct_live_connected',
+        livemode: true,
+        token_type: 'bearer',
+        access_token: 'sk_live_connected_access',
+        refresh_token: 'rt_live_connected',
+        stripe_publishable_key: 'pk_live_connected'
+      }
+    }
+    const balanceSecrets = []
+
+    setStripeConnectFetchForTest(async (_url, options = {}) => {
+      const params = new URLSearchParams(String(options.body))
+      const response = oauthByCode[params.get('code')]
+      assert.ok(response, 'OAuth code esperado en test')
+      return mockOAuthResponse(response)
+    })
+
+    setStripeFactoryForTest((secretKey) => {
+      if (secretKey === 'sk_test_connected_access' || secretKey === 'sk_live_connected_access') {
+        return {
+          balance: {
+            retrieve: async () => {
+              balanceSecrets.push(secretKey)
+              return {
+                livemode: secretKey.startsWith('sk_live_'),
+                available: [{ amount: 1000, currency: 'mxn' }]
+              }
+            }
+          }
+        }
+      }
+
+      assert.ok(['sk_test_platform', 'sk_live_platform'].includes(secretKey))
+      return {
+        accounts: {
+          retrieve: async (accountId) => ({
+            id: accountId,
+            email: `${accountId}@stripe.test`,
+            charges_enabled: true,
+            payouts_enabled: true,
+            details_submitted: true,
+            business_profile: {
+              name: accountId.includes('live') ? 'Stripe Live' : 'Stripe Test'
+            }
+          })
+        },
+        webhookEndpoints: {
+          create: async (payload, options = {}) => {
+            assert.ok(options.stripeAccount)
+            return {
+              id: `we_${options.stripeAccount}`,
+              url: payload.url,
+              secret: `whsec_${options.stripeAccount}`
+            }
+          },
+          del: async () => ({ deleted: true })
+        }
+      }
+    })
+
+    const startedTest = await createStripeConnectOAuthUrl({
+      mode: 'test',
+      baseUrl: 'https://app.example.com',
+      returnPath: '/settings/payments/stripe?stripe_setup=dual&stripe_step=test'
+    })
+    const testUrl = new URL(startedTest.url)
+    const completedTest = await completeStripeConnectOAuth({
+      code: 'ac_test_code',
+      state: testUrl.searchParams.get('state'),
+      baseUrl: 'https://app.example.com'
+    })
+
+    assert.equal(completedTest.config.mode, 'test')
+    assert.equal(completedTest.config.connectModes.test.connected, true)
+    assert.equal(completedTest.config.connectModes.live.connected, false)
+
+    const startedLive = await createStripeConnectOAuthUrl({
+      mode: 'live',
+      baseUrl: 'https://app.example.com',
+      returnPath: '/settings/payments/stripe?stripe_setup=dual&stripe_step=live'
+    })
+    const liveUrl = new URL(startedLive.url)
+    const completedLive = await completeStripeConnectOAuth({
+      code: 'ac_live_code',
+      state: liveUrl.searchParams.get('state'),
+      baseUrl: 'https://app.example.com'
+    })
+
+    assert.equal(completedLive.config.mode, 'live')
+    assert.equal(completedLive.config.connectModes.test.connected, true)
+    assert.equal(completedLive.config.connectModes.live.connected, true)
+    assert.equal(completedLive.config.connectedAccountId, 'acct_live_connected')
+    assert.equal(completedLive.config.publishableKey, 'pk_live_connected')
+
+    const testConfig = await setStripeConnectActiveMode('test')
+    assert.equal(testConfig.mode, 'test')
+    assert.equal(testConfig.connectedAccountId, 'acct_test_connected')
+    assert.equal(testConfig.publishableKey, 'pk_test_connected')
+
+    const testResult = await testStripePaymentConfig()
+    assert.equal(testResult.livemode, false)
+
+    const liveConfig = await setStripeConnectActiveMode('live')
+    assert.equal(liveConfig.mode, 'live')
+    assert.equal(liveConfig.connectedAccountId, 'acct_live_connected')
+
+    const liveResult = await testStripePaymentConfig()
+    assert.equal(liveResult.livemode, true)
+    assert.deepEqual(balanceSecrets, ['sk_test_connected_access', 'sk_live_connected_access'])
   })
 })
 

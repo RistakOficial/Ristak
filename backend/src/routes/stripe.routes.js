@@ -10,6 +10,7 @@ import {
   getStripeConfigView,
   getStripeSavedPaymentMethodsView,
   saveStripeConfigView,
+  setStripeConnectModeView,
   stripeConnectCallbackView,
   stripeWebhookView,
   syncStripeConnectView,
@@ -33,6 +34,7 @@ router.delete('/config', requireModuleAccess('settings_payments'), deleteStripeC
 router.post('/config/test', requireModuleAccess('settings_payments'), testStripeConfigView)
 router.post('/connect/url', requireModuleAccess('settings_payments'), createStripeConnectUrlView)
 router.post('/connect/sync', requireModuleAccess('settings_payments'), syncStripeConnectView)
+router.post('/connect/mode', requireModuleAccess('settings_payments'), setStripeConnectModeView)
 router.post('/payment-links', requireModuleAccess('payments'), createStripePaymentLinkView)
 router.post('/payment-plans', requireModuleAccess('payments'), createStripePaymentPlanView)
 router.get('/contacts/:contactId/payment-methods', requireModuleAccess('payments'), getStripeSavedPaymentMethodsView)

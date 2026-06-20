@@ -1161,6 +1161,115 @@
   background: var(--surface-solid);
 }
 
+.stripeWizardIntro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.stripeWizardCopy {
+  min-width: 0;
+}
+
+.stripeWizardCopy h3,
+.stripeVerificationPanel h3 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.stripeWizardCopy p,
+.stripeVerificationPanel p {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.stripeWizardSteps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.stripeWizardStep,
+.stripeWizardStepActive,
+.stripeWizardStepDone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 172px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid);
+}
+
+.stripeWizardStepActive {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.stripeWizardStepDone {
+  border-color: var(--pos);
+  background: var(--pos-soft);
+}
+
+.stripeWizardStep > span,
+.stripeWizardStepActive > span,
+.stripeWizardStepDone > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stripeWizardStepDone > span {
+  background: var(--pos);
+  color: var(--on-accent);
+}
+
+.stripeWizardStep strong,
+.stripeWizardStepActive strong,
+.stripeWizardStepDone strong {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stripeWizardStep small,
+.stripeWizardStepActive small,
+.stripeWizardStepDone small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.stripeWizardArrow {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
 .actionsRow {
   display: flex;
   flex-wrap: wrap;
@@ -1258,6 +1367,72 @@
   margin-right: 16px;
 }
 
+.stripeVerificationContent {
+  overflow: visible;
+}
+
+.stripeVerificationPanel {
+  display: grid;
+  gap: 16px;
+}
+
+.stripeModeExplainer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stripeModeExplainer > div {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.stripeModeExplainer strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stripeModeExplainer span {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.stripeVerificationSwitchCard {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-card);
+  background: var(--accent-soft);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.stripeVerificationSwitchCard small {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.stripeVerificationArrow {
+  color: var(--accent);
+  animation: stripeArrowNudge 1.1s ease-in-out infinite;
+}
+
+.stripeVerificationActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .webhookList {
   display: flex;
   flex-direction: column;
@@ -1312,6 +1487,17 @@
   }
 }
 
+@keyframes stripeArrowNudge {
+  0%,
+  100% {
+    transform: translateX(-4px);
+  }
+
+  50% {
+    transform: translateX(4px);
+  }
+}
+
 @media (max-width: 1040px) {
   .twoColumnLayout {
     grid-template-columns: 1fr;
@@ -1326,8 +1512,29 @@
 
   .summaryStrip,
   .connectionSummary,
-  .automationColumns {
+  .automationColumns,
+  .stripeModeExplainer {
     grid-template-columns: 1fr;
+  }
+
+  .stripeWizardIntro {
+    grid-template-columns: 1fr;
+  }
+
+  .stripeWizardSteps {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .stripeWizardStep,
+  .stripeWizardStepActive,
+  .stripeWizardStepDone {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .stripeWizardArrow {
+    transform: rotate(90deg);
   }
 }
 

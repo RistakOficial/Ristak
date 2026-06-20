@@ -20,6 +20,7 @@ export interface StripePaymentConfig {
   connectScope?: string
   connectLivemode?: boolean
   connectReady?: boolean
+  connectModes?: Record<'test' | 'live', StripeConnectModeStatus>
   connectOauthReady?: boolean
   connectOauthReadyByMode?: Record<'test' | 'live', boolean>
   connectMissingEnv?: string[]
@@ -37,6 +38,19 @@ export interface StripePaymentConfig {
   connectConnectedAt?: string
   hasConnectAccessToken?: boolean
   hasConnectRefreshToken?: boolean
+}
+
+export interface StripeConnectModeStatus {
+  connected: boolean
+  mode: 'test' | 'live'
+  accountId?: string
+  accountPreview?: string
+  accountEmail?: string
+  accountLabel?: string
+  webhookStatus?: string
+  webhookUrl?: string
+  connectedAt?: string
+  livemode?: boolean
 }
 
 export interface StripeWebhookEndpoint {
@@ -277,6 +291,18 @@ export const stripePaymentsService = {
     const response = await fetch(apiUrl('/api/stripe/connect/sync'), {
       method: 'POST',
       headers: getAuthHeaders()
+    })
+    return parseApiResponse<StripePaymentConfig>(response)
+  },
+
+  async setConnectMode(mode: 'test' | 'live'): Promise<StripePaymentConfig> {
+    const response = await fetch(apiUrl('/api/stripe/connect/mode'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify({ mode })
     })
     return parseApiResponse<StripePaymentConfig>(response)
   },

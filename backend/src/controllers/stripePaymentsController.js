@@ -11,6 +11,7 @@ import {
   getStripeSavedPaymentMethods,
   handleStripeWebhookEvent,
   saveStripePaymentConfig,
+  setStripeConnectActiveMode,
   syncStripeConnectFromCentral,
   testStripePaymentConfig
 } from '../services/stripePaymentService.js'
@@ -168,6 +169,16 @@ export async function syncStripeConnectView(req, res) {
   } catch (error) {
     logger.error(`Error sincronizando Stripe Connect central: ${error.message}`)
     sendStripeError(res, error, 'No se pudo sincronizar Stripe Connect')
+  }
+}
+
+export async function setStripeConnectModeView(req, res) {
+  try {
+    const config = await setStripeConnectActiveMode(req.body?.mode || 'live')
+    res.json({ success: true, data: await withStripeWebhookEndpoints(req, config) })
+  } catch (error) {
+    logger.error(`Error cambiando modo Stripe Connect: ${error.message}`)
+    sendStripeError(res, error, 'No se pudo cambiar el modo de Stripe')
   }
 }
 
