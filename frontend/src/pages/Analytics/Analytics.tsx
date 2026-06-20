@@ -1175,6 +1175,8 @@ const Analytics: React.FC = () => {
   const customersLabel = appLabels.customers?.trim() || `${customerLabel}s`
   const leadsLabelLower = leadsLabel.toLocaleLowerCase('es-MX')
   const customersLabelLower = customersLabel.toLocaleLowerCase('es-MX')
+  const newContactsLabel = 'Contactos nuevos'
+  const newContactsLabelLower = newContactsLabel.toLocaleLowerCase('es-MX')
 
   const conversionFilters = React.useMemo<Array<{ stage: ConversionStage; label: string }>>(() => [
     { stage: 'prospect', label: leadsLabel },
@@ -2292,7 +2294,7 @@ const Analytics: React.FC = () => {
       icon: Users
     },
     {
-      title: 'Registros',
+      title: newContactsLabel,
       value: String(metrics.registros || 0),
       delta: metrics.trends?.registros || 0,
       icon: UserCheck
@@ -2433,11 +2435,11 @@ const Analytics: React.FC = () => {
   const mainChartOptions = React.useMemo<Array<{ value: AnalyticsMainChartView; label: string }>>(() => (
     [
       { value: 'traffic', label: 'Tráfico del sitio' },
-      { value: 'visitors-registrations', label: 'Visitantes vs Registros' },
+      { value: 'visitors-registrations', label: `Visitantes vs ${newContactsLabel}` },
       { value: 'sessions-visitors', label: 'Sesiones vs Visitantes' },
       { value: 'identity-returning', label: 'Identificados vs Recurrentes' }
     ]
-  ), [])
+  ), [newContactsLabel])
 
   const showAnalyticsFilters = Boolean(
     (showWebAnalyticsBlocks || showMessageAnalyticsBlocks) &&
@@ -2461,7 +2463,7 @@ const Analytics: React.FC = () => {
 
   const conversionChartOptions = React.useMemo<Array<{ value: AnalyticsConversionChartView; label: string }>>(() => {
     const options: Array<{ value: AnalyticsConversionChartView; label: string }> = [
-      { value: 'registrations-customers', label: `Registros vs ${customersLabel}` },
+      { value: 'registrations-customers', label: `${newContactsLabel} vs ${customersLabel}` },
       { value: 'prospects-customers', label: `${leadsLabel} vs ${customersLabel}` }
     ]
 
@@ -2474,7 +2476,7 @@ const Analytics: React.FC = () => {
     )
 
     return options
-  }, [customersLabel, leadsLabel, showMessageAnalyticsBlocks])
+  }, [customersLabel, leadsLabel, newContactsLabel, showMessageAnalyticsBlocks])
 
   useEffect(() => {
     const validValues = conversionChartOptions.map(opt => opt.value)
@@ -2520,14 +2522,14 @@ const Analytics: React.FC = () => {
     switch (selectedMainChartView) {
       case 'visitors-registrations':
         return {
-          title: 'Visitantes vs Registros',
-          description: `Cuántos visitantes terminan identificándose por ${periodLabel}`,
+          title: `Visitantes vs ${newContactsLabel}`,
+          description: `Cuántos visitantes terminan creando contactos nuevos por ${periodLabel}`,
           label1: 'Visitantes únicos',
-          label2: 'Registros',
+          label2: newContactsLabel,
           color: ANALYTICS_CHART_COLORS.visitors,
           color2: ANALYTICS_CHART_COLORS.registrations,
           data: mergeVisitorRegistrationData(dailyTraffic, dailyConversions),
-          emptyMessage: 'Sin datos de visitantes o registros disponibles'
+          emptyMessage: 'Sin datos de visitantes o contactos nuevos disponibles'
         }
       case 'sessions-visitors':
         return {
@@ -2564,7 +2566,7 @@ const Analytics: React.FC = () => {
           emptyMessage: 'Sin datos de tráfico disponibles'
         }
     }
-  }, [dailyConversions, dailyTraffic, periodLabel, selectedMainChartView, sessionTrendData])
+  }, [dailyConversions, dailyTraffic, newContactsLabel, periodLabel, selectedMainChartView, sessionTrendData])
 
   const messageChartConfig = React.useMemo<ChartMetricConfig>(() => ({
     title: 'Mensajes',
@@ -2625,17 +2627,17 @@ const Analytics: React.FC = () => {
       case 'registrations-customers':
       default:
         return {
-          title: `Registros vs ${customersLabel}`,
-          description: `Mide cuántos registros terminan siendo ${customersLabelLower} por ${periodLabel}`,
-          label1: 'Registros',
+          title: `${newContactsLabel} vs ${customersLabel}`,
+          description: `Mide cuántos ${newContactsLabelLower} terminan siendo ${customersLabelLower} por ${periodLabel}`,
+          label1: newContactsLabel,
           label2: customersLabel,
           color: ANALYTICS_CHART_COLORS.registrations,
           color2: ANALYTICS_CHART_COLORS.customers,
           data: mapTrendToChartData(conversionTrendData, 'registrations', 'customers'),
-          emptyMessage: `Sin registros o ${customersLabelLower} disponibles`
+          emptyMessage: `Sin ${newContactsLabelLower} o ${customersLabelLower} disponibles`
         }
     }
-  }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, periodLabel, selectedConversionChartView, messageTrendData])
+  }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, newContactsLabel, newContactsLabelLower, periodLabel, selectedConversionChartView, messageTrendData])
 
   const webChartHasData = webChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   const messageChartHasData = messageChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
@@ -2666,10 +2668,10 @@ const Analytics: React.FC = () => {
       case 'registrations-customers':
       default:
         return seriesKey === 'value'
-          ? { listType: 'registrations', modalType: 'interesados', title: 'Registros' }
+          ? { listType: 'registrations', modalType: 'interesados', title: newContactsLabel }
           : { listType: 'customers', modalType: 'sales', title: customersLabel }
     }
-  }, [customersLabel, leadsLabel, selectedConversionChartView])
+  }, [customersLabel, leadsLabel, newContactsLabel, selectedConversionChartView])
 
   const handleConversionPointClick = useCallback(async (
     point: AnalyticsChartClickPoint,
