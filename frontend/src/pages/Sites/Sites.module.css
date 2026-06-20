@@ -9337,6 +9337,21 @@
   min-width: 0;
 }
 
+.inspectorTabListScrollable {
+  justify-content: flex-start;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.inspectorTabListScrollable::-webkit-scrollbar {
+  display: none;
+}
+
+.inspectorTabListScrollable :global([data-ristak-tablist-tab]) {
+  flex: 0 0 auto;
+  width: auto;
+}
+
 .inspectorTabList :global([data-ristak-tablist-tab]) {
   min-width: 0;
   padding-inline: 8px;

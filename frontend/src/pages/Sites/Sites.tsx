@@ -28065,7 +28065,7 @@ const PopupInspector: React.FC<{
   )
 }
 
-type InspectorTabId = 'edit' | 'design' | 'settings' | 'videoActions'
+type InspectorTabId = 'edit' | 'design' | 'settings' | 'videoActions' | 'videoFormGate'
 
 interface InspectorTab {
   value: InspectorTabId
@@ -28085,6 +28085,10 @@ const InspectorTabbedPanel: React.FC<{
 }> = ({ title, subtitle, tabs, defaultTab = 'edit', className, ariaLabel, header }) => {
   const [activeTab, setActiveTab] = useState<InspectorTabId>(defaultTab)
   const activeContent = tabs.find(tab => tab.value === activeTab)?.content || tabs[0]?.content
+  const tabListClassName = [
+    styles.inspectorTabList,
+    tabs.length > 3 ? styles.inspectorTabListScrollable : ''
+  ].filter(Boolean).join(' ')
 
   useEffect(() => {
     if (!tabs.some(tab => tab.value === activeTab)) {
@@ -28107,7 +28111,7 @@ const InspectorTabbedPanel: React.FC<{
           onTabChange={(value) => setActiveTab(value as InspectorTabId)}
           variant="compact"
           fullWidth
-          className={styles.inspectorTabList}
+          className={tabListClassName}
         />
       </div>
       <div className={`${styles.propertiesBody} ${styles.inspectorTabBody}`} data-inspector-tab={activeTab}>
@@ -29533,13 +29537,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           blocks={allBlocks || blocks}
           forms={forms}
           calendars={calendars}
-          customFields={customFields}
-          customFieldFolders={customFieldFolders}
           pages={pages}
           activePageId={activePageId}
           connectedSocialProfiles={connectedSocialProfiles}
           loadingSocialProfiles={loadingSocialProfiles}
-          onCustomFieldCreated={onCustomFieldCreated}
           onPatchSettings={onPatchSettings}
           onSave={onSave}
         />
@@ -29640,9 +29641,25 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     />
   ) : null
 
+  const videoFormGateContent = block.blockType === 'video' ? (
+    <VideoFormGateSettingsPanel
+      site={site}
+      block={block}
+      forms={forms}
+      customFields={customFields}
+      customFieldFolders={customFieldFolders}
+      pages={pages}
+      activePageId={activePageId}
+      onPatchSettings={onPatchSettings}
+      onCustomFieldCreated={onCustomFieldCreated}
+      onSave={onSave}
+    />
+  ) : null
+
   const inspectorTabs: InspectorTab[] = [
     { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
     ...(videoActionsContent ? [{ value: 'videoActions' as InspectorTabId, label: 'Acciones de video', icon: <Clock3 size={14} />, content: videoActionsContent }] : []),
+    ...(videoFormGateContent ? [{ value: 'videoFormGate' as InspectorTabId, label: 'Formulario de video', icon: <FormInput size={14} />, content: videoFormGateContent }] : []),
     { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent }
   ]
 
@@ -29829,13 +29846,10 @@ interface LandingBlockSettingsProps {
   blocks: SiteBlock[]
   forms: PublicSite[]
   calendars: CalendarType[]
-  customFields: CustomFieldDefinition[]
-  customFieldFolders: CustomFieldFolder[]
   pages: SitePage[]
   activePageId: string
   connectedSocialProfiles: ConnectedSocialProfile[]
   loadingSocialProfiles: boolean
-  onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }
@@ -30369,7 +30383,7 @@ const VideoFormGateSettingsPanel: React.FC<{
   )
 }
 
-const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, customFields, customFieldFolders, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onCustomFieldCreated, onPatchSettings, onSave }) => {
+const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
 
   if (isPanelBlock(block)) {
@@ -30635,26 +30649,12 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           <input value={getSettingString(settings, 'mediaUrl')} onChange={(event) => onPatchSettings({ mediaUrl: event.target.value })} onBlur={onSave} />
         </label>
         {block.blockType === 'video' && (
-          <>
-            <VideoPlayerSettingsControls
-              settings={settings}
-              mediaUrl={getSettingString(settings, 'mediaUrl')}
-              onPatchSettings={onPatchSettings}
-              onSave={onSave}
-            />
-            <VideoFormGateSettingsPanel
-              site={site}
-              block={block}
-              forms={forms}
-              customFields={customFields}
-              customFieldFolders={customFieldFolders}
-              pages={pages}
-              activePageId={activePageId}
-              onPatchSettings={onPatchSettings}
-              onCustomFieldCreated={onCustomFieldCreated}
-              onSave={onSave}
-            />
-          </>
+          <VideoPlayerSettingsControls
+            settings={settings}
+            mediaUrl={getSettingString(settings, 'mediaUrl')}
+            onPatchSettings={onPatchSettings}
+            onSave={onSave}
+          />
         )}
       </div>
     )
