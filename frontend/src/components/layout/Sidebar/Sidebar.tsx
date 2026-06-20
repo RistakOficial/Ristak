@@ -188,6 +188,13 @@ const getNavLinkClasses = (isActive: boolean, extraClasses?: string, collapsed =
   extraClasses
 )
 
+const getNavChildLinkClasses = (isActive: boolean) => cn(
+  'flex items-center rounded-md px-2.5 py-1.5 text-[13px] font-medium leading-[1.2] transition-colors',
+  isActive
+    ? 'bg-[var(--accent-soft)] text-[var(--text)]'
+    : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
+)
+
 interface SettingsNavLinkProps {
   pathname: string
   collapsed?: boolean
@@ -284,13 +291,9 @@ const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({
                 to={child.to}
                 onClick={onNavigate}
                 data-ristak-sidebar-nav-item
+                data-ristak-sidebar-subnav-item
                 data-active={childActive ? 'true' : undefined}
-                className={cn(
-                  'block rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors',
-                  childActive
-                    ? 'bg-[var(--accent-soft)] text-[var(--text)]'
-                    : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
-                )}
+                className={getNavChildLinkClasses(childActive)}
               >
                 {child.label}
               </Link>
@@ -371,13 +374,9 @@ const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
                 to={child.to}
                 onClick={onNavigate}
                 data-ristak-sidebar-nav-item
+                data-ristak-sidebar-subnav-item
                 data-active={childActive ? 'true' : undefined}
-                className={cn(
-                  'block rounded-md px-2.5 py-[7px] text-[13px] font-medium transition-colors',
-                  childActive
-                    ? 'bg-[var(--accent-soft)] text-[var(--text)]'
-                    : 'text-[var(--text-mute)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
-                )}
+                className={getNavChildLinkClasses(childActive)}
               >
                 {child.label}
               </Link>

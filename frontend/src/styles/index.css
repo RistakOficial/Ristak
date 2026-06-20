@@ -3817,6 +3817,8 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) {
   --app-segment-font-size: var(--font-size-sm);
   --app-sidebar-nav-height: 42px;
   --app-sidebar-nav-font-size: var(--font-size-sm);
+  --app-sidebar-subnav-height: 34px;
+  --app-sidebar-subnav-font-size: 0.8125rem;
   --app-sidebar-icon-size: 1.25rem;
   --app-kpi-min-height: 128px;
   --app-kpi-gap: 0.75rem;
@@ -3873,6 +3875,12 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-
 body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-sidebar-nav-item] {
   min-height: var(--app-sidebar-nav-height) !important;
   font-size: var(--app-sidebar-nav-font-size) !important;
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-sidebar-subnav-item] {
+  min-height: var(--app-sidebar-subnav-height) !important;
+  font-size: var(--app-sidebar-subnav-font-size) !important;
+  line-height: 1.2 !important;
 }
 
 body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) [data-ristak-sidebar-nav-item] svg {
@@ -3977,6 +3985,8 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) .dashb
     --app-segment-padding-x: 0.625rem;
     --app-sidebar-nav-height: 38px;
     --app-sidebar-nav-font-size: 0.8125rem;
+    --app-sidebar-subnav-height: 32px;
+    --app-sidebar-subnav-font-size: 0.78125rem;
     --app-kpi-min-height: 104px;
     --app-kpi-title-size: 0.78125rem;
     --app-kpi-value-size: 1.35rem;
@@ -4071,6 +4081,8 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) .dashb
     --app-segment-padding-x: 0.5rem;
     --app-sidebar-nav-height: 34px;
     --app-sidebar-nav-font-size: 0.75rem;
+    --app-sidebar-subnav-height: 30px;
+    --app-sidebar-subnav-font-size: 0.75rem;
     --app-sidebar-icon-size: 1rem;
     --app-kpi-min-height: 78px;
     --app-kpi-gap: 0.5rem;
@@ -4121,6 +4133,8 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) .dashb
     --app-segment-padding-x: 0.45rem;
     --app-sidebar-nav-height: 32px;
     --app-sidebar-nav-font-size: 0.72rem;
+    --app-sidebar-subnav-height: 28px;
+    --app-sidebar-subnav-font-size: 0.7rem;
     --app-sidebar-icon-size: 0.95rem;
     --app-kpi-min-height: 72px;
     --app-kpi-title-size: 0.65rem;
@@ -4168,6 +4182,8 @@ body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) .dashb
     --app-segment-padding-x: 0.375rem;
     --app-sidebar-nav-height: 30px;
     --app-sidebar-nav-font-size: 0.6875rem;
+    --app-sidebar-subnav-height: 26px;
+    --app-sidebar-subnav-font-size: 0.6875rem;
     --app-sidebar-icon-size: 0.875rem;
     --app-kpi-min-height: 68px;
     --app-kpi-gap: 0.375rem;
