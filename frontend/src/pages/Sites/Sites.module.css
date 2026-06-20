@@ -6516,6 +6516,20 @@
   align-items: end;
 }
 
+.threeColumn {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.inlineFields {
+  display: grid;
+  grid-template-columns: minmax(76px, 0.8fr) minmax(86px, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
 .checkboxLabel {
   min-height: 40px;
   display: flex;
@@ -18559,6 +18573,190 @@
   gap: 12px;
   border-top: 1px solid var(--border);
   padding-top: 12px;
+}
+
+.videoFormGateEditorPreview {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  padding: 8px;
+}
+
+.videoFormGateEditorFrame {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-ctl);
+  background: color-mix(in srgb, var(--text) 72%, var(--bg));
+  padding: 10px;
+  overflow: hidden;
+}
+
+.videoFormGateEditorCard {
+  width: min(100%, 680px);
+  max-height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  overflow: hidden;
+  border: 1px solid var(--vfg-preview-field-border, var(--border));
+  border-radius: var(--radius-card);
+  background: var(--vfg-preview-bg, var(--surface));
+  color: var(--vfg-preview-text, var(--text));
+  padding: 12px;
+  box-shadow: var(--shadow-card);
+}
+
+.videoFormGateEditorHeader {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.videoFormGateEditorHeader strong {
+  min-width: 0;
+  color: var(--vfg-preview-text, var(--text));
+  font-size: 1rem;
+  font-weight: 750;
+  line-height: 1.16;
+}
+
+.videoFormGateEditorHeader p {
+  margin: 0;
+  color: var(--vfg-preview-help, var(--text-dim));
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.videoFormGatePreviewStack {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.videoFormGatePreviewQuestion {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--vfg-preview-text, var(--text));
+  padding: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.videoFormGatePreviewQuestion:hover,
+.videoFormGatePreviewQuestionActive {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.videoFormGatePreviewQuestion > span {
+  color: var(--vfg-preview-text, var(--text));
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.videoFormGatePreviewQuestion em {
+  color: var(--neg);
+  font-style: normal;
+}
+
+.videoFormGatePreviewQuestion small {
+  color: var(--vfg-preview-help, var(--text-dim));
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.videoFormGatePreviewInput {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--vfg-preview-field-border, var(--border));
+  border-radius: var(--vfg-preview-field-radius, var(--radius-ctl));
+  background: var(--vfg-preview-field-bg, var(--surface));
+  color: var(--vfg-preview-field-text, var(--text));
+  padding: 0 10px;
+  font-size: 0.78rem;
+}
+
+.videoFormGatePreviewInput span {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoFormGatePreviewOptions {
+  display: grid;
+  gap: 6px;
+}
+
+.videoFormGatePreviewOptions span {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--vfg-preview-field-border, var(--border));
+  border-radius: var(--vfg-preview-field-radius, var(--radius-ctl));
+  background: var(--vfg-preview-field-bg, var(--surface));
+  color: var(--vfg-preview-field-text, var(--text));
+  padding: 0 10px;
+  font-size: 0.77rem;
+}
+
+.videoFormGatePreviewOptions i {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-pill);
+  opacity: 0.62;
+}
+
+.videoFormGatePreviewActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.videoFormGatePreviewActions button {
+  min-height: 34px;
+  min-width: 0;
+  flex: 1 1 92px;
+  border: 1px solid var(--vfg-preview-submit-border, var(--accent));
+  border-radius: var(--vfg-preview-submit-radius, var(--radius-ctl));
+  background: var(--vfg-preview-submit-bg, var(--accent));
+  color: var(--vfg-preview-submit-text, var(--on-accent));
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.77rem;
+  font-weight: 700;
+}
+
+.videoFormGatePreviewActions button:first-child,
+.videoFormGatePreviewActions button:nth-child(2) {
+  background: var(--vfg-preview-field-bg, var(--surface));
+  color: var(--vfg-preview-field-text, var(--text));
+}
+
+.videoFormGatePreviewEmpty {
+  margin: 0;
+  color: var(--vfg-preview-help, var(--text-dim));
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .videoFormGateSwitchRow {

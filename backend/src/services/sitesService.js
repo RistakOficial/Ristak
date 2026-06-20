@@ -11032,6 +11032,12 @@ function collectVideoActionTargetIds(blocks = [], ids = new Set()) {
           if (targetId && targetId !== POPUP_SURFACE_ID) ids.add(targetId)
         })
       })
+      const completionAction = normalizeVideoFormGateCompletionAction(settings)
+      if (completionAction === 'show_targets' || completionAction === 'hide_targets') {
+        getVideoFormGateCompletionTargetIds(settings).forEach(targetId => {
+          if (targetId && targetId !== POPUP_SURFACE_ID) ids.add(targetId)
+        })
+      }
     }
 
     if (Array.isArray(settings.embeddedBlocks) && settings.embeddedBlocks.length) {
@@ -11053,6 +11059,11 @@ function collectVideoActionInitialHiddenTargetIds(blocks = [], ids = new Set()) 
           })
         }
       })
+      if (normalizeVideoFormGateCompletionAction(settings) === 'show_targets') {
+        getVideoFormGateCompletionTargetIds(settings).forEach(targetId => {
+          if (targetId && targetId !== POPUP_SURFACE_ID) ids.add(targetId)
+        })
+      }
     }
 
     if (Array.isArray(settings.embeddedBlocks) && settings.embeddedBlocks.length) {
@@ -11622,6 +11633,60 @@ function normalizeVideoFormGateAnimation(settings = {}) {
   return ['fade', 'instant', 'slide_up'].includes(animation) ? animation : 'fade'
 }
 
+const VIDEO_FORM_GATE_COMPLETION_ACTIONS = new Set(['continue_video', 'redirect', 'disqualify_message', 'show_targets', 'hide_targets'])
+const VIDEO_FORM_GATE_REPEAT_MODES = new Set(['every_visit', 'session', 'remember_visitor'])
+
+function normalizeVideoFormGateCompletionAction(settings = {}) {
+  const action = cleanString(settings.videoFormGateCompletionAction || settings.video_form_gate_completion_action)
+  if (VIDEO_FORM_GATE_COMPLETION_ACTIONS.has(action)) return action
+  const embeddedTheme = isPlainObject(settings.videoFormGateEmbeddedTheme)
+    ? settings.videoFormGateEmbeddedTheme
+    : isPlainObject(settings.video_form_gate_embedded_theme)
+      ? settings.video_form_gate_embedded_theme
+      : {}
+  const legacyCompletionAction = cleanString(embeddedTheme.formCompletionAction || embeddedTheme.form_completion_action || settings.completionAction || settings.completion_action)
+  const legacyRedirectUrl = safeHref(settings.videoFormGateRedirectUrl || settings.video_form_gate_redirect_url || embeddedTheme.formQualifiedRedirectUrl || embeddedTheme.form_qualified_redirect_url || '', '')
+  if (legacyCompletionAction === 'redirect_qualified' && legacyRedirectUrl) return 'redirect'
+  return 'continue_video'
+}
+
+function normalizeVideoFormGateRepeatMode(settings = {}) {
+  const mode = cleanString(settings.videoFormGateRepeatMode || settings.video_form_gate_repeat_mode)
+  return VIDEO_FORM_GATE_REPEAT_MODES.has(mode) ? mode : 'every_visit'
+}
+
+function normalizeVideoFormGateStorageUnit(settings = {}) {
+  return cleanString(settings.videoFormGateStorageUnit || settings.video_form_gate_storage_unit) === 'months' ? 'months' : 'days'
+}
+
+function videoFormGateStorageTtlSeconds(settings = {}) {
+  const rawValue = Number(settings.videoFormGateStorageValue ?? settings.video_form_gate_storage_value ?? 30)
+  const value = Number.isFinite(rawValue) ? Math.min(730, Math.max(1, Math.round(rawValue))) : 30
+  const unit = normalizeVideoFormGateStorageUnit(settings)
+  return Math.round(value * (unit === 'months' ? 30 * 86400 : 86400))
+}
+
+function getVideoFormGateCompletionTargetIds(settings = {}) {
+  const rawIds = Array.isArray(settings.videoFormGateCompletionTargetIds)
+    ? settings.videoFormGateCompletionTargetIds
+    : Array.isArray(settings.video_form_gate_completion_target_ids)
+      ? settings.video_form_gate_completion_target_ids
+      : []
+  const ids = rawIds.map(cleanString).filter(Boolean)
+  const targetBlockId = cleanString(settings.videoFormGateCompletionTargetId || settings.video_form_gate_completion_target_id)
+  if (targetBlockId) ids.unshift(targetBlockId)
+  return [...new Set(ids)]
+}
+
+function getVideoFormGateRedirectUrl(settings = {}) {
+  const embeddedTheme = isPlainObject(settings.videoFormGateEmbeddedTheme)
+    ? settings.videoFormGateEmbeddedTheme
+    : isPlainObject(settings.video_form_gate_embedded_theme)
+      ? settings.video_form_gate_embedded_theme
+      : {}
+  return safeHref(settings.videoFormGateRedirectUrl || settings.video_form_gate_redirect_url || embeddedTheme.formQualifiedRedirectUrl || embeddedTheme.form_qualified_redirect_url || '', '')
+}
+
 function hasVideoFormGates(blocks = []) {
   for (const block of Array.isArray(blocks) ? blocks : []) {
     const settings = block?.settings || {}
@@ -11661,6 +11726,11 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
   const backText = cleanString(settings.videoFormGateBackText || settings.video_form_gate_back_text || embeddedTheme.backText) || 'Anterior'
   const submitText = cleanString(settings.videoFormGateSubmitText || settings.video_form_gate_submit_text || embeddedTheme.submitText) || 'Continuar'
   const animation = normalizeVideoFormGateAnimation(settings)
+  const completionAction = normalizeVideoFormGateCompletionAction(settings)
+  const completionRedirectUrl = getVideoFormGateRedirectUrl(settings)
+  const completionTargetIds = getVideoFormGateCompletionTargetIds(settings)
+  const repeatMode = normalizeVideoFormGateRepeatMode(settings)
+  const storageTtlSeconds = videoFormGateStorageTtlSeconds(settings)
   const classes = [
     'rstk-video-form-gate',
     `rstk-video-form-gate-anim-${animation}`,
@@ -11669,7 +11739,7 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
   ].join(' ')
 
   return `
-    <div class="${classes}" data-rstk-video-form-gate data-site-id="${escapeHtml(context.site?.id || '')}" data-page-id="${escapeHtml(context.pageId || '')}" data-video-block-id="${escapeHtml(block.id || '')}" data-form-site-id="${escapeHtml(formSiteId)}" data-form-site-name="${escapeHtml(formSiteName)}" data-trigger-seconds="${escapeHtml(String(getVideoFormGateTriggerSeconds(settings)))}" data-next-text="${escapeHtml(nextText)}" data-back-text="${escapeHtml(backText)}" data-submit-text="${escapeHtml(submitText)}" style="${style}" hidden>
+    <div class="${classes}" data-rstk-video-form-gate data-site-id="${escapeHtml(context.site?.id || '')}" data-page-id="${escapeHtml(context.pageId || '')}" data-video-block-id="${escapeHtml(block.id || '')}" data-form-site-id="${escapeHtml(formSiteId)}" data-form-site-name="${escapeHtml(formSiteName)}" data-trigger-seconds="${escapeHtml(String(getVideoFormGateTriggerSeconds(settings)))}" data-next-text="${escapeHtml(nextText)}" data-back-text="${escapeHtml(backText)}" data-submit-text="${escapeHtml(submitText)}" data-completion-action="${escapeHtml(completionAction)}" data-completion-redirect-url="${escapeHtml(completionRedirectUrl)}" data-completion-target-ids="${escapeHtml(JSON.stringify(completionTargetIds))}" data-repeat-mode="${escapeHtml(repeatMode)}" data-storage-ttl-seconds="${escapeHtml(String(storageTtlSeconds))}" style="${style}" hidden>
       <div class="rstk-video-form-gate-panel">
         <header class="rstk-video-form-gate-header">
           <strong>${escapeHtml(title)}</strong>
@@ -11852,6 +11922,113 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
       };
       const shouldSubmitRule = rule => !rule || !['redirect', 'site_page'].includes(rule.action) || rule.submitBeforeAction !== false;
       const formatProgress = (index, total) => total > 1 ? 'Pregunta ' + (index + 1) + ' de ' + total : '';
+      const parseJson = value => {
+        if (!value) return null;
+        try { return JSON.parse(value); } catch (_) { return null; }
+      };
+      const escapeSelectorValue = value => {
+        const text = String(value || '');
+        if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(text);
+        return text.replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\"');
+      };
+      const findTarget = id => {
+        const targetId = String(id || '');
+        if (!targetId) return null;
+        const escaped = escapeSelectorValue(targetId);
+        return document.querySelector('[data-rstk-video-action-target="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-block-id="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-edit-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristak-edit-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristack-edit-id="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-form-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristak-form-id="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-section="' + escaped + '"]') ||
+          document.querySelector('[data-ristak-section="' + escaped + '"]') ||
+          document.getElementById(targetId);
+      };
+      const setTargetHidden = (target, hidden) => {
+        if (!target) return;
+        if (hidden) {
+          target.hidden = true;
+          target.setAttribute('data-rstk-video-action-hidden', 'true');
+          target.setAttribute('aria-hidden', 'true');
+          return;
+        }
+        target.hidden = false;
+        target.removeAttribute('hidden');
+        target.removeAttribute('data-rstk-video-action-hidden');
+        target.removeAttribute('data-rstk-countdown-hidden');
+        target.removeAttribute('data-rstk-user-hidden');
+        target.removeAttribute('aria-hidden');
+      };
+      const getCookie = name => {
+        const prefix = String(name || '') + '=';
+        const cookie = String(document.cookie || '').split(';').map(item => item.trim()).find(item => item.indexOf(prefix) === 0);
+        return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : '';
+      };
+      const setCookie = (name, value, maxAge) => {
+        document.cookie = name + '=' + encodeURIComponent(value) + '; Max-Age=' + String(maxAge || 31536000) + '; Path=/; SameSite=Lax';
+      };
+      const removeCookie = name => {
+        document.cookie = name + '=; Max-Age=0; Path=/; SameSite=Lax';
+      };
+      const storageSafeId = value => String(value || 'gate').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 96) || 'gate';
+      const storageKeysForGate = gate => {
+        const rawKey = [
+          gate.getAttribute('data-site-id') || 'site',
+          gate.getAttribute('data-video-block-id') || 'video',
+          gate.getAttribute('data-form-site-id') || 'form'
+        ].join(':');
+        return {
+          storage: 'ristak:video-form-gate:' + rawKey,
+          cookie: 'rstk_vfg_' + storageSafeId(rawKey)
+        };
+      };
+      const readStoredGateCompletion = gate => {
+        const mode = gate.getAttribute('data-repeat-mode') || 'every_visit';
+        if (mode === 'every_visit') return null;
+        const keys = storageKeysForGate(gate);
+        const readRaw = () => {
+          try {
+            if (mode === 'session' && window.sessionStorage) return window.sessionStorage.getItem(keys.storage);
+            if (window.localStorage) {
+              const local = window.localStorage.getItem(keys.storage);
+              if (local) return local;
+            }
+          } catch (_) {}
+          return getCookie(keys.cookie);
+        };
+        let record = null;
+        try { record = JSON.parse(readRaw() || 'null'); } catch (_) { record = null; }
+        if (!record || record.completed !== true) return null;
+        if (Number(record.expiresAt || 0) && Number(record.expiresAt || 0) < Date.now()) {
+          try {
+            if (window.localStorage) window.localStorage.removeItem(keys.storage);
+            if (window.sessionStorage) window.sessionStorage.removeItem(keys.storage);
+          } catch (_) {}
+          removeCookie(keys.cookie);
+          return null;
+        }
+        return record;
+      };
+      const rememberGateCompletion = (gate, submission) => {
+        const mode = gate.getAttribute('data-repeat-mode') || 'every_visit';
+        if (mode === 'every_visit') return;
+        const ttlSeconds = Math.max(3600, Number(gate.getAttribute('data-storage-ttl-seconds') || 2592000) || 2592000);
+        const record = {
+          completed: true,
+          completedAt: Date.now(),
+          expiresAt: mode === 'session' ? 0 : Date.now() + ttlSeconds * 1000,
+          status: submission && submission.status ? submission.status : ''
+        };
+        const value = JSON.stringify(record);
+        const keys = storageKeysForGate(gate);
+        try {
+          if (mode === 'session' && window.sessionStorage) window.sessionStorage.setItem(keys.storage, value);
+          else if (window.localStorage) window.localStorage.setItem(keys.storage, value);
+        } catch (_) {}
+        if (mode === 'remember_visitor') setCookie(keys.cookie, value, ttlSeconds);
+      };
 
       const attachGate = gate => {
         if (!gate || attached.has(gate)) return;
@@ -11869,6 +12046,9 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         const message = gate.querySelector('[data-rstk-video-gate-message]');
         const progress = gate.querySelector('[data-rstk-video-gate-progress]');
         const triggerSeconds = Math.max(0, Number(gate.getAttribute('data-trigger-seconds') || 0) || 0);
+        const completionAction = gate.getAttribute('data-completion-action') || 'continue_video';
+        const completionRedirectUrl = gate.getAttribute('data-completion-redirect-url') || '';
+        const completionTargetIds = Array.isArray(parseJson(gate.getAttribute('data-completion-target-ids'))) ? parseJson(gate.getAttribute('data-completion-target-ids')) : [];
         const state = {
           host,
           video,
@@ -11987,10 +12167,49 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           fields.forEach(field => { field.hidden = false; });
           resumePlayer();
         };
+        const showCompletionMessage = text => {
+          state.completed = true;
+          state.shown = true;
+          gate.hidden = false;
+          host.classList.add('rstk-video-gate-active');
+          fields.forEach(field => { field.hidden = true; });
+          if (backButton) backButton.hidden = true;
+          if (nextButton) nextButton.hidden = true;
+          if (submitButton) submitButton.hidden = true;
+          if (progress) progress.hidden = true;
+          setMessage(text || 'Gracias. Tu información fue recibida.');
+        };
+        const applyCompletionTargets = hidden => {
+          completionTargetIds.map(findTarget).filter(Boolean).forEach(target => setTargetHidden(target, hidden));
+        };
+        const applyCompletionAction = (submission = {}, options = {}) => {
+          if (completionAction === 'redirect' && completionRedirectUrl && options.remembered !== true) {
+            window.location.href = preserveUrl(completionRedirectUrl);
+            return true;
+          }
+          if (completionAction === 'show_targets') {
+            applyCompletionTargets(false);
+            completeGate();
+            return true;
+          }
+          if (completionAction === 'hide_targets') {
+            applyCompletionTargets(true);
+            completeGate();
+            return true;
+          }
+          if (completionAction === 'disqualify_message' && options.remembered !== true) {
+            showCompletionMessage(submission.message || 'Gracias. Por ahora esta solicitud no califica.');
+            return true;
+          }
+          completeGate();
+          return true;
+        };
         const redirectToRule = rule => {
           const targetUrl = getRuleRedirectUrl(rule);
           if (targetUrl) window.location.href = targetUrl;
         };
+        const storedCompletion = readStoredGateCompletion(gate);
+        if (storedCompletion) applyCompletionAction(storedCompletion, { remembered: true });
         const submitGate = async (rule = null, options = {}) => {
           if (state.submitting) return true;
           state.submitting = true;
@@ -12025,6 +12244,8 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
                   ruleAction: rule ? rule.action || '' : '',
                   ruleFieldId: options.fieldId || '',
                   immediateDisqualify: options.immediateDisqualify === true,
+                  videoFormGateCompletionAction: completionAction,
+                  videoFormGateForceDisqualified: completionAction === 'disqualify_message',
                   tracking: nativeTracking,
                   fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
                   fbc: (document.cookie.match(/(?:^|; )_fbc=([^;]+)/) || [])[1] || null
@@ -12054,24 +12275,20 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
               });
             }
             window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
-            if (submission.redirectUrl) {
-              window.location.href = preserveUrl(submission.redirectUrl);
-              return true;
-            }
+            rememberGateCompletion(gate, submission);
             if (rule && ['redirect', 'site_page'].includes(rule.action)) {
               redirectToRule(rule);
               return true;
             }
             if (submission.status === 'disqualified' || (rule && ['show_message', 'disqualify', 'end_form'].includes(rule.action))) {
-              fields.forEach(field => { field.hidden = true; });
-              if (backButton) backButton.hidden = true;
-              if (nextButton) nextButton.hidden = true;
-              if (submitButton) submitButton.hidden = true;
-              if (progress) progress.hidden = true;
-              setMessage(submission.message || (rule && rule.message) || 'Gracias. Tu información fue recibida.');
+              showCompletionMessage(submission.message || (rule && rule.message) || 'Gracias. Tu información fue recibida.');
               return true;
             }
-            completeGate();
+            if (completionAction === 'continue_video' && submission.redirectUrl) {
+              window.location.href = preserveUrl(submission.redirectUrl);
+              return true;
+            }
+            applyCompletionAction(submission);
             return true;
           } catch (error) {
             setMessage(error.message || 'No se pudo enviar el formulario');
@@ -21163,7 +21380,21 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     throw error
   }
 
-  const ruleEvaluation = evaluateSubmissionRules(submissionBlocks, responses)
+  let ruleEvaluation = evaluateSubmissionRules(submissionBlocks, responses)
+  const forceVideoFormGateDisqualified = Boolean(videoFormGateContext) && normalizeBoolean(
+    body.meta?.videoFormGateForceDisqualified ||
+    body.meta?.video_form_gate_force_disqualified ||
+    (cleanString(body.meta?.videoFormGateCompletionAction || body.meta?.video_form_gate_completion_action) === 'disqualify_message' ? true : false)
+  ) === 1
+  if (forceVideoFormGateDisqualified) {
+    ruleEvaluation = {
+      ...ruleEvaluation,
+      status: 'disqualified',
+      disqualified: true,
+      redirectUrl: '',
+      targetPageId: ''
+    }
+  }
   const ruleRedirectUrl = ruleEvaluation.redirectUrl ||
     (ruleEvaluation.targetPageId ? buildPageHref(ruleEvaluation.targetPageId, { site }) : '')
 

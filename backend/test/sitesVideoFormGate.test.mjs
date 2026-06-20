@@ -20,6 +20,7 @@ test('video form gate renders inside the video player and posts as the source fo
   }
   const suffix = Date.now()
   const email = `video-gate-${suffix}@example.test`
+  const forcedEmail = `video-gate-forced-${suffix}@example.test`
   let formSite
   let landingSite
 
@@ -96,6 +97,19 @@ test('video form gate renders inside the video player and posts as the source fo
     })
 
     landingSite = await createBlock(landingSite.id, {
+      blockType: 'title',
+      label: 'Oferta oculta',
+      content: 'Oferta desbloqueada',
+      sortOrder: 1,
+      settings: {
+        pageId: 'page-1'
+      }
+    })
+
+    const targetBlock = (landingSite.blocks || []).find(block => block.label === 'Oferta oculta')
+    assert.ok(targetBlock)
+
+    landingSite = await createBlock(landingSite.id, {
       blockType: 'video',
       label: 'Video con formulario',
       sortOrder: 0,
@@ -105,7 +119,13 @@ test('video form gate renders inside the video player and posts as the source fo
         videoFormGateEnabled: true,
         videoFormGateFormSiteId: formSite.id,
         videoFormGateTitle: 'Formulario de video',
-        videoFormGateTriggerSeconds: 3
+        videoFormGateTriggerSeconds: 3,
+        videoFormGateCompletionAction: 'show_targets',
+        videoFormGateCompletionTargetId: targetBlock.id,
+        videoFormGateCompletionTargetIds: [targetBlock.id],
+        videoFormGateRepeatMode: 'remember_visitor',
+        videoFormGateStorageValue: 45,
+        videoFormGateStorageUnit: 'days'
       }
     })
 
@@ -128,6 +148,11 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, /rstk-video-form-field/)
     assert.match(html, /ristakVideoFormGateRuntimeLoaded/)
     assert.match(html, /data-trigger-seconds="3"/)
+    assert.match(html, /data-completion-action="show_targets"/)
+    assert.match(html, /data-repeat-mode="remember_visitor"/)
+    assert.match(html, /data-storage-ttl-seconds="3888000"/)
+    assert.match(html, new RegExp(`data-rstk-video-action-target="${targetBlock.id}"`))
+    assert.match(html, /data-rstk-video-action-hidden="true"/)
 
     const result = await createSubmissionFromRequest(
       {
@@ -165,8 +190,38 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.equal(meta.videoFormGate, true)
     assert.equal(meta.videoFormGateBlockId, videoBlock.id)
     assert.equal(meta.formSiteId, formSite.id)
+
+    const forcedResult = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${landingSite.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: landingSite.id,
+        pageId: 'page-1',
+        videoFormGateBlockId: videoBlock.id,
+        responses: {
+          [emailBlock.id]: forcedEmail,
+          [companyBlock.id]: 'Ristak Labs',
+          [qualificationBlock.id]: 'Califica'
+        },
+        meta: {
+          videoFormGate: true,
+          videoFormGateBlockId: videoBlock.id,
+          videoFormGateCompletionAction: 'disqualify_message',
+          videoFormGateForceDisqualified: true
+        }
+      }
+    )
+
+    assert.equal(forcedResult.status, 'disqualified')
+    assert.equal(forcedResult.message, 'No calificas para este video.')
   } finally {
     await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE email = ?', [forcedEmail]).catch(() => undefined)
     if (landingSite?.id) await deleteSite(landingSite.id).catch(() => undefined)
     if (formSite?.id) await deleteSite(formSite.id).catch(() => undefined)
     await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
