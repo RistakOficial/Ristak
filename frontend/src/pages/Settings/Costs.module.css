@@ -426,6 +426,7 @@ body.dark .modal {
 }
 
 .inputWithPrefix {
+  --cost-value-prefix-offset: 54px;
   position: relative;
   display: flex;
   align-items: center;
@@ -438,16 +439,17 @@ body.dark .modal {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  width: 26px;
   transform: translateY(-50%);
   font-size: 14px;
   font-weight: 500;
   color: var(--color-text-tertiary);
   pointer-events: none;
+  z-index: 1;
 }
 
 .inputWithPrefix .prefixedInput {
-  padding-left: 44px !important;
+  padding-left: var(--cost-value-prefix-offset) !important;
 }
 
 .radioGroup {

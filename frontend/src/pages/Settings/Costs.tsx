@@ -644,6 +644,7 @@ export const Costs: React.FC = () => {
                   </span>
                   <NumberInput
                     className={`${styles.input} ${styles.prefixedInput}`}
+                    data-ristak-unstyled
                     placeholder={calculationType === 'percentage' ? '0-100' : '0.00'}
                     value={value}
                     onChange={(e) => setValue(e.target.value)}
