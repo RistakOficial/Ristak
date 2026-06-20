@@ -530,6 +530,7 @@ export interface ImportedEditableContentUpdate {
   fieldHtmlId?: string
   fieldTag?: string
   fieldInputType?: string
+  videoSettings?: Record<string, unknown>
 }
 
 export type SitesAICreationKind = 'landing' | 'form' | 'interactive_form'

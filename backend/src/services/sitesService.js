@@ -2111,10 +2111,60 @@ function buildImportedVideoMediaMarkup(value = '') {
   return `<iframe src="${escapeHtml(video.src)}" title="${escapeHtml(video.title || 'Video')}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" sandbox="${EMBED_SANDBOX_URL}" allow="${escapeHtml(video.allow || DEFAULT_EMBED_ALLOW)}" allowfullscreen style="width:100%;height:100%;min-height:220px;aspect-ratio:16/9;display:block;background:#000;border:0;border-radius:inherit;"></iframe>`
 }
 
-function buildImportedVideoReplacement(value = '', attrsText = '', editId = '') {
+function parseImportedVideoSettingsValue(value) {
+  if (!value) return {}
+  if (typeof value === 'object' && !Array.isArray(value)) return value
+  if (typeof value !== 'string') return {}
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function normalizeImportedVideoSettings(settings = {}, mediaUrl = '') {
+  const nextSettings = settings && typeof settings === 'object' && !Array.isArray(settings) ? { ...settings } : {}
+  const cleanMediaUrl = cleanString(mediaUrl || nextSettings.mediaUrl)
+  if (cleanMediaUrl) nextSettings.mediaUrl = cleanMediaUrl
+  return nextSettings
+}
+
+function getImportedVideoSettingsFromAttrs(attrsText = '', mediaUrl = '') {
+  const attrs = parseHtmlAttributes(attrsText)
+  const rawSettings = attrs['data-rstk-video-settings'] ||
+    attrs['data-ristak-video-settings'] ||
+    attrs['data-ristack-video-settings'] ||
+    ''
+  const sourceUrl = mediaUrl || attrs['data-rstk-video-url'] || attrs['data-ristak-video-url'] || attrs['data-rstk-video-embed'] || ''
+  return normalizeImportedVideoSettings(parseImportedVideoSettingsValue(rawSettings), sourceUrl)
+}
+
+function getImportedVideoSettingsForUpdate(input = {}, attrsText = '', mediaUrl = '') {
+  const rawInputSettings = Object.prototype.hasOwnProperty.call(input, 'videoSettings')
+    ? input.videoSettings
+    : Object.prototype.hasOwnProperty.call(input, 'video_settings')
+      ? input.video_settings
+      : null
+  const sourceSettings = rawInputSettings !== null
+    ? parseImportedVideoSettingsValue(rawInputSettings)
+    : getImportedVideoSettingsFromAttrs(attrsText, mediaUrl)
+  return normalizeImportedVideoSettings(sourceSettings, mediaUrl)
+}
+
+function setImportedVideoSettingsAttributes(openingTag = '', attrsText = '', input = {}, value = '') {
+  const videoSource = normalizeImportedVideoEmbed(value).src
+  let nextTag = setHtmlAttribute(openingTag, attrsText, 'data-rstk-video-url', videoSource)
+  nextTag = setHtmlAttribute(nextTag, attrsText, 'data-rstk-video-settings', jsonString(getImportedVideoSettingsForUpdate(input, attrsText, videoSource)))
+  return nextTag
+}
+
+function buildImportedVideoReplacement(value = '', attrsText = '', editId = '', input = {}) {
   const attrs = parseHtmlAttributes(attrsText)
   const label = getImportedElementLabel('video', attrs, 'Video')
-  return `<div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-label="${escapeHtml(label)}" data-rstk-edit-id="${escapeHtml(editId)}" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:inherit;">${buildImportedVideoMediaMarkup(value)}</div>`
+  const videoSource = normalizeImportedVideoEmbed(value).src
+  const videoSettings = getImportedVideoSettingsForUpdate(input, attrsText, videoSource)
+  return `<div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-label="${escapeHtml(label)}" data-rstk-edit-id="${escapeHtml(editId)}" data-rstk-video-url="${escapeHtml(videoSource)}" data-rstk-video-settings="${escapeHtml(jsonString(videoSettings))}" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:inherit;">${buildImportedVideoMediaMarkup(value)}</div>`
 }
 
 function getImportedEditableTextValue(input = {}) {
@@ -2507,11 +2557,10 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
     }) => {
       const tag = cleanString(tagName).toLowerCase()
       if (selfClosing || ['iframe', 'video', 'object', 'embed', 'wistia-player'].includes(tag)) {
-        return buildImportedVideoReplacement(value, attrsText, editId)
+        return buildImportedVideoReplacement(value, attrsText, editId, input)
       }
 
-      const videoSource = normalizeImportedVideoEmbed(value).src
-      const openingTagWithSource = setHtmlAttribute(openingTag, attrsText, 'data-rstk-video-url', videoSource)
+      const openingTagWithSource = setImportedVideoSettingsAttributes(openingTag, attrsText, input, value)
       return `${openingTagWithSource}${mediaMarkup}</${tagName}>`
     })
     if (preciseVideoUpdate.updated) {
@@ -2521,27 +2570,27 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
     nextHtml = nextHtml.replace(/<(iframe|video|object)\b([^>]*)>[\s\S]*?<\/\1>/gi, (match, _tagName, attrsText = '') => {
       if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'video') return match
       updated = true
-      return buildImportedVideoReplacement(value, attrsText, editId)
+      return buildImportedVideoReplacement(value, attrsText, editId, input)
     })
     nextHtml = nextHtml.replace(/<embed\b([^>]*?)\s*(\/?)>/gi, (match, attrsText = '') => {
       if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'video') return match
       updated = true
-      return buildImportedVideoReplacement(value, attrsText, editId)
+      return buildImportedVideoReplacement(value, attrsText, editId, input)
     })
     nextHtml = nextHtml.replace(/<wistia-player\b([^>]*)>[\s\S]*?<\/wistia-player>/gi, (match, attrsText = '') => {
       if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'video') return match
       updated = true
-      return buildImportedVideoReplacement(value, attrsText, editId)
+      return buildImportedVideoReplacement(value, attrsText, editId, input)
     })
     nextHtml = nextHtml.replace(/<wistia-player\b([^>]*?)\s*\/>/gi, (match, attrsText = '') => {
       if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'video') return match
       updated = true
-      return buildImportedVideoReplacement(value, attrsText, editId)
+      return buildImportedVideoReplacement(value, attrsText, editId, input)
     })
     nextHtml = nextHtml.replace(/<(div|section|article|figure|aside)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (match, tagName, attrsText = '') => {
       if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'video') return match
       updated = true
-      const openingTag = setHtmlAttribute(`<${tagName}${attrsText}>`, attrsText, 'data-rstk-video-url', normalizeImportedVideoEmbed(value).src)
+      const openingTag = setImportedVideoSettingsAttributes(`<${tagName}${attrsText}>`, attrsText, input, value)
       return `${openingTag}${mediaMarkup}</${tagName}>`
     })
   } else if (editType === 'placeholder') {
@@ -10972,8 +11021,8 @@ function renderBlockHiddenAttributes(block = {}) {
   return isBlockHiddenBySettings(block) ? ' data-rstk-user-hidden="true" hidden aria-hidden="true"' : ''
 }
 
-function buildVideoActionsRuntimeScript(blocks = []) {
-  if (!hasVideoActionRules(blocks)) return ''
+function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
+  if (!options.force && !hasVideoActionRules(blocks)) return ''
 
   return `<style>[data-rstk-video-action-hidden="true"]{display:none!important}</style>
   <script>
@@ -11008,6 +11057,13 @@ function buildVideoActionsRuntimeScript(blocks = []) {
         const escaped = escapeSelectorValue(targetId);
         return document.querySelector('[data-rstk-video-action-target="' + escaped + '"]') ||
           document.querySelector('[data-rstk-block-id="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-edit-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristak-edit-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristack-edit-id="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-form-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristak-form-id="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-section="' + escaped + '"]') ||
+          document.querySelector('[data-ristak-section="' + escaped + '"]') ||
           document.getElementById(targetId);
       };
       const getTargetIds = action => {
@@ -16782,6 +16838,305 @@ function getImportedRenderPageByAssetPath(site, assetPath = '') {
   )) || null
 }
 
+function getImportedVideoUrlFromAttrs(attrsText = '') {
+  const attrs = parseHtmlAttributes(attrsText)
+  return cleanString(
+    attrs['data-rstk-video-url'] ||
+    attrs['data-ristak-video-url'] ||
+    attrs['data-rstk-video-embed'] ||
+    attrs.src ||
+    attrs.data ||
+    ''
+  )
+}
+
+function hasImportedVideoSettings(attrsText = '') {
+  const attrs = parseHtmlAttributes(attrsText)
+  return Boolean(attrs['data-rstk-video-settings'] || attrs['data-ristak-video-settings'] || attrs['data-ristack-video-settings'])
+}
+
+function renderImportedVideoElementForRender({
+  sourceHtml = '',
+  tagName = '',
+  openingTag = '',
+  attrsText = '',
+  selfClosing = false,
+  site,
+  context = {},
+  index = 0
+} = {}) {
+  const attrs = parseHtmlAttributes(attrsText)
+  const rawUrl = getImportedVideoUrlFromAttrs(attrsText)
+  if (!rawUrl || !hasImportedVideoSettings(attrsText)) return sourceHtml
+
+  let videoSource = rawUrl
+  try {
+    videoSource = normalizeImportedVideoEmbed(rawUrl).src || rawUrl
+  } catch {
+    videoSource = rawUrl
+  }
+
+  const editId = getImportedEditableAttr(attrs, 'id') || attrs.id || `imported-video-${index + 1}`
+  const label = getImportedElementLabel(cleanString(tagName) || 'video', attrs, 'Video')
+  const settings = getImportedVideoSettingsFromAttrs(attrsText, videoSource)
+  const block = {
+    id: editId,
+    siteId: site?.id || '',
+    blockType: 'video',
+    label,
+    content: videoSource,
+    placeholder: '',
+    required: false,
+    options: [],
+    settings,
+    sortOrder: index,
+    createdAt: '',
+    updatedAt: ''
+  }
+  const renderedVideo = renderContentBlock(block, context)
+  if (!renderedVideo) return sourceHtml
+
+  const tag = cleanString(tagName).toLowerCase()
+  const mediaTag = selfClosing || ['iframe', 'video', 'object', 'embed', 'wistia-player'].includes(tag)
+  if (mediaTag) {
+    return `<div class="rstk-imported-video-slot" data-rstk-editable="true" data-rstk-edit-type="video" data-rstk-label="${escapeHtml(label)}" data-rstk-edit-id="${escapeHtml(editId)}" data-rstk-video-url="${escapeHtml(videoSource)}" data-rstk-video-settings="${escapeHtml(jsonString(settings))}" style="width:100%;aspect-ratio:16/9;min-height:220px;overflow:hidden;background:#000;border-radius:inherit;">${renderedVideo}</div>`
+  }
+
+  let nextOpeningTag = setHtmlAttribute(openingTag, attrsText, 'data-rstk-video-url', videoSource)
+  nextOpeningTag = setHtmlAttribute(nextOpeningTag, attrsText, 'data-rstk-video-settings', jsonString(settings))
+  return `${nextOpeningTag}${renderedVideo}</${tagName}>`
+}
+
+function rewriteImportedVideosForRender(site, html = '', context = {}) {
+  const source = String(html || '')
+  if (!/data-rstk-edit-type\s*=\s*(?:"video"|'video'|video)|data-ristak-edit-type\s*=\s*(?:"video"|'video'|video)|data-ristack-edit-type\s*=\s*(?:"video"|'video'|video)/i.test(source)) {
+    return source
+  }
+
+  const openingPattern = /<([a-z][\w:-]*)\b([^>]*)>/gi
+  let cursor = 0
+  let index = 0
+  let output = ''
+  let match
+
+  while ((match = openingPattern.exec(source))) {
+    if (match.index < cursor) continue
+    const tagName = match[1] || ''
+    const attrsText = match[2] || ''
+    if (getImportedEditTypeFromAttrs(attrsText) !== 'video') continue
+
+    const openingTag = match[0] || ''
+    const openEnd = openingPattern.lastIndex
+    const selfClosing = isImportedHtmlSelfClosingTag(tagName, openingTag)
+    const end = selfClosing ? openEnd : findImportedHtmlElementEnd(source, tagName, openEnd)
+    if (end < openEnd) continue
+
+    const originalHtml = source.slice(match.index, end)
+    const replacement = renderImportedVideoElementForRender({
+      sourceHtml: originalHtml,
+      tagName,
+      openingTag,
+      attrsText,
+      selfClosing,
+      site,
+      context,
+      index
+    })
+
+    output += source.slice(cursor, match.index)
+    output += replacement
+    cursor = end
+    openingPattern.lastIndex = end
+    index += 1
+  }
+
+  return cursor ? `${output}${source.slice(cursor)}` : source
+}
+
+const IMPORTED_VIDEO_PLAYER_CSS = `
+<style data-rstk-imported-video-player>
+  .rstk-imported-video-slot .rstk-video,.rstk-video{width:var(--rstk-media-width,100%);margin:0;overflow:hidden;border:var(--rstk-video-border-width,0) solid var(--rstk-video-border-color,transparent);border-radius:var(--rstk-video-radius,18px);background:var(--rstk-video-bg,#000);aspect-ratio:var(--rstk-video-aspect-ratio,16/9);position:relative;box-sizing:border-box}
+  .rstk-imported-video-slot .rstk-video iframe,.rstk-imported-video-slot .rstk-video video,.rstk-video iframe,.rstk-video video{width:100%;height:100%;display:block;border:0;background:var(--rstk-video-bg,#000)}
+  .rstk-video video{object-fit:cover}
+  .rstk-video-player{container-type:inline-size;isolation:isolate}
+  .rstk-video-custom-controls video{cursor:pointer}
+  .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:transparent;color:var(--rstk-video-play-color,#fff);cursor:pointer}
+  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:0;border-radius:var(--rstk-video-play-radius,0);background:var(--rstk-video-player-color,#000);color:var(--rstk-video-play-color,#fff);transition:opacity .18s ease,transform .18s ease}
+  .rstk-video-is-playing .rstk-video-play-dot{opacity:0;transform:scale(.9)}
+  .rstk-video-play-shape-round .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,999px)}
+  .rstk-video-play-dot svg{width:var(--rstk-video-play-icon-size,95px);height:var(--rstk-video-play-icon-size,95px)}
+  .rstk-video-sound{position:absolute;top:22px;right:22px;z-index:3;display:inline-flex;align-items:center;gap:10px;min-width:58px;height:58px;border-radius:999px;background:color-mix(in srgb,#020617 72%,transparent);color:var(--rstk-video-sound-color,var(--rstk-video-play-color,#fff));padding:0 12px;pointer-events:none;backdrop-filter:blur(14px)}
+  .rstk-video-sound-text{max-width:min(260px,calc(100vw - 150px));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:1rem;font-weight:500}
+  .rstk-video-is-playing .rstk-video-sound{display:none}
+  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:var(--rstk-video-control-radius,24px);background:var(--rstk-video-player-color,#000);color:var(--rstk-video-play-color,#fff);padding:7px;backdrop-filter:blur(14px);transition:opacity .2s ease,transform .2s ease}
+  .rstk-video-controls-hidden .rstk-video-control-bar{opacity:0;pointer-events:none;transform:translateY(8px)}
+  .rstk-video-control-button{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;cursor:pointer}
+  .rstk-video-control-button:hover{background:rgba(255,255,255,.2)}
+  .rstk-video-control-pause,.rstk-video-control-muted{display:none}
+  .rstk-video-is-playing .rstk-video-control-play{display:none}
+  .rstk-video-is-playing .rstk-video-control-pause{display:block}
+  .rstk-video-is-muted .rstk-video-control-volume{display:none}
+  .rstk-video-is-muted .rstk-video-control-muted{display:block}
+  .rstk-video-progress{flex:1 1 44px;min-width:44px;position:relative;height:18px;border-radius:999px;background:transparent;cursor:pointer;touch-action:none}
+  .rstk-video-progress::before{content:"";position:absolute;inset:50% 0 auto;height:5px;border-radius:inherit;background:rgba(255,255,255,.2);transform:translateY(-50%)}
+  .rstk-video-progress span{position:absolute;left:0;top:50%;display:block;width:0;height:5px;border-radius:inherit;background:currentColor;transform:translateY(-50%)}
+  .rstk-video-speed-control{position:relative;min-width:66px;height:30px;display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;padding:0 20px 0 8px}
+  .rstk-video-speed-control select{appearance:none;width:34px;height:100%;border:0!important;background:transparent!important;color:inherit;cursor:pointer;font:inherit;font-size:.76rem;font-weight:750;outline:0}
+  .rstk-video-speed-control option{color:#111827}
+</style>`
+
+function buildImportedVideoPlayerRuntimeScript() {
+  return `<script>
+    (() => {
+      if (window.ristakImportedVideoPlayerRuntimeLoaded) return;
+      window.ristakImportedVideoPlayerRuntimeLoaded = true;
+      const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+      let hlsLoader = null;
+      const isHlsSource = src => /\\.m3u8(?:[?#]|$)/i.test(String(src || ''));
+      const loadHls = () => {
+        if (window.Hls) return Promise.resolve(window.Hls);
+        if (hlsLoader) return hlsLoader;
+        hlsLoader = new Promise(resolve => {
+          const script = document.createElement('script');
+          script.src = HLS_SCRIPT_URL;
+          script.async = true;
+          script.dataset.rstkHlsPlayer = 'true';
+          script.onload = () => resolve(window.Hls || null);
+          script.onerror = () => resolve(null);
+          document.head.appendChild(script);
+        });
+        return hlsLoader;
+      };
+      const canPlayNativeHls = video => {
+        try { return Boolean(video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL')); } catch (_) { return false; }
+      };
+      const attach = host => {
+        if (!host || host.dataset.rstkImportedVideoAttached === 'true') return;
+        const video = host.querySelector('video');
+        if (!video) return;
+        host.dataset.rstkImportedVideoAttached = 'true';
+        const source = video.getAttribute('data-rstk-video-src') || video.getAttribute('src') || '';
+        if (source && isHlsSource(source) && !canPlayNativeHls(video)) {
+          video.removeAttribute('src');
+          video.load();
+          loadHls().then(Hls => {
+            if (!Hls || !Hls.isSupported || !Hls.isSupported()) {
+              video.src = source;
+              video.load();
+              return;
+            }
+            const hls = new Hls({ enableWorker: true });
+            hls.loadSource(source);
+            hls.attachMedia(video);
+          }).catch(() => {
+            video.src = source;
+            video.load();
+          });
+        }
+        const progress = host.querySelector('[data-rstk-video-progress]');
+        const progressTrack = host.querySelector('[data-rstk-video-progress-track]');
+        const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
+        const overlay = host.querySelector('[data-rstk-video-overlay]');
+        const toggles = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
+        const mutes = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
+        const controlBar = host.querySelector('[data-rstk-video-control-bar]');
+        const hasControlBar = Boolean(controlBar);
+        let controlsTimer = 0;
+        const sync = () => {
+          const duration = Number.isFinite(video.duration) ? video.duration : 0;
+          const ratio = duration > 0 ? Math.max(0, Math.min(1, video.currentTime / duration)) : 0;
+          if (progress) progress.style.width = (ratio * 100).toFixed(3) + '%';
+          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
+          host.classList.toggle('rstk-video-is-playing', !video.paused);
+          host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
+          toggles.forEach(button => button.setAttribute('aria-label', video.paused ? 'Reproducir video' : 'Pausar video'));
+          mutes.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
+        };
+        const setControlsVisible = visible => {
+          if (!hasControlBar) return;
+          host.classList.toggle('rstk-video-controls-visible', visible);
+          host.classList.toggle('rstk-video-controls-hidden', !visible);
+        };
+        const showControls = () => {
+          setControlsVisible(true);
+          window.clearTimeout(controlsTimer);
+          if (!video.paused) controlsTimer = window.setTimeout(() => setControlsVisible(false), ${VIDEO_CONTROLS_IDLE_MS});
+        };
+        const play = unmute => {
+          if (unmute) {
+            video.muted = false;
+            if (video.volume === 0) video.volume = 1;
+          }
+          if (video.paused) video.play().catch(() => {});
+          else video.pause();
+          showControls();
+          window.setTimeout(sync, 0);
+        };
+        overlay?.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          play(true);
+        });
+        toggles.forEach(button => button.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          play(false);
+        }));
+        mutes.forEach(button => button.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          video.muted = !(video.muted || video.volume === 0);
+          if (!video.muted && video.volume === 0) video.volume = 1;
+          showControls();
+          sync();
+        }));
+        if (progressTrack) {
+          const seek = clientX => {
+            const rect = progressTrack.getBoundingClientRect();
+            if (!rect.width || !Number.isFinite(video.duration) || video.duration <= 0) return;
+            video.currentTime = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * video.duration;
+            sync();
+          };
+          progressTrack.addEventListener('pointerdown', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            seek(event.clientX);
+          });
+        }
+        if (speedSelect) {
+          const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
+          video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
+          speedSelect.value = String(video.playbackRate);
+          speedSelect.addEventListener('change', event => {
+            const nextSpeed = Number(event.target.value);
+            if (!Number.isFinite(nextSpeed)) return;
+            video.playbackRate = Math.min(4, Math.max(0.25, nextSpeed));
+            showControls();
+          });
+        }
+        ['play','pause','timeupdate','volumechange','loadedmetadata','ended'].forEach(eventName => video.addEventListener(eventName, sync));
+        ['pointermove','pointerenter','touchstart','focusin'].forEach(eventName => host.addEventListener(eventName, showControls, { passive: true }));
+        sync();
+      };
+      const attachAll = () => document.querySelectorAll('.rstk-video-player').forEach(attach);
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attachAll, { once: true });
+      else attachAll();
+      new MutationObserver(attachAll).observe(document.documentElement, { childList: true, subtree: true });
+    })();
+  </script>`
+}
+
+function buildImportedVideoRuntimeInjection(html = '') {
+  const source = String(html || '')
+  const hasRistakVideo = /\brstk-video\b/.test(source)
+  if (!hasRistakVideo) return ''
+  return [
+    IMPORTED_VIDEO_PLAYER_CSS,
+    /\brstk-video-player\b/.test(source) ? buildImportedVideoPlayerRuntimeScript() : '',
+    /data-rstk-video-actions=/.test(source) ? buildVideoActionsRuntimeScript([], { force: true }) : ''
+  ].filter(Boolean).join('')
+}
+
 async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled = true, preview = false } = {}) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
@@ -16806,6 +17161,16 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
   if (!trackingEnabled || preview) {
     html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
   }
+  const importedVideoRenderContext = {
+    site,
+    pages: normalizeSitePages(site),
+    noTrack: !trackingEnabled || preview,
+    linkStyle: 'query',
+    videoStreamAssetsByStorageUrl: new Map(),
+    videoStorageAssetsByStreamVideoId: new Map()
+  }
+  html = rewriteImportedVideosForRender(site, html, importedVideoRenderContext)
+  const importedVideoRuntime = buildImportedVideoRuntimeInjection(html)
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled: trackingEnabled && !preview,
@@ -16816,7 +17181,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
     annotateImportedEditableHtml(html),
     trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
   )
-  return injectImportedHtmlRuntime(htmlWithHeaderTracking, injection)
+  return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection}${importedVideoRuntime}`)
 }
 
 export async function getImportedSiteAssetResponse(siteId, assetPath, { trackingEnabled = true } = {}) {
@@ -16851,6 +17216,16 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     if (!trackingEnabled) {
       html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
     }
+    const importedVideoRenderContext = {
+      site,
+      pages: normalizeSitePages(site),
+      noTrack: !trackingEnabled,
+      linkStyle: 'query',
+      videoStreamAssetsByStorageUrl: new Map(),
+      videoStorageAssetsByStreamVideoId: new Map()
+    }
+    html = rewriteImportedVideosForRender(site, html, importedVideoRenderContext)
+    const importedVideoRuntime = buildImportedVideoRuntimeInjection(html)
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
       pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
@@ -16866,7 +17241,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       site,
       assetPath: asset.assetPath,
       contentType: 'text/html; charset=utf-8',
-      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, injection), 'utf8'),
+      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection}${importedVideoRuntime}`), 'utf8'),
       cacheControl: trackingEnabled ? 'public, max-age=300' : 'no-store'
     }
   }

@@ -79,6 +79,7 @@ import {
   Search,
   Send,
   Settings2,
+  SlidersHorizontal,
   Sparkles,
   Smartphone,
   Strikethrough,
@@ -11699,6 +11700,7 @@ type ImportedEditableSelection = {
   buttonPageId?: string
   buttonMessage?: string
   buttonInsideForm?: boolean
+  videoSettings?: Record<string, unknown>
   codeDescriptor?: ImportedFrameElementDescriptor
   codeRange?: ImportedCodeSourceRange
 }
@@ -11808,6 +11810,13 @@ type ImportedButtonEditorState = {
   buttonActions: ImportedButtonActionStep[]
 }
 
+type ImportedVideoEditorState = {
+  selection: ImportedEditableSelection
+  value: string
+  settings: Record<string, unknown>
+  targetBlocks: SiteBlock[]
+}
+
 type ImportedCodeElementEditorMode = 'text' | 'field' | 'media' | 'container'
 
 type ImportedCodeElementEditorState = {
@@ -11826,6 +11835,8 @@ type ImportedCodeElementEditorState = {
   required?: boolean
   options?: ImportedFormFieldOption[]
   mediaUrl?: string
+  videoSettings?: Record<string, unknown>
+  videoTargetBlocks?: SiteBlock[]
 }
 
 type ImportedChoiceSelection = {
@@ -13114,6 +13125,121 @@ const readImportedButtonSettings = (element: HTMLElement, editType: ImportedEdit
   }
 }
 
+const importedVideoSettingsAttributeNames = [
+  'data-rstk-video-settings',
+  'data-ristak-video-settings',
+  'data-ristack-video-settings'
+]
+
+const parseImportedVideoSettings = (rawValue: string): Record<string, unknown> => {
+  const raw = String(rawValue || '').trim()
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+const getImportedVideoSettingsAttribute = (element: HTMLElement) => {
+  for (const name of importedVideoSettingsAttributeNames) {
+    const value = element.getAttribute(name)
+    if (value) return value
+  }
+  return ''
+}
+
+const readImportedVideoSettings = (element: HTMLElement, mediaUrl: string): Record<string, unknown> => {
+  const parsed = parseImportedVideoSettings(getImportedVideoSettingsAttribute(element))
+  return withDefaultVideoPlayerSettings({
+    ...parsed,
+    mediaUrl: mediaUrl || String(parsed.mediaUrl || '')
+  })
+}
+
+const cleanImportedVideoSettings = (settings: Record<string, unknown> = {}, mediaUrl = '') => (
+  withDefaultVideoPlayerSettings({
+    ...settings,
+    mediaUrl: mediaUrl.trim()
+  })
+)
+
+const getImportedVideoActionTargetId = (element: HTMLElement) => String(
+  getImportedEditableAttribute(element, 'id') ||
+  element.getAttribute('data-rstk-form-id') ||
+  element.getAttribute('data-ristak-form-id') ||
+  element.getAttribute('id') ||
+  getImportedEditableAttribute(element, 'section') ||
+  ''
+).trim()
+
+const getImportedVideoActionTargetLabel = (element: HTMLElement, fallback: string) => (
+  getImportedEditableAttribute(element, 'label') ||
+  element.getAttribute('aria-label') ||
+  element.getAttribute('title') ||
+  getImportedEditableAttribute(element, 'section') ||
+  (element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) ||
+  fallback
+).trim()
+
+const getImportedVideoActionTargetBlockType = (
+  element: HTMLElement,
+  editType: ImportedEditableSelection['editType'] | ''
+): SiteBlockType => {
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'form' || element.hasAttribute('data-rstk-form-id') || element.hasAttribute('data-ristak-form-id')) return 'form_embed'
+  if (editType === 'form_field' || tagName === 'input' || tagName === 'textarea' || tagName === 'select') return 'form_embed'
+  if (getImportedEditableAttribute(element, 'section')) return SECTION_BLOCK_TYPE
+  if (editType === 'image' || editType === 'background_image' || tagName === 'img') return 'image'
+  if (editType === 'video') return 'video'
+  if (editType === 'button' || tagName === 'a' || tagName === 'button') return 'button'
+  if (editType === 'heading' || /^h[1-6]$/.test(tagName)) return 'title'
+  return 'text'
+}
+
+const buildImportedVideoActionTargetBlocks = (
+  doc: Document,
+  sourceEditId: string,
+  siteId: string
+): SiteBlock[] => {
+  const selector = [
+    importedEditableSelector,
+    importedSectionSelector,
+    'form[data-rstk-form-id]',
+    'form[data-ristak-form-id]'
+  ].join(', ')
+  const seen = new Set<string>()
+  const now = new Date().toISOString()
+
+  return Array.from(doc.querySelectorAll<HTMLElement>(selector))
+    .map((element, index): SiteBlock | null => {
+      const id = getImportedVideoActionTargetId(element)
+      if (!id || id === sourceEditId || seen.has(id)) return null
+      const editType = normalizeImportedEditableType(getImportedEditableAttribute(element, 'type'), element)
+      const blockType = getImportedVideoActionTargetBlockType(element, editType)
+      const label = getImportedVideoActionTargetLabel(element, blockLabels[blockType] || 'Elemento')
+      seen.add(id)
+      return {
+        id,
+        siteId,
+        blockType,
+        label,
+        content: label,
+        placeholder: '',
+        required: false,
+        options: [],
+        settings: {},
+        sortOrder: index,
+        createdAt: now,
+        updatedAt: now
+      }
+    })
+    .filter((block): block is SiteBlock => Boolean(block))
+}
+
 const getImportedChoiceLabel = (input: HTMLInputElement, doc: Document) => {
   const id = input.getAttribute('id') || ''
   const explicitLabel = input.getAttribute('aria-label') || input.getAttribute('data-rstk-label') || input.getAttribute('data-ristak-label')
@@ -13303,6 +13429,7 @@ const readImportedEditableSelection = (element: HTMLElement): ImportedEditableSe
     label,
     value: getEditableElementValue(element, editType),
     tagName: element.tagName.toLowerCase(),
+    ...(editType === 'video' ? { videoSettings: readImportedVideoSettings(element, getEditableElementValue(element, editType)) } : {}),
     ...readImportedButtonSettings(element, editType)
   }
 }
@@ -13841,8 +13968,18 @@ const applyImportedCodeElementPatch = (
       openingTag = setImportedHtmlAttribute(openingTag, 'data', mediaUrl)
     } else if (tagName === 'wistia-player') {
       openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-video-url', mediaUrl)
+    } else if (editor.editType === 'video') {
+      openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-video-url', mediaUrl)
+      openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-video-settings', JSON.stringify(cleanImportedVideoSettings(editor.videoSettings || {}, mediaUrl)))
+      if (['iframe', 'embed', 'video'].includes(tagName)) {
+        openingTag = setImportedHtmlAttribute(openingTag, 'src', mediaUrl)
+      }
     } else {
       openingTag = setImportedHtmlAttribute(openingTag, 'src', mediaUrl)
+    }
+    if (editor.editType === 'video') {
+      openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-video-url', mediaUrl)
+      openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-video-settings', JSON.stringify(cleanImportedVideoSettings(editor.videoSettings || {}, mediaUrl)))
     }
     return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
   }
@@ -14971,6 +15108,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [previewVersion, setPreviewVersion] = useState(0)
   const [inlineEditor, setInlineEditor] = useState<ImportedInlineEditorState | null>(null)
   const [buttonEditor, setButtonEditor] = useState<ImportedButtonEditorState | null>(null)
+  const [videoEditor, setVideoEditor] = useState<ImportedVideoEditorState | null>(null)
+  const videoEditorRef = useRef<ImportedVideoEditorState | null>(null)
   const [codeElementEditor, setCodeElementEditor] = useState<ImportedCodeElementEditorState | null>(null)
   const [elementPopoverPosition, setElementPopoverPosition] = useState<ImportedElementPopoverPosition | null>(null)
   const [choiceEditor, setChoiceEditor] = useState<ImportedChoiceEditorState | null>(null)
@@ -15290,6 +15429,8 @@ const ImportedHtmlEditorPanel: React.FC<{
     selectedIframeElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
     setCodeElementEditor(null)
     setElementPopoverPosition(null)
     setChoiceEditor(null)
@@ -15312,6 +15453,8 @@ const ImportedHtmlEditorPanel: React.FC<{
     selectedIframeElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
     setCodeElementEditor(null)
     setElementPopoverPosition(null)
     setChoiceEditor(null)
@@ -15359,6 +15502,8 @@ const ImportedHtmlEditorPanel: React.FC<{
     const position = getInlineEditorPosition(element)
     setElementPopoverPosition(null)
     setButtonEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
     setCodeElementEditor(null)
     setChoiceEditor(null)
     setFieldEditor(null)
@@ -15371,8 +15516,48 @@ const ImportedHtmlEditorPanel: React.FC<{
     setContentError('')
   }, [getInlineEditorPosition])
 
+  const setImportedVideoEditorState = useCallback((
+    updater: ImportedVideoEditorState | null | ((current: ImportedVideoEditorState | null) => ImportedVideoEditorState | null)
+  ) => {
+    setVideoEditor(current => {
+      const next = typeof updater === 'function'
+        ? (updater as (current: ImportedVideoEditorState | null) => ImportedVideoEditorState | null)(current)
+        : updater
+      videoEditorRef.current = next
+      return next
+    })
+  }, [])
+
+  const openVideoEditorForElement = useCallback((
+    element: HTMLElement,
+    selection: ImportedEditableSelection,
+    frame: HTMLIFrameElement | null = iframeRef.current
+  ) => {
+    const doc = element.ownerDocument
+    const value = selection.value
+    const nextEditor: ImportedVideoEditorState = {
+      selection: {
+        ...selection,
+        videoSettings: selection.videoSettings || readImportedVideoSettings(element, value)
+      },
+      value,
+      settings: cleanImportedVideoSettings(selection.videoSettings || readImportedVideoSettings(element, value), value),
+      targetBlocks: buildImportedVideoActionTargetBlocks(doc, selection.editId, site.id)
+    }
+    setInlineEditor(null)
+    setButtonEditor(null)
+    setCodeElementEditor(null)
+    setChoiceEditor(null)
+    setFieldEditor(null)
+    setElementPopoverPosition(getElementPopoverPosition(element, frame))
+    setImportedVideoEditorState(nextEditor)
+    setContentError('')
+  }, [getElementPopoverPosition, setImportedVideoEditorState, site.id])
+
   const openButtonEditorForSelection = useCallback((selection: ImportedEditableSelection, position?: ImportedElementPopoverPosition | null) => {
     setInlineEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
     setCodeElementEditor(null)
     setChoiceEditor(null)
     setFieldEditor(null)
@@ -15418,18 +15603,29 @@ const ImportedHtmlEditorPanel: React.FC<{
   ) => {
     const doc = element.ownerDocument
     const editor = readImportedCodeElementEditor(element, descriptor, range, doc)
+    const nextEditor = editor?.mode === 'media' && editor.editType === 'video'
+      ? {
+        ...editor,
+        videoSettings: cleanImportedVideoSettings(readImportedVideoSettings(element, editor.mediaUrl || editor.value), editor.mediaUrl || editor.value),
+        videoTargetBlocks: buildImportedVideoActionTargetBlocks(doc, editor.editId, site.id)
+      }
+      : editor
     setInlineEditor(null)
     setButtonEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
     setChoiceEditor(null)
     setFieldEditor(null)
-    setCodeElementEditor(editor)
+    setCodeElementEditor(nextEditor)
     setElementPopoverPosition(getElementPopoverPosition(element, codePreviewIframeRef.current))
     setContentError('')
-  }, [getElementPopoverPosition])
+  }, [getElementPopoverPosition, site.id])
 
   const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection, position?: ImportedElementPopoverPosition | null) => {
     setInlineEditor(null)
     setButtonEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
     setCodeElementEditor(null)
     setFieldEditor(null)
     setElementPopoverPosition(position || {
@@ -15447,6 +15643,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const openFieldEditorForSelection = useCallback((selection: ImportedFormFieldSelection, position?: ImportedElementPopoverPosition | null) => {
     setInlineEditor(null)
     setButtonEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
     setCodeElementEditor(null)
     setChoiceEditor(null)
     setElementPopoverPosition(position || {
@@ -15470,13 +15668,15 @@ const ImportedHtmlEditorPanel: React.FC<{
     selectedCodePreviewElementRef.current = null
     setInlineEditor(null)
     setButtonEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
     setCodeElementEditor(null)
     setElementPopoverPosition(null)
     setChoiceEditor(null)
     setFieldEditor(null)
   }, [])
 
-  const hasElementPopoverEditor = Boolean(buttonEditor || choiceEditor || fieldEditor || codeElementEditor)
+  const hasElementPopoverEditor = Boolean(buttonEditor || videoEditor || choiceEditor || fieldEditor || codeElementEditor)
   const elementPopoverStyle = elementPopoverPosition
     ? ({
       '--imported-element-popover-left': `${elementPopoverPosition.left}px`,
@@ -15552,6 +15752,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       fieldHtmlId?: string
       fieldTag?: string
       fieldInputType?: string
+      videoSettings?: Record<string, unknown>
     }
   ) => {
     if (selection.editType === 'section') return false
@@ -15722,6 +15923,8 @@ const ImportedHtmlEditorPanel: React.FC<{
     aiRegionVoiceDictation.cancelVoice()
     setInlineEditor(null)
     setButtonEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
     setCodeElementEditor(null)
     setElementPopoverPosition(null)
     setChoiceEditor(null)
@@ -16319,14 +16522,18 @@ const ImportedHtmlEditorPanel: React.FC<{
         mediaActionButton = doc.createElement('button')
         mediaActionButton.type = 'button'
         mediaActionButton.className = 'rstk-imported-image-action'
-        mediaActionButton.textContent = selection.editType === 'video' ? 'Cambiar video' : 'Cambiar imagen'
+        mediaActionButton.textContent = selection.editType === 'video' ? 'Configurar video' : 'Cambiar imagen'
         mediaActionButton.style.left = `${Math.max(8, rect.left + 8)}px`
         mediaActionButton.style.top = `${Math.max(8, rect.top + 8)}px`
         mediaActionButton.addEventListener('click', (buttonEvent) => {
           buttonEvent.preventDefault()
           buttonEvent.stopPropagation()
           selectElement(element)
-          openInlineEditorForElement(element, selection, selection.editType === 'video' ? 'video' : 'image')
+          if (selection.editType === 'video') {
+            openVideoEditorForElement(element, selection, iframeRef.current)
+          } else {
+            openInlineEditorForElement(element, selection, 'image')
+          }
         })
         doc.body.appendChild(mediaActionButton)
       }
@@ -16393,15 +16600,23 @@ const ImportedHtmlEditorPanel: React.FC<{
           if (selection.editType === 'image' || selection.editType === 'background_image' || selection.editType === 'video') {
             setButtonEditor(null)
             setChoiceEditor(null)
-            openInlineEditorForElement(editableElement, selection, selection.editType === 'video' ? 'video' : 'image')
+            if (selection.editType === 'video') {
+              openVideoEditorForElement(editableElement, selection, iframeRef.current)
+            } else {
+              openInlineEditorForElement(editableElement, selection, 'image')
+            }
           } else if (selection.editType === 'button') {
             openButtonEditorForSelection(selection, getElementPopoverPosition(editableElement, iframeRef.current))
           } else if (selection.editType === 'placeholder') {
             setButtonEditor(null)
+            setVideoEditor(null)
+            videoEditorRef.current = null
             setChoiceEditor(null)
             openInlineEditorForElement(editableElement, selection, 'text')
           } else {
             setButtonEditor(null)
+            setVideoEditor(null)
+            videoEditorRef.current = null
             setChoiceEditor(null)
             beginTextEdit(editableElement, selection)
           }
@@ -16413,6 +16628,8 @@ const ImportedHtmlEditorPanel: React.FC<{
           selectElement(sectionElement)
           setInlineEditor(null)
           setButtonEditor(null)
+          setVideoEditor(null)
+          videoEditorRef.current = null
           setChoiceEditor(null)
           setElementPopoverPosition(null)
           setContentError('')
@@ -16484,6 +16701,8 @@ const ImportedHtmlEditorPanel: React.FC<{
         selectedIframeElementRef.current = null
         setInlineEditor(null)
         setButtonEditor(null)
+        setVideoEditor(null)
+        videoEditorRef.current = null
         setChoiceEditor(null)
         setContentError('')
 
@@ -16619,7 +16838,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       iframe.removeEventListener('load', installEditorHooks)
       cleanupDocument()
     }
-  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, editorPreviewHtml, getElementPopoverPosition, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, previewLoading, previewVersion, saveEditableContent, site.id, site.name, site.title])
+  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, editorPreviewHtml, getElementPopoverPosition, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, openVideoEditorForElement, previewLoading, previewVersion, saveEditableContent, site.id, site.name, site.title])
 
   const routeValue = getRouteEditorValue(site)
   const saveRoute = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -16644,6 +16863,41 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!inlineEditor || inlineEditor.selection.editType === 'section') return
     await saveEditableContent(inlineEditor.selection, inlineEditor.value)
   }
+
+  const saveImportedVideoEditor = useCallback(async (options: { closeOnSave?: boolean; reloadPreview?: boolean; showSavedToast?: boolean } = {}) => {
+    const editor = videoEditorRef.current
+    if (!editor || editor.selection.editType !== 'video') return false
+    const cleanValue = editor.value.trim()
+    if (!cleanValue) {
+      setContentError('Pega una URL o embed de video antes de guardar.')
+      return false
+    }
+
+    const nextSettings = cleanImportedVideoSettings(editor.settings, cleanValue)
+    setContentSaving(true)
+    setContentError('')
+    try {
+      const result = await sitesService.updateImportedContent(site.id, {
+        editId: editor.selection.editId,
+        editType: 'video',
+        value: cleanValue,
+        pageId: activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID,
+        videoSettings: nextSettings
+      })
+      onContentUpdated(result)
+      if (options.reloadPreview) await loadInlinePreview()
+      if (options.closeOnSave) clearInlineSelection()
+      if (options.showSavedToast) {
+        showToast('success', 'Video guardado', 'El HTML importado ya tiene la configuración del reproductor.')
+      }
+      return true
+    } catch (error) {
+      setContentError(error instanceof Error ? error.message : 'No se pudo guardar el video.')
+      return false
+    } finally {
+      setContentSaving(false)
+    }
+  }, [activeImportedPage?.id, clearInlineSelection, loadInlinePreview, onContentUpdated, showToast, site.id])
 
   const handleInlineImageFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -17000,6 +17254,37 @@ const ImportedHtmlEditorPanel: React.FC<{
   const inlineVideoPreview: EmbedPreviewConfig = inlineEditor?.mode === 'video'
     ? resolveImportedVideoPreview(inlineEditor.value)
     : { kind: 'empty' }
+  const importedVideoPreview: EmbedPreviewConfig = videoEditor
+    ? resolveImportedVideoPreview(videoEditor.value)
+    : { kind: 'empty' }
+  const importedVideoBlock: SiteBlock | null = videoEditor ? {
+    id: videoEditor.selection.editId,
+    siteId: site.id,
+    blockType: 'video',
+    label: videoEditor.selection.label || 'Video',
+    content: videoEditor.value,
+    placeholder: '',
+    required: false,
+    options: [],
+    settings: cleanImportedVideoSettings(videoEditor.settings, videoEditor.value),
+    sortOrder: 0,
+    createdAt: '',
+    updatedAt: ''
+  } : null
+  const importedCodeVideoBlock: SiteBlock | null = codeElementEditor?.mode === 'media' && codeElementEditor.editType === 'video' ? {
+    id: codeElementEditor.editId,
+    siteId: site.id,
+    blockType: 'video',
+    label: codeElementEditor.label || 'Video',
+    content: codeElementEditor.mediaUrl || codeElementEditor.value,
+    placeholder: '',
+    required: false,
+    options: [],
+    settings: cleanImportedVideoSettings(codeElementEditor.videoSettings || {}, codeElementEditor.mediaUrl || codeElementEditor.value),
+    sortOrder: 0,
+    createdAt: '',
+    updatedAt: ''
+  } : null
   const selectedRouteCustomField = selectedFieldRouteDraft && selectedFieldRouteDraft.destinationType !== 'standard' && selectedFieldRouteDraft.destinationType !== 'ignored'
     ? findImportedCustomFieldDefinitionForDraft(activeImportedCustomFields, selectedFieldRouteDraft)
     : null
@@ -17283,17 +17568,60 @@ const ImportedHtmlEditorPanel: React.FC<{
       )}
 
       {codeElementEditor.mode === 'media' && (
-        <label className={styles.importedActionField}>
-          <span>{codeElementEditor.editType === 'image' ? 'URL de imagen' : codeElementEditor.editType === 'video' ? 'URL de video' : 'URL de fondo'}</span>
-          <input
-            value={codeElementEditor.mediaUrl || codeElementEditor.value}
-            disabled={saving}
-            placeholder="https://..."
-            name="rstk-imported-code-media-url"
-            {...importedEditorNoAutocompleteAttrs}
-            onChange={(event) => setCodeElementEditor(current => current ? { ...current, mediaUrl: event.target.value, value: event.target.value } : current)}
-          />
-        </label>
+        <>
+          <label className={styles.importedActionField}>
+            <span>{codeElementEditor.editType === 'image' ? 'URL de imagen' : codeElementEditor.editType === 'video' ? 'URL de video' : 'URL de fondo'}</span>
+            <input
+              value={codeElementEditor.mediaUrl || codeElementEditor.value}
+              disabled={saving}
+              placeholder="https://..."
+              name="rstk-imported-code-media-url"
+              {...importedEditorNoAutocompleteAttrs}
+              onChange={(event) => {
+                const nextValue = event.target.value
+                setCodeElementEditor(current => current ? {
+                  ...current,
+                  mediaUrl: nextValue,
+                  value: nextValue,
+                  videoSettings: current.editType === 'video'
+                    ? cleanImportedVideoSettings({ ...(current.videoSettings || {}), mediaUrl: nextValue }, nextValue)
+                    : current.videoSettings
+                } : current)
+              }}
+            />
+          </label>
+          {codeElementEditor.editType === 'video' && importedCodeVideoBlock && (
+            <>
+              <VideoPlayerSettingsControls
+                settings={importedCodeVideoBlock.settings}
+                mediaUrl={codeElementEditor.mediaUrl || codeElementEditor.value}
+                onPatchSettings={(patch) => {
+                  setCodeElementEditor(current => current ? {
+                    ...current,
+                    videoSettings: cleanImportedVideoSettings({ ...(current.videoSettings || {}), ...patch }, current.mediaUrl || current.value)
+                  } : current)
+                }}
+                onSave={() => undefined}
+              />
+              <VideoActionsPanel
+                site={site}
+                block={importedCodeVideoBlock}
+                blocks={codeElementEditor.videoTargetBlocks || []}
+                popupBlocks={[]}
+                pages={pages}
+                activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
+                onPatchSettings={(patch) => {
+                  setCodeElementEditor(current => current ? {
+                    ...current,
+                    videoSettings: cleanImportedVideoSettings({ ...(current.videoSettings || {}), ...patch }, current.mediaUrl || current.value)
+                  } : current)
+                }}
+                onSave={() => undefined}
+              />
+            </>
+          )}
+        </>
       )}
 
       {codeElementEditor.mode === 'container' && (
@@ -17315,6 +17643,141 @@ const ImportedHtmlEditorPanel: React.FC<{
         <Button type="button" size="sm" onClick={saveCodeElementEditor} disabled={!canSaveCodeElementEditor || saving} loading={saving}>
           <Save size={14} />
           Guardar elemento
+        </Button>
+      </div>
+    </div>
+  ) : null
+
+  const videoEditorPanel = videoEditor && importedVideoBlock ? (
+    <div className={styles.importedButtonActionBox}>
+      <div className={styles.importedButtonActionHeader}>
+        <Video size={17} />
+        <div>
+          <span>Video seleccionado</span>
+          <strong>{videoEditor.selection.label || 'Video'}</strong>
+        </div>
+      </div>
+
+      <InspectorTabbedPanel
+        title="Propiedades"
+        subtitle="Video importado"
+        defaultTab="edit"
+        tabs={[
+          {
+            value: 'edit',
+            label: 'Editar',
+            icon: <Pencil size={14} />,
+            content: (
+              <>
+                <label className={styles.importedActionField}>
+                  <span>URL o embed del video</span>
+                  <textarea
+                    rows={4}
+                    value={videoEditor.value}
+                    disabled={contentSaving}
+                    placeholder="Pega URL, iframe o código embed"
+                    name="rstk-imported-video-url"
+                    {...importedEditorNoAutocompleteAttrs}
+                    onChange={(event) => {
+                      const nextValue = event.target.value
+                      setImportedVideoEditorState(current => current ? {
+                        ...current,
+                        value: nextValue,
+                        settings: cleanImportedVideoSettings({ ...current.settings, mediaUrl: nextValue }, nextValue)
+                      } : current)
+                    }}
+                  />
+                </label>
+                {importedVideoPreview.kind === 'url' && (
+                  <div className={styles.importedInlineVideoPreview}>
+                    <iframe
+                      src={importedVideoPreview.src}
+                      title={importedVideoPreview.title}
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                      sandbox={EMBED_SANDBOX_URL}
+                      allow={importedVideoPreview.allow || DEFAULT_EMBED_ALLOW}
+                      allowFullScreen
+                    />
+                  </div>
+                )}
+                {importedVideoPreview.kind === 'html' && (
+                  <div className={styles.importedInlineVideoPreview}>
+                    <iframe
+                      srcDoc={importedVideoPreview.srcDoc}
+                      title={importedVideoPreview.title}
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                      sandbox={EMBED_SANDBOX_HTML}
+                      allow={DEFAULT_EMBED_ALLOW}
+                    />
+                  </div>
+                )}
+                {importedVideoPreview.kind === 'empty' && videoEditor.value.trim() && (
+                  <div className={styles.importedInlineVideoHint}>
+                    No se pudo mostrar aquí, pero Ristak intentará guardarlo como video seguro.
+                  </div>
+                )}
+              </>
+            )
+          },
+          {
+            value: 'settings',
+            label: 'Reproductor',
+            icon: <SlidersHorizontal size={14} />,
+            content: (
+              <VideoPlayerSettingsControls
+                settings={importedVideoBlock.settings}
+                mediaUrl={videoEditor.value}
+                onPatchSettings={(patch) => {
+                  setImportedVideoEditorState(current => current ? {
+                    ...current,
+                    settings: cleanImportedVideoSettings({ ...current.settings, ...patch }, current.value)
+                  } : current)
+                }}
+                onSave={() => void saveImportedVideoEditor()}
+              />
+            )
+          },
+          {
+            value: 'videoActions',
+            label: 'Acciones de video',
+            icon: <Clock3 size={14} />,
+            content: (
+              <VideoActionsPanel
+                site={site}
+                block={importedVideoBlock}
+                blocks={videoEditor.targetBlocks}
+                popupBlocks={[]}
+                pages={pages}
+                activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
+                onPatchSettings={(patch) => {
+                  setImportedVideoEditorState(current => current ? {
+                    ...current,
+                    settings: cleanImportedVideoSettings({ ...current.settings, ...patch }, current.value)
+                  } : current)
+                }}
+                onSave={() => void saveImportedVideoEditor()}
+              />
+            )
+          }
+        ]}
+      />
+
+      <div className={styles.importedButtonActionFooter}>
+        <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
+          Cancelar
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => void saveImportedVideoEditor({ closeOnSave: true, reloadPreview: true, showSavedToast: true })}
+          disabled={!videoEditor.value.trim() || contentSaving}
+          loading={contentSaving}
+        >
+          <Save size={14} />
+          Guardar video
         </Button>
       </div>
     </div>
@@ -18080,7 +18543,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           </div>
         )}
 
-        {(buttonEditorPanel || choiceEditor || fieldEditor) && (
+        {(buttonEditorPanel || videoEditorPanel || choiceEditor || fieldEditor || contentError) && (
           <div
             ref={elementPopoverRef}
             className={styles.importedElementPopoverShell}
@@ -18090,6 +18553,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             onPointerDown={(event) => event.stopPropagation()}
           >
             {buttonEditorPanel}
+            {videoEditorPanel}
 
             {choiceEditor && (
           <div className={styles.importedButtonActionBox}>
@@ -18200,6 +18664,12 @@ const ImportedHtmlEditorPanel: React.FC<{
               </Button>
             </div>
           </div>
+            )}
+            {contentError && (
+              <div className={styles.importedInlineError}>
+                <AlertTriangle size={15} />
+                <span>{contentError}</span>
+              </div>
             )}
           </div>
         )}
