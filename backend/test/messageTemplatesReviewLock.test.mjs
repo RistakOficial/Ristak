@@ -5,6 +5,7 @@ import {
   createMessageTemplate,
   createTemplateFolder,
   deleteTemplateFolder,
+  submitMessageTemplateToYCloud,
   updateMessageTemplate
 } from '../src/services/messageTemplatesService.js'
 
@@ -71,5 +72,49 @@ test('bloquea edición de plantillas en revisión y permite moverlas de carpeta'
     await db.run('DELETE FROM whatsapp_message_templates WHERE name = ?', [templateName])
     await db.run('DELETE FROM whatsapp_api_templates WHERE name = ?', [templateName])
     if (folder) await deleteTemplateFolder(folder.id)
+  }
+})
+
+test('rechaza enviar a revisión cuando una variable no tiene ejemplo para Meta', async () => {
+  const suffix = Date.now()
+  const templateName = `missing_meta_example_${suffix}`
+
+  try {
+    const template = await createMessageTemplate({
+      folderId: null,
+      name: templateName,
+      description: 'Plantilla con ejemplo faltante',
+      category: 'utility',
+      language: 'es_MX',
+      status: 'active',
+      headerEnabled: false,
+      headerType: 'none',
+      headerText: '',
+      headerMediaUrl: '',
+      headerLocation: { latitude: '', longitude: '', name: '', address: '' },
+      bodyText: 'Hola {{1}}, tu cita es mañana.',
+      footerText: '',
+      buttons: [],
+      variableExamples: {},
+      variableBindings: {
+        headerText: {},
+        bodyText: {
+          1: {
+            variableKey: 'contact.first_name',
+            mergeField: '{{contact.first_name}}',
+            label: 'Primer nombre',
+            example: ''
+          }
+        }
+      }
+    })
+
+    await assert.rejects(
+      () => submitMessageTemplateToYCloud(template.id),
+      /ejemplo que Meta revisara para \{\{1\}\} en el cuerpo/i
+    )
+  } finally {
+    await db.run('DELETE FROM whatsapp_message_templates WHERE name = ?', [templateName])
+    await db.run('DELETE FROM whatsapp_api_templates WHERE name = ?', [templateName])
   }
 })

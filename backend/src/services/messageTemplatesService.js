@@ -706,6 +706,10 @@ function buildYCloudTemplatePayload(template) {
 
   if (template.headerEnabled && template.headerType !== 'none') {
     if (template.headerType === 'text') {
+      if (!cleanString(template.headerText)) {
+        throw new Error('Escribe el texto del encabezado o apaga el encabezado de la plantilla.')
+      }
+
       const headerExamples = getVariableExamplesForTarget(template, 'headerText', 'el encabezado')
       if (headerExamples.length > 1) {
         throw new Error('Meta solo permite una variable en el encabezado de texto.')

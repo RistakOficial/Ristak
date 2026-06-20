@@ -642,7 +642,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       const withMetaVariables = target
         ? text.replace(META_VARIABLE_PATTERN, (fullMatch, key) => {
           const binding = draft.variableBindings?.[target]?.[key]
-          return binding?.example || (binding?.variableKey ? variableByKey.get(binding.variableKey)?.example : '') || fullMatch
+          return binding?.example?.trim() || fullMatch
         })
         : text
 
@@ -666,7 +666,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         value: resolveText(button.value)
       }))
     }
-  }, [draft, variableByKey, variableByMergeField])
+  }, [draft, variableByMergeField])
 
   const updateDraft = <K extends keyof MessageTemplatePayload>(key: K, value: MessageTemplatePayload[K]) => {
     setDraft((current) => ({ ...current, [key]: value }))
@@ -716,7 +716,42 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     }
   }
 
-  const getMissingVariableBinding = () => {
+  const getMissingTemplateRequirement = () => {
+    if (draft.headerEnabled && draft.headerType === 'text' && !String(draft.headerText || '').trim()) {
+      return {
+        title: 'Encabezado requerido',
+        message: 'Escribe el texto del encabezado o apaga el encabezado de la plantilla.'
+      }
+    }
+
+    if (
+      draft.headerEnabled &&
+      ['image', 'video', 'document'].includes(draft.headerType) &&
+      !String(draft.headerMediaUrl || '').trim()
+    ) {
+      return {
+        title: 'Archivo requerido',
+        message: 'Agrega la URL de ejemplo del archivo para que Meta pueda revisar el encabezado.'
+      }
+    }
+
+    for (const button of draft.buttons || []) {
+      const buttonLabel = String(button.label || '').trim()
+      if (!buttonLabel) continue
+      if (button.type === 'website' && !String(button.value || '').trim()) {
+        return {
+          title: 'URL requerida',
+          message: `Agrega la URL del botón "${buttonLabel}".`
+        }
+      }
+      if (button.type === 'phone' && !String(button.value || '').trim()) {
+        return {
+          title: 'Teléfono requerido',
+          message: `Agrega el teléfono del botón "${buttonLabel}".`
+        }
+      }
+    }
+
     const targets: Array<{ key: MessageTemplateVariableTarget; section: string; enabled: boolean }> = [
       { key: 'headerText', section: 'el encabezado', enabled: draft.headerEnabled && draft.headerType === 'text' },
       { key: 'bodyText', section: 'el cuerpo', enabled: true }
@@ -728,7 +763,16 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       for (const index of indexes) {
         const binding = draft.variableBindings?.[target.key]?.[String(index)]
         if (!binding?.variableKey || !variableByKey.has(binding.variableKey)) {
-          return { placeholder: `{{${index}}}`, section: target.section }
+          return {
+            title: 'Dato dinámico requerido',
+            message: `Selecciona una variable para {{${index}}} en ${target.section}. No se puede enviar texto libre.`
+          }
+        }
+        if (!String(binding.example || '').trim()) {
+          return {
+            title: 'Ejemplo para Meta requerido',
+            message: `Escribe el ejemplo que Meta revisará para {{${index}}} en ${target.section}.`
+          }
         }
       }
     }
@@ -745,12 +789,12 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       showToast('warning', 'Cuerpo requerido', 'Escribe el mensaje principal')
       return null
     }
-    const missingBinding = getMissingVariableBinding()
-    if (missingBinding) {
+    const missingRequirement = getMissingTemplateRequirement()
+    if (missingRequirement) {
       showToast(
         'warning',
-        'Dato dinámico requerido',
-        `Selecciona una variable para ${missingBinding.placeholder} en ${missingBinding.section}. No se puede enviar texto libre.`
+        missingRequirement.title,
+        missingRequirement.message
       )
       return null
     }
@@ -1300,11 +1344,14 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                 </div>
               </label>
               <label>
-                <span>Ejemplo para Meta</span>
+                <span>Ejemplo para Meta *</span>
                 <input
                   value={binding.example || ''}
                   onChange={(event) => updateVariableBinding(target, index, { example: event.target.value })}
                   placeholder={selectedVariable?.example || 'Jane'}
+                  required
+                  aria-required="true"
+                  aria-invalid={selectedVariable ? !String(binding.example || '').trim() : undefined}
                 />
               </label>
             </div>
