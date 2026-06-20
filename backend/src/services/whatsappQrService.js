@@ -13,6 +13,7 @@ const QR_PROFILE_PICTURE_TIMEOUT_MS = 4500
 const QR_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const QR_PROFILE_PICTURE_BATCH_LIMIT = 8
 const RECONNECT_BASE_DELAY_MS = 2500
+const CONNECTION_REPLACED_RECONNECT_BASE_DELAY_MS = 5000
 const RECONNECT_MAX_DELAY_MS = 60000
 const MAX_RECONNECT_ATTEMPTS = 8
 const QR_ACK_STATUS = {
@@ -53,6 +54,7 @@ const qrSendAckWaiters = new Map()
 const qrRecentMessageAcks = new Map()
 const qrRecentRistakOutboundAttempts = new Map()
 let baileysRuntime = null
+let reconnectDelayOverrideForTest = null
 
 // Cache de mensajes enviados para responder reintentos de descifrado
 // (getMessage de Baileys). Sin esto, cuando el receptor no puede descifrar un
@@ -844,14 +846,26 @@ function isBadSessionDisconnect(statusCode, DisconnectReason = {}) {
   return numericStatus === badSessionCode
 }
 
-function isConnectionReplacedDisconnect(statusCode, DisconnectReason = {}) {
+function isConnectionReplacedDisconnect(statusCode, lastError = '', DisconnectReason = {}) {
   const numericStatus = Number(statusCode)
   const replacedCode = Number(DisconnectReason.connectionReplaced || 440)
-  return numericStatus === replacedCode
+  return numericStatus === replacedCode ||
+    /(?:connection replaced|conflict|another\s+(?:session|device))/i.test(cleanString(lastError))
 }
 
 function getReconnectStatus(statusCode, lastError = '', DisconnectReason = {}) {
   return isRestartRequiredDisconnect(statusCode, lastError, DisconnectReason) ? 'restarting' : 'reconnecting'
+}
+
+function getReconnectDelayMs(statusCode, lastError = '', reconnectAttempt = 0, DisconnectReason = {}) {
+  if (reconnectDelayOverrideForTest !== null) return reconnectDelayOverrideForTest
+  if (isRestartRequiredDisconnect(statusCode, lastError, DisconnectReason)) return 0
+
+  const baseDelay = isConnectionReplacedDisconnect(statusCode, lastError, DisconnectReason)
+    ? CONNECTION_REPLACED_RECONNECT_BASE_DELAY_MS
+    : RECONNECT_BASE_DELAY_MS
+  return Math.min(baseDelay * (2 ** reconnectAttempt), RECONNECT_MAX_DELAY_MS) +
+    Math.floor(Math.random() * 1500)
 }
 
 function getConnectedPhoneFromSocket(sock, authState) {
@@ -908,6 +922,28 @@ async function loadQrCode() {
     logger.warn(`[WhatsApp QR] No se pudo cargar qrcode: ${error.message}`)
     return null
   }
+}
+
+export function setBaileysRuntimeForTest(runtime = null) {
+  baileysRuntime = runtime || null
+}
+
+export function setWhatsAppQrReconnectDelayForTest(delayMs = null) {
+  const numericDelay = Number(delayMs)
+  reconnectDelayOverrideForTest = Number.isFinite(numericDelay) && numericDelay >= 0
+    ? numericDelay
+    : null
+}
+
+export function resetWhatsAppQrServiceForTest() {
+  for (const phoneNumberId of [...liveSessions.keys()]) {
+    closeLiveSession(phoneNumberId)
+  }
+  baileysRuntime = null
+  reconnectDelayOverrideForTest = null
+  qrSendAckWaiters.clear()
+  qrRecentMessageAcks.clear()
+  qrRecentRistakOutboundAttempts.clear()
 }
 
 async function getPhoneRow(phoneNumberId) {
@@ -1373,6 +1409,10 @@ function closeLiveSession(phoneNumberId) {
   const live = liveSessions.get(phoneNumberId)
   liveSessions.delete(phoneNumberId)
 
+  if (live?.reconnectTimer) {
+    clearTimeout(live.reconnectTimer)
+  }
+
   if (!live?.sock) return
 
   try {
@@ -1444,7 +1484,8 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
   liveSessions.set(phone.id, {
     sock,
     openPromise: deferred.promise,
-    connected: false
+    connected: false,
+    reconnectTimer: null
   })
 
   sock.ev.on('creds.update', saveCreds)
@@ -1523,13 +1564,14 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       const liveStillCurrent = liveSessions.get(phone.id)?.sock === sock
 
       if (!liveStillCurrent) {
+        if (liveSessions.get(phone.id)?.openPromise === deferred.promise) return
         rejectCurrentOpen(new Error(lastError || 'La conexión por QR se reemplazo por otra sesión'))
         return
       }
 
       const loggedOut = isLoggedOutDisconnect(statusCode, DisconnectReason)
       const badSession = isBadSessionDisconnect(statusCode, DisconnectReason)
-      const connectionReplaced = isConnectionReplacedDisconnect(statusCode, DisconnectReason)
+      const connectionReplaced = isConnectionReplacedDisconnect(statusCode, lastError, DisconnectReason)
 
       if (loggedOut || badSession) {
         await clearAuthState(phone.id).catch(error => {
@@ -1543,24 +1585,6 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         await upsertSession(phone, {
           status: finalStatus,
           connectedPhone: null,
-          qrCode: null,
-          qrCodeDataUrl: null,
-          lastError: message,
-          lastDisconnectedAt: nowIso()
-        })
-        liveSessions.delete(phone.id)
-        rejectCurrentOpen(new Error(message))
-        return
-      }
-
-      if (connectionReplaced) {
-        // Otra instancia abrio la misma sesión (tipico durante un deploy con dos
-        // procesos vivos a la vez). Las credenciales SIGUEN siendo validas, asi
-        // que NO se borran: el watchdog reconecta solo cuando la otra instancia
-        // muera, sin pedir un QR nuevo.
-        const message = 'Otra sesión tomó el control de esta conexión. Se reconectará sola en unos minutos.'
-        await upsertSession(phone, {
-          status: 'connection_replaced',
           qrCode: null,
           qrCodeDataUrl: null,
           lastError: message,
@@ -1590,11 +1614,11 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       const nextReconnectAttempt = currentReconnectAttempt + 1
       // Backoff exponencial con jitter: sin el jitter, varias sesiones caidas
       // a la vez reintentan sincronizadas y WhatsApp las rechaza en rafaga.
-      const reconnectDelay = nextStatus === 'restarting'
-        ? 0
-        : Math.min(RECONNECT_BASE_DELAY_MS * (2 ** currentReconnectAttempt), RECONNECT_MAX_DELAY_MS) +
-          Math.floor(Math.random() * 1500)
-      logger.info(`[WhatsApp QR] ${nextStatus === 'restarting' ? 'Reiniciando' : 'Reconectando'} socket ${phone.id} (${nextReconnectAttempt}/${MAX_RECONNECT_ATTEMPTS})`)
+      // El 440/connectionReplaced tambien reconecta solo, pero arranca con un
+      // poco mas de aire para no pelearse con un proceso viejo durante deploys.
+      const reconnectDelay = getReconnectDelayMs(statusCode, lastError, currentReconnectAttempt, DisconnectReason)
+      const reconnectReason = connectionReplaced ? 'sesión reemplazada' : (statusCode || lastError || 'cierre')
+      logger.info(`[WhatsApp QR] ${nextStatus === 'restarting' ? 'Reiniciando' : 'Reconectando'} socket ${phone.id} por ${reconnectReason} (${nextReconnectAttempt}/${MAX_RECONNECT_ATTEMPTS})`)
       await upsertSession(phone, {
         status: nextStatus,
         qrCode: null,
@@ -1610,13 +1634,23 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
           logger.warn(`[WhatsApp QR] Reconexion fallida ${phone.id}: ${error.message}`)
         })
       }
-      setTimeout(() => {
+      const reconnectTimer = setTimeout(() => {
+        const pendingLive = liveSessions.get(phone.id)
+        if (pendingLive?.reconnectTimer !== reconnectTimer) return
+
         openSocket(phone, {
           requireConsent: false,
           reconnectAttempt: nextReconnectAttempt,
           openDeferred: nextOpenDeferred
         }).catch(nextOpenDeferred.reject)
       }, reconnectDelay)
+
+      liveSessions.set(phone.id, {
+        sock: null,
+        openPromise: nextOpenDeferred.promise,
+        connected: false,
+        reconnectTimer
+      })
     }
   })
 
@@ -2009,13 +2043,11 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
 }
 
 // Estados desde los que vale la pena reabrir una sesión con credenciales
-// guardadas. Los estados terminales (logged_out, bad_session, number_mismatch,
+// guardadas. connection_replaced queda por compatibilidad con sesiones que
+// alcanzaron ese estado antes de que el 440 se manejara como reconexion viva.
+// Los estados terminales (logged_out, bad_session, number_mismatch,
 // disconnected manual) requieren un QR nuevo y NO se tocan.
 const QR_RESUMABLE_STATUSES = new Set(['connected', 'reconnecting', 'restarting', 'connection_replaced'])
-// Tras un 440 (otra instancia tomo la sesión) se espera a que la otra
-// instancia muera de verdad antes de reconectar, para no entrar en una guerra
-// de reconexiones entre dos procesos (deploy viejo vs nuevo).
-const QR_REPLACED_COOLDOWN_MS = 10 * 60 * 1000
 
 /**
  * Reabre las sesiones de WhatsApp Web que tienen credenciales guardadas y se
@@ -2046,11 +2078,6 @@ export async function resumeWhatsAppQrSessions({ source = 'watchdog' } = {}) {
     if (!resumable) continue
     if (liveSessions.has(phoneNumberId)) continue
     if (!(await hasSavedAuthState(phoneNumberId))) continue
-
-    if (status === 'connection_replaced') {
-      const lastDisconnect = Date.parse(row.last_disconnected_at || '')
-      if (Number.isFinite(lastDisconnect) && (Date.now() - lastDisconnect) < QR_REPLACED_COOLDOWN_MS) continue
-    }
 
     try {
       const phone = await getPhoneRow(phoneNumberId)
