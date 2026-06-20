@@ -17462,23 +17462,37 @@
   width: 100%;
   height: 30px;
   margin: 0;
+  -webkit-appearance: none;
   appearance: none;
+  border: 0;
   background: transparent;
+  color: transparent;
   pointer-events: none;
   z-index: 3;
 }
 
 .videoPreviewThumb::-webkit-slider-runnable-track {
+  -webkit-appearance: none;
   height: 30px;
+  border: 0;
   background: transparent;
+  color: transparent;
 }
 
 .videoPreviewThumb::-moz-range-track {
   height: 30px;
+  border: 0;
+  background: transparent;
+  color: transparent;
+}
+
+.videoPreviewThumb::-moz-range-progress {
+  border: 0;
   background: transparent;
 }
 
 .videoPreviewThumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
   width: 18px;
   height: 18px;
   margin-top: 6px;

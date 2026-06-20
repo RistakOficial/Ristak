@@ -190,7 +190,8 @@ test('video player renders configurable first-seconds preview loop settings', as
 
   assert.match(html, /data-rstk-video-preview="true"/)
   assert.match(html, /data-rstk-video-preview-start="12\.5"/)
-  assert.match(html, /data-rstk-video-preview-end="40"/)
+  assert.match(html, /data-rstk-video-preview-end="52\.5"/)
+  assert.match(html, /const previewMaxSpan = 40/)
   assert.match(html, /rstkVideoPreviewing === 'true'/)
   assert.match(html, /rstkVideoPreviewing/)
   assert.doesNotMatch(html, /rstk-video-is-playing:hover \.rstk-video-play-dot/)

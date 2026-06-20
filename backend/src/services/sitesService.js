@@ -12456,7 +12456,7 @@ const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
 const VIDEO_CONTROLS_IDLE_MS = 2600
 const VIDEO_CONTROLS_LEAVE_IDLE_MS = 650
 const VIDEO_SPEED_OPTIONS = ['0.75', '1', '1.25', '1.5', '2']
-const VIDEO_PREVIEW_MAX_SECONDS = 40
+const VIDEO_PREVIEW_MAX_SPAN_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
 
@@ -12570,22 +12570,25 @@ function roundVideoPreviewSecond(value) {
   return Math.round(value / VIDEO_PREVIEW_STEP_SECONDS) * VIDEO_PREVIEW_STEP_SECONDS
 }
 
-function normalizeVideoPreviewRange(settings = {}, durationSeconds = VIDEO_PREVIEW_MAX_SECONDS) {
+function normalizeVideoPreviewRange(settings = {}, durationSeconds) {
   const rawMax = Number(durationSeconds)
   const maxSeconds = Number.isFinite(rawMax) && rawMax > 0
-    ? Math.max(VIDEO_PREVIEW_STEP_SECONDS, Math.min(VIDEO_PREVIEW_MAX_SECONDS, roundVideoPreviewSecond(rawMax)))
-    : VIDEO_PREVIEW_MAX_SECONDS
-  const minSpan = Math.min(1, Math.max(VIDEO_PREVIEW_STEP_SECONDS, maxSeconds))
-  const fallbackEnd = Math.min(VIDEO_PREVIEW_DEFAULT_SECONDS, maxSeconds)
+    ? Math.max(VIDEO_PREVIEW_STEP_SECONDS, roundVideoPreviewSecond(rawMax))
+    : null
+  const timelineLimit = maxSeconds ?? Number.MAX_SAFE_INTEGER
+  const minSpan = Math.min(1, Math.max(VIDEO_PREVIEW_STEP_SECONDS, maxSeconds ?? VIDEO_PREVIEW_MAX_SPAN_SECONDS))
+  const maxSpan = Math.min(VIDEO_PREVIEW_MAX_SPAN_SECONDS, timelineLimit)
+  const fallbackEnd = Math.min(VIDEO_PREVIEW_DEFAULT_SECONDS, timelineLimit)
   const rawStart = Number(settings.videoPreviewStart)
   const rawEnd = Number(settings.videoPreviewEnd)
   const start = Math.min(
     Math.max(0, roundVideoPreviewSecond(Number.isFinite(rawStart) ? rawStart : 0)),
-    Math.max(0, maxSeconds - minSpan)
+    Math.max(0, timelineLimit - minSpan)
   )
   const end = Math.min(
     Math.max(start + minSpan, roundVideoPreviewSecond(Number.isFinite(rawEnd) ? rawEnd : fallbackEnd)),
-    maxSeconds
+    timelineLimit,
+    start + maxSpan
   )
 
   return {
@@ -15982,17 +15985,18 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        return hlsLoader;
 	      };
 	      const previewStep = 0.25;
-	      const previewMax = 40;
+	      const previewMaxSpan = 40;
 	      const controlsIdleMs = ${VIDEO_CONTROLS_IDLE_MS};
 	      const controlsLeaveIdleMs = ${VIDEO_CONTROLS_LEAVE_IDLE_MS};
 	      const roundPreviewSecond = value => Math.round(value / previewStep) * previewStep;
 	      const normalizePreviewRange = video => {
 	        const rawDuration = Number(video.duration);
 	        const maxSeconds = Number.isFinite(rawDuration) && rawDuration > 0
-	          ? Math.max(previewStep, Math.min(previewMax, roundPreviewSecond(rawDuration)))
-	          : previewMax;
+	          ? Math.max(previewStep, roundPreviewSecond(rawDuration))
+	          : previewMaxSpan;
 	        const minSpan = Math.min(1, Math.max(previewStep, maxSeconds));
-	        const fallbackEnd = Math.min(5, maxSeconds);
+	        const maxSpan = Math.min(previewMaxSpan, maxSeconds);
+	        const fallbackEnd = Math.min(previewMaxSpan, maxSeconds);
 	        const rawStart = Number(video.getAttribute('data-rstk-video-preview-start') || '0');
 	        const rawEnd = Number(video.getAttribute('data-rstk-video-preview-end') || fallbackEnd);
 	        const start = Math.min(
@@ -16001,7 +16005,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        );
 	        const end = Math.min(
 	          Math.max(start + minSpan, roundPreviewSecond(Number.isFinite(rawEnd) ? rawEnd : fallbackEnd)),
-	          maxSeconds
+	          maxSeconds,
+	          start + maxSpan
 	        );
 	        return { start, end };
 	      };

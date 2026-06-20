@@ -682,7 +682,7 @@ const VIDEO_PLAY_SIZE_MIN = 56
 const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
 const VIDEO_PLAY_ICON_SIZE_MAX = 95
-const VIDEO_PREVIEW_MAX_SECONDS = 40
+const VIDEO_PREVIEW_MAX_SPAN_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
@@ -2280,8 +2280,8 @@ const roundVideoPreviewSecond = (value: number) =>
 
 const getVideoPreviewMaxSeconds = (durationSeconds?: number) => {
   const duration = Number(durationSeconds)
-  if (!Number.isFinite(duration) || duration <= 0) return VIDEO_PREVIEW_MAX_SECONDS
-  return Math.max(VIDEO_PREVIEW_STEP_SECONDS, Math.min(VIDEO_PREVIEW_MAX_SECONDS, roundVideoPreviewSecond(duration)))
+  if (!Number.isFinite(duration) || duration <= 0) return VIDEO_PREVIEW_MAX_SPAN_SECONDS
+  return Math.max(VIDEO_PREVIEW_STEP_SECONDS, roundVideoPreviewSecond(duration))
 }
 
 const getVideoPreviewMinimumSpan = (maxSeconds: number) =>
@@ -2290,6 +2290,7 @@ const getVideoPreviewMinimumSpan = (maxSeconds: number) =>
 const normalizeVideoPreviewRange = (settings: Record<string, unknown>, durationSeconds?: number) => {
   const maxSeconds = getVideoPreviewMaxSeconds(durationSeconds)
   const minSpan = getVideoPreviewMinimumSpan(maxSeconds)
+  const maxSpan = Math.min(VIDEO_PREVIEW_MAX_SPAN_SECONDS, maxSeconds)
   const fallbackEnd = Math.min(VIDEO_PREVIEW_DEFAULT_SECONDS, maxSeconds)
   const rawStart = Number(settings.videoPreviewStart)
   const rawEnd = Number(settings.videoPreviewEnd)
@@ -2299,14 +2300,16 @@ const normalizeVideoPreviewRange = (settings: Record<string, unknown>, durationS
   )
   const clampedEnd = Math.min(
     Math.max(clampedStart + minSpan, roundVideoPreviewSecond(Number.isFinite(rawEnd) ? rawEnd : fallbackEnd)),
-    maxSeconds
+    maxSeconds,
+    clampedStart + maxSpan
   )
 
   return {
     start: Number(clampedStart.toFixed(2)),
     end: Number(clampedEnd.toFixed(2)),
     max: Number(maxSeconds.toFixed(2)),
-    minSpan: Number(minSpan.toFixed(2))
+    minSpan: Number(minSpan.toFixed(2)),
+    maxSpan: Number(maxSpan.toFixed(2))
   }
 }
 
@@ -19454,12 +19457,22 @@ const VideoPreviewRangeControl: React.FC<{
   }, [durationSeconds, onPatchSettings, onSave, settings])
 
   const handleStartChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const nextStart = Math.min(Number(event.target.value), range.end - range.minSpan)
-    patchRange(nextStart, range.end)
+    const requestedStart = Math.min(
+      Math.max(0, Number(event.target.value)),
+      Math.max(0, range.max - range.minSpan)
+    )
+    const currentSpan = Math.min(range.maxSpan, Math.max(range.minSpan, range.end - range.start))
+    const nextEnd = requestedStart > range.end - range.minSpan
+      ? Math.min(range.max, requestedStart + currentSpan)
+      : range.end
+    patchRange(requestedStart, nextEnd)
   }
 
   const handleEndChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const nextEnd = Math.max(Number(event.target.value), range.start + range.minSpan)
+    const nextEnd = Math.min(
+      Math.max(Number(event.target.value), range.start + range.minSpan),
+      range.start + range.maxSpan
+    )
     patchRange(range.start, nextEnd)
   }
 
