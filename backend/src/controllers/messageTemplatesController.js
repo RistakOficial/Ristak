@@ -9,7 +9,7 @@ import {
   getMessageTemplateBundle,
   getVariableCatalog,
   previewMessageTemplate,
-  repairDefaultAppointmentMessageTemplatesForCurrentConnection,
+  repairDefaultMessageTemplatesForCurrentConnection,
   sendMessageTemplateTest,
   submitMessageTemplateToYCloud,
   syncAllMessageTemplatesWithYCloud,
@@ -17,6 +17,20 @@ import {
   updateMessageTemplate,
   updateTemplateFolder
 } from '../services/messageTemplatesService.js'
+
+function cleanString(value) {
+  if (value === null || value === undefined) return ''
+  return String(value).trim()
+}
+
+function getPublicBaseUrl(req) {
+  const forwardedHost = cleanString(req.headers?.['x-forwarded-host']).split(',')[0].trim()
+  const host = forwardedHost || req.headers?.host || req.get?.('host')
+  const forwardedProto = cleanString(req.headers?.['x-forwarded-proto']).split(',')[0].trim()
+  const protocol = forwardedProto || req.protocol || 'https'
+  const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || (host ? `${protocol}://${host}` : '')
+  return cleanString(baseUrl).replace(/\/+$/, '')
+}
 
 function sendError(res, error, fallback = 'No se pudo completar la operación') {
   const statusCode = error.statusCode || 400
@@ -28,7 +42,7 @@ function sendError(res, error, fallback = 'No se pudo completar la operación') 
 
 export async function getMessageTemplatesView(req, res) {
   try {
-    await repairDefaultAppointmentMessageTemplatesForCurrentConnection().catch(error => {
+    await repairDefaultMessageTemplatesForCurrentConnection({ publicBaseUrl: getPublicBaseUrl(req) }).catch(error => {
       logger.warn(`No se pudo reparar plantillas default de WhatsApp antes de listar: ${error.message}`)
     })
     const data = await getMessageTemplateBundle()

@@ -36,7 +36,7 @@ import {
   createScheduledChatMessage,
   listScheduledChatMessages
 } from '../services/scheduledChatMessagesService.js'
-import { ensureDefaultAppointmentMessageTemplates } from '../services/messageTemplatesService.js'
+import { ensureDefaultWhatsAppApiMessageTemplates } from '../services/messageTemplatesService.js'
 import {
   getWhatsAppQrDripSettings,
   saveWhatsAppQrDripSettings
@@ -75,11 +75,14 @@ function getWebhookUrl(req) {
   return `${getPublicBaseUrl(req)}${getWhatsAppApiWebhookPath()}`
 }
 
-async function ensureDefaultAppointmentTemplatesForWhatsAppApi() {
+async function ensureDefaultTemplatesForWhatsAppApi(req) {
   try {
-    return await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: true })
+    return await ensureDefaultWhatsAppApiMessageTemplates({
+      submitToYCloud: true,
+      publicBaseUrl: getPublicBaseUrl(req)
+    })
   } catch (error) {
-    logger.warn(`WhatsApp API conectado, pero no se pudieron preparar plantillas default de citas: ${error.message}`)
+    logger.warn(`WhatsApp API conectado, pero no se pudieron preparar plantillas default: ${error.message}`)
     return null
   }
 }
@@ -133,7 +136,7 @@ export async function connectWhatsAppApiView(req, res) {
       wabaId: req.body?.wabaId,
       webhookUrl: getWebhookUrl(req)
     })
-    await ensureDefaultAppointmentTemplatesForWhatsAppApi()
+    await ensureDefaultTemplatesForWhatsAppApi(req)
 
     res.json({ success: true, data: await getWhatsAppApiStatus() })
   } catch (error) {
@@ -148,7 +151,7 @@ export async function connectWhatsAppApiView(req, res) {
 export async function refreshWhatsAppApiView(req, res) {
   try {
     await refreshWhatsAppApi()
-    await ensureDefaultAppointmentTemplatesForWhatsAppApi()
+    await ensureDefaultTemplatesForWhatsAppApi(req)
     res.json({ success: true, data: await getWhatsAppApiStatus() })
   } catch (error) {
     logger.error(`Error actualizando WhatsApp_API: ${error.message}`)
@@ -663,7 +666,7 @@ export async function sendWhatsAppApiAudioMessageView(req, res) {
 
 export async function getWhatsAppApiTemplatesView(req, res) {
   try {
-    await ensureDefaultAppointmentTemplatesForWhatsAppApi()
+    await ensureDefaultTemplatesForWhatsAppApi(req)
     const data = await getWhatsAppApiTemplates({
       status: req.query?.status,
       limit: req.query?.limit

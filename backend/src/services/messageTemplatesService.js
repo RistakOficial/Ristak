@@ -19,6 +19,7 @@ const BUTTON_TYPES = new Set(['quick_reply', 'website', 'phone', 'whatsapp_call'
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
 const NUMERIC_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
 const TEXT_VARIABLE_TARGETS = new Set(['headerText', 'bodyText'])
+const BUTTON_VALUE_TARGET_PATTERN = /^buttons\.(\d+)\.value$/
 
 const BASE_CONTACT_VARIABLES = [
   ['Full Name', 'contact.name', 'Jane Smith'],
@@ -61,11 +62,46 @@ const BASE_APPOINTMENT_VARIABLES = [
   source: 'system'
 }))
 
+const BASE_PAYMENT_VARIABLES = [
+  ['ID del pago', 'payment.id', 'pay_3NfL8dZ9'],
+  ['ID publico del pago', 'payment.public_id', 'pay_3NfL8dZ9xQ2aB6mP'],
+  ['Concepto del pago', 'payment.product', 'Plan mensual'],
+  ['Monto del pago', 'payment.amount', '$1,499 MXN'],
+  ['Moneda del pago', 'payment.currency', 'MXN'],
+  ['Estado del pago', 'payment.status', 'Pendiente'],
+  ['Metodo de pago', 'payment.method', 'Tarjeta'],
+  ['Proveedor del pago', 'payment.provider', 'Stripe'],
+  ['Referencia del pago', 'payment.receipt', 'REC-1048'],
+  ['Numero de comprobante', 'payment.invoice_number', 'COMP-1048'],
+  ['Fecha del pago', 'payment.date', '20 de junio de 2026'],
+  ['URL de pago', 'payment.url', 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'],
+  ['URL de comprobante', 'payment.receipt_url', 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP?receipt=1'],
+  ['Ruta dinamica de comprobante', 'payment.receipt_path', 'pay_3NfL8dZ9xQ2aB6mP?receipt=1']
+].map(([label, key, example]) => ({
+  key,
+  label,
+  mergeField: `{{${key}}}`,
+  example,
+  group: 'Pagos',
+  source: 'system'
+}))
+
 const DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE = 'es_MX'
 const DEFAULT_APPOINTMENT_TEMPLATE_FOLDER = {
   id: 'Reminders',
   name: 'Recordatorios'
 }
+
+const DEFAULT_PAYMENT_TEMPLATE_LANGUAGE = 'es_MX'
+const DEFAULT_PAYMENT_TEMPLATE_FOLDER = {
+  id: 'Payments',
+  name: 'Pagos'
+}
+const DEFAULT_PAYMENT_TEMPLATE_NAME_LIST = [
+  'recordatorio_pago_pendiente',
+  'comprobante_pago_recibido',
+  'pago_fallido_reintento'
+]
 
 const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
   {
@@ -196,6 +232,203 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+function normalizePublicBaseUrl(value = '') {
+  const cleaned = cleanString(value).replace(/\/+$/, '')
+  return /^https?:\/\//i.test(cleaned) ? cleaned : ''
+}
+
+function buildPaymentButtonUrlTemplate(publicBaseUrl = '') {
+  const baseUrl = normalizePublicBaseUrl(publicBaseUrl)
+  return baseUrl ? `${baseUrl}/pay/{{1}}` : '{{1}}'
+}
+
+function paymentButtonBinding({ hasPublicBaseUrl, receipt = false } = {}) {
+  if (!hasPublicBaseUrl) {
+    return {
+      variableKey: receipt ? 'payment.receipt_url' : 'payment.url',
+      mergeField: receipt ? '{{payment.receipt_url}}' : '{{payment.url}}',
+      label: receipt ? 'URL de comprobante' : 'URL de pago',
+      example: receipt
+        ? 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP?receipt=1'
+        : 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'
+    }
+  }
+
+  return {
+    variableKey: receipt ? 'payment.receipt_path' : 'payment.public_id',
+    mergeField: receipt ? '{{payment.receipt_path}}' : '{{payment.public_id}}',
+    label: receipt ? 'Ruta dinamica de comprobante' : 'ID publico del pago',
+    example: receipt ? 'pay_3NfL8dZ9xQ2aB6mP?receipt=1' : 'pay_3NfL8dZ9xQ2aB6mP'
+  }
+}
+
+function getDefaultPaymentMessageTemplates({ publicBaseUrl = '' } = {}) {
+  const buttonUrl = buildPaymentButtonUrlTemplate(publicBaseUrl)
+  const hasPublicBaseUrl = Boolean(normalizePublicBaseUrl(publicBaseUrl))
+  const payButtonBinding = paymentButtonBinding({ hasPublicBaseUrl })
+  const receiptButtonBinding = paymentButtonBinding({ hasPublicBaseUrl, receipt: true })
+
+  return [
+    {
+      name: 'recordatorio_pago_pendiente',
+      description: 'Plantilla automática de Ristak para recordar un pago pendiente antes del cobro.',
+      category: 'utility',
+      language: DEFAULT_PAYMENT_TEMPLATE_LANGUAGE,
+      status: 'active',
+      headerEnabled: true,
+      headerType: 'text',
+      headerText: 'Pago pendiente',
+      bodyText: 'Hola {{1}}, tienes pendiente el pago de {{2}} por {{3}}. Toca el botón para pagar de forma segura.',
+      footerText: 'Mensaje automático de Ristak',
+      buttons: [
+        {
+          type: 'website',
+          label: 'Pagar aquí',
+          value: buttonUrl
+        }
+      ],
+      variableExamples: {
+        '{{contact.first_name}}': 'Maria',
+        '{{payment.product}}': 'Plan mensual',
+        '{{payment.amount}}': '$1,499 MXN',
+        '{{payment.public_id}}': 'pay_3NfL8dZ9xQ2aB6mP',
+        '{{payment.url}}': 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'
+      },
+      variableBindings: {
+        headerText: {},
+        bodyText: {
+          1: {
+            variableKey: 'contact.first_name',
+            mergeField: '{{contact.first_name}}',
+            label: 'Primer nombre',
+            example: 'Maria'
+          },
+          2: {
+            variableKey: 'payment.product',
+            mergeField: '{{payment.product}}',
+            label: 'Concepto del pago',
+            example: 'Plan mensual'
+          },
+          3: {
+            variableKey: 'payment.amount',
+            mergeField: '{{payment.amount}}',
+            label: 'Monto del pago',
+            example: '$1,499 MXN'
+          }
+        },
+        'buttons.0.value': {
+          1: payButtonBinding
+        }
+      }
+    },
+    {
+      name: 'comprobante_pago_recibido',
+      description: 'Plantilla automática de Ristak para enviar el comprobante descargable después del pago.',
+      category: 'utility',
+      language: DEFAULT_PAYMENT_TEMPLATE_LANGUAGE,
+      status: 'active',
+      headerEnabled: true,
+      headerType: 'text',
+      headerText: 'Pago confirmado',
+      bodyText: 'Hola {{1}}, recibimos tu pago de {{2}} por {{3}}. Gracias. Puedes descargar tu comprobante desde el botón.',
+      footerText: 'Mensaje automático de Ristak',
+      buttons: [
+        {
+          type: 'website',
+          label: 'Descargar comprobante',
+          value: buttonUrl
+        }
+      ],
+      variableExamples: {
+        '{{contact.first_name}}': 'Maria',
+        '{{payment.product}}': 'Plan mensual',
+        '{{payment.amount}}': '$1,499 MXN',
+        '{{payment.public_id}}': 'pay_3NfL8dZ9xQ2aB6mP',
+        '{{payment.receipt_path}}': 'pay_3NfL8dZ9xQ2aB6mP?receipt=1',
+        '{{payment.receipt_url}}': 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP?receipt=1'
+      },
+      variableBindings: {
+        headerText: {},
+        bodyText: {
+          1: {
+            variableKey: 'contact.first_name',
+            mergeField: '{{contact.first_name}}',
+            label: 'Primer nombre',
+            example: 'Maria'
+          },
+          2: {
+            variableKey: 'payment.product',
+            mergeField: '{{payment.product}}',
+            label: 'Concepto del pago',
+            example: 'Plan mensual'
+          },
+          3: {
+            variableKey: 'payment.amount',
+            mergeField: '{{payment.amount}}',
+            label: 'Monto del pago',
+            example: '$1,499 MXN'
+          }
+        },
+        'buttons.0.value': {
+          1: receiptButtonBinding
+        }
+      }
+    },
+    {
+      name: 'pago_fallido_reintento',
+      description: 'Plantilla automática de Ristak para avisar un cobro fallido y mandar al cliente al link correcto de pago.',
+      category: 'utility',
+      language: DEFAULT_PAYMENT_TEMPLATE_LANGUAGE,
+      status: 'active',
+      headerEnabled: true,
+      headerType: 'text',
+      headerText: 'Cobro fallido',
+      bodyText: 'Hola {{1}}, no pudimos procesar tu pago de {{2}} por {{3}}. Puedes intentar nuevamente desde el botón.',
+      footerText: 'Mensaje automático de Ristak',
+      buttons: [
+        {
+          type: 'website',
+          label: 'Intentar pago',
+          value: buttonUrl
+        }
+      ],
+      variableExamples: {
+        '{{contact.first_name}}': 'Maria',
+        '{{payment.product}}': 'Plan mensual',
+        '{{payment.amount}}': '$1,499 MXN',
+        '{{payment.public_id}}': 'pay_3NfL8dZ9xQ2aB6mP',
+        '{{payment.url}}': 'https://app.ristak.com/pay/pay_3NfL8dZ9xQ2aB6mP'
+      },
+      variableBindings: {
+        headerText: {},
+        bodyText: {
+          1: {
+            variableKey: 'contact.first_name',
+            mergeField: '{{contact.first_name}}',
+            label: 'Primer nombre',
+            example: 'Maria'
+          },
+          2: {
+            variableKey: 'payment.product',
+            mergeField: '{{payment.product}}',
+            label: 'Concepto del pago',
+            example: 'Plan mensual'
+          },
+          3: {
+            variableKey: 'payment.amount',
+            mergeField: '{{payment.amount}}',
+            label: 'Monto del pago',
+            example: '$1,499 MXN'
+          }
+        },
+        'buttons.0.value': {
+          1: payButtonBinding
+        }
+      }
+    }
+  ]
+}
+
 function normalizeOptionalString(value) {
   const cleaned = cleanString(value)
   return cleaned || null
@@ -308,11 +541,21 @@ function normalizeVariableExamples(value = {}) {
   )
 }
 
+function isSupportedVariableTarget(target) {
+  const cleanTarget = cleanString(target)
+  return TEXT_VARIABLE_TARGETS.has(cleanTarget) || BUTTON_VALUE_TARGET_PATTERN.test(cleanTarget)
+}
+
 function normalizeVariableBindings(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const normalized = {}
+  const targets = new Set(TEXT_VARIABLE_TARGETS)
 
-  for (const target of TEXT_VARIABLE_TARGETS) {
+  Object.keys(source).forEach((target) => {
+    if (isSupportedVariableTarget(target)) targets.add(target)
+  })
+
+  for (const target of targets) {
     const targetSource = source[target] && typeof source[target] === 'object' && !Array.isArray(source[target])
       ? source[target]
       : {}
@@ -488,7 +731,12 @@ function customFieldVariables(customFields = []) {
 }
 
 function buildCatalog(customFields = []) {
-  return [...BASE_CONTACT_VARIABLES, ...BASE_APPOINTMENT_VARIABLES, ...customFieldVariables(customFields)]
+  return [
+    ...BASE_CONTACT_VARIABLES,
+    ...BASE_APPOINTMENT_VARIABLES,
+    ...BASE_PAYMENT_VARIABLES,
+    ...customFieldVariables(customFields)
+  ]
 }
 
 function getVariableLookup(catalog = []) {
@@ -603,6 +851,19 @@ function getYCloudTemplateName(template = {}) {
   return cleanString(template.ycloudTemplateName || raw.name || template.name)
 }
 
+function getButtonValueTarget(index) {
+  return `buttons.${index}.value`
+}
+
+function getTemplateTextForTarget(template = {}, target = '') {
+  const match = cleanString(target).match(BUTTON_VALUE_TARGET_PATTERN)
+  if (match) {
+    const index = Number(match[1])
+    return template.buttons?.[index]?.value || ''
+  }
+  return template[target]
+}
+
 function assertMetaVariableSyntax(text, label) {
   const content = cleanString(text)
   if (!content) return
@@ -616,7 +877,7 @@ function assertMetaVariableSyntax(text, label) {
 }
 
 function getVariableExamplesForTarget(template, target, label) {
-  const indexes = extractNumericVariableIndexes(template[target])
+  const indexes = extractNumericVariableIndexes(getTemplateTextForTarget(template, target))
   if (!indexes.length) return []
 
   indexes.forEach((index, position) => {
@@ -638,15 +899,26 @@ function getVariableExamplesForTarget(template, target, label) {
   })
 }
 
-function buildYCloudButtons(buttons = []) {
-  return buttons.map((button) => {
+function buildYCloudButtons(template = {}) {
+  const buttons = Array.isArray(template.buttons) ? template.buttons : []
+  return buttons.map((button, index) => {
     const label = clampText(button.label, 25)
     if (!label) return null
 
     if (button.type === 'website') {
       const url = clampText(button.value, 2000)
       if (!url) throw new Error(`El botón ${label} necesita URL`)
-      return { type: 'URL', text: label, url }
+      assertMetaVariableSyntax(url, `La URL del botón ${label}`)
+      const examples = getVariableExamplesForTarget(template, getButtonValueTarget(index), `la URL del botón ${label}`)
+      if (examples.length > 1) {
+        throw new Error(`La URL del botón ${label} solo puede usar una variable.`)
+      }
+      return {
+        type: 'URL',
+        text: label,
+        url,
+        ...(examples.length ? { example: examples } : {})
+      }
     }
 
     if (button.type === 'phone') {
@@ -759,7 +1031,7 @@ function buildYCloudTemplatePayload(template) {
     })
   }
 
-  const buttons = buildYCloudButtons(template.buttons)
+  const buttons = buildYCloudButtons(template)
   if (buttons.length) {
     components.push({
       type: 'BUTTONS',
@@ -1088,22 +1360,22 @@ async function findMessageTemplateByNameLanguage(name, language) {
   return row ? mapTemplate(row) : null
 }
 
-async function ensureDefaultTemplateFolder() {
+async function ensureTemplateFolder(folderDefinition, sortOrder = -100) {
   const existing = await db.get(
     'SELECT * FROM whatsapp_template_folders WHERE id = ?',
-    [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id]
+    [folderDefinition.id]
   )
 
   if (existing) {
-    if (existing.name !== DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.name || existing.parent_id) {
+    if (existing.name !== folderDefinition.name || existing.parent_id) {
       await db.run(`
         UPDATE whatsapp_template_folders
         SET name = ?, parent_id = NULL, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `, [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.name, DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id])
+      `, [folderDefinition.name, folderDefinition.id])
       return mapFolder(await db.get(
         'SELECT * FROM whatsapp_template_folders WHERE id = ?',
-        [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id]
+        [folderDefinition.id]
       ))
     }
 
@@ -1113,12 +1385,16 @@ async function ensureDefaultTemplateFolder() {
   await db.run(`
     INSERT INTO whatsapp_template_folders (id, name, parent_id, sort_order, created_at, updated_at)
     VALUES (?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `, [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id, DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.name, -100])
+  `, [folderDefinition.id, folderDefinition.name, sortOrder])
 
   return mapFolder(await db.get(
     'SELECT * FROM whatsapp_template_folders WHERE id = ?',
-    [DEFAULT_APPOINTMENT_TEMPLATE_FOLDER.id]
+    [folderDefinition.id]
   ))
+}
+
+async function ensureDefaultTemplateFolder() {
+  return ensureTemplateFolder(DEFAULT_APPOINTMENT_TEMPLATE_FOLDER, -100)
 }
 
 async function ensureDefaultMessageTemplate(definition, folderId) {
@@ -1442,9 +1718,82 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToYCloud 
   }
 }
 
+export async function ensureDefaultPaymentMessageTemplates({ submitToYCloud = false, publicBaseUrl = '' } = {}) {
+  const results = []
+  const folder = await ensureTemplateFolder(DEFAULT_PAYMENT_TEMPLATE_FOLDER, -90)
+  const templates = []
+  const canSubmitToYCloud = submitToYCloud && Boolean(normalizePublicBaseUrl(publicBaseUrl))
+
+  for (const definition of getDefaultPaymentMessageTemplates({ publicBaseUrl })) {
+    templates.push(await ensureDefaultMessageTemplate(definition, folder.id))
+  }
+
+  for (let index = 0; index < templates.length; index += 1) {
+    let template = templates[index]
+    const ycloudStatus = normalizeYCloudTemplateStatus(template.ycloudStatus)
+    let submitted = false
+    let error = null
+
+    if (canSubmitToYCloud && !TEMPLATE_REVIEW_STATES.has(ycloudStatus) && !template.ycloudTemplateId) {
+      try {
+        const result = await submitMessageTemplateToYCloud(template.id)
+        template = result.template
+        templates[index] = template
+        submitted = true
+      } catch (submitError) {
+        error = getTemplateErrorMessage(submitError, 'No se pudo enviar a revisión')
+        logger.warn(`No se pudo enviar plantilla default de pago ${template.name}/${template.language} a revisión: ${error}`)
+      }
+    }
+
+    results.push({
+      id: template.id,
+      name: template.name,
+      language: template.language,
+      ycloudStatus: template.ycloudStatus || null,
+      reviewRetryCount: template.ycloudReviewRetryCount || 0,
+      submitted,
+      retried: false,
+      retryAlerted: false,
+      error
+    })
+  }
+
+  return {
+    total: results.length,
+    submitted: results.filter((result) => result.submitted).length,
+    errors: results.filter((result) => result.error).length,
+    templates: results
+  }
+}
+
+function combineDefaultTemplateResults(results = []) {
+  const templates = results.flatMap((result) => Array.isArray(result?.templates) ? result.templates : [])
+  return {
+    total: templates.length,
+    submitted: templates.filter((template) => template.submitted).length,
+    errors: templates.filter((template) => template.error).length,
+    templates
+  }
+}
+
+export async function ensureDefaultWhatsAppApiMessageTemplates({ submitToYCloud = false, publicBaseUrl = '' } = {}) {
+  const appointmentResult = await ensureDefaultAppointmentMessageTemplates({ submitToYCloud })
+  const paymentResult = await ensureDefaultPaymentMessageTemplates({ submitToYCloud, publicBaseUrl })
+  return combineDefaultTemplateResults([appointmentResult, paymentResult])
+}
+
 export async function repairDefaultAppointmentMessageTemplatesForCurrentConnection() {
   const submitToYCloud = await shouldSubmitDefaultAppointmentTemplates()
   return ensureDefaultAppointmentMessageTemplates({ submitToYCloud })
+}
+
+export async function repairDefaultMessageTemplatesForCurrentConnection({ publicBaseUrl = '' } = {}) {
+  const submitToYCloud = await shouldSubmitDefaultAppointmentTemplates()
+  return ensureDefaultWhatsAppApiMessageTemplates({
+    submitToYCloud,
+    publicBaseUrl: publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || ''
+  })
 }
 
 export async function submitMessageTemplateToYCloud(id) {
@@ -1581,7 +1930,7 @@ async function renderSendBindingValue(template, binding = {}, index, variableOpt
 }
 
 async function buildTextSendParametersFromTemplate(template, target, variableOptions = {}) {
-  const indexes = extractNumericVariableIndexes(template?.[target])
+  const indexes = extractNumericVariableIndexes(getTemplateTextForTarget(template, target))
   if (!indexes.length) return []
 
   const bindings = template.variableBindings?.[target] || {}
@@ -1594,6 +1943,32 @@ async function buildTextSendParametersFromTemplate(template, target, variableOpt
     parameters.push({ type: 'text', text: value })
   }
   return parameters
+}
+
+async function buildUrlButtonSendComponentsFromTemplate(template, variableOptions = {}) {
+  const buttons = Array.isArray(template?.buttons) ? template.buttons : []
+  const components = []
+
+  for (let index = 0; index < buttons.length; index += 1) {
+    const button = buttons[index]
+    if (cleanString(button?.type) !== 'website') continue
+
+    const parameters = await buildTextSendParametersFromTemplate(
+      template,
+      getButtonValueTarget(index),
+      variableOptions
+    )
+    if (!parameters.length) continue
+
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index: String(index),
+      parameters
+    })
+  }
+
+  return components
 }
 
 function buildMediaHeaderSendComponent(template) {
@@ -1639,6 +2014,8 @@ export async function buildDefaultMessageTemplateSendComponents({
     components.push({ type: 'body', parameters: bodyParameters })
   }
 
+  components.push(...await buildUrlButtonSendComponentsFromTemplate(template, variableOptions))
+
   return components
 }
 
@@ -1658,6 +2035,8 @@ async function buildSendComponentsFromTemplate(template) {
   if (bodyParameters.length) {
     components.push({ type: 'body', parameters: bodyParameters })
   }
+
+  components.push(...await buildUrlButtonSendComponentsFromTemplate(template))
 
   return components
 }

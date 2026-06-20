@@ -220,6 +220,9 @@ function buildAutomationPaymentPayload(input = {}) {
   const paymentId = firstValue(input.paymentId, input.payment_id, input.id) || '';
   const invoiceId = firstValue(input.invoiceId, input.invoice_id, input.ghl_invoice_id) || '';
   const invoiceNumber = firstValue(input.invoiceNumber, input.invoice_number) || '';
+  const publicPaymentId = firstValue(input.publicPaymentId, input.public_payment_id, input.paymentPublicId, input.payment_public_id) || '';
+  const paymentUrl = firstValue(input.paymentUrl, input.payment_url, input.checkoutUrl, input.checkout_url, input.paymentLink, input.payment_link) || '';
+  const receiptUrl = firstValue(input.receiptUrl, input.receipt_url, input.receiptDownloadUrl, input.receipt_download_url, input.paymentReceiptUrl, input.payment_receipt_url) || '';
   const title = firstValue(input.title, input.name, input.product, input.description) || '';
   const description = firstValue(input.description, input.product, title) || '';
   const product = firstValue(input.product, description, title) || '';
@@ -243,6 +246,9 @@ function buildAutomationPaymentPayload(input = {}) {
     description,
     invoiceId,
     invoiceNumber,
+    publicPaymentId,
+    paymentUrl,
+    receiptUrl,
     receipt: firstValue(input.receipt, reference, invoiceNumber, invoiceId, title) || '',
     paymentDate: input.paymentDate || input.date || input.createdAt || input.created_at || '',
     date: input.paymentDate || input.date || input.createdAt || input.created_at || ''
@@ -264,6 +270,8 @@ function buildAutomationPaymentPayloadFromRow(row = {}, overrides = {}) {
     description: row.description,
     invoiceId: row.ghl_invoice_id,
     invoiceNumber: row.invoice_number,
+    publicPaymentId: row.public_payment_id,
+    paymentUrl: row.payment_url,
     paymentDate: row.date,
     createdAt: row.created_at,
     ...overrides

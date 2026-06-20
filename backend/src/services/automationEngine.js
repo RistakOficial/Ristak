@@ -521,18 +521,102 @@ function paymentActionMatches(configAction, ctx = {}, eventType = '') {
   return actual === wanted
 }
 
+function firstCleanPaymentValue(...values) {
+  for (const value of values) {
+    const cleaned = cleanString(value)
+    if (cleaned) return cleaned
+  }
+  return ''
+}
+
+function paymentObjectFromContext(ctx = {}) {
+  return ctx.payment && typeof ctx.payment === 'object' && !Array.isArray(ctx.payment)
+    ? ctx.payment
+    : {}
+}
+
+function publicPaymentIdFromContext(ctx = {}) {
+  const payment = paymentObjectFromContext(ctx)
+  return firstCleanPaymentValue(
+    ctx.publicPaymentId,
+    ctx.public_payment_id,
+    ctx.paymentPublicId,
+    ctx.payment_public_id,
+    payment.publicPaymentId,
+    payment.public_payment_id,
+    payment.publicId,
+    payment.public_id
+  )
+}
+
+function buildPaymentPageUrlFromContext(ctx = {}) {
+  const payment = paymentObjectFromContext(ctx)
+  const explicitUrl = firstCleanPaymentValue(
+    ctx.paymentUrl,
+    ctx.payment_url,
+    ctx.checkoutUrl,
+    ctx.checkout_url,
+    ctx.paymentLink,
+    ctx.payment_link,
+    payment.paymentUrl,
+    payment.payment_url,
+    payment.checkoutUrl,
+    payment.checkout_url,
+    payment.paymentLink,
+    payment.payment_link
+  )
+  if (explicitUrl) return explicitUrl
+
+  const publicPaymentId = publicPaymentIdFromContext(ctx)
+  const baseUrl = firstCleanPaymentValue(
+    ctx.publicBaseUrl,
+    ctx.public_base_url,
+    process.env.PUBLIC_URL,
+    process.env.RENDER_EXTERNAL_URL
+  ).replace(/\/+$/, '')
+  return publicPaymentId && /^https?:\/\//i.test(baseUrl)
+    ? `${baseUrl}/pay/${encodeURIComponent(publicPaymentId)}`
+    : ''
+}
+
+function appendPaymentReceiptQuery(paymentUrl = '') {
+  const url = cleanString(paymentUrl)
+  if (!url) return ''
+  return url.includes('?') ? `${url}&receipt=1` : `${url}?receipt=1`
+}
+
 function paymentDataFromContext(ctx = {}) {
+  const payment = paymentObjectFromContext(ctx)
+  const publicPaymentId = publicPaymentIdFromContext(ctx)
+  const paymentUrl = buildPaymentPageUrlFromContext(ctx)
+  const receiptUrl = firstCleanPaymentValue(
+    ctx.receiptUrl,
+    ctx.receipt_url,
+    ctx.receiptDownloadUrl,
+    ctx.receipt_download_url,
+    ctx.paymentReceiptUrl,
+    ctx.payment_receipt_url,
+    payment.receiptUrl,
+    payment.receipt_url,
+    payment.receiptDownloadUrl,
+    payment.receipt_download_url,
+    appendPaymentReceiptQuery(paymentUrl)
+  )
   return {
-    id_pago: ctx.paymentId || ctx.payment_id || ctx.id || '',
-    monto: ctx.amount ?? '',
-    moneda: ctx.currency || '',
-    estado: ctx.paymentStatus || ctx.payment_status || ctx.status || '',
-    producto: ctx.product || ctx.title || ctx.description || '',
-    proveedor: ctx.provider || ctx.paymentProvider || ctx.gateway || '',
-    metodo_pago: ctx.paymentMethod || ctx.payment_method || ctx.method || '',
-    recibo: ctx.receipt || ctx.reference || ctx.invoiceNumber || ctx.invoiceId || '',
-    numero_factura: ctx.invoiceNumber || ctx.invoice_number || '',
-    fecha: ctx.paymentDate || ctx.date || ctx.createdAt || ''
+    id_pago: ctx.paymentId || ctx.payment_id || payment.id || ctx.id || '',
+    id_publico: publicPaymentId,
+    monto: ctx.amount ?? payment.amount ?? '',
+    moneda: ctx.currency || payment.currency || '',
+    estado: ctx.paymentStatus || ctx.payment_status || payment.paymentStatus || payment.payment_status || ctx.status || payment.status || '',
+    producto: ctx.product || payment.product || ctx.title || payment.title || ctx.description || payment.description || '',
+    proveedor: ctx.provider || ctx.paymentProvider || ctx.gateway || payment.provider || payment.paymentProvider || payment.gateway || '',
+    metodo_pago: ctx.paymentMethod || ctx.payment_method || ctx.method || payment.paymentMethod || payment.payment_method || payment.method || '',
+    recibo: ctx.receipt || payment.receipt || ctx.reference || payment.reference || ctx.invoiceNumber || payment.invoiceNumber || ctx.invoiceId || payment.invoiceId || '',
+    numero_factura: ctx.invoiceNumber || ctx.invoice_number || payment.invoiceNumber || payment.invoice_number || '',
+    fecha: ctx.paymentDate || payment.paymentDate || ctx.date || payment.date || ctx.createdAt || payment.createdAt || '',
+    url_pago: paymentUrl,
+    url_comprobante: receiptUrl,
+    ruta_comprobante: publicPaymentId ? `${publicPaymentId}?receipt=1` : ''
   }
 }
 
@@ -740,6 +824,7 @@ function buildVariableMap(ctx) {
     setDeepVariable(map, 'pago', payment)
     setDeepVariable(map, 'pago_1', payment)
     map['payment.id'] = String(payment.id_pago ?? '')
+    map['payment.public_id'] = String(payment.id_publico ?? '')
     map['payment.amount'] = String(payment.monto ?? '')
     map['payment.currency'] = String(payment.moneda ?? '')
     map['payment.status'] = String(payment.estado ?? '')
@@ -749,6 +834,9 @@ function buildVariableMap(ctx) {
     map['payment.receipt'] = String(payment.recibo ?? '')
     map['payment.invoice_number'] = String(payment.numero_factura ?? '')
     map['payment.date'] = String(payment.fecha ?? '')
+    map['payment.url'] = String(payment.url_pago ?? '')
+    map['payment.receipt_url'] = String(payment.url_comprobante ?? '')
+    map['payment.receipt_path'] = String(payment.ruta_comprobante ?? '')
   }
   const form = formDataFromContext(ctx)
   const formResponses = formResponsesFromContext(ctx)
@@ -2267,6 +2355,7 @@ async function sendWhatsAppBlocks(node, ctx) {
         )
         if (seconds > 0) await sleep(seconds * 1000)
       } else if (str(block.templateId) || str(block.templateName)) {
+        const extraVariables = buildVariableMap(ctx)
         const components = await buildDefaultMessageTemplateSendComponents({
           templateId: str(block.templateId),
           templateName: str(block.templateName),
@@ -2276,7 +2365,7 @@ async function sendWhatsAppBlocks(node, ctx) {
             phone: to,
             userId: ctx.userId,
             publicBaseUrl: ctx.publicBaseUrl,
-            extraVariables: buildVariableMap(ctx)
+            extraVariables
           }
         })
 
@@ -2286,6 +2375,8 @@ async function sendWhatsAppBlocks(node, ctx) {
           templateName: str(block.templateName) || undefined,
           ...(components.length ? { components } : {}),
           contactId: ctx.contact?.id,
+          publicBaseUrl: ctx.publicBaseUrl,
+          extraVariables,
           phoneNumberId
         })
         sentNames.push(str(block.templateName) || str(block.templateId))

@@ -1218,6 +1218,8 @@ export const refundTransaction = async (req, res) => {
           description: transaction.description || '',
           invoiceId: transaction.ghl_invoice_id || '',
           invoiceNumber: transaction.invoice_number || '',
+          publicPaymentId: transaction.public_payment_id || '',
+          paymentUrl: transaction.payment_url || buildLocalPaymentUrl(req, transaction.public_payment_id),
           receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
           paymentDate: transaction.date || transaction.created_at || ''
         }))
@@ -1288,6 +1290,8 @@ export const voidTransaction = async (req, res) => {
           description: transaction.description || '',
           invoiceId: transaction.ghl_invoice_id || '',
           invoiceNumber: transaction.invoice_number || '',
+          publicPaymentId: transaction.public_payment_id || '',
+          paymentUrl: transaction.payment_url || buildLocalPaymentUrl(req, transaction.public_payment_id),
           receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
           paymentDate: transaction.date || transaction.created_at || ''
         }))

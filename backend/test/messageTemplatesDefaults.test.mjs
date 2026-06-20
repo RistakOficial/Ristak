@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
+  buildDefaultMessageTemplateSendComponents,
   ensureDefaultAppointmentMessageTemplates,
+  ensureDefaultWhatsAppApiMessageTemplates,
   getMessageTemplateBundle,
   repairDefaultAppointmentMessageTemplatesForCurrentConnection
 } from '../src/services/messageTemplatesService.js'
@@ -18,6 +20,12 @@ const DEFAULT_TEMPLATE_NAMES = [
   'confirmacion_cita_dia_anterior'
 ]
 const DEFAULT_FOLDER_ID = 'Reminders'
+const DEFAULT_PAYMENT_TEMPLATE_NAMES = [
+  'recordatorio_pago_pendiente',
+  'comprobante_pago_recibido',
+  'pago_fallido_reintento'
+]
+const DEFAULT_PAYMENT_FOLDER_ID = 'Payments'
 
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
   return {
@@ -78,6 +86,26 @@ async function deleteDefaultTemplates() {
       ${retryLikeClauses ? `OR ${retryLikeClauses}` : ''}
   `, [...DEFAULT_TEMPLATE_NAMES, ...retryLikeParams])
   await db.run('DELETE FROM whatsapp_template_folders WHERE id = ?', [DEFAULT_FOLDER_ID])
+}
+
+async function deleteDefaultPaymentTemplates() {
+  const placeholders = DEFAULT_PAYMENT_TEMPLATE_NAMES.map(() => '?').join(', ')
+  const rows = await db.all(`SELECT id FROM whatsapp_message_templates WHERE name IN (${placeholders})`, DEFAULT_PAYMENT_TEMPLATE_NAMES)
+  const ids = rows.map(row => row.id).filter(Boolean)
+  if (ids.length) {
+    await db.run(
+      `DELETE FROM whatsapp_api_alerts WHERE entity_id IN (${ids.map(() => '?').join(', ')})`,
+      ids
+    )
+  }
+  await db.run(`DELETE FROM whatsapp_message_templates WHERE name IN (${placeholders})`, DEFAULT_PAYMENT_TEMPLATE_NAMES)
+  await db.run(`DELETE FROM whatsapp_api_templates WHERE name IN (${placeholders})`, DEFAULT_PAYMENT_TEMPLATE_NAMES)
+  await db.run('DELETE FROM whatsapp_template_folders WHERE id = ?', [DEFAULT_PAYMENT_FOLDER_ID])
+}
+
+async function deleteAllDefaultTemplates() {
+  await deleteDefaultTemplates()
+  await deleteDefaultPaymentTemplates()
 }
 
 test('crea plantillas default de citas y las manda a revisión una sola vez', async () => {
@@ -158,6 +186,120 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
     } finally {
       setYCloudFetchForTest(null)
       await deleteDefaultTemplates()
+    }
+  })
+})
+
+test('crea plantillas default de pagos con botones dinamicos de pago y comprobante', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const captures = []
+
+  await snapshotAppConfig([keys.enabled, keys.apiKey, keys.wabaId], async () => {
+    await deleteAllDefaultTemplates()
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.apiKey, encrypt('ycloud_payment_default_templates_secret'))
+    await setAppConfig(keys.wabaId, 'waba_payment_default_templates_test')
+
+    setYCloudFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const path = parsed.pathname.replace(/^\/v2/, '')
+      const method = String(options.method || 'GET').toUpperCase()
+
+      if (path === '/whatsapp/templates' && method === 'POST') {
+        const body = JSON.parse(options.body || '{}')
+        captures.push(body)
+        return ycloudJsonResponse({
+          id: `official_${body.name}`,
+          wabaId: body.wabaId,
+          name: body.name,
+          language: body.language,
+          category: body.category,
+          status: 'PENDING',
+          components: body.components
+        })
+      }
+
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      const result = await ensureDefaultWhatsAppApiMessageTemplates({
+        submitToYCloud: true,
+        publicBaseUrl: 'https://pagos.ristak.test'
+      })
+      assert.equal(result.total, 6)
+      assert.equal(result.submitted, 6)
+
+      const paymentCaptures = captures.filter((capture) => DEFAULT_PAYMENT_TEMPLATE_NAMES.includes(capture.name))
+      assert.deepEqual(paymentCaptures.map((capture) => capture.name).sort(), [...DEFAULT_PAYMENT_TEMPLATE_NAMES].sort())
+
+      const beforePayment = paymentCaptures.find((capture) => capture.name === 'recordatorio_pago_pendiente')
+      assert.equal(beforePayment.components[0].text, 'Pago pendiente')
+      assert.equal(beforePayment.components[1].text, 'Hola {{1}}, tienes pendiente el pago de {{2}} por {{3}}. Toca el botón para pagar de forma segura.')
+      const beforeButtons = beforePayment.components.find((component) => component.type === 'BUTTONS').buttons
+      assert.equal(beforeButtons[0].type, 'URL')
+      assert.equal(beforeButtons[0].text, 'Pagar aquí')
+      assert.equal(beforeButtons[0].url, 'https://pagos.ristak.test/pay/{{1}}')
+      assert.deepEqual(beforeButtons[0].example, ['pay_3NfL8dZ9xQ2aB6mP'])
+
+      const receiptTemplate = paymentCaptures.find((capture) => capture.name === 'comprobante_pago_recibido')
+      const receiptButtons = receiptTemplate.components.find((component) => component.type === 'BUTTONS').buttons
+      assert.equal(receiptButtons[0].text, 'Descargar comprobante')
+      assert.equal(receiptButtons[0].url, 'https://pagos.ristak.test/pay/{{1}}')
+      assert.deepEqual(receiptButtons[0].example, ['pay_3NfL8dZ9xQ2aB6mP?receipt=1'])
+
+      const failedTemplate = paymentCaptures.find((capture) => capture.name === 'pago_fallido_reintento')
+      const failedButtons = failedTemplate.components.find((component) => component.type === 'BUTTONS').buttons
+      assert.equal(failedButtons[0].text, 'Intentar pago')
+      assert.equal(failedButtons[0].url, 'https://pagos.ristak.test/pay/{{1}}')
+
+      const bundle = await getMessageTemplateBundle()
+      const folder = bundle.folders.find((item) => item.id === DEFAULT_PAYMENT_FOLDER_ID)
+      assert.ok(folder)
+      assert.equal(folder.name, 'Pagos')
+
+      const localReceiptTemplate = bundle.templates.find((template) => template.name === 'comprobante_pago_recibido')
+      assert.ok(localReceiptTemplate)
+      assert.equal(localReceiptTemplate.folderId, DEFAULT_PAYMENT_FOLDER_ID)
+      assert.equal(localReceiptTemplate.variableBindings.bodyText['1'].variableKey, 'contact.first_name')
+      assert.equal(localReceiptTemplate.variableBindings.bodyText['2'].variableKey, 'payment.product')
+      assert.equal(localReceiptTemplate.variableBindings.bodyText['3'].variableKey, 'payment.amount')
+      assert.equal(localReceiptTemplate.variableBindings['buttons.0.value']['1'].variableKey, 'payment.receipt_path')
+
+      const sendComponents = await buildDefaultMessageTemplateSendComponents({
+        templateName: 'comprobante_pago_recibido',
+        language: 'es_MX',
+        variableOptions: {
+          extraVariables: {
+            'contact.first_name': 'Ana',
+            'payment.product': 'Plan anual',
+            'payment.amount': '$2,000 MXN',
+            'payment.receipt_path': 'pay_test_123?receipt=1'
+          }
+        }
+      })
+      assert.deepEqual(sendComponents, [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: 'Ana' },
+            { type: 'text', text: 'Plan anual' },
+            { type: 'text', text: '$2,000 MXN' }
+          ]
+        },
+        {
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
+          parameters: [
+            { type: 'text', text: 'pay_test_123?receipt=1' }
+          ]
+        }
+      ])
+    } finally {
+      setYCloudFetchForTest(null)
+      await deleteAllDefaultTemplates()
     }
   })
 })

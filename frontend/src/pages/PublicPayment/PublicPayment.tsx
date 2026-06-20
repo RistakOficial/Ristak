@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe, type StripeElementsOptions } from '@stripe/stripe-js'
 import { AlertCircle, CheckCircle2, CreditCard, Download, Loader2, ShieldCheck } from 'lucide-react'
@@ -161,6 +161,7 @@ const PublicPaymentForm: React.FC<{
 export const PublicPayment: React.FC = () => {
   const { publicPaymentId = '' } = useParams()
   const [searchParams] = useSearchParams()
+  const autoReceiptPrintRef = useRef('')
   const [payment, setPayment] = useState<PublicStripePayment | null>(null)
   const [intent, setIntent] = useState<StripePaymentIntentResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -170,6 +171,7 @@ export const PublicPayment: React.FC = () => {
   const status = getStatusCopy(payment?.status || '')
   const isPaid = Boolean(payment && ['paid', 'succeeded', 'completed'].includes(payment.status.toLowerCase()))
   const isClosed = Boolean(payment && ['void', 'refunded', 'deleted'].includes(payment.status.toLowerCase()))
+  const receiptDownloadRequested = searchParams.get('receipt') === '1'
   const shouldSavePaymentMethod = Boolean(payment?.contact?.id)
 
   const stripePromise = useMemo<StripePromise | null>(() => {
@@ -244,6 +246,18 @@ export const PublicPayment: React.FC = () => {
       }, 500)
     })
   }
+
+  useEffect(() => {
+    if (!payment || !isPaid || !receiptDownloadRequested || typeof window === 'undefined') return
+    if (autoReceiptPrintRef.current === payment.publicPaymentId) return
+
+    autoReceiptPrintRef.current = payment.publicPaymentId
+    const timer = window.setTimeout(() => {
+      handleDownloadPdf()
+    }, 350)
+
+    return () => window.clearTimeout(timer)
+  }, [payment, isPaid, receiptDownloadRequested])
 
   if (loading) {
     return (

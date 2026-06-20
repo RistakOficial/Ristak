@@ -19,7 +19,7 @@ import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
 import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageService.js'
-import { repairDefaultAppointmentMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
+import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
 
 // Force redeploy to ensure latest logs are active
 
@@ -223,10 +223,10 @@ app.listen(PORT, '0.0.0.0', async () => {
     logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)
   })
 
-  repairDefaultAppointmentMessageTemplatesForCurrentConnection()
+  repairDefaultMessageTemplatesForCurrentConnection()
     .then((result) => {
       if (result?.submitted > 0) {
-        logger.info(`[WhatsApp] Plantillas default de recordatorios preparadas y enviadas a revisión: ${result.submitted}`)
+        logger.info(`[WhatsApp] Plantillas default preparadas y enviadas a revisión: ${result.submitted}`)
       }
     })
     .catch(error => {
