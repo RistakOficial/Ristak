@@ -10,7 +10,7 @@ import { logger } from '../utils/logger.js'
 
 function sendError(res, error, fallback = 'No se pudo procesar la suscripción.') {
   logger.error(fallback, error)
-  res.status(400).json({
+  res.status(error?.status || 400).json({
     success: false,
     error: error instanceof Error ? error.message : fallback
   })

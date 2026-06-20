@@ -8,6 +8,7 @@ import {
   syncStripeSubscriptionInvoicePayment,
   updateStripeRecurringSubscription
 } from './stripePaymentService.js'
+import { getSubscriptionAuditSummary } from './paymentRecordSafetyService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 
 const SUBSCRIPTION_PREFIX = 'rstk_sub'
@@ -603,6 +604,13 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
 }
 
 export async function deleteSubscription(subscriptionId) {
+  const audit = await getSubscriptionAuditSummary(subscriptionId)
+  if (audit.hasPayments) {
+    const error = new Error('Esta suscripción ya tiene cobros registrados. No se puede eliminar; cancélala para conservar el historial.')
+    error.status = 422
+    throw error
+  }
+
   const result = await db.run(
     `UPDATE subscriptions
      SET status = 'deleted', updated_at = CURRENT_TIMESTAMP

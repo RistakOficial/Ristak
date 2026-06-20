@@ -11,6 +11,10 @@ import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerWhatsappFirstPurchaseEvent } from '../services/metaWhatsappEventsService.js'
 import { sendPaymentNotification } from '../services/pushNotificationsService.js'
 import { queuePaymentAutomationMessage } from '../services/paymentAutomationsService.js'
+import {
+  getPaymentDeletionGuard,
+  isSuccessfulPaymentStatus
+} from '../services/paymentRecordSafetyService.js'
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
 import { findContactByPhoneCandidates } from '../services/contactIdentityService.js'
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
@@ -127,6 +131,31 @@ const sendStripePlanAuthorizationManualPaymentError = (res) => res.status(422).j
   success: false,
   error: 'Este pago activa la domiciliación del plan y solo Stripe puede marcarlo como pagado cuando el cliente complete el enlace. No se puede registrar como pago offline.'
 })
+
+const sendPaymentDeletionGuardError = (res, guard) => {
+  if (guard.hasPlanLink) {
+    return res.status(422).json({
+      success: false,
+      error: 'Esta transacción pertenece a un plan de pagos. No se puede borrar desde transacciones; edita, cancela o elimina el plan completo para conservar el historial.'
+    })
+  }
+
+  if (guard.hasSubscriptionLink) {
+    return res.status(422).json({
+      success: false,
+      error: 'Esta transacción pertenece a una suscripción. No se puede borrar desde transacciones; cancela o pausa la suscripción para conservar el historial.'
+    })
+  }
+
+  if (guard.hasLedgerActivity) {
+    return res.status(422).json({
+      success: false,
+      error: 'Esta transacción ya tiene actividad de pago registrada. No se puede borrar; usa reembolso o anulación según corresponda para mantener el historial.'
+    })
+  }
+
+  return null
+}
 
 const splitName = (name = '') => {
   const parts = cleanString(name).split(/\s+/).filter(Boolean)
@@ -974,6 +1003,12 @@ export const updateTransaction = async (req, res) => {
       return sendStripePlanAuthorizationManualPaymentError(res)
     }
 
+    if (statusChanged && nextStatus === 'deleted') {
+      const deletionGuard = await getPaymentDeletionGuard(transaction)
+      const guardResponse = sendPaymentDeletionGuardError(res, deletionGuard)
+      if (guardResponse) return guardResponse
+    }
+
     if (invoiceId && statusChanged && nextStatus === 'refunded') {
       return res.status(422).json({
         success: false,
@@ -1124,16 +1159,29 @@ export const deleteTransaction = async (req, res) => {
       })
     }
 
-    if (isStripeBackedTransaction(transaction)) {
+    const deletionGuard = await getPaymentDeletionGuard(transaction)
+    const guardResponse = sendPaymentDeletionGuardError(res, deletionGuard)
+    if (guardResponse) return guardResponse
+
+    if (deletionGuard.shouldArchive) {
+      let archiveStatus = 'deleted'
+      if (transaction.ghl_invoice_id) {
+        const ghlClient = await getGHLClient()
+        await ghlClient.voidInvoice(transaction.ghl_invoice_id)
+        archiveStatus = 'void'
+      }
+
       await db.run(
         'UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        ['deleted', id]
+        [archiveStatus, id]
       )
-      await syncStripePaymentPlanFromLocalPayment(id)
+      if (isStripeBackedTransaction(transaction)) {
+        await syncStripePaymentPlanFromLocalPayment(id)
+      }
+    } else {
+      await db.run('DELETE FROM payments WHERE id = ?', [id])
     }
 
-    // Eliminar de la base de datos
-    await db.run('DELETE FROM payments WHERE id = ?', [id])
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
     }
@@ -1147,9 +1195,9 @@ export const deleteTransaction = async (req, res) => {
 
   } catch (error) {
     logger.error(`Error eliminando transacción: ${error.message}`)
-    res.status(500).json({
+    res.status(error.status || 500).json({
       success: false,
-      error: 'Error eliminando transacción'
+      error: error.message || 'Error eliminando transacción'
     })
   }
 }
@@ -1259,6 +1307,18 @@ export const voidTransaction = async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'Transacción no encontrada'
+      })
+    }
+
+    const deletionGuard = await getPaymentDeletionGuard(transaction)
+    if (deletionGuard.hasPlanLink || deletionGuard.hasSubscriptionLink) {
+      return sendPaymentDeletionGuardError(res, deletionGuard)
+    }
+
+    if (isSuccessfulPaymentStatus(transaction.status)) {
+      return res.status(422).json({
+        success: false,
+        error: 'Este pago ya está completado. No se puede anular; registra un reembolso para conservar el historial.'
       })
     }
 

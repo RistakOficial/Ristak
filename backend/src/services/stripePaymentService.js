@@ -5,6 +5,7 @@ import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
+import { getPaymentPlanAuditSummary } from './paymentRecordSafetyService.js'
 import {
   createCentralStripeConnectUrl,
   disconnectCentralStripeConnect,
@@ -3710,6 +3711,15 @@ export async function applyStripePaymentPlanAction(flowId, action, options = {})
     const error = new Error('Acción inválida para plan Stripe.')
     error.status = 400
     throw error
+  }
+
+  if (normalizedAction === 'delete') {
+    const audit = await getPaymentPlanAuditSummary(cleanFlowId)
+    if (audit.hasLedgerActivity) {
+      const error = new Error('Este plan ya tiene pagos, intentos, anulaciones o reembolsos registrados. No se puede eliminar; cancélalo para conservar el historial.')
+      error.status = 422
+      throw error
+    }
   }
 
   const finalState = normalizedAction === 'delete'

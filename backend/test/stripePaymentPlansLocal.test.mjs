@@ -193,6 +193,66 @@ test('cancela un plan Stripe local y anula pagos pendientes ligados', async () =
   }
 })
 
+test('elimina un plan Stripe local sin cobros reales e invalida pagos pendientes', async () => {
+  const ids = await seedStripePlan()
+
+  try {
+    const res = createResponse()
+    await actionInvoiceSchedule({
+      params: { scheduleId: ids.flowId },
+      body: { action: 'delete' }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+    assert.equal(res.payload.data.status, 'deleted')
+
+    const flow = await db.get('SELECT current_state FROM payment_flows WHERE id = ?', [ids.flowId])
+    const installment = await db.get('SELECT status FROM installment_payments WHERE id = ?', [ids.installmentId])
+    const setupPayment = await db.get('SELECT status FROM payments WHERE id = ?', [ids.cardSetupPaymentId])
+    const installmentPayment = await db.get('SELECT status FROM payments WHERE id = ?', [ids.installmentPaymentId])
+
+    assert.equal(flow.current_state, 'deleted')
+    assert.equal(installment.status, 'deleted')
+    assert.equal(setupPayment.status, 'deleted')
+    assert.equal(installmentPayment.status, 'deleted')
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('bloquea eliminar un plan Stripe local cuando ya tiene un pago registrado', async () => {
+  const ids = await seedStripePlan()
+
+  try {
+    await db.run(
+      `UPDATE payments
+       SET status = 'paid',
+           stripe_payment_intent_id = 'pi_plan_delete_guard',
+           paid_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [ids.cardSetupPaymentId]
+    )
+
+    const res = createResponse()
+    await actionInvoiceSchedule({
+      params: { scheduleId: ids.flowId },
+      body: { action: 'delete' }
+    }, res)
+
+    assert.equal(res.statusCode, 422)
+    assert.match(res.payload.error, /no se puede eliminar|conservar el historial/i)
+
+    const flow = await db.get('SELECT current_state FROM payment_flows WHERE id = ?', [ids.flowId])
+    const setupPayment = await db.get('SELECT status FROM payments WHERE id = ?', [ids.cardSetupPaymentId])
+
+    assert.equal(flow.current_state, 'waiting_card_authorization')
+    assert.equal(setupPayment.status, 'paid')
+  } finally {
+    await cleanup(ids)
+  }
+})
+
 test('edita calendario de pagos de un plan Stripe local', async () => {
   const ids = await seedStripePlan()
 
