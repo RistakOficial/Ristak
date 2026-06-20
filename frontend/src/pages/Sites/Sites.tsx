@@ -3356,11 +3356,16 @@ const getEmbeddedFormPageFields = (fields: SiteBlock[], pages: SitePage[], pageI
   return fields.filter(field => getBlockPageId(field, pages) === activePageId)
 }
 
-const getOrderedPagesForSite = (site: PublicSite, nextPages: SitePage[]) => (
-  isStandardForm(site)
-    ? normalizeFormPages({ ...site, theme: { ...(site.theme || {}), pages: nextPages } })
-    : nextPages
+const applyPageArrayOrder = (pages: SitePage[]) => (
+  pages.map((page, index) => ({ ...page, sortOrder: index }))
 )
+
+const getOrderedPagesForSite = (site: PublicSite, nextPages: SitePage[]) => {
+  const orderedNextPages = applyPageArrayOrder(nextPages)
+  return isStandardForm(site)
+    ? normalizeFormPages({ ...site, theme: { ...(site.theme || {}), pages: orderedNextPages } })
+    : orderedNextPages
+}
 
 const getFormAddPageIndex = (site: PublicSite, pages: SitePage[]) => (
   isStandardForm(site)
