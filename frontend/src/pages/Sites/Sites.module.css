@@ -6636,6 +6636,66 @@
   background: var(--surface-2);
 }
 
+.videoActionRuleSummary {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.videoActionRuleSummary:hover,
+.videoActionRuleSummary:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.videoActionRuleSummaryTime {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  padding: 3px 7px;
+  font: var(--num-font);
+  font-size: 0.74rem;
+}
+
+.videoActionRuleSummaryText {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.videoActionRuleSummaryText strong,
+.videoActionRuleSummaryText small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoActionRuleSummaryText strong {
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.videoActionRuleSummaryText small {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
 .videoActionTimeline {
   display: grid;
   gap: 7px;
@@ -6901,7 +6961,8 @@
 
 .videoActionRuleActions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 8px;
   border-top: 1px solid var(--sites-editor-section-border, var(--border));
   padding-top: 2px;
 }

@@ -10959,7 +10959,7 @@ function buildVideoTrackingAttributes({ enabled = false, block = {}, asset = nul
   })
 }
 
-const VIDEO_ACTION_KINDS = new Set(['show', 'hide', 'open_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
+const VIDEO_ACTION_KINDS = new Set(['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 const VIDEO_ACTION_BEFORE_STATES = new Set(['hidden', 'visible', 'unchanged'])
 const VIDEO_ACTION_TARGET_KINDS = new Set(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 
@@ -11617,6 +11617,11 @@ function getVideoFormGateTriggerSeconds(settings = {}) {
   return Number.isFinite(value) ? Math.min(86400, Math.max(0, value)) : 0
 }
 
+function normalizeVideoFormGateAnimation(settings = {}) {
+  const animation = cleanString(settings.videoFormGateAnimation || settings.video_form_gate_animation)
+  return ['fade', 'instant', 'slide_up'].includes(animation) ? animation : 'fade'
+}
+
 function hasVideoFormGates(blocks = []) {
   for (const block of Array.isArray(blocks) ? blocks : []) {
     const settings = block?.settings || {}
@@ -11655,8 +11660,10 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
   const nextText = cleanString(settings.videoFormGateNextText || settings.video_form_gate_next_text || embeddedTheme.nextText) || 'Siguiente'
   const backText = cleanString(settings.videoFormGateBackText || settings.video_form_gate_back_text || embeddedTheme.backText) || 'Anterior'
   const submitText = cleanString(settings.videoFormGateSubmitText || settings.video_form_gate_submit_text || embeddedTheme.submitText) || 'Continuar'
+  const animation = normalizeVideoFormGateAnimation(settings)
   const classes = [
     'rstk-video-form-gate',
+    `rstk-video-form-gate-anim-${animation}`,
     `rstk-choice-${normalizeFormChoiceStyle(embeddedTheme.formChoiceStyle)}`,
     `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`
   ].join(' ')
@@ -13417,7 +13424,7 @@ function findVideoFormGateBlock(blocks = [], videoBlockId = '') {
 }
 
 function getVideoFormGateSubmissionContext(site, blocks = [], videoBlockId = '') {
-  if (!site || site.siteType !== 'landing_page') return null
+  if (!site || !['landing_page', 'standard_form'].includes(site.siteType)) return null
   const block = findVideoFormGateBlock(blocks, videoBlockId)
   if (!block) return null
 
@@ -16569,6 +16576,9 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-gate-active > video,.rstk-video-gate-active > iframe{pointer-events:none}
 	  .rstk-video-form-gate{position:absolute;inset:0;z-index:9;display:grid;place-items:center;min-width:0;padding:clamp(8px,3cqw,22px);background:color-mix(in srgb,var(--rstk-video-bg,#000) 84%,transparent);color:var(--rstk-ink);font-family:var(--rstk-form-font,var(--rstk-font));backdrop-filter:blur(12px)}
 	  .rstk-video-form-gate[hidden]{display:none!important}
+	  .rstk-video-form-gate-anim-fade:not([hidden]){animation:rstkVideoFormGateFade .22s ease-out both}
+	  .rstk-video-form-gate-anim-slide_up:not([hidden]){animation:rstkVideoFormGateSlide .24s ease-out both}
+	  .rstk-video-form-gate-anim-instant:not([hidden]){animation:none}
 	  .rstk-video-form-gate-panel{width:min(100%,680px);height:100%;max-width:100%;max-height:100%;min-height:0;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;gap:clamp(8px,1.8cqw,14px);overflow:hidden;border:1px solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:clamp(10px,2.4cqw,20px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-ink);box-shadow:0 24px 70px -42px rgba(0,0,0,.66);padding:clamp(12px,3cqw,24px)}
 	  .rstk-video-form-gate-header{display:grid;gap:4px;text-align:left}
 	  .rstk-video-form-gate-header strong{display:block;color:var(--rstk-ink);font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(1rem,3.2cqw,1.5rem);font-weight:800;line-height:1.1}
@@ -16591,6 +16601,8 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-actions .rstk-secondary{background:transparent;color:var(--rstk-ink);border:1px solid var(--rstk-form-field-border,var(--rstk-input-border))}
 	  .rstk-video-form-actions button:disabled{opacity:.62;cursor:not-allowed}
 	  .rstk-video-form-gate .rstk-submit-message{min-height:18px;margin:0;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.74rem,1.8cqw,.88rem);font-weight:650;text-align:left}
+	  @keyframes rstkVideoFormGateFade{from{opacity:0}to{opacity:1}}
+	  @keyframes rstkVideoFormGateSlide{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 	  @container (max-width:460px){.rstk-video-form-gate{padding:8px}.rstk-video-form-gate-panel{gap:8px;padding:10px;border-radius:12px}.rstk-video-form-actions{justify-content:stretch}.rstk-video-form-actions button{flex:1 1 0;min-width:0;padding-inline:10px}.rstk-video-form-gate .rstk-phone-input{grid-template-columns:1fr}}
 	  @supports (width:1cqw){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(104px,min(22cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))))}.rstk-video-control-bar{left:max(6px,min(12px,2cqw));right:max(6px,min(12px,2cqw));bottom:max(6px,min(12px,2cqw));gap:max(4px,min(8px,1.4cqw));padding:max(5px,min(7px,1.2cqw))}.rstk-video-control-button{width:max(24px,min(30px,5cqw));height:max(24px,min(30px,5cqw))}.rstk-video-speed-control{min-width:max(54px,min(66px,11cqw));height:max(24px,min(30px,5cqw));padding-inline:max(6px,min(8px,1.5cqw)) max(18px,min(20px,3cqw))}@media (max-width:760px){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(88px,min(18cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))))}}}
 	  @media (max-width:760px){.rstk-block-style .rstk-video-portrait{width:100%;margin-left:auto;margin-right:auto}}

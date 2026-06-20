@@ -1051,8 +1051,9 @@ const PAGE_SELECTED_ID = '__page__'
 const POPUP_SELECTED_ID = '__popup__'
 const POPUP_SURFACE_ID = 'site-popup'
 const isEditorSurfaceSelection = (id: string) => id === PAGE_SELECTED_ID || id === POPUP_SELECTED_ID
-type VideoActionKind = 'show' | 'hide' | 'open_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout'
+type VideoActionKind = 'show' | 'hide' | 'open_form' | 'open_video_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout'
 type VideoActionBeforeState = 'hidden' | 'visible' | 'unchanged'
+type VideoFormGateAnimation = 'fade' | 'instant' | 'slide_up'
 
 interface VideoActionRule {
   id: string
@@ -1075,11 +1076,12 @@ interface VideoActionTargetOption {
 }
 
 const VIDEO_ACTIONS_SETTING_KEY = 'videoActions'
+const VIDEO_FORM_GATE_ACTION_ID = 'video-form-gate-action'
 const VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS = 600
 const VIDEO_ACTION_TIMELINE_PADDING_SECONDS = 60
-const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout']
+const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout']
 const videoActionBeforeStates: VideoActionBeforeState[] = ['hidden', 'visible', 'unchanged']
-const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'show_popup', 'site_page', 'redirect', 'scroll_to']
+const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'scroll_to']
 const videoActionTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 const videoActionMultiTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form'])
 
@@ -1087,6 +1089,7 @@ const videoActionLabels: Record<VideoActionKind, string> = {
   show: 'Mostrar elementos',
   hide: 'Ocultar elementos',
   open_form: 'Abrir formulario',
+  open_video_form: 'Abrir formulario de video',
   show_popup: 'Mostrar popup',
   site_page: 'Redirigir a página',
   redirect: 'Redirigir a URL',
@@ -1100,6 +1103,7 @@ const videoActionRuleLabels: Record<VideoActionKind, string> = {
   show: 'mostrar',
   hide: 'ocultar',
   open_form: 'abrir formulario',
+  open_video_form: 'abrir formulario de video',
   show_popup: 'mostrar popup',
   site_page: 'redirigir a',
   redirect: 'redirigir a',
@@ -1114,6 +1118,12 @@ const videoActionBeforeLabels: Record<VideoActionBeforeState, string> = {
   visible: 'Mantener visible',
   unchanged: 'No cambiar nada'
 }
+
+const videoFormGateAnimationOptions: Array<{ value: VideoFormGateAnimation; label: string }> = [
+  { value: 'fade', label: 'Degradada' },
+  { value: 'instant', label: 'Repentina' },
+  { value: 'slide_up', label: 'Subir suave' }
+]
 
 const LANDING_DEFAULT_PAGE_PADDING = 36
 const HEADER_PANEL_BLOCK_TYPE: SiteBlockType = 'header_panel'
@@ -3891,6 +3901,11 @@ const getRecommendedVideoActionBefore = (action: VideoActionKind): VideoActionBe
   return 'unchanged'
 }
 
+const getVideoFormGateAnimation = (settings: Record<string, unknown> = {}): VideoFormGateAnimation => {
+  const animation = getSettingString(settings, 'videoFormGateAnimation') as VideoFormGateAnimation
+  return videoFormGateAnimationOptions.some(option => option.value === animation) ? animation : 'fade'
+}
+
 const getVideoActionTargetIdsFromSource = (source: Record<string, unknown>) => {
   const rawIds = Array.isArray(source.targetBlockIds)
     ? source.targetBlockIds
@@ -3910,7 +3925,11 @@ const normalizeVideoActionRule = (value: unknown, index = 0): VideoActionRule | 
   const source = value as Record<string, unknown>
   const action = isVideoActionKind(source.action) ? source.action : 'show'
   const sourceTargetBlockIds = getVideoActionTargetIdsFromSource(source)
-  const targetBlockIds = action === 'show_popup' ? [POPUP_SURFACE_ID] : sourceTargetBlockIds
+  const targetBlockIds = action === 'show_popup'
+    ? [POPUP_SURFACE_ID]
+    : action === 'open_video_form'
+      ? []
+      : sourceTargetBlockIds
   const targetBlockId = targetBlockIds[0] || ''
   const before = isVideoActionBeforeState(source.before) ? source.before : getRecommendedVideoActionBefore(action)
   const id = getSettingString(source, 'id') || `video-action-${index + 1}`
@@ -3933,10 +3952,20 @@ const normalizeVideoActionRule = (value: unknown, index = 0): VideoActionRule | 
 
 const getVideoActionRules = (settings: Record<string, unknown> = {}) => {
   const source = Array.isArray(settings[VIDEO_ACTIONS_SETTING_KEY]) ? settings[VIDEO_ACTIONS_SETTING_KEY] as unknown[] : []
-  return source
+  const rules = source
     .map(normalizeVideoActionRule)
     .filter((rule): rule is VideoActionRule => Boolean(rule))
-    .sort((a, b) => a.timeSeconds - b.timeSeconds)
+  const hasExplicitVideoFormRule = rules.some(rule => rule.action === 'open_video_form')
+  if (settings.videoFormGateEnabled === true && !hasExplicitVideoFormRule) {
+    const gateRule = normalizeVideoActionRule({
+      id: VIDEO_FORM_GATE_ACTION_ID,
+      timeSeconds: settings.videoFormGateTriggerSeconds,
+      action: 'open_video_form',
+      before: 'unchanged'
+    }, rules.length)
+    if (gateRule) rules.push(gateRule)
+  }
+  return rules.sort((a, b) => a.timeSeconds - b.timeSeconds)
 }
 
 const formatVideoActionTime = (value: unknown) => {
@@ -4045,6 +4074,9 @@ const getVideoActionPageLabel = (pageId: string | undefined, pages: SitePage[]) 
 
 const getVideoActionRuleText = (rule: VideoActionRule, targets: VideoActionTargetOption[], pages: SitePage[] = []) => {
   const targetLabel = getVideoActionTargetsLabel(rule, targets)
+  if (rule.action === 'open_video_form') {
+    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, abrir formulario de video.`
+  }
   if (rule.action === 'show_popup') {
     return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, mostrar popup.`
   }
@@ -4309,14 +4341,17 @@ const getButtonAction = (settings: Record<string, unknown>): ButtonAction => {
   return ['url', 'next_page', 'specific_page', 'open_popup', 'close_popup'].includes(action) ? action : 'url'
 }
 
+const isFormCompletionAction = (value: unknown): value is FormCompletionAction =>
+  value === 'form_default' || value === 'next_page' || value === 'next_page_if_qualified' || value === 'redirect_qualified'
+
 const getFormCompletionAction = (settings: Record<string, unknown>): FormCompletionAction => {
   const action = getSettingString(settings, 'completionAction') as FormCompletionAction
-  return ['form_default', 'next_page', 'next_page_if_qualified', 'redirect_qualified'].includes(action) ? action : 'form_default'
+  return isFormCompletionAction(action) ? action : 'form_default'
 }
 
 const getThemeFormCompletionAction = (theme?: SiteTheme): FormCompletionAction => {
   const action = theme?.formCompletionAction
-  return action === 'form_default' || action === 'next_page' || action === 'next_page_if_qualified' || action === 'redirect_qualified' ? action : 'next_page_if_qualified'
+  return isFormCompletionAction(action) ? action : 'next_page_if_qualified'
 }
 
 const getThemeDisqualifiedDestination = (theme?: SiteTheme): FormResultDestination => (
@@ -5380,19 +5415,40 @@ const buildEmbeddedFormSourceTheme = (
   return theme as SiteTheme
 }
 
+const getVideoFormGateEmbeddedTheme = (settings: Record<string, unknown> = {}): SiteTheme => {
+  const theme = settings.videoFormGateEmbeddedTheme
+  return theme && typeof theme === 'object' && !Array.isArray(theme) ? theme as SiteTheme : {}
+}
+
+const getVideoFormGateCompletionAction = (settings: Record<string, unknown> = {}): FormCompletionAction => {
+  const embeddedAction = getVideoFormGateEmbeddedTheme(settings).formCompletionAction
+  if (isFormCompletionAction(embeddedAction)) return embeddedAction
+  const completionAction = getFormCompletionAction(settings)
+  return completionAction === 'form_default' ? 'next_page_if_qualified' : completionAction
+}
+
 const buildVideoFormGateSourceTheme = (
   sourceSite: PublicSite,
   settings: Record<string, unknown>
-): SiteTheme => ({
-  ...buildEmbeddedFormSourceTheme(sourceSite, settings, getVideoFormGateSinglePage()),
-  pages: normalizePagesForSave(getVideoFormGateSinglePage()),
-  libraryFolderId: VIDEO_FORMS_FOLDER_ID,
-  librarySource: 'video_gate',
-  submitText: getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT,
-  continueText: getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT,
-  nextText: getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT,
-  backText: getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT
-})
+): SiteTheme => {
+  const embeddedTheme = getVideoFormGateEmbeddedTheme(settings)
+  const nextText = getSettingString(settings, 'videoFormGateNextText') || embeddedTheme.nextText || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT
+  const backText = getSettingString(settings, 'videoFormGateBackText') || embeddedTheme.backText || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT
+  const submitText = getSettingString(settings, 'videoFormGateSubmitText') || embeddedTheme.submitText || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT
+
+  return {
+    ...buildEmbeddedFormSourceTheme(sourceSite, settings, getVideoFormGateSinglePage()),
+    ...cloneJson(embeddedTheme),
+    pages: normalizePagesForSave(getVideoFormGateSinglePage()),
+    formCompletionAction: getVideoFormGateCompletionAction(settings),
+    libraryFolderId: VIDEO_FORMS_FOLDER_ID,
+    librarySource: 'video_gate',
+    submitText,
+    continueText: nextText,
+    nextText,
+    backText
+  }
+}
 
 const stripEmbeddedFormDraftSettings = (settings: Record<string, unknown>, formSiteId: string) => {
   const next = { ...settings }
@@ -22271,10 +22327,9 @@ const VideoPlayerSettingsControls: React.FC<{
   settings: Record<string, unknown>
   mediaUrl?: string
   sections?: 'all' | 'playback' | 'chrome'
-  afterPlaybackContent?: React.ReactNode
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ settings, mediaUrl = '', sections = 'all', afterPlaybackContent, onPatchSettings, onSave }) => {
+}> = ({ settings, mediaUrl = '', sections = 'all', onPatchSettings, onSave }) => {
   const controlsMode = getVideoControlsMode(settings)
   const showCustomControls = controlsMode === 'clean'
   const showPlaybackSections = sections === 'all' || sections === 'playback'
@@ -22489,7 +22544,6 @@ const VideoPlayerSettingsControls: React.FC<{
             </div>
           </section>
 
-          {afterPlaybackContent}
         </>
       )}
 
@@ -29692,11 +29746,37 @@ const VideoActionsPanel: React.FC<{
   pages: SitePage[]
   activePageId: string
   importedPopupDetected: boolean
+  forms?: PublicSite[]
+  customFields?: CustomFieldDefinition[]
+  customFieldFolders?: CustomFieldFolder[]
+  onCustomFieldCreated?: (field: CustomFieldDefinition) => void
+  enableVideoFormGateAction?: boolean
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
   onTargetHover?: (blockId: string) => void
-}> = ({ site, block, blocks, popupBlocks, pages, activePageId, importedPopupDetected, onPatchSettings, onSave, onTargetHover }) => {
-  const rules = useMemo(() => getVideoActionRules(block.settings || {}), [block.settings])
+}> = ({
+  site,
+  block,
+  blocks,
+  popupBlocks,
+  pages,
+  activePageId,
+  importedPopupDetected,
+  forms = [],
+  customFields = [],
+  customFieldFolders = [],
+  onCustomFieldCreated = () => undefined,
+  enableVideoFormGateAction = false,
+  onPatchSettings,
+  onSave,
+  onTargetHover
+}) => {
+  const settings = block.settings || {}
+  const allRules = useMemo(() => getVideoActionRules(settings), [settings])
+  const rules = useMemo(
+    () => enableVideoFormGateAction ? allRules : allRules.filter(rule => rule.action !== 'open_video_form'),
+    [allRules, enableVideoFormGateAction]
+  )
   const targets = useMemo(
     () => buildVideoActionTargetOptions(site, blocks, popupBlocks, block.id, importedPopupDetected),
     [site, blocks, popupBlocks, block.id, importedPopupDetected]
@@ -29712,10 +29792,50 @@ const VideoActionsPanel: React.FC<{
   )
   const pageTargets = useMemo(() => getManualRedirectPages(pages, activePageId), [pages, activePageId])
   const hasPopupTarget = targets.some(target => target.id === POPUP_SURFACE_ID)
+  const availablePrimaryVideoActionKinds = useMemo(
+    () => primaryVideoActionKinds.filter(action => enableVideoFormGateAction || action !== 'open_video_form'),
+    [enableVideoFormGateAction]
+  )
   const [expandedRuleId, setExpandedRuleId] = useState('')
   const [timeInputs, setTimeInputs] = useState<Record<string, string>>({})
   const [videoDurationSeconds, setVideoDurationSeconds] = useState(0)
   const timelineMaxSeconds = useMemo(() => getVideoActionTimelineMax(rules, videoDurationSeconds), [rules, videoDurationSeconds])
+
+  const buildVideoFormGateSettingsPatch = useCallback((nextRules: VideoActionRule[]) => {
+    if (!enableVideoFormGateAction) return {}
+    const currentSettings = block.settings || {}
+    const gateRule = nextRules.find(rule => rule.action === 'open_video_form') || null
+    if (!gateRule) {
+      return currentSettings.videoFormGateEnabled === true ? { videoFormGateEnabled: false } : {}
+    }
+
+    const selectedFormId = getVideoFormGateSourceId(block)
+    const selectedQuestions = getEditableVideoFormGateBlocks(block, forms)
+    const initialQuestions = selectedQuestions.length ? selectedQuestions : createVideoFormGateBlocks(site.id)
+    const hasDraftQuestions = Array.isArray(currentSettings.videoFormGateEmbeddedBlocks)
+      && (currentSettings.videoFormGateEmbeddedBlocks as unknown[]).length > 0
+    const completionAction = getVideoFormGateCompletionAction(currentSettings)
+    const nextSettingsForTheme = { ...currentSettings, completionAction }
+    const patch: Record<string, unknown> = {
+      videoFormGateEnabled: true,
+      videoFormGateTriggerSeconds: gateRule.timeSeconds,
+      videoFormGateTitle: getSettingString(currentSettings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE,
+      videoFormGateDescription: getSettingString(currentSettings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION,
+      videoFormGateNextText: getSettingString(currentSettings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT,
+      videoFormGateBackText: getSettingString(currentSettings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT,
+      videoFormGateSubmitText: getSettingString(currentSettings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT,
+      videoFormGateAnimation: getVideoFormGateAnimation(currentSettings),
+      completionAction
+    }
+
+    if (!hasDraftQuestions) {
+      patch.videoFormGateEmbeddedBlocks = normalizeVideoFormGateBlocks(initialQuestions, selectedFormId || site.id)
+    }
+    if (!currentSettings.videoFormGateEmbeddedTheme) {
+      patch.videoFormGateEmbeddedTheme = buildVideoFormGateSourceTheme(site, nextSettingsForTheme)
+    }
+    return patch
+  }, [block, enableVideoFormGateAction, forms, site])
 
   useEffect(() => {
     const visibleRuleIds = new Set(rules.map(rule => rule.id))
@@ -29760,9 +29880,12 @@ const VideoActionsPanel: React.FC<{
       .map((rule, index) => normalizeVideoActionRule(rule, index))
       .filter((rule): rule is VideoActionRule => Boolean(rule))
 
-    onPatchSettings({ [VIDEO_ACTIONS_SETTING_KEY]: normalizedRules })
+    onPatchSettings({
+      [VIDEO_ACTIONS_SETTING_KEY]: normalizedRules,
+      ...buildVideoFormGateSettingsPatch(normalizedRules)
+    })
     window.setTimeout(onSave, 0)
-  }, [onPatchSettings, onSave])
+  }, [buildVideoFormGateSettingsPatch, onPatchSettings, onSave])
 
   const patchRule = useCallback((ruleId: string, patch: Partial<VideoActionRule>, options?: { seek?: boolean }) => {
     const nextRules = rules.map(rule => rule.id === ruleId ? { ...rule, ...patch } : rule)
@@ -29774,7 +29897,15 @@ const VideoActionsPanel: React.FC<{
 
   const openNewRule = useCallback(() => {
     const timeSeconds = Math.min(timelineMaxSeconds, getCurrentEditorVideoTime(block.id))
-    const defaultAction: VideoActionKind = contentTargets.length ? 'show' : hasPopupTarget ? 'show_popup' : pageTargets.length ? 'site_page' : 'redirect'
+    const defaultAction: VideoActionKind = contentTargets.length
+      ? 'show'
+      : enableVideoFormGateAction && !rules.some(rule => rule.action === 'open_video_form')
+        ? 'open_video_form'
+        : hasPopupTarget
+          ? 'show_popup'
+          : pageTargets.length
+            ? 'site_page'
+            : 'redirect'
     const targetBlockIds = defaultAction === 'show_popup' ? [POPUP_SURFACE_ID] : []
     const nextRule = normalizeVideoActionRule({
       id: makeVideoActionId(),
@@ -29791,7 +29922,7 @@ const VideoActionsPanel: React.FC<{
     setExpandedRuleId(nextRule.id)
     setTimeInputs(current => ({ ...current, [nextRule.id]: formatVideoActionTime(timeSeconds) }))
     seekEditorVideoToTime(block.id, timeSeconds)
-  }, [block.id, contentTargets.length, hasPopupTarget, pageTargets, patchRules, rules, timelineMaxSeconds])
+  }, [block.id, contentTargets.length, enableVideoFormGateAction, hasPopupTarget, pageTargets, patchRules, rules, timelineMaxSeconds])
 
   const getTargetOptionsForAction = useCallback((action: VideoActionKind) => {
     if (action === 'open_form') return formTargets
@@ -29801,7 +29932,11 @@ const VideoActionsPanel: React.FC<{
 
   const handleChangeAction = useCallback((rule: VideoActionRule, action: VideoActionKind) => {
     const previousRecommended = getRecommendedVideoActionBefore(rule.action)
-    const nextBefore = rule.before === previousRecommended ? getRecommendedVideoActionBefore(action) : rule.before
+    const nextBefore = action === 'open_video_form'
+      ? 'unchanged'
+      : rule.before === previousRecommended
+        ? getRecommendedVideoActionBefore(action)
+        : rule.before
     const candidateTargets = getTargetOptionsForAction(action)
     const candidateTargetIds = new Set(candidateTargets.map(target => target.id))
     const currentTargetIds = getVideoActionTargetIds(rule).filter(targetId => targetId !== POPUP_SURFACE_ID)
@@ -29817,9 +29952,9 @@ const VideoActionsPanel: React.FC<{
       before: nextBefore,
       targetBlockId: nextTargetIds[0] || '',
       targetBlockIds: nextTargetIds,
-      targetPageId: action === 'site_page' ? rule.targetPageId || pageTargets[0]?.id || '' : rule.targetPageId,
-      redirectUrl: action === 'redirect' ? rule.redirectUrl || '' : rule.redirectUrl,
-      pauseUntilComplete: action === 'open_form' ? rule.pauseUntilComplete !== false : rule.pauseUntilComplete
+      targetPageId: action === 'site_page' ? rule.targetPageId || pageTargets[0]?.id || '' : '',
+      redirectUrl: action === 'redirect' ? rule.redirectUrl || '' : '',
+      pauseUntilComplete: action === 'open_form' ? rule.pauseUntilComplete !== false : false
     })
   }, [getTargetOptionsForAction, pageTargets, patchRule])
 
@@ -29927,6 +30062,7 @@ const VideoActionsPanel: React.FC<{
 
   const renderRuleEditor = (rule: VideoActionRule) => {
     const timeInput = timeInputs[rule.id] ?? formatVideoActionTime(rule.timeSeconds)
+    const videoFormActionTaken = rule.action !== 'open_video_form' && rules.some(item => item.action === 'open_video_form')
 
     return (
       <div className={styles.videoActionInlineEditor}>
@@ -29956,11 +30092,11 @@ const VideoActionsPanel: React.FC<{
             onChange={(event) => handleChangeAction(rule, event.target.value as VideoActionKind)}
             onBlur={onSave}
           >
-            {primaryVideoActionKinds.map(action => (
+            {availablePrimaryVideoActionKinds.map(action => (
               <option
                 key={action}
                 value={action}
-                disabled={(action === 'show_popup' && !hasPopupTarget) || (action === 'open_form' && !formTargets.length) || (action === 'site_page' && !pageTargets.length)}
+                disabled={(action === 'show_popup' && !hasPopupTarget) || (action === 'open_form' && !formTargets.length) || (action === 'site_page' && !pageTargets.length) || (action === 'open_video_form' && videoFormActionTaken)}
               >
                 {videoActionLabels[action]}
               </option>
@@ -29968,18 +30104,20 @@ const VideoActionsPanel: React.FC<{
           </CustomSelect>
         </label>
 
-        <label className={styles.field}>
-          <span>Antes de este momento</span>
-          <CustomSelect
-            value={rule.before}
-            onChange={(event) => patchRule(rule.id, { before: event.target.value as VideoActionBeforeState })}
-            onBlur={onSave}
-          >
-            {videoActionBeforeStates.map(before => (
-              <option key={before} value={before}>{videoActionBeforeLabels[before]}</option>
-            ))}
-          </CustomSelect>
-        </label>
+        {rule.action !== 'open_video_form' && (
+          <label className={styles.field}>
+            <span>Antes de este momento</span>
+            <CustomSelect
+              value={rule.before}
+              onChange={(event) => patchRule(rule.id, { before: event.target.value as VideoActionBeforeState })}
+              onBlur={onSave}
+            >
+              {videoActionBeforeStates.map(before => (
+                <option key={before} value={before}>{videoActionBeforeLabels[before]}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
 
         {rule.action === 'site_page' && (
           <label className={styles.field}>
@@ -30009,6 +30147,26 @@ const VideoActionsPanel: React.FC<{
           </label>
         )}
 
+        {rule.action === 'open_video_form' && (
+          <VideoFormGateSettingsPanel
+            site={site}
+            block={block}
+            forms={forms}
+            customFields={customFields}
+            customFieldFolders={customFieldFolders}
+            pages={pages}
+            activePageId={activePageId}
+            forceEnabled
+            showEnableSwitch={false}
+            showTriggerControl={false}
+            showCompletionControls
+            showDesignControls
+            onPatchSettings={onPatchSettings}
+            onCustomFieldCreated={onCustomFieldCreated}
+            onSave={onSave}
+          />
+        )}
+
         {videoActionTargetKinds.has(rule.action) && (
           <div className={styles.videoActionStep}>
             <div className={styles.videoActionStepHeader}>
@@ -30029,10 +30187,44 @@ const VideoActionsPanel: React.FC<{
           >
             Eliminar acción
           </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            leftIcon={<Save size={14} />}
+            onClick={() => {
+              onSave()
+              setExpandedRuleId('')
+            }}
+          >
+            Guardar acción
+          </Button>
         </div>
       </div>
     )
   }
+
+  const renderRuleSummary = (rule: VideoActionRule) => (
+    <button
+      type="button"
+      className={styles.videoActionRuleSummary}
+      onClick={() => {
+        setExpandedRuleId(rule.id)
+        setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(rule.timeSeconds) }))
+        seekEditorVideoToTime(block.id, rule.timeSeconds)
+      }}
+    >
+      <span className={styles.videoActionRuleSummaryTime}>
+        <Clock3 size={13} />
+        {formatVideoActionTime(rule.timeSeconds)}
+      </span>
+      <span className={styles.videoActionRuleSummaryText}>
+        <strong>{videoActionLabels[rule.action]}</strong>
+        <small>{getVideoActionRuleText(rule, targets, pages)}</small>
+      </span>
+      <ChevronDown size={15} />
+    </button>
+  )
 
   return (
     <div className={styles.videoActionPanel}>
@@ -30053,7 +30245,7 @@ const VideoActionsPanel: React.FC<{
           <div className={styles.videoActionRuleList}>
             {rules.map(rule => (
               <article key={rule.id} className={`${styles.videoActionRule} ${expandedRuleId === rule.id ? styles.videoActionRuleExpanded : ''}`}>
-                {renderRuleEditor(rule)}
+                {expandedRuleId === rule.id ? renderRuleEditor(rule) : renderRuleSummary(rule)}
               </article>
             ))}
           </div>
@@ -30289,21 +30481,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       onSave={onSave}
     />
   ) : null
-  const videoFormGateContent = block.blockType === 'video' ? (
-    <VideoFormGateSettingsPanel
-      site={site}
-      block={block}
-      forms={forms}
-      customFields={customFields}
-      customFieldFolders={customFieldFolders}
-      pages={pages}
-      activePageId={activePageId}
-      onPatchSettings={onPatchSettings}
-      onCustomFieldCreated={onCustomFieldCreated}
-      onSave={onSave}
-    />
-  ) : null
-
   const settingsContent = (
     <>
       {!isField && blockHasExtraSettingsContent && (
@@ -30317,7 +30494,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           activePageId={activePageId}
           connectedSocialProfiles={connectedSocialProfiles}
           loadingSocialProfiles={loadingSocialProfiles}
-          videoFormGateContent={videoFormGateContent}
           onPatchSettings={onPatchSettings}
           onSave={onSave}
         />
@@ -30422,6 +30598,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       pages={pages}
       activePageId={activePageId}
       importedPopupDetected={importedPopupDetected}
+      forms={forms}
+      customFields={customFields}
+      customFieldFolders={customFieldFolders}
+      onCustomFieldCreated={onCustomFieldCreated}
+      enableVideoFormGateAction
       onPatchSettings={onPatchSettings}
       onSave={onSave}
       onTargetHover={onVideoActionTargetHover}
@@ -30621,7 +30802,6 @@ interface LandingBlockSettingsProps {
   activePageId: string
   connectedSocialProfiles: ConnectedSocialProfile[]
   loadingSocialProfiles: boolean
-  videoFormGateContent?: React.ReactNode
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }
@@ -30804,12 +30984,33 @@ const VideoFormGateSettingsPanel: React.FC<{
   customFieldFolders: CustomFieldFolder[]
   pages: SitePage[]
   activePageId: string
+  forceEnabled?: boolean
+  showEnableSwitch?: boolean
+  showTriggerControl?: boolean
+  showCompletionControls?: boolean
+  showDesignControls?: boolean
   onPatchSettings: (patch: Record<string, unknown>) => void
   onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onSave: () => void
-}> = ({ site, block, forms, customFields, customFieldFolders, pages, activePageId, onPatchSettings, onCustomFieldCreated, onSave }) => {
+}> = ({
+  site,
+  block,
+  forms,
+  customFields,
+  customFieldFolders,
+  pages,
+  activePageId,
+  forceEnabled = false,
+  showEnableSwitch = true,
+  showTriggerControl = true,
+  showCompletionControls = false,
+  showDesignControls = false,
+  onPatchSettings,
+  onCustomFieldCreated,
+  onSave
+}) => {
   const settings = block.settings || {}
-  const enabled = settings.videoFormGateEnabled === true
+  const enabled = forceEnabled || settings.videoFormGateEnabled === true
   const selectedFormId = getVideoFormGateSourceId(block)
   const selectedForm = forms.find(form => form.id === selectedFormId) || null
   const questions = getEditableVideoFormGateBlocks(block, forms)
@@ -30819,6 +31020,12 @@ const VideoFormGateSettingsPanel: React.FC<{
   const activeQuestion = questions.find(question => question.id === activeQuestionId) || questions[0] || null
   const activeQuestionSettings = activeQuestion?.settings || {}
   const activeQuestionPreset = activeQuestion ? getSystemFormFieldPresetForBlock(activeQuestion) : null
+  const videoGateTheme = useMemo(() => buildVideoFormGateSourceTheme(site, settings), [site, settings])
+  const videoGateSite = useMemo(() => ({
+    ...site,
+    siteType: 'standard_form' as SiteType,
+    theme: videoGateTheme
+  }), [site, videoGateTheme])
 
   useEffect(() => {
     if (!enabled) return
@@ -30829,6 +31036,33 @@ const VideoFormGateSettingsPanel: React.FC<{
   const patchAndSaveSoon = (patch: Record<string, unknown>) => {
     onPatchSettings(patch)
     window.setTimeout(onSave, 0)
+  }
+
+  const patchVideoGateTheme = (patch: Partial<SiteTheme>) => {
+    const nextTheme = {
+      ...videoGateTheme,
+      ...patch
+    }
+    const settingsPatch: Record<string, unknown> = {
+      videoFormGateEmbeddedTheme: nextTheme
+    }
+    if (patch.submitText !== undefined) settingsPatch.videoFormGateSubmitText = patch.submitText
+    if (patch.nextText !== undefined || patch.continueText !== undefined) {
+      settingsPatch.videoFormGateNextText = patch.nextText ?? patch.continueText
+    }
+    if (patch.backText !== undefined) settingsPatch.videoFormGateBackText = patch.backText
+    if (patch.formCompletionAction !== undefined) settingsPatch.completionAction = patch.formCompletionAction
+    onPatchSettings(settingsPatch)
+  }
+
+  const patchButtonCopy = (patch: Record<string, unknown>, themePatch: Partial<SiteTheme>) => {
+    onPatchSettings({
+      ...patch,
+      videoFormGateEmbeddedTheme: {
+        ...videoGateTheme,
+        ...themePatch
+      }
+    })
   }
 
   const patchQuestions = (nextQuestions: SiteBlock[], nextActiveQuestionId?: string) => {
@@ -30854,7 +31088,10 @@ const VideoFormGateSettingsPanel: React.FC<{
       videoFormGateNextText: getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT,
       videoFormGateBackText: getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT,
       videoFormGateSubmitText: getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT,
-      videoFormGateEmbeddedBlocks: normalizeVideoFormGateBlocks(initialQuestions, selectedFormId || site.id)
+      videoFormGateAnimation: getVideoFormGateAnimation(settings),
+      completionAction: getVideoFormGateCompletionAction(settings),
+      videoFormGateEmbeddedBlocks: normalizeVideoFormGateBlocks(initialQuestions, selectedFormId || site.id),
+      videoFormGateEmbeddedTheme: buildVideoFormGateSourceTheme(site, settings)
     })
     setActiveQuestionId(initialQuestions[0]?.id || '')
   }
@@ -30862,9 +31099,13 @@ const VideoFormGateSettingsPanel: React.FC<{
   const selectSourceForm = (formId: string) => {
     const source = forms.find(form => form.id === formId) || null
     const sourceQuestions = source ? getVideoFormGateBlocksFromForm(source) : createVideoFormGateBlocks(site.id)
+    const sourceSettingsForTheme = source
+      ? { ...settings, videoFormGateEmbeddedTheme: source.theme || {} }
+      : settings
     patchAndSaveSoon({
       videoFormGateFormSiteId: formId,
-      videoFormGateEmbeddedBlocks: normalizeVideoFormGateBlocks(sourceQuestions, formId || site.id)
+      videoFormGateEmbeddedBlocks: normalizeVideoFormGateBlocks(sourceQuestions, formId || site.id),
+      videoFormGateEmbeddedTheme: buildVideoFormGateSourceTheme(source || site, sourceSettingsForTheme)
     })
     setActiveQuestionId(sourceQuestions[0]?.id || '')
   }
@@ -30937,7 +31178,9 @@ const VideoFormGateSettingsPanel: React.FC<{
           <strong>Formulario de video</strong>
           <span>Bloquea el video y captura respuestas dentro del mismo reproductor.</span>
         </div>
-        <Switch checked={enabled} onChange={enableGate} aria-label="Activar formulario de video" />
+        {showEnableSwitch && (
+          <Switch checked={enabled} onChange={enableGate} aria-label="Activar formulario de video" />
+        )}
       </div>
 
       {enabled && (
@@ -30952,27 +31195,38 @@ const VideoFormGateSettingsPanel: React.FC<{
             </CustomSelect>
           </label>
 
-          <div className={styles.twoColumn}>
-            <label className={styles.field}>
-              <span>Mostrar en segundo</span>
-              <NumberInput
-                value={getSettingNumber(settings, 'videoFormGateTriggerSeconds', 0, 0, 86399)}
-                min={0}
-                max={86399}
-                step={1}
-                onValueChange={(value) => onPatchSettings({ videoFormGateTriggerSeconds: Math.round(value) })}
-                onBlur={onSave}
-              />
-            </label>
+          {showTriggerControl ? (
+            <div className={styles.twoColumn}>
+              <label className={styles.field}>
+                <span>Mostrar en segundo</span>
+                <NumberInput
+                  value={getSettingNumber(settings, 'videoFormGateTriggerSeconds', 0, 0, 86399)}
+                  min={0}
+                  max={86399}
+                  step={1}
+                  onValueChange={(value) => onPatchSettings({ videoFormGateTriggerSeconds: Math.round(value) })}
+                  onBlur={onSave}
+                />
+              </label>
+              <label className={styles.field}>
+                <span>Botón final</span>
+                <input
+                  value={getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT}
+                  onChange={(event) => patchButtonCopy({ videoFormGateSubmitText: event.target.value }, { submitText: event.target.value })}
+                  onBlur={onSave}
+                />
+              </label>
+            </div>
+          ) : (
             <label className={styles.field}>
               <span>Botón final</span>
               <input
                 value={getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT}
-                onChange={(event) => onPatchSettings({ videoFormGateSubmitText: event.target.value })}
+                onChange={(event) => patchButtonCopy({ videoFormGateSubmitText: event.target.value }, { submitText: event.target.value })}
                 onBlur={onSave}
               />
             </label>
-          </div>
+          )}
 
           <label className={styles.field}>
             <span>Título</span>
@@ -30998,7 +31252,7 @@ const VideoFormGateSettingsPanel: React.FC<{
               <span>Botón siguiente</span>
               <input
                 value={getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT}
-                onChange={(event) => onPatchSettings({ videoFormGateNextText: event.target.value })}
+                onChange={(event) => patchButtonCopy({ videoFormGateNextText: event.target.value }, { nextText: event.target.value, continueText: event.target.value })}
                 onBlur={onSave}
               />
             </label>
@@ -31006,11 +31260,125 @@ const VideoFormGateSettingsPanel: React.FC<{
               <span>Botón anterior</span>
               <input
                 value={getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT}
-                onChange={(event) => onPatchSettings({ videoFormGateBackText: event.target.value })}
+                onChange={(event) => patchButtonCopy({ videoFormGateBackText: event.target.value }, { backText: event.target.value })}
                 onBlur={onSave}
               />
             </label>
           </div>
+
+          <label className={styles.field}>
+            <span>Animación de aparición</span>
+            <CustomSelect
+              value={getVideoFormGateAnimation(settings)}
+              onChange={(event) => onPatchSettings({ videoFormGateAnimation: event.target.value })}
+              onBlur={onSave}
+            >
+              {videoFormGateAnimationOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+
+          {showCompletionControls && (
+            <div className={styles.settingsGroup}>
+              <div className={styles.panelSubheader}>Al terminar</div>
+              <label className={styles.field}>
+                <span>Al enviar formulario</span>
+                <CustomSelect
+                  value={getVideoFormGateCompletionAction(settings)}
+                  onChange={(event) => patchVideoGateTheme({ formCompletionAction: event.target.value as FormCompletionAction })}
+                  onBlur={onSave}
+                >
+                  <option value="next_page_if_qualified">Mostrar Agradecimiento o Descalificación según resultado</option>
+                  <option value="redirect_qualified">Redirigir calificados a una URL</option>
+                  <option value="next_page">Siempre mostrar Agradecimiento</option>
+                  <option value="form_default">Mostrar mensaje en el reproductor</option>
+                </CustomSelect>
+              </label>
+              {getVideoFormGateCompletionAction(settings) === 'redirect_qualified' && (
+                <label className={styles.field}>
+                  <span>URL para calificados</span>
+                  <input
+                    type="url"
+                    value={videoGateTheme.formQualifiedRedirectUrl || ''}
+                    placeholder="https://tudominio.com/gracias"
+                    onChange={(event) => patchVideoGateTheme({ formQualifiedRedirectUrl: event.target.value })}
+                    onBlur={onSave}
+                  />
+                </label>
+              )}
+              <label className={styles.field}>
+                <span>Si descalifica</span>
+                <CustomSelect
+                  value={getThemeDisqualifiedDestination(videoGateTheme)}
+                  onChange={(event) => patchVideoGateTheme({ formDisqualifiedCompletionAction: event.target.value === 'redirect_url' ? 'redirect_url' : 'disqualified_page' })}
+                  onBlur={onSave}
+                >
+                  <option value="result_page">Mostrar Descalificación</option>
+                  <option value="redirect_url">Redirigir a una URL</option>
+                </CustomSelect>
+              </label>
+              {getThemeDisqualifiedDestination(videoGateTheme) === 'redirect_url' && (
+                <label className={styles.field}>
+                  <span>URL si descalifica</span>
+                  <input
+                    type="url"
+                    value={videoGateTheme.formDisqualifiedRedirectUrl || ''}
+                    placeholder="https://tudominio.com/no-califica"
+                    onChange={(event) => patchVideoGateTheme({ formDisqualifiedRedirectUrl: event.target.value })}
+                    onBlur={onSave}
+                  />
+                </label>
+              )}
+              <div className={styles.twoColumn}>
+                <label className={styles.field}>
+                  <span>Mensaje si califica</span>
+                  <textarea
+                    rows={2}
+                    value={videoGateTheme.finalMessages?.success || ''}
+                    placeholder="Listo. Recibimos tu información."
+                    onChange={(event) => patchVideoGateTheme({ finalMessages: { ...(videoGateTheme.finalMessages || {}), success: event.target.value } })}
+                    onBlur={onSave}
+                  />
+                </label>
+                <label className={styles.field}>
+                  <span>Mensaje si descalifica</span>
+                  <textarea
+                    rows={2}
+                    value={videoGateTheme.finalMessages?.disqualified || ''}
+                    placeholder="Gracias por responder. Por ahora no parece ser el siguiente paso ideal."
+                    onChange={(event) => patchVideoGateTheme({ finalMessages: { ...(videoGateTheme.finalMessages || {}), disqualified: event.target.value } })}
+                    onBlur={onSave}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+
+          {showDesignControls && (
+            <div className={styles.settingsGroup}>
+              <div className={styles.panelSubheader}>Diseño del formulario</div>
+              <div className={styles.twoColumn}>
+                <ColorField
+                  label="Fondo"
+                  value={getThemePaint(videoGateTheme, 'backgroundColor', userBgColor(videoGateSite) || resolvedPageBg(videoGateSite))}
+                  allowGradient
+                  onChange={(value) => patchVideoGateTheme({ backgroundColor: value })}
+                  onCommit={onSave}
+                />
+                <ColorField
+                  label="Texto"
+                  value={getThemePaint(videoGateTheme, 'textColor', isSiteDark(videoGateSite) ? '#ffffff' : '#111827')}
+                  allowGradient
+                  onChange={(value) => patchVideoGateTheme({ textColor: value, textColorCustom: true })}
+                  onCommit={onSave}
+                />
+              </div>
+              <FormFieldGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
+              <FormOptionGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
+              <FormSubmitGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
+            </div>
+          )}
 
           <div className={styles.videoFormGateQuestionTools}>
             <CustomSelect value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as SiteBlockType)}>
@@ -31155,7 +31523,7 @@ const VideoFormGateSettingsPanel: React.FC<{
   )
 }
 
-const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, videoFormGateContent, onPatchSettings, onSave }) => {
+const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
 
   if (isPanelBlock(block)) {
@@ -31425,7 +31793,6 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
             settings={settings}
             mediaUrl={getSettingString(settings, 'mediaUrl')}
             sections="playback"
-            afterPlaybackContent={videoFormGateContent}
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
