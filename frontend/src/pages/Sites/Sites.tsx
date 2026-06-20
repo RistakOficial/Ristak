@@ -9935,19 +9935,6 @@ export const Sites: React.FC = () => {
                           {editorPageSelector}
                         </div>
                       )}
-                      {hasEditablePages(editorToolbarSettingsSite) && (
-                        <button
-                          type="button"
-                          className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${headerModalOpen ? styles.headerToolbarButtonActive : ''}`}
-                          onClick={() => setHeaderModalOpen(current => !current)}
-                          disabled={editorAIGenerating}
-                          title="Configurar Headers"
-                          aria-label="Configurar Headers"
-                        >
-                          <PanelTop size={15} />
-                          <span>Headers</span>
-                        </button>
-                      )}
                       {canConfigurePopup && (
                         <button
                           type="button"
