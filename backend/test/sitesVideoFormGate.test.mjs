@@ -188,6 +188,7 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, /ristakVideoFormGateRuntimeLoaded/)
     assert.match(html, /data-trigger-seconds="3"/)
     assert.match(html, /--rstk-video-form-gate-video-bg:rgba\(255, 255, 255, 0\.2\)/)
+    assert.match(html, /rstk-video-gate-active\{aspect-ratio:auto;min-height:/)
     assert.match(html, /data-completion-action="show_targets"/)
     assert.match(html, /data-repeat-mode="remember_visitor"/)
     assert.match(html, /data-storage-ttl-seconds="3888000"/)

@@ -28132,7 +28132,8 @@ const VideoPlayerPreview: React.FC<{
     isMuted ? 'rstk-video-is-muted' : '',
     `rstk-video-${resolvedOrientation}`,
     `rstk-video-play-shape-${playShape}`,
-    `rstk-video-play-${playIconStyle}`
+    `rstk-video-play-${playIconStyle}`,
+    showGatePreview ? 'rstk-video-form-gate-previewing' : ''
   ].filter(Boolean).join(' ')
 
   useEffect(() => {

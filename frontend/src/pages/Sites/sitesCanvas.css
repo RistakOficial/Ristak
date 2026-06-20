@@ -368,6 +368,15 @@
   container-type: inline-size;
   isolation: isolate;
 }
+.rstkCanvas .rstk-video-form-gate-previewing,
+.rstkCanvas .rstk-video-gate-active {
+  aspect-ratio: auto;
+  min-height: min(760px, max(520px, 86svh));
+}
+.rstkCanvas .rstk-video-form-gate-previewing.rstk-video-portrait,
+.rstkCanvas .rstk-video-gate-active.rstk-video-portrait {
+  min-height: min(800px, max(560px, 88svh));
+}
 .rstkCanvas .rstk-video-custom-controls video { cursor: pointer; }
 .rstkCanvas .rstk-video-overlay {
   position: absolute;
@@ -568,6 +577,28 @@
   }
   .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input {
     grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 760px) {
+  .rstkCanvas .rstk-video-form-gate-previewing,
+  .rstkCanvas .rstk-video-gate-active {
+    width: 100%;
+    margin-inline: auto;
+    min-height: min(720px, max(520px, 82svh));
+  }
+  .rstkCanvas .rstk-video-form-gate-previewing.rstk-video-portrait,
+  .rstkCanvas .rstk-video-gate-active.rstk-video-portrait {
+    min-height: min(800px, max(560px, 88svh));
+  }
+}
+@supports not (height: 1svh) {
+  .rstkCanvas .rstk-video-form-gate-previewing,
+  .rstkCanvas .rstk-video-gate-active {
+    min-height: min(760px, max(520px, 86vh));
+  }
+  .rstkCanvas .rstk-video-form-gate-previewing.rstk-video-portrait,
+  .rstkCanvas .rstk-video-gate-active.rstk-video-portrait {
+    min-height: min(800px, max(560px, 88vh));
   }
 }
 .rstkCanvas .rstk-video-play-dot {
