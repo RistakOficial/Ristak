@@ -23167,8 +23167,6 @@ const Palette: React.FC<{
       items: group.items.filter(item => allowed.has(item.blockType) && (!PANEL_BLOCK_TYPES.has(item.blockType) || !existingPanelTypes.has(item.blockType)))
     }))
     .filter(group => group.items.length > 0)
-  const elementCountLabel = `${elements.length} ${elements.length === 1 ? 'elemento' : 'elementos'}`
-
   const handleElementDragEnd = (event: DragEndEvent) => {
     if (!event.over || event.active.id === event.over.id) return
     const oldIndex = elements.findIndex(block => block.id === event.active.id)
@@ -23181,29 +23179,16 @@ const Palette: React.FC<{
     <aside className={styles.palette}>
       <div className={styles.panelHeader}>
         <strong>{viewMode === 'elements' ? 'Elementos' : 'Bloques'}</strong>
-        {viewMode === 'elements' && <span>{elementCountLabel}</span>}
-      </div>
-      <div className={styles.paletteModeActions} role="group" aria-label="Vista del panel izquierdo">
-        <Button
+        <button
           type="button"
-          variant={viewMode === 'blocks' ? 'primary' : 'secondary'}
-          size="sm"
-          className={styles.paletteModeButton}
-          leftIcon={<LayoutTemplate size={14} />}
-          onClick={() => setViewMode('blocks')}
+          className={styles.paletteHeaderToggle}
+          aria-pressed={viewMode === 'elements'}
+          aria-label={viewMode === 'elements' ? 'Ver bloques' : 'Ver elementos'}
+          onClick={() => setViewMode(viewMode === 'elements' ? 'blocks' : 'elements')}
         >
-          Bloques
-        </Button>
-        <Button
-          type="button"
-          variant={viewMode === 'elements' ? 'primary' : 'secondary'}
-          size="sm"
-          className={styles.paletteModeButton}
-          leftIcon={<ListOrdered size={14} />}
-          onClick={() => setViewMode('elements')}
-        >
-          Ver elementos
-        </Button>
+          {viewMode === 'elements' ? <LayoutTemplate size={13} /> : <ListOrdered size={13} />}
+          {viewMode === 'elements' ? 'Ver bloques' : 'Ver elementos'}
+        </button>
       </div>
 
       {viewMode === 'elements' ? (
