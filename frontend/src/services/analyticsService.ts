@@ -43,6 +43,20 @@ export interface ContactConversionsByDate {
 
 export type ContactConversionListType = 'registrations' | 'prospects' | 'appointments' | 'attendances' | 'customers'
 
+export interface WhatsAppAnalyticsSummary {
+  metrics?: {
+    inboundMessages?: number
+    conversations?: number
+    contacts?: number
+    attributionRate?: number
+  }
+  trend?: Array<{ label: string; messages?: number }>
+  status?: {
+    connected?: boolean
+    hasData?: boolean
+  }
+}
+
 /**
  * Obtiene conteo de contactos con visitor_id por fecha de creación
  */
@@ -60,6 +74,18 @@ export async function getContactConversionsByDate(startDate: string, endDate: st
   return apiClient.get<ContactConversionsByDate[]>(
     `/tracking/contact-conversions-by-date?start=${startDate}&end=${endDate}`
   )
+}
+
+/**
+ * Obtiene resumen y tendencia de mensajes entrantes de WhatsApp.
+ */
+export async function getWhatsAppAnalyticsSummary(
+  startDate: string,
+  endDate: string,
+  groupBy: 'day' | 'month' | 'year' = 'day'
+): Promise<WhatsAppAnalyticsSummary> {
+  const params = new URLSearchParams({ start: startDate, end: endDate, groupBy })
+  return apiClient.get<WhatsAppAnalyticsSummary>(`/tracking/whatsapp-summary?${params.toString()}`)
 }
 
 /**

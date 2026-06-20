@@ -10,6 +10,7 @@ const toRanked = (bucketMap, limit = 10) =>
     .slice(0, limit)
 
 const GENERIC_SOURCES = new Set(['Directo', 'Desconocido', 'Otro'])
+const isPostgres = Boolean(process.env.DATABASE_URL)
 
 const hasText = (value) => {
   if (value === null || value === undefined) return false
@@ -25,6 +26,13 @@ const resolveWhatsAppApiSource = (message = {}) => {
     referral_ctwa_clid: message.detected_ctwa_clid,
     referral_source_app: message.detected_source_app,
     referral_entry_point: message.detected_entry_point,
+    attribution_url: message.attribution_url,
+    source_url: message.attribution_url,
+    source_type: message.attribution_medium,
+    source_app: message.attribution_session_source,
+    source_id: message.attribution_ad_id,
+    ad_id: message.attribution_ad_id,
+    ctwa_clid: message.attribution_ctwa_clid,
     source: message.contact_source || 'whatsapp_api'
   })
 
@@ -49,6 +57,38 @@ const getWhatsAppApiIdentity = (message = {}) => {
   if (hasText(message.phone)) return `phone:${message.phone}`
   if (hasText(message.whatsapp_api_contact_id)) return `whatsapp-profile:${message.whatsapp_api_contact_id}`
   return `message:${message.id}`
+}
+
+const getWhatsAppApiIdentitySql = (alias = 'msg') => `
+  CASE
+    WHEN COALESCE(${alias}.contact_id, '') != '' THEN 'contact:' || ${alias}.contact_id
+    WHEN COALESCE(${alias}.phone, '') != '' THEN 'phone:' || ${alias}.phone
+    WHEN COALESCE(${alias}.whatsapp_api_contact_id, '') != '' THEN 'whatsapp-profile:' || ${alias}.whatsapp_api_contact_id
+    ELSE 'message:' || ${alias}.id
+  END
+`
+
+function whatsappTimestampExpression(column, timezone = 'UTC') {
+  if (!isPostgres) {
+    return `datetime(${column}, '-6 hours')`
+  }
+
+  const safeTimezone = String(timezone || 'UTC').replace(/'/g, "''")
+  return `((${column})::timestamptz AT TIME ZONE '${safeTimezone}')`
+}
+
+function whatsappPeriodExpression(column, groupBy = 'day', timezone = 'UTC') {
+  const localTimestamp = whatsappTimestampExpression(column, timezone)
+
+  if (!isPostgres) {
+    if (groupBy === 'year') return `strftime('%Y', ${localTimestamp})`
+    if (groupBy === 'month') return `strftime('%Y-%m', ${localTimestamp})`
+    return `strftime('%Y-%m-%d', ${localTimestamp})`
+  }
+
+  if (groupBy === 'year') return `TO_CHAR(${localTimestamp}, 'YYYY')`
+  if (groupBy === 'month') return `TO_CHAR(${localTimestamp}, 'YYYY-MM')`
+  return `TO_CHAR(${localTimestamp}, 'YYYY-MM-DD')`
 }
 
 async function getWhatsAppApiOriginMessages(range) {
@@ -80,13 +120,96 @@ async function getWhatsAppApiOriginMessages(range) {
       c.source as contact_source,
       c.attribution_url,
       c.attribution_session_source,
-      c.attribution_medium
+      c.attribution_medium,
+      c.attribution_ctwa_clid,
+      c.attribution_ad_id
     FROM whatsapp_api_messages msg
     LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
     LEFT JOIN contacts c ON c.id = msg.contact_id
     WHERE ${conditions.join(' AND ')}
     ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC, msg.id ASC
   `, [range.startUtc, range.endUtc])
+}
+
+export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } = {}) {
+  const normalizedGroupBy = ['day', 'month', 'year'].includes(groupBy) ? groupBy : 'day'
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  const timestampColumn = 'COALESCE(msg.message_timestamp, msg.created_at)'
+  const baseConditions = [
+    "LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'",
+    `${timestampColumn} >= ?`,
+    `${timestampColumn} <= ?`
+  ]
+
+  if (hiddenCondition) {
+    baseConditions.push(`(msg.contact_id IS NULL OR ${hiddenCondition})`)
+  }
+
+  const messages = await getWhatsAppApiOriginMessages(range)
+  const identities = new Set()
+  const attributedIdentities = new Set()
+
+  messages.forEach(message => {
+    const identity = getWhatsAppApiIdentity(message)
+    identities.add(identity)
+
+    const source = resolveWhatsAppApiSource(message)
+    if (source && source !== 'WhatsApp' && !GENERIC_SOURCES.has(source)) {
+      attributedIdentities.add(identity)
+    }
+  })
+
+  const periodExpr = whatsappPeriodExpression(timestampColumn, normalizedGroupBy, range.appliedTimezone)
+  const trendRows = await db.all(`
+    SELECT ${periodExpr} as label, COUNT(*) as messages
+    FROM whatsapp_api_messages msg
+    LEFT JOIN contacts c ON c.id = msg.contact_id
+    WHERE ${baseConditions.join(' AND ')}
+    GROUP BY label
+    ORDER BY label ASC
+  `, [range.startUtc, range.endUtc])
+
+  const identityExpr = getWhatsAppApiIdentitySql('msg')
+  const firstSeenConditions = ["LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'"]
+  if (hiddenCondition) {
+    firstSeenConditions.push(`(msg.contact_id IS NULL OR ${hiddenCondition})`)
+  }
+
+  const firstSeenRow = await db.get(`
+    SELECT COUNT(*) as total
+    FROM (
+      SELECT ${identityExpr} as identity, MIN(${timestampColumn}) as first_seen_at
+      FROM whatsapp_api_messages msg
+      LEFT JOIN contacts c ON c.id = msg.contact_id
+      WHERE ${firstSeenConditions.join(' AND ')}
+      GROUP BY identity
+    ) first_seen
+    WHERE first_seen_at >= ? AND first_seen_at <= ?
+  `, [range.startUtc, range.endUtc])
+
+  const phoneRows = await db.get('SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers').catch(() => ({ total: 0 }))
+
+  const inboundMessages = messages.length
+  const conversations = identities.size
+  const attributedConversations = attributedIdentities.size
+
+  return {
+    metrics: {
+      inboundMessages,
+      conversations,
+      contacts: Number(firstSeenRow?.total || 0),
+      attributionRate: conversations > 0 ? Number(((attributedConversations / conversations) * 100).toFixed(1)) : 0
+    },
+    trend: trendRows.map(row => ({
+      label: row.label,
+      messages: Number(row.messages || 0)
+    })),
+    status: {
+      connected: Number(phoneRows?.total || 0) > 0,
+      hasData: inboundMessages > 0
+    }
+  }
 }
 
 /**

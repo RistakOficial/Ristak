@@ -29,9 +29,11 @@ import {
   getContactsByDate,
   getContactConversionsByDate,
   getContactConversionContacts,
+  getWhatsAppAnalyticsSummary,
   type ContactsByDate,
   type ContactConversionListType,
-  type ContactConversionsByDate
+  type ContactConversionsByDate,
+  type WhatsAppAnalyticsSummary
 } from '../../services/analyticsService'
 import { trackingService, type TrackingSession } from '../../services/trackingService'
 import type { ContactListItem } from '../../services/reportsService'
@@ -43,16 +45,6 @@ type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'custom'
 type AnalyticsMainChartView = 'traffic' | 'visitors-registrations' | 'sessions-visitors' | 'identity-returning'
 type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers' | 'messages-appointments' | 'appointments-patients'
-type WhatsAppAnalytics = {
-  metrics?: {
-    inboundMessages?: number
-    conversations?: number
-    contacts?: number
-    attributionRate?: number
-  }
-  trend?: Array<{ label: string; messages?: number }>
-  status?: { connected?: boolean; hasData?: boolean }
-}
 
 const monthNamesShort = [
   'ene', 'feb', 'mar', 'abr', 'may', 'jun',
@@ -942,7 +934,7 @@ const Analytics: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [hasLoadedAnalytics, setHasLoadedAnalytics] = useState(false)
   const [webTrackingConfigured, setWebTrackingConfigured] = useState(false)
-  const [whatsAppAnalytics, setWhatsAppAnalytics] = useState<WhatsAppAnalytics | null>(null)
+  const [whatsAppAnalytics, setWhatsAppAnalytics] = useState<WhatsAppAnalyticsSummary | null>(null)
 
   const leadLabel = appLabels.lead?.trim() || 'Prospecto'
   const leadsLabel = appLabels.leads?.trim() || `${leadLabel}s`
@@ -1082,18 +1074,20 @@ const Analytics: React.FC = () => {
           contactsData,
           prevContactsData,
           contactConversionRows,
-          trackingConfig
+          trackingConfig,
+          whatsAppSummary
         ] = await Promise.all([
           getSessionsByDateRange(startDate, endDate, { payload: 'analytics' }),
           getSessionMetricsByDateRange(prevStartDate, prevEndDate),
           getContactsByDate(startDate, endDate),
           getContactsByDate(prevStartDate, prevEndDate),
           getContactConversionsByDate(startDate, endDate),
-          trackingService.getTrackingConfig().catch(() => null)
+          trackingService.getTrackingConfig().catch(() => null),
+          getWhatsAppAnalyticsSummary(startDate, endDate, viewType).catch(() => null)
         ])
 
         setWebTrackingConfigured(Boolean(trackingConfig?.isConfigured) || currentSessions.length > 0)
-        setWhatsAppAnalytics(null)
+        setWhatsAppAnalytics(whatsAppSummary)
         setContactConversionsByDate(contactConversionRows || [])
 
         if (currentSessions.length > 0) {
