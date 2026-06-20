@@ -154,6 +154,41 @@
 
 .paymentPlanModal {
   max-width: 820px;
+  max-height: min(760px, 78vh);
+  padding: var(--spacing-lg);
+}
+
+.paymentPlanModal .modalHeader {
+  margin-bottom: var(--spacing-md);
+}
+
+.paymentPlanModal .form {
+  gap: var(--spacing-sm);
+}
+
+.paymentPlanModal .paymentPlanFormGrid {
+  gap: var(--spacing-sm);
+}
+
+.paymentPlanModal textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+
+.cardSetupLinkModal {
+  max-width: 560px;
+}
+
+.paymentPlanModalTitle {
+  min-width: 0;
+}
+
+.paymentPlanModalTitleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .modalHeader {
@@ -206,7 +241,7 @@
 
 .planSummaryGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--spacing-sm);
 }
 
@@ -214,7 +249,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xs);
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-sm);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
   background-color: var(--color-surface);
@@ -368,6 +403,20 @@
   margin-top: var(--spacing-md);
 }
 
+.paymentPlanFormActions {
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.paymentPlanSecondaryActions,
+.paymentPlanPrimaryActions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
 /* Input con icono para monto */
 .inputWithIcon {
   position: relative;
@@ -400,8 +449,8 @@
 .stripePlanEditor {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md);
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
   background-color: var(--color-surface);
@@ -455,9 +504,10 @@
 
 .stripePlanControls {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(180px, max-content);
-  gap: var(--spacing-md);
+  grid-template-columns: minmax(220px, 1fr);
+  gap: var(--spacing-sm);
   align-items: end;
+  max-width: 430px;
 }
 
 .stripePlanPaymentRows {
@@ -471,7 +521,7 @@
   grid-template-columns: minmax(112px, 0.55fr) minmax(430px, 2.4fr) minmax(104px, max-content);
   gap: var(--spacing-sm);
   align-items: center;
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-sm);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
   background-color: var(--color-background);
@@ -509,7 +559,7 @@
 }
 
 .stripePlanReadonlyValue {
-  min-height: 42px;
+  min-height: 38px;
   display: flex;
   align-items: center;
   padding: var(--spacing-sm) var(--spacing-md);
@@ -540,6 +590,45 @@
   display: flex;
   gap: var(--spacing-sm);
   justify-content: flex-end;
+}
+
+.cardSetupLinkBody {
+  display: grid;
+  gap: var(--spacing-sm);
+}
+
+.cardSetupLinkSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.cardSetupLinkSummary span {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+}
+
+.cardSetupLinkSummary strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.cardSetupLinkBox {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 /* Spinning animation */

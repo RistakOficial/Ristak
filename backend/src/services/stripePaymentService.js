@@ -2009,6 +2009,8 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
     cardSetupRequired: Boolean(flow.card_setup_required),
     cardSetupStatus: flow.card_setup_status || null,
     cardSetupAmount: Number(flow.card_setup_amount || 0),
+    cardSetupPaymentLink: flow.card_setup_payment_link || null,
+    stripePaymentMethodLabel: flow.stripe_payment_method_label || null,
     firstPayment: {
       amount: Number(flow.first_payment_amount || 0),
       date: flow.first_payment_date || null,
@@ -2629,7 +2631,99 @@ export async function syncStripePaymentPlanFromLocalPayment(paymentId) {
   return db.get('SELECT * FROM payment_plans WHERE id = ?', [flowId])
 }
 
-export async function applyStripePaymentPlanAction(flowId, action) {
+async function createStripePaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
+  if (!flow || flow.payment_provider !== 'stripe') {
+    const error = new Error('Plan Stripe no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  const currentState = cleanString(flow.current_state).toLowerCase()
+  if ([STRIPE_PLAN_STATES.CANCELLED, STRIPE_PLAN_STATES.DELETED].includes(currentState)) {
+    const error = new Error('No se puede cambiar la tarjeta de un plan cancelado o eliminado.')
+    error.status = 409
+    throw error
+  }
+
+  const now = new Date().toISOString()
+  const metadata = parseJson(flow.metadata, {})
+  const concept = cleanString(flow.concept) || 'Plan de pagos'
+  const currency = normalizeCurrency(flow.currency || DEFAULT_CURRENCY)
+  const cardSetupAmount = await resolveStripeCardSetupAmount(flow.card_setup_amount || metadata.cardSetupAmount)
+  const setupLink = await createStripePaymentLink({
+    contactId: flow.contact_id,
+    contactName: flow.contact_name,
+    email: flow.contact_email,
+    phone: flow.contact_phone,
+    amount: cardSetupAmount,
+    currency,
+    title: `${concept} - cambiar tarjeta domiciliada`,
+    description: `Domiciliación de nueva tarjeta para ${concept}`,
+    dueDate: todayDateOnly(),
+    source: 'stripe_payment_plan_card_update',
+    lineItems: [
+      {
+        name: 'Cambio de tarjeta domiciliada',
+        description: `Autorización para usar una nueva tarjeta en el plan ${concept}`,
+        quantity: 1,
+        amount: cardSetupAmount,
+        currency
+      }
+    ],
+    metadata: {
+      paymentPlan: {
+        flowId: flow.id,
+        trigger: 'card_setup',
+        reason: 'card_update'
+      }
+    }
+  }, { baseUrl })
+
+  const hasSavedCard = Boolean(cleanString(flow.stripe_payment_method_id))
+  const nextState = hasSavedCard
+    ? cleanString(flow.current_state) || STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE
+    : STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION
+  const nextStateHistory = hasSavedCard
+    ? parseJson(flow.state_history, [])
+    : addPlanState(flow.state_history, STRIPE_PLAN_STATES.WAITING_CARD_AUTHORIZATION)
+
+  await db.run(
+    `UPDATE payment_flows
+     SET card_setup_required = 1,
+         card_setup_amount = ?,
+         card_setup_status = 'pending',
+         card_setup_invoice_id = ?,
+         card_setup_payment_link = ?,
+         current_state = ?,
+         state_history = ?,
+         metadata = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      cardSetupAmount,
+      setupLink.payment?.id || null,
+      setupLink.paymentUrl,
+      nextState,
+      JSON.stringify(nextStateHistory),
+      JSON.stringify({
+        ...metadata,
+        cardSetupLinkRequired: true,
+        cardUpdateRequestedAt: now,
+        cardUpdatePaymentId: setupLink.payment?.id || null
+      }),
+      flow.id
+    ]
+  )
+
+  return {
+    cardSetupLink: setupLink.paymentUrl,
+    cardSetupPaymentId: setupLink.payment?.id || null,
+    cardSetupAmount,
+    actionedAt: now
+  }
+}
+
+export async function applyStripePaymentPlanAction(flowId, action, options = {}) {
   const cleanFlowId = cleanString(flowId)
   const normalizedAction = cleanString(action).toLowerCase()
   if (!cleanFlowId) {
@@ -2647,6 +2741,19 @@ export async function applyStripePaymentPlanAction(flowId, action) {
 
   const now = new Date().toISOString()
   const stateHistory = (nextState) => addPlanState(flow.state_history, nextState)
+
+  if (['change_card', 'change-card', 'change_payment_method', 'replace_card'].includes(normalizedAction)) {
+    const cardSetup = await createStripePaymentPlanCardSetupLink(flow, options)
+    return persistStripePaymentPlanMirror(cleanFlowId, {
+      localAction: 'change_card',
+      actionedAt: cardSetup.actionedAt,
+      response: {
+        cardSetupLink: cardSetup.cardSetupLink,
+        cardSetupPaymentId: cardSetup.cardSetupPaymentId,
+        cardSetupAmount: cardSetup.cardSetupAmount
+      }
+    })
+  }
 
   if (normalizedAction === 'activate') {
     const hasSavedCard = Boolean(cleanString(flow.stripe_payment_method_id))

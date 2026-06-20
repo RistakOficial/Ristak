@@ -125,11 +125,15 @@ function normalizeBaseUrl(value = '') {
 }
 
 function getPublicBaseUrl(req) {
+  const requestHost = typeof req.get === 'function'
+    ? req.get('host')
+    : req.headers?.host;
+
   return normalizeBaseUrl(
     process.env.RENDER_EXTERNAL_URL ||
     process.env.PUBLIC_URL ||
     req.body?.baseUrl ||
-    `${req.protocol}://${req.get('host')}`
+    `${req.protocol || 'http'}://${requestHost || 'localhost'}`
   );
 }
 
@@ -3308,6 +3312,12 @@ export const actionInvoiceSchedule = async (req, res) => {
       delete: 'delete',
       eliminar: 'delete',
       remove: 'delete',
+      change_card: 'change_card',
+      'change-card': 'change_card',
+      cambiar_tarjeta: 'change_card',
+      'cambiar-tarjeta': 'change_card',
+      change_payment_method: 'change_card',
+      replace_card: 'change_card',
       'auto-payment': 'auto-payment',
       autopayment: 'auto-payment'
     };
@@ -3333,7 +3343,8 @@ export const actionInvoiceSchedule = async (req, res) => {
         activate: 'activate',
         pause: 'pause',
         cancel: 'cancel',
-        delete: 'delete'
+        delete: 'delete',
+        change_card: 'change_card'
       };
       const stripeAction = actionMap[action];
 
@@ -3344,7 +3355,7 @@ export const actionInvoiceSchedule = async (req, res) => {
         });
       }
 
-      await applyStripePaymentPlanAction(scheduleId, stripeAction);
+      await applyStripePaymentPlanAction(scheduleId, stripeAction, { baseUrl: getPublicBaseUrl(req) });
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
 
       return res.json({

@@ -26,7 +26,9 @@ import {
   PlayCircle,
   Ban,
   X,
-  Loader2
+  Loader2,
+  Copy,
+  ExternalLink
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -55,11 +57,20 @@ interface ModalData {
 type PaymentsTableTab = 'transactions' | 'payment-plans'
 type TransactionsViewMode = 'all' | 'by-date'
 type StatusFilters = Record<string, string[]>
+type PaymentPlanAction = 'activate' | 'pause' | 'cancel' | 'delete' | 'change_card'
 
 interface PaymentPlanModalData {
   plan: PaymentPlan | null
   loading: boolean
   saving: boolean
+}
+
+interface StripeCardSetupLinkModalData {
+  open: boolean
+  link: string
+  planName: string
+  contactName: string
+  amount: number
 }
 
 interface PaymentPlanCreateModalData {
@@ -192,6 +203,14 @@ const getStripePlanSchedulePayload = (plan: PaymentPlan | null): Record<string, 
   const raw = plan?.raw && typeof plan.raw === 'object' ? plan.raw : {}
   const schedule = raw.schedule && typeof raw.schedule === 'object' ? raw.schedule : {}
   return schedule
+}
+
+const getStripePlanCardSetupPaymentLink = (plan: PaymentPlan | null): string => {
+  const raw = plan?.raw && typeof plan.raw === 'object' ? plan.raw : {}
+  const schedule = getStripePlanSchedulePayload(plan)
+  const paymentFlow = raw.paymentFlow && typeof raw.paymentFlow === 'object' ? raw.paymentFlow : {}
+  const response = raw.response && typeof raw.response === 'object' ? raw.response : {}
+  return String(schedule.cardSetupPaymentLink || paymentFlow.cardSetupPaymentLink || response.cardSetupLink || '').trim()
 }
 
 const getEditableStripeMethod = (method?: string | null) => {
@@ -435,6 +454,13 @@ export const Transactions: React.FC = () => {
     plan: null,
     loading: false,
     saving: false
+  })
+  const [stripeCardSetupLinkModal, setStripeCardSetupLinkModal] = useState<StripeCardSetupLinkModalData>({
+    open: false,
+    link: '',
+    planName: '',
+    contactName: '',
+    amount: 0
   })
   const [stripePlanFirstPaymentDraft, setStripePlanFirstPaymentDraft] = useState<StripePlanPaymentDraft | null>(null)
   const [stripePlanInstallmentDrafts, setStripePlanInstallmentDrafts] = useState<StripePlanPaymentDraft[]>([])
@@ -952,7 +978,7 @@ export const Transactions: React.FC = () => {
 
   const runPaymentPlanAction = async (
     plan: PaymentPlan,
-    action: 'activate' | 'pause' | 'cancel' | 'delete',
+    action: PaymentPlanAction,
     successTitle: string,
     successMessage: string
   ) => {
@@ -962,7 +988,24 @@ export const Transactions: React.FC = () => {
     try {
       const updatedPlan = await transactionsService.actionPaymentPlan(plan.id, action)
       updatePaymentPlanInState(updatedPlan)
-      showToast('success', successTitle, successMessage)
+      if (action === 'change_card') {
+        const cardSetupLink = getStripePlanCardSetupPaymentLink(updatedPlan)
+        if (cardSetupLink) {
+          const schedule = getStripePlanSchedulePayload(updatedPlan)
+          setStripeCardSetupLinkModal({
+            open: true,
+            link: cardSetupLink,
+            planName: updatedPlan.name || updatedPlan.title || 'Plan de pago',
+            contactName: updatedPlan.contactName ? formatName(updatedPlan.contactName) : 'Sin contacto',
+            amount: Number(schedule.cardSetupAmount || 0)
+          })
+          showToast('success', successTitle, successMessage)
+        } else {
+          showToast('warning', 'Enlace no disponible', 'Stripe generó la solicitud, pero Ristak no recibió la URL del enlace.')
+        }
+      } else {
+        showToast('success', successTitle, successMessage)
+      }
       fetchPaymentPlans()
     } catch (error: any) {
       showToast('error', 'No se pudo actualizar el plan', error?.message || 'No se pudo aplicar la acción para este plan de pago.')
@@ -973,7 +1016,7 @@ export const Transactions: React.FC = () => {
 
   const handlePaymentPlanAction = (
     plan: PaymentPlan,
-    action: 'activate' | 'pause' | 'cancel' | 'delete'
+    action: Exclude<PaymentPlanAction, 'change_card'>
   ) => {
     const planName = plan.name || plan.title || 'este plan de pago'
 
@@ -1003,6 +1046,19 @@ export const Transactions: React.FC = () => {
     }
 
     runPaymentPlanAction(plan, action, 'Plan activado', 'El plan quedó activo/programado.')
+  }
+
+  const handleChangeStripePlanCard = (plan: PaymentPlan) => {
+    showConfirm(
+      'Cambiar tarjeta domiciliada',
+      'Se creará un nuevo enlace de domiciliación. Cuando el cliente lo pague o autorice, esa tarjeta quedará como predeterminada para los próximos cobros.',
+      () => runPaymentPlanAction(
+        plan,
+        'change_card',
+        'Enlace de domiciliación listo',
+        'Copia o abre el enlace para enviarlo al contacto.'
+      )
+    )
   }
 
   const handleCreatePaymentPlan = async (formData: FormData) => {
@@ -1433,6 +1489,32 @@ export const Transactions: React.FC = () => {
     } catch (error) {
       showToast('error', 'Error al copiar enlace', 'No se pudo obtener el enlace de pago')
     }
+  }
+
+  const closeStripeCardSetupLinkModal = () => {
+    setStripeCardSetupLinkModal({
+      open: false,
+      link: '',
+      planName: '',
+      contactName: '',
+      amount: 0
+    })
+  }
+
+  const handleCopyStripeCardSetupLink = async () => {
+    if (!stripeCardSetupLinkModal.link) return
+
+    try {
+      await navigator.clipboard.writeText(stripeCardSetupLinkModal.link)
+      showToast('success', 'Enlace copiado', 'El enlace de domiciliación quedó listo para enviarse.')
+    } catch {
+      showToast('error', 'No se pudo copiar', 'Copia el enlace manualmente desde la caja de texto.')
+    }
+  }
+
+  const handleOpenStripeCardSetupLink = () => {
+    if (!stripeCardSetupLinkModal.link) return
+    window.open(stripeCardSetupLinkModal.link, '_blank', 'noopener,noreferrer')
   }
 
   const handleSendPayment = async (id: string, sendMethod: 'email' | 'sms' | 'both' = 'email') => {
@@ -2002,18 +2084,7 @@ export const Transactions: React.FC = () => {
     const cardSetupStatus = String(schedule.cardSetupStatus || '').toLowerCase()
 
     return (
-      <section className={styles.stripePlanEditor}>
-        <div className={styles.stripePlanEditorHeader}>
-          <div>
-            <h3>Calendario del plan</h3>
-            <p>Revisa el enganche, las parcialidades y los próximos cobros automáticos o manuales.</p>
-          </div>
-          <div className={styles.stripePlanEditorTotal}>
-            <span>Total del plan</span>
-            <strong>{formatCurrency(selectedPaymentPlanDisplayTotal)}</strong>
-          </div>
-        </div>
-
+      <section className={styles.stripePlanEditor} aria-label="Calendario del plan">
         <div className={styles.stripePlanControls}>
           <div className={styles.formGroup}>
             <label>Frecuencia base</label>
@@ -2022,10 +2093,6 @@ export const Transactions: React.FC = () => {
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </CustomSelect>
-          </div>
-          <div className={styles.stripePlanReadonlySummary}>
-            <span>Pagos restantes</span>
-            <strong>{formatCurrency(stripePlanInstallmentsTotal)}</strong>
           </div>
         </div>
 
@@ -2249,6 +2316,9 @@ export const Transactions: React.FC = () => {
   const selectedPaymentPlanHasDraftRows = Boolean(stripePlanFirstPaymentDraft) || stripePlanInstallmentDrafts.length > 0
   const selectedPaymentPlanDisplayTotal = selectedPaymentPlanIsStripe && selectedPaymentPlanHasDraftRows
     ? stripePlanDraftTotal
+    : Number(paymentPlanModal.plan?.total || 0)
+  const selectedPaymentPlanRemainingTotal = selectedPaymentPlanIsStripe
+    ? stripePlanInstallmentsTotal
     : Number(paymentPlanModal.plan?.total || 0)
   const canProgramPaymentPlan = stripeConnected || highLevelConnected
   const paymentPlanConnectionLoading = stripeStatusLoading || highLevelLoading
@@ -2937,8 +3007,11 @@ export const Transactions: React.FC = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <div className={styles.modalHeader} data-modal-header="">
-              <div>
-                <h2>Plan de pago</h2>
+              <div className={styles.paymentPlanModalTitle}>
+                <div className={styles.paymentPlanModalTitleRow}>
+                  <h2>Plan de pago</h2>
+                  {getPlanStatusBadge(paymentPlanModal.plan.status)}
+                </div>
                 <p className={styles.modalSubtitle}>{paymentPlanModal.plan.id}</p>
               </div>
               <button
@@ -2962,12 +3035,12 @@ export const Transactions: React.FC = () => {
               }}>
                 <div className={styles.planSummaryGrid}>
                   <div className={styles.planSummaryItem}>
-                    <span>Estado</span>
-                    <strong>{getPlanStatusBadge(paymentPlanModal.plan.status)}</strong>
+                    <span>Total del plan</span>
+                    <strong>{formatCurrency(selectedPaymentPlanDisplayTotal)}</strong>
                   </div>
                   <div className={styles.planSummaryItem}>
-                    <span>Monto</span>
-                    <strong>{formatCurrency(selectedPaymentPlanDisplayTotal)}</strong>
+                    <span>Pagos restantes</span>
+                    <strong>{formatCurrency(selectedPaymentPlanRemainingTotal)}</strong>
                   </div>
                   <div className={styles.planSummaryItem}>
                     <span>Contacto</span>
@@ -3026,22 +3099,96 @@ export const Transactions: React.FC = () => {
                     <label>Términos / notas</label>
                     <textarea
                       name="termsNotes"
-                      rows={4}
+                      rows={2}
                       defaultValue={getPlanTermsNotes(paymentPlanModal.plan)}
                     />
                   </div>
                 </div>
                 {selectedPaymentPlanIsStripe && renderStripePlanScheduleEditor(paymentPlanModal.plan)}
-                <div className={styles.formActions} data-modal-footer="">
-                  <Button type="button" variant="ghost" onClick={closePaymentPlanModal}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit" loading={paymentPlanModal.saving}>
-                    Guardar plan
-                  </Button>
+                <div className={`${styles.formActions} ${styles.paymentPlanFormActions}`} data-modal-footer="">
+                  <div className={styles.paymentPlanSecondaryActions}>
+                    {selectedPaymentPlanIsStripe && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => handleChangeStripePlanCard(paymentPlanModal.plan!)}
+                        loading={paymentPlanActionId === `${paymentPlanModal.plan.id}:change_card`}
+                      >
+                        <CreditCard size={16} />
+                        Cambiar tarjeta domiciliada
+                      </Button>
+                    )}
+                  </div>
+                  <div className={styles.paymentPlanPrimaryActions}>
+                    <Button type="button" variant="ghost" onClick={closePaymentPlanModal}>
+                      Cancelar
+                    </Button>
+                    <Button type="submit" loading={paymentPlanModal.saving}>
+                      Guardar plan
+                    </Button>
+                  </div>
                 </div>
               </form>
             )}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {isClient && stripeCardSetupLinkModal.open && createPortal(
+        <div className={styles.modalOverlay} data-overlay="" onClick={closeStripeCardSetupLinkModal}>
+          <div
+            className={`${styles.modal} ${styles.cardSetupLinkModal}`}
+            data-modal=""
+            data-modal-shell="legacy"
+            data-modal-size="sm"
+            data-modal-type="custom"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.modalHeader} data-modal-header="">
+              <div>
+                <h2>Enlace de domiciliación listo</h2>
+                <p className={styles.modalSubtitle}>{stripeCardSetupLinkModal.planName}</p>
+              </div>
+              <button
+                className={styles.closeButton}
+                type="button"
+                onClick={closeStripeCardSetupLinkModal}
+                title="Cerrar"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className={styles.cardSetupLinkBody}>
+              <div className={styles.cardSetupLinkSummary}>
+                <span>Contacto</span>
+                <strong>{stripeCardSetupLinkModal.contactName}</strong>
+              </div>
+              {stripeCardSetupLinkModal.amount > 0 && (
+                <div className={styles.cardSetupLinkSummary}>
+                  <span>Domiciliación</span>
+                  <strong>{formatCurrency(stripeCardSetupLinkModal.amount)}</strong>
+                </div>
+              )}
+              <div className={styles.cardSetupLinkBox}>
+                {stripeCardSetupLinkModal.link}
+              </div>
+            </div>
+
+            <div className={styles.formActions} data-modal-footer="">
+              <Button type="button" variant="ghost" onClick={closeStripeCardSetupLinkModal}>
+                Listo
+              </Button>
+              <Button type="button" variant="secondary" onClick={handleOpenStripeCardSetupLink}>
+                <ExternalLink size={16} />
+                Abrir
+              </Button>
+              <Button type="button" onClick={handleCopyStripeCardSetupLink}>
+                <Copy size={16} />
+                Copiar enlace
+              </Button>
+            </div>
           </div>
         </div>,
         document.body
