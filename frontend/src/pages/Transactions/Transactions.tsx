@@ -155,9 +155,28 @@ const buildTransactionDetailPath = (viewMode: TransactionsViewMode, transactionI
 const buildPaymentPlansPath = () => '/transactions/payment-plans'
 const buildPaymentPlanDetailPath = (planId: string) => `${buildPaymentPlansPath()}/${encodeURIComponent(planId)}`
 const isStripePaymentPlan = (plan: PaymentPlan) => plan.source === 'stripe' || plan.raw?.provider === 'stripe'
+const isMercadoPagoPaymentPlan = (plan: PaymentPlan) => plan.source === 'mercadopago' || plan.raw?.provider === 'mercadopago' || plan.raw?.schedule?.provider === 'mercadopago'
+const isLocalCheckoutPaymentPlan = (plan: PaymentPlan) => isStripePaymentPlan(plan) || isMercadoPagoPaymentPlan(plan)
+type LocalCheckoutPlanProvider = 'stripe' | 'mercadopago'
+const getLocalCheckoutPlanProvider = (plan: PaymentPlan | null): LocalCheckoutPlanProvider => (
+  plan && isMercadoPagoPaymentPlan(plan) ? 'mercadopago' : 'stripe'
+)
+const getPaymentPlanProviderLabel = (plan: PaymentPlan) => {
+  if (isMercadoPagoPaymentPlan(plan)) return 'Mercado Pago'
+  if (isStripePaymentPlan(plan)) return 'Stripe'
+  return 'HighLevel'
+}
 const STRIPE_PLAN_LOCKED_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled', 'registered'])
 const STRIPE_PLAN_PAYMENT_METHOD_OPTIONS = [
   { value: 'stripe_auto', label: 'Tarjeta automática' },
+  { value: 'bank_transfer', label: 'Transferencia' },
+  { value: 'cash', label: 'Efectivo' },
+  { value: 'deposit', label: 'Depósito' },
+  { value: 'check', label: 'Cheque' },
+  { value: 'other', label: 'Otro' }
+]
+const MERCADOPAGO_PLAN_PAYMENT_METHOD_OPTIONS = [
+  { value: 'mercadopago', label: 'Checkout Pro' },
   { value: 'bank_transfer', label: 'Transferencia' },
   { value: 'cash', label: 'Efectivo' },
   { value: 'deposit', label: 'Depósito' },
@@ -221,9 +240,30 @@ const getEditableStripeMethod = (method?: string | null) => {
   return normalized
 }
 
-const getStripePlanMethodLabel = (method?: string | null) => {
-  const normalized = getEditableStripeMethod(method)
-  return STRIPE_PLAN_PAYMENT_METHOD_OPTIONS.find(option => option.value === normalized)?.label || normalized
+const getEditableMercadoPagoMethod = (method?: string | null) => {
+  const normalized = String(method || '').toLowerCase()
+  if (!normalized || normalized.startsWith('mercadopago') || ['card', 'payment_link', 'checkout', 'auto'].includes(normalized)) {
+    return 'mercadopago'
+  }
+  if (normalized === 'transfer') return 'bank_transfer'
+  return normalized
+}
+
+const getEditablePlanMethod = (method: string | null | undefined, provider: LocalCheckoutPlanProvider) => (
+  provider === 'mercadopago' ? getEditableMercadoPagoMethod(method) : getEditableStripeMethod(method)
+)
+
+const getPlanMethodOptions = (provider: LocalCheckoutPlanProvider) => (
+  provider === 'mercadopago' ? MERCADOPAGO_PLAN_PAYMENT_METHOD_OPTIONS : STRIPE_PLAN_PAYMENT_METHOD_OPTIONS
+)
+
+const getDefaultPlanMethod = (provider: LocalCheckoutPlanProvider) => (
+  provider === 'mercadopago' ? 'mercadopago' : 'stripe_auto'
+)
+
+const getStripePlanMethodLabel = (method?: string | null, provider: LocalCheckoutPlanProvider = 'stripe') => {
+  const normalized = getEditablePlanMethod(method, provider)
+  return getPlanMethodOptions(provider).find(option => option.value === normalized)?.label || normalized
 }
 
 const createStripePlanDraftId = () => `draft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -477,10 +517,11 @@ export const Transactions: React.FC = () => {
   const [transactionDeleteConfirmation, setTransactionDeleteConfirmation] = useState('')
   const [deletingTransactions, setDeletingTransactions] = useState(false)
 
-  // Los planes de pago pueden programarse con Stripe o con HighLevel.
+  // Los planes de pago pueden programarse con Stripe, Mercado Pago o HighLevel.
   // La lista histórica sigue leyendo schedules de HighLevel cuando está conectado.
   const { connected: highLevelConnected, loading: highLevelLoading } = useHighLevelConnected()
   const [stripeConnected, setStripeConnected] = useState(false)
+  const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
   const [stripeStatusLoading, setStripeStatusLoading] = useState(true)
   const [transactionStatusFilters, setTransactionStatusFilters] = useUrlFilterState('statusFilters')
   const [paymentPlanStatusFilters, setPaymentPlanStatusFilters] = useUrlFilterState('planFilters')
@@ -497,12 +538,13 @@ export const Transactions: React.FC = () => {
   }, [location.search, navigate])
 
   const hydrateStripePlanDraft = useCallback((plan: PaymentPlan | null) => {
-    if (!plan || !isStripePaymentPlan(plan)) {
+    if (!plan || !isLocalCheckoutPaymentPlan(plan)) {
       setStripePlanFirstPaymentDraft(null)
       setStripePlanInstallmentDrafts([])
       return
     }
 
+    const provider = getLocalCheckoutPlanProvider(plan)
     const schedule = getStripePlanSchedulePayload(plan)
     const firstPayment = schedule.firstPayment && typeof schedule.firstPayment === 'object'
       ? schedule.firstPayment
@@ -516,10 +558,10 @@ export const Transactions: React.FC = () => {
       label: 'Primer pago',
       amount: normalizeDraftAmount(firstAmount),
       dueDate: toDateInputValue(firstPayment?.date || firstPayment?.dueDate || plan.startDate),
-      method: getEditableStripeMethod(firstPayment?.method || firstPayment?.paymentMethod),
+      method: getEditablePlanMethod(firstPayment?.method || firstPayment?.paymentMethod, provider),
       status: firstStatus || 'pending',
       paymentId: firstPayment?.paymentId || null,
-      locked: isStripePlanPaymentLocked(firstStatus)
+      locked: isStripePlanPaymentLocked(firstStatus) || (provider === 'mercadopago' && Boolean(firstPayment?.paymentLink || firstPayment?.preferenceId))
     } : null)
 
     const installments = Array.isArray(schedule.installments) ? schedule.installments : []
@@ -533,10 +575,10 @@ export const Transactions: React.FC = () => {
         label: `Pago ${Number(item.sequence || index + 1)}`,
         amount: normalizeDraftAmount(item.amount),
         dueDate: toDateInputValue(item.dueDate || item.date || item.scheduledAt || plan.nextRunAt),
-        method: getEditableStripeMethod(item.paymentMethod || item.method),
+        method: getEditablePlanMethod(item.paymentMethod || item.method, provider),
         status,
         paymentId: item.paymentId || null,
-        locked: isStripePlanPaymentLocked(status)
+        locked: isStripePlanPaymentLocked(status) || (provider === 'mercadopago' && Boolean(item.preferenceId || item.paymentUrl))
       }
     }))
   }, [])
@@ -566,10 +608,12 @@ export const Transactions: React.FC = () => {
       .then((data) => {
         if (cancelled) return
         setStripeConnected(Boolean(data?.stripe?.connected))
+        setMercadoPagoConnected(Boolean(data?.mercadopago?.connected))
       })
       .catch(() => {
         if (cancelled) return
         setStripeConnected(false)
+        setMercadoPagoConnected(false)
       })
       .finally(() => {
         if (!cancelled) setStripeStatusLoading(false)
@@ -590,7 +634,7 @@ export const Transactions: React.FC = () => {
     if (paymentTableTab !== 'payment-plans') return
 
     fetchPaymentPlans()
-  }, [highLevelConnected, paymentTableTab, stripeConnected])
+  }, [highLevelConnected, mercadoPagoConnected, paymentTableTab, stripeConnected])
 
   useEffect(() => {
     setPaymentTableTab(current => current === routeState.tab ? current : routeState.tab)
@@ -666,8 +710,8 @@ export const Transactions: React.FC = () => {
     setSyncing(true)
     try {
       if (paymentTableTab === 'payment-plans') {
-        if (!stripeConnected && !highLevelConnected && paymentPlans.length === 0) {
-          showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o HighLevel para consultar y programar planes de pago.')
+        if (!stripeConnected && !mercadoPagoConnected && !highLevelConnected && paymentPlans.length === 0) {
+          showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Mercado Pago o HighLevel para consultar y programar planes de pago.')
           return
         }
         showToast('info', 'Actualizando planes de pago', 'Consultando planes guardados en Ristak y tus pasarelas conectadas...')
@@ -735,7 +779,7 @@ export const Transactions: React.FC = () => {
   }
 
   const openPaymentPlanCreateModal = () => {
-    if (stripeConnected) {
+    if (stripeConnected || mercadoPagoConnected) {
       setPaymentTableTab('payment-plans')
       setRecordPaymentInitialMode('partial')
       setShowRecordPaymentModal(true)
@@ -744,7 +788,7 @@ export const Transactions: React.FC = () => {
     }
 
     if (!highLevelConnected) {
-      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o HighLevel para programar planes de pago.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Mercado Pago o HighLevel para programar planes de pago.')
       return
     }
 
@@ -806,6 +850,7 @@ export const Transactions: React.FC = () => {
 
   const addStripeFirstPaymentDraft = () => {
     if (stripePlanFirstPaymentDraft) return
+    const provider = getLocalCheckoutPlanProvider(paymentPlanModal.plan)
 
     setStripePlanFirstPaymentDraft({
       localId: 'stripe_first_payment',
@@ -813,7 +858,7 @@ export const Transactions: React.FC = () => {
       label: 'Primer pago',
       amount: '',
       dueDate: toDateInputValue(paymentPlanModal.plan?.startDate || paymentPlanModal.plan?.nextRunAt),
-      method: 'stripe_auto',
+      method: getDefaultPlanMethod(provider),
       status: 'pending',
       paymentId: null,
       locked: false
@@ -830,6 +875,7 @@ export const Transactions: React.FC = () => {
 
   const addStripeInstallmentDraft = () => {
     setStripePlanInstallmentDrafts(prev => {
+      const provider = getLocalCheckoutPlanProvider(paymentPlanModal.plan)
       const nextIndex = prev.length + 1
       const nextDueDate = getNextPlanDueDate(prev, paymentPlanModal.plan?.nextRunAt || paymentPlanModal.plan?.startDate)
 
@@ -840,7 +886,7 @@ export const Transactions: React.FC = () => {
           label: `Pago ${nextIndex}`,
           amount: '',
           dueDate: nextDueDate,
-          method: 'stripe_auto',
+          method: getDefaultPlanMethod(provider),
           status: 'pending',
           paymentId: null,
           locked: false
@@ -857,8 +903,11 @@ export const Transactions: React.FC = () => {
 
   const handleSavePaymentPlan = async (formData: FormData) => {
     if (!paymentPlanModal.plan) return
-    if (isStripePaymentPlan(paymentPlanModal.plan)) {
+    if (isLocalCheckoutPaymentPlan(paymentPlanModal.plan)) {
       const plan = paymentPlanModal.plan
+      const provider = getLocalCheckoutPlanProvider(plan)
+      const providerLabel = provider === 'mercadopago' ? 'Mercado Pago' : 'Stripe'
+      const defaultMethod = getDefaultPlanMethod(provider)
       const schedule = getStripePlanSchedulePayload(plan)
       const name = String(formData.get('name') || plan.name || plan.title || 'Plan de pago').trim()
       const title = String(formData.get('title') || plan.title || name).trim()
@@ -869,7 +918,7 @@ export const Transactions: React.FC = () => {
         id: draft.id,
         amount: Number(draft.amount),
         dueDate: draft.dueDate,
-        method: draft.method || 'stripe_auto',
+        method: draft.method || defaultMethod,
         sequence: index + 1
       }))
 
@@ -904,7 +953,7 @@ export const Transactions: React.FC = () => {
         payload.firstPayment = {
           amount: firstPaymentAmount,
           dueDate: stripePlanFirstPaymentDraft.dueDate,
-          method: stripePlanFirstPaymentDraft.method || 'stripe_auto'
+          method: stripePlanFirstPaymentDraft.method || defaultMethod
         }
       } else if (Number(schedule.firstPayment?.amount || 0) > 0) {
         payload.firstPayment = null
@@ -920,11 +969,11 @@ export const Transactions: React.FC = () => {
           loading: false,
           saving: false
         })
-        showToast('success', 'Calendario actualizado', 'El plan de Stripe quedó actualizado con los pagos configurados.')
+        showToast('success', 'Calendario actualizado', `El plan de ${providerLabel} quedó actualizado con los pagos configurados.`)
         fetchPaymentPlans()
       } catch (error: any) {
         setPaymentPlanModal(prev => ({ ...prev, saving: false }))
-        showToast('error', 'No se pudo guardar el plan', error?.message || 'Stripe no pudo actualizar el calendario de pagos.')
+        showToast('error', 'No se pudo guardar el plan', error?.message || `${providerLabel} no pudo actualizar el calendario de pagos.`)
       }
       return
     }
@@ -1019,7 +1068,7 @@ export const Transactions: React.FC = () => {
     const planName = plan.name || plan.title || 'este plan de pago'
 
     if (action === 'cancel') {
-      const providerLabel = isStripePaymentPlan(plan) ? 'Stripe' : 'HighLevel'
+      const providerLabel = getPaymentPlanProviderLabel(plan)
       showConfirm(
         'Cancelar plan de pago',
         `¿Seguro que quieres cancelar ${planName}? ${providerLabel} dejará de cobrar este plan.`,
@@ -1029,7 +1078,7 @@ export const Transactions: React.FC = () => {
     }
 
     if (action === 'delete') {
-      const providerLabel = isStripePaymentPlan(plan) ? 'Stripe' : 'HighLevel'
+      const providerLabel = getPaymentPlanProviderLabel(plan)
       showConfirm(
         'Eliminar plan de pago',
         `¿Seguro que quieres eliminar ${planName}? Esta acción lo marca como eliminado en ${providerLabel} y en Ristak.`,
@@ -1255,17 +1304,17 @@ export const Transactions: React.FC = () => {
   }, [routeState.createTransaction])
 
   useEffect(() => {
-    const paymentPlanStripeFlowOpen = routeState.createPaymentPlan && stripeConnected
-    if (!routeState.createTransaction && !paymentPlanStripeFlowOpen && showRecordPaymentModal) {
+    const paymentPlanLinkFlowOpen = routeState.createPaymentPlan && (stripeConnected || mercadoPagoConnected)
+    if (!routeState.createTransaction && !paymentPlanLinkFlowOpen && showRecordPaymentModal) {
       setShowRecordPaymentModal(false)
     }
-  }, [routeState.createPaymentPlan, routeState.createTransaction, showRecordPaymentModal, stripeConnected])
+  }, [mercadoPagoConnected, routeState.createPaymentPlan, routeState.createTransaction, showRecordPaymentModal, stripeConnected])
 
   useEffect(() => {
     if (!routeState.createPaymentPlan) return
     setPaymentTableTab('payment-plans')
 
-    if (stripeConnected) {
+    if (stripeConnected || mercadoPagoConnected) {
       setRecordPaymentInitialMode('partial')
       setShowRecordPaymentModal(true)
       return
@@ -1274,7 +1323,7 @@ export const Transactions: React.FC = () => {
     if (stripeStatusLoading || highLevelLoading) return
 
     if (!highLevelConnected) {
-      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o HighLevel para programar planes de pago.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Mercado Pago o HighLevel para programar planes de pago.')
       navigateTransactionsPath(buildPaymentPlansPath(), { replace: true })
       return
     }
@@ -1288,7 +1337,7 @@ export const Transactions: React.FC = () => {
       endType: 'never',
       monthlyMode: 'dayOfMonth'
     })
-  }, [highLevelConnected, highLevelLoading, navigateTransactionsPath, routeState.createPaymentPlan, showToast, stripeConnected, stripeStatusLoading])
+  }, [highLevelConnected, highLevelLoading, mercadoPagoConnected, navigateTransactionsPath, routeState.createPaymentPlan, showToast, stripeConnected, stripeStatusLoading])
 
   useEffect(() => {
     if (!routeState.createPaymentPlan && paymentPlanCreateModal.open) {
@@ -1599,6 +1648,8 @@ export const Transactions: React.FC = () => {
   const getMethodIcon = (method: string) => {
     switch(method) {
       case 'card': return <CreditCard size={16} />
+      case 'mercadopago':
+      case 'mercadopago_checkout': return <CreditCard size={16} />
       case 'bank_transfer':
       case 'transfer': return <RefreshCw size={16} />
       case 'cash': return <Banknote size={16} />
@@ -1611,6 +1662,8 @@ export const Transactions: React.FC = () => {
   const getMethodLabel = (method: string) => {
     switch(method) {
       case 'card': return 'Tarjeta'
+      case 'mercadopago':
+      case 'mercadopago_checkout': return 'Mercado Pago'
       case 'bank_transfer':
       case 'transfer': return 'Transferencia'
       case 'cash': return 'Efectivo'
@@ -1695,6 +1748,8 @@ export const Transactions: React.FC = () => {
         const method = String(item.method || '').toLowerCase()
         const provider = String(item.paymentProvider || '').toLowerCase()
         const isStripeTransaction = provider === 'stripe' || method.startsWith('stripe') || Boolean(item.publicPaymentId || item.paymentUrl || item.stripePaymentIntentId)
+        const isMercadoPagoTransaction = provider === 'mercadopago' || method.startsWith('mercadopago')
+        const isGatewayTransaction = isStripeTransaction || isMercadoPagoTransaction
         const hasPaymentLink = Boolean(item.paymentUrl || item.publicPaymentId || item.invoiceId)
 
         // Copiar enlace - disponible para draft, sent, pending, overdue
@@ -1708,7 +1763,7 @@ export const Transactions: React.FC = () => {
         }
 
         // Enviar - solo para draft y pending
-        if (!isStripeTransaction && item.invoiceId && ['draft', 'pending'].includes(item.status)) {
+        if (!isGatewayTransaction && item.invoiceId && ['draft', 'pending'].includes(item.status)) {
           actions.push('send')
         }
 
@@ -1989,13 +2044,16 @@ export const Transactions: React.FC = () => {
     draft: StripePlanPaymentDraft,
     _index: number,
     options: {
+      provider: LocalCheckoutPlanProvider
       kind: 'first' | 'installment'
       onUpdate: (updates: Partial<StripePlanPaymentDraft>) => void
       onRemove?: () => void
     }
   ) => {
     const locked = Boolean(draft.locked)
-    const methodLabel = getStripePlanMethodLabel(draft.method)
+    const methodLabel = getStripePlanMethodLabel(draft.method, options.provider)
+    const methodOptions = getPlanMethodOptions(options.provider)
+    const defaultMethod = getDefaultPlanMethod(options.provider)
 
     return (
       <div
@@ -2046,10 +2104,10 @@ export const Transactions: React.FC = () => {
               <div className={styles.stripePlanReadonlyValue}>{methodLabel}</div>
             ) : (
               <CustomSelect
-                value={draft.method || 'stripe_auto'}
+                value={draft.method || defaultMethod}
                 onChange={(event) => options.onUpdate({ method: event.target.value })}
               >
-                {STRIPE_PLAN_PAYMENT_METHOD_OPTIONS.map(option => (
+                {methodOptions.map(option => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </CustomSelect>
@@ -2076,6 +2134,8 @@ export const Transactions: React.FC = () => {
   }
 
   const renderStripePlanScheduleEditor = (plan: PaymentPlan) => {
+    const provider = getLocalCheckoutPlanProvider(plan)
+    const isStripePlan = provider === 'stripe'
     const schedule = getStripePlanSchedulePayload(plan)
     const cardSetupRequired = Boolean(schedule.cardSetupRequired)
     const cardSetupAmount = Number(schedule.cardSetupAmount || 0)
@@ -2095,7 +2155,7 @@ export const Transactions: React.FC = () => {
         </div>
 
         <div className={styles.stripePlanPaymentRows}>
-          {cardSetupRequired && (
+          {isStripePlan && cardSetupRequired && (
             <div className={styles.stripePlanPaymentRow}>
               <div className={styles.stripePlanPaymentMeta}>
                 <strong>Domiciliación</strong>
@@ -2117,12 +2177,14 @@ export const Transactions: React.FC = () => {
           )}
 
           {stripePlanFirstPaymentDraft && renderStripePaymentDraftRow(stripePlanFirstPaymentDraft, 0, {
+            provider,
             kind: 'first',
             onUpdate: updateStripeFirstPaymentDraft,
             onRemove: removeStripeFirstPaymentDraft
           })}
 
           {stripePlanInstallmentDrafts.map((draft, index) => renderStripePaymentDraftRow(draft, index, {
+            provider,
             kind: 'installment',
             onUpdate: (updates) => updateStripeInstallmentDraft(draft.localId, updates),
             onRemove: () => removeStripeInstallmentDraft(draft.localId)
@@ -2216,6 +2278,7 @@ export const Transactions: React.FC = () => {
         const status = getNormalizedPlanStatus(item)
         const actionInProgress = paymentPlanActionId?.startsWith(`${item.id}:`) || false
         const stripePlan = isStripePaymentPlan(item)
+        const mercadoPagoPlan = isMercadoPagoPaymentPlan(item)
         const activationLabel = status === 'paused' ? 'Continuar plan' : 'Activar plan'
 
         if (isPlanDeleted(item)) {
@@ -2237,7 +2300,7 @@ export const Transactions: React.FC = () => {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem disabled={actionInProgress} onClick={() => handleOpenPaymentPlan(item)}>
                   <Edit size={16} />
-                  <span style={{ marginLeft: '8px' }}>{stripePlan ? 'Ver plan Stripe' : 'Editar factura'}</span>
+                  <span style={{ marginLeft: '8px' }}>{stripePlan ? 'Ver plan Stripe' : mercadoPagoPlan ? 'Ver plan Mercado Pago' : 'Editar factura'}</span>
                 </DropdownMenuItem>
 
                 {canActivatePaymentPlan(item) && (
@@ -2311,14 +2374,15 @@ export const Transactions: React.FC = () => {
   const lockedContactDetail = modal.transaction?.email || modal.selectedContact?.email || modal.transaction?.phone || modal.selectedContact?.phone
   const isPaymentPlansPage = paymentTableTab === 'payment-plans'
   const selectedPaymentPlanIsStripe = paymentPlanModal.plan ? isStripePaymentPlan(paymentPlanModal.plan) : false
+  const selectedPaymentPlanIsLocalCheckout = paymentPlanModal.plan ? isLocalCheckoutPaymentPlan(paymentPlanModal.plan) : false
   const selectedPaymentPlanHasDraftRows = Boolean(stripePlanFirstPaymentDraft) || stripePlanInstallmentDrafts.length > 0
-  const selectedPaymentPlanDisplayTotal = selectedPaymentPlanIsStripe && selectedPaymentPlanHasDraftRows
+  const selectedPaymentPlanDisplayTotal = selectedPaymentPlanIsLocalCheckout && selectedPaymentPlanHasDraftRows
     ? stripePlanDraftTotal
     : Number(paymentPlanModal.plan?.total || 0)
-  const selectedPaymentPlanRemainingTotal = selectedPaymentPlanIsStripe
+  const selectedPaymentPlanRemainingTotal = selectedPaymentPlanIsLocalCheckout
     ? stripePlanInstallmentsTotal
     : Number(paymentPlanModal.plan?.total || 0)
-  const canProgramPaymentPlan = stripeConnected || highLevelConnected
+  const canProgramPaymentPlan = stripeConnected || mercadoPagoConnected || highLevelConnected
   const paymentPlanConnectionLoading = stripeStatusLoading || highLevelLoading
   const pageTitle = isPaymentPlansPage ? 'Planes de pago' : 'Transacciones'
   const pageSubtitle = isPaymentPlansPage
@@ -2403,7 +2467,7 @@ export const Transactions: React.FC = () => {
                 variant="secondary"
                 onClick={openPaymentPlanCreateModal}
                 disabled={paymentPlanConnectionLoading || !canProgramPaymentPlan}
-                title={!canProgramPaymentPlan ? 'Conecta Stripe o HighLevel para programar planes' : undefined}
+                title={!canProgramPaymentPlan ? 'Conecta Stripe, Mercado Pago o HighLevel para programar planes' : undefined}
               >
                 <Plus size={16} />
                 Programar plan
@@ -2481,7 +2545,7 @@ export const Transactions: React.FC = () => {
             data={filteredPaymentPlans}
             keyExtractor={(item) => item.id}
             onRowClick={handleOpenPaymentPlan}
-            emptyMessage={canProgramPaymentPlan ? 'No hay planes de pago' : 'Conecta Stripe o HighLevel para ver y programar planes de pago'}
+            emptyMessage={canProgramPaymentPlan ? 'No hay planes de pago' : 'Conecta Stripe, Mercado Pago o HighLevel para ver y programar planes de pago'}
             loading={paymentPlansLoading}
             searchable={true}
             searchPlaceholder="Buscar planes de pago..."
@@ -3063,7 +3127,7 @@ export const Transactions: React.FC = () => {
                       defaultValue={paymentPlanModal.plan.title || paymentPlanModal.plan.name || ''}
                     />
                   </div>
-                  {!selectedPaymentPlanIsStripe && (
+                  {!selectedPaymentPlanIsLocalCheckout && (
                     <>
                       <div className={styles.formGroup}>
                         <label>Monto</label>
@@ -3098,7 +3162,7 @@ export const Transactions: React.FC = () => {
                     />
                   </div>
                 </div>
-                {selectedPaymentPlanIsStripe && renderStripePlanScheduleEditor(paymentPlanModal.plan)}
+                {selectedPaymentPlanIsLocalCheckout && renderStripePlanScheduleEditor(paymentPlanModal.plan)}
                 <div className={`${styles.formActions} ${styles.paymentPlanFormActions}`} data-modal-footer="">
                   <div className={styles.paymentPlanSecondaryActions}>
                     {selectedPaymentPlanIsStripe && (

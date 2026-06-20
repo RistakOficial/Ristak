@@ -66,6 +66,7 @@ const DEFAULT_PAYMENT_SETTINGS = {
     provider: 'jigsaw',
     jigsawEnabled: false,
     applyToStripe: true,
+    applyToMercadoPago: true,
     applyToHighLevel: true
   }
 }
@@ -190,6 +191,7 @@ export function normalizePaymentSettings(input = {}) {
       provider: 'jigsaw',
       jigsawEnabled: cleanBoolean(taxes.jigsawEnabled, DEFAULT_PAYMENT_SETTINGS.taxes.jigsawEnabled),
       applyToStripe: cleanBoolean(taxes.applyToStripe, DEFAULT_PAYMENT_SETTINGS.taxes.applyToStripe),
+      applyToMercadoPago: cleanBoolean(taxes.applyToMercadoPago, DEFAULT_PAYMENT_SETTINGS.taxes.applyToMercadoPago),
       applyToHighLevel: cleanBoolean(taxes.applyToHighLevel, DEFAULT_PAYMENT_SETTINGS.taxes.applyToHighLevel)
     }
   }
@@ -202,6 +204,7 @@ export function calculatePaymentTax(amount, rawTaxes = {}, { provider = 'stripe'
 
   if (!taxes.enabled || baseAmount <= 0 || rateValue <= 0) return null
   if (provider === 'stripe' && !taxes.applyToStripe) return null
+  if (provider === 'mercadopago' && !taxes.applyToMercadoPago) return null
   if (provider === 'highlevel' && !taxes.applyToHighLevel) return null
 
   const isPercentage = taxes.rateType === 'percentage'

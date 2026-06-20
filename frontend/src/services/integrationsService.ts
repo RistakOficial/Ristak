@@ -41,6 +41,14 @@ export interface StripeStatus {
   accountLabel?: string | null
 }
 
+export interface MercadoPagoStatus {
+  configured: boolean
+  connected: boolean
+  mode?: 'test' | 'live'
+  publicKey?: string | null
+  accountLabel?: string | null
+}
+
 export interface IntegrationsStatus {
   highlevel: HighLevelStatus
   meta: MetaStatus
@@ -48,6 +56,7 @@ export interface IntegrationsStatus {
   openai: OpenAiStatus
   googleCalendar: GoogleCalendarStatus
   stripe?: StripeStatus
+  mercadopago?: MercadoPagoStatus
 }
 
 // El estado de integraciones se consulta desde muchos componentes al montar

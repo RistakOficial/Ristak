@@ -139,4 +139,17 @@ describe('payment settings tax calculation', () => {
       null
     )
   })
+
+  it('skips taxes when Mercado Pago application is disabled', () => {
+    assert.equal(
+      calculatePaymentTax(100, {
+        enabled: true,
+        rateType: 'fixed',
+        rateValue: 25,
+        calculationMode: 'exclusive',
+        applyToMercadoPago: false
+      }, { provider: 'mercadopago' }),
+      null
+    )
+  })
 })

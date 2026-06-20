@@ -66,6 +66,7 @@ export interface PaymentTaxSettings {
   provider: 'jigsaw'
   jigsawEnabled: boolean
   applyToStripe: boolean
+  applyToMercadoPago: boolean
   applyToHighLevel: boolean
 }
 
@@ -147,6 +148,7 @@ export const defaultPaymentSettings: PaymentSettings = {
     provider: 'jigsaw',
     jigsawEnabled: false,
     applyToStripe: true,
+    applyToMercadoPago: true,
     applyToHighLevel: true
   }
 }

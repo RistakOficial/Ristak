@@ -2065,6 +2065,8 @@ async function initTables() {
         payment_url TEXT,
         stripe_payment_intent_id TEXT,
         stripe_charge_id TEXT,
+        mercadopago_payment_id TEXT,
+        mercadopago_preference_id TEXT,
         paid_at DATETIME,
         metadata_json TEXT,
         date DATETIME,
@@ -3127,6 +3129,8 @@ async function initTables() {
         stripe_customer_id TEXT,
         stripe_payment_method_id TEXT,
         stripe_payment_method_label TEXT,
+        mercadopago_user_id TEXT,
+        mercadopago_preapproval_id TEXT,
         current_state TEXT NOT NULL,
         state_history TEXT,
         card_authorized_at DATETIME,
@@ -3160,6 +3164,8 @@ async function initTables() {
         ghl_schedule_id TEXT,
         ghl_schedule_status TEXT,
         stripe_payment_intent_id TEXT,
+        mercadopago_payment_id TEXT,
+        mercadopago_preference_id TEXT,
         notes TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -3242,6 +3248,8 @@ async function initTables() {
         ['payment_url', 'TEXT'],
         ['stripe_payment_intent_id', 'TEXT'],
         ['stripe_charge_id', 'TEXT'],
+        ['mercadopago_payment_id', 'TEXT'],
+        ['mercadopago_preference_id', 'TEXT'],
         ['paid_at', 'DATETIME'],
         ['metadata_json', 'TEXT']
       ]
@@ -3268,6 +3276,8 @@ async function initTables() {
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_provider ON payments(payment_provider)')
         await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_public_payment ON payments(public_payment_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_stripe_intent ON payments(stripe_payment_intent_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payments_mercadopago_payment ON payments(mercadopago_payment_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payments_mercadopago_preference ON payments(mercadopago_preference_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column')) {
           throw err
@@ -3562,7 +3572,9 @@ async function initTables() {
         ['payment_provider', 'TEXT DEFAULT \'highlevel\''],
         ['stripe_customer_id', 'TEXT'],
         ['stripe_payment_method_id', 'TEXT'],
-        ['stripe_payment_method_label', 'TEXT']
+        ['stripe_payment_method_label', 'TEXT'],
+        ['mercadopago_user_id', 'TEXT'],
+        ['mercadopago_preapproval_id', 'TEXT']
       ]
 
       for (const [column, type] of paymentFlowColumns) {
@@ -3601,6 +3613,7 @@ async function initTables() {
 
       try {
         await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_stripe_method ON payment_flows(stripe_payment_method_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_mercadopago_user ON payment_flows(mercadopago_user_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err
@@ -3640,6 +3653,22 @@ async function initTables() {
       }
 
       try {
+        await db.run('ALTER TABLE installment_payments ADD COLUMN mercadopago_payment_id TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
+        await db.run('ALTER TABLE installment_payments ADD COLUMN mercadopago_preference_id TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
         await db.run('ALTER TABLE installment_payments ADD COLUMN notes TEXT')
       } catch (err) {
         if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
@@ -3657,6 +3686,8 @@ async function initTables() {
 
       try {
         await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_stripe_intent ON installment_payments(stripe_payment_intent_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_mercadopago_payment ON installment_payments(mercadopago_payment_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_mercadopago_preference ON installment_payments(mercadopago_preference_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err

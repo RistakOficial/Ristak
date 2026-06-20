@@ -16,6 +16,7 @@ import { startAppointmentRemindersCron } from './jobs/appointmentReminders.cron.
 import { startWhatsAppQrWatchdogCron } from './jobs/whatsappQrWatchdog.cron.js'
 import { startStripePaymentPlansCron } from './jobs/stripePaymentPlans.cron.js'
 import { startPaymentAutomationsCron } from './jobs/paymentAutomations.cron.js'
+import { startMercadoPagoPaymentPlansCron } from './jobs/mercadoPagoPaymentPlans.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
@@ -56,6 +57,7 @@ import emailRoutes from './routes/email.routes.js'
 import productsRoutes from './routes/products.routes.js'
 import subscriptionsRoutes from './routes/subscriptions.routes.js'
 import stripeRoutes from './routes/stripe.routes.js'
+import mercadoPagoRoutes from './routes/mercadopago.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
 import mediaRoutes from './routes/media.routes.js'
 import internalStorageRoutes from './routes/internalStorage.routes.js'
@@ -132,6 +134,7 @@ app.use('/api/highlevel', highlevelRoutes)
 app.use('/api/products', productsRoutes)
 app.use('/api/subscriptions', subscriptionsRoutes)
 app.use('/api/stripe', stripeRoutes)
+app.use('/api/mercadopago', mercadoPagoRoutes)
 app.use('/api/meta', requireFeature('meta_ads'), metaRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/webhook-config', webhookConfigRoutes)
@@ -252,6 +255,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   startWhatsAppQrWatchdogCron()    // Reabre sesiones de WhatsApp Web al arrancar y las mantiene vivas
   startStripePaymentPlansCron()    // Cobra parcialidades Stripe vencidas con tarjetas guardadas
   startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
+  startMercadoPagoPaymentPlansCron() // Genera links Mercado Pago para parcialidades vencidas
 })
 
 // Manejo de errores de proceso

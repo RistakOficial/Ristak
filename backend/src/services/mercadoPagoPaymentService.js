@@ -1,0 +1,1867 @@
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
+import { logger } from '../utils/logger.js'
+import { updateSingleContactStats } from '../utils/updateContactsStats.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
+import {
+  createCentralMercadoPagoConnectUrl,
+  disconnectCentralMercadoPago,
+  getCentralMercadoPagoStatus,
+  isLicenseEnforced
+} from './licenseService.js'
+import { calculatePaymentTax, getPublicPaymentSettings } from './paymentSettingsService.js'
+
+const CONFIG_KEYS = {
+  enabled: 'mercadopago_enabled',
+  mode: 'mercadopago_mode',
+  defaultCurrency: 'mercadopago_default_currency',
+  accountLabel: 'mercadopago_account_label',
+  publicKey: 'mercadopago_public_key',
+  userId: 'mercadopago_user_id',
+  scope: 'mercadopago_scope',
+  tokenType: 'mercadopago_token_type',
+  livemode: 'mercadopago_livemode',
+  accessToken: 'mercadopago_access_token_encrypted',
+  refreshToken: 'mercadopago_refresh_token_encrypted',
+  webhookSecret: 'mercadopago_webhook_secret_encrypted',
+  webhookUrl: 'mercadopago_webhook_url',
+  tokenExpiresAt: 'mercadopago_token_expires_at',
+  connectedAt: 'mercadopago_connected_at',
+  disconnectedAt: 'mercadopago_disconnected_at',
+  managedByPortal: 'mercadopago_managed_by_portal'
+}
+
+const DEFAULT_CURRENCY = 'MXN'
+const MERCADOPAGO_API_BASE = 'https://api.mercadopago.com'
+const MERCADOPAGO_WEBHOOK_PATH = '/api/mercadopago/webhook'
+const TOKEN_SYNC_WINDOW_MS = 15 * 60 * 1000
+const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
+const MP_PLAN_STATES = {
+  ACTIVE: 'mercadopago_plan_active',
+  PAUSED: 'paused',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled',
+  DELETED: 'deleted'
+}
+const LOCKED_PLAN_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled'])
+const MERCADOPAGO_CHECKOUT_METHODS = new Set(['', 'mercadopago', 'mercadopago_checkout', 'payment_link', 'checkout', 'card', 'auto'])
+const MANUAL_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other', 'manual', 'offline'])
+
+let mercadoPagoFetchForTest = null
+
+export function setMercadoPagoFetchForTest(fetchImpl) {
+  mercadoPagoFetchForTest = typeof fetchImpl === 'function' ? fetchImpl : null
+}
+
+function cleanString(value) {
+  return String(value || '').trim()
+}
+
+function mercadoPagoFetch() {
+  return mercadoPagoFetchForTest || fetch
+}
+
+function normalizeMode(value) {
+  return value === 'live' ? 'live' : 'test'
+}
+
+function normalizeBoolean(value, fallback = true) {
+  if (value === undefined || value === null || value === '') return fallback
+  if (typeof value === 'boolean') return value
+  return !['0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase())
+}
+
+function normalizeCurrency(value) {
+  const currency = cleanString(value || DEFAULT_CURRENCY).toUpperCase()
+  return /^[A-Z]{3}$/.test(currency) ? currency : DEFAULT_CURRENCY
+}
+
+async function getConfiguredCurrency() {
+  try {
+    return normalizeCurrency(await getAccountCurrency())
+  } catch {
+    return DEFAULT_CURRENCY
+  }
+}
+
+function createId(prefix) {
+  return `${prefix}_${Date.now()}_${randomBytes(6).toString('hex')}`
+}
+
+function createPublicId() {
+  return `pay_${randomBytes(18).toString('base64url')}`
+}
+
+function parseJson(value, fallback = {}) {
+  if (!value) return fallback
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function decryptSecret(value) {
+  const clean = cleanString(value)
+  if (!clean) return ''
+  return isEncrypted(clean) ? decrypt(clean) : clean
+}
+
+function encryptOptionalSecret(value) {
+  const clean = cleanString(value)
+  return clean ? encrypt(clean) : ''
+}
+
+function normalizePositiveAmount(value, fallback = 25) {
+  const amount = Number(value)
+  if (Number.isFinite(amount) && amount > 0) return Math.round(amount * 100) / 100
+  return Math.round(Number(fallback || 25) * 100) / 100
+}
+
+function normalizeDateOnly(value) {
+  if (!value) return new Date().toISOString().slice(0, 10)
+  const text = String(value).trim()
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (match) return match[1]
+
+  const date = new Date(text)
+  if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10)
+  return new Date().toISOString().slice(0, 10)
+}
+
+function todayDateOnly() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: DEFAULT_PAYMENT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date())
+}
+
+function dateOnlySql(expression) {
+  return process.env.DATABASE_URL ? `(${expression})::date` : `DATE(${expression})`
+}
+
+function dateOnlyPlaceholder() {
+  return process.env.DATABASE_URL ? '?::date' : 'DATE(?)'
+}
+
+function buildPaymentUrl(baseUrl, publicPaymentId) {
+  const cleanBase = cleanString(baseUrl).replace(/\/+$/, '')
+  return cleanBase ? `${cleanBase}/pay/${encodeURIComponent(publicPaymentId)}` : ''
+}
+
+function getConfiguredBaseUrl() {
+  return cleanString(
+    process.env.PUBLIC_APP_URL ||
+    process.env.APP_PUBLIC_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.APP_URL
+  ).replace(/\/+$/, '')
+}
+
+async function readRawConfig() {
+  const configKeys = Object.values(CONFIG_KEYS)
+  const rows = await db.all(
+    `SELECT config_key, config_value FROM app_config
+     WHERE config_key IN (${configKeys.map(() => '?').join(', ')})`,
+    configKeys
+  )
+
+  const values = {}
+  for (const row of rows || []) values[row.config_key] = row.config_value
+  return values
+}
+
+function shouldSyncToken(raw = {}) {
+  const expiresAt = raw[CONFIG_KEYS.tokenExpiresAt]
+  if (!expiresAt) return false
+  const expires = new Date(expiresAt).getTime()
+  return Number.isFinite(expires) && expires - Date.now() <= TOKEN_SYNC_WINDOW_MS
+}
+
+function mapConfig(raw = {}, { includeSecrets = false } = {}) {
+  const mode = normalizeMode(raw[CONFIG_KEYS.mode])
+  const accessToken = raw[CONFIG_KEYS.accessToken] ? decryptSecret(raw[CONFIG_KEYS.accessToken]) : ''
+  const refreshToken = raw[CONFIG_KEYS.refreshToken] ? decryptSecret(raw[CONFIG_KEYS.refreshToken]) : ''
+  const webhookSecret = raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : ''
+  const enabled = normalizeBoolean(raw[CONFIG_KEYS.enabled], true)
+  const configured = Boolean(enabled && accessToken && cleanString(raw[CONFIG_KEYS.userId]))
+
+  return {
+    enabled,
+    configured,
+    mode,
+    defaultCurrency: normalizeCurrency(raw[CONFIG_KEYS.defaultCurrency] || DEFAULT_CURRENCY),
+    accountLabel: cleanString(raw[CONFIG_KEYS.accountLabel]),
+    userId: cleanString(raw[CONFIG_KEYS.userId]),
+    publicKey: cleanString(raw[CONFIG_KEYS.publicKey]),
+    scope: cleanString(raw[CONFIG_KEYS.scope]),
+    tokenType: cleanString(raw[CONFIG_KEYS.tokenType] || 'bearer'),
+    livemode: normalizeBoolean(raw[CONFIG_KEYS.livemode], mode === 'live'),
+    webhookUrl: cleanString(raw[CONFIG_KEYS.webhookUrl]),
+    hasWebhookSecret: Boolean(webhookSecret),
+    tokenExpiresAt: raw[CONFIG_KEYS.tokenExpiresAt] || null,
+    connectedAt: raw[CONFIG_KEYS.connectedAt] || null,
+    disconnectedAt: raw[CONFIG_KEYS.disconnectedAt] || null,
+    managedByPortal: normalizeBoolean(raw[CONFIG_KEYS.managedByPortal], false) || isLicenseEnforced(),
+    hasAccessToken: Boolean(accessToken),
+    hasRefreshToken: Boolean(refreshToken),
+    ...(includeSecrets ? { accessToken, refreshToken, webhookSecret } : {})
+  }
+}
+
+async function writeCentralConnection(connection = {}) {
+  const connected = Boolean(connection.connected && connection.access_token && connection.user_id)
+  if (!connected) {
+    const error = new Error('Mercado Pago no está conectado en el portal central.')
+    error.status = 400
+    throw error
+  }
+
+  await setAppConfig(CONFIG_KEYS.enabled, '1')
+  await setAppConfig(CONFIG_KEYS.mode, normalizeMode(connection.mode))
+  await setAppConfig(CONFIG_KEYS.defaultCurrency, await getConfiguredCurrency())
+  await setAppConfig(CONFIG_KEYS.accountLabel, cleanString(connection.account_label || connection.account_email || connection.user_id))
+  await setAppConfig(CONFIG_KEYS.publicKey, cleanString(connection.public_key))
+  await setAppConfig(CONFIG_KEYS.userId, cleanString(connection.user_id))
+  await setAppConfig(CONFIG_KEYS.scope, cleanString(connection.scope))
+  await setAppConfig(CONFIG_KEYS.tokenType, cleanString(connection.token_type || 'bearer'))
+  await setAppConfig(CONFIG_KEYS.livemode, connection.livemode ? '1' : '0')
+  await setAppConfig(CONFIG_KEYS.webhookUrl, cleanString(connection.webhook_url))
+  await setAppConfig(CONFIG_KEYS.tokenExpiresAt, cleanString(connection.token_expires_at))
+  await setAppConfig(CONFIG_KEYS.connectedAt, cleanString(connection.connected_at || new Date().toISOString()))
+  await setAppConfig(CONFIG_KEYS.managedByPortal, '1')
+  await setAppConfig(CONFIG_KEYS.accessToken, encryptOptionalSecret(connection.access_token))
+
+  if (connection.refresh_token) {
+    await setAppConfig(CONFIG_KEYS.refreshToken, encryptOptionalSecret(connection.refresh_token))
+  } else {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.refreshToken])
+  }
+
+  if (connection.webhook_secret) {
+    await setAppConfig(CONFIG_KEYS.webhookSecret, encryptOptionalSecret(connection.webhook_secret))
+  } else {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.webhookSecret])
+  }
+}
+
+export async function getMercadoPagoPaymentConfig({ includeSecrets = false } = {}) {
+  let raw = await readRawConfig()
+  if (isLicenseEnforced() && raw[CONFIG_KEYS.accessToken] && shouldSyncToken(raw)) {
+    try {
+      await syncMercadoPagoFromCentral()
+      raw = await readRawConfig()
+    } catch (error) {
+      logger.warn(`No se pudo refrescar Mercado Pago desde el portal central: ${error.message}`)
+    }
+  }
+  return mapConfig(raw, { includeSecrets })
+}
+
+export async function createMercadoPagoOAuthUrl({ mode = 'test', appUrl = '', returnPath = '/settings/payments/mercadopago' } = {}) {
+  const result = await createCentralMercadoPagoConnectUrl({
+    mode,
+    appUrl,
+    returnPath
+  })
+  return result
+}
+
+export async function syncMercadoPagoFromCentral() {
+  const connection = await getCentralMercadoPagoStatus()
+  await writeCentralConnection(connection)
+  return getMercadoPagoPaymentConfig()
+}
+
+export async function setMercadoPagoActiveMode(mode = 'live') {
+  const normalizedMode = normalizeMode(mode)
+  const synced = await syncMercadoPagoFromCentral()
+  if (synced.mode !== normalizedMode) {
+    const error = new Error(`Reconecta Mercado Pago en modo ${normalizedMode === 'live' ? 'en vivo' : 'prueba'} para usar ese token.`)
+    error.status = 400
+    throw error
+  }
+  return synced
+}
+
+export async function deleteMercadoPagoPaymentConfig() {
+  if (isLicenseEnforced()) {
+    try {
+      await disconnectCentralMercadoPago()
+    } catch (error) {
+      logger.warn(`No se pudo desconectar Mercado Pago central: ${error.message}`)
+    }
+  }
+
+  await db.run(
+    `DELETE FROM app_config
+     WHERE config_key IN (${Object.values(CONFIG_KEYS).map(() => '?').join(', ')})`,
+    Object.values(CONFIG_KEYS)
+  )
+  return getMercadoPagoPaymentConfig()
+}
+
+async function getMercadoPagoClientConfig() {
+  let config = await getMercadoPagoPaymentConfig({ includeSecrets: true })
+  if ((!config.configured || !config.accessToken) && isLicenseEnforced()) {
+    await syncMercadoPagoFromCentral()
+    config = await getMercadoPagoPaymentConfig({ includeSecrets: true })
+  }
+
+  if (!config.configured || !config.accessToken) {
+    const error = new Error('Mercado Pago no está configurado.')
+    error.status = 400
+    throw error
+  }
+
+  return config
+}
+
+async function mercadoPagoApiRequest(path, { method = 'GET', body = null, idempotencyKey = '' } = {}) {
+  const config = await getMercadoPagoClientConfig()
+  const url = path.startsWith('http') ? path : `${MERCADOPAGO_API_BASE}${path}`
+  const headers = {
+    Accept: 'application/json',
+    Authorization: `Bearer ${config.accessToken}`
+  }
+  if (body) headers['Content-Type'] = 'application/json'
+  if (idempotencyKey) headers['X-Idempotency-Key'] = idempotencyKey
+
+  const response = await mercadoPagoFetch()(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  })
+  const payload = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    const error = new Error(payload?.message || payload?.error || 'Mercado Pago no pudo completar la solicitud.')
+    error.status = response.status || 502
+    error.payload = payload
+    throw error
+  }
+
+  return { payload, config }
+}
+
+export async function testMercadoPagoPaymentConfig() {
+  const { payload } = await mercadoPagoApiRequest('/users/me')
+  return {
+    ok: true,
+    userId: cleanString(payload.id),
+    accountLabel: cleanString(payload.nickname || payload.email || payload.id),
+    email: cleanString(payload.email)
+  }
+}
+
+async function findPaymentByPublicId(publicPaymentId) {
+  return db.get(
+    `SELECT
+      p.*,
+      c.full_name AS contact_name,
+      c.email AS contact_email,
+      c.phone AS contact_phone
+     FROM payments p
+     LEFT JOIN contacts c ON c.id = p.contact_id
+     WHERE p.public_payment_id = ?`,
+    [publicPaymentId]
+  )
+}
+
+async function findPaymentById(paymentId) {
+  return db.get(
+    `SELECT
+      p.*,
+      c.full_name AS contact_name,
+      c.email AS contact_email,
+      c.phone AS contact_phone
+     FROM payments p
+     LEFT JOIN contacts c ON c.id = p.contact_id
+     WHERE p.id = ?`,
+    [paymentId]
+  )
+}
+
+function mapPublicPayment(row, config, baseUrl = '', settings = null) {
+  if (!row) return null
+  const metadata = parseJson(row.metadata_json, {})
+  const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const publicPaymentId = row.public_payment_id
+  return {
+    id: row.id,
+    publicPaymentId,
+    paymentUrl: row.payment_url || (publicPaymentId && baseUrl ? buildPaymentUrl(baseUrl, publicPaymentId) : ''),
+    status: row.status || 'pending',
+    amount: Number(row.amount || 0),
+    currency: row.currency || config?.defaultCurrency || DEFAULT_CURRENCY,
+    title: row.title || 'Pago',
+    description: row.description || '',
+    dueDate: row.due_date || null,
+    sentAt: row.sent_at || null,
+    paidAt: row.paid_at || null,
+    paymentMode: row.payment_mode || config?.mode || 'test',
+    provider: 'mercadopago',
+    contact: {
+      id: row.contact_id || '',
+      name: row.contact_name || metadata.contactName || '',
+      email: row.contact_email || metadata.contactEmail || '',
+      phone: row.contact_phone || metadata.contactPhone || ''
+    },
+    mercadoPagoPaymentId: row.mercadopago_payment_id || null,
+    mercadoPagoPreferenceId: row.mercadopago_preference_id || null,
+    publicKey: config?.publicKey || '',
+    tax,
+    settings: settings || null
+  }
+}
+
+function buildPreferencePayload(row, { baseUrl = '' } = {}) {
+  const metadata = parseJson(row.metadata_json, {})
+  const publicPaymentId = row.public_payment_id
+  const paymentPageUrl = buildPaymentUrl(baseUrl, publicPaymentId)
+  const returnUrl = paymentPageUrl ? `${paymentPageUrl}?mercadopago=return` : ''
+  const notificationUrl = cleanString(baseUrl) ? `${cleanString(baseUrl).replace(/\/+$/, '')}${MERCADOPAGO_WEBHOOK_PATH}` : ''
+
+  return {
+    items: [
+      {
+        id: row.id,
+        title: row.title || 'Pago Ristak',
+        description: row.description || row.title || 'Pago Ristak',
+        quantity: 1,
+        unit_price: Number(row.amount || 0),
+        currency_id: normalizeCurrency(row.currency)
+      }
+    ],
+    payer: {
+      name: row.contact_name || metadata.contactName || undefined,
+      email: row.contact_email || metadata.contactEmail || undefined,
+      phone: row.contact_phone || metadata.contactPhone
+        ? { number: row.contact_phone || metadata.contactPhone }
+        : undefined
+    },
+    external_reference: row.id,
+    notification_url: notificationUrl || undefined,
+    back_urls: returnUrl ? {
+      success: returnUrl,
+      pending: returnUrl,
+      failure: returnUrl
+    } : undefined,
+    auto_return: 'approved',
+    binary_mode: false,
+    metadata: {
+      ristak_payment_id: row.id,
+      public_payment_id: publicPaymentId,
+      source: metadata.source || 'ristak',
+      ...(metadata.paymentPlan ? { payment_plan: metadata.paymentPlan } : {})
+    }
+  }
+}
+
+async function createPreferenceForPayment(row, { baseUrl = '' } = {}) {
+  const { payload, config } = await mercadoPagoApiRequest('/checkout/preferences', {
+    method: 'POST',
+    idempotencyKey: `ristak-mp-pref-${row.id}`,
+    body: buildPreferencePayload(row, { baseUrl })
+  })
+
+  const paymentUrl = config.mode === 'test'
+    ? cleanString(payload.sandbox_init_point || payload.init_point)
+    : cleanString(payload.init_point || payload.sandbox_init_point)
+
+  await db.run(
+    `UPDATE payments
+     SET payment_url = COALESCE(?, payment_url),
+         mercadopago_preference_id = COALESCE(?, mercadopago_preference_id),
+         status = CASE WHEN status = 'scheduled' THEN 'sent' ELSE status END,
+         sent_at = COALESCE(sent_at, CURRENT_TIMESTAMP),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [paymentUrl || null, cleanString(payload.id) || null, row.id]
+  )
+
+  return {
+    preferenceId: cleanString(payload.id),
+    paymentUrl,
+    raw: payload
+  }
+}
+
+async function insertPaymentRow({
+  contact = {},
+  amount,
+  currency,
+  status = 'sent',
+  paymentMethod = 'mercadopago_checkout',
+  title = 'Pago',
+  description = 'Pago',
+  dueDate = null,
+  metadata = {},
+  createPreference = true,
+  baseUrl = ''
+} = {}) {
+  const config = await getMercadoPagoClientConfig()
+  const publicPaymentId = createPublicId()
+  const id = createId('mp_payment')
+  const now = new Date().toISOString()
+  const paymentUrl = buildPaymentUrl(baseUrl, publicPaymentId)
+
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, date, due_date, sent_at,
+      public_payment_id, payment_url, metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      id,
+      cleanString(contact.id) || null,
+      normalizePositiveAmount(amount),
+      normalizeCurrency(currency || config.defaultCurrency),
+      status,
+      paymentMethod,
+      config.mode,
+      'mercadopago',
+      publicPaymentId,
+      cleanString(title) || 'Pago',
+      cleanString(description) || cleanString(title) || 'Pago',
+      now,
+      dueDate || null,
+      status === 'scheduled' ? null : now,
+      publicPaymentId,
+      createPreference ? paymentUrl : '',
+      JSON.stringify(metadata)
+    ]
+  )
+
+  let row = await findPaymentById(id)
+  let preference = null
+  if (createPreference) {
+    preference = await createPreferenceForPayment(row, { baseUrl })
+    row = await findPaymentById(id)
+  }
+
+  return {
+    payment: row,
+    preference,
+    publicPaymentId,
+    paymentUrl: preference?.paymentUrl || row.payment_url || paymentUrl
+  }
+}
+
+export async function createMercadoPagoPaymentLink(input = {}, { baseUrl } = {}) {
+  const amount = Number(input.amount)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const error = new Error('El monto debe ser mayor a 0.')
+    error.status = 400
+    throw error
+  }
+
+  const paymentSettings = await getPublicPaymentSettings()
+  const tax = calculatePaymentTax(amount, paymentSettings.taxes, { provider: 'mercadopago' })
+  const chargeAmount = tax?.totalAmount || Math.round(amount * 100) / 100
+  const currency = normalizeCurrency(input.currency || await getConfiguredCurrency())
+  const contact = {
+    id: cleanString(input.contactId),
+    name: cleanString(input.contactName),
+    email: cleanString(input.email),
+    phone: cleanString(input.phone)
+  }
+  const metadata = {
+    contactName: contact.name,
+    contactEmail: contact.email,
+    contactPhone: contact.phone,
+    source: cleanString(input.source || 'ristak'),
+    lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
+    ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    ...(tax ? { tax } : {})
+  }
+
+  const result = await insertPaymentRow({
+    contact,
+    amount: chargeAmount,
+    currency,
+    status: 'sent',
+    title: cleanString(input.title) || 'Pago',
+    description: cleanString(input.description) || cleanString(input.title) || 'Pago',
+    dueDate: input.dueDate || null,
+    metadata,
+    createPreference: true,
+    baseUrl
+  })
+
+  const config = await getMercadoPagoPaymentConfig()
+  return {
+    payment: mapPublicPayment(await findPaymentById(result.payment.id), config, baseUrl, paymentSettings),
+    paymentUrl: result.paymentUrl,
+    publicPaymentId: result.publicPaymentId,
+    preferenceId: result.preference?.preferenceId || ''
+  }
+}
+
+export async function getPublicMercadoPagoPayment(publicPaymentId, { baseUrl } = {}) {
+  const config = await getMercadoPagoPaymentConfig()
+  const row = await findPaymentByPublicId(publicPaymentId)
+  if (!row || row.payment_provider !== 'mercadopago') return null
+
+  const paymentSettings = await getPublicPaymentSettings()
+  return mapPublicPayment(row, config, baseUrl, paymentSettings)
+}
+
+export async function ensurePublicMercadoPagoPreference(publicPaymentId, { baseUrl } = {}) {
+  const row = await findPaymentByPublicId(publicPaymentId)
+  if (!row || row.payment_provider !== 'mercadopago') {
+    const error = new Error('Pago no encontrado.')
+    error.status = 404
+    throw error
+  }
+  if (['paid', 'refunded', 'void', 'deleted'].includes(cleanString(row.status).toLowerCase())) {
+    const error = new Error('Este pago ya no acepta nuevos cobros.')
+    error.status = 409
+    throw error
+  }
+
+  if (row.payment_url && row.mercadopago_preference_id) {
+    return {
+      paymentUrl: row.payment_url,
+      preferenceId: row.mercadopago_preference_id
+    }
+  }
+
+  return createPreferenceForPayment(row, { baseUrl })
+}
+
+function validatePlanPayload(input = {}) {
+  const totalAmount = normalizePositiveAmount(input.totalAmount)
+  const contact = input.contact || {}
+  if (!cleanString(contact.id)) {
+    const error = new Error('Selecciona un contacto para el plan de pagos.')
+    error.status = 400
+    throw error
+  }
+
+  const remainingPayments = Array.isArray(input.remainingPayments) ? input.remainingPayments : []
+  if (!remainingPayments.length) {
+    const error = new Error('Agrega al menos una parcialidad programada.')
+    error.status = 400
+    throw error
+  }
+
+  return {
+    contact: {
+      id: cleanString(contact.id),
+      name: cleanString(contact.name),
+      email: cleanString(contact.email),
+      phone: cleanString(contact.phone)
+    },
+    totalAmount,
+    currency: normalizeCurrency(input.currency || DEFAULT_CURRENCY),
+    title: cleanString(input.title || input.description || 'Plan de pago'),
+    description: cleanString(input.description || input.title || 'Plan de pago'),
+    source: cleanString(input.source || 'ristak'),
+    lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
+    remainingFrequency: cleanString(input.remainingFrequency || 'custom'),
+    firstPayment: {
+      enabled: input.firstPayment?.enabled !== false && Number(input.firstPayment?.amount || 0) > 0,
+      amount: normalizePositiveAmount(input.firstPayment?.amount || 0, 0),
+      date: normalizeDateOnly(input.firstPayment?.date),
+      method: cleanString(input.firstPayment?.method || 'mercadopago')
+    },
+    remainingPayments: remainingPayments.map((payment, index) => ({
+      sequence: Number(payment.sequence || index + 1),
+      amount: normalizePositiveAmount(payment.amount),
+      percentage: payment.percentage === null || payment.percentage === undefined ? null : Number(payment.percentage),
+      dueDate: normalizeDateOnly(payment.dueDate),
+      frequency: cleanString(payment.frequency || input.remainingFrequency || 'custom')
+    }))
+  }
+}
+
+function addPlanState(history = [], state) {
+  return [
+    ...history,
+    {
+      state,
+      at: new Date().toISOString()
+    }
+  ]
+}
+
+function getMercadoPagoPlanRecurrenceLabel(value) {
+  const frequency = cleanString(value || 'custom')
+  if (frequency === 'weekly') return 'Semanal'
+  if (frequency === 'biweekly') return 'Quincenal'
+  if (frequency === 'monthly') return 'Mensual'
+  if (frequency === 'daily') return 'Diaria'
+  if (frequency === 'yearly') return 'Anual'
+  return 'Personalizada'
+}
+
+function getMercadoPagoPlanMirrorStatus(flow = {}) {
+  const state = cleanString(flow.current_state).toLowerCase()
+  if (state === MP_PLAN_STATES.COMPLETED) return 'completed'
+  if (state === MP_PLAN_STATES.DELETED || state === 'deleted') return 'deleted'
+  if (state === MP_PLAN_STATES.PAUSED || state === 'paused') return 'paused'
+  if (state === MP_PLAN_STATES.CANCELLED || ['cancelled', 'canceled', 'void'].includes(state)) return 'cancelled'
+  return 'active'
+}
+
+async function persistMercadoPagoPaymentPlanMirror(flowId, extra = {}) {
+  const cleanFlowId = cleanString(flowId)
+  if (!cleanFlowId) return null
+
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  if (!flow || flow.payment_provider !== 'mercadopago') return null
+
+  const installments = await db.all(
+    `SELECT *
+     FROM installment_payments
+     WHERE flow_id = ?
+     ORDER BY sequence ASC`,
+    [cleanFlowId]
+  )
+  const metadata = parseJson(flow.metadata, {})
+  const visibleInstallments = (installments || []).filter((installment) => (
+    !['cancelled', 'canceled', 'deleted', 'void'].includes(cleanString(installment.status).toLowerCase())
+  ))
+  const nextInstallment = visibleInstallments.find((installment) => (
+    !['paid', 'cancelled', 'canceled', 'deleted'].includes(cleanString(installment.status).toLowerCase())
+  )) || visibleInstallments[0] || null
+  const lastInstallment = visibleInstallments[Math.max(0, visibleInstallments.length - 1)] || null
+  const startDate = flow.first_payment_date || visibleInstallments[0]?.due_date || flow.created_at
+  const nextRunAt = nextInstallment?.due_date || flow.first_payment_date || flow.created_at
+  const itemCount = (Number(flow.first_payment_amount || 0) > 0 ? 1 : 0) + visibleInstallments.length
+  const scheduleJson = {
+    provider: 'mercadopago',
+    flowId: cleanFlowId,
+    remainingFrequency: metadata.remainingFrequency || 'custom',
+    checkoutProvider: 'mercadopago',
+    firstPayment: {
+      amount: Number(flow.first_payment_amount || 0),
+      date: flow.first_payment_date || null,
+      method: flow.first_payment_method || null,
+      status: flow.first_payment_status || null,
+      paymentId: flow.first_payment_invoice_id || null,
+      paymentLink: flow.card_setup_payment_link || null
+    },
+    installments: visibleInstallments.map((installment) => ({
+      id: installment.id,
+      sequence: installment.sequence,
+      amount: Number(installment.amount || 0),
+      percentage: installment.percentage ?? null,
+      dueDate: installment.due_date || null,
+      status: installment.status || null,
+      paymentId: installment.payment_id || null,
+      paymentMethod: installment.payment_method || null,
+      preferenceId: installment.mercadopago_preference_id || null
+    }))
+  }
+  const rawJson = {
+    id: cleanFlowId,
+    provider: 'mercadopago',
+    paymentFlow: {
+      id: cleanFlowId,
+      state: flow.current_state,
+      contactId: flow.contact_id,
+      mercadoPagoUserId: flow.mercadopago_user_id || null
+    },
+    schedule: scheduleJson,
+    ...(extra && Object.keys(extra).length ? extra : {})
+  }
+
+  await db.run(
+    `INSERT INTO payment_plans (
+      id, ghl_schedule_id, contact_id, contact_name, email, phone,
+      name, title, status, total, currency, description, recurrence_label,
+      start_date, next_run_at, end_date, live_mode, item_count,
+      schedule_json, raw_json, source, last_synced_at, created_at, updated_at
+    ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'mercadopago', CURRENT_TIMESTAMP, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      ghl_schedule_id = NULL,
+      contact_id = excluded.contact_id,
+      contact_name = excluded.contact_name,
+      email = excluded.email,
+      phone = excluded.phone,
+      name = excluded.name,
+      title = excluded.title,
+      status = excluded.status,
+      total = excluded.total,
+      currency = excluded.currency,
+      description = excluded.description,
+      recurrence_label = excluded.recurrence_label,
+      start_date = excluded.start_date,
+      next_run_at = excluded.next_run_at,
+      end_date = excluded.end_date,
+      live_mode = excluded.live_mode,
+      item_count = excluded.item_count,
+      schedule_json = excluded.schedule_json,
+      raw_json = excluded.raw_json,
+      source = 'mercadopago',
+      last_synced_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP`,
+    [
+      cleanFlowId,
+      flow.contact_id,
+      flow.contact_name || null,
+      flow.contact_email || null,
+      flow.contact_phone || null,
+      flow.concept || 'Plan de pagos',
+      flow.concept || 'Plan de pagos',
+      getMercadoPagoPlanMirrorStatus(flow),
+      Number(flow.total_amount || 0),
+      flow.currency || DEFAULT_CURRENCY,
+      flow.concept || 'Plan de pagos',
+      getMercadoPagoPlanRecurrenceLabel(metadata.remainingFrequency),
+      startDate || null,
+      nextRunAt || null,
+      lastInstallment?.due_date || null,
+      itemCount,
+      JSON.stringify(scheduleJson),
+      JSON.stringify(rawJson),
+      flow.created_at || null
+    ]
+  )
+
+  return db.get('SELECT * FROM payment_plans WHERE id = ?', [cleanFlowId])
+}
+
+function isOfflinePaymentMethod(method) {
+  return ['cash', 'bank_transfer', 'transfer', 'deposit', 'manual', 'offline', 'check', 'other'].includes(cleanString(method))
+}
+
+function normalizePlanEditableAmount(value, fieldLabel = 'monto') {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount < 0) {
+    const error = new Error(`El ${fieldLabel} debe ser un número válido.`)
+    error.status = 400
+    throw error
+  }
+
+  return Math.round(amount * 100) / 100
+}
+
+function normalizeManualPaymentMethod(method) {
+  const normalized = cleanString(method).toLowerCase()
+  if (normalized === 'transfer') return 'bank_transfer'
+  if (normalized === 'offline') return 'other'
+  return normalized
+}
+
+function normalizeMercadoPagoPlanPaymentMethod(value) {
+  const method = cleanString(value).toLowerCase()
+  if (MERCADOPAGO_CHECKOUT_METHODS.has(method)) {
+    return {
+      automatic: 1,
+      installmentMethod: 'mercadopago_checkout',
+      paymentMethod: 'mercadopago_checkout',
+      status: 'scheduled',
+      notes: 'Mercado Pago generará el link cuando llegue la fecha programada.'
+    }
+  }
+
+  if (!MANUAL_PLAN_PAYMENT_METHODS.has(method)) {
+    const error = new Error('Forma de cobro inválida para la parcialidad.')
+    error.status = 400
+    throw error
+  }
+
+  const manualMethod = normalizeManualPaymentMethod(method)
+  return {
+    automatic: 0,
+    installmentMethod: manualMethod,
+    paymentMethod: manualMethod,
+    status: 'pending',
+    notes: 'Pago manual dentro del plan.'
+  }
+}
+
+function normalizeMercadoPagoFirstPaymentMethod(value) {
+  const method = cleanString(value).toLowerCase()
+  if (MERCADOPAGO_CHECKOUT_METHODS.has(method)) {
+    return {
+      flowMethod: 'payment_link',
+      paymentMethod: 'mercadopago_checkout',
+      flowStatus: 'pending',
+      createPreference: true
+    }
+  }
+
+  if (!MANUAL_PLAN_PAYMENT_METHODS.has(method)) {
+    const error = new Error('Forma de cobro inválida para el primer pago.')
+    error.status = 400
+    throw error
+  }
+
+  const manualMethod = normalizeManualPaymentMethod(method)
+  return {
+    flowMethod: manualMethod,
+    paymentMethod: manualMethod,
+    flowStatus: 'pending',
+    createPreference: false
+  }
+}
+
+function isMercadoPagoInstallmentLocked(installment = {}) {
+  const status = cleanString(installment.status || installment.payment_status).toLowerCase()
+  return LOCKED_PLAN_PAYMENT_STATUSES.has(status) || Boolean(cleanString(installment.mercadopago_preference_id))
+}
+
+function buildPlanInstallmentPaymentMetadata(flow, installment, sequence, paymentMode, source = 'mercadopago_payment_plan_installment') {
+  return {
+    mercadoPagoMode: paymentMode || 'test',
+    source,
+    contactName: flow.contact_name,
+    contactEmail: flow.contact_email,
+    contactPhone: flow.contact_phone,
+    paymentPlan: {
+      flowId: flow.id,
+      installmentId: installment.id,
+      sequence,
+      trigger: 'scheduled_installment'
+    }
+  }
+}
+
+export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, { baseUrl = '' } = {}) {
+  const cleanFlowId = cleanString(flowId)
+  if (!cleanFlowId) {
+    const error = new Error('Plan Mercado Pago requerido.')
+    error.status = 400
+    throw error
+  }
+
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  if (!flow || flow.payment_provider !== 'mercadopago') {
+    const error = new Error('Plan Mercado Pago no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  const metadata = parseJson(flow.metadata, {})
+  const nextConcept = cleanString(input.name || input.title || input.description || input.concept || flow.concept || 'Plan de pagos')
+  const nextFrequency = cleanString(input.remainingFrequency || input.frequency || metadata.remainingFrequency || 'custom') || 'custom'
+  const submittedInstallments = Array.isArray(input.installments)
+    ? input.installments
+    : Array.isArray(input.remainingPayments)
+      ? input.remainingPayments
+      : []
+
+  const existingInstallments = await db.all(
+    `SELECT i.*, p.status AS payment_status, p.payment_mode, p.mercadopago_preference_id, p.payment_url
+     FROM installment_payments i
+     LEFT JOIN payments p ON p.id = i.payment_id
+     WHERE i.flow_id = ?
+       AND LOWER(COALESCE(i.status, 'pending')) NOT IN ('deleted', 'cancelled', 'canceled', 'void')
+     ORDER BY i.sequence ASC`,
+    [cleanFlowId]
+  )
+  const existingById = new Map((existingInstallments || []).map(installment => [installment.id, installment]))
+  const submittedExistingIds = new Set()
+  let nextSequence = 1
+  let remainingTotal = 0
+
+  for (const submitted of submittedInstallments) {
+    const existingId = cleanString(submitted.id)
+    const existing = existingId ? existingById.get(existingId) : null
+
+    if (existing?.id) submittedExistingIds.add(existing.id)
+
+    if (isMercadoPagoInstallmentLocked(existing)) {
+      remainingTotal += Number(existing.amount || 0)
+      nextSequence += 1
+      continue
+    }
+
+    const amount = normalizePlanEditableAmount(submitted.amount, 'monto de la parcialidad')
+    if (amount <= 0) {
+      const error = new Error('Cada parcialidad futura debe tener un monto mayor a 0.')
+      error.status = 400
+      throw error
+    }
+
+    const dueDate = normalizeDateOnly(submitted.dueDate || submitted.date || submitted.scheduledAt)
+    if (!dueDate) {
+      const error = new Error('Cada parcialidad futura necesita fecha de cobro.')
+      error.status = 400
+      throw error
+    }
+
+    const method = normalizeMercadoPagoPlanPaymentMethod(submitted.paymentMethod || submitted.method)
+    const installmentId = existing?.id || createId('mp_installment')
+    const paymentId = existing?.payment_id || createId('mp_plan_payment')
+    const paymentMode = existing?.payment_mode || metadata.mercadoPagoMode || metadata.paymentMode || 'test'
+    const title = `${nextConcept} - pago ${nextSequence}`
+
+    if (existing) {
+      await db.run(
+        `UPDATE installment_payments
+         SET sequence = ?,
+             amount = ?,
+             percentage = ?,
+             due_date = ?,
+             frequency = ?,
+             payment_method = ?,
+             automatic = ?,
+             status = ?,
+             payment_id = ?,
+             notes = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          nextSequence,
+          amount,
+          submitted.percentage ?? null,
+          dueDate,
+          nextFrequency,
+          method.installmentMethod,
+          method.automatic,
+          method.status,
+          paymentId,
+          method.notes,
+          existing.id
+        ]
+      )
+    } else {
+      await db.run(
+        `INSERT INTO installment_payments (
+          id, flow_id, sequence, amount, percentage, due_date, frequency,
+          payment_method, automatic, status, payment_id, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [
+          installmentId,
+          cleanFlowId,
+          nextSequence,
+          amount,
+          submitted.percentage ?? null,
+          dueDate,
+          nextFrequency,
+          method.installmentMethod,
+          method.automatic,
+          method.status,
+          paymentId,
+          method.notes
+        ]
+      )
+    }
+
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, title, description, date, due_date, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'mercadopago', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        contact_id = excluded.contact_id,
+        amount = excluded.amount,
+        currency = excluded.currency,
+        status = CASE
+          WHEN payments.status IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success') THEN payments.status
+          ELSE excluded.status
+        END,
+        payment_method = excluded.payment_method,
+        payment_mode = excluded.payment_mode,
+        payment_provider = 'mercadopago',
+        title = excluded.title,
+        description = excluded.description,
+        date = excluded.date,
+        due_date = excluded.due_date,
+        metadata_json = excluded.metadata_json,
+        updated_at = CURRENT_TIMESTAMP`,
+      [
+        paymentId,
+        flow.contact_id,
+        amount,
+        flow.currency || DEFAULT_CURRENCY,
+        method.status,
+        method.paymentMethod,
+        paymentMode,
+        title,
+        title,
+        dueDate,
+        dueDate,
+        JSON.stringify(buildPlanInstallmentPaymentMetadata(flow, { id: installmentId }, nextSequence, paymentMode))
+      ]
+    )
+
+    remainingTotal += amount
+    nextSequence += 1
+  }
+
+  for (const existing of existingInstallments || []) {
+    if (submittedExistingIds.has(existing.id)) continue
+
+    if (isMercadoPagoInstallmentLocked(existing)) {
+      remainingTotal += Number(existing.amount || 0)
+      continue
+    }
+
+    await db.run(
+      `UPDATE installment_payments
+       SET status = 'deleted',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [existing.id]
+    )
+
+    if (existing.payment_id) {
+      await db.run(
+        `UPDATE payments
+         SET status = 'deleted',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+        [existing.payment_id]
+      )
+    }
+  }
+
+  const hasFirstPaymentInput = Object.prototype.hasOwnProperty.call(input, 'firstPayment')
+  const firstPayment = hasFirstPaymentInput && input.firstPayment && typeof input.firstPayment === 'object' ? input.firstPayment : null
+  let firstPaymentAmount = Number(flow.first_payment_amount || 0)
+  let firstPaymentDate = flow.first_payment_date || null
+  let firstPaymentMethod = flow.first_payment_method || null
+  let firstPaymentLink = flow.card_setup_payment_link || null
+  const firstPaymentStatus = cleanString(flow.first_payment_status).toLowerCase()
+  const firstPaymentRow = flow.first_payment_invoice_id
+    ? await db.get('SELECT * FROM payments WHERE id = ?', [flow.first_payment_invoice_id])
+    : null
+  const firstPaymentLocked = LOCKED_PLAN_PAYMENT_STATUSES.has(firstPaymentStatus)
+    || Boolean(cleanString(firstPaymentRow?.mercadopago_preference_id))
+
+  if (hasFirstPaymentInput && !firstPaymentLocked) {
+    const firstPaymentInputAmount = firstPayment
+      ? normalizePlanEditableAmount(firstPayment.amount, 'monto del primer pago')
+      : 0
+    const shouldRemoveFirstPayment = !firstPayment || firstPayment.remove === true || firstPaymentInputAmount <= 0
+
+    if (shouldRemoveFirstPayment) {
+      firstPaymentAmount = 0
+      firstPaymentDate = null
+      firstPaymentMethod = null
+      firstPaymentLink = null
+
+      await db.run(
+        `UPDATE payment_flows
+         SET first_payment_amount = 0,
+             first_payment_value = 0,
+             first_payment_date = NULL,
+             first_payment_method = NULL,
+             first_payment_status = NULL,
+             first_payment_invoice_id = NULL,
+             card_setup_payment_link = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [cleanFlowId]
+      )
+
+      if (flow.first_payment_invoice_id) {
+        await db.run(
+          `UPDATE payments
+           SET status = 'deleted',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?
+             AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+          [flow.first_payment_invoice_id]
+        )
+      }
+    } else {
+      firstPaymentAmount = firstPaymentInputAmount
+      firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate)
+      const normalizedFirstPaymentMethod = normalizeMercadoPagoFirstPaymentMethod(
+        firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'mercadopago'
+      )
+      firstPaymentMethod = normalizedFirstPaymentMethod.flowMethod
+      let firstPaymentPaymentId = flow.first_payment_invoice_id || null
+      let firstPaymentStatusNext = firstPaymentStatus && firstPaymentStatus !== 'not_required'
+        ? firstPaymentStatus
+        : normalizedFirstPaymentMethod.flowStatus
+
+      if (!firstPaymentPaymentId) {
+        const created = await insertPaymentRow({
+          contact: {
+            id: flow.contact_id,
+            name: flow.contact_name,
+            email: flow.contact_email,
+            phone: flow.contact_phone
+          },
+          amount: firstPaymentAmount,
+          currency: flow.currency || DEFAULT_CURRENCY,
+          status: normalizedFirstPaymentMethod.createPreference ? 'sent' : firstPaymentStatusNext,
+          paymentMethod: normalizedFirstPaymentMethod.paymentMethod,
+          title: `${nextConcept} - primer pago`,
+          description: `${nextConcept} - primer pago`,
+          dueDate: firstPaymentDate,
+          metadata: {
+            mercadoPagoMode: metadata.mercadoPagoMode || metadata.paymentMode || 'test',
+            source: normalizedFirstPaymentMethod.createPreference ? 'mercadopago_payment_plan_first_link' : 'mercadopago_payment_plan_first_manual',
+            contactName: flow.contact_name,
+            contactEmail: flow.contact_email,
+            contactPhone: flow.contact_phone,
+            paymentPlan: {
+              flowId: cleanFlowId,
+              trigger: normalizedFirstPaymentMethod.createPreference ? 'first_payment' : 'first_payment_manual'
+            }
+          },
+          createPreference: normalizedFirstPaymentMethod.createPreference,
+          baseUrl
+        })
+        firstPaymentPaymentId = created.payment?.id || null
+        firstPaymentLink = created.paymentUrl || null
+        firstPaymentStatusNext = normalizedFirstPaymentMethod.createPreference ? 'pending' : firstPaymentStatusNext
+      }
+
+      await db.run(
+        `UPDATE payment_flows
+         SET first_payment_amount = ?,
+             first_payment_value = ?,
+             first_payment_date = ?,
+             first_payment_method = ?,
+             first_payment_status = ?,
+             first_payment_invoice_id = ?,
+             card_setup_payment_link = COALESCE(?, card_setup_payment_link),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          firstPaymentAmount,
+          firstPaymentAmount,
+          firstPaymentDate,
+          firstPaymentMethod,
+          firstPaymentStatusNext,
+          firstPaymentPaymentId,
+          firstPaymentLink,
+          cleanFlowId
+        ]
+      )
+
+      if (firstPaymentPaymentId) {
+        await db.run(
+          `UPDATE payments
+           SET amount = ?,
+               payment_method = ?,
+               status = CASE
+                 WHEN payments.status IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success') THEN payments.status
+                 ELSE ?
+               END,
+               date = COALESCE(?, date),
+               due_date = COALESCE(?, due_date),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?
+             AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+          [
+            firstPaymentAmount,
+            normalizedFirstPaymentMethod.paymentMethod,
+            normalizedFirstPaymentMethod.createPreference ? 'sent' : firstPaymentStatusNext,
+            firstPaymentDate,
+            firstPaymentDate,
+            firstPaymentPaymentId
+          ]
+        )
+      }
+    }
+  }
+
+  const nextTotal = Math.round((remainingTotal + Number(firstPaymentAmount || 0)) * 100) / 100
+  await db.run(
+    `UPDATE payment_flows
+     SET total_amount = ?,
+         concept = ?,
+         metadata = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      nextTotal,
+      nextConcept,
+      JSON.stringify({
+        ...metadata,
+        remainingFrequency: nextFrequency
+      }),
+      cleanFlowId
+    ]
+  )
+
+  return persistMercadoPagoPaymentPlanMirror(cleanFlowId, {
+    localAction: 'update_schedule',
+    actionedAt: new Date().toISOString()
+  })
+}
+
+export async function applyMercadoPagoPaymentPlanAction(flowId, action) {
+  const cleanFlowId = cleanString(flowId)
+  const normalizedAction = cleanString(action).toLowerCase()
+  if (!cleanFlowId) {
+    const error = new Error('Plan Mercado Pago requerido.')
+    error.status = 400
+    throw error
+  }
+
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  if (!flow || flow.payment_provider !== 'mercadopago') {
+    const error = new Error('Plan Mercado Pago no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  const now = new Date().toISOString()
+  const stateHistory = (nextState) => addPlanState(flow.state_history, nextState)
+
+  if (normalizedAction === 'activate') {
+    await db.run(
+      `UPDATE payment_flows
+       SET current_state = ?,
+           installment_plan_created_at = COALESCE(installment_plan_created_at, ?),
+           installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
+           state_history = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        MP_PLAN_STATES.ACTIVE,
+        now,
+        now,
+        JSON.stringify(stateHistory(MP_PLAN_STATES.ACTIVE)),
+        cleanFlowId
+      ]
+    )
+
+    return persistMercadoPagoPaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
+  }
+
+  if (normalizedAction === 'pause') {
+    await db.run(
+      `UPDATE payment_flows
+       SET current_state = ?,
+           state_history = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        MP_PLAN_STATES.PAUSED,
+        JSON.stringify(stateHistory(MP_PLAN_STATES.PAUSED)),
+        cleanFlowId
+      ]
+    )
+
+    return persistMercadoPagoPaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
+  }
+
+  if (!['cancel', 'delete'].includes(normalizedAction)) {
+    const error = new Error('Acción inválida para plan Mercado Pago.')
+    error.status = 400
+    throw error
+  }
+
+  const finalState = normalizedAction === 'delete'
+    ? MP_PLAN_STATES.DELETED
+    : MP_PLAN_STATES.CANCELLED
+  const finalPaymentStatus = normalizedAction === 'delete' ? 'deleted' : 'void'
+  const finalInstallmentStatus = normalizedAction === 'delete' ? 'deleted' : 'cancelled'
+
+  await db.run(
+    `UPDATE payment_flows
+     SET current_state = ?,
+         state_history = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      finalState,
+      JSON.stringify(stateHistory(finalState)),
+      cleanFlowId
+    ]
+  )
+
+  await db.run(
+    `UPDATE installment_payments
+     SET status = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE flow_id = ?
+       AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled')`,
+    [finalInstallmentStatus, cleanFlowId]
+  )
+
+  await db.run(
+    `UPDATE payments
+     SET status = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id IN (
+       SELECT payment_id
+       FROM installment_payments
+       WHERE flow_id = ?
+         AND payment_id IS NOT NULL
+       UNION
+       SELECT first_payment_invoice_id
+       FROM payment_flows
+       WHERE id = ?
+         AND first_payment_invoice_id IS NOT NULL
+     )
+       AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')`,
+    [finalPaymentStatus, cleanFlowId, cleanFlowId]
+  )
+
+  const mirrored = await persistMercadoPagoPaymentPlanMirror(cleanFlowId, {
+    localAction: normalizedAction,
+    actionedAt: now
+  })
+
+  if (normalizedAction === 'delete') {
+    await db.run(
+      `UPDATE payment_plans
+       SET status = 'deleted',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [cleanFlowId]
+    )
+  }
+
+  return mirrored
+}
+
+export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {}) {
+  const config = await getMercadoPagoClientConfig()
+  const plan = validatePlanPayload({ ...input, currency: input.currency || await getConfiguredCurrency() })
+  const flowId = createId('mp_flow')
+  const now = new Date().toISOString()
+  const firstPaymentIsOffline = plan.firstPayment.enabled && isOfflinePaymentMethod(plan.firstPayment.method)
+
+  await db.run(
+    `INSERT INTO payment_flows (
+      id, contact_id, contact_name, contact_email, contact_phone,
+      total_amount, currency, concept, payment_type,
+      first_payment_amount, first_payment_type, first_payment_value,
+      first_payment_date, first_payment_method, first_payment_status,
+      remaining_automatic, card_setup_required, card_setup_amount,
+      payment_provider, mercadopago_user_id, current_state, state_history,
+      installment_plan_created_at, installment_plan_active_at, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'partial', ?, ?, ?, ?, ?, ?, 1, 0, 0, 'mercadopago', ?, ?, ?, ?, ?, ?)`,
+    [
+      flowId,
+      plan.contact.id,
+      plan.contact.name || null,
+      plan.contact.email || null,
+      plan.contact.phone || null,
+      plan.totalAmount,
+      plan.currency,
+      plan.description,
+      plan.firstPayment.amount,
+      plan.firstPayment.enabled ? 'amount' : 'none',
+      plan.firstPayment.amount,
+      plan.firstPayment.date,
+      plan.firstPayment.method,
+      plan.firstPayment.enabled ? (firstPaymentIsOffline ? 'registered' : 'pending') : 'not_required',
+      config.userId || null,
+      MP_PLAN_STATES.ACTIVE,
+      JSON.stringify(addPlanState([], MP_PLAN_STATES.ACTIVE)),
+      now,
+      now,
+      JSON.stringify({
+        source: plan.source,
+        remainingFrequency: plan.remainingFrequency,
+        lineItems: plan.lineItems,
+        checkoutProvider: 'mercadopago'
+      })
+    ]
+  )
+
+  const response = {
+    flowId,
+    currentState: MP_PLAN_STATES.ACTIVE,
+    paymentMode: config.mode,
+    firstPaymentLink: null,
+    firstPaymentPaymentId: null,
+    scheduledPayments: []
+  }
+
+  if (plan.firstPayment.enabled) {
+    if (firstPaymentIsOffline) {
+      const first = await insertPaymentRow({
+        contact: plan.contact,
+        amount: plan.firstPayment.amount,
+        currency: plan.currency,
+        status: 'paid',
+        paymentMethod: plan.firstPayment.method,
+        title: `${plan.title} - primer pago`,
+        description: `${plan.description} - primer pago`,
+        dueDate: plan.firstPayment.date,
+        metadata: {
+          source: 'mercadopago_payment_plan_first_offline',
+          contactName: plan.contact.name,
+          contactEmail: plan.contact.email,
+          contactPhone: plan.contact.phone,
+          paymentPlan: { flowId, trigger: 'first_payment_offline' }
+        },
+        createPreference: false,
+        baseUrl
+      })
+      await db.run(
+        `UPDATE payment_flows
+         SET first_payment_invoice_id = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [first.payment.id, flowId]
+      )
+      response.firstPaymentPaymentId = first.payment.id
+      updateSingleContactStats(plan.contact.id).catch((error) => {
+        logger.warn(`No se pudieron actualizar stats del contacto por primer pago Mercado Pago ${first.payment.id}: ${error.message}`)
+      })
+    } else {
+      const first = await createMercadoPagoPaymentLink({
+        contactId: plan.contact.id,
+        contactName: plan.contact.name,
+        email: plan.contact.email,
+        phone: plan.contact.phone,
+        amount: plan.firstPayment.amount,
+        currency: plan.currency,
+        title: `${plan.title} - primer pago`,
+        description: `${plan.description} - primer pago`,
+        dueDate: plan.firstPayment.date,
+        source: 'mercadopago_payment_plan_first_link',
+        lineItems: plan.lineItems,
+        metadata: {
+          paymentPlan: { flowId, trigger: 'first_payment' }
+        }
+      }, { baseUrl })
+      await db.run(
+        `UPDATE payment_flows
+         SET first_payment_invoice_id = ?,
+             card_setup_payment_link = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [first.payment?.id || null, first.paymentUrl, flowId]
+      )
+      response.firstPaymentPaymentId = first.payment?.id || null
+      response.firstPaymentLink = first.paymentUrl
+    }
+  }
+
+  for (const payment of plan.remainingPayments) {
+    const installmentId = createId('mp_installment')
+    const scheduled = await insertPaymentRow({
+      contact: plan.contact,
+      amount: payment.amount,
+      currency: plan.currency,
+      status: 'scheduled',
+      paymentMethod: 'mercadopago_checkout',
+      title: `${plan.title} - pago ${payment.sequence}`,
+      description: `${plan.description} - pago ${payment.sequence}`,
+      dueDate: payment.dueDate,
+      metadata: {
+        mercadoPagoMode: config.mode,
+        source: 'mercadopago_payment_plan_installment',
+        contactName: plan.contact.name,
+        contactEmail: plan.contact.email,
+        contactPhone: plan.contact.phone,
+        paymentPlan: {
+          flowId,
+          installmentId,
+          sequence: payment.sequence,
+          trigger: 'scheduled_installment'
+        }
+      },
+      createPreference: false,
+      baseUrl
+    })
+
+    await db.run(
+      `INSERT INTO installment_payments (
+        id, flow_id, sequence, amount, percentage, due_date, frequency,
+        payment_method, automatic, status, payment_id, notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'mercadopago_checkout', 1, 'scheduled', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        installmentId,
+        flowId,
+        payment.sequence,
+        payment.amount,
+        payment.percentage,
+        payment.dueDate,
+        payment.frequency,
+        scheduled.payment.id,
+        'Mercado Pago generará el link cuando llegue la fecha programada.'
+      ]
+    )
+
+    response.scheduledPayments.push({
+      installmentId,
+      paymentId: scheduled.payment.id,
+      sequence: payment.sequence,
+      amount: payment.amount,
+      currency: plan.currency,
+      dueDate: payment.dueDate,
+      status: 'scheduled'
+    })
+  }
+
+  await persistMercadoPagoPaymentPlanMirror(flowId, {
+    response
+  })
+
+  return response
+}
+
+export async function processDueMercadoPagoPaymentPlanCharges({ limit = 25, baseUrl = '' } = {}) {
+  await getMercadoPagoClientConfig()
+  const dueDate = todayDateOnly()
+  const normalizedLimit = Math.max(1, Math.min(Number(limit) || 25, 100))
+  const resolvedBaseUrl = cleanString(baseUrl) || getConfiguredBaseUrl()
+  const dueDateSql = dateOnlySql('i.due_date')
+  const dueDateParam = dateOnlyPlaceholder()
+  const rows = await db.all(
+    `SELECT
+       i.id AS installment_id,
+       i.payment_id,
+       i.due_date,
+       f.id AS flow_id,
+       p.status AS payment_status,
+       p.payment_url,
+       p.mercadopago_preference_id
+     FROM installment_payments i
+     JOIN payment_flows f ON f.id = i.flow_id
+     JOIN payments p ON p.id = i.payment_id
+     WHERE f.payment_provider = 'mercadopago'
+       AND f.current_state = ?
+       AND i.automatic = 1
+       AND i.status IN ('scheduled', 'pending')
+       AND p.status IN ('scheduled', 'pending')
+       AND (p.mercadopago_preference_id IS NULL OR p.mercadopago_preference_id = '')
+       AND ${dueDateSql} <= ${dueDateParam}
+     ORDER BY i.due_date ASC, i.sequence ASC
+     LIMIT ?`,
+    [MP_PLAN_STATES.ACTIVE, dueDate, normalizedLimit]
+  )
+
+  const results = []
+  const touchedFlowIds = new Set()
+  for (const row of rows || []) {
+    touchedFlowIds.add(row.flow_id)
+    try {
+      const payment = await findPaymentById(row.payment_id)
+      const preference = await createPreferenceForPayment(payment, { baseUrl: resolvedBaseUrl })
+      await db.run(
+        `UPDATE installment_payments
+         SET status = 'sent',
+             mercadopago_preference_id = ?,
+             notes = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          preference.preferenceId || null,
+          'Link de Mercado Pago generado automáticamente por fecha programada.',
+          row.installment_id
+        ]
+      )
+      results.push({
+        installmentId: row.installment_id,
+        paymentId: row.payment_id,
+        generated: true,
+        paymentUrl: preference.paymentUrl
+      })
+    } catch (error) {
+      logger.error(`[Mercado Pago Planes] Error generando link ${row.installment_id}: ${error.message}`)
+      await db.run(
+        `UPDATE installment_payments
+         SET status = 'failed',
+             notes = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [error.message, row.installment_id]
+      )
+      results.push({ installmentId: row.installment_id, paymentId: row.payment_id, error: error.message })
+    }
+  }
+
+  for (const flowId of touchedFlowIds) {
+    await persistMercadoPagoPaymentPlanMirror(flowId)
+  }
+
+  return results
+}
+
+function parseMercadoPagoSignature(value) {
+  return String(value || '').split(',').reduce((acc, part) => {
+    const [key, raw] = part.split('=')
+    if (key && raw) acc[key.trim()] = raw.trim()
+    return acc
+  }, {})
+}
+
+function validateWebhookSignature({ signatureHeader, requestId, dataId, secret }) {
+  const cleanSecret = cleanString(secret)
+  if (!cleanSecret) return true
+  const signature = parseMercadoPagoSignature(signatureHeader)
+  const ts = cleanString(signature.ts)
+  const v1 = cleanString(signature.v1)
+  if (!ts || !v1 || !requestId || !dataId) return false
+
+  const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`
+  const expected = createHmac('sha256', cleanSecret).update(manifest).digest('hex')
+  const expectedBuffer = Buffer.from(expected, 'hex')
+  const receivedBuffer = Buffer.from(v1, 'hex')
+  return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer)
+}
+
+function getWebhookDataId(body = {}, query = {}) {
+  return cleanString(body?.data?.id)
+    || cleanString(query?.['data.id'])
+    || cleanString(query?.id)
+    || cleanString(body?.id)
+}
+
+function mapMercadoPagoStatus(status) {
+  const normalized = cleanString(status).toLowerCase()
+  if (normalized === 'approved' || normalized === 'accredited') return 'paid'
+  if (['pending', 'in_process', 'in_mediation', 'authorized'].includes(normalized)) return 'pending'
+  if (['cancelled', 'canceled'].includes(normalized)) return 'void'
+  if (['refunded', 'charged_back'].includes(normalized)) return 'refunded'
+  if (['rejected'].includes(normalized)) return 'failed'
+  return 'pending'
+}
+
+function timestampToIso(value) {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+async function syncMercadoPagoPaymentPlanFromLocalPayment(payment) {
+  if (!payment?.id) return
+  const status = cleanString(payment.status)
+  const touchedRows = await db.all(
+    `SELECT flow_id FROM installment_payments WHERE payment_id = ?
+     UNION
+     SELECT id AS flow_id FROM payment_flows WHERE first_payment_invoice_id = ?`,
+    [payment.id, payment.id]
+  )
+
+  await db.run(
+    `UPDATE installment_payments
+     SET status = ?,
+         mercadopago_payment_id = COALESCE(?, mercadopago_payment_id),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE payment_id = ?`,
+    [status === 'paid' ? 'paid' : status || 'pending', payment.mercadopago_payment_id || null, payment.id]
+  )
+
+  await db.run(
+    `UPDATE payment_flows
+     SET first_payment_status = CASE
+           WHEN first_payment_invoice_id = ? THEN ?
+           ELSE first_payment_status
+         END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE first_payment_invoice_id = ?`,
+    [payment.id, status === 'paid' ? 'paid' : status || 'pending', payment.id]
+  )
+
+  for (const row of touchedRows || []) {
+    await persistMercadoPagoPaymentPlanMirror(row.flow_id)
+  }
+}
+
+async function updatePaymentFromMercadoPagoPayment(mpPayment) {
+  const paymentId = cleanString(mpPayment?.external_reference)
+    || cleanString(mpPayment?.metadata?.ristak_payment_id)
+  const mercadoPagoPaymentId = cleanString(mpPayment?.id)
+  if (!paymentId && !mercadoPagoPaymentId) return null
+
+  const row = paymentId
+    ? await findPaymentById(paymentId)
+    : await db.get('SELECT * FROM payments WHERE mercadopago_payment_id = ?', [mercadoPagoPaymentId])
+  if (!row) return null
+
+  const amount = Number(mpPayment.transaction_amount || mpPayment.transaction_details?.total_paid_amount || row.amount)
+  const currency = normalizeCurrency(mpPayment.currency_id || row.currency)
+  const nextStatus = mapMercadoPagoStatus(mpPayment.status)
+  const paidAt = nextStatus === 'paid'
+    ? timestampToIso(mpPayment.date_approved || mpPayment.money_release_date || mpPayment.date_last_updated) || new Date().toISOString()
+    : null
+  const paymentMethod = cleanString(mpPayment.payment_type_id || mpPayment.payment_method_id || 'mercadopago')
+  const metadata = {
+    ...parseJson(row.metadata_json, {}),
+    mercadoPago: {
+      paymentId: mercadoPagoPaymentId,
+      status: cleanString(mpPayment.status),
+      statusDetail: cleanString(mpPayment.status_detail),
+      paymentMethodId: cleanString(mpPayment.payment_method_id),
+      paymentTypeId: cleanString(mpPayment.payment_type_id),
+      preferenceId: cleanString(mpPayment.preference_id)
+    }
+  }
+
+  await db.run(
+    `UPDATE payments
+     SET amount = COALESCE(?, amount),
+         currency = COALESCE(?, currency),
+         status = ?,
+         payment_method = ?,
+         payment_provider = 'mercadopago',
+         reference = COALESCE(?, reference),
+         mercadopago_payment_id = COALESCE(?, mercadopago_payment_id),
+         mercadopago_preference_id = COALESCE(?, mercadopago_preference_id),
+         paid_at = COALESCE(?, paid_at),
+         date = COALESCE(?, date),
+         metadata_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      Number.isFinite(amount) ? amount : null,
+      currency,
+      nextStatus,
+      paymentMethod,
+      mercadoPagoPaymentId || null,
+      mercadoPagoPaymentId || null,
+      cleanString(mpPayment.preference_id) || null,
+      paidAt,
+      paidAt,
+      JSON.stringify(metadata),
+      row.id
+    ]
+  )
+
+  const updated = await findPaymentById(row.id)
+  if (updated?.contact_id && nextStatus === 'paid') {
+    updateSingleContactStats(updated.contact_id).catch((error) => {
+      logger.warn(`No se pudieron actualizar stats del contacto por pago Mercado Pago ${row.id}: ${error.message}`)
+    })
+  }
+  await syncMercadoPagoPaymentPlanFromLocalPayment(updated)
+
+  return updated
+}
+
+export async function refreshMercadoPagoPayment(mercadoPagoPaymentId) {
+  const paymentId = cleanString(mercadoPagoPaymentId)
+  if (!paymentId) return null
+  const { payload } = await mercadoPagoApiRequest(`/v1/payments/${encodeURIComponent(paymentId)}`)
+  return updatePaymentFromMercadoPagoPayment(payload)
+}
+
+export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, query = {}) {
+  const config = await getMercadoPagoPaymentConfig({ includeSecrets: true })
+  const dataId = getWebhookDataId(body, query)
+  const requestId = cleanString(headers['x-request-id'])
+  const signatureHeader = cleanString(headers['x-signature'])
+
+  if (config.webhookSecret && !validateWebhookSignature({
+    signatureHeader,
+    requestId,
+    dataId,
+    secret: config.webhookSecret
+  })) {
+    const error = new Error('No se pudo verificar la firma del webhook de Mercado Pago.')
+    error.status = 401
+    throw error
+  }
+
+  const type = cleanString(body.type || body.topic || query.topic || query.type)
+  const action = cleanString(body.action)
+  if (!dataId || !(type.includes('payment') || action.includes('payment'))) {
+    return { received: true, ignored: true, type, action }
+  }
+
+  const updated = await refreshMercadoPagoPayment(dataId)
+  return {
+    received: true,
+    type,
+    action,
+    paymentId: updated?.id || null,
+    status: updated?.status || null
+  }
+}

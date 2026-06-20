@@ -9,10 +9,10 @@ export interface Transaction {
   phone?: string
   amount: number
   currency?: string
-  method: 'card' | 'transfer' | 'cash' | 'paypal' | 'other' | 'bank_transfer' | 'check' | 'stripe'
+  method: 'card' | 'transfer' | 'cash' | 'paypal' | 'other' | 'bank_transfer' | 'check' | 'stripe' | 'mercadopago' | 'mercadopago_checkout'
   status: 'draft' | 'sent' | 'paid' | 'pending' | 'overdue' | 'partial' | 'void' | 'refunded' | 'failed' | 'deleted'
   paymentMode?: 'live' | 'test'
-  paymentProvider?: 'manual' | 'highlevel' | 'stripe' | string
+  paymentProvider?: 'manual' | 'highlevel' | 'stripe' | 'mercadopago' | string
   reference?: string
   title?: string
   description?: string

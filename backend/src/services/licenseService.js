@@ -379,6 +379,36 @@ export async function disconnectCentralStripeConnect() {
   return data.connection || {}
 }
 
+export async function getCentralMercadoPagoStatus() {
+  const data = await callLicenseServer('/api/license/mercadopago/status')
+  return data.connection || {}
+}
+
+export async function createCentralMercadoPagoConnectUrl({ mode = 'test', returnPath = '/settings/payments/mercadopago', appUrl = '' } = {}) {
+  const payload = {
+    mode: mode === 'live' ? 'live' : 'test',
+    return_path: returnPath
+  }
+
+  if (appUrl) {
+    payload.app_url = appUrl
+  }
+
+  const data = await callLicenseServer('/api/license/mercadopago/connect-url', payload)
+  return {
+    url: data.url || '',
+    mode: data.mode === 'live' ? 'live' : 'test',
+    redirectUri: data.redirect_uri || data.redirectUri || '',
+    webhookUrl: data.webhook_url || data.webhookUrl || '',
+    managedByPortal: true
+  }
+}
+
+export async function disconnectCentralMercadoPago() {
+  const data = await callLicenseServer('/api/license/mercadopago/disconnect')
+  return data.connection || {}
+}
+
 /**
  * Verifica las credenciales del dueño contra el portal central. El portal es la
  * fuente de verdad: si el admin asignó una nueva contraseña allá, la app la

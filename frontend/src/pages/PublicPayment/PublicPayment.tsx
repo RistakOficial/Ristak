@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe, type StripeElementsOptions } from '@stripe/stripe-js'
-import { AlertCircle, CheckCircle2, CreditCard, Download, Loader2, ShieldCheck } from 'lucide-react'
+import { AlertCircle, CheckCircle2, CreditCard, Download, ExternalLink, Loader2, ShieldCheck, WalletCards } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
+import { mercadoPagoPaymentsService, type PublicMercadoPagoPayment } from '@/services/mercadoPagoPaymentsService'
 import {
   stripePaymentsService,
   type PublicStripePayment,
@@ -17,6 +18,7 @@ import {
 import styles from './PublicPayment.module.css'
 
 type StripePromise = ReturnType<typeof loadStripe>
+type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -162,7 +164,7 @@ export const PublicPayment: React.FC = () => {
   const { publicPaymentId = '' } = useParams()
   const [searchParams] = useSearchParams()
   const autoReceiptPrintRef = useRef('')
-  const [payment, setPayment] = useState<PublicStripePayment | null>(null)
+  const [payment, setPayment] = useState<PublicPaymentData | null>(null)
   const [intent, setIntent] = useState<StripePaymentIntentResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [startingPayment, setStartingPayment] = useState(false)
@@ -172,13 +174,17 @@ export const PublicPayment: React.FC = () => {
   const isPaid = Boolean(payment && ['paid', 'succeeded', 'completed'].includes(payment.status.toLowerCase()))
   const isClosed = Boolean(payment && ['void', 'refunded', 'deleted'].includes(payment.status.toLowerCase()))
   const receiptDownloadRequested = searchParams.get('receipt') === '1'
-  const shouldSavePaymentMethod = Boolean(payment?.contact?.id)
+  const isStripePayment = payment?.provider === 'stripe'
+  const isMercadoPagoPayment = payment?.provider === 'mercadopago'
+  const shouldSavePaymentMethod = Boolean(isStripePayment && payment?.contact?.id)
+  const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : 'Stripe'
 
   const stripePromise = useMemo<StripePromise | null>(() => {
+    if (!payment || payment.provider !== 'stripe') return null
     const key = intent?.publishableKey || payment?.publishableKey
     const stripeAccount = intent?.stripeAccountId || payment?.stripeAccountId
     return key ? loadStripe(key, stripeAccount ? { stripeAccount } : undefined) : null
-  }, [intent?.publishableKey, intent?.stripeAccountId, payment?.publishableKey, payment?.stripeAccountId])
+  }, [intent?.publishableKey, intent?.stripeAccountId, payment])
 
   const elementsOptions = useMemo<StripeElementsOptions | null>(() => {
     if (!intent?.clientSecret) return null
@@ -190,8 +196,20 @@ export const PublicPayment: React.FC = () => {
 
   const loadPayment = async (sync = false) => {
     if (!publicPaymentId) return
-    const data = await stripePaymentsService.getPublicPayment(publicPaymentId, sync)
+    const data = await loadPublicPayment(publicPaymentId, sync)
     setPayment(data)
+  }
+
+  const loadPublicPayment = async (id: string, sync = false): Promise<PublicPaymentData> => {
+    try {
+      return await stripePaymentsService.getPublicPayment(id, sync)
+    } catch (stripeError: any) {
+      try {
+        return await mercadoPagoPaymentsService.getPublicPayment(id)
+      } catch {
+        throw stripeError
+      }
+    }
   }
 
   useEffect(() => {
@@ -202,7 +220,7 @@ export const PublicPayment: React.FC = () => {
       setError('')
       try {
         const sync = searchParams.get('payment') === 'return'
-        const data = await stripePaymentsService.getPublicPayment(publicPaymentId, sync)
+        const data = await loadPublicPayment(publicPaymentId, sync)
         if (mounted) setPayment(data)
       } catch (loadError: any) {
         if (mounted) setError(loadError.message || 'No pudimos cargar este pago.')
@@ -224,6 +242,16 @@ export const PublicPayment: React.FC = () => {
     setStartingPayment(true)
     setError('')
     try {
+      if (payment.provider === 'mercadopago') {
+        const nextPreference = await mercadoPagoPaymentsService.ensurePublicPreference(payment.publicPaymentId)
+        const paymentUrl = nextPreference.paymentUrl || payment.paymentUrl
+        if (!paymentUrl) {
+          throw new Error('Mercado Pago no devolvió un link de pago.')
+        }
+        window.location.assign(paymentUrl)
+        return
+      }
+
       const nextIntent = await stripePaymentsService.createPublicPaymentIntent(payment.publicPaymentId, {
         savePaymentMethod: shouldSavePaymentMethod
       })
@@ -333,7 +361,7 @@ export const PublicPayment: React.FC = () => {
             <p className={styles.subtitle}>
               {isPaid
                 ? 'Tu pago fue recibido correctamente. Puedes descargar tu comprobante en PDF cuando lo necesites.'
-                : checkoutSettings?.description || 'Revisa los datos del cobro y paga de forma segura con Stripe. Ristak no ve ni guarda el número de tu tarjeta.'}
+                : checkoutSettings?.description || `Revisa los datos del cobro y paga de forma segura con ${providerLabel}. Ristak no ve ni guarda el número de tu tarjeta.`}
             </p>
           </div>
           <span className={`${styles.statusBadge} ${status.className}`}>
@@ -401,11 +429,13 @@ export const PublicPayment: React.FC = () => {
 
           <section className={styles.payPanel} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
-              <h2>{isPaid ? 'Pago confirmado' : 'Pagar con tarjeta'}</h2>
+              <h2>{isPaid ? 'Pago confirmado' : isMercadoPagoPayment ? 'Pagar con Mercado Pago' : 'Pagar con tarjeta'}</h2>
               <p>
                 {isPaid
                   ? 'Este pago ya aparece como pagado en Ristak.'
-                  : 'Los datos se capturan en el formulario seguro de Stripe.'}
+                  : isMercadoPagoPayment
+                    ? 'Mercado Pago abrirá su checkout seguro para completar el cobro.'
+                    : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
 
@@ -455,7 +485,7 @@ export const PublicPayment: React.FC = () => {
                   )}
                   <div>
                     <span>Pasarela</span>
-                    <strong>Stripe · {paymentModeLabel}</strong>
+                    <strong>{providerLabel} · {paymentModeLabel}</strong>
                   </div>
                   <div>
                     <span>Referencia</span>
@@ -486,7 +516,34 @@ export const PublicPayment: React.FC = () => {
                 <AlertCircle size={16} />
                 <span>Este link ya no está disponible para cobrar.</span>
               </p>
-            ) : stripePromise && elementsOptions ? (
+            ) : isMercadoPagoPayment ? (
+              <div className={styles.stripeBox}>
+                <p className={styles.message}>
+                  <WalletCards size={16} />
+                  <span>Mercado Pago abrirá Checkout Pro para que puedas pagar con los métodos disponibles de tu cuenta.</span>
+                </p>
+                <div className={styles.actions}>
+                  <button
+                    type="button"
+                    className={`${styles.button} ${styles.buttonPrimary}`}
+                    onClick={startPayment}
+                    disabled={startingPayment}
+                  >
+                    {startingPayment ? (
+                      <>
+                        <Loader2 size={16} className={styles.spin} />
+                        Abriendo
+                      </>
+                    ) : (
+                      <>
+                        <ExternalLink size={16} />
+                        {checkoutSettings?.buttonLabel || 'Pagar con Mercado Pago'}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : isStripePayment && stripePromise && elementsOptions ? (
               <Elements stripe={stripePromise} options={elementsOptions}>
                 <PublicPaymentForm payment={payment} onPaid={() => loadPayment(true)} />
               </Elements>
@@ -509,7 +566,7 @@ export const PublicPayment: React.FC = () => {
                     type="button"
                     className={`${styles.button} ${styles.buttonPrimary}`}
                     onClick={startPayment}
-                    disabled={startingPayment || !payment.publishableKey}
+                    disabled={startingPayment || !isStripePayment || !payment.publishableKey}
                   >
                     {startingPayment ? (
                       <>
@@ -573,7 +630,7 @@ export const PublicPayment: React.FC = () => {
               </div>
               <div>
                 <span>Pasarela</span>
-                <strong>Stripe · {paymentModeLabel}</strong>
+                <strong>{providerLabel} · {paymentModeLabel}</strong>
               </div>
             </section>
 

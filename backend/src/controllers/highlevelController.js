@@ -34,6 +34,7 @@ import {
   updateLocalProduct
 } from '../services/localProductService.js';
 import { applyStripePaymentPlanAction, refreshStripePaymentPlanMirrors, updateStripePaymentPlanSchedule } from '../services/stripePaymentService.js';
+import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -2927,8 +2928,13 @@ async function getLocalInvoiceSchedule(scheduleId) {
 function isStripeLocalInvoiceSchedule(schedule) {
   return schedule?.source === 'stripe'
     || schedule?.raw?.provider === 'stripe'
-    || schedule?.raw?.paymentFlow?.id
     || schedule?.raw?.schedule?.provider === 'stripe';
+}
+
+function isMercadoPagoLocalInvoiceSchedule(schedule) {
+  return schedule?.source === 'mercadopago'
+    || schedule?.raw?.provider === 'mercadopago'
+    || schedule?.raw?.schedule?.provider === 'mercadopago';
 }
 
 async function markLocalInvoiceScheduleStatus(scheduleId, status, rawPatch = {}) {
@@ -3227,6 +3233,14 @@ export const getInvoiceSchedule = async (req, res) => {
       });
     }
 
+    if (isMercadoPagoLocalInvoiceSchedule(localSchedule)) {
+      return res.json({
+        success: true,
+        data: localSchedule,
+        source: 'local_mercadopago'
+      });
+    }
+
     const ghlClient = await getGHLClient();
     const response = await ghlClient.getInvoiceSchedule(scheduleId);
     const schedule = extractScheduleFromResponse(response);
@@ -3300,6 +3314,17 @@ export const updateInvoiceSchedule = async (req, res) => {
         success: true,
         data: updatedLocalSchedule,
         source: 'local_stripe'
+      });
+    }
+
+    if (isMercadoPagoLocalInvoiceSchedule(localSchedule)) {
+      await updateMercadoPagoPaymentPlanSchedule(scheduleId, payload, { baseUrl: getPublicBaseUrl(req) });
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+
+      return res.json({
+        success: true,
+        data: updatedLocalSchedule,
+        source: 'local_mercadopago'
       });
     }
 
@@ -3414,6 +3439,32 @@ export const actionInvoiceSchedule = async (req, res) => {
         success: true,
         data: updatedLocalSchedule,
         source: 'local_stripe'
+      });
+    }
+
+    if (isMercadoPagoLocalInvoiceSchedule(localSchedule)) {
+      const actionMap = {
+        activate: 'activate',
+        pause: 'pause',
+        cancel: 'cancel',
+        delete: 'delete'
+      };
+      const mercadoPagoAction = actionMap[action];
+
+      if (!mercadoPagoAction) {
+        return res.status(409).json({
+          success: false,
+          error: 'Esta acción no aplica para planes de Mercado Pago.'
+        });
+      }
+
+      await applyMercadoPagoPaymentPlanAction(scheduleId, mercadoPagoAction);
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+
+      return res.json({
+        success: true,
+        data: updatedLocalSchedule,
+        source: 'local_mercadopago'
       });
     }
 

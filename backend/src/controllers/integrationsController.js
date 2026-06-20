@@ -5,6 +5,7 @@ import fetch from 'node-fetch';
 import { getAIAgentStatus } from '../services/aiAgentService.js';
 import { getGoogleCalendarConfig } from '../services/googleCalendarService.js';
 import { getStripePaymentConfig } from '../services/stripePaymentService.js';
+import { getMercadoPagoPaymentConfig } from '../services/mercadoPagoPaymentService.js';
 
 // La verificación del token contra la API de HighLevel es costosa y este
 // endpoint se consulta varias veces por carga de página. Se cachea el
@@ -166,6 +167,21 @@ export const getStatus = async (req, res) => {
       logger.warn(`Error obteniendo estado de Stripe: ${error.message}`);
     }
 
+    // Mercado Pago
+    let mercadoPagoStatus = { configured: false, connected: false };
+    try {
+      const mercadoPagoConfig = await getMercadoPagoPaymentConfig();
+      mercadoPagoStatus = {
+        configured: Boolean(mercadoPagoConfig?.configured),
+        connected: Boolean(mercadoPagoConfig?.configured),
+        mode: mercadoPagoConfig?.mode || 'test',
+        publicKey: mercadoPagoConfig?.publicKey || null,
+        accountLabel: mercadoPagoConfig?.accountLabel || null
+      };
+    } catch (error) {
+      logger.warn(`Error obteniendo estado de Mercado Pago: ${error.message}`);
+    }
+
     // Respuesta con estructura mejorada
     res.json({
       highlevel: highlevelStatus,
@@ -173,7 +189,8 @@ export const getStatus = async (req, res) => {
       whatsapp: whatsappStatus,
       openai: openaiStatus,
       googleCalendar: googleCalendarStatus,
-      stripe: stripeStatus
+      stripe: stripeStatus,
+      mercadopago: mercadoPagoStatus
     });
 
   } catch (error) {
@@ -193,6 +210,7 @@ export const getStatus = async (req, res) => {
       whatsapp: { configured: false, connected: false },
       openai: { configured: false, connected: false },
       googleCalendar: { configured: false, connected: false },
+      mercadopago: { configured: false, connected: false },
       error: 'Error al obtener estado de integraciones'
     });
   }
