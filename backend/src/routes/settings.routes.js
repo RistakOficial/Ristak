@@ -44,7 +44,9 @@ import {
   updateTemplateFolderView
 } from '../controllers/messageTemplatesController.js';
 import {
+  createPaymentReceiptPreviewSessionView,
   getPaymentSettingsView,
+  previewPaymentReceiptSessionView,
   savePaymentSettingsView
 } from '../controllers/paymentSettingsController.js';
 
@@ -53,6 +55,8 @@ const requireAccountAccess = requireModuleAccess('settings_account');
 const requireCustomFieldsAccess = requireModuleAccess('settings_custom_fields');
 const requireWhatsAppAccess = requireModuleAccess('settings_whatsapp');
 const requirePaymentsAccess = requireModuleAccess('settings_payments');
+
+router.get('/payments/receipt-preview-session/:token', previewPaymentReceiptSessionView);
 
 router.use(requireAuth);
 
@@ -91,6 +95,7 @@ router.get('/notifications', requireAccountAccess, getNotificationsView);
 // Payment settings
 router.get('/payments', requirePaymentsAccess, getPaymentSettingsView);
 router.post('/payments', requirePaymentsAccess, savePaymentSettingsView);
+router.post('/payments/receipt-preview-session', requirePaymentsAccess, createPaymentReceiptPreviewSessionView);
 
 // WhatsApp message templates
 router.get('/message-templates', requireWhatsAppAccess, getMessageTemplatesView);

@@ -455,6 +455,14 @@
   margin-bottom: 16px;
 }
 
+.documentPreviewActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .documentDesignPanel {
   display: grid;
   gap: 10px;

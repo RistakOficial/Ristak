@@ -69,6 +69,11 @@ export interface PaymentSettings {
 
 export type PublicPaymentSettings = Pick<PaymentSettings, 'checkout' | 'receipt' | 'taxes'>
 
+export interface PaymentReceiptPreviewSession {
+  url: string
+  expiresAt: string
+}
+
 export const defaultPaymentSettings: PaymentSettings = {
   checkout: {
     logoUrl: '',
@@ -163,5 +168,17 @@ export const paymentSettingsService = {
       body: JSON.stringify(payload)
     })
     return parseApiResponse<PaymentSettings>(response)
+  },
+
+  async createReceiptPreviewSession(payload: PaymentSettings, currency = 'MXN'): Promise<PaymentReceiptPreviewSession> {
+    const response = await fetch(apiUrl('/api/settings/payments/receipt-preview-session'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify({ settings: payload, currency })
+    })
+    return parseApiResponse<PaymentReceiptPreviewSession>(response)
   }
 }

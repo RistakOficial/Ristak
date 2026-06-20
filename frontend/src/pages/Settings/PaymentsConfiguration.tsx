@@ -285,6 +285,64 @@ async function copyTextToClipboard(text: string) {
   return copied
 }
 
+const RECEIPT_PREVIEW_LOADING_HTML = `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Previsualizando comprobante...</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background: Canvas;
+        color: CanvasText;
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        display: grid;
+        gap: 12px;
+        justify-items: center;
+        padding: 24px;
+        text-align: center;
+      }
+      i {
+        width: 40px;
+        aspect-ratio: 1;
+        border: 3px solid color-mix(in srgb, CanvasText 18%, transparent);
+        border-top-color: CanvasText;
+        border-radius: 999px;
+        animation: spin .8s linear infinite;
+      }
+      strong {
+        font-size: 16px;
+        letter-spacing: 0;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        i { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main aria-live="polite" aria-busy="true">
+      <i aria-hidden="true"></i>
+      <strong>Preparando vista previa</strong>
+    </main>
+  </body>
+</html>`
+
+const writeReceiptPreviewLoadingPage = (previewWindow: Window) => {
+  previewWindow.document.open()
+  previewWindow.document.write(RECEIPT_PREVIEW_LOADING_HTML)
+  previewWindow.document.close()
+}
+
 function formatCompactMoney(value: number, currency = 'MXN') {
   return new Intl.NumberFormat('es-MX', {
     style: 'currency',
@@ -378,6 +436,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const [disconnectingStripe, setDisconnectingStripe] = useState(false)
   const [uploadingReceiptLogo, setUploadingReceiptLogo] = useState(false)
   const [receiptLogoUploadProgress, setReceiptLogoUploadProgress] = useState(0)
+  const [previewingReceipt, setPreviewingReceipt] = useState(false)
   const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
   const receiptLogoInputRef = useRef<HTMLInputElement>(null)
   const latestSettingsRef = useRef(settings)
@@ -992,6 +1051,28 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
+  const handlePreviewReceipt = async () => {
+    if (previewingReceipt) return
+
+    const previewWindow = window.open('', '_blank')
+    if (!previewWindow) {
+      showToast('error', 'Preview bloqueado', 'Permite popups para abrir la previsualización del comprobante.')
+      return
+    }
+
+    writeReceiptPreviewLoadingPage(previewWindow)
+    setPreviewingReceipt(true)
+    try {
+      const session = await paymentSettingsService.createReceiptPreviewSession(latestSettingsRef.current, accountCurrency)
+      previewWindow.location.replace(session.url)
+    } catch (error: any) {
+      previewWindow.close()
+      showToast('error', 'No se pudo previsualizar', error.message || 'Intenta guardar y abrir de nuevo.')
+    } finally {
+      setPreviewingReceipt(false)
+    }
+  }
+
   const handleInvoiceTemplateSelect = (templateId: PaymentInvoiceTemplateId) => {
     setReceiptValue('invoiceTemplate', templateId)
   }
@@ -1368,10 +1449,31 @@ export const PaymentsConfiguration: React.FC = () => {
               <h3>Vista de hoja</h3>
               <p>Así se imprime o guarda como PDF desde el link pagado.</p>
             </div>
-            <Badge variant="success">
-              <CheckCircle size={14} />
-              Pagado
-            </Badge>
+            <div className={styles.documentPreviewActions}>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handlePreviewReceipt}
+                disabled={loadingSettings || previewingReceipt}
+              >
+                {previewingReceipt ? (
+                  <>
+                    <Loader2 size={14} className={styles.spinIcon} />
+                    Abriendo...
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink size={14} />
+                    Previsualizar
+                  </>
+                )}
+              </Button>
+              <Badge variant="success">
+                <CheckCircle size={14} />
+                Pagado
+              </Badge>
+            </div>
           </div>
 
           <div className={styles.documentDesignPanel}>

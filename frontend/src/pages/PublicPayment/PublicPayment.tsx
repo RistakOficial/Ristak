@@ -252,7 +252,7 @@ export const PublicPayment: React.FC = () => {
           <section className={styles.statePanel}>
             <Loader2 size={34} className={styles.spin} />
             <h1>Cargando pago</h1>
-            <p>Estamos preparando la información de tu invoice.</p>
+            <p>Estamos preparando la información de tu pago.</p>
           </section>
         </div>
       </main>
@@ -329,7 +329,7 @@ export const PublicPayment: React.FC = () => {
         </header>
 
         <section className={styles.grid}>
-          <aside className={styles.invoicePanel} aria-label="Resumen del invoice">
+          <aside className={styles.invoicePanel} aria-label="Resumen del pago">
             <div className={styles.invoiceTop}>
               <div>
                 <p className={styles.invoiceLabel}>Concepto</p>
@@ -390,7 +390,7 @@ export const PublicPayment: React.FC = () => {
               <h2>{isPaid ? 'Pago confirmado' : 'Pagar con tarjeta'}</h2>
               <p>
                 {isPaid
-                  ? 'Este invoice ya aparece como pagado en Ristak.'
+                  ? 'Este pago ya aparece como pagado en Ristak.'
                   : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
