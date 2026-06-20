@@ -5,6 +5,7 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
+import { createInternalNotification } from './notificationsService.js'
 import {
   findContactByPhoneCandidates,
   finalizePreparedPhoneUpsert,
@@ -2159,6 +2160,115 @@ async function applyContactUserAction(node, ctx) {
     : `Usuario asignado: ${str(config.userName) || userId}`
 }
 
+function notificationClickUrl(config = {}, ctx = {}) {
+  const action = str(config.clickAction) || 'phone_chat'
+  const contactId = cleanString(renderedConfigValue(config.contactId, ctx) || ctx.contact?.id || '')
+  const contactQuery = contactId ? `?contact=${encodeURIComponent(contactId)}` : ''
+  const contactOpenQuery = contactId ? `?open=contact&id=${encodeURIComponent(contactId)}` : ''
+
+  if (action === 'phone_contacts') return '/phone/contacts'
+  if (action === 'desktop_contacts') return contactId ? `/contacts${contactOpenQuery}` : '/contacts'
+  if (action === 'desktop_chat') return '/chat'
+  if (action === 'custom_url') {
+    const customUrl = cleanString(renderedConfigValue(config.customUrl, ctx))
+    if (!customUrl) return '/phone/chat'
+    return customUrl.startsWith('/') ? customUrl : `/${customUrl}`
+  }
+  return `/phone/chat${contactQuery}`
+}
+
+function notificationActionLabel(config = {}) {
+  const labels = {
+    phone_chat: 'Abrir chat',
+    phone_contacts: 'Abrir contactos',
+    desktop_contacts: 'Abrir contacto',
+    desktop_chat: 'Abrir chat',
+    custom_url: 'Abrir'
+  }
+  return labels[str(config.clickAction)] || 'Abrir'
+}
+
+async function resolveNotificationContact(config = {}, ctx = {}) {
+  const contactId = cleanString(renderedConfigValue(config.contactId, ctx) || ctx.contact?.id || '')
+  if (!contactId) return { contactId: '', contact: ctx.contact || null }
+  if (ctx.contact?.id === contactId) return { contactId, contact: ctx.contact }
+  return {
+    contactId,
+    contact: await loadContact(contactId, ctx.contact || {}).catch(() => null)
+  }
+}
+
+async function executeSystemNotification(node, ctx, enrollment) {
+  const config = node.config || {}
+  const recipientMode = str(config.recipientMode) || 'all'
+  const { contactId, contact } = await resolveNotificationContact(config, ctx)
+  const title = renderedConfigValue(config.pushTitle || config.title, ctx).slice(0, 120)
+  const message = renderedConfigValue(config.pushBody || config.body, ctx).slice(0, 700)
+  const actionUrl = notificationClickUrl(config, ctx)
+  const recipientUserIds = []
+  let broadcast = false
+
+  if (recipientMode === 'all') {
+    broadcast = true
+  } else if (recipientMode === 'assigned_user') {
+    const assignedUserId = cleanString(
+      contact?.assignedUser ||
+      contact?.assigned_user ||
+      contact?.customFields?.assignedUser
+    )
+    if (assignedUserId) recipientUserIds.push(assignedUserId)
+  } else if (recipientMode === 'specific_user') {
+    const userId = cleanString(config.user || config.userId)
+    if (userId) recipientUserIds.push(userId)
+  }
+
+  if (!broadcast && recipientUserIds.length === 0) {
+    return {
+      handle: 'out',
+      detail: recipientMode === 'assigned_user'
+        ? 'Notificación omitida: el contacto no tiene usuario asignado'
+        : 'Notificación omitida: no hay destinatario interno'
+    }
+  }
+
+  const result = await createInternalNotification({
+    broadcast,
+    recipientUserIds,
+    source: 'Automatizaciones',
+    severity: 'info',
+    title: title || 'Notificación interna',
+    message,
+    actionUrl,
+    actionLabel: notificationActionLabel(config),
+    category: 'automation',
+    contactId,
+    automationId: enrollment?.automationId || ctx.automationId || '',
+    automationNodeId: node.id,
+    enrollmentId: enrollment?.id || '',
+    metadata: {
+      nodeLabel: nodeLabel(node),
+      automationName: ctx.automationName || ''
+    },
+    pushTitle: title,
+    pushBody: message
+  })
+
+  return {
+    handle: 'out',
+    detail: broadcast
+      ? 'Notificación interna enviada a todos'
+      : `Notificación interna enviada a ${recipientUserIds.length} usuario${recipientUserIds.length === 1 ? '' : 's'}`,
+    output: {
+      estado: result.created > 0 ? 'creada' : 'omitida',
+      destinatarios: broadcast ? 'todos' : recipientUserIds.join(', '),
+      titulo: title,
+      url: actionUrl,
+      push_enviados: result.push?.sent || 0
+    },
+    outputBaseId: 'notificacion'
+  }
+}
+
 /** Envía un bloque adjunto: si es un archivo subido a Ristak se manda como
     data URL (el servicio de WhatsApp lo publica); si es URL externa, directo */
 async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport = 'api', allowQrFallback = true, ctx }) {
@@ -2718,6 +2828,9 @@ async function executeNode(node, ctx, enrollment) {
     case 'action-assign-user':
     case 'action-unassign-user':
       return { handle: 'out', detail: await applyContactUserAction(node, ctx) }
+
+    case 'action-system-notification':
+      return executeSystemNotification(node, ctx, enrollment)
 
     default:
       return { skipped: true, handle: 'out', detail: 'Paso aún no soportado por el motor: se omitió' }

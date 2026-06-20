@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import { WhatsAppIcon, MessengerIcon, InstagramIcon } from './BrandIcons'
 import {
   Banknote,
+  BellRing,
   Bot,
   Calculator,
   CalendarCheck,
@@ -1966,6 +1967,122 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
 // ---------------------------------------------------------------------------
 
 const OTHER_ACTIONS: NodeDefinition[] = [
+  {
+    type: 'action-system-notification',
+    kind: 'action',
+    label: 'Notificaciones',
+    category: 'action-logic',
+    description: 'Manda una notificación interna en Ristak y push al celular',
+    icon: BellRing,
+    accent: 'orange',
+    tintedHeader: true,
+    addButtonLabel: 'Configurar notificación',
+    supportsVariables: true,
+    defaultConfig: () => ({
+      recipientMode: 'all',
+      user: '',
+      contactId: '',
+      pushTitle: '',
+      pushBody: '',
+      clickAction: 'phone_chat',
+      customUrl: ''
+    }),
+    fields: [
+      {
+        key: 'recipientMode',
+        label: 'Quién recibe la notificación',
+        type: 'select',
+        required: true,
+        options: [
+          { value: 'all', label: 'Todos los usuarios' },
+          { value: 'assigned_user', label: 'Usuario asignado del contacto' },
+          { value: 'specific_user', label: 'Usuario específico' }
+        ]
+      },
+      {
+        key: 'user',
+        label: 'Usuario',
+        type: 'catalogSelect',
+        catalog: 'users',
+        required: true,
+        showIf: (config) => str(config.recipientMode) === 'specific_user'
+      },
+      {
+        key: 'pushTitle',
+        label: 'Título push',
+        type: 'text',
+        placeholder: 'Nuevo aviso de Ristak',
+        required: true,
+        showVariables: true
+      },
+      {
+        key: 'pushBody',
+        label: 'Cuerpo push',
+        type: 'textarea',
+        placeholder: 'Describe qué necesita revisar la persona…',
+        required: true,
+        showVariables: true
+      },
+      {
+        key: 'clickAction',
+        label: 'Al tocar la notificación',
+        type: 'select',
+        options: [
+          { value: 'phone_chat', label: 'Abrir chat en el celular' },
+          { value: 'phone_contacts', label: 'Abrir contactos en el celular' },
+          { value: 'desktop_contacts', label: 'Abrir contacto en escritorio' },
+          { value: 'desktop_chat', label: 'Abrir chat en escritorio' },
+          { value: 'custom_url', label: 'Abrir ruta interna personalizada' }
+        ]
+      },
+      {
+        key: 'contactId',
+        label: 'Contacto de referencia (opcional)',
+        type: 'text',
+        placeholder: '{{contact.id}}',
+        showVariables: true,
+        advanced: true
+      },
+      {
+        key: 'customUrl',
+        label: 'Ruta interna',
+        type: 'text',
+        placeholder: '/phone/chat',
+        showVariables: true,
+        showIf: (config) => str(config.clickAction) === 'custom_url'
+      }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    validate: (config) => {
+      const errors: string[] = []
+      if (str(config.recipientMode) === 'specific_user' && !str(config.user)) {
+        errors.push('Selecciona el usuario que recibirá la notificación')
+      }
+      if (str(config.clickAction) === 'custom_url' && !str(config.customUrl).trim()) {
+        errors.push('Captura la ruta interna que se abrirá al tocar la notificación')
+      }
+      return errors
+    },
+    summary: (config) => {
+      const recipients: Record<string, string> = {
+        all: 'Todos',
+        assigned_user: 'Usuario asignado',
+        specific_user: str(config.userName) || 'Usuario específico'
+      }
+      const actions: Record<string, string> = {
+        phone_chat: 'abre chat del celular',
+        phone_contacts: 'abre contactos del celular',
+        desktop_contacts: 'abre contacto en escritorio',
+        desktop_chat: 'abre chat en escritorio',
+        custom_url: str(config.customUrl) || 'ruta interna'
+      }
+      return {
+        text: `${recipients[str(config.recipientMode)] || 'Todos'} · ${actions[str(config.clickAction)] || 'abre chat del celular'}`,
+        box: str(config.pushTitle) || str(config.pushBody) || undefined,
+        empty: 'Configura destinatario, título y cuerpo'
+      }
+    }
+  },
   {
     type: 'action-webhook',
     kind: 'action',

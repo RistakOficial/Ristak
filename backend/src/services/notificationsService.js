@@ -1,9 +1,11 @@
 import fetch from 'node-fetch'
+import crypto from 'crypto'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { getMetaConfig, getMetaSyncProgress } from './metaAdsService.js'
 import { getSitesPublicDomain } from './sitesService.js'
 import { listAutomationReviewProblems } from './automationReferenceResolver.js'
+import { sendAppNotificationPayload } from './pushNotificationsService.js'
 import { logger } from '../utils/logger.js'
 
 const STORAGE_LIMIT_GB = Number(process.env.DATABASE_STORAGE_LIMIT_GB || 1)
@@ -66,6 +68,15 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+function makeInternalNotificationId() {
+  return `internal_notification_${crypto.randomUUID()}`
+}
+
+function normalizeUserIds(value = []) {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.map((item) => cleanString(item)).filter(Boolean))]
+}
+
 function sanitizeExternalMessage(value) {
   return cleanString(value)
     .replace(/access_token=[^&\s]+/gi, 'access_token=***')
@@ -107,6 +118,97 @@ function createNotification({
     actionUrl,
     actionLabel
   }
+}
+
+function internalNotificationFromRow(row = {}) {
+  return createNotification({
+    id: row.id,
+    source: row.source || 'Ristak',
+    severity: row.severity || 'info',
+    title: row.title || 'Notificación interna',
+    message: row.message || '',
+    createdAt: row.created_at || row.createdAt,
+    updatedAt: row.updated_at || row.updatedAt || row.created_at || row.createdAt,
+    actionUrl: row.action_url || row.actionUrl || '',
+    actionLabel: row.action_label || row.actionLabel || 'Abrir'
+  })
+}
+
+export async function createInternalNotification({
+  recipientUserIds = [],
+  broadcast = false,
+  source = 'Automatizaciones',
+  severity = 'info',
+  title,
+  message = '',
+  actionUrl = '',
+  actionLabel = 'Abrir',
+  category = 'automation',
+  contactId = '',
+  automationId = '',
+  automationNodeId = '',
+  enrollmentId = '',
+  metadata = {},
+  pushTitle = '',
+  pushBody = ''
+} = {}) {
+  const cleanTitle = limitText(title || pushTitle || 'Notificación interna', 120)
+  const cleanMessage = limitText(message || pushBody || '', 700)
+  const normalizedRecipients = normalizeUserIds(recipientUserIds)
+  const recipientTargets = broadcast ? [null] : normalizedRecipients
+
+  if (!broadcast && recipientTargets.length === 0) {
+    return {
+      created: 0,
+      ids: [],
+      push: { sent: 0, skipped: true, reason: 'missing_recipients' }
+    }
+  }
+
+  const ids = []
+  for (const recipientUserId of recipientTargets) {
+    const id = makeInternalNotificationId()
+    ids.push(id)
+    await db.run(
+      `INSERT INTO internal_notifications (
+        id, recipient_user_id, source, severity, title, message, action_url, action_label,
+        category, contact_id, automation_id, automation_node_id, enrollment_id, metadata_json,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        id,
+        recipientUserId,
+        cleanString(source) || 'Ristak',
+        SEVERITY_RANK[severity] ? severity : 'info',
+        cleanTitle,
+        cleanMessage,
+        cleanString(actionUrl),
+        cleanString(actionLabel) || 'Abrir',
+        cleanString(category) || 'internal',
+        cleanString(contactId) || null,
+        cleanString(automationId) || null,
+        cleanString(automationNodeId) || null,
+        cleanString(enrollmentId) || null,
+        JSON.stringify(metadata || {})
+      ]
+    )
+  }
+
+  const pushPayload = {
+    title: pushTitle || cleanTitle,
+    body: pushBody || cleanMessage || cleanTitle,
+    url: actionUrl || '/phone/chat',
+    category,
+    tag: ids[0] || `internal-${Date.now()}`,
+    contactId: cleanString(contactId)
+  }
+  const pushOptions = broadcast ? {} : { userIds: normalizedRecipients }
+  const push = await sendAppNotificationPayload(pushPayload, pushOptions).catch((error) => {
+    logger.warn(`[Notificaciones] No se pudo enviar push interno: ${error.message}`)
+    return { sent: 0, skipped: true, reason: 'push_error' }
+  })
+
+  return { created: ids.length, ids, push }
 }
 
 function sortNotifications(left, right) {
@@ -1096,8 +1198,38 @@ async function getAutomationReviewNotifications() {
   }
 }
 
-export async function getSystemNotifications({ liveMetaCheck = true, limit = 30 } = {}) {
+async function getInternalNotifications({ userId = null, limit = 30 } = {}) {
+  try {
+    const cleanUserId = cleanString(userId)
+    const max = Math.max(1, Math.min(Number(limit) || 30, 100))
+    const rows = cleanUserId
+      ? await db.all(
+          `SELECT id, source, severity, title, message, action_url, action_label, created_at, updated_at
+           FROM internal_notifications
+           WHERE recipient_user_id IS NULL OR recipient_user_id = ?
+           ORDER BY updated_at DESC
+           LIMIT ?`,
+          [cleanUserId, max]
+        )
+      : await db.all(
+          `SELECT id, source, severity, title, message, action_url, action_label, created_at, updated_at
+           FROM internal_notifications
+           WHERE recipient_user_id IS NULL
+           ORDER BY updated_at DESC
+           LIMIT ?`,
+          [max]
+        )
+
+    return rows.map(internalNotificationFromRow)
+  } catch (error) {
+    logger.warn(`No se pudieron leer notificaciones internas: ${error.message}`)
+    return []
+  }
+}
+
+export async function getSystemNotifications({ liveMetaCheck = true, limit = 30, userId = null } = {}) {
   const groups = await Promise.all([
+    getInternalNotifications({ userId, limit }),
     getWhatsAppNotifications(),
     getMetaNotifications({ liveMetaCheck }),
     getStorageNotifications(),

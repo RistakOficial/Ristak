@@ -21,6 +21,7 @@ import {
   setEmailTransportFactoryForTest
 } from '../src/services/emailService.js'
 import { captureQrChatMessage, getWhatsAppApiConfigKeys } from '../src/services/whatsappApiService.js'
+import { setAppNotificationPayloadSenderForTest } from '../src/services/pushNotificationsService.js'
 
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
@@ -1426,6 +1427,111 @@ test('webhook encuentra contacto por valor mapeado y asigna usuario', async () =
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('notificación interna desde automatización crea aviso y push para usuario asignado', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_internal_notification_${suffix}`
+  const contactId = `contact_internal_notification_${suffix}`
+  const username = `notifier-${suffix}@example.com`
+  let userId = ''
+  const sentPushes = []
+
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-contact-created',
+              type: 'trigger-contact-created',
+              config: {}
+            }
+          ]
+        }
+      },
+      {
+        id: 'notify-owner',
+        type: 'action-system-notification',
+        label: 'Notificaciones',
+        config: {
+          recipientMode: 'assigned_user',
+          pushTitle: 'Nuevo lead: {{contact.first_name}}',
+          pushBody: 'Revisa a {{contact.full_name}} en Ristak',
+          clickAction: 'phone_chat'
+        }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-notify', sourceNodeId: 'start', targetNodeId: 'notify-owner' }
+    ],
+    settings: {}
+  }
+
+  setAppNotificationPayloadSenderForTest(async (payload, options) => {
+    sentPushes.push({ payload, options })
+    return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+  })
+
+  try {
+    const result = await db.run(
+      `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+       VALUES (?, ?, ?, ?, 'admin', 1)`,
+      [username, username, 'test-hash', 'Dueño Notificación']
+    )
+    userId = String(result.lastID || '')
+    if (!userId) {
+      const user = await db.get('SELECT id FROM users WHERE username = ?', [username])
+      userId = String(user.id)
+    }
+
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `internal-notification-${suffix}@example.com`,
+        'Lead Notificación',
+        'Lead',
+        JSON.stringify({ assignedUser: userId, assignedUserName: 'Dueño Notificación' })
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test notificación interna', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('contact-created', { contactId })
+
+    const notification = await db.get(
+      'SELECT * FROM internal_notifications WHERE automation_id = ? AND automation_node_id = ?',
+      [automationId, 'notify-owner']
+    )
+    assert.equal(notification.recipient_user_id, userId)
+    assert.equal(notification.title, 'Nuevo lead: Lead')
+    assert.equal(notification.message, 'Revisa a Lead Notificación en Ristak')
+    assert.equal(notification.action_url, `/phone/chat?contact=${encodeURIComponent(contactId)}`)
+
+    assert.equal(sentPushes.length, 1)
+    assert.deepEqual(sentPushes[0].options.userIds, [userId])
+    assert.equal(sentPushes[0].payload.title, 'Nuevo lead: Lead')
+    assert.equal(sentPushes[0].payload.body, 'Revisa a Lead Notificación en Ristak')
+
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    assert.equal(enrollment.status, 'completed')
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM internal_notifications WHERE automation_id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => {})
   }
 })
 

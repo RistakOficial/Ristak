@@ -1049,12 +1049,36 @@ async function initTables() {
       )
     `)
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS internal_notifications (
+        id TEXT PRIMARY KEY,
+        recipient_user_id TEXT,
+        source TEXT DEFAULT 'Ristak',
+        severity TEXT DEFAULT 'info',
+        title TEXT NOT NULL,
+        message TEXT,
+        action_url TEXT,
+        action_label TEXT,
+        category TEXT DEFAULT 'internal',
+        contact_id TEXT,
+        automation_id TEXT,
+        automation_node_id TEXT,
+        enrollment_id TEXT,
+        metadata_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
     try {
       await db.run('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_enabled ON push_subscriptions(enabled)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_enabled ON mobile_push_devices(enabled)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_user ON mobile_push_devices(user_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_platform ON mobile_push_devices(platform)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_internal_notifications_recipient ON internal_notifications(recipient_user_id, updated_at)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_internal_notifications_contact ON internal_notifications(contact_id, updated_at)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_internal_notifications_automation ON internal_notifications(automation_id, updated_at)')
     } catch (err) {
       logger.warn('Advertencia al crear índices de avisos push:', err.message)
     }

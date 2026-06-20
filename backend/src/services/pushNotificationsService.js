@@ -114,6 +114,11 @@ function normalizeCalendarIds(value = []) {
   return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))]
 }
 
+function normalizeUserIds(value = []) {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))]
+}
+
 function normalizePlatform(value = '') {
   const platform = String(value || '').trim().toLowerCase()
   if (platform === 'ios' || platform === 'android') return platform
@@ -558,7 +563,7 @@ export async function disableMobilePushDevice(token = '') {
 
 async function getSubscriptionsForCalendar(calendarId) {
   const rows = await db.all(`
-    SELECT id, endpoint, subscription_json, calendar_ids_json
+    SELECT id, user_id, endpoint, subscription_json, calendar_ids_json
     FROM push_subscriptions
     WHERE enabled = 1
   `)
@@ -569,17 +574,20 @@ async function getSubscriptionsForCalendar(calendarId) {
   })
 }
 
-async function getEnabledSubscriptions() {
-  return db.all(`
-    SELECT id, endpoint, subscription_json
+async function getEnabledSubscriptions(userIds = null) {
+  const rows = await db.all(`
+    SELECT id, user_id, endpoint, subscription_json
     FROM push_subscriptions
     WHERE enabled = 1
   `)
+  if (!Array.isArray(userIds)) return rows
+  const allowed = new Set(normalizeUserIds(userIds))
+  return rows.filter((row) => allowed.has(String(row.user_id || '').trim()))
 }
 
 async function getMobileDevicesForCalendar(calendarId) {
   const rows = await db.all(`
-    SELECT id, platform, token, calendar_ids_json
+    SELECT id, user_id, platform, token, calendar_ids_json
     FROM mobile_push_devices
     WHERE enabled = 1
   `)
@@ -590,12 +598,15 @@ async function getMobileDevicesForCalendar(calendarId) {
   })
 }
 
-async function getEnabledMobileDevices() {
-  return db.all(`
-    SELECT id, platform, token, calendar_ids_json
+async function getEnabledMobileDevices(userIds = null) {
+  const rows = await db.all(`
+    SELECT id, user_id, platform, token, calendar_ids_json
     FROM mobile_push_devices
     WHERE enabled = 1
   `)
+  if (!Array.isArray(userIds)) return rows
+  const allowed = new Set(normalizeUserIds(userIds))
+  return rows.filter((row) => allowed.has(String(row.user_id || '').trim()))
 }
 
 async function markSubscriptionError(row, error) {
@@ -782,13 +793,19 @@ async function sendMobileNotificationRows(rows = [], payload = {}) {
   return sent
 }
 
-export async function sendAppNotificationPayload(payload = {}, { calendarId = '' } = {}) {
+export async function sendAppNotificationPayload(payload = {}, { calendarId = '', userIds = null } = {}) {
   if (appNotificationPayloadSenderForTest) {
-    return appNotificationPayloadSenderForTest(payload, { calendarId })
+    return appNotificationPayloadSenderForTest(payload, { calendarId, userIds })
   }
 
   if (!pushConfigured && !nativePushConfigured) {
     return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'not_configured' }
+  }
+
+  const filterByUser = Array.isArray(userIds)
+  const normalizedUserIds = filterByUser ? normalizeUserIds(userIds) : null
+  if (filterByUser && normalizedUserIds.length === 0) {
+    return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'missing_recipients' }
   }
 
   const normalizedPayload = normalizeNotificationPayload(payload)
@@ -797,17 +814,24 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
       ? (calendarId ? getSubscriptionsForCalendar(calendarId) : getEnabledSubscriptions())
       : Promise.resolve([]),
     nativePushConfigured
-      ? (calendarId ? getMobileDevicesForCalendar(calendarId) : getEnabledMobileDevices())
+      ? (calendarId ? getMobileDevicesForCalendar(calendarId) : getEnabledMobileDevices(normalizedUserIds))
       : Promise.resolve([])
   ])
 
-  if (webRows.length === 0 && nativeRows.length === 0) {
+  const filteredWebRows = filterByUser
+    ? webRows.filter((row) => normalizedUserIds.includes(String(row.user_id || '').trim()))
+    : webRows
+  const filteredNativeRows = filterByUser
+    ? nativeRows.filter((row) => normalizedUserIds.includes(String(row.user_id || '').trim()))
+    : nativeRows
+
+  if (filteredWebRows.length === 0 && filteredNativeRows.length === 0) {
     return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'no_subscriptions' }
   }
 
   const [webSent, nativeSent] = await Promise.all([
-    pushConfigured ? sendNotificationRows(webRows, normalizedPayload) : Promise.resolve(0),
-    nativePushConfigured ? sendMobileNotificationRows(nativeRows, normalizedPayload) : Promise.resolve(0)
+    pushConfigured ? sendNotificationRows(filteredWebRows, normalizedPayload) : Promise.resolve(0),
+    nativePushConfigured ? sendMobileNotificationRows(filteredNativeRows, normalizedPayload) : Promise.resolve(0)
   ])
 
   return {

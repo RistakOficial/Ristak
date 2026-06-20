@@ -5,7 +5,8 @@ export async function getNotificationsView(req, res) {
   try {
     const liveMetaCheck = String(req.query?.liveMetaCheck ?? '1') !== '0'
     const limit = Number(req.query?.limit || 30)
-    const data = await getSystemNotifications({ liveMetaCheck, limit })
+    const userId = req.user?.userId || req.user?.id || null
+    const data = await getSystemNotifications({ liveMetaCheck, limit, userId })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error obteniendo notificaciones: ${error.message}`)
