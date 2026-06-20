@@ -23455,7 +23455,6 @@ const VideoPreviewRangeControl: React.FC<{
         <strong>{formatVideoPreviewDuration(spanSeconds)}</strong>
       </div>
       <div
-        ref={trackRef}
         className={styles.videoPreviewTrack}
         style={{
           ['--video-preview-start' as string]: `${startPercent}%`,
@@ -23469,46 +23468,43 @@ const VideoPreviewRangeControl: React.FC<{
             </span>
           ))}
         </div>
-        <div className={styles.videoPreviewOutsideLeft} aria-hidden="true" />
-        <div className={styles.videoPreviewOutsideRight} aria-hidden="true" />
-        <div
-          className={styles.videoPreviewSelection}
-          onPointerDown={handleSelectionPointerDown}
-          onPointerMove={handleSelectionPointerMove}
-          onPointerUp={handleSelectionPointerUp}
-          onPointerCancel={handleSelectionPointerUp}
-          aria-hidden="true"
-        />
-        <span className={`${styles.videoPreviewMarker} ${styles.videoPreviewMarkerStart}`} aria-hidden="true">
-          <GripVertical size={13} />
-        </span>
-        <span className={`${styles.videoPreviewMarker} ${styles.videoPreviewMarkerEnd}`} aria-hidden="true">
-          <GripVertical size={13} />
-        </span>
-        <input
-          className={styles.videoPreviewThumb}
-          type="range"
-          min={0}
-          max={range.max}
-          step={VIDEO_PREVIEW_STEP_SECONDS}
-          value={range.start}
-          aria-label="Inicio del loop"
-          onChange={handleStartChange}
-          onMouseUp={onSave}
-          onTouchEnd={onSave}
-        />
-        <input
-          className={styles.videoPreviewThumb}
-          type="range"
-          min={0}
-          max={range.max}
-          step={VIDEO_PREVIEW_STEP_SECONDS}
-          value={range.end}
-          aria-label="Fin del loop"
-          onChange={handleEndChange}
-          onMouseUp={onSave}
-          onTouchEnd={onSave}
-        />
+        <div ref={trackRef} className={styles.videoPreviewControlRail}>
+          <div className={styles.videoPreviewRailBase} aria-hidden="true" />
+          <div
+            className={styles.videoPreviewSelection}
+            onPointerDown={handleSelectionPointerDown}
+            onPointerMove={handleSelectionPointerMove}
+            onPointerUp={handleSelectionPointerUp}
+            onPointerCancel={handleSelectionPointerUp}
+            aria-hidden="true"
+          />
+          <span className={`${styles.videoPreviewPoint} ${styles.videoPreviewPointStart}`} aria-hidden="true" />
+          <span className={`${styles.videoPreviewPoint} ${styles.videoPreviewPointEnd}`} aria-hidden="true" />
+          <input
+            className={styles.videoPreviewThumb}
+            type="range"
+            min={0}
+            max={range.max}
+            step={VIDEO_PREVIEW_STEP_SECONDS}
+            value={range.start}
+            aria-label="Inicio del loop"
+            onChange={handleStartChange}
+            onMouseUp={onSave}
+            onTouchEnd={onSave}
+          />
+          <input
+            className={styles.videoPreviewThumb}
+            type="range"
+            min={0}
+            max={range.max}
+            step={VIDEO_PREVIEW_STEP_SECONDS}
+            value={range.end}
+            aria-label="Fin del loop"
+            onChange={handleEndChange}
+            onMouseUp={onSave}
+            onTouchEnd={onSave}
+          />
+        </div>
       </div>
       <div className={styles.videoPreviewTimelineLabels}>
         <span>0:00</span>
