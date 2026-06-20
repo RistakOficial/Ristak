@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
   BellRing,
-  Building2,
   CheckCircle,
   Clock,
   Copy,
@@ -48,6 +47,7 @@ import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'automations' | 'gateways' | 'taxes'
 type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip'
+type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 
 interface PaymentGatewayOption {
   id: PaymentGatewayId
@@ -165,6 +165,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const [settings, setSettings] = useState<PaymentSettings>(defaultPaymentSettings)
   const [loadingSettings, setLoadingSettings] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
+  const [autoSaveState, setAutoSaveState] = useState<AutoSaveState>('idle')
   const [paymentTitle, setPaymentTitle] = useState('PAGO')
   const [paymentNumberPrefix, setPaymentNumberPrefix] = useState('INV-')
   const [paymentDueDays, setPaymentDueDays] = useState(7)
@@ -179,16 +180,26 @@ export const PaymentsConfiguration: React.FC = () => {
   const [stripeSecretKey, setStripeSecretKey] = useState('')
   const [stripeWebhookSecret, setStripeWebhookSecret] = useState('')
   const [loadingStripeConfig, setLoadingStripeConfig] = useState(false)
+  const [savingHighLevelConfig, setSavingHighLevelConfig] = useState(false)
   const [savingStripeConfig, setSavingStripeConfig] = useState(false)
   const [testingStripeConfig, setTestingStripeConfig] = useState(false)
   const [connectingStripe, setConnectingStripe] = useState(false)
   const [syncingStripeConnect, setSyncingStripeConnect] = useState(false)
   const [disconnectingStripe, setDisconnectingStripe] = useState(false)
+  const latestSettingsRef = useRef(settings)
+  const loadedSettingsRef = useRef(false)
+  const lastSavedSettingsRef = useRef(JSON.stringify(defaultPaymentSettings))
 
   const checkout = settings.checkout
   const receipt = settings.receipt
   const automations = settings.automations
   const taxes = settings.taxes
+  const routeSegment = getPaymentRouteSegment(location.pathname)
+  const activeGatewayRoute = isPaymentGatewayId(routeSegment) ? routeSegment : null
+
+  useEffect(() => {
+    latestSettingsRef.current = settings
+  }, [settings])
 
   useEffect(() => {
     const nextSection = getInitialSection(location.pathname)
@@ -240,7 +251,7 @@ export const PaymentsConfiguration: React.FC = () => {
         await loadStripeConfig()
       }
 
-      navigate('/settings/payments/gateways', { replace: true })
+      navigate('/settings/payments/stripe', { replace: true })
     }
 
     void finishStripeReturn()
@@ -279,9 +290,7 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   ]
 
-  const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === selectedGateway)
-  const showHighLevelSettings = highLevelConnected && selectedGateway === 'highlevel'
-  const showStripeSettings = selectedGateway === 'stripe'
+  const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === (activeGatewayRoute || selectedGateway))
   const stripeWebhookEndpoints = stripeConfig?.webhookEndpoints || []
   const stripeConnectionType = stripeConfig?.connectionType || 'manual'
   const stripeIsConnect = stripeConnectionType === 'connect'
@@ -323,7 +332,12 @@ export const PaymentsConfiguration: React.FC = () => {
     setLoadingSettings(true)
     try {
       const nextSettings = await paymentSettingsService.getSettings()
+      const serialized = JSON.stringify(nextSettings)
+      loadedSettingsRef.current = true
+      lastSavedSettingsRef.current = serialized
+      latestSettingsRef.current = nextSettings
       setSettings(nextSettings)
+      setAutoSaveState('saved')
     } catch (error: any) {
       showToast('warning', 'Configuración local', error.message || 'Usaremos valores por defecto mientras se carga pagos.')
     } finally {
@@ -367,7 +381,7 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
-  const saveHighLevelInvoiceConfig = async (nextSettings: PaymentSettings) => {
+  const saveHighLevelInvoiceConfig = useCallback(async (nextSettings: PaymentSettings) => {
     if (!highLevelConnected) return
 
     const response = await fetch('/api/highlevel/invoice-config', {
@@ -394,23 +408,70 @@ export const PaymentsConfiguration: React.FC = () => {
     window.dispatchEvent(new CustomEvent('ristak-payment-config-changed', {
       detail: { ghlInvoiceMode }
     }))
-  }
+  }, [cardSetupAmount, ghlInvoiceMode, highLevelConnected, paymentDueDays, paymentNumberPrefix, paymentTitle, transferInfoUrl])
 
-  const handleSaveSettings = async () => {
+  const persistPaymentSettings = useCallback(async ({ showSuccess = false } = {}) => {
+    const nextSettings = latestSettingsRef.current
+    const pendingSerialized = JSON.stringify(nextSettings)
     setSavingSettings(true)
+    setAutoSaveState('saving')
     try {
-      const savedSettings = await paymentSettingsService.saveSettings(settings)
-      setSettings(savedSettings)
+      const savedSettings = await paymentSettingsService.saveSettings(nextSettings)
+      const savedSerialized = JSON.stringify(savedSettings)
+      lastSavedSettingsRef.current = savedSerialized
+
+      if (JSON.stringify(latestSettingsRef.current) === pendingSerialized) {
+        latestSettingsRef.current = savedSettings
+        setSettings(savedSettings)
+        setAutoSaveState('saved')
+      }
+
       try {
         await saveHighLevelInvoiceConfig(savedSettings)
-        showToast('success', 'Pagos guardado', 'La configuración de cobro, comprobante, automatizaciones e impuestos quedó actualizada.')
+        if (showSuccess) {
+          showToast('success', 'Pagos guardado', 'La configuración quedó actualizada.')
+        }
       } catch (highLevelError: any) {
-        showToast('warning', 'Pagos guardado', highLevelError.message || 'La configuración global se guardó, pero GoHighLevel necesita revisión.')
+        if (showSuccess) {
+          showToast('warning', 'Pagos guardado', highLevelError.message || 'La configuración global se guardó, pero GoHighLevel necesita revisión.')
+        }
       }
     } catch (error: any) {
-      showToast('error', 'No se pudo guardar', error.message || 'Revisa la configuración de pagos.')
+      setAutoSaveState('error')
+      if (showSuccess) {
+        showToast('error', 'No se pudo guardar', error.message || 'Revisa la configuración de pagos.')
+      }
     } finally {
       setSavingSettings(false)
+    }
+  }, [saveHighLevelInvoiceConfig, showToast])
+
+  useEffect(() => {
+    if (!loadedSettingsRef.current || loadingSettings) return
+
+    const serialized = JSON.stringify(settings)
+    if (serialized === lastSavedSettingsRef.current) {
+      setAutoSaveState((current) => current === 'saving' ? current : 'saved')
+      return
+    }
+
+    setAutoSaveState('idle')
+    const timer = window.setTimeout(() => {
+      void persistPaymentSettings()
+    }, 750)
+
+    return () => window.clearTimeout(timer)
+  }, [loadingSettings, persistPaymentSettings, settings])
+
+  const handleSaveHighLevelGatewayConfig = async () => {
+    setSavingHighLevelConfig(true)
+    try {
+      await saveHighLevelInvoiceConfig(latestSettingsRef.current)
+      showToast('success', 'GoHighLevel guardado', 'La configuración de invoices quedó actualizada.')
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar GoHighLevel', error.message || 'Revisa la configuración de invoices.')
+    } finally {
+      setSavingHighLevelConfig(false)
     }
   }
 
@@ -528,12 +589,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const handleSelectGateway = (gateway: PaymentGatewayOption) => {
     setSelectedGateway(gateway.id)
-    if (gateway.id === 'stripe' || gateway.id === 'highlevel') {
-      navigate(`/settings/payments/${gateway.id}`)
-    } else {
-      navigate('/settings/payments/gateways')
-      showToast('info', 'Próximamente', `${gateway.name} todavía no está disponible para conectar.`)
-    }
+    navigate(`/settings/payments/${gateway.id}`)
   }
 
   const renderField = (
@@ -560,6 +616,34 @@ export const PaymentsConfiguration: React.FC = () => {
         <span>{description}</span>
       </div>
       <Switch checked={checked} onChange={onChange} aria-label={label} />
+    </div>
+  )
+
+  const getAutoSaveLabel = () => {
+    if (savingSettings || autoSaveState === 'saving') return 'Guardando cambios...'
+    if (autoSaveState === 'error') return 'No se pudo guardar'
+    if (autoSaveState === 'saved') return 'Guardado automático activo'
+    return 'Se guarda automáticamente'
+  }
+
+  const renderSectionSaveBar = (buttonLabel: string) => (
+    <div className={styles.sectionSaveBar}>
+      <span>{getAutoSaveLabel()}</span>
+      <Button
+        type="button"
+        variant="secondary"
+        onClick={() => persistPaymentSettings({ showSuccess: true })}
+        disabled={savingSettings || loadingSettings}
+      >
+        {savingSettings ? (
+          <>
+            <Loader2 size={16} className={styles.spinIcon} />
+            Guardando...
+          </>
+        ) : (
+          buttonLabel
+        )}
+      </Button>
     </div>
   )
 
@@ -634,12 +718,16 @@ export const PaymentsConfiguration: React.FC = () => {
           )}
         </div>
 
-        {renderSwitchRow(
-          'Mostrar sello de pago seguro',
-          'Aparece junto al formulario para reforzar confianza antes de pagar.',
-          checkout.showSecureBadge,
-          (next) => setCheckoutValue('showSecureBadge', next)
-        )}
+        <div className={styles.sectionDividerStack}>
+          {renderSwitchRow(
+            'Mostrar sello de pago seguro',
+            'Aparece junto al formulario para reforzar confianza antes de pagar.',
+            checkout.showSecureBadge,
+            (next) => setCheckoutValue('showSecureBadge', next)
+          )}
+        </div>
+
+        {renderSectionSaveBar('Guardar página de cobro')}
       </Card>
 
       <Card className={styles.previewCard}>
@@ -787,6 +875,8 @@ export const PaymentsConfiguration: React.FC = () => {
           {renderSwitchRow('Mostrar datos del cliente', 'Incluye nombre, email y referencia del pago.', receipt.showCustomerInfo, (next) => setReceiptValue('showCustomerInfo', next))}
           {renderSwitchRow('Mostrar términos', 'Agrega términos al final del comprobante.', receipt.showTerms, (next) => setReceiptValue('showTerms', next))}
         </div>
+
+        {renderSectionSaveBar('Guardar comprobante')}
       </Card>
 
       <Card className={styles.receiptPreview}>
@@ -899,6 +989,8 @@ export const PaymentsConfiguration: React.FC = () => {
             />
           )}
         </div>
+
+        {renderSectionSaveBar('Guardar automatizaciones')}
       </Card>
 
       <div className={styles.summaryStrip}>
@@ -923,45 +1015,58 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const renderGatewaysSection = () => (
     <div className={styles.singleColumnLayout}>
-      <Card className={styles.sectionCard}>
-        <div className={styles.sectionHeader}>
-          <div>
-            <h2>Pasarela de pagos</h2>
-            <p>Elige con qué proveedor se cobran links, tarjetas y parcialidades.</p>
-          </div>
-          <Badge variant={stripeConnected || highLevelConnected ? 'success' : 'warning'}>
-            {stripeConnected || highLevelConnected ? <CheckCircle size={14} /> : <KeyRound size={14} />}
-            {stripeConnected || highLevelConnected ? 'Conectada' : 'Pendiente'}
+      {activeGatewayRoute && (
+        <div className={styles.gatewayDetailBar}>
+          <Button type="button" variant="secondary" size="sm" onClick={() => navigate('/settings/payments/gateways')}>
+            <WalletCards size={16} />
+            Pasarelas
+          </Button>
+          <Badge variant={selectedGatewayOption?.status === 'connected' ? 'success' : selectedGatewayOption?.status === 'soon' ? 'warning' : 'info'}>
+            {selectedGatewayOption?.status === 'connected' ? 'Conectada' : selectedGatewayOption?.status === 'soon' ? 'Próximamente' : 'Configurable'}
           </Badge>
         </div>
+      )}
 
-        <div className={styles.gatewayList}>
-          {gatewayOptions.map((gateway) => {
-            const isSelected = selectedGateway === gateway.id
-            const isConnected = gateway.status === 'connected'
-            const isAvailable = gateway.status === 'available'
+      {!activeGatewayRoute && (
+        <Card className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
+            <div>
+              <h2>Pasarela de pagos</h2>
+              <p>Elige con qué proveedor se cobran links, tarjetas y parcialidades.</p>
+            </div>
+            <Badge variant={stripeConnected || highLevelConnected ? 'success' : 'warning'}>
+              {stripeConnected || highLevelConnected ? <CheckCircle size={14} /> : <KeyRound size={14} />}
+              {stripeConnected || highLevelConnected ? 'Conectada' : 'Pendiente'}
+            </Badge>
+          </div>
 
-            return (
-              <Card key={gateway.id} className={`${styles.gatewayItem} ${isSelected ? styles.gatewayItemActive : ''}`} padding="md">
-                <div>
-                  <strong>{gateway.name}</strong>
-                  <p>{gateway.description}</p>
-                </div>
-                <div className={styles.gatewayItemActions}>
-                  <Badge variant={isConnected ? 'success' : isAvailable ? 'info' : 'warning'}>
-                    {isConnected ? 'Conectado' : isAvailable ? 'Configurar' : 'Próximamente'}
-                  </Badge>
-                  <Button type="button" variant={isSelected ? 'primary' : 'secondary'} size="sm" onClick={() => handleSelectGateway(gateway)}>
-                    {isSelected ? 'Seleccionado' : 'Elegir'}
-                  </Button>
-                </div>
-              </Card>
-            )
-          })}
-        </div>
-      </Card>
+          <div className={styles.gatewayList}>
+            {gatewayOptions.map((gateway) => {
+              const isConnected = gateway.status === 'connected'
+              const isAvailable = gateway.status === 'available'
 
-      {selectedGatewayOption?.status === 'soon' && (
+              return (
+                <Card key={gateway.id} className={styles.gatewayItem} padding="md">
+                  <div>
+                    <strong>{gateway.name}</strong>
+                    <p>{gateway.description}</p>
+                  </div>
+                  <div className={styles.gatewayItemActions}>
+                    <Badge variant={isConnected ? 'success' : isAvailable ? 'info' : 'warning'}>
+                      {isConnected ? 'Conectado' : isAvailable ? 'Configurar' : 'Próximamente'}
+                    </Badge>
+                    <Button type="button" variant={isConnected || isAvailable ? 'primary' : 'secondary'} size="sm" onClick={() => handleSelectGateway(gateway)}>
+                      {isConnected ? 'Abrir' : isAvailable ? 'Configurar' : 'Ver estado'}
+                    </Button>
+                  </div>
+                </Card>
+              )
+            })}
+          </div>
+        </Card>
+      )}
+
+      {activeGatewayRoute && selectedGatewayOption?.status === 'soon' && (
         <Card className={styles.noticeCard}>
           <AlertTriangle size={18} />
           <div>
@@ -971,7 +1076,7 @@ export const PaymentsConfiguration: React.FC = () => {
         </Card>
       )}
 
-      {selectedGateway === 'highlevel' && !highLevelConnected && (
+      {activeGatewayRoute === 'highlevel' && !highLevelConnected && (
         <Card className={styles.noticeCard}>
           <AlertTriangle size={18} />
           <div>
@@ -981,7 +1086,7 @@ export const PaymentsConfiguration: React.FC = () => {
         </Card>
       )}
 
-      {showHighLevelSettings && (
+      {activeGatewayRoute === 'highlevel' && highLevelConnected && (
         <Card className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
             <div>
@@ -1042,10 +1147,24 @@ export const PaymentsConfiguration: React.FC = () => {
               'Se cobra cuando hace falta guardar o autorizar una tarjeta antes de activar parcialidades automáticas.'
             )}
           </div>
+
+          <div className={styles.sectionSaveBar}>
+            <span>Guarda esta configuración dentro de la integración de GoHighLevel.</span>
+            <Button type="button" onClick={handleSaveHighLevelGatewayConfig} disabled={savingHighLevelConfig}>
+              {savingHighLevelConfig ? (
+                <>
+                  <Loader2 size={16} className={styles.spinIcon} />
+                  Guardando...
+                </>
+              ) : (
+                'Guardar GoHighLevel'
+              )}
+            </Button>
+          </div>
         </Card>
       )}
 
-      {showStripeSettings && (
+      {activeGatewayRoute === 'stripe' && (
         <Card className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
             <div>
@@ -1446,26 +1565,15 @@ export const PaymentsConfiguration: React.FC = () => {
   return (
     <PageContainer size="wide" className={styles.page}>
       <PageHeader
+        className={styles.pageHeader}
         eyebrow="Configuración"
         title="Pagos"
         subtitle="Configura el cobro, comprobante, automatizaciones, pasarelas e impuestos desde un solo setup."
         actions={(
-          <>
-            <Badge variant={stripeConnected || highLevelConnected ? 'success' : 'warning'}>
-              {isLoadingPage ? <Loader2 size={14} className={styles.spinIcon} /> : stripeConnected || highLevelConnected ? <CheckCircle size={14} /> : <Clock size={14} />}
-              {isLoadingPage ? 'Cargando' : stripeConnected ? 'Stripe conectado' : highLevelConnected ? 'GoHighLevel conectado' : 'Pasarela pendiente'}
-            </Badge>
-            <Button type="button" onClick={handleSaveSettings} disabled={savingSettings || loadingSettings}>
-              {savingSettings ? (
-                <>
-                  <Loader2 size={18} className={styles.spinIcon} />
-                  Guardando...
-                </>
-              ) : (
-                'Guardar configuración'
-              )}
-            </Button>
-          </>
+          <Badge variant={stripeConnected || highLevelConnected ? 'success' : 'warning'}>
+            {isLoadingPage ? <Loader2 size={14} className={styles.spinIcon} /> : stripeConnected || highLevelConnected ? <CheckCircle size={14} /> : <Clock size={14} />}
+            {isLoadingPage ? 'Cargando' : stripeConnected ? 'Stripe conectado' : highLevelConnected ? 'GoHighLevel conectado' : 'Pasarela pendiente'}
+          </Badge>
         )}
       />
 
