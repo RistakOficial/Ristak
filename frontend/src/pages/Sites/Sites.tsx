@@ -1475,7 +1475,7 @@ type EmbeddedFormCanvasEditorBridge = {
 }
 
 type EditorHistoryEntry = {
-  action: 'reorder' | 'delete' | 'pages'
+  action: 'reorder' | 'delete' | 'create' | 'pages'
   siteId: string
   pageId?: string
   selectedBefore: string
@@ -1490,6 +1490,7 @@ type EditorHistoryEntry = {
   deletedBlocks?: SiteBlock[]
   deletedCreatedBlockIds?: string[]
   deletedPendingSaveBlockIds?: string[]
+  createdBlocks?: SiteBlock[]
 }
 
 type AddBlockOptions = {
@@ -2884,6 +2885,8 @@ type ButtonStylePreset = {
 
 const buttonPresetBasePatch = {
   buttonHeight: undefined,
+  buttonWidth: 0,
+  buttonAlign: 'center',
   buttonTextTransform: 'none',
   buttonLineHeight: '',
   buttonSubtitleFontSize: 13
@@ -8180,6 +8183,39 @@ export const Sites: React.FC = () => {
           }
           markBlockOrderDirty(entry.pageId)
         }
+      } else if (entry.action === 'create') {
+        const createdBlocks = entry.createdBlocks || []
+        const createdIds = createdBlocks.map(block => block.id)
+        if (!createdIds.length) return false
+
+        if (direction === 'undo') {
+          site = {
+            ...siteToEdit,
+            blocks: (siteToEdit.blocks || []).filter(block => !createdIds.includes(block.id))
+          }
+          markBlocksDeletedLocal(createdIds)
+          if (entry.beforeBlockIds.length) {
+            site = applyBlockOrderLocal(site, entry.beforeBlockIds, entry.pageId)
+          }
+        } else {
+          const existingIds = new Set((siteToEdit.blocks || []).map(block => block.id))
+          const blocksToRestore = createdBlocks
+            .filter(block => !existingIds.has(block.id))
+            .map(block => cloneJson(block))
+          site = {
+            ...siteToEdit,
+            blocks: [
+              ...(siteToEdit.blocks || []),
+              ...blocksToRestore
+            ]
+          }
+          for (const blockId of createdIds) pendingDeletedBlockIdsRef.current.delete(blockId)
+          markBlocksCreatedLocal(createdBlocks)
+          if (entry.afterBlockIds.length) {
+            site = applyBlockOrderLocal(site, entry.afterBlockIds, entry.pageId)
+          }
+        }
+        markBlockOrderDirty(entry.pageId)
       } else if (entry.action === 'pages') {
         const targetPages = direction === 'undo' ? entry.beforePages : entry.afterPages
         if (!targetPages?.length) return false
@@ -8539,6 +8575,22 @@ export const Sites: React.FC = () => {
     settings: {
       ...cloneJson(block.settings || {}),
       pageId
+    }
+  })
+
+  const cloneBlockForDuplicate = (
+    block: SiteBlock,
+    settingsPatch: Record<string, unknown> = {}
+  ): Partial<SiteBlock> & { blockType: SiteBlockType } => ({
+    blockType: block.blockType,
+    label: block.label,
+    content: block.content,
+    placeholder: block.placeholder,
+    required: block.required,
+    options: cloneJson(block.options),
+    settings: {
+      ...cloneJson(block.settings || {}),
+      ...settingsPatch
     }
   })
 
@@ -10164,6 +10216,102 @@ export const Sites: React.FC = () => {
     void handleDeleteBlock(blockId)
   }
 
+  const handleDuplicateBlock = (blockId: string) => {
+    const siteToEdit = selectedSiteRef.current || selectedSite
+    if (!siteToEdit?.blocks) return
+
+    try {
+      const sortedSiteBlocks = [...siteToEdit.blocks].sort((a, b) => a.sortOrder - b.sortOrder)
+      const sourceBlock = sortedSiteBlocks.find(block => block.id === blockId)
+      if (!sourceBlock) return
+
+      const duplicatingPopupBlock = isPopupBlock(sourceBlock)
+      const sitePages = hasEditablePages(siteToEdit) ? normalizeFunnelPages(siteToEdit) : []
+      const orderPageId = duplicatingPopupBlock
+        ? POPUP_SELECTED_ID
+        : hasEditablePages(siteToEdit)
+          ? activePage?.id || activePageId || sitePages[0]?.id
+          : undefined
+      const sourceBlocks = duplicatingPopupBlock
+        ? sortedSiteBlocks.filter(isPopupBlock)
+        : hasEditablePages(siteToEdit) && orderPageId
+          ? sortedSiteBlocks.filter(block => !isPopupBlock(block) && (isGlobalHeaderBlock(block) || getBlockPageId(block, sitePages) === orderPageId))
+          : sortedSiteBlocks.filter(block => !isPopupBlock(block))
+      const scopedSourceBlock = sourceBlocks.find(block => block.id === blockId)
+      if (!scopedSourceBlock) return
+
+      const sourceLanes = isLanding(siteToEdit) ? buildLandingSectionLanes(sourceBlocks) : []
+      const sourceGroup = isLanding(siteToEdit) && isTopLevelLandingBlock(scopedSourceBlock)
+        ? buildLandingBlockOrderGroups(sourceBlocks, sourceLanes).find(group => group.id === scopedSourceBlock.id)?.blocks || [scopedSourceBlock]
+        : [scopedSourceBlock]
+      const sourceGroupIds = new Set(sourceGroup.map(block => block.id))
+      const insertAfterIndex = sourceBlocks.reduce(
+        (lastIndex, block, index) => sourceGroupIds.has(block.id) ? index : lastIndex,
+        -1
+      )
+      if (insertAfterIndex < 0) return
+
+      let clonedSectionId = ''
+      const clonedBlocks: SiteBlock[] = []
+      for (const block of sourceGroup) {
+        const settingsPatch: Record<string, unknown> = {}
+        if (isSectionBlock(scopedSourceBlock) && block.id !== scopedSourceBlock.id && clonedSectionId) {
+          settingsPatch.sectionId = clonedSectionId
+        }
+        const clonedBlock = createLocalBlockFromPayload(
+          siteToEdit,
+          cloneBlockForDuplicate(block, settingsPatch),
+          sortedSiteBlocks.length + clonedBlocks.length,
+          [...sortedSiteBlocks, ...clonedBlocks]
+        )
+        clonedBlocks.push(clonedBlock)
+        if (isSectionBlock(block) && block.id === scopedSourceBlock.id) clonedSectionId = clonedBlock.id
+      }
+      if (!clonedBlocks.length) return
+
+      const beforeBlockIds = sourceBlocks.map(block => block.id)
+      const nextScopedBlocks = [
+        ...sourceBlocks.slice(0, insertAfterIndex + 1),
+        ...clonedBlocks,
+        ...sourceBlocks.slice(insertAfterIndex + 1)
+      ].map((block, index) => ({ ...block, sortOrder: index }))
+      const scopedBlockIds = new Set(sourceBlocks.map(block => block.id))
+      const nextSite = normalizeSiteForEditor({
+        ...siteToEdit,
+        blocks: [
+          ...siteToEdit.blocks.filter(block => !scopedBlockIds.has(block.id)),
+          ...nextScopedBlocks
+        ]
+      })
+      const selectedBefore = selectedBlockId
+      const selectedAfter = clonedBlocks[0]?.id || selectedBefore
+      const afterBlockIds = nextScopedBlocks.map(block => block.id)
+
+      selectedSiteRef.current = nextSite
+      setSelectedSite(nextSite)
+      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      markBlocksCreatedLocal(clonedBlocks)
+      markBlockOrderDirty(orderPageId)
+      setHasUnsavedChanges(true)
+      setActiveDragId(null)
+      resetPaletteDrag()
+      setSelectedBlockId(selectedAfter)
+      pushEditorHistory({
+        action: 'create',
+        siteId: siteToEdit.id,
+        pageId: orderPageId,
+        selectedBefore,
+        selectedAfter,
+        beforeBlockIds,
+        afterBlockIds,
+        createdBlocks: clonedBlocks.map(block => cloneJson(block))
+      })
+      showToast('success', clonedBlocks.length > 1 ? 'Contenedor duplicado' : 'Bloque duplicado', 'La copia quedo justo debajo. Guarda para conservarla.')
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo duplicar el bloque')
+    }
+  }
+
   const persistCanvasBlockOrder = async (orderedBlocks: SiteBlock[], options: { popup?: boolean } = {}) => {
     const siteToEdit = selectedSiteRef.current || selectedSite
     if (!siteToEdit) return false
@@ -11158,6 +11306,7 @@ export const Sites: React.FC = () => {
                               onClosePopup={() => selectEditorBlock(PAGE_SELECTED_ID)}
                               onSelectBlock={selectEditorBlock}
                               onDeleteBlock={requestDeleteBlock}
+                              onDuplicateBlock={handleDuplicateBlock}
                               onMoveBlock={handleMoveBlock}
                               getBlockMoveState={getBlockMoveState}
                               onPatchBlock={patchBlockLocal}
@@ -11202,6 +11351,7 @@ export const Sites: React.FC = () => {
                                         embeddedFormEditor={embeddedFormEditorBridge}
                                         onSelectBlock={selectEditorBlock}
                                         onDeleteBlock={requestDeleteBlock}
+                                        onDuplicateBlock={handleDuplicateBlock}
                                         onMoveBlock={handleMoveBlock}
                                         getBlockMoveState={getBlockMoveState}
                                         onPatchBlock={patchBlockLocal}
@@ -11245,6 +11395,7 @@ export const Sites: React.FC = () => {
                                           embeddedFormEditor={embeddedFormEditorBridge}
                                           onSelect={() => selectEditorBlock(block.id)}
                                           onDelete={() => requestDeleteBlock(block.id)}
+                                          onDuplicate={() => handleDuplicateBlock(block.id)}
                                           onMoveUp={() => handleMoveBlock(block.id, 'up')}
                                           onMoveDown={() => handleMoveBlock(block.id, 'down')}
                                           onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
@@ -25520,6 +25671,7 @@ interface SortableCanvasBlockProps {
   embeddedFormEditor?: EmbeddedFormCanvasEditorBridge | null
   onSelect: () => void
   onDelete: () => void
+  onDuplicate: () => void
   onMoveUp: () => void
   onMoveDown: () => void
   onPatchBlock: (patch: Partial<SiteBlock>) => void
@@ -25557,6 +25709,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   embeddedFormEditor,
   onSelect,
   onDelete,
+  onDuplicate,
   onMoveUp,
   onMoveDown,
   onPatchBlock,
@@ -25615,6 +25768,16 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         </button>
         <button
           type="button"
+          className="rstkBlockTool"
+          onClick={(event) => { event.stopPropagation(); onDuplicate() }}
+          onPointerDown={(event) => event.stopPropagation()}
+          aria-label="Duplicar bloque"
+          title="Duplicar"
+        >
+          <Copy size={14} />
+        </button>
+        <button
+          type="button"
           className="rstkBlockTool rstkBlockToolDelete"
           onClick={(event) => { event.stopPropagation(); onDelete() }}
           onPointerDown={(event) => event.stopPropagation()}
@@ -25663,6 +25826,7 @@ interface PopupCanvasSurfaceProps {
   onClosePopup: () => void
   onSelectBlock: (blockId: string) => void
   onDeleteBlock: (blockId: string) => void
+  onDuplicateBlock: (blockId: string) => void
   onMoveBlock: (blockId: string, direction: BlockMoveDirection) => void
   getBlockMoveState: (block: SiteBlock) => BlockMoveState
   onPatchBlock: (blockId: string, patch: Partial<SiteBlock>) => void
@@ -25691,6 +25855,7 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
   onClosePopup,
   onSelectBlock,
   onDeleteBlock,
+  onDuplicateBlock,
   onMoveBlock,
   getBlockMoveState,
   onPatchBlock,
@@ -25786,6 +25951,7 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
               embeddedFormEditor={embeddedFormEditor}
               onSelectBlock={onSelectBlock}
               onDeleteBlock={onDeleteBlock}
+              onDuplicateBlock={onDuplicateBlock}
               onMoveBlock={onMoveBlock}
               getBlockMoveState={getBlockMoveState}
               onPatchBlock={onPatchBlock}
@@ -25817,6 +25983,7 @@ interface LandingCanvasSectionsProps {
   embeddedFormEditor?: EmbeddedFormCanvasEditorBridge | null
   onSelectBlock: (blockId: string) => void
   onDeleteBlock: (blockId: string) => void
+  onDuplicateBlock: (blockId: string) => void
   onMoveBlock: (blockId: string, direction: BlockMoveDirection) => void
   getBlockMoveState: (block: SiteBlock) => BlockMoveState
   onPatchBlock: (blockId: string, patch: Partial<SiteBlock>) => void
@@ -25842,6 +26009,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
   embeddedFormEditor,
   onSelectBlock,
   onDeleteBlock,
+  onDuplicateBlock,
   onMoveBlock,
   getBlockMoveState,
   onPatchBlock,
@@ -25884,6 +26052,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
                 embeddedFormEditor={embeddedFormEditor}
                 onSelect={() => onSelectBlock(block.id)}
                 onDelete={() => onDeleteBlock(block.id)}
+                onDuplicate={() => onDuplicateBlock(block.id)}
                 onMoveUp={() => onMoveBlock(block.id, 'up')}
                 onMoveDown={() => onMoveBlock(block.id, 'down')}
                 onPatchBlock={(patch) => onPatchBlock(block.id, patch)}
@@ -25917,6 +26086,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
                 embeddedFormEditor={embeddedFormEditor}
 	              onSelectBlock={onSelectBlock}
               onDeleteBlock={onDeleteBlock}
+              onDuplicateBlock={onDuplicateBlock}
               onMoveBlock={onMoveBlock}
               getBlockMoveState={getBlockMoveState}
               onPatchBlock={onPatchBlock}
@@ -25952,6 +26122,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
                 embeddedFormEditor={embeddedFormEditor}
 	              onSelectBlock={onSelectBlock}
               onDeleteBlock={onDeleteBlock}
+              onDuplicateBlock={onDuplicateBlock}
               onMoveBlock={onMoveBlock}
               getBlockMoveState={getBlockMoveState}
               onPatchBlock={onPatchBlock}
@@ -25983,6 +26154,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
           embeddedFormEditor={embeddedFormEditor}
 	          onSelectBlock={onSelectBlock}
           onDeleteBlock={onDeleteBlock}
+          onDuplicateBlock={onDuplicateBlock}
           onMoveBlock={onMoveBlock}
           getBlockMoveState={getBlockMoveState}
           onPatchBlock={onPatchBlock}
@@ -26013,6 +26185,7 @@ interface LandingSectionRenderProps {
   embeddedFormEditor?: EmbeddedFormCanvasEditorBridge | null
   onSelectBlock: (blockId: string) => void
   onDeleteBlock: (blockId: string) => void
+  onDuplicateBlock: (blockId: string) => void
   onMoveBlock: (blockId: string, direction: BlockMoveDirection) => void
   getBlockMoveState: (block: SiteBlock) => BlockMoveState
   onPatchBlock: (blockId: string, patch: Partial<SiteBlock>) => void
@@ -26039,6 +26212,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
   embeddedFormEditor,
   onSelectBlock,
   onDeleteBlock,
+  onDuplicateBlock,
   onMoveBlock,
   getBlockMoveState,
   onPatchBlock,
@@ -26097,6 +26271,7 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
                     embeddedFormEditor={embeddedFormEditor}
                     onSelect={() => onSelectBlock(block.id)}
                     onDelete={() => onDeleteBlock(block.id)}
+                    onDuplicate={() => onDuplicateBlock(block.id)}
                     onMoveUp={() => onMoveBlock(block.id, 'up')}
                     onMoveDown={() => onMoveBlock(block.id, 'down')}
                     onPatchBlock={(patch) => onPatchBlock(block.id, patch)}
@@ -26138,6 +26313,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
   embeddedFormEditor,
   onSelectBlock,
   onDeleteBlock,
+  onDuplicateBlock,
   onMoveBlock,
   getBlockMoveState,
   onPatchBlock,
@@ -26214,6 +26390,16 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
         </button>
         <button
           type="button"
+          className="rstkBlockTool"
+          onClick={(event) => { event.stopPropagation(); onDuplicateBlock(section.id) }}
+          onPointerDown={(event) => event.stopPropagation()}
+          aria-label="Duplicar contenedor"
+          title="Duplicar"
+        >
+          <Copy size={14} />
+        </button>
+        <button
+          type="button"
           className="rstkBlockTool rstkBlockToolDelete"
           onClick={(event) => { event.stopPropagation(); onDeleteBlock(section.id) }}
           onPointerDown={(event) => event.stopPropagation()}
@@ -26249,6 +26435,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
 	          embeddedFormEditor={embeddedFormEditor}
 	          onSelectBlock={onSelectBlock}
           onDeleteBlock={onDeleteBlock}
+          onDuplicateBlock={onDuplicateBlock}
           onMoveBlock={onMoveBlock}
           getBlockMoveState={getBlockMoveState}
           onPatchBlock={onPatchBlock}
