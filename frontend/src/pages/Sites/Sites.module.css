@@ -16768,6 +16768,24 @@
   gap: 8px;
 }
 
+.pageFrame .containerFocused .sitesShellFocused .paletteModeActions {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 14px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteModeActions :global([data-btn]) {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  justify-content: flex-start;
+  padding-inline: 10px;
+}
+
+.paletteModeButton {
+  min-width: 0;
+}
+
 .pageFrame .containerFocused .sitesShellFocused .paletteItem {
   min-height: 42px;
   border: 1px solid var(--sites-editor-border) !important;
@@ -16800,6 +16818,136 @@
 
 .pageFrame .containerFocused .sitesShellFocused .paletteItem:hover .paletteGrip {
   opacity: 1;
+}
+
+.paletteElementList {
+  display: grid;
+  gap: 7px;
+  padding-bottom: 24px;
+}
+
+.paletteElementRow {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--sites-editor-border, var(--border));
+  border-radius: var(--design-control-radius, var(--radius-ctl));
+  background: var(--sites-editor-control-bg, var(--surface));
+  padding: 5px 6px;
+}
+
+.paletteElementRow[data-depth='1'] {
+  margin-left: 14px;
+}
+
+.paletteElementRowActive {
+  border-color: var(--sites-editor-focus, var(--accent));
+  background: var(--sites-editor-hover-bg, var(--surface-hover));
+}
+
+.paletteElementHandle {
+  width: 24px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--design-control-radius, var(--radius-ctl));
+  color: var(--text-mute, var(--color-text-tertiary));
+  cursor: grab;
+}
+
+.paletteElementHandle:active {
+  cursor: grabbing;
+}
+
+.paletteElementButton {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text, var(--color-text-primary));
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paletteElementText {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.paletteElementName,
+.paletteElementDetail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paletteElementName {
+  color: var(--text, var(--color-text-primary));
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.paletteElementDetail {
+  color: var(--text-mute, var(--color-text-tertiary));
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.paletteElementActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.paletteElementActions button {
+  width: 26px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--sites-editor-section-border, var(--border));
+  border-radius: var(--design-control-radius, var(--radius-ctl));
+  background: var(--design-panel-bg, var(--surface));
+  color: var(--text-dim, var(--color-text-secondary));
+  padding: 0;
+  cursor: pointer;
+}
+
+.paletteElementActions button:hover:not(:disabled) {
+  border-color: var(--sites-editor-border-strong, var(--border-strong));
+  background: var(--sites-editor-hover-bg, var(--surface-hover));
+  color: var(--text, var(--color-text-primary));
+}
+
+.paletteElementActions button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.paletteEmpty {
+  min-height: 132px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed var(--sites-editor-border, var(--border));
+  border-radius: var(--design-control-radius, var(--radius-ctl));
+  color: var(--text-mute, var(--color-text-tertiary));
+  text-align: center;
+  padding: 16px;
+}
+
+.paletteEmpty p {
+  margin: 0;
+  color: var(--text-mute, var(--color-text-tertiary));
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 /* Site editor header v3: product hierarchy, grouped controls, and save state. */

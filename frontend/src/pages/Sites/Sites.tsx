@@ -1423,6 +1423,8 @@ type LandingBlockOrderGroup = {
   blocks: SiteBlock[]
 }
 
+type PaletteViewMode = 'blocks' | 'elements'
+
 type ButtonAction = 'url' | 'next_page' | 'specific_page' | 'open_popup' | 'close_popup'
 type FormCompletionAction = 'form_default' | 'next_page' | 'next_page_if_qualified' | 'redirect_qualified'
 type FormResultDestination = 'result_page' | 'redirect_url'
@@ -3644,6 +3646,20 @@ const getReadableBlockLabel = (block?: SiteBlock | null) => (
   block?.label || block?.content || (block?.blockType ? blockLabels[block.blockType] : '') || 'Elemento'
 ).trim()
 
+const getElementPanelName = (block: SiteBlock) =>
+  getReadableBlockLabel(block) || getBlockInternalName(block) || 'Elemento'
+
+const getElementPanelDetail = (block: SiteBlock) => {
+  const internalName = getBlockInternalName(block)
+  const typeLabel = blockLabels[block.blockType] || 'Elemento'
+  return internalName && internalName !== slugifyName(getElementPanelName(block))
+    ? `${typeLabel} · ${internalName}`
+    : typeLabel
+}
+
+const getElementPanelDepth = (block: SiteBlock) =>
+  getBlockSectionId(block) && !isTopLevelLandingBlock(block) ? 1 : 0
+
 const buildVideoActionTargetOptions = (
   site: PublicSite,
   blocks: SiteBlock[],
@@ -4465,6 +4481,65 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] =>
     }
   })
 
+const normalizeElementIdentityValue = (value?: string | null) =>
+  String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+
+const getBlockInternalName = (block?: SiteBlock | null) => (
+  getSettingString(block?.settings || {}, 'internalName') ||
+  getSettingString(block?.settings || {}, 'internal_name')
+).trim()
+
+const makeUniqueElementLabel = (baseLabel: string, existingBlocks: SiteBlock[]) => {
+  const fallback = baseLabel.trim() || 'Elemento'
+  const usedLabels = new Set(existingBlocks
+    .map(block => normalizeElementIdentityValue(block.label))
+    .filter(Boolean)
+  )
+  const normalizedFallback = normalizeElementIdentityValue(fallback)
+  if (!usedLabels.has(normalizedFallback)) return fallback
+
+  let suffix = 2
+  while (usedLabels.has(normalizeElementIdentityValue(`${fallback} ${suffix}`))) suffix += 1
+  return `${fallback} ${suffix}`
+}
+
+const makeUniqueInternalName = (baseName: string, existingBlocks: SiteBlock[]) => {
+  const fallback = slugifyName(baseName || 'elemento') || 'elemento'
+  const usedNames = new Set(existingBlocks
+    .map(block => getBlockInternalName(block) || slugifyName(block.label || ''))
+    .map(value => slugifyName(value))
+    .filter(Boolean)
+  )
+  if (!usedNames.has(fallback)) return fallback
+
+  let suffix = 2
+  while (usedNames.has(`${fallback}_${suffix}`)) suffix += 1
+  return `${fallback}_${suffix}`
+}
+
+const withUniqueBlockIdentity = (
+  payload: Partial<SiteBlock> & { blockType: SiteBlockType },
+  blockType: SiteBlockType,
+  existingBlocks: SiteBlock[]
+) => {
+  const baseLabel = String(payload.label || blockLabels[blockType] || 'Elemento').trim() || 'Elemento'
+  const label = makeUniqueElementLabel(baseLabel, existingBlocks)
+  const settings = { ...(payload.settings || {}) }
+  const internalName = makeUniqueInternalName(
+    getSettingString(settings, 'internalName') || getSettingString(settings, 'internal_name') || baseLabel,
+    existingBlocks
+  )
+
+  return {
+    ...payload,
+    label,
+    settings: {
+      ...settings,
+      internalName
+    }
+  }
+}
+
 const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | string, siteType?: SiteType) => {
   const site = typeof siteOrId === 'string' ? null : siteOrId
   const siteId = typeof siteOrId === 'string' ? siteOrId : siteOrId.id
@@ -4697,21 +4772,23 @@ const createEmbeddedFieldBlock = (
   blockType: SiteBlockType,
   sortOrder = 0,
   pageId = DEFAULT_FUNNEL_PAGE_ID,
-  initialSettings: Record<string, unknown> = {}
+  initialSettings: Record<string, unknown> = {},
+  existingBlocks: SiteBlock[] = []
 ): SiteBlock => {
   const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, site), initialSettings)
+  const uniquePayload = withUniqueBlockIdentity(payload, payload.blockType || blockType, existingBlocks)
   const now = new Date().toISOString()
   return {
     id: `embedded_${crypto.randomUUID()}`,
     siteId: site.id,
-    blockType: payload.blockType || blockType,
-    label: payload.label || blockLabels[payload.blockType || blockType] || 'Elemento',
-    content: payload.content || '',
-    placeholder: payload.placeholder || '',
-    required: Boolean(payload.required),
-    options: cloneJson(payload.options || []),
+    blockType: uniquePayload.blockType || blockType,
+    label: uniquePayload.label || blockLabels[uniquePayload.blockType || blockType] || 'Elemento',
+    content: uniquePayload.content || '',
+    placeholder: uniquePayload.placeholder || '',
+    required: Boolean(uniquePayload.required),
+    options: cloneJson(uniquePayload.options || []),
     settings: {
-      ...cloneJson(payload.settings || {}),
+      ...cloneJson(uniquePayload.settings || {}),
       pageId
     },
     sortOrder,
@@ -5984,6 +6061,13 @@ export const Sites: React.FC = () => {
     () => editorSite && isLanding(editorSite) ? buildLandingSectionLanes(popupBlocks) : [],
     [editorSite, popupBlocks]
   )
+  const paletteElementBlocks = useMemo(() => {
+    if (!editorSite) return []
+    if (!isLanding(editorSite)) return editableCanvasBlocks
+
+    const lanes = popupSurfaceSelected ? popupSectionLanes : landingSectionLanes
+    return buildLandingBlockOrderGroups(editableCanvasBlocks, lanes).flatMap(group => group.blocks)
+  }, [editableCanvasBlocks, editorSite, landingSectionLanes, popupSectionLanes, popupSurfaceSelected])
   const hasLandingCanvasContent = landingSectionLanes.length > 0 || canvasBlocks.some(isPanelBlock)
   const palettePreviewBlock = editorSite && paletteDragPayload
     ? makePreviewBlock(
@@ -6112,18 +6196,24 @@ export const Sites: React.FC = () => {
     })
   }
 
-  function createLocalBlockFromPayload(site: PublicSite, payload: Partial<SiteBlock> & { blockType: SiteBlockType }, sortOrder?: number): SiteBlock {
+  function createLocalBlockFromPayload(
+    site: PublicSite,
+    payload: Partial<SiteBlock> & { blockType: SiteBlockType },
+    sortOrder?: number,
+    existingBlocks: SiteBlock[] = site.blocks || []
+  ): SiteBlock {
+    const uniquePayload = withUniqueBlockIdentity(payload, payload.blockType, existingBlocks)
     const now = new Date().toISOString()
     return {
       id: createEditorLocalId(),
       siteId: site.id,
-      blockType: payload.blockType,
-      label: payload.label || 'Nuevo bloque',
-      content: payload.content || '',
-      placeholder: payload.placeholder || '',
-      required: Boolean(payload.required),
-      options: Array.isArray(payload.options) ? payload.options : [],
-      settings: { ...(payload.settings || {}) },
+      blockType: uniquePayload.blockType,
+      label: uniquePayload.label || 'Nuevo bloque',
+      content: uniquePayload.content || '',
+      placeholder: uniquePayload.placeholder || '',
+      required: Boolean(uniquePayload.required),
+      options: Array.isArray(uniquePayload.options) ? uniquePayload.options : [],
+      settings: { ...(uniquePayload.settings || {}) },
       sortOrder: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : (site.blocks || []).length,
       createdAt: now,
       updatedAt: now
@@ -8357,7 +8447,8 @@ export const Sites: React.FC = () => {
               sectionGap: DEFAULT_SECTION_GAP
             })
 
-            const siteWithSection = await sitesService.createBlock(selectedSite.id, sectionPayload)
+            const uniqueSectionPayload = withUniqueBlockIdentity(sectionPayload, SECTION_BLOCK_TYPE, selectedSite.blocks || [])
+            const siteWithSection = await sitesService.createBlock(selectedSite.id, uniqueSectionPayload)
             autoCreatedSection = [...(siteWithSection.blocks || [])]
               .filter(block => !previousBlockIds.has(block.id))
               .find(block => isSectionBlock(block) && isPopupBlock(block)) || null
@@ -8380,7 +8471,8 @@ export const Sites: React.FC = () => {
           })
         }
 
-        let site = await sitesService.createBlock(selectedSite.id, payload)
+        const payloadForCreate = withUniqueBlockIdentity(payload, blockType, (selectedSiteRef.current || selectedSite).blocks || [])
+        let site = await sitesService.createBlock(selectedSite.id, payloadForCreate)
         syncSelectedSite(site)
         const added = [...(site.blocks || [])]
           .filter(block => !blockIdsBeforeContent.has(block.id))
@@ -8454,7 +8546,8 @@ export const Sites: React.FC = () => {
               pageId: activePage.id
             }
 
-            const siteWithSection = await sitesService.createBlock(selectedSite.id, sectionPayload)
+            const uniqueSectionPayload = withUniqueBlockIdentity(sectionPayload, SECTION_BLOCK_TYPE, selectedSite.blocks || [])
+            const siteWithSection = await sitesService.createBlock(selectedSite.id, uniqueSectionPayload)
             const sectionPages = normalizeFunnelPages(siteWithSection)
             autoCreatedSection = [...(siteWithSection.blocks || [])]
               .filter(block => !previousBlockIds.has(block.id))
@@ -8511,7 +8604,8 @@ export const Sites: React.FC = () => {
           ...initialSettings
         }
       }
-      let site = await sitesService.createBlock(selectedSite.id, payload)
+      const payloadForCreate = withUniqueBlockIdentity(payload, blockType, (selectedSiteRef.current || selectedSite).blocks || [])
+      let site = await sitesService.createBlock(selectedSite.id, payloadForCreate)
       const sitePages = normalizeFunnelPages(site)
       const activePageForAdd = activePage?.id || DEFAULT_FUNNEL_PAGE_ID
       syncSelectedSite(site)
@@ -8555,7 +8649,12 @@ export const Sites: React.FC = () => {
       let orderPageId: string | undefined = hasEditablePages(siteForAdd) ? activePage?.id : undefined
 
       const makeLocalBlock = (blockPayload: Partial<SiteBlock> & { blockType: SiteBlockType }) =>
-        createLocalBlockFromPayload(siteForAdd, blockPayload, (siteForAdd.blocks || []).length + blocksToAdd.length)
+        createLocalBlockFromPayload(
+          siteForAdd,
+          blockPayload,
+          (siteForAdd.blocks || []).length + blocksToAdd.length,
+          [...(siteForAdd.blocks || []), ...blocksToAdd]
+        )
 
       if (popupSurfaceSelected) {
         if (!isPopupEditableBlockType(blockType)) {
@@ -8933,7 +9032,7 @@ export const Sites: React.FC = () => {
     if (!embeddedFormBlockTypeSet.has(blockType)) return
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
-    const nextField = createEmbeddedFieldBlock(context.sourceSite, blockType, context.fields.length, context.activePageId, initialSettings)
+    const nextField = createEmbeddedFieldBlock(context.sourceSite, blockType, context.fields.length, context.activePageId, initialSettings, context.fields)
     const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, context.activePageId)
     const boundedIndex = Number.isFinite(Number(insertIndex))
       ? Math.max(0, Math.min(Number(insertIndex), pageFields.length))
@@ -10085,7 +10184,15 @@ export const Sites: React.FC = () => {
 	                  <Palette
 		                    blockTypes={popupSurfaceSelected ? getPopupPaletteBlockTypes(editorSite) : isLanding(editorSite) ? landingBlockTypes : formBlockTypes}
 		                    existingBlocks={editableCanvasBlocks}
+                        elements={paletteElementBlocks}
+                        selectedElementId={selectedBlockId}
 		                    onAdd={handleAddBlockManually}
+                        onSelectElement={selectEditorBlock}
+                        onMoveElement={handleMoveBlock}
+                        getMoveState={getBlockMoveState}
+                        onReorderElements={(orderedBlocks) => {
+                          void persistCanvasBlockOrder(orderedBlocks, { popup: popupSurfaceSelected })
+                        }}
 	                    onPaletteDragStart={(payload, position) => {
 	                      setActivePaletteDragPayload(payload)
 	                      setPaletteDragPosition(position)
@@ -23026,11 +23133,32 @@ const EditablePageTitle: React.FC<{
 const Palette: React.FC<{
   blockTypes: SiteBlockType[]
   existingBlocks?: SiteBlock[]
+  elements?: SiteBlock[]
+  selectedElementId?: string
   onAdd: (blockType: SiteBlockType, options?: AddBlockOptions) => void
+  onSelectElement?: (blockId: string) => void
+  onMoveElement?: (blockId: string, direction: BlockMoveDirection) => void
+  onReorderElements?: (orderedBlocks: SiteBlock[]) => void
+  getMoveState?: (block: SiteBlock) => BlockMoveState
   onPaletteDragStart: (payload: PaletteDragPayload, position: PaletteDragPosition | null) => void
   onPaletteDragMove: (position: PaletteDragPosition | null) => void
   onPaletteDragEnd: () => void
-}> = ({ blockTypes, existingBlocks = [], onAdd, onPaletteDragStart, onPaletteDragMove, onPaletteDragEnd }) => {
+}> = ({
+  blockTypes,
+  existingBlocks = [],
+  elements = [],
+  selectedElementId = '',
+  onAdd,
+  onSelectElement,
+  onMoveElement,
+  onReorderElements,
+  getMoveState,
+  onPaletteDragStart,
+  onPaletteDragMove,
+  onPaletteDragEnd
+}) => {
+  const [viewMode, setViewMode] = useState<PaletteViewMode>('blocks')
+  const elementSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
   const allowed = new Set(blockTypes)
   const existingPanelTypes = new Set(existingBlocks.filter(isPanelBlock).map(block => block.blockType))
   const groups = paletteGroups
@@ -23039,72 +23167,196 @@ const Palette: React.FC<{
       items: group.items.filter(item => allowed.has(item.blockType) && (!PANEL_BLOCK_TYPES.has(item.blockType) || !existingPanelTypes.has(item.blockType)))
     }))
     .filter(group => group.items.length > 0)
+  const elementCountLabel = `${elements.length} ${elements.length === 1 ? 'elemento' : 'elementos'}`
+
+  const handleElementDragEnd = (event: DragEndEvent) => {
+    if (!event.over || event.active.id === event.over.id) return
+    const oldIndex = elements.findIndex(block => block.id === event.active.id)
+    const newIndex = elements.findIndex(block => block.id === event.over?.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    onReorderElements?.(arrayMove(elements, oldIndex, newIndex))
+  }
 
   return (
     <aside className={styles.palette}>
       <div className={styles.panelHeader}>
-        <strong>Bloques</strong>
+        <strong>{viewMode === 'elements' ? 'Elementos' : 'Bloques'}</strong>
+        {viewMode === 'elements' && <span>{elementCountLabel}</span>}
       </div>
-      <div className={styles.paletteGroups}>
-        {groups.map(group => (
-          <div key={group.label} className={styles.paletteGroup}>
-            <span className={styles.paletteGroupLabel}>
-              <span>{group.label}</span>
-              <span className={styles.paletteGroupHint}>(Arrastra)</span>
-            </span>
-            <div className={styles.paletteItems}>
-              {group.items.map(item => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={styles.paletteItem}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = 'move'
-                    event.dataTransfer.dropEffect = 'move'
-                    event.dataTransfer.setData('application/ristak-block', item.blockType)
-                    if (item.initialSettings) {
-                      event.dataTransfer.setData('application/ristak-block-settings', JSON.stringify(item.initialSettings))
-                    }
-                    hideNativeDragPreview(event.dataTransfer)
-                    const rect = event.currentTarget.getBoundingClientRect()
-                    onPaletteDragStart(
-                      { blockType: item.blockType, initialSettings: item.initialSettings },
-                      event.clientX || event.clientY
-                        ? { x: event.clientX, y: event.clientY }
-                        : { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-                    )
-                  }}
-                  onDrag={(event) => {
-                    if (event.clientX || event.clientY) {
-                      onPaletteDragMove({ x: event.clientX, y: event.clientY })
-                    }
-                  }}
-                  onDragEnd={onPaletteDragEnd}
-                  onClick={() => onAdd(item.blockType, { initialSettings: item.initialSettings })}
-                >
-                  <span className={styles.paletteIcon}>
-                    {item.blockType === SECTION_BLOCK_TYPE ? (
-                      <span
-                        className={styles.sectionPalettePreview}
-                        style={{ gridTemplateColumns: `repeat(${getSettingNumber(item.initialSettings || {}, 'sectionColumns', 1, 1, 3)}, minmax(0, 1fr))` }}
-                        aria-hidden="true"
-                      >
-                        {Array.from({ length: getSettingNumber(item.initialSettings || {}, 'sectionColumns', 1, 1, 3) }).map((_, index) => (
-                          <span key={index} />
-                        ))}
-                      </span>
-                    ) : blockIcons[item.blockType]}
-                  </span>
-                  <span>{item.label}</span>
-                  <GripVertical className={styles.paletteGrip} size={14} />
-                </button>
-              ))}
-            </div>
+      <div className={styles.paletteModeActions} role="group" aria-label="Vista del panel izquierdo">
+        <Button
+          type="button"
+          variant={viewMode === 'blocks' ? 'primary' : 'secondary'}
+          size="sm"
+          className={styles.paletteModeButton}
+          leftIcon={<LayoutTemplate size={14} />}
+          onClick={() => setViewMode('blocks')}
+        >
+          Bloques
+        </Button>
+        <Button
+          type="button"
+          variant={viewMode === 'elements' ? 'primary' : 'secondary'}
+          size="sm"
+          className={styles.paletteModeButton}
+          leftIcon={<ListOrdered size={14} />}
+          onClick={() => setViewMode('elements')}
+        >
+          Ver elementos
+        </Button>
+      </div>
+
+      {viewMode === 'elements' ? (
+        elements.length ? (
+          <DndContext sensors={elementSensors} collisionDetection={closestCenter} onDragEnd={handleElementDragEnd}>
+            <SortableContext items={elements.map(block => block.id)} strategy={verticalListSortingStrategy}>
+              <div className={styles.paletteElementList}>
+                {elements.map((block, index) => {
+                  const moveState = getMoveState?.(block) || {
+                    canMoveUp: index > 0,
+                    canMoveDown: index < elements.length - 1
+                  }
+                  return (
+                    <PaletteElementItem
+                      key={block.id}
+                      block={block}
+                      selected={selectedElementId === block.id}
+                      canMoveUp={moveState.canMoveUp}
+                      canMoveDown={moveState.canMoveDown}
+                      onSelect={() => onSelectElement?.(block.id)}
+                      onMoveUp={() => onMoveElement?.(block.id, 'up')}
+                      onMoveDown={() => onMoveElement?.(block.id, 'down')}
+                    />
+                  )
+                })}
+              </div>
+            </SortableContext>
+          </DndContext>
+        ) : (
+          <div className={styles.paletteEmpty}>
+            <ListOrdered size={18} />
+            <p>Agrega un bloque para verlo aquí.</p>
           </div>
-        ))}
-      </div>
+        )
+      ) : (
+        <div className={styles.paletteGroups}>
+          {groups.map(group => (
+            <div key={group.label} className={styles.paletteGroup}>
+              <span className={styles.paletteGroupLabel}>
+                <span>{group.label}</span>
+                <span className={styles.paletteGroupHint}>(Arrastra)</span>
+              </span>
+              <div className={styles.paletteItems}>
+                {group.items.map(item => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={styles.paletteItem}
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.dropEffect = 'move'
+                      event.dataTransfer.setData('application/ristak-block', item.blockType)
+                      if (item.initialSettings) {
+                        event.dataTransfer.setData('application/ristak-block-settings', JSON.stringify(item.initialSettings))
+                      }
+                      hideNativeDragPreview(event.dataTransfer)
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      onPaletteDragStart(
+                        { blockType: item.blockType, initialSettings: item.initialSettings },
+                        event.clientX || event.clientY
+                          ? { x: event.clientX, y: event.clientY }
+                          : { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+                      )
+                    }}
+                    onDrag={(event) => {
+                      if (event.clientX || event.clientY) {
+                        onPaletteDragMove({ x: event.clientX, y: event.clientY })
+                      }
+                    }}
+                    onDragEnd={onPaletteDragEnd}
+                    onClick={() => onAdd(item.blockType, { initialSettings: item.initialSettings })}
+                  >
+                    <span className={styles.paletteIcon}>
+                      {item.blockType === SECTION_BLOCK_TYPE ? (
+                        <span
+                          className={styles.sectionPalettePreview}
+                          style={{ gridTemplateColumns: `repeat(${getSettingNumber(item.initialSettings || {}, 'sectionColumns', 1, 1, 3)}, minmax(0, 1fr))` }}
+                          aria-hidden="true"
+                        >
+                          {Array.from({ length: getSettingNumber(item.initialSettings || {}, 'sectionColumns', 1, 1, 3) }).map((_, index) => (
+                            <span key={index} />
+                          ))}
+                        </span>
+                      ) : blockIcons[item.blockType]}
+                    </span>
+                    <span>{item.label}</span>
+                    <GripVertical className={styles.paletteGrip} size={14} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </aside>
+  )
+}
+
+const PaletteElementItem: React.FC<{
+  block: SiteBlock
+  selected: boolean
+  canMoveUp: boolean
+  canMoveDown: boolean
+  onSelect: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+}> = ({ block, selected, canMoveUp, canMoveDown, onSelect, onMoveUp, onMoveDown }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: block.id,
+    animateLayoutChanges: sortableAnimateLayoutChanges,
+    transition: sortableTransition
+  })
+  const rowStyle: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.52 : undefined,
+    zIndex: isDragging ? 5 : undefined
+  }
+  const name = getElementPanelName(block)
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`${styles.paletteElementRow} ${selected ? styles.paletteElementRowActive : ''}`}
+      data-depth={getElementPanelDepth(block)}
+      style={rowStyle}
+    >
+      <span
+        className={styles.paletteElementHandle}
+        {...attributes}
+        {...listeners}
+        aria-label={`Arrastrar ${name}`}
+        title="Arrastra para ordenar"
+      >
+        <GripVertical size={14} />
+      </span>
+      <button type="button" className={styles.paletteElementButton} onClick={onSelect}>
+        <span className={styles.paletteIcon}>{blockIcons[block.blockType] || <LayoutTemplate size={15} />}</span>
+        <span className={styles.paletteElementText}>
+          <span className={styles.paletteElementName}>{name}</span>
+          <span className={styles.paletteElementDetail}>{getElementPanelDetail(block)}</span>
+        </span>
+      </button>
+      <span className={styles.paletteElementActions}>
+        <button type="button" disabled={!canMoveUp} onClick={onMoveUp} aria-label={`Subir ${name}`} title="Subir">
+          <ArrowUp size={13} />
+        </button>
+        <button type="button" disabled={!canMoveDown} onClick={onMoveDown} aria-label={`Bajar ${name}`} title="Bajar">
+          <ArrowDown size={13} />
+        </button>
+      </span>
+    </div>
   )
 }
 
