@@ -10596,6 +10596,22 @@ export const Sites: React.FC = () => {
     window.setTimeout(() => { void handleSaveBlock(context.block.id) }, 0)
   }
 
+  const reorderVideoFormGateBlocks = (orderedBlocks: SiteBlock[]) => {
+    const context = getCurrentVideoFormGateContext()
+    if (!context) return
+    const orderedIds = new Set(orderedBlocks.map(block => block.id))
+    if (orderedBlocks.length !== context.fields.length || context.fields.some(block => !orderedIds.has(block.id))) return
+    patchVideoFormGateFieldsLocal(orderedBlocks, activeVideoFormGateBlockId)
+    window.setTimeout(() => { void handleSaveBlock(context.block.id) }, 0)
+  }
+
+  const toggleVideoFormGateBlockVisibility = (block: SiteBlock) => {
+    patchVideoFormGateBlockSettings(block, { hidden: !isBlockHidden(block) })
+    if (videoFormGateEditBlock) {
+      window.setTimeout(() => { void handleSaveBlock(videoFormGateEditBlock.id) }, 0)
+    }
+  }
+
   const patchBlockCategorySettingsLocal = (sourceBlock: SiteBlock, patch: Record<string, unknown>) => {
     const current = selectedSiteRef.current
     if (!current?.blocks) return
@@ -11830,7 +11846,7 @@ export const Sites: React.FC = () => {
                 />
               ) : (
               <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm} ${formSurfaceEditMode ? styles.builderGridFormMode : ''}`}>
-                <div className={`${styles.blocksRail} ${formSurfaceEditMode ? styles.formModeRail : ''}`}>
+                <div className={`${styles.blocksRail} ${formEditMode ? styles.formModeRail : ''}`}>
                   {formEditMode ? (
                     <FormModePalette
                       fieldsCount={formEditVisibleFields.length}
@@ -11848,14 +11864,26 @@ export const Sites: React.FC = () => {
                       onPaletteDragEnd={resetPaletteDrag}
                     />
                   ) : videoFormGateEditMode ? (
-                    <FormModePalette
-                      title="Formulario de video"
-                      icon={<Play size={17} />}
-                      fieldsCount={videoFormGateEditBlocks.length}
-                      activePageTitle="Dentro del video"
-                      hint="Arrastra preguntas, texto o imagen al formulario que aparece sobre el video."
-                      contentTypes={videoFormGateContentTypes}
-                      onAddField={(blockType, initialSettings) => handleAddVideoFormGateBlock(blockType, undefined, initialSettings || {})}
+                    <Palette
+                      blockTypes={videoFormGateBlockTypes}
+                      existingBlocks={videoFormGateEditBlocks}
+                      elements={videoFormGateEditBlocks}
+                      selectedElementId={activeVideoFormGateSubmitSelected ? '' : activeVideoFormGateBlockId}
+                      onAdd={(blockType, options) => handleAddVideoFormGateBlock(blockType, undefined, options?.initialSettings || {})}
+                      onSelectElement={(blockId) => {
+                        setActiveVideoFormGateSubmitSelected(false)
+                        setActiveVideoFormGateBlockId(blockId)
+                      }}
+                      onMoveElement={moveVideoFormGateBlock}
+                      onToggleElementVisibility={toggleVideoFormGateBlockVisibility}
+                      onReorderElements={reorderVideoFormGateBlocks}
+                      getMoveState={(block) => {
+                        const index = videoFormGateEditBlocks.findIndex(item => item.id === block.id)
+                        return {
+                          canMoveUp: index > 0,
+                          canMoveDown: index >= 0 && index < videoFormGateEditBlocks.length - 1
+                        }
+                      }}
                       onPaletteDragStart={(payload, position) => {
                         setActivePaletteDragPayload(payload)
                         setPaletteDragPosition(position)
