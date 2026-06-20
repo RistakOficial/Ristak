@@ -87,6 +87,7 @@ import {
   Sparkles,
   Smartphone,
   Rows3,
+  Star,
   Strikethrough,
   Sun,
   Table2,
@@ -337,7 +338,8 @@ const emptySitesDomainConfig: SitesDomainConfig = {
   appDomain: '',
   appDomainVerified: false,
   appDomainCheckedAt: null,
-  appDomainError: null
+  appDomainError: null,
+  defaultRoute: null
 }
 
 const metaEventOptions = [
@@ -2099,6 +2101,12 @@ const buildLivePublicUrl = (site: PublicSite, domainConfig: SitesDomainConfig) =
 
 const getPublicRouteLabel = (site: PublicSite, domainConfig: SitesDomainConfig) =>
   domainConfig.domain ? `${domainConfig.domain}${getRoutePath(site)}` : getRoutePath(site)
+
+const getDefaultPublicRouteSiteId = (domainConfig: SitesDomainConfig) =>
+  domainConfig.defaultRoute?.siteId || ''
+
+const isDefaultPublicRoute = (site: PublicSite, domainConfig: SitesDomainConfig) =>
+  Boolean(site.id && site.id === getDefaultPublicRouteSiteId(domainConfig))
 
 const getPublicDomainPreview = (domainConfig: SitesDomainConfig) => {
   const domain = domainConfig.domain.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')
@@ -9842,6 +9850,17 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const handleSetDefaultDomainRoute = async (siteToUpdate: PublicSite) => {
+    try {
+      const result = await sitesService.setDefaultDomainRoute(siteToUpdate.id)
+      setDomainConfig(result)
+      showToast('success', 'Ruta predeterminada actualizada', `${siteToUpdate.name} abrirá al entrar al dominio principal.`)
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo establecer como predeterminado')
+      throw error
+    }
+  }
+
   const handleDeleteSite = async (siteToDelete = selectedSite) => {
     if (!siteToDelete) return
     showConfirm(
@@ -11935,6 +11954,7 @@ export const Sites: React.FC = () => {
                 onSelectResponsesForm={selectResponsesForm}
                 onRefreshResponses={() => void loadFormResponses(selectedResponsesFormId)}
                 onUpdateRoute={handleUpdateLibraryRoute}
+                onSetDefaultRoute={handleSetDefaultDomainRoute}
                 onOpenSettings={(site) => { void openLibrarySettings(site) }}
                 onDelete={(site) => void handleDeleteSite(site)}
                 domainConfig={domainConfig}
@@ -21323,6 +21343,7 @@ interface SitesLibraryPanelProps {
   onSelectResponsesForm: (siteId: string) => void
   onRefreshResponses: () => void
   onUpdateRoute: (site: PublicSite, slug: string) => Promise<void>
+  onSetDefaultRoute: (site: PublicSite) => Promise<void>
   onOpenSettings: (site: PublicSite) => void
   onDelete: (site: PublicSite) => void
 }
@@ -21506,6 +21527,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   onSelectResponsesForm,
   onRefreshResponses,
   onUpdateRoute,
+  onSetDefaultRoute,
   onOpenSettings,
   onDelete
 }) => {
@@ -21686,6 +21708,18 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <Settings2 size={15} />
           Editar ruta
         </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={isDefaultPublicRoute(site, domainConfig)}
+          onSelect={(event) => {
+            event.stopPropagation()
+            if (!isDefaultPublicRoute(site, domainConfig)) {
+              void onSetDefaultRoute(site)
+            }
+          }}
+        >
+          <Star size={15} />
+          {isDefaultPublicRoute(site, domainConfig) ? 'Ya es predeterminado' : 'Establecer como predeterminado'}
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onOpenSettings(site) }}>
           <Settings2 size={15} />
           Más ajustes
@@ -21708,6 +21742,12 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   const renderSiteStatus = (site: PublicSite) => (
     <Badge variant={getStatusVariant(site, domainConfig)}>{getStatusLabel(site, domainConfig)}</Badge>
   )
+  const renderDefaultRouteMarker = (site: PublicSite) => isDefaultPublicRoute(site, domainConfig) ? (
+    <span className={styles.libraryDefaultRouteMarker} title="Ruta principal del dominio público">
+      <Star size={13} fill="currentColor" />
+      <span>Predeterminado</span>
+    </span>
+  ) : null
   const renderGalleryCard = (site: PublicSite) => {
     const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
 
@@ -21739,6 +21779,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
         <div className={styles.libraryCardBody}>
           <div className={styles.libraryCardTitleRow}>
             <strong>{site.name}</strong>
+            {renderDefaultRouteMarker(site)}
           </div>
           <div className={styles.libraryCardMeta}>
             <span className={styles.siteDomain}>{getPublicRouteLabel(site, domainConfig)}</span>
@@ -21764,6 +21805,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <span className={styles.explorerFileIcon}>{isLanding(site) ? <LayoutTemplate size={18} /> : <FormInput size={18} />}</span>
           <span>
             <strong>{site.name}</strong>
+            {renderDefaultRouteMarker(site)}
             <small>{getPublicRouteLabel(site, domainConfig)}</small>
           </span>
         </button>
@@ -21956,6 +21998,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                         <span className={styles.explorerFileIcon}>{isLanding(site) ? <LayoutTemplate size={17} /> : <FormInput size={17} />}</span>
                         <span>
                           <strong>{site.name}</strong>
+                          {renderDefaultRouteMarker(site)}
                           <small>{getPublicRouteLabel(site, domainConfig)}</small>
                         </span>
                       </button>

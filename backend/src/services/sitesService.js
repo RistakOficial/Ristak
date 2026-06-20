@@ -157,6 +157,7 @@ const SITES_PUBLIC_DOMAIN_CONFIG_KEYS = {
   checkedAt: 'sites_public_domain_checked_at',
   error: 'sites_public_domain_error'
 }
+const SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY = 'sites_public_default_route_site_id'
 const SITES_APP_DOMAIN_CONFIG_KEYS = {
   domain: 'sites_app_domain',
   verified: 'sites_app_domain_verified',
@@ -3406,6 +3407,20 @@ function mapSite(row) {
         ? Number(((Number(row.tracking_conversions || 0) / Number(row.tracking_visitors || 0)) * 100).toFixed(1))
         : 0
     }
+  }
+}
+
+function buildPublicDefaultRoute(site) {
+  if (!site) return null
+
+  const slug = cleanString(site.slug)
+  return {
+    siteId: site.id,
+    name: site.name || site.title || 'Ruta predeterminada',
+    slug,
+    siteType: site.siteType || 'standard_form',
+    status: site.status || 'draft',
+    path: slug ? `/${slug}` : '/'
   }
 }
 
@@ -10095,6 +10110,9 @@ export async function deleteSite(siteId) {
 
   await deleteImportedSiteMediaAssets(siteId)
   await db.run('DELETE FROM public_sites WHERE id = ?', [siteId])
+  if (cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY)) === cleanString(siteId)) {
+    await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null)
+  }
   return true
 }
 
@@ -10413,16 +10431,31 @@ export async function getSitesPublicDomain() {
   return getSitesPublicDomainConfig()
 }
 
+async function getConfiguredDefaultPublicSite({ clearMissing = false } = {}) {
+  const siteId = cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY))
+  if (!siteId) return null
+
+  const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
+  if (!site && clearMissing) {
+    await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null)
+  }
+  return site
+}
+
 export async function getSitesDomainSettings({
   publicConfig = null,
   appConfig = null,
   verification = undefined,
-  appVerification = undefined
+  appVerification = undefined,
+  defaultRouteSite = undefined
 } = {}) {
   const [publicDomainConfig, appDomainConfig] = await Promise.all([
     publicConfig || getSitesPublicDomainConfig(),
     appConfig || getSitesAppDomainConfig()
   ])
+  const resolvedDefaultRouteSite = defaultRouteSite === undefined
+    ? await getConfiguredDefaultPublicSite({ clearMissing: true })
+    : defaultRouteSite
   const nextVerification = verification ?? publicDomainConfig.verification
   const nextAppVerification = appVerification ?? appDomainConfig.verification
 
@@ -10436,7 +10469,8 @@ export async function getSitesDomainSettings({
     appDomainVerified: appDomainConfig.renderDomainVerified,
     appDomainCheckedAt: appDomainConfig.renderDomainCheckedAt,
     appDomainError: appDomainConfig.renderDomainError,
-    ...(nextAppVerification ? { appVerification: nextAppVerification } : {})
+    ...(nextAppVerification ? { appVerification: nextAppVerification } : {}),
+    defaultRoute: buildPublicDefaultRoute(resolvedDefaultRouteSite)
   }
 }
 
@@ -10458,9 +10492,28 @@ export async function removeSitesPublicDomain() {
     setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.domain, null),
     setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified, null),
     setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.checkedAt, null),
-    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, null)
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, null),
+    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null)
   ])
   return getSitesPublicDomainConfig()
+}
+
+export async function setSitesPublicDefaultRoute(siteIdValue) {
+  const siteId = cleanString(siteIdValue)
+  if (!siteId) {
+    await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null)
+    return getSitesDomainSettings({ defaultRouteSite: null })
+  }
+
+  const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
+  if (!site) {
+    const error = new Error('Página o formulario no encontrado')
+    error.status = 404
+    throw error
+  }
+
+  await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, site.id)
+  return getSitesDomainSettings({ defaultRouteSite: site })
 }
 
 export async function removeSitesAppDomain() {
@@ -10754,6 +10807,11 @@ async function findDefaultPublishedSite() {
   return mapSite(row)
 }
 
+async function findRootPublicSite() {
+  const configuredDefault = await getConfiguredDefaultPublicSite({ clearMissing: true })
+  return configuredDefault || findDefaultPublishedSite()
+}
+
 function stripWwwPrefix(hostValue) {
   const host = normalizeDomain(hostValue)
   return host.startsWith('www.') ? host.slice(4) : host
@@ -10908,7 +10966,7 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
 
   let site = await findSiteByRoutePath(path)
   if (!site && !normalizePublicRouteSlug(path)) {
-    site = await findDefaultPublishedSite()
+    site = await findRootPublicSite()
   }
   if (!site) {
     return { ok: false, status: 404, reason: 'route_not_configured', message: 'Ruta pública no configurada' }

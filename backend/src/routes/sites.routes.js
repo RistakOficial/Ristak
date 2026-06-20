@@ -28,6 +28,7 @@ import {
   previewSiteSessionHandler,
   reorderBlocksHandler,
   restoreBlocksHandler,
+  setSitesDefaultRouteHandler,
   sitesFontCssHandler,
   sitesFontFileHandler,
   submitPublicSiteHandler,
@@ -62,6 +63,7 @@ router.post('/ai-create-html', createSiteWithAIHtmlHandler)
 router.post('/import-html', importSiteHtmlHandler)
 router.get('/domain', getSitesDomainHandler)
 router.post('/domain/verify', verifySitesDomainHandler)
+router.post('/domain/default-route', setSitesDefaultRouteHandler)
 router.delete('/domain', removeSitesDomainHandler)
 router.post('/domain/app/verify', verifySitesAppDomainHandler)
 router.delete('/domain/app', removeSitesAppDomainHandler)

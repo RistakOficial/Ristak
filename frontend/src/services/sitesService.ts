@@ -709,6 +709,14 @@ export interface SitesDomainConfig {
     verified: boolean
     error: string | null
   }
+  defaultRoute: {
+    siteId: string
+    name: string
+    slug: string
+    siteType: SiteType
+    status: SiteStatus
+    path: string
+  } | null
 }
 
 export type ImportedFieldDestinationType = 'standard' | 'custom' | 'new_custom' | 'ignored'
@@ -1167,6 +1175,10 @@ export const sitesService = {
 
   removeDomain() {
     return apiClient.delete<SitesDomainConfig>('/sites/domain')
+  },
+
+  setDefaultDomainRoute(siteId?: string | null) {
+    return apiClient.post<SitesDomainConfig>('/sites/domain/default-route', { siteId: siteId || '' })
   },
 
   verifyAppDomain(domain: string) {

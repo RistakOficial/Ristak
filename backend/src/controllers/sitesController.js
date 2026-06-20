@@ -33,6 +33,7 @@ import {
   resolveConnectedPublicDomainForHost,
   resolvePublicSiteForHost,
   restoreBlocks,
+  setSitesPublicDefaultRoute,
   updateBlock,
   updateSiteFolder,
   updateImportedSiteEditableContent,
@@ -721,6 +722,16 @@ export async function removeSitesDomainHandler(req, res) {
   } catch (error) {
     logger.error(`Error eliminando dominio público de Sites: ${error.message}`)
     sendError(res, error, 'Error eliminando dominio')
+  }
+}
+
+export async function setSitesDefaultRouteHandler(req, res) {
+  try {
+    const result = await setSitesPublicDefaultRoute(req.body?.siteId || req.body?.site_id || '')
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error configurando ruta predeterminada de Sites: ${error.message}`)
+    sendError(res, error, 'Error configurando ruta predeterminada')
   }
 }
 
