@@ -183,7 +183,7 @@ test('Stripe Connect OAuth guarda cuenta, scopes y webhook automatico', async ()
   })
 })
 
-async function startCentralStripeServer() {
+async function startCentralStripeServer({ expectedAppUrl = 'https://app.example.com' } = {}) {
   let lastRequestBody = null
   const server = http.createServer((req, res) => {
     const chunks = []
@@ -197,14 +197,14 @@ async function startCentralStripeServer() {
         assert.equal(lastRequestBody.client_id, 'cli_test_stripe')
         assert.equal(lastRequestBody.license_key, 'RSTK-STRIPE-TEST')
         assert.equal(lastRequestBody.installation_id, 'inst_test_stripe')
-        assert.equal(lastRequestBody.app_url, 'https://app.example.com')
+        assert.equal(lastRequestBody.app_url, expectedAppUrl)
         assert.equal(lastRequestBody.mode, 'test')
         res.end(JSON.stringify({
           success: true,
           url: 'https://connect.stripe.com/oauth/authorize?state=central_state',
           mode: 'test',
           redirect_uri: 'https://portal.test/api/stripe/connect/callback',
-          webhook_url: 'https://app.example.com/api/stripe/webhook'
+          webhook_url: `${expectedAppUrl}/api/stripe/webhook`
         }))
         return
       }
@@ -227,7 +227,7 @@ async function startCentralStripeServer() {
             payouts_enabled: true,
             details_submitted: true,
             webhook_endpoint_id: 'we_central_123',
-            webhook_url: 'https://app.example.com/api/stripe/webhook',
+            webhook_url: `${expectedAppUrl}/api/stripe/webhook`,
             webhook_status: 'active',
             connected_at: '2026-06-19T00:00:00.000Z',
             access_token: 'sk_test_connected_access',
@@ -259,7 +259,8 @@ test('Stripe Connect central delega OAuth al Installer y sincroniza credenciales
   await initializeMasterKey()
 
   await snapshotStripeConfig(async () => {
-    const central = await startCentralStripeServer()
+    const tenantAppUrl = 'https://raulgomez.onrender.com'
+    const central = await startCentralStripeServer({ expectedAppUrl: tenantAppUrl })
     try {
       process.env.LICENSE_SERVER_URL = central.baseUrl
       process.env.CLIENT_ID = 'cli_test_stripe'
@@ -283,7 +284,8 @@ test('Stripe Connect central delega OAuth al Installer y sincroniza credenciales
 
       const started = await createStripeConnectOAuthUrl({
         mode: 'test',
-        baseUrl: 'https://app.example.com',
+        baseUrl: 'https://app.ristak.com',
+        appUrl: tenantAppUrl,
         returnPath: '/settings/payments/stripe'
       })
       assert.equal(started.url, 'https://connect.stripe.com/oauth/authorize?state=central_state')

@@ -596,6 +596,20 @@ function sanitizeStripeReturnPath(value) {
   return clean.slice(0, 300)
 }
 
+function normalizeStripeAppBaseUrl(value) {
+  const clean = cleanString(value).replace(/\/+$/, '')
+  if (!clean) return ''
+
+  const withProtocol = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`
+  try {
+    const parsed = new URL(withProtocol)
+    if (!['http:', 'https:'].includes(parsed.protocol)) return ''
+    return parsed.origin
+  } catch {
+    return ''
+  }
+}
+
 function buildStripeOAuthRedirectUri(baseUrl) {
   const cleanBaseUrl = cleanString(baseUrl).replace(/\/+$/, '')
   if (!cleanBaseUrl) {
@@ -757,12 +771,14 @@ async function saveStripeConnectConnection({
   return getStripePaymentConfig()
 }
 
-export async function createStripeConnectOAuthUrl({ mode = 'test', baseUrl = '', returnPath = '/settings/payments/stripe' } = {}) {
+export async function createStripeConnectOAuthUrl({ mode = 'test', baseUrl = '', appUrl = '', returnPath = '/settings/payments/stripe' } = {}) {
   const normalizedMode = normalizeMode(mode)
+  const installedAppUrl = normalizeStripeAppBaseUrl(appUrl) || normalizeStripeAppBaseUrl(baseUrl)
   if (isLicenseEnforced()) {
     return createCentralStripeConnectUrl({
       mode: normalizedMode,
-      returnPath: sanitizeStripeReturnPath(returnPath)
+      returnPath: sanitizeStripeReturnPath(returnPath),
+      appUrl: installedAppUrl
     })
   }
 
@@ -771,7 +787,7 @@ export async function createStripeConnectOAuthUrl({ mode = 'test', baseUrl = '',
     secretKey: true,
     publishableKey: true
   })
-  const redirectUri = buildStripeOAuthRedirectUri(baseUrl)
+  const redirectUri = buildStripeOAuthRedirectUri(installedAppUrl || baseUrl)
   const state = `st_${randomBytes(24).toString('base64url')}`
   const payload = {
     state,

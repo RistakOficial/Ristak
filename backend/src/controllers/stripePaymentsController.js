@@ -147,9 +147,11 @@ export async function getStripeConfigView(req, res) {
 
 export async function createStripeConnectUrlView(req, res) {
   try {
+    const requestBaseUrl = getRequestBaseUrl(req)
     const result = await createStripeConnectOAuthUrl({
       mode: req.body?.mode || req.query?.mode || 'test',
-      baseUrl: getRequestBaseUrl(req),
+      baseUrl: requestBaseUrl,
+      appUrl: req.body?.appUrl || req.body?.app_url || req.headers.origin || requestBaseUrl,
       returnPath: req.body?.returnPath || '/settings/payments/stripe'
     })
     res.json({ success: true, data: result })

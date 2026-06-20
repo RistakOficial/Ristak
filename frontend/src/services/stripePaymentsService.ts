@@ -261,7 +261,7 @@ export const stripePaymentsService = {
     return parseApiResponse(response)
   },
 
-  async createConnectUrl(payload: { mode: 'test' | 'live'; returnPath?: string }): Promise<StripeConnectUrlResponse> {
+  async createConnectUrl(payload: { mode: 'test' | 'live'; returnPath?: string; appUrl?: string }): Promise<StripeConnectUrlResponse> {
     const response = await fetch(apiUrl('/api/stripe/connect/url'), {
       method: 'POST',
       headers: {

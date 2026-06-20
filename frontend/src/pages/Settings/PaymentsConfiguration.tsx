@@ -667,7 +667,8 @@ export const PaymentsConfiguration: React.FC = () => {
     try {
       const response = await stripePaymentsService.createConnectUrl({
         mode: stripeMode,
-        returnPath: '/settings/payments/stripe'
+        returnPath: '/settings/payments/stripe',
+        appUrl: window.location.origin
       })
       window.location.assign(response.url)
     } catch (error: any) {
