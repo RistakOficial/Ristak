@@ -146,6 +146,27 @@
   line-height: 1.45;
 }
 
+.currencyNote {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
+  font-size: 13px;
+}
+
+.currencyNote strong {
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .fullWidthField {
   grid-column: 1 / -1;
 }

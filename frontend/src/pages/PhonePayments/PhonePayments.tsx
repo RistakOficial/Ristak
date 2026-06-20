@@ -4,14 +4,12 @@ import { ArrowLeft, CalendarDays, Check, ChevronDown, ChevronRight, CreditCard, 
 import { RecordPaymentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
-import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig, useHighLevelConnected, usePhoneElasticScroll } from '@/hooks'
+import { useAccountCurrency, useHighLevelConnected, usePhoneElasticScroll } from '@/hooks'
 import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
-import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhonePayments.module.css'
 
@@ -55,7 +53,6 @@ interface ProductFormState {
   description: string
   priceName: string
   amount: string
-  currency: string
 }
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'partial'])
@@ -66,11 +63,6 @@ const RECENT_PAYMENT_PERIODS: Array<{ id: RecentPaymentsPeriod; label: string; d
   { id: '30d', label: '30 días', days: 30 },
   { id: '90d', label: '90 días', days: 90 }
 ]
-
-const PRODUCT_CURRENCY_OPTIONS = CURRENCY_OPTIONS.map((option) => {
-  const [code, description = code] = option.label.split(' - ')
-  return { value: option.value, label: code, description }
-})
 
 function hasPortableAccess() {
   if (typeof window === 'undefined') return false
@@ -179,13 +171,12 @@ function getPriceAmount(price?: ProductPrice | null) {
   return Number(price?.amount ?? price?.price ?? 0) || 0
 }
 
-function createEmptyProductForm(currency = 'MXN'): ProductFormState {
+function createEmptyProductForm(): ProductFormState {
   return {
     name: '',
     description: '',
     priceName: 'Precio base',
-    amount: '',
-    currency
+    amount: ''
   }
 }
 
@@ -193,8 +184,7 @@ export const PhonePayments: React.FC = () => {
   const [searchParams] = useSearchParams()
   const { connected: highLevelConnected } = useHighLevelConnected()
   const { showConfirm, showToast } = useNotification()
-  const detectedLocaleDefaults = getDetectedAccountLocaleDefaults()
-  const [defaultCurrency] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
+  const [accountCurrency] = useAccountCurrency()
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   usePhoneElasticScroll({ enabled: accessState === 'allowed' })
 
@@ -211,7 +201,7 @@ export const PhonePayments: React.FC = () => {
   const [productsError, setProductsError] = useState('')
   const [productFormMode, setProductFormMode] = useState<ProductFormMode>(null)
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null)
-  const [productForm, setProductForm] = useState<ProductFormState>(() => createEmptyProductForm(defaultCurrency))
+  const [productForm, setProductForm] = useState<ProductFormState>(() => createEmptyProductForm())
   const [savingProduct, setSavingProduct] = useState(false)
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null)
 
@@ -243,7 +233,7 @@ export const PhonePayments: React.FC = () => {
 
   const openCreateProduct = () => {
     setEditingProduct(null)
-    setProductForm(createEmptyProductForm(defaultCurrency))
+    setProductForm(createEmptyProductForm())
     setProductFormMode('create')
   }
 
@@ -254,8 +244,7 @@ export const PhonePayments: React.FC = () => {
       name: product.name || '',
       description: product.description || '',
       priceName: price?.name || 'Precio base',
-      amount: getPriceAmount(price) ? String(getPriceAmount(price)) : '',
-      currency: price?.currency || product.currency || defaultCurrency || 'MXN'
+      amount: getPriceAmount(price) ? String(getPriceAmount(price)) : ''
     })
     setProductFormMode('edit')
   }
@@ -263,7 +252,7 @@ export const PhonePayments: React.FC = () => {
   const closeProductForm = () => {
     setProductFormMode(null)
     setEditingProduct(null)
-    setProductForm(createEmptyProductForm(defaultCurrency))
+    setProductForm(createEmptyProductForm())
   }
 
   const updateProductForm = (field: keyof ProductFormState, value: string) => {
@@ -273,7 +262,7 @@ export const PhonePayments: React.FC = () => {
   const handleSaveProduct = async () => {
     const name = productForm.name.trim()
     const amount = Number(productForm.amount)
-    const currency = productForm.currency || defaultCurrency || 'MXN'
+    const currency = accountCurrency
 
     if (!name) {
       showToast('warning', 'Falta el nombre', 'Escribe cómo se llama el producto.')
@@ -587,7 +576,7 @@ export const PhonePayments: React.FC = () => {
 
           <div className={styles.productFormGrid}>
             <label className={styles.productField}>
-              <span>Precio</span>
+              <span>Precio ({accountCurrency})</span>
               <input
                 value={productForm.amount}
                 onChange={(event) => updateProductForm('amount', event.target.value)}
@@ -595,17 +584,10 @@ export const PhonePayments: React.FC = () => {
                 type="text"
                 placeholder="0.00"
               />
-            </label>
-            <label className={styles.productField}>
-              <span>Moneda</span>
-              <PhoneSelect
-                value={productForm.currency}
-                onChange={(value) => updateProductForm('currency', value)}
-                options={PRODUCT_CURRENCY_OPTIONS}
-                title="Moneda"
-                placeholder="Moneda"
-                buttonClassName={styles.productSelectButton}
-              />
+              <div className={styles.currencyNote}>
+                <span>Moneda de cuenta</span>
+                <strong>{accountCurrency}</strong>
+              </div>
             </label>
           </div>
 
@@ -675,7 +657,7 @@ export const PhonePayments: React.FC = () => {
                   <div className={styles.productItemCopy}>
                     <strong>{product.name || 'Producto sin nombre'}</strong>
                     <span>{product.description || 'Sin descripción'}</span>
-                    <small>{price ? `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), price.currency || product.currency || defaultCurrency || 'MXN')}` : 'Sin precio guardado'}</small>
+                    <small>{price ? `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), accountCurrency)}` : 'Sin precio guardado'}</small>
                   </div>
                 </div>
                 <div className={styles.productItemActions}>
@@ -825,7 +807,7 @@ export const PhonePayments: React.FC = () => {
                   <strong>{recentPaymentsOpen ? 'Ocultar últimos pagos' : 'Mostrar últimos pagos'}</strong>
                   <small>
                     {selectedRecentPayment
-                      ? `${formatCurrency(selectedRecentPayment.amount, selectedRecentPayment.currency || defaultCurrency || 'MXN')} seleccionado`
+                      ? `${formatCurrency(selectedRecentPayment.amount, selectedRecentPayment.currency || accountCurrency)} seleccionado`
                       : `${selectedRecentPeriod.label} recientes`}
                   </small>
                 </span>
@@ -880,7 +862,7 @@ export const PhonePayments: React.FC = () => {
                               onClick={() => setSelectedRecentPaymentId(selected ? null : payment.id)}
                             >
                               <span className={styles.recentPaymentMain}>
-                                <strong>{formatCurrency(payment.amount, payment.currency || defaultCurrency || 'MXN')}</strong>
+                                <strong>{formatCurrency(payment.amount, payment.currency || accountCurrency)}</strong>
                                 <small>{getContactLabel(payment)}</small>
                               </span>
                               <span className={styles.recentPaymentMeta}>

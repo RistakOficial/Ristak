@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { db, getHighLevelConfig } from '../config/database.js'
 import GHLClient from './ghlClient.js'
 import { logger } from '../utils/logger.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
 
 const LOCAL_PRODUCT_PREFIX = 'rstk_prod'
 const LOCAL_PRICE_PREFIX = 'rstk_price'
@@ -95,10 +96,19 @@ function normalizeCurrency(value) {
   return cleanString(value || DEFAULT_CURRENCY).toUpperCase() || DEFAULT_CURRENCY
 }
 
+async function getDefaultProductCurrency() {
+  try {
+    return normalizeCurrency(await getAccountCurrency())
+  } catch {
+    return DEFAULT_CURRENCY
+  }
+}
+
 function normalizeProductRecord(raw = {}, options = {}) {
   const product = raw.product && typeof raw.product === 'object' ? raw.product : raw
   const source = options.source || product.source || (product.ghlProductId || product.ghl_product_id ? 'ghl' : 'ristak')
   const sourceIsGhl = source === 'ghl'
+  const defaultCurrency = normalizeCurrency(options.defaultCurrency)
   const ghlProductId = cleanString(
     options.ghlProductId ||
     product.ghlProductId ||
@@ -126,7 +136,7 @@ function normalizeProductRecord(raw = {}, options = {}) {
     productType,
     image: cleanString(product.image || product.imageUrl || product.image_url || '') || null,
     availableInStore: toBoolInt(product.availableInStore ?? product.available_in_store, false),
-    currency: normalizeCurrency(product.currency || product.defaultCurrency),
+    currency: normalizeCurrency(sourceIsGhl ? product.currency || product.defaultCurrency || defaultCurrency : defaultCurrency),
     isActive: toBoolInt(product.isActive ?? product.is_active ?? product.active, true),
     source,
     syncStatus: options.syncStatus || product.syncStatus || product.sync_status || (sourceIsGhl ? 'synced' : 'pending'),
@@ -140,6 +150,7 @@ function normalizePriceRecord(raw = {}, options = {}) {
   const price = raw.price && typeof raw.price === 'object' ? raw.price : raw
   const source = options.source || price.source || (price.ghlPriceId || price.ghl_price_id ? 'ghl' : 'ristak')
   const sourceIsGhl = source === 'ghl'
+  const defaultCurrency = normalizeCurrency(options.defaultCurrency)
   const recurring = price.recurring && typeof price.recurring === 'object' ? price.recurring : {}
   const amount = normalizeAmount(
     price.amount ??
@@ -172,7 +183,7 @@ function normalizePriceRecord(raw = {}, options = {}) {
     locationId: cleanString(options.locationId || price.locationId || price.location_id || '') || null,
     name: cleanString(price.name || price.nickname || price.label || 'Precio'),
     type,
-    currency: normalizeCurrency(price.currency || price.currencyCode),
+    currency: normalizeCurrency(sourceIsGhl ? price.currency || price.currencyCode || defaultCurrency : defaultCurrency),
     amount,
     description: cleanString(price.description || ''),
     interval: cleanString(recurring.interval || price.interval || '') || null,
@@ -316,7 +327,10 @@ async function findUnlinkedPriceBySignature(productId, price) {
 }
 
 export async function upsertLocalProduct(raw = {}, options = {}) {
-  const normalized = normalizeProductRecord(raw, options)
+  const normalized = normalizeProductRecord(raw, {
+    ...options,
+    defaultCurrency: options.defaultCurrency || await getDefaultProductCurrency()
+  })
   const existingByGhl = normalized.ghlProductId ? await getLocalProduct(normalized.ghlProductId) : null
   const existingByName = normalized.ghlProductId && !existingByGhl
     ? await findUnlinkedProductByName(normalized.name)
@@ -374,7 +388,10 @@ export async function upsertLocalProduct(raw = {}, options = {}) {
 }
 
 export async function upsertLocalPrice(raw = {}, options = {}) {
-  const normalized = normalizePriceRecord(raw, options)
+  const normalized = normalizePriceRecord(raw, {
+    ...options,
+    defaultCurrency: options.defaultCurrency || await getDefaultProductCurrency()
+  })
   const product = await getLocalProduct(normalized.productId || normalized.ghlProductId)
 
   if (!product?.id) {

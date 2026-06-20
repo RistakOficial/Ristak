@@ -25,15 +25,15 @@ import {
   DropdownMenuTrigger,
   KpiCard,
   Modal,
+  NumberInput,
   PageContainer,
   PageHeader,
   Table
 } from '@/components/common'
 import type { BadgeVariant, Column } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig } from '@/hooks'
+import { useAccountCurrency } from '@/hooks'
 import type { Contact } from '@/types'
-import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { formatCurrency, formatDate } from '@/utils/format'
 import {
   subscriptionsService,
@@ -51,7 +51,6 @@ interface SubscriptionFormState {
   name: string
   description: string
   amount: string
-  currency: string
   intervalType: SubscriptionInterval
   intervalCount: string
   startDate: string
@@ -101,11 +100,6 @@ const PAYMENT_METHOD_OPTIONS = [
   { value: 'manual', label: 'Manual / offline' }
 ]
 
-const SUBSCRIPTION_CURRENCY_OPTIONS = CURRENCY_OPTIONS.map((option) => {
-  const [code, description = code] = option.label.split(' - ')
-  return { value: option.value, label: code, description }
-})
-
 function toDateInputValue(value?: string | null) {
   if (!value) return ''
   const date = new Date(value)
@@ -117,14 +111,13 @@ function getTodayInputValue() {
   return new Date().toISOString().slice(0, 10)
 }
 
-function createEmptyForm(currency = 'MXN'): SubscriptionFormState {
+function createEmptyForm(): SubscriptionFormState {
   const today = getTodayInputValue()
 
   return {
     name: '',
     description: '',
     amount: '',
-    currency,
     intervalType: 'monthly',
     intervalCount: '1',
     startDate: today,
@@ -222,8 +215,7 @@ function buildContactFromSubscription(subscription: PaymentSubscription): Contac
 
 export const PaymentSubscriptions: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
-  const detectedLocaleDefaults = useMemo(getDetectedAccountLocaleDefaults, [])
-  const [defaultCurrency] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
+  const [accountCurrency] = useAccountCurrency()
   const [subscriptions, setSubscriptions] = useState<PaymentSubscription[]>([])
   const [summary, setSummary] = useState<SubscriptionSummary>(EMPTY_SUMMARY)
   const [statusFilter, setStatusFilter] = useState('all')
@@ -234,7 +226,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const [formMode, setFormMode] = useState<SubscriptionFormMode>(null)
   const [editingSubscription, setEditingSubscription] = useState<PaymentSubscription | null>(null)
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
-  const [form, setForm] = useState<SubscriptionFormState>(() => createEmptyForm(defaultCurrency))
+  const [form, setForm] = useState<SubscriptionFormState>(() => createEmptyForm())
 
   const loadSubscriptions = async ({ refresh = false } = {}) => {
     if (refresh) setRefreshing(true)
@@ -264,7 +256,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const openCreateSubscription = () => {
     setEditingSubscription(null)
     setSelectedContact(null)
-    setForm(createEmptyForm(defaultCurrency || 'MXN'))
+    setForm(createEmptyForm())
     setFormMode('create')
   }
 
@@ -275,7 +267,6 @@ export const PaymentSubscriptions: React.FC = () => {
       name: subscription.name || '',
       description: subscription.description || '',
       amount: subscription.amount ? String(subscription.amount) : '',
-      currency: subscription.currency || defaultCurrency || 'MXN',
       intervalType: (subscription.intervalType as SubscriptionInterval) || 'monthly',
       intervalCount: String(subscription.intervalCount || 1),
       startDate: toDateInputValue(subscription.startDate) || getTodayInputValue(),
@@ -293,7 +284,7 @@ export const PaymentSubscriptions: React.FC = () => {
     setFormMode(null)
     setEditingSubscription(null)
     setSelectedContact(null)
-    setForm(createEmptyForm(defaultCurrency || 'MXN'))
+    setForm(createEmptyForm())
   }
 
   const patchForm = (field: keyof SubscriptionFormState, value: string) => {
@@ -329,7 +320,7 @@ export const PaymentSubscriptions: React.FC = () => {
       description: form.description.trim(),
       status: form.status,
       amount,
-      currency: form.currency || defaultCurrency || 'MXN',
+      currency: accountCurrency,
       intervalType: form.intervalType,
       intervalCount,
       startDate: form.startDate || null,
@@ -451,7 +442,7 @@ export const PaymentSubscriptions: React.FC = () => {
       key: 'amount',
       header: 'Monto',
       render: (_value, item) => (
-        <span className={styles.amountCell}>{formatCurrency(item.amount || 0, item.currency || defaultCurrency || 'MXN')}</span>
+        <span className={styles.amountCell}>{formatCurrency(item.amount || 0, item.currency || accountCurrency)}</span>
       ),
       searchValue: (_value, item) => [item.amount, item.currency],
       sortable: true
@@ -572,7 +563,7 @@ export const PaymentSubscriptions: React.FC = () => {
 
         <div className={styles.metricsGrid}>
           <KpiCard title="Activas" value={summary.active} icon={Repeat2} loading={loading} />
-          <KpiCard title="Ingreso mensual" value={formatCurrency(summary.monthlyRevenue, defaultCurrency || 'MXN')} icon={CreditCard} loading={loading} />
+          <KpiCard title="Ingreso mensual" value={formatCurrency(summary.monthlyRevenue, accountCurrency)} icon={CreditCard} loading={loading} />
           <KpiCard title="Próximo cobro" value={summary.nextRunAt ? formatDate(summary.nextRunAt, { includeYear: true }) : 'Sin fecha'} icon={CalendarClock} loading={loading} />
           <KpiCard title="Vencidas / pausadas" value={`${summary.pastDue} / ${summary.paused}`} icon={Pause} loading={loading} />
         </div>
@@ -604,7 +595,7 @@ export const PaymentSubscriptions: React.FC = () => {
           isOpen={formMode !== null}
           onClose={closeForm}
           title={formMode === 'edit' ? 'Editar suscripción' : 'Nueva suscripción'}
-          size="lg"
+          size="md"
           type="custom"
         >
           <form className={styles.form} onSubmit={(event) => {
@@ -653,31 +644,19 @@ export const PaymentSubscriptions: React.FC = () => {
               </div>
 
               <div className={styles.formGroup}>
-                <label>Monto</label>
-                <input
+                <label>Monto ({accountCurrency})</label>
+                <NumberInput
                   value={form.amount}
                   onChange={(event) => patchForm('amount', event.target.value)}
-                  type="number"
                   min="0"
                   step="0.01"
-                  inputMode="decimal"
                   placeholder="0.00"
                   required
                 />
-              </div>
-
-              <div className={styles.formGroup}>
-                <label>Moneda</label>
-                <CustomSelect
-                  value={form.currency}
-                  onChange={(event) => patchForm('currency', event.target.value)}
-                >
-                  {SUBSCRIPTION_CURRENCY_OPTIONS.map((currencyOption) => (
-                    <option key={currencyOption.value} value={currencyOption.value}>
-                      {currencyOption.label} - {currencyOption.description}
-                    </option>
-                  ))}
-                </CustomSelect>
+                <div className={styles.currencyNote}>
+                  <span>Moneda de cuenta</span>
+                  <strong>{accountCurrency}</strong>
+                </div>
               </div>
 
               <div className={styles.formGroup}>
@@ -694,13 +673,11 @@ export const PaymentSubscriptions: React.FC = () => {
 
               <div className={styles.formGroup}>
                 <label>Cada</label>
-                <input
+                <NumberInput
                   value={form.intervalCount}
                   onChange={(event) => patchForm('intervalCount', event.target.value)}
-                  type="number"
                   min="1"
                   step="1"
-                  inputMode="numeric"
                   required
                 />
               </div>

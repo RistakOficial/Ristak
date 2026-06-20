@@ -7,6 +7,7 @@ import {
   resumeStripeRecurringSubscription,
   updateStripeRecurringSubscription
 } from './stripePaymentService.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
 
 const SUBSCRIPTION_PREFIX = 'rstk_sub'
 const DEFAULT_CURRENCY = 'MXN'
@@ -33,6 +34,14 @@ function normalizeAmount(value) {
 
 function normalizeCurrency(value) {
   return cleanString(value || DEFAULT_CURRENCY).toUpperCase() || DEFAULT_CURRENCY
+}
+
+async function getDefaultSubscriptionCurrency() {
+  try {
+    return normalizeCurrency(await getAccountCurrency())
+  } catch {
+    return DEFAULT_CURRENCY
+  }
 }
 
 function normalizeInterval(value) {
@@ -215,6 +224,7 @@ function buildSummary(rows = []) {
 async function buildSubscriptionRow(payload = {}, existing = {}) {
   const contactId = nullableString(payload.contactId ?? payload.contact_id ?? existing.contact_id)
   const contact = await getContactSnapshot(contactId)
+  const accountCurrency = await getDefaultSubscriptionCurrency()
   const intervalType = normalizeInterval(payload.intervalType ?? payload.interval_type ?? existing.interval_type)
   const intervalCount = normalizeIntervalCount(payload.intervalCount ?? payload.interval_count ?? existing.interval_count)
   const startDate = nullableDate(payload.startDate ?? payload.start_date ?? existing.start_date) || new Date().toISOString()
@@ -230,7 +240,7 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     description: cleanString(payload.description ?? existing.description),
     status: normalizeStatus(payload.status ?? existing.status),
     amount: normalizeAmount(payload.amount ?? existing.amount),
-    currency: normalizeCurrency(payload.currency ?? existing.currency),
+    currency: accountCurrency,
     interval_type: intervalType,
     interval_count: intervalCount,
     start_date: startDate,

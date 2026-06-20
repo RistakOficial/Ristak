@@ -914,7 +914,7 @@ async function sendInvoice({ ghlClient, invoiceId, contact, channels, forceAllAv
 export async function createSinglePaymentLink(payload) {
   const contact = payload.contact || {}
   const amount = normalizeAmount(payload.amount || payload.totalAmount)
-  const currency = payload.currency || await getAccountCurrency()
+  const currency = await getAccountCurrency()
   const concept = payload.description || payload.concept || payload.title || 'Pago'
   const title = payload.title || concept || 'Pago'
 
@@ -977,7 +977,7 @@ function normalizeOfflineRecordMethod(value) {
 export async function createOfflineContactPayment(payload) {
   const contact = payload.contact || {}
   const amount = normalizeAmount(payload.amount || payload.totalAmount)
-  const currency = payload.currency || await getAccountCurrency()
+  const currency = await getAccountCurrency()
   const concept = payload.description || payload.concept || payload.title || 'Pago registrado'
   const title = payload.title || concept || 'Pago registrado'
   const paymentMethod = normalizeOfflineRecordMethod(payload.paymentMethod || payload.method)
@@ -1751,9 +1751,7 @@ function validateInstallmentFlowPayload(payload) {
 }
 
 export async function createInstallmentPaymentFlow(payload) {
-  const normalizedPayload = payload.currency
-    ? payload
-    : { ...payload, currency: await getAccountCurrency() }
+  const normalizedPayload = { ...payload, currency: await getAccountCurrency() }
   const {
     contact,
     totalAmount,

@@ -34,6 +34,7 @@ import {
   Switch
 } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAccountCurrency } from '@/hooks'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
 import { invalidateIntegrationsStatus } from '@/services/integrationsService'
 import mediaService from '@/services/mediaService'
@@ -165,11 +166,13 @@ async function copyTextToClipboard(text: string) {
   return copied
 }
 
-const compactMoney = new Intl.NumberFormat('es-MX', {
-  style: 'currency',
-  currency: 'MXN',
-  maximumFractionDigits: 0
-})
+function formatCompactMoney(value: number, currency = 'MXN') {
+  return new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 0
+  }).format(value)
+}
 
 const channelOptions = [
   { value: 'whatsapp', label: 'WhatsApp API' },
@@ -206,6 +209,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const location = useLocation()
   const { showToast, showConfirm } = useNotification()
   const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
+  const [accountCurrency] = useAccountCurrency()
 
   const [activeSection, setActiveSection] = useState<PaymentsSectionId>(() => getInitialSection(location.pathname))
   const [selectedGateway, setSelectedGateway] = useState<PaymentGatewayId>(() => getInitialGateway(location.pathname))
@@ -221,7 +225,6 @@ export const PaymentsConfiguration: React.FC = () => {
   const [ghlInvoiceMode, setGhlInvoiceMode] = useState<'live' | 'test'>('live')
   const [stripeConfig, setStripeConfig] = useState<StripePaymentConfig | null>(null)
   const [stripeMode, setStripeMode] = useState<'test' | 'live'>('test')
-  const [stripeDefaultCurrency, setStripeDefaultCurrency] = useState('MXN')
   const [stripeAccountLabel, setStripeAccountLabel] = useState('')
   const [stripePublishableKey, setStripePublishableKey] = useState('')
   const [stripeSecretKey, setStripeSecretKey] = useState('')
@@ -563,7 +566,6 @@ export const PaymentsConfiguration: React.FC = () => {
   const applyStripeConfig = (config: StripePaymentConfig) => {
     setStripeConfig(config)
     setStripeMode(config.mode || 'test')
-    setStripeDefaultCurrency(config.defaultCurrency || 'MXN')
     setStripeAccountLabel(config.accountLabel || '')
     setStripePublishableKey(config.publishableKey || '')
     setStripeSecretKey(config.secretKeyPreview || '')
@@ -585,7 +587,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const buildStripeConfigPayload = () => ({
     enabled: true,
     mode: stripeMode,
-    defaultCurrency: stripeDefaultCurrency.trim().toUpperCase() || 'MXN',
+    defaultCurrency: accountCurrency,
     accountLabel: stripeAccountLabel.trim(),
     publishableKey: stripePublishableKey.trim(),
     secretKey: stripeSecretKey.trim(),
@@ -876,7 +878,7 @@ export const PaymentsConfiguration: React.FC = () => {
           </div>
           <div>
             <span>Total</span>
-            <strong>{compactMoney.format(2490)}</strong>
+            <strong>{formatCompactMoney(2490, accountCurrency)}</strong>
           </div>
           <div>
             <span>Vencimiento</span>
@@ -1205,7 +1207,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 </div>
                 <div>
                   <span>Moneda</span>
-                  <strong>MXN</strong>
+                  <strong>{accountCurrency}</strong>
                 </div>
               </section>
 
@@ -1238,24 +1240,24 @@ export const PaymentsConfiguration: React.FC = () => {
                 <div className={styles.documentLineRow}>
                   <strong>Plan mensual</strong>
                   <span>1</span>
-                  <span>{compactMoney.format(previewSubtotal)}</span>
+                  <span>{formatCompactMoney(previewSubtotal, accountCurrency)}</span>
                 </div>
               </section>
 
               <section className={styles.documentTotals} aria-label="Totales">
                 <div>
                   <span>Subtotal</span>
-                  <strong>{compactMoney.format(previewSubtotal)}</strong>
+                  <strong>{formatCompactMoney(previewSubtotal, accountCurrency)}</strong>
                 </div>
                 {taxes.enabled && (
                   <div>
                     <span>{taxes.calculationMode === 'inclusive' ? `${previewTaxLabel} incluido` : previewTaxLabel}</span>
-                    <strong>{compactMoney.format(previewTaxAmount)}</strong>
+                    <strong>{formatCompactMoney(previewTaxAmount, accountCurrency)}</strong>
                   </div>
                 )}
                 <div>
                   <span>Total pagado</span>
-                  <strong>{compactMoney.format(previewTotal)}</strong>
+                  <strong>{formatCompactMoney(previewTotal, accountCurrency)}</strong>
                 </div>
               </section>
 
@@ -1779,14 +1781,11 @@ export const PaymentsConfiguration: React.FC = () => {
                   />
                 )}
                 {renderField(
-                  'Moneda principal',
-                  <input
-                    type="text"
-                    value={stripeDefaultCurrency}
-                    onChange={(event) => setStripeDefaultCurrency(event.target.value.toUpperCase().slice(0, 3))}
-                    placeholder="MXN"
-                    autoComplete="off"
-                  />
+                  'Moneda de cuenta',
+                  <div className={styles.currencyNote}>
+                    <span>Moneda de cuenta</span>
+                    <strong>{accountCurrency}</strong>
+                  </div>
                 )}
                 {renderField(
                   'Publishable key',
@@ -1993,15 +1992,15 @@ export const PaymentsConfiguration: React.FC = () => {
         <div className={styles.taxPreview}>
           <div>
             <span>Subtotal</span>
-            <strong>{compactMoney.format(2490)}</strong>
+            <strong>{formatCompactMoney(2490, accountCurrency)}</strong>
           </div>
           <div>
             <span>{taxes.taxName || 'IVA'} {taxes.rateType === 'percentage' ? `${taxes.rateValue}%` : ''}</span>
-            <strong>{taxes.calculationMode === 'inclusive' ? 'Incluido' : compactMoney.format(taxes.rateType === 'percentage' ? 398 : taxes.rateValue)}</strong>
+            <strong>{taxes.calculationMode === 'inclusive' ? 'Incluido' : formatCompactMoney(taxes.rateType === 'percentage' ? 398 : taxes.rateValue, accountCurrency)}</strong>
           </div>
           <div>
             <span>Total mostrado</span>
-            <strong>{compactMoney.format(taxes.calculationMode === 'inclusive' ? 2490 : 2888)}</strong>
+            <strong>{formatCompactMoney(taxes.calculationMode === 'inclusive' ? 2490 : 2888, accountCurrency)}</strong>
           </div>
         </div>
       </Card>

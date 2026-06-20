@@ -1274,8 +1274,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     ? (selectedSalesProduct.prices || []).find((price) => getPriceId(price) === goalWorkflow.sales.priceId) || getPrimaryPrice(selectedSalesProduct)
     : null
   const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig || detectedLocaleDefaults.currency)
-  const salesCurrency = normalizeCurrencyCode(goalWorkflow.sales.currency || selectedSalesPrice?.currency || selectedSalesProduct?.currency || accountCurrency)
-  const depositCurrency = normalizeCurrencyCode(deposit.currency || salesCurrency || accountCurrency)
+  const salesCurrency = accountCurrency
+  const depositCurrency = accountCurrency
   const salesPaymentMode = getWorkflowSalesPaymentMode(goalWorkflow)
   const depositEnabledForForm = agent.objective === 'ventas' ? salesPaymentMode === 'deposit' : deposit.enabled
   const depositHelper = agent.objective === 'ventas'
@@ -1295,7 +1295,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         { value: '', label: 'Precio base' },
         ...(selectedSalesProduct.prices || []).map((price) => ({
           value: getPriceId(price),
-          label: `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), price.currency || selectedSalesProduct.currency || accountCurrency)}`
+          label: `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), accountCurrency)}`
         }))
       ]
     : [{ value: '', label: 'Selecciona producto primero' }]
@@ -1401,7 +1401,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         ...goalWorkflow.deposit,
         enabled: needsDeposit,
         currency: needsDeposit
-          ? normalizeCurrencyCode(goalWorkflow.deposit.currency || salesCurrency || accountCurrency)
+          ? accountCurrency
           : goalWorkflow.deposit.currency
       }
     })
@@ -1494,7 +1494,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         productName: product?.name || '',
         priceName: price?.name || '',
         amount: price ? getPriceAmount(price) : null,
-        currency: price?.currency || product?.currency || ''
+        currency: accountCurrency
       }
     })
   }
@@ -1508,7 +1508,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         priceId: getPriceId(price),
         priceName: price?.name || '',
         amount: price ? getPriceAmount(price) : null,
-        currency: price?.currency || selectedSalesProduct.currency || ''
+        currency: accountCurrency
       }
     })
   }
@@ -2529,7 +2529,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                           </CustomSelect>
                           {selectedSalesPrice && (
                             <p className={styles.helper}>
-                              {selectedSalesProduct.name} · {formatCurrency(getPriceAmount(selectedSalesPrice), selectedSalesPrice.currency || selectedSalesProduct.currency || accountCurrency)}
+                              {selectedSalesProduct.name} · {formatCurrency(getPriceAmount(selectedSalesPrice), accountCurrency)}
                             </p>
                           )}
                         </div>

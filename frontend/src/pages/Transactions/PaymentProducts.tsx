@@ -1,10 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Edit3, MoreVertical, Package, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import {
   Badge,
   Button,
   Card,
-  CustomSelect,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -18,8 +17,7 @@ import {
 } from '@/components/common'
 import type { BadgeVariant, Column } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig, useHighLevelConnected } from '@/hooks'
-import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
+import { useAccountCurrency, useHighLevelConnected } from '@/hooks'
 import { formatCurrency } from '@/utils/format'
 import {
   productsService,
@@ -36,20 +34,13 @@ interface ProductFormState {
   description: string
   priceName: string
   amount: string
-  currency: string
 }
 
-const PRODUCT_CURRENCY_OPTIONS = CURRENCY_OPTIONS.map((option) => {
-  const [code, description = code] = option.label.split(' - ')
-  return { value: option.value, label: code, description }
-})
-
-const createEmptyProductForm = (currency = 'MXN'): ProductFormState => ({
+const createEmptyProductForm = (): ProductFormState => ({
   name: '',
   description: '',
   priceName: 'Precio base',
-  amount: '',
-  currency
+  amount: ''
 })
 
 const getProductId = (product: ProductItem) => product.localId || product.id || product._id || ''
@@ -89,8 +80,7 @@ const getSyncStatusVariant = (status?: string | null): BadgeVariant => {
 export const PaymentProducts: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const { connected: highLevelConnected } = useHighLevelConnected()
-  const detectedLocaleDefaults = useMemo(getDetectedAccountLocaleDefaults, [])
-  const [defaultCurrency] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
+  const [accountCurrency] = useAccountCurrency()
   const [products, setProducts] = useState<ProductItem[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -98,7 +88,7 @@ export const PaymentProducts: React.FC = () => {
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null)
   const [formMode, setFormMode] = useState<ProductFormMode>(null)
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null)
-  const [productForm, setProductForm] = useState<ProductFormState>(() => createEmptyProductForm(defaultCurrency))
+  const [productForm, setProductForm] = useState<ProductFormState>(() => createEmptyProductForm())
 
   const loadProducts = async ({ refresh = false, sync = false }: { refresh?: boolean; sync?: boolean } = {}) => {
     if (refresh) setRefreshing(true)
@@ -125,7 +115,7 @@ export const PaymentProducts: React.FC = () => {
 
   const openCreateProduct = () => {
     setEditingProduct(null)
-    setProductForm(createEmptyProductForm(defaultCurrency || 'MXN'))
+    setProductForm(createEmptyProductForm())
     setFormMode('create')
   }
 
@@ -137,8 +127,7 @@ export const PaymentProducts: React.FC = () => {
       name: product.name || '',
       description: product.description || '',
       priceName: price?.name || 'Precio base',
-      amount: getPriceAmount(price) ? String(getPriceAmount(price)) : '',
-      currency: price?.currency || product.currency || defaultCurrency || 'MXN'
+      amount: getPriceAmount(price) ? String(getPriceAmount(price)) : ''
     })
     setFormMode('edit')
   }
@@ -148,7 +137,7 @@ export const PaymentProducts: React.FC = () => {
 
     setFormMode(null)
     setEditingProduct(null)
-    setProductForm(createEmptyProductForm(defaultCurrency || 'MXN'))
+    setProductForm(createEmptyProductForm())
   }
 
   const patchProductForm = (field: keyof ProductFormState, value: string) => {
@@ -158,7 +147,7 @@ export const PaymentProducts: React.FC = () => {
   const buildProductPayload = (): ProductPayload | null => {
     const name = productForm.name.trim()
     const amount = Number(productForm.amount)
-    const currency = productForm.currency || defaultCurrency || 'MXN'
+    const currency = accountCurrency
 
     if (!name) {
       showToast('warning', 'Falta el nombre', 'Escribe cómo se llama el producto.')
@@ -273,7 +262,7 @@ export const PaymentProducts: React.FC = () => {
       render: (_value, item) => {
         const price = getPrimaryPrice(item)
         const amount = getPriceAmount(price)
-        const currency = price?.currency || item.currency || defaultCurrency || 'MXN'
+        const currency = price?.currency || item.currency || accountCurrency
 
         return amount > 0 ? (
           <span className={styles.priceCell}>{formatCurrency(amount, currency)}</span>
@@ -452,23 +441,7 @@ export const PaymentProducts: React.FC = () => {
               </div>
 
               <div className={styles.formGroup}>
-                <label>Moneda</label>
-                <CustomSelect
-                  portal
-                  dropdownMinWidth={280}
-                  value={productForm.currency}
-                  onChange={(event) => patchProductForm('currency', event.target.value)}
-                >
-                  {PRODUCT_CURRENCY_OPTIONS.map((currencyOption) => (
-                    <option key={currencyOption.value} value={currencyOption.value}>
-                      {currencyOption.label} - {currencyOption.description}
-                    </option>
-                  ))}
-                </CustomSelect>
-              </div>
-
-              <div className={styles.formGroup}>
-                <label>Monto</label>
+                <label>Monto ({accountCurrency})</label>
                 <NumberInput
                   value={productForm.amount}
                   onChange={(event) => patchProductForm('amount', event.target.value)}
@@ -477,6 +450,10 @@ export const PaymentProducts: React.FC = () => {
                   placeholder="0.00"
                   required
                 />
+                <div className={styles.currencyNote}>
+                  <span>Moneda de cuenta</span>
+                  <strong>{accountCurrency}</strong>
+                </div>
               </div>
 
               {editingProduct && (

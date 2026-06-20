@@ -218,6 +218,7 @@ body.dark {
 
   input[type='number'] {
     appearance: textfield;
+    -webkit-appearance: none;
     -moz-appearance: textfield;
   }
 

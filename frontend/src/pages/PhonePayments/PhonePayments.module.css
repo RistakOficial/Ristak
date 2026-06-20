@@ -684,6 +684,27 @@
   font-weight: 650;
 }
 
+.currencyNote {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--phone-payments-border);
+  border-radius: 8px;
+  background: var(--phone-payments-surface);
+  color: var(--phone-payments-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.currencyNote strong {
+  color: var(--phone-payments-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .productField textarea {
   min-height: 82px;
   padding-top: 10px;

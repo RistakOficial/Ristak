@@ -71,6 +71,19 @@ export const CURRENCY_OPTIONS = [
   { value: 'VES', label: 'VES - Bolívar' }
 ]
 
+export function normalizeCurrencyCode(value?: string | null, fallback = 'MXN') {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (/^[A-Z]{3}$/.test(normalized)) return normalized
+
+  const fallbackNormalized = String(fallback || '').trim().toUpperCase()
+  return /^[A-Z]{3}$/.test(fallbackNormalized) ? fallbackNormalized : 'MXN'
+}
+
+export function getCurrencyOptionLabel(value?: string | null) {
+  const currency = normalizeCurrencyCode(value)
+  return CURRENCY_OPTIONS.find((option) => option.value === currency)?.label || currency
+}
+
 const DEFAULT_COUNTRY = COUNTRY_OPTIONS[0]
 
 function getCountryFromLocale() {

@@ -32,9 +32,8 @@ import {
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig, useHighLevelConnected, useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
+import { useAccountCurrency, useHighLevelConnected, useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString, formatName } from '@/utils/format'
-import { ACCOUNT_CURRENCY_CONFIG_KEY, CURRENCY_OPTIONS, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan } from '@/services/transactionsService'
 import { highLevelService } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -440,8 +439,7 @@ export const Transactions: React.FC = () => {
   const routeState = useMemo(() => parseTransactionsRoute(location.pathname), [location.pathname])
   const { formatLocalDateShort } = useTimezone()
   const { showConfirm, showToast } = useNotification()
-  const detectedLocaleDefaults = useMemo(getDetectedAccountLocaleDefaults, [])
-  const [defaultCurrency] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
+  const [accountCurrency] = useAccountCurrency()
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [paymentPlans, setPaymentPlans] = useState<PaymentPlan[]>([])
   const [summary, setSummary] = useState<TransactionSummary | null>(null)
@@ -1572,7 +1570,7 @@ export const Transactions: React.FC = () => {
       email: contactSnapshot.email || '',
       phone: contactSnapshot.phone || '',
       amount: parseFloat(formData.get('amount') as string) || 0,
-      currency: (formData.get('currency') as string) || modal.transaction?.currency || defaultCurrency || 'MXN',
+      currency: accountCurrency,
       method: formData.get('method') as any,
       status: formData.get('status') as any,
       reference: formData.get('reference') as string,
@@ -1585,11 +1583,11 @@ export const Transactions: React.FC = () => {
       if (modal.type === 'create') {
         const newTransaction = await transactionsService.createTransaction(transaction)
         setTransactions(prev => [...prev, newTransaction])
-        showToast('success', '¡Pago registrado exitosamente!', `Se registró el pago de ${formatCurrency(transaction.amount)} para ${contactSnapshot.name}`)
+        showToast('success', '¡Pago registrado exitosamente!', `Se registró el pago de ${formatCurrency(transaction.amount, accountCurrency)} para ${contactSnapshot.name}`)
       } else if (modal.type === 'edit') {
         const updatedTransaction = await transactionsService.updateTransaction(transaction.id, transaction)
         setTransactions(prev => prev.map(t => t.id === updatedTransaction.id ? updatedTransaction : t))
-        showToast('success', 'Pago actualizado correctamente', `Se actualizó el registro de pago de ${formatCurrency(updatedTransaction.amount)}`)
+        showToast('success', 'Pago actualizado correctamente', `Se actualizó el registro de pago de ${formatCurrency(updatedTransaction.amount, accountCurrency)}`)
       }
       closeTransactionModal()
       fetchData()
@@ -2590,7 +2588,7 @@ export const Transactions: React.FC = () => {
                 </div>
               )}
               <div className={styles.formGroup}>
-                <label>Monto</label>
+                <label>Monto ({accountCurrency})</label>
                 <div className={styles.inputWithIcon}>
                   <span className={styles.inputIcon}>$</span>
                   <input
@@ -2604,14 +2602,10 @@ export const Transactions: React.FC = () => {
                     className={styles.amountInput}
                   />
                 </div>
-              </div>
-              <div className={styles.formGroup}>
-                <label>Moneda</label>
-                <CustomSelect name="currency" defaultValue={modal.transaction?.currency || defaultCurrency || 'MXN'}>
-                  {CURRENCY_OPTIONS.map((currencyOption) => (
-                    <option key={currencyOption.value} value={currencyOption.value}>{currencyOption.value}</option>
-                  ))}
-                </CustomSelect>
+                <div className={styles.currencyNote}>
+                  <span>Moneda de cuenta</span>
+                  <strong>{accountCurrency}</strong>
+                </div>
               </div>
               <div className={styles.formGroup}>
                 <label>Método de pago</label>

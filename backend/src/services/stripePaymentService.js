@@ -4,6 +4,7 @@ import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
 import {
   createCentralStripeConnectUrl,
   disconnectCentralStripeConnect,
@@ -206,6 +207,14 @@ function normalizeCurrency(value) {
   return /^[A-Z]{3}$/.test(currency) ? currency : DEFAULT_CURRENCY
 }
 
+async function getConfiguredCurrency() {
+  try {
+    return normalizeCurrency(await getAccountCurrency())
+  } catch {
+    return DEFAULT_CURRENCY
+  }
+}
+
 function normalizeMode(value) {
   return value === 'live' ? 'live' : 'test'
 }
@@ -386,6 +395,7 @@ async function readRawConfig() {
 
 export async function getStripePaymentConfig({ includeSecrets = false } = {}) {
   const raw = await readRawConfig()
+  const accountCurrency = await getConfiguredCurrency()
   const mode = normalizeMode(raw[CONFIG_KEYS.mode])
   const connectionType = normalizeConnectionType(raw[CONFIG_KEYS.connectionType])
   const managedByPortal = normalizeBoolean(raw[CONFIG_KEYS.connectManagedByPortal], false) || isLicenseEnforced()
@@ -418,7 +428,7 @@ export async function getStripePaymentConfig({ includeSecrets = false } = {}) {
     configured,
     connectionType,
     mode,
-    defaultCurrency: normalizeCurrency(raw[CONFIG_KEYS.defaultCurrency]),
+    defaultCurrency: accountCurrency,
     accountLabel: cleanString(raw[CONFIG_KEYS.accountLabel]),
     publishableKey,
     hasSecretKey: connectionType === 'manual' ? Boolean(secretKey) : Boolean(connectAccessToken || platform.secretKey),
@@ -460,6 +470,7 @@ export async function getStripePaymentConfig({ includeSecrets = false } = {}) {
 
 export async function saveStripePaymentConfig(input = {}) {
   const current = await getStripePaymentConfig({ includeSecrets: true })
+  const accountCurrency = await getConfiguredCurrency()
   const currentSecretKey = current.connectionType === 'manual' ? current.secretKey : ''
   const currentWebhookSecret = current.connectionType === 'manual' ? current.webhookSecret : ''
   const publishableKey = assertStripePublishableKey(input.publishableKey ?? '')
@@ -474,7 +485,7 @@ export async function saveStripePaymentConfig(input = {}) {
   await setAppConfig(CONFIG_KEYS.connectionType, 'manual')
   await setAppConfig(CONFIG_KEYS.mode, normalizeMode(input.mode))
   await setAppConfig(CONFIG_KEYS.publishableKey, publishableKey)
-  await setAppConfig(CONFIG_KEYS.defaultCurrency, normalizeCurrency(input.defaultCurrency || current.defaultCurrency))
+  await setAppConfig(CONFIG_KEYS.defaultCurrency, accountCurrency)
   await setAppConfig(CONFIG_KEYS.accountLabel, cleanString(input.accountLabel || current.accountLabel))
 
   if (nextSecretKey) {
@@ -678,10 +689,10 @@ async function saveStripeConnectConnection({
   mode,
   oauthData,
   account,
-  webhook,
-  defaultCurrency = DEFAULT_CURRENCY
+  webhook
 }) {
   const normalizedMode = normalizeMode(mode)
+  const accountCurrency = await getConfiguredCurrency()
   const accountDetails = mapStripeAccountForConfig(account)
   const connectedAccountId = cleanString(oauthData.stripe_user_id)
   const scope = cleanString(oauthData.scope || STRIPE_CONNECT_SCOPE)
@@ -691,7 +702,7 @@ async function saveStripeConnectConnection({
   await setAppConfig(CONFIG_KEYS.enabled, '1')
   await setAppConfig(CONFIG_KEYS.connectionType, 'connect')
   await setAppConfig(CONFIG_KEYS.mode, livemode ? 'live' : 'test')
-  await setAppConfig(CONFIG_KEYS.defaultCurrency, normalizeCurrency(defaultCurrency))
+  await setAppConfig(CONFIG_KEYS.defaultCurrency, accountCurrency)
   await setAppConfig(CONFIG_KEYS.accountLabel, accountDetails.label)
   await setAppConfig(CONFIG_KEYS.publishableKey, connectPublishableKey || getStripeConnectPlatformConfig(livemode ? 'live' : 'test').publishableKey)
   await setAppConfig(CONFIG_KEYS.connectAccountId, connectedAccountId)
@@ -759,7 +770,7 @@ export async function createStripeConnectOAuthUrl({ mode = 'test', baseUrl = '',
     scope: STRIPE_CONNECT_SCOPE,
     state,
     redirect_uri: redirectUri,
-    'stripe_user[currency]': normalizeCurrency((await getAppConfig(CONFIG_KEYS.defaultCurrency)) || DEFAULT_CURRENCY).toLowerCase()
+    'stripe_user[currency]': (await getConfiguredCurrency()).toLowerCase()
   })
 
   return {
@@ -793,7 +804,7 @@ export async function syncStripeConnectFromCentral() {
   await setAppConfig(CONFIG_KEYS.enabled, '1')
   await setAppConfig(CONFIG_KEYS.connectionType, 'connect')
   await setAppConfig(CONFIG_KEYS.mode, mode)
-  await setAppConfig(CONFIG_KEYS.defaultCurrency, normalizeCurrency(await getAppConfig(CONFIG_KEYS.defaultCurrency) || DEFAULT_CURRENCY))
+  await setAppConfig(CONFIG_KEYS.defaultCurrency, await getConfiguredCurrency())
   await setAppConfig(CONFIG_KEYS.accountLabel, accountLabel)
   await setAppConfig(CONFIG_KEYS.publishableKey, assertStripePublishableKey(connection.publishable_key || ''))
   await setAppConfig(CONFIG_KEYS.connectAccountId, cleanString(connection.account_id))
@@ -883,8 +894,7 @@ export async function completeStripeConnectOAuth({ code = '', state = '', baseUr
     mode: finalMode,
     oauthData,
     account,
-    webhook,
-    defaultCurrency: await getAppConfig(CONFIG_KEYS.defaultCurrency)
+    webhook
   })
 
   return {
@@ -1174,7 +1184,7 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
   const chargeAmount = tax?.totalAmount || Math.round(amount * 100) / 100
   const publicPaymentId = createPublicId()
   const id = createId('stripe_payment')
-  const currency = normalizeCurrency(input.currency || config.defaultCurrency)
+  const currency = await getConfiguredCurrency()
   const now = new Date().toISOString()
   const paymentUrl = buildPaymentUrl(baseUrl, publicPaymentId)
   const contactId = cleanString(input.contactId) || null
@@ -1716,7 +1726,7 @@ export async function createStripeRecurringSubscription(input = {}) {
   const contactId = cleanString(input.contactId)
   const name = cleanString(input.name) || 'Suscripción'
   const amount = Number(input.amount)
-  const currency = normalizeCurrency(input.currency || config.defaultCurrency)
+  const currency = await getConfiguredCurrency()
   const interval = cleanString(input.intervalType || 'monthly').toLowerCase()
   const intervalCount = Number.parseInt(input.intervalCount, 10) || 1
   const ristakSubscriptionId = cleanString(input.ristakSubscriptionId)
@@ -1824,7 +1834,7 @@ export async function updateStripeRecurringSubscription(input = {}) {
   const stripeSubscriptionId = extractStripeObjectId(input.stripeSubscriptionId)
   const name = cleanString(input.name) || 'Suscripción'
   const amount = Number(input.amount)
-  const currency = normalizeCurrency(input.currency || config.defaultCurrency)
+  const currency = await getConfiguredCurrency()
   const interval = cleanString(input.intervalType || 'monthly').toLowerCase()
   const intervalCount = Number.parseInt(input.intervalCount, 10) || 1
   const ristakSubscriptionId = cleanString(input.ristakSubscriptionId)
@@ -3460,7 +3470,7 @@ export async function createStripeSavedCardPayment(input = {}) {
   }
 
   const id = createId('stripe_saved_payment')
-  const currency = normalizeCurrency(input.currency || config.defaultCurrency)
+  const currency = await getConfiguredCurrency()
   const now = new Date().toISOString()
   const title = cleanString(input.title) || 'Pago'
   const description = cleanString(input.description) || title
@@ -3524,7 +3534,8 @@ export async function createStripeSavedCardPayment(input = {}) {
 
 export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
   const { stripe, config, requestOptions } = await getStripeClient()
-  const plan = validateStripePaymentPlanPayload(input)
+  const accountCurrency = await getConfiguredCurrency()
+  const plan = validateStripePaymentPlanPayload({ ...input, currency: accountCurrency })
   plan.cardSetupAmount = await resolveStripeCardSetupAmount(input.cardSetupAmount)
   const savedMethod = plan.paymentMethodId
     ? await resolveStripeSavedMethod(plan.contact.id, plan.paymentMethodId, config)

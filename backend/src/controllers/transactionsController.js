@@ -489,7 +489,7 @@ export const createTransaction = async (req, res) => {
     }
 
     const transactionId = cleanString(id) || createLocalId('manual_payment')
-    const finalCurrency = cleanString(currency || await getAccountCurrency()).toUpperCase()
+    const finalCurrency = cleanString(await getAccountCurrency()).toUpperCase() || 'MXN'
     const finalMethod = cleanString(paymentMethod || method || 'cash') || 'cash'
     const finalTitle = cleanString(title || description || 'Pago')
     const finalDescription = cleanString(description || title || 'Pago')
@@ -931,9 +931,11 @@ export const updateTransaction = async (req, res) => {
       })
     }
 
+    const accountCurrency = cleanString(await getAccountCurrency()).toUpperCase() || 'MXN'
+    const shouldNormalizeCurrency = currency !== undefined || cleanString(transaction.currency).toUpperCase() !== accountCurrency
     const updates = {
       amount: normalizeAmount(amount),
-      currency: currency ? String(currency).toUpperCase() : undefined,
+      currency: shouldNormalizeCurrency ? accountCurrency : undefined,
       method: paymentMethod || method,
       status: status ? normalizeStatus(status) : undefined,
       reference: reference !== undefined ? String(reference || '') : undefined,
@@ -1017,7 +1019,7 @@ export const updateTransaction = async (req, res) => {
       recordedPaymentMode = liveMode ? 'live' : 'test'
       await ghlClient.recordPayment(invoiceId, {
         amount: updates.amount ?? transaction.amount,
-        currency: updates.currency || transaction.currency || 'MXN',
+        currency: accountCurrency,
         fulfilledAt: updates.date || transaction.date || new Date().toISOString(),
         mode: PAYMENT_METHOD_TO_GHL_MODE[updates.method || transaction.payment_method] || 'cash',
         note: recordedPaymentMode === 'test'
@@ -1034,7 +1036,7 @@ export const updateTransaction = async (req, res) => {
 
     const finalContactId = updates.contactId ?? transaction.contact_id
     const finalAmount = updates.amount ?? transaction.amount
-    const finalCurrency = updates.currency || transaction.currency || 'MXN'
+    const finalCurrency = accountCurrency
     const finalStatus = nextStatus
     const finalMethod = updates.method ?? transaction.payment_method
     const finalReference = updates.reference ?? transaction.reference
