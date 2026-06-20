@@ -867,6 +867,203 @@
   gap: 8px;
 }
 
+.qrDripPanel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+  padding: 14px;
+}
+
+.qrDripPanelCompact {
+  width: 100%;
+  margin: 0;
+  text-align: left;
+}
+
+.qrDripIcon,
+.qrDripIntroIcon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.qrDripCopy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.qrDripTitleRow {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.qrDripTitleRow h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.qrDripCopy p,
+.qrDripIntro p,
+.qrDripNotes p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.qrDripControls {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.qrDripSettingsBody {
+  display: grid;
+  gap: 16px;
+}
+
+.qrDripIntro {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.qrDripIntro strong,
+.qrDripSwitchRow strong,
+.qrDripExampleHeader strong,
+.qrDripTimeline strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.qrDripSwitchRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 0;
+}
+
+.qrDripSwitchRow div {
+  display: grid;
+  gap: 4px;
+}
+
+.qrDripSwitchRow span,
+.qrDripExampleHeader span {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.qrDripInputRow {
+  display: grid;
+  grid-template-columns: minmax(0, 120px) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.qrDripNumberInput {
+  min-height: 42px;
+}
+
+.qrDripInputRow span {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.qrDripExampleBox {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+  padding: 14px;
+}
+
+.qrDripExampleHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.qrDripExampleHeader div {
+  display: grid;
+  gap: 2px;
+}
+
+.qrDripExampleHeader svg {
+  color: var(--accent);
+}
+
+.qrDripTimeline {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qrDripTimeline li {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.qrDripTimeline li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.qrDripTimeline li > span {
+  color: var(--accent);
+  font: var(--label-font);
+  font-size: 11px;
+}
+
+.qrDripTimeline em {
+  color: var(--text-mute);
+  font-size: 12px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.qrDripNotes {
+  display: grid;
+  gap: 8px;
+  border-left: 3px solid var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--radius-ctl);
+  padding: 12px;
+}
+
 /* Modal de QR en grande */
 .qrModalBody {
   display: flex;
@@ -947,4 +1144,22 @@
 @keyframes qrModalSpin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+@media (max-width: 760px) {
+  .qrDripPanel,
+  .qrDripSwitchRow,
+  .qrDripTimeline li {
+    grid-template-columns: 1fr;
+  }
+
+  .qrDripControls,
+  .qrModalActions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .qrDripInputRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

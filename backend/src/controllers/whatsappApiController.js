@@ -37,6 +37,10 @@ import {
   listScheduledChatMessages
 } from '../services/scheduledChatMessagesService.js'
 import { ensureDefaultAppointmentMessageTemplates } from '../services/messageTemplatesService.js'
+import {
+  getWhatsAppQrDripSettings,
+  saveWhatsAppQrDripSettings
+} from '../services/whatsappQrDripService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { markHumanTakeoverByPhone } from '../services/conversationalAgentService.js'
@@ -438,6 +442,35 @@ export async function disconnectWhatsAppQrView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo desconectar el QR de WhatsApp'
+    })
+  }
+}
+
+export async function getWhatsAppQrDripSettingsView(req, res) {
+  try {
+    const data = await getWhatsAppQrDripSettings()
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error leyendo anti-bloqueos WhatsApp QR: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'No se pudo leer la configuración anti-bloqueos de WhatsApp QR'
+    })
+  }
+}
+
+export async function updateWhatsAppQrDripSettingsView(req, res) {
+  try {
+    const data = await saveWhatsAppQrDripSettings({
+      enabled: req.body?.enabled,
+      delaySeconds: req.body?.delaySeconds
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error guardando anti-bloqueos WhatsApp QR: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo guardar la configuración anti-bloqueos de WhatsApp QR'
     })
   }
 }

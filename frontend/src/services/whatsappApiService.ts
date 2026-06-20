@@ -126,6 +126,7 @@ export interface WhatsAppApiStatus {
   qr?: {
     consentText: string
     sessions: WhatsAppQrSession[]
+    drip?: WhatsAppQrDripSettings
   }
   metaDirect?: WhatsAppMetaDirectStatus
   stats: {
@@ -149,6 +150,15 @@ export interface WhatsAppApiStatus {
   }
   lastError?: string | null
 }
+
+export interface WhatsAppQrDripSettings {
+  enabled: boolean
+  delaySeconds: number
+  minDelaySeconds?: number
+  maxDelaySeconds?: number
+}
+
+export type WhatsAppQrDripSettingsPayload = Partial<Pick<WhatsAppQrDripSettings, 'enabled' | 'delaySeconds'>>
 
 export interface WhatsAppMetaDirectStatus {
   provider: 'meta_direct' | string
@@ -413,6 +423,8 @@ export const whatsappApiService = {
   getQr: (phoneNumberId?: string) => apiClient.get<WhatsAppQrSession | WhatsAppQrSession[]>('/whatsapp-api/qr', {
     params: phoneNumberId ? { phoneNumberId } : undefined
   }),
+  getQrDripSettings: () => apiClient.get<WhatsAppQrDripSettings>('/whatsapp-api/qr/drip-settings'),
+  updateQrDripSettings: (payload: WhatsAppQrDripSettingsPayload) => apiClient.put<WhatsAppQrDripSettings>('/whatsapp-api/qr/drip-settings', payload),
   createQrPhoneNumber: (payload: WhatsAppQrPhoneNumberPayload) => apiClient.post<WhatsAppApiPhoneNumber>('/whatsapp-api/qr/phone-numbers', payload),
   connectQr: (payload: WhatsAppQrConnectPayload) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/connect', payload),
   disconnectQr: (phoneNumberId: string) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/disconnect', { phoneNumberId }),

@@ -13,6 +13,7 @@ import {
   getMetaDirectSetupPrefillView,
   getWhatsAppMetaBusinessAccountView,
   getWhatsAppApiTemplatesView,
+  getWhatsAppQrDripSettingsView,
   getWhatsAppQrView,
   previewWhatsAppApiPhoneNumbersView,
   handleMetaDirectWebhookRelayView,
@@ -31,6 +32,7 @@ import {
   setWhatsAppApiDefaultPhoneNumberView,
   syncMetaDirectHistoryView,
   testMetaDirectConnectionView,
+  updateWhatsAppQrDripSettingsView,
   rerouteWhatsAppPhoneNumberContactsView,
   restoreWhatsAppPhoneNumberContactsView
 } from '../controllers/whatsappApiController.js'
@@ -60,6 +62,8 @@ router.post('/phone-numbers/:id/restore', restoreWhatsAppPhoneNumberContactsView
 router.post('/refresh', refreshWhatsAppApiView)
 router.post('/disconnect', disconnectWhatsAppApiView)
 router.post('/reset', resetWhatsAppApiCredentialsView)
+router.get('/qr/drip-settings', getWhatsAppQrDripSettingsView)
+router.put('/qr/drip-settings', updateWhatsAppQrDripSettingsView)
 router.get('/qr', getWhatsAppQrView)
 router.post('/qr/phone-numbers', createWhatsAppQrPhoneNumberView)
 router.post('/qr/connect', connectWhatsAppQrView)

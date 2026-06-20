@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowLeft,
+  Clock3,
   Cloud,
   ExternalLink,
   FileText,
@@ -12,16 +13,17 @@ import {
   Plus,
   QrCode,
   RefreshCw,
+  Send,
   ShieldCheck,
   Star,
   Unplug,
   Wallet
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
-import { Badge, Button, Modal, PageHeader, SearchField } from '@/components/common'
+import { Badge, Button, Modal, NumberInput, PageHeader, SearchField, Switch } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
-import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
+import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
 import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
 
@@ -46,6 +48,14 @@ const isQueryText = (value?: string | null): value is string => typeof value ===
 const YCLOUD_REGISTER_URL = 'https://www.ycloud.com/console/#/entry/register'
 const YCLOUD_CONSOLE_URL = 'https://www.ycloud.com/console/#/app/dashboard/analytics'
 const META_WHATSAPP_PAYMENT_CONFIG_URL = 'https://business.facebook.com/latest/settings/whatsapp_account'
+const QR_DRIP_DISABLE_CONFIRM_WORD = 'APAGAR'
+const DEFAULT_QR_DRIP_SETTINGS: Required<WhatsAppQrDripSettings> = {
+  enabled: true,
+  delaySeconds: 30,
+  minDelaySeconds: 15,
+  maxDelaySeconds: 600
+}
+const QR_DRIP_EXAMPLE_NAMES = ['María López', 'Carlos Vega', 'Ana Ruiz', 'Luis Ortega', 'Diana Solís']
 
 function parseJson<T>(value?: string | null): T | null {
   if (!value) return null
@@ -128,6 +138,47 @@ function isQrWorkingStatus(status?: string | null) {
   return ['connected', 'qr_pending', 'starting', 'restarting', 'reconnecting'].includes(String(status || '').toLowerCase())
 }
 
+function normalizeQrDripSettings(settings?: WhatsAppQrDripSettings | null): Required<WhatsAppQrDripSettings> {
+  const delaySeconds = Number(settings?.delaySeconds)
+  const minDelaySeconds = Number(settings?.minDelaySeconds) || DEFAULT_QR_DRIP_SETTINGS.minDelaySeconds
+  const maxDelaySeconds = Number(settings?.maxDelaySeconds) || DEFAULT_QR_DRIP_SETTINGS.maxDelaySeconds
+  return {
+    enabled: settings?.enabled ?? DEFAULT_QR_DRIP_SETTINGS.enabled,
+    delaySeconds: Number.isFinite(delaySeconds)
+      ? Math.min(Math.max(Math.round(delaySeconds), minDelaySeconds), maxDelaySeconds)
+      : DEFAULT_QR_DRIP_SETTINGS.delaySeconds,
+    minDelaySeconds,
+    maxDelaySeconds
+  }
+}
+
+function formatQrDripDelay(seconds: number) {
+  const safeSeconds = Math.max(1, Math.round(Number(seconds) || DEFAULT_QR_DRIP_SETTINGS.delaySeconds))
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainder = safeSeconds % 60
+  if (minutes && remainder) return `${minutes} min ${remainder} s`
+  if (minutes) return `${minutes} min`
+  return `${safeSeconds} s`
+}
+
+function buildQrDripExample(delaySeconds: number) {
+  const base = new Date()
+  const formatter = new Intl.DateTimeFormat('es-MX', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+
+  return QR_DRIP_EXAMPLE_NAMES.map((name, index) => {
+    const sendAt = new Date(base.getTime() + (index * Math.max(1, delaySeconds) * 1000))
+    return {
+      name,
+      offset: index === 0 ? 'Ahora' : `+${formatQrDripDelay(index * delaySeconds)}`,
+      time: formatter.format(sendAt)
+    }
+  })
+}
+
 const whatsappSections: ConnectedSection[] = ['numbers', 'templates', 'alerts']
 const isWhatsAppSection = (value?: string): value is ConnectedSection => whatsappSections.includes(value as ConnectedSection)
 const parseWhatsAppSection = (pathname: string): ConnectedSection => {
@@ -168,11 +219,21 @@ export const WhatsAppSettings: React.FC = () => {
   // El modal de QR tiene dos pasos: primero el aviso de riesgo y, al aceptar,
   // el código QR en grande dentro del mismo modal.
   const [qrModalView, setQrModalView] = useState<'consent' | 'qr'>('consent')
+  const [qrDripModalOpen, setQrDripModalOpen] = useState(false)
+  const [qrDripDelayDraft, setQrDripDelayDraft] = useState(DEFAULT_QR_DRIP_SETTINGS.delaySeconds)
+  const [qrDripSaving, setQrDripSaving] = useState(false)
+  const [qrDripDisableConfirmOpen, setQrDripDisableConfirmOpen] = useState(false)
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
 
   const apiConnected = Boolean(apiStatus?.connected)
   const hasWhatsAppNumbers = Boolean(apiStatus?.phoneNumbers?.length)
   const hasAnyWhatsAppConnection = apiConnected || hasWhatsAppNumbers
+  const qrDripSettings = useMemo(() => normalizeQrDripSettings(apiStatus?.qr?.drip), [apiStatus?.qr?.drip])
+  const qrDripExample = useMemo(() => buildQrDripExample(qrDripDelayDraft), [qrDripDelayDraft])
+
+  useEffect(() => {
+    setQrDripDelayDraft(qrDripSettings.delaySeconds)
+  }, [qrDripSettings.delaySeconds])
 
   useEffect(() => {
     setActiveSection(current => current === routeSection ? current : routeSection)
@@ -359,6 +420,58 @@ export const WhatsAppSettings: React.FC = () => {
     } finally {
       setApiRefreshing(false)
     }
+  }
+
+  const mergeQrDripSettings = (settings: WhatsAppQrDripSettings) => {
+    setApiStatus(current => {
+      if (!current) return current
+      return {
+        ...current,
+        qr: {
+          consentText: current.qr?.consentText || '',
+          sessions: current.qr?.sessions || [],
+          ...current.qr,
+          drip: settings
+        }
+      }
+    })
+  }
+
+  const saveQrDripSettings = async (patch: Partial<WhatsAppQrDripSettings>, options: { quiet?: boolean } = {}) => {
+    setQrDripSaving(true)
+    try {
+      const nextSettings = await whatsappApiService.updateQrDripSettings(patch)
+      mergeQrDripSettings(nextSettings)
+      setQrDripDelayDraft(nextSettings.delaySeconds)
+      if (!options.quiet) {
+        showToast(
+          'success',
+          'Anti-bloqueos actualizado',
+          nextSettings.enabled
+            ? `Los mensajes por QR saldrán con ${formatQrDripDelay(nextSettings.delaySeconds)} entre cada envío automático.`
+            : 'El envío por QR ya no tendrá retardo automático.'
+        )
+      }
+      return nextSettings
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta nuevamente.')
+      throw error
+    } finally {
+      setQrDripSaving(false)
+    }
+  }
+
+  const requestQrDripToggle = (nextEnabled: boolean) => {
+    if (!nextEnabled) {
+      setQrDripDisableConfirmOpen(true)
+      return
+    }
+
+    saveQrDripSettings({ enabled: true }).catch(() => null)
+  }
+
+  const saveQrDripDelay = () => {
+    saveQrDripSettings({ delaySeconds: qrDripDelayDraft }).catch(() => null)
   }
 
   const openAddNumberModal = () => {
@@ -877,6 +990,8 @@ export const WhatsAppSettings: React.FC = () => {
             </div>
           </div>
 
+          {renderQrDripPanel()}
+
           {filteredPhones.length > 0 ? (
             <div className={styles.tableWrap}>
               <table className={styles.table} data-ristak-table data-ristak-table-element>
@@ -1092,6 +1207,119 @@ export const WhatsAppSettings: React.FC = () => {
     return <MessageTemplates embedded />
   }
 
+  const renderQrDripPanel = (compact = false) => (
+    <section className={`${styles.qrDripPanel} ${compact ? styles.qrDripPanelCompact : ''}`} aria-label="Sistema anti-bloqueos de WhatsApp">
+      <div className={styles.qrDripIcon} aria-hidden="true">
+        <Clock3 size={18} />
+      </div>
+      <div className={styles.qrDripCopy}>
+        <div className={styles.qrDripTitleRow}>
+          <h3>Sistema anti-bloqueos de WhatsApp</h3>
+          <Badge variant={qrDripSettings.enabled ? 'success' : 'warning'}>
+            {qrDripSettings.enabled ? 'Activo' : 'Apagado'}
+          </Badge>
+        </div>
+        <p>
+          Cuando una automatización use QR, Ristak reparte los envíos con {formatQrDripDelay(qrDripSettings.delaySeconds)} entre mensajes para no mandar todo de golpe.
+        </p>
+      </div>
+      <div className={styles.qrDripControls}>
+        <Switch
+          checked={qrDripSettings.enabled}
+          disabled={qrDripSaving}
+          onChange={requestQrDripToggle}
+          aria-label="Activar sistema anti-bloqueos de WhatsApp"
+        />
+        <Button variant="outline" size="small" onClick={() => setQrDripModalOpen(true)}>
+          Configurar
+        </Button>
+      </div>
+    </section>
+  )
+
+  const renderQrDripSettingsModal = () => (
+    <div className={styles.qrDripSettingsBody}>
+      <div className={styles.qrDripIntro}>
+        <span className={styles.qrDripIntroIcon} aria-hidden="true">
+          <Clock3 size={18} />
+        </span>
+        <div>
+          <strong>Configuración global para WhatsApp Web / QR</strong>
+          <p>
+            Aplica a todos los números conectados por QR y a cualquier respaldo QR que use una automatización.
+          </p>
+        </div>
+      </div>
+
+      <div className={styles.qrDripSwitchRow}>
+        <div>
+          <strong>Modo goteo automático</strong>
+          <span>El primer mensaje sale al momento; los siguientes esperan el intervalo configurado.</span>
+        </div>
+        <Switch
+          checked={qrDripSettings.enabled}
+          disabled={qrDripSaving}
+          onChange={requestQrDripToggle}
+          aria-label="Activar modo goteo automático"
+        />
+      </div>
+
+      <label className={styles.fieldLabel}>
+        Esperar antes del siguiente mensaje QR
+        <div className={styles.qrDripInputRow}>
+          <NumberInput
+            className={styles.qrDripNumberInput}
+            value={qrDripDelayDraft}
+            min={qrDripSettings.minDelaySeconds}
+            max={qrDripSettings.maxDelaySeconds}
+            step={5}
+            onValueChange={setQrDripDelayDraft}
+            aria-label="Segundos entre mensajes QR automáticos"
+          />
+          <span>segundos</span>
+        </div>
+      </label>
+
+      <div className={styles.qrDripExampleBox}>
+        <div className={styles.qrDripExampleHeader}>
+          <Send size={16} />
+          <div>
+            <strong>Ejemplo de calendario de goteo</strong>
+            <span>Si llegan 5 recordatorios automáticos al mismo tiempo.</span>
+          </div>
+        </div>
+        <ol className={styles.qrDripTimeline}>
+          {qrDripExample.map((item) => (
+            <li key={item.name}>
+              <span>{item.offset}</span>
+              <strong>{item.name}</strong>
+              <em>{item.time}</em>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <div className={styles.qrDripNotes}>
+        <p>Esto reduce picos raros de actividad en sesiones tipo WhatsApp Web. No garantiza que WhatsApp no limite el número, pero baja el riesgo de envíos masivos repentinos.</p>
+        <p>Si apagas el sistema, cada automatización que use QR intentará enviar en cuanto le toque.</p>
+      </div>
+
+      <div className={styles.qrModalActions}>
+        <Button variant="secondary" onClick={() => setQrDripModalOpen(false)}>
+          Cerrar
+        </Button>
+        <Button
+          variant="primary"
+          loading={qrDripSaving}
+          onClick={saveQrDripDelay}
+          disabled={qrDripDelayDraft === qrDripSettings.delaySeconds}
+        >
+          Guardar tiempo
+        </Button>
+      </div>
+    </div>
+  )
+
   if (apiLoading) {
     return (
       <div className={styles.shell}>
@@ -1168,6 +1396,30 @@ export const WhatsAppSettings: React.FC = () => {
         {renderAddNumberContent()}
       </Modal>
 
+      <Modal
+        isOpen={qrDripModalOpen}
+        onClose={() => setQrDripModalOpen(false)}
+        title="Sistema anti-bloqueos de WhatsApp"
+        type="custom"
+        size="lg"
+      >
+        {renderQrDripSettingsModal()}
+      </Modal>
+
+      <Modal
+        isOpen={qrDripDisableConfirmOpen}
+        onClose={() => setQrDripDisableConfirmOpen(false)}
+        title="Apagar anti-bloqueos de WhatsApp"
+        message={`Si apagas esto, los mensajes automáticos por QR pueden salir todos juntos y WhatsApp puede restringir o bloquear el número. Escribe ${QR_DRIP_DISABLE_CONFIRM_WORD} para confirmar.`}
+        type="confirm"
+        confirmText="Apagar sistema"
+        cancelText="Mantener encendido"
+        typeToConfirm={QR_DRIP_DISABLE_CONFIRM_WORD}
+        onConfirm={async () => {
+          await saveQrDripSettings({ enabled: false })
+        }}
+      />
+
       {(() => {
         const qrModalSession = qrConsentPhone ? qrSessionsByPhoneId.get(qrConsentPhone.id) : null
         const qrModalStatus = String(qrModalSession?.status || qrConsentPhone?.qr_status || '').toLowerCase()
@@ -1217,11 +1469,14 @@ export const WhatsAppSettings: React.FC = () => {
             ) : (
               <div className={styles.qrModalBody}>
                 {qrModalConnected ? (
-                  <div className={styles.qrModalState}>
-                    <ShieldCheck size={34} className={styles.qrModalSuccessIcon} />
-                    <strong>¡QR conectado!</strong>
-                    <span>Este número ya puede mandar mensajes individuales por WhatsApp Web.</span>
-                  </div>
+                  <>
+                    <div className={styles.qrModalState}>
+                      <ShieldCheck size={34} className={styles.qrModalSuccessIcon} />
+                      <strong>¡QR conectado!</strong>
+                      <span>Este número ya puede mandar mensajes individuales por WhatsApp Web.</span>
+                    </div>
+                    {renderQrDripPanel(true)}
+                  </>
                 ) : qrModalSession?.qrCodeDataUrl && qrModalPending ? (
                   <>
                     <div className={styles.qrModalImage}>

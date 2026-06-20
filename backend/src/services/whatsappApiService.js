@@ -21,6 +21,7 @@ import {
   sendWhatsAppQrTextMessage,
   startWhatsAppQrConnection
 } from './whatsappQrService.js'
+import { getWhatsAppQrDripSettings } from './whatsappQrDripService.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
@@ -3061,7 +3062,7 @@ export async function restoreWhatsAppPhoneNumberContacts({ phoneNumberId } = {})
 export async function getWhatsAppApiStatus() {
   const config = await clearStaleDisconnectedYCloudCredentials(await loadConfig())
   const metaDirect = await loadMetaDirectConfig()
-  const [stats, phoneNumbers, balance, templates, alerts, qrSessions] = await Promise.all([
+  const [stats, phoneNumbers, balance, templates, alerts, qrSessions, qrDripSettings] = await Promise.all([
     getStats(),
     getPhoneNumbersFromDb(),
     getBalanceFromDb(),
@@ -3070,6 +3071,10 @@ export async function getWhatsAppApiStatus() {
     getWhatsAppQrSessions().catch(error => {
       logger.warn(`No se pudieron leer sesiones QR WhatsApp: ${error.message}`)
       return []
+    }),
+    getWhatsAppQrDripSettings().catch(error => {
+      logger.warn(`No se pudo leer configuración anti-bloqueos QR: ${error.message}`)
+      return { enabled: true, delaySeconds: 30, minDelaySeconds: 15, maxDelaySeconds: 600 }
     })
   ])
 
@@ -3167,7 +3172,8 @@ export async function getWhatsAppApiStatus() {
     },
     qr: {
       consentText: QR_CONSENT_TEXT,
-      sessions: qrSessions
+      sessions: qrSessions,
+      drip: qrDripSettings
     },
     metaDirect: {
       provider: metaDirect.provider,

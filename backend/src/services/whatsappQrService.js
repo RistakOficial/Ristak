@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { logger } from '../utils/logger.js'
+import { waitForWhatsAppQrDripSlot } from './whatsappQrDripService.js'
 
 const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak solo la usará para mensajes individuales cuando yo lo active.'
 const CONNECT_TIMEOUT_MS = 20000
@@ -1851,6 +1852,11 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
     type: 'text',
     text: body
   })
+  await waitForWhatsAppQrDripSlot({
+    phoneNumberId: phone.id,
+    to: recipient.verifiedPhone || toPhone,
+    type: 'text'
+  })
   const response = await sock.sendMessage(recipient.jid, { text: body })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
 
@@ -1894,6 +1900,11 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
     contactPhone: recipient.verifiedPhone || toPhone,
     type: 'image',
     text: cleanCaption
+  })
+  await waitForWhatsAppQrDripSlot({
+    phoneNumberId: phone.id,
+    to: recipient.verifiedPhone || toPhone,
+    type: 'image'
   })
   const response = await sock.sendMessage(recipient.jid, {
     image: media.content,
@@ -1947,6 +1958,11 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
     contactPhone: recipient.verifiedPhone || toPhone,
     type: 'audio',
     text: ''
+  })
+  await waitForWhatsAppQrDripSlot({
+    phoneNumberId: phone.id,
+    to: recipient.verifiedPhone || toPhone,
+    type: 'audio'
   })
   const response = await sock.sendMessage(recipient.jid, {
     audio: media.content,
@@ -2011,6 +2027,11 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
     contactPhone: recipient.verifiedPhone || toPhone,
     type: 'document',
     text: cleanCaption || cleanFilename
+  })
+  await waitForWhatsAppQrDripSlot({
+    phoneNumberId: phone.id,
+    to: recipient.verifiedPhone || toPhone,
+    type: 'document'
   })
   const response = await sock.sendMessage(recipient.jid, {
     document: media.content,
