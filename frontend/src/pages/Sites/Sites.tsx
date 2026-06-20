@@ -24110,6 +24110,7 @@ const VideoPlayerPreview: React.FC<{
   const showOverlayLayer = showOverlay && (!isPlaying || isPreviewLooping)
   const showSoundNotice = showOverlay && soundHint && !hasStartedPlayback
   const shouldHideControlBarAtStart = showCustomControlBar && !showControlBarInitially && !hasStartedPlayback
+  const shouldDismissControlsOnOutsidePointer = showCustomControlBar && controlsVisible && !shouldHideControlBarAtStart
   const controlBarTabIndex = shouldHideControlBarAtStart ? -1 : undefined
   const isControlBarBlockedAtStart = useCallback(
     () => showCustomControlBar && !showControlBarInitially && !hasStartedPlaybackRef.current,
@@ -24164,7 +24165,7 @@ const VideoPlayerPreview: React.FC<{
   }, [hideControlsAfter])
 
   useEffect(() => {
-    if (!showCustomControlBar || (!isPlaying && !isPreviewLooping)) return undefined
+    if (!shouldDismissControlsOnOutsidePointer) return undefined
     const player = playerRef.current
     if (!player) return undefined
 
@@ -24195,7 +24196,7 @@ const VideoPlayerPreview: React.FC<{
         doc.removeEventListener('pointerdown', handleOutsidePointerDown, true)
       })
     }
-  }, [clearControlsHideTimer, isPlaying, isPreviewLooping, showCustomControlBar])
+  }, [clearControlsHideTimer, shouldDismissControlsOnOutsidePointer])
   const className = [
     'rstk-video',
     'rstk-video-player',
