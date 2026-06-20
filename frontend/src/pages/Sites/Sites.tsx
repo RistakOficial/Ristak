@@ -31167,6 +31167,11 @@ const VideoActionsPanel: React.FC<{
     setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(rule.timeSeconds) }))
   }, [])
 
+  const handleCloseRuleEditor = useCallback(() => {
+    onSave()
+    setExpandedRuleId('')
+  }, [onSave])
+
   const handleDeleteRule = useCallback((ruleId: string) => {
     patchRules(rules.filter(rule => rule.id !== ruleId))
     setExpandedRuleId(current => current === ruleId ? '' : current)
@@ -31259,15 +31264,27 @@ const VideoActionsPanel: React.FC<{
       <div className={styles.videoActionInlineEditor}>
         <div className={styles.videoActionTimeControl}>
           <div className={styles.videoActionTimeRow}>
-            <span>Cuando llegue a</span>
-            <input
-              className={styles.videoActionTimeInput}
-              value={timeInput}
-              placeholder="03:45"
-              inputMode="numeric"
-              onChange={(event) => handleTimeInputChange(rule, event.target.value)}
-              onBlur={() => handleTimeInputBlur(rule)}
-            />
+            <label className={styles.videoActionTimeMeta}>
+              <span className={styles.videoActionTimeLabel}>Cuando llegue a:</span>
+              <input
+                className={styles.videoActionTimeInput}
+                value={timeInput}
+                placeholder="03:45"
+                inputMode="numeric"
+                onChange={(event) => handleTimeInputChange(rule, event.target.value)}
+                onBlur={() => handleTimeInputBlur(rule)}
+              />
+            </label>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              leftIcon={<X size={14} />}
+              className={styles.videoActionCloseButton}
+              onClick={handleCloseRuleEditor}
+            >
+              Cerrar y guardar
+            </Button>
           </div>
           <VideoActionTimeScale
             timeSeconds={rule.timeSeconds}
@@ -31424,10 +31441,7 @@ const VideoActionsPanel: React.FC<{
             variant="secondary"
             size="sm"
             leftIcon={<Save size={14} />}
-            onClick={() => {
-              onSave()
-              setExpandedRuleId('')
-            }}
+            onClick={handleCloseRuleEditor}
           >
             Guardar acción
           </Button>

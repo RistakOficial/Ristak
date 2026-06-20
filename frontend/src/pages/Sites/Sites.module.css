@@ -7020,19 +7020,28 @@
 
 .videoActionTimeRow {
   display: grid;
-  grid-template-columns: auto minmax(84px, 112px);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
 }
 
-.videoActionTimeRow > span {
+.videoActionTimeMeta {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.videoActionTimeLabel {
+  flex: 0 0 auto;
   color: var(--text-dim);
   font-size: 0.78rem;
   font-weight: 400;
 }
 
 .videoActionTimeInput {
-  width: 100%;
+  flex: 0 0 88px;
+  width: 88px;
   height: 32px;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
@@ -7048,6 +7057,10 @@
 .videoActionTimeInput:focus {
   border-color: var(--accent);
   box-shadow: var(--ristak-focus-ring);
+}
+
+.videoActionCloseButton {
+  white-space: nowrap;
 }
 
 .videoActionStep {
@@ -7178,6 +7191,10 @@
 @media (max-width: 720px) {
   .videoActionTimeRow {
     grid-template-columns: 1fr;
+  }
+
+  .videoActionCloseButton {
+    justify-self: end;
   }
 }
 
