@@ -783,14 +783,15 @@ async function insertLocalInvoicePayment({ invoice, contactId, fallbackAmount, f
   await db.run(
     `INSERT INTO payments (
       id, contact_id, amount, currency, status, payment_method, payment_mode,
-      reference, title, description, date, ghl_invoice_id, invoice_number,
+      payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
       due_date, sent_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       contact_id = excluded.contact_id,
       amount = excluded.amount,
       currency = excluded.currency,
       status = excluded.status,
+      payment_provider = 'highlevel',
       payment_mode = excluded.payment_mode,
       reference = excluded.reference,
       title = excluded.title,
@@ -808,6 +809,7 @@ async function insertLocalInvoicePayment({ invoice, contactId, fallbackAmount, f
       status,
       null,
       resolvedPaymentMode,
+      'highlevel',
       invoice.invoiceNumber || null,
       invoice.title || invoice.name || firstItem.name || fallbackDescription || 'Pago',
       firstItem.description || firstItem.name || invoice.description || fallbackDescription || invoice.name || invoice.title || 'Pago',

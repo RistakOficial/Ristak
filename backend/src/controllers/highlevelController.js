@@ -15,6 +15,7 @@ import { renderTemplateVariables } from '../services/templateVariablesService.js
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
 import { clearHighLevelIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
+import { updateSingleContactStats } from '../utils/updateContactsStats.js';
 import {
   getGhlContactIdForLocalContact,
   linkContactToGhl,
@@ -652,6 +653,54 @@ export const testConnection = async (req, res) => {
  * Limpia todas las tablas de datos (contactos, pagos, citas, anuncios de Meta)
  * Se usa cuando se cambia a un location diferente
  */
+const HIGHLEVEL_MIRROR_PAYMENT_WHERE = `(
+  COALESCE(payment_provider, '') = 'highlevel'
+  OR (
+    COALESCE(ghl_invoice_id, '') != ''
+    AND id = ghl_invoice_id
+    AND COALESCE(payment_provider, 'manual') != 'stripe'
+    AND id NOT LIKE 'manual_payment_%'
+  )
+)`;
+
+const LOCAL_PAYMENT_WITH_GHL_LINK_WHERE = `
+  COALESCE(ghl_invoice_id, '') != ''
+  AND NOT ${HIGHLEVEL_MIRROR_PAYMENT_WHERE}
+`;
+
+export async function clearHighLevelMirrorDataForLocationChange() {
+  const affectedPaymentContacts = await db.all(
+    `SELECT DISTINCT contact_id
+     FROM payments
+     WHERE contact_id IS NOT NULL
+       AND (${HIGHLEVEL_MIRROR_PAYMENT_WHERE} OR (${LOCAL_PAYMENT_WITH_GHL_LINK_WHERE}))`
+  );
+
+  const deletedMirrors = await db.run(`DELETE FROM payments WHERE ${HIGHLEVEL_MIRROR_PAYMENT_WHERE}`);
+  const detachedLocalPayments = await db.run(
+    `UPDATE payments
+     SET ghl_invoice_id = NULL,
+         invoice_number = NULL,
+         sent_at = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE ${LOCAL_PAYMENT_WITH_GHL_LINK_WHERE}`
+  );
+
+  await Promise.all(
+    affectedPaymentContacts
+      .map(row => row.contact_id)
+      .filter(Boolean)
+      .map(contactId => updateSingleContactStats(contactId).catch(error => {
+        logger.warn(`No se pudieron recalcular estadísticas del contacto ${contactId} tras limpiar HighLevel: ${error.message}`);
+      }))
+  );
+
+  return {
+    deletedPaymentMirrors: deletedMirrors.changes || 0,
+    detachedLocalPayments: detachedLocalPayments.changes || 0
+  };
+}
+
 async function clearAllData() {
   logger.info('🧹 Limpiando espejos de HighLevel sin borrar datos locales de Ristak...');
 
@@ -660,7 +709,8 @@ async function clearAllData() {
     // para poder sincronizarse con el nuevo location conectado.
     await db.run('DELETE FROM whatsapp_attribution');
     await db.run('DELETE FROM meta_ads');
-    await db.run('DELETE FROM payments');
+    const paymentsCleanup = await clearHighLevelMirrorDataForLocationChange();
+    logger.info(`Pagos HighLevel limpiados: ${paymentsCleanup.deletedPaymentMirrors} espejos borrados, ${paymentsCleanup.detachedLocalPayments} pagos locales desligados`);
     await db.run('DELETE FROM meta_config');
 
     try {
@@ -1683,14 +1733,15 @@ export const createInvoice = async (req, res) => {
       await db.run(
         `INSERT INTO payments (
           id, contact_id, amount, currency, status, payment_method, payment_mode,
-          reference, title, description, date, ghl_invoice_id, invoice_number,
+          payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
           due_date, sent_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
           contact_id = excluded.contact_id,
           amount = excluded.amount,
           currency = excluded.currency,
           status = excluded.status,
+          payment_provider = 'highlevel',
           payment_mode = excluded.payment_mode,
           reference = excluded.reference,
           title = excluded.title,
@@ -1708,6 +1759,7 @@ export const createInvoice = async (req, res) => {
           'draft', // Inicialmente siempre es draft
           null, // payment_method (se llena cuando se pague)
           paymentMode,
+          'highlevel',
           createdInvoice.invoiceNumber || null,
           displayTitle,
           displayDescription,

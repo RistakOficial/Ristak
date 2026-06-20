@@ -257,6 +257,7 @@ function buildAutomationPaymentPayloadFromRow(row = {}, overrides = {}) {
     currency: row.currency,
     status: row.status,
     paymentMethod: row.payment_method,
+    provider: row.payment_provider,
     paymentMode: row.payment_mode,
     reference: row.reference,
     title: row.title,
@@ -840,6 +841,11 @@ export const handlePaymentWebhook = async (req, res) => {
              currency = COALESCE(currency, ?),
              status = ?,
              payment_method = COALESCE(?, payment_method, 'manual'),
+             payment_provider = CASE
+               WHEN id LIKE 'manual_payment_%' THEN COALESCE(payment_provider, 'manual')
+               WHEN payment_provider = 'stripe' THEN payment_provider
+               ELSE 'highlevel'
+             END,
              payment_mode = COALESCE(?, payment_mode, 'live'),
              reference = COALESCE(reference, ?),
              title = COALESCE(title, ?),
@@ -878,13 +884,18 @@ export const handlePaymentWebhook = async (req, res) => {
       const query = usePostgres
         ? `INSERT INTO payments (
              id, contact_id, amount, currency, status, payment_method, payment_mode,
-             reference, title, description, date, created_at, ghl_invoice_id, invoice_number
+             payment_provider, reference, title, description, date, created_at, ghl_invoice_id, invoice_number
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
            ON CONFLICT (id) DO UPDATE SET
              amount = EXCLUDED.amount,
              status = EXCLUDED.status,
              payment_method = EXCLUDED.payment_method,
+             payment_provider = CASE
+               WHEN payments.id LIKE 'manual_payment_%' THEN COALESCE(payments.payment_provider, 'manual')
+               WHEN payments.payment_provider = 'stripe' THEN payments.payment_provider
+               ELSE 'highlevel'
+             END,
              payment_mode = EXCLUDED.payment_mode,
              reference = EXCLUDED.reference,
              title = EXCLUDED.title,
@@ -894,13 +905,18 @@ export const handlePaymentWebhook = async (req, res) => {
              updated_at = CURRENT_TIMESTAMP`
         : `INSERT INTO payments (
              id, contact_id, amount, currency, status, payment_method, payment_mode,
-             reference, title, description, date, created_at, ghl_invoice_id, invoice_number
+             payment_provider, reference, title, description, date, created_at, ghl_invoice_id, invoice_number
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              amount = excluded.amount,
              status = excluded.status,
              payment_method = excluded.payment_method,
+             payment_provider = CASE
+               WHEN id LIKE 'manual_payment_%' THEN COALESCE(payment_provider, 'manual')
+               WHEN payment_provider = 'stripe' THEN payment_provider
+               ELSE 'highlevel'
+             END,
              payment_mode = excluded.payment_mode,
              reference = excluded.reference,
              title = excluded.title,
@@ -917,6 +933,7 @@ export const handlePaymentWebhook = async (req, res) => {
         status,
         paymentMethod || 'manual',
         paymentMode,
+        'highlevel',
         reference,
         title,
         description,
@@ -971,7 +988,8 @@ export const handlePaymentWebhook = async (req, res) => {
       currency,
       status,
       paymentMethod,
-      provider: paymentProvider,
+      provider: 'highlevel',
+      gateway: paymentProvider,
       paymentMode,
       reference,
       title,
@@ -1566,16 +1584,40 @@ export const handleInvoiceWebhook = async (req, res) => {
 
       case 'InvoiceDeleted':
       case 'invoice.deleted': {
-        // Eliminar de BD local y recalcular estadísticas del contacto para que
-        // no quede como cliente con purchases_count/total_paid obsoletos
-        const deletedPayment = await db.get(
-          'SELECT contact_id FROM payments WHERE ghl_invoice_id = ?',
+        // Eliminar sólo espejos remotos. Si el pago nació en Ristak o Stripe,
+        // se conserva y se desliga del invoice remoto eliminado.
+        const affectedPayments = await db.all(
+          'SELECT id, contact_id FROM payments WHERE ghl_invoice_id = ?',
           [invoiceId]
         );
-        await db.run('DELETE FROM payments WHERE ghl_invoice_id = ?', [invoiceId]);
-        if (deletedPayment?.contact_id) {
-          await updateSingleContactStats(deletedPayment.contact_id);
-          logger.success(`Estadísticas recalculadas tras eliminar invoice para contacto: ${deletedPayment.contact_id}`);
+
+        await db.run(
+          `DELETE FROM payments
+           WHERE ghl_invoice_id = ?
+             AND (
+               COALESCE(payment_provider, '') = 'highlevel'
+               OR (
+                 id = ghl_invoice_id
+                 AND COALESCE(payment_provider, 'manual') != 'stripe'
+                 AND id NOT LIKE 'manual_payment_%'
+               )
+             )`,
+          [invoiceId]
+        );
+        await db.run(
+          `UPDATE payments
+           SET ghl_invoice_id = NULL,
+               invoice_number = NULL,
+               sent_at = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE ghl_invoice_id = ?`,
+          [invoiceId]
+        );
+
+        const affectedContactIds = [...new Set(affectedPayments.map(row => row.contact_id).filter(Boolean))];
+        for (const contactId of affectedContactIds) {
+          await updateSingleContactStats(contactId);
+          logger.success(`Estadísticas recalculadas tras eliminar/desligar invoice para contacto: ${contactId}`);
         }
         logger.info(`Invoice ${invoiceId} fue eliminado`);
         return res.status(200).json({ success: true, message: 'Invoice eliminado' });
@@ -1588,7 +1630,14 @@ export const handleInvoiceWebhook = async (req, res) => {
 
     if (newStatus) {
       // Construir query de actualización
-      const setFields = [`status = ?`];
+      const setFields = [
+        `status = ?`,
+        `payment_provider = CASE
+          WHEN id LIKE 'manual_payment_%' THEN COALESCE(payment_provider, 'manual')
+          WHEN payment_provider = 'stripe' THEN payment_provider
+          ELSE 'highlevel'
+        END`
+      ];
       const values = [newStatus];
       const paymentModeSignal = firstValue(
         data.liveMode,

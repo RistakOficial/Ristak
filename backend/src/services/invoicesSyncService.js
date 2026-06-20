@@ -36,6 +36,15 @@ const PAID_STATUS_DOWNGRADE_PROTECTED_STATUSES = new Set(['draft', 'sent', 'pend
 const LOCAL_EXPORT_EXCLUDED_STATUSES = new Set(['deleted', 'failed', 'refunded', 'void', 'voided'])
 const LOCAL_EXPORT_PAID_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success'])
 const LOCAL_EXPORT_ID_PREFIXES = ['manual_payment_']
+const GENERIC_PAYMENT_IDENTITY_TEXTS = new Set([
+  'pago',
+  'payment',
+  'invoice',
+  'factura',
+  'new invoice',
+  'text2pay',
+  'text2pay addi'
+])
 const LOCAL_EXPORT_METHOD_TO_GHL_MODE = {
   card: 'card',
   transfer: 'bank_transfer',
@@ -88,6 +97,66 @@ function normalizeLocalPaymentMode(value, fallback = 'live') {
 function isLocalPaymentExportCandidate(payment = {}) {
   const id = cleanString(payment.id)
   return LOCAL_EXPORT_ID_PREFIXES.some(prefix => id.startsWith(prefix))
+}
+
+function normalizeLookupText(value) {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
+function getMeaningfulIdentityText(value) {
+  const text = normalizeLookupText(value)
+  if (!text || text.length < 4 || GENERIC_PAYMENT_IDENTITY_TEXTS.has(text)) return ''
+  return text
+}
+
+function uniq(values = []) {
+  return [...new Set(values.filter(Boolean))]
+}
+
+function buildPaymentIdentityTexts({ invoiceNumber, reference, title, description } = {}) {
+  const normalizedInvoiceNumber = normalizeInvoiceNumber(invoiceNumber)
+  const invoiceCandidates = normalizedInvoiceNumber
+    ? buildInvoiceReferenceCandidates(normalizedInvoiceNumber).map(normalizeLookupText)
+    : []
+
+  return uniq([
+    ...invoiceCandidates,
+    getMeaningfulIdentityText(reference),
+    getMeaningfulIdentityText(title),
+    getMeaningfulIdentityText(description)
+  ])
+}
+
+function rowMatchesIdentityTexts(row = {}, identityTexts = []) {
+  if (!identityTexts.length) return false
+
+  const rowTexts = buildPaymentIdentityTexts({
+    invoiceNumber: row.invoice_number,
+    reference: row.reference,
+    title: row.title,
+    description: row.description
+  })
+
+  return rowTexts.some(text => identityTexts.includes(text))
+}
+
+function localExportPrefixWhere(column = 'id') {
+  return `(${LOCAL_EXPORT_ID_PREFIXES.map(() => `${column} LIKE ?`).join(' OR ')})`
+}
+
+function localExportPrefixParams() {
+  return LOCAL_EXPORT_ID_PREFIXES.map(prefix => `${prefix}%`)
+}
+
+function preserveLocalPaymentProviderSql() {
+  const prefix = `${LOCAL_EXPORT_ID_PREFIXES[0]}%`
+  return `CASE
+    WHEN id LIKE '${prefix}' THEN COALESCE(payment_provider, 'manual')
+    WHEN payment_provider = 'stripe' THEN payment_provider
+    ELSE 'highlevel'
+  END`
 }
 
 function getInvoiceItems(invoice = {}) {
@@ -194,9 +263,10 @@ async function getLocalPaymentsPendingHighLevel({ paymentId, limit = 100 } = {})
   const filters = [
     "(p.ghl_invoice_id IS NULL OR p.ghl_invoice_id = '')",
     'COALESCE(p.amount, 0) > 0',
-    `(${LOCAL_EXPORT_ID_PREFIXES.map(() => 'p.id LIKE ?').join(' OR ')})`
+    "COALESCE(p.payment_provider, 'manual') = 'manual'",
+    localExportPrefixWhere('p.id')
   ]
-  const params = LOCAL_EXPORT_ID_PREFIXES.map(prefix => `${prefix}%`)
+  const params = localExportPrefixParams()
 
   if (paymentId) {
     filters.push('p.id = ?')
@@ -405,7 +475,114 @@ function buildInvoicePayloadForLocalPayment({ payment, contactId, context }) {
   }
 }
 
+async function findUnlinkedLocalPaymentForInvoice({ contactId, amount, invoiceNumber, reference, title, description } = {}) {
+  if (!contactId || !(Number(amount) > 0)) return null
+
+  const identityTexts = buildPaymentIdentityTexts({ invoiceNumber, reference, title, description })
+  if (!identityTexts.length) return null
+
+  const rows = await db.all(
+    `SELECT id, contact_id, status, payment_method, payment_mode, payment_provider,
+            reference, title, description, ghl_invoice_id, invoice_number
+     FROM payments
+     WHERE contact_id = ?
+       AND (ghl_invoice_id IS NULL OR ghl_invoice_id = '')
+       AND COALESCE(payment_provider, 'manual') = 'manual'
+       AND ${localExportPrefixWhere('id')}
+       AND ABS(COALESCE(amount, 0) - ?) < 0.005
+     ORDER BY created_at DESC
+     LIMIT 25`,
+    [contactId, ...localExportPrefixParams(), Number(amount)]
+  )
+
+  return rows.find(row => {
+    const status = cleanString(row.status).toLowerCase()
+    return !LOCAL_EXPORT_EXCLUDED_STATUSES.has(status) && rowMatchesIdentityTexts(row, identityTexts)
+  }) || null
+}
+
+async function findHighLevelMirrorForLocalPayment(payment = {}) {
+  const contactId = payment.contact_local_id || payment.contact_id
+  if (!contactId || !(Number(payment.amount) > 0)) return null
+
+  const identityTexts = buildPaymentIdentityTexts({
+    invoiceNumber: payment.invoice_number,
+    reference: payment.reference,
+    title: payment.title,
+    description: payment.description
+  })
+  if (!identityTexts.length) return null
+
+  const rows = await db.all(
+    `SELECT id, contact_id, amount, status, payment_method, payment_mode, payment_provider,
+            reference, title, description, ghl_invoice_id, invoice_number
+     FROM payments
+     WHERE id != ?
+       AND contact_id = ?
+       AND COALESCE(ghl_invoice_id, '') != ''
+       AND COALESCE(payment_provider, 'highlevel') != 'stripe'
+       AND ABS(COALESCE(amount, 0) - ?) < 0.005
+     ORDER BY created_at DESC
+     LIMIT 25`,
+    [payment.id, contactId, Number(payment.amount)]
+  )
+
+  return rows.find(row => {
+    const status = cleanString(row.status).toLowerCase()
+    return !LOCAL_EXPORT_EXCLUDED_STATUSES.has(status) && rowMatchesIdentityTexts(row, identityTexts)
+  }) || null
+}
+
+async function linkLocalPaymentToHighLevelMirror({ payment, mirror }) {
+  const ghlInvoiceId = mirror.ghl_invoice_id || mirror.id
+  const nextStatus = resolveSyncedInvoiceStatus(payment.status, mirror.status)
+  const localContactId = payment.contact_local_id || payment.contact_id || mirror.contact_id
+
+  await db.run(
+    `UPDATE payments
+     SET contact_id = COALESCE(contact_id, ?),
+         status = ?,
+         payment_method = COALESCE(payment_method, ?),
+         payment_mode = COALESCE(payment_mode, ?),
+         ghl_invoice_id = ?,
+         invoice_number = COALESCE(invoice_number, ?),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      localContactId,
+      nextStatus,
+      mirror.payment_method || payment.payment_method || null,
+      mirror.payment_mode || payment.payment_mode || null,
+      ghlInvoiceId,
+      mirror.invoice_number || null,
+      payment.id
+    ]
+  )
+
+  if (mirror.id && mirror.id !== payment.id) {
+    await db.run('DELETE FROM payments WHERE id = ?', [mirror.id])
+  }
+
+  if (localContactId) {
+    await updateContactStats(localContactId)
+  }
+
+  return {
+    paymentId: payment.id,
+    contactId: localContactId,
+    invoiceId: ghlInvoiceId,
+    invoiceNumber: mirror.invoice_number || null,
+    linkedDuplicate: true
+  }
+}
+
 async function exportSingleLocalPaymentToHighLevel({ client, payment, context }) {
+  const existingMirror = await findHighLevelMirrorForLocalPayment(payment)
+  if (existingMirror) {
+    logger.info(`Pago local ${payment.id} enlazado a invoice HighLevel existente ${existingMirror.ghl_invoice_id || existingMirror.id}; no se exporta duplicado`)
+    return linkLocalPaymentToHighLevelMirror({ payment, mirror: existingMirror })
+  }
+
   // El payload remoto usa el ID de GHL; los registros locales conservan el ID Ristak.
   const { localContactId, ghlContactId } = await ensureHighLevelContactForLocalPayment(client, payment)
   const paymentMode = normalizeLocalPaymentMode(payment.payment_mode, context.paymentMode)
@@ -475,24 +652,29 @@ export async function syncLocalPaymentsToHighLevel({ paymentId, limit = 100 } = 
     client = await getGHLClient()
   } catch (error) {
     logger.info(`HighLevel no configurado; pagos locales quedan pendientes de exportación: ${error.message}`)
-    return { total: 0, exported: 0, failed: 0, skippedNoConfig: true, errors: [] }
+    return { total: 0, exported: 0, linkedDuplicates: 0, failed: 0, skippedNoConfig: true, errors: [] }
   }
 
   const localPayments = await getLocalPaymentsPendingHighLevel({ paymentId, limit })
   if (!localPayments.length) {
-    return { total: 0, exported: 0, failed: 0, skippedNoConfig: false, errors: [] }
+    return { total: 0, exported: 0, linkedDuplicates: 0, failed: 0, skippedNoConfig: false, errors: [] }
   }
 
   const context = await getLocalPaymentExportContext()
   const errors = []
   let exported = 0
+  let linkedDuplicates = 0
 
   logger.info(`Exportando ${localPayments.length} pagos locales pendientes a HighLevel...`)
 
   for (const payment of localPayments) {
     try {
-      await exportSingleLocalPaymentToHighLevel({ client, payment, context })
-      exported += 1
+      const result = await exportSingleLocalPaymentToHighLevel({ client, payment, context })
+      if (result?.linkedDuplicate) {
+        linkedDuplicates += 1
+      } else {
+        exported += 1
+      }
     } catch (error) {
       errors.push({ paymentId: payment.id, error: error.message })
       logger.warn(`No se pudo exportar pago local ${payment.id} a HighLevel: ${error.message}`)
@@ -502,6 +684,7 @@ export async function syncLocalPaymentsToHighLevel({ paymentId, limit = 100 } = 
   return {
     total: localPayments.length,
     exported,
+    linkedDuplicates,
     failed: errors.length,
     skippedNoConfig: false,
     errors
@@ -524,10 +707,19 @@ async function ensureLocalContactForInvoice(ghlClient, contactId) {
   return ensured.localContactId || null
 }
 
-async function findExistingPaymentForInvoice({ invoiceId, contactId, invoiceNumber, importedLocalPaymentId = null }) {
+async function findExistingPaymentForInvoice({
+  invoiceId,
+  contactId,
+  invoiceNumber,
+  importedLocalPaymentId = null,
+  amount,
+  reference,
+  title,
+  description
+}) {
   if (importedLocalPaymentId) {
     const existingImportedLocal = await db.get(
-      'SELECT id, contact_id, status, payment_mode, ghl_invoice_id FROM payments WHERE id = ? LIMIT 1',
+      'SELECT id, contact_id, status, payment_mode, payment_provider, ghl_invoice_id FROM payments WHERE id = ? LIMIT 1',
       [importedLocalPaymentId]
     )
 
@@ -535,31 +727,45 @@ async function findExistingPaymentForInvoice({ invoiceId, contactId, invoiceNumb
   }
 
   const existingByInvoiceId = await db.get(
-    'SELECT id, contact_id, status, payment_mode, ghl_invoice_id FROM payments WHERE ghl_invoice_id = ? OR id = ? LIMIT 1',
+    'SELECT id, contact_id, status, payment_mode, payment_provider, ghl_invoice_id FROM payments WHERE ghl_invoice_id = ? OR id = ? LIMIT 1',
     [invoiceId, invoiceId]
   )
 
   if (existingByInvoiceId) return existingByInvoiceId
 
+  if (!contactId) return null
+
   const normalizedInvoiceNumber = normalizeInvoiceNumber(invoiceNumber)
-  if (!contactId || !normalizedInvoiceNumber) return null
 
-  const referenceCandidates = buildInvoiceReferenceCandidates(normalizedInvoiceNumber)
-  const referencePlaceholders = referenceCandidates.map(() => '?').join(', ')
-  const normalizedCandidates = referenceCandidates.map(value => value.toLowerCase())
+  if (normalizedInvoiceNumber) {
+    const referenceCandidates = buildInvoiceReferenceCandidates(normalizedInvoiceNumber)
+    const referencePlaceholders = referenceCandidates.map(() => '?').join(', ')
+    const normalizedCandidates = referenceCandidates.map(value => value.toLowerCase())
 
-  return await db.get(
-    `SELECT id, contact_id, status, payment_mode, ghl_invoice_id
-     FROM payments
-     WHERE contact_id = ?
-       AND (
-         LOWER(COALESCE(invoice_number, '')) IN (${referencePlaceholders})
-         OR LOWER(COALESCE(reference, '')) IN (${referencePlaceholders})
-       )
-     ORDER BY created_at DESC
-     LIMIT 1`,
-    [contactId, ...normalizedCandidates, ...normalizedCandidates]
-  )
+    const existingByReference = await db.get(
+      `SELECT id, contact_id, status, payment_mode, payment_provider, ghl_invoice_id
+       FROM payments
+       WHERE contact_id = ?
+         AND (
+           LOWER(COALESCE(invoice_number, '')) IN (${referencePlaceholders})
+           OR LOWER(COALESCE(reference, '')) IN (${referencePlaceholders})
+         )
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [contactId, ...normalizedCandidates, ...normalizedCandidates]
+    )
+
+    if (existingByReference) return existingByReference
+  }
+
+  return await findUnlinkedLocalPaymentForInvoice({
+    contactId,
+    amount,
+    invoiceNumber,
+    reference,
+    title,
+    description
+  })
 }
 
 function resolveSyncedInvoiceStatus(existingStatus, incomingStatus) {
@@ -619,13 +825,6 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
   try {
     logger.info(`Iniciando sincronización de invoices (limit: ${limit}, offset: ${offset})`)
 
-    if (!contactId && offset === 0) {
-      const localExport = await syncLocalPaymentsToHighLevel({ limit: 1000 })
-      if (localExport.exported > 0 || localExport.failed > 0) {
-        logger.info(`Exportación local previa: ${localExport.exported} pagos exportados, ${localExport.failed} fallidos`)
-      }
-    }
-
     const ghlClient = await getGHLClient()
 
     // Obtener invoices desde HighLevel
@@ -662,6 +861,9 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
 
         const invoiceNumber = invoice.invoiceNumber || null
         const importedLocalPaymentId = extractImportedLocalPaymentId(invoice)
+        const invoiceAmount = invoice.total || invoice.amount || 0
+        const invoiceTitle = getInvoiceDisplayTitle(invoice)
+        const invoiceDescription = getInvoiceDisplayDescription(invoice)
 
         if (importedLocalPaymentId && !isLocalPaymentExportCandidate({ id: importedLocalPaymentId })) {
           logger.warn(`Ignorando invoice ${ghlInvoiceId}: parece duplicado creado por exportación local accidental de ${importedLocalPaymentId}`)
@@ -677,20 +879,24 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           invoiceId: ghlInvoiceId,
           contactId: localContactId || contactId,
           invoiceNumber,
-          importedLocalPaymentId
+          importedLocalPaymentId,
+          amount: invoiceAmount,
+          reference: invoiceNumber,
+          title: invoiceTitle,
+          description: invoiceDescription
         })
 
         // Datos comunes del invoice
         const invoiceData = {
           contact_id: localContactId || contactId,
-          amount: invoice.total || invoice.amount || 0,
+          amount: invoiceAmount,
           currency: invoice.currency || 'MXN',
           status: mapInvoiceStatus(invoice.status),
           payment_method: invoice.paymentMode || null,
           payment_mode: getInvoicePaymentMode(invoice, existing?.payment_mode || 'live'),
           reference: invoiceNumber,
-          title: getInvoiceDisplayTitle(invoice),
-          description: getInvoiceDisplayDescription(invoice),
+          title: invoiceTitle,
+          description: invoiceDescription,
           date: invoice.createdAt || invoice.issueDate || new Date().toISOString(),
           ghl_invoice_id: ghlInvoiceId,
           invoice_number: invoiceNumber,
@@ -706,6 +912,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           await db.run(
             `UPDATE payments
              SET status = ?, amount = ?, currency = ?, payment_method = ?,
+                 payment_provider = ${preserveLocalPaymentProviderSql()},
                  payment_mode = ?, reference = ?, title = ?, description = ?, contact_id = ?,
                  ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?,
                  updated_at = CURRENT_TIMESTAMP
@@ -742,9 +949,9 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           await db.run(
             `INSERT INTO payments (
               id, contact_id, amount, currency, status, payment_method, payment_mode,
-              reference, title, description, date, ghl_invoice_id, invoice_number,
+              payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
               due_date, sent_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
             [
               ghlInvoiceId, // Usar mismo ID que en HighLevel
               invoiceData.contact_id,
@@ -753,6 +960,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
               invoiceData.status,
               invoiceData.payment_method,
               invoiceData.payment_mode,
+              'highlevel',
               invoiceData.reference,
               invoiceData.title,
               invoiceData.description,
@@ -801,7 +1009,15 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
       total: invoices.length,
       created,
       updated,
-      skipped
+      skipped,
+      localExport: null
+    }
+
+    if (!contactId && offset === 0) {
+      stats.localExport = await syncLocalPaymentsToHighLevel({ limit: 1000 })
+      if (stats.localExport.exported > 0 || stats.localExport.linkedDuplicates > 0 || stats.localExport.failed > 0) {
+        logger.info(`Exportación local posterior: ${stats.localExport.exported} pagos exportados, ${stats.localExport.linkedDuplicates} enlazados, ${stats.localExport.failed} fallidos`)
+      }
     }
 
     logger.success(`Sincronización completada: ${JSON.stringify(stats)}`)
@@ -825,13 +1041,6 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
 export async function syncAllInvoices({ contactId } = {}) {
   try {
     logger.info('🔄 Iniciando sincronización COMPLETA de invoices desde HighLevel...')
-
-    if (!contactId) {
-      const localExport = await syncLocalPaymentsToHighLevel({ limit: 1000 })
-      if (localExport.exported > 0 || localExport.failed > 0) {
-        logger.info(`Exportación local previa: ${localExport.exported} pagos exportados, ${localExport.failed} fallidos`)
-      }
-    }
 
     const ghlClient = await getGHLClient()
     let allInvoices = []
@@ -882,6 +1091,9 @@ export async function syncAllInvoices({ contactId } = {}) {
 
         const invoiceNumber = invoice.invoiceNumber || null
         const importedLocalPaymentId = extractImportedLocalPaymentId(invoice)
+        const invoiceAmount = invoice.total || invoice.amount || 0
+        const invoiceTitle = getInvoiceDisplayTitle(invoice)
+        const invoiceDescription = getInvoiceDisplayDescription(invoice)
 
         if (importedLocalPaymentId && !isLocalPaymentExportCandidate({ id: importedLocalPaymentId })) {
           logger.warn(`Ignorando invoice ${ghlInvoiceId}: parece duplicado creado por exportación local accidental de ${importedLocalPaymentId}`)
@@ -896,7 +1108,11 @@ export async function syncAllInvoices({ contactId } = {}) {
           invoiceId: ghlInvoiceId,
           contactId: localContactId || contactId,
           invoiceNumber,
-          importedLocalPaymentId
+          importedLocalPaymentId,
+          amount: invoiceAmount,
+          reference: invoiceNumber,
+          title: invoiceTitle,
+          description: invoiceDescription
         })
 
         if (!localContactId) {
@@ -908,14 +1124,14 @@ export async function syncAllInvoices({ contactId } = {}) {
         // Datos comunes del invoice
         const invoiceData = {
           contact_id: localContactId,
-          amount: invoice.total || invoice.amount || 0,
+          amount: invoiceAmount,
           currency: invoice.currency || 'MXN',
           status: mapInvoiceStatus(invoice.status),
           payment_method: invoice.paymentMode || null,
           payment_mode: getInvoicePaymentMode(invoice, existing?.payment_mode || 'live'),
           reference: invoiceNumber,
-          title: getInvoiceDisplayTitle(invoice),
-          description: getInvoiceDisplayDescription(invoice),
+          title: invoiceTitle,
+          description: invoiceDescription,
           date: invoice.createdAt || invoice.issueDate || new Date().toISOString(),
           ghl_invoice_id: ghlInvoiceId,
           invoice_number: invoiceNumber,
@@ -931,6 +1147,7 @@ export async function syncAllInvoices({ contactId } = {}) {
           await db.run(
             `UPDATE payments
              SET status = ?, amount = ?, currency = ?, payment_method = ?,
+                 payment_provider = ${preserveLocalPaymentProviderSql()},
                  payment_mode = ?, reference = ?, title = ?, description = ?, contact_id = ?,
                  ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?,
                  updated_at = CURRENT_TIMESTAMP
@@ -958,9 +1175,9 @@ export async function syncAllInvoices({ contactId } = {}) {
           await db.run(
             `INSERT INTO payments (
               id, contact_id, amount, currency, status, payment_method, payment_mode,
-              reference, title, description, date, ghl_invoice_id, invoice_number,
+              payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
               due_date, sent_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
             [
               ghlInvoiceId,
               invoiceData.contact_id,
@@ -969,6 +1186,7 @@ export async function syncAllInvoices({ contactId } = {}) {
               invoiceData.status,
               invoiceData.payment_method,
               invoiceData.payment_mode,
+              'highlevel',
               invoiceData.reference,
               invoiceData.title,
               invoiceData.description,
@@ -1016,7 +1234,15 @@ export async function syncAllInvoices({ contactId } = {}) {
       totalFetched: allInvoices.length,
       created,
       updated,
-      skipped
+      skipped,
+      localExport: null
+    }
+
+    if (!contactId) {
+      stats.localExport = await syncLocalPaymentsToHighLevel({ limit: 1000 })
+      if (stats.localExport.exported > 0 || stats.localExport.linkedDuplicates > 0 || stats.localExport.failed > 0) {
+        logger.info(`Exportación local posterior: ${stats.localExport.exported} pagos exportados, ${stats.localExport.linkedDuplicates} enlazados, ${stats.localExport.failed} fallidos`)
+      }
     }
 
     logger.success(`✅ Sincronización completa finalizada: ${JSON.stringify(stats)}`)
@@ -1053,6 +1279,9 @@ export async function syncSingleInvoice(invoiceId) {
     const ghlStatus = mapInvoiceStatus(invoice.status)
     const invoiceNumber = invoice.invoiceNumber || null
     const importedLocalPaymentId = extractImportedLocalPaymentId(invoice)
+    const invoiceAmount = invoice.total || invoice.amount || 0
+    const invoiceTitle = getInvoiceDisplayTitle(invoice)
+    const invoiceDescription = getInvoiceDisplayDescription(invoice)
 
     if (importedLocalPaymentId && !isLocalPaymentExportCandidate({ id: importedLocalPaymentId })) {
       logger.warn(`Ignorando invoice ${ghlInvoiceId}: parece duplicado creado por exportación local accidental de ${importedLocalPaymentId}`)
@@ -1066,19 +1295,23 @@ export async function syncSingleInvoice(invoiceId) {
       invoiceId: ghlInvoiceId,
       contactId: localContactId || contactId,
       invoiceNumber,
-      importedLocalPaymentId
+      importedLocalPaymentId,
+      amount: invoiceAmount,
+      reference: invoiceNumber,
+      title: invoiceTitle,
+      description: invoiceDescription
     })
 
     const invoiceData = {
       contact_id: localContactId || contactId || null,
-      amount: invoice.total || invoice.amount || 0,
+      amount: invoiceAmount,
       currency: invoice.currency || 'MXN',
       status: ghlStatus,
       payment_method: invoice.paymentMode || null,
       payment_mode: getInvoicePaymentMode(invoice, existing?.payment_mode || 'live'),
       reference: invoiceNumber,
-      title: getInvoiceDisplayTitle(invoice),
-      description: getInvoiceDisplayDescription(invoice),
+      title: invoiceTitle,
+      description: invoiceDescription,
       date: invoice.createdAt || invoice.issueDate || new Date().toISOString(),
       invoice_number: invoiceNumber,
       due_date: invoice.dueDate || null,
@@ -1094,6 +1327,7 @@ export async function syncSingleInvoice(invoiceId) {
       await db.run(
         `UPDATE payments
          SET status = ?, amount = ?, currency = ?, payment_method = ?,
+             payment_provider = ${preserveLocalPaymentProviderSql()},
              payment_mode = ?, reference = ?, title = ?, description = ?, contact_id = ?,
              ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?,
              updated_at = CURRENT_TIMESTAMP
@@ -1121,9 +1355,9 @@ export async function syncSingleInvoice(invoiceId) {
       await db.run(
         `INSERT INTO payments (
           id, contact_id, amount, currency, status, payment_method, payment_mode,
-          reference, title, description, date, ghl_invoice_id, invoice_number,
+          payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
           due_date, sent_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           ghlInvoiceId,
           invoiceData.contact_id,
@@ -1132,6 +1366,7 @@ export async function syncSingleInvoice(invoiceId) {
           invoiceData.status,
           invoiceData.payment_method,
           invoiceData.payment_mode,
+          'highlevel',
           invoiceData.reference,
           invoiceData.title,
           invoiceData.description,
@@ -1174,6 +1409,12 @@ export async function syncSingleInvoice(invoiceId) {
     logger.error(`Error en syncSingleInvoice(${invoiceId}): ${error.message}`)
     throw error
   }
+}
+
+export const __invoicesSyncTestHooks = {
+  findExistingPaymentForInvoice,
+  findHighLevelMirrorForLocalPayment,
+  linkLocalPaymentToHighLevelMirror
 }
 
 /**
