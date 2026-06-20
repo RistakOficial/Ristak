@@ -34285,10 +34285,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               {!retentionSegments.length || !retentionCurvePoints ? (
                 <div className={styles.videoRetentionEmptyNote}>Aún no hay suficientes reproducciones para dibujar retención.</div>
               ) : null}
-              <div className={styles.videoRetentionTimes}>
-                <span>0:00</span>
-                <span>{formatSitesTimecode(retentionDisplayDuration)}</span>
-              </div>
               {retentionPreviewUrl ? (
                 <div className={styles.videoRetentionControls}>
                   <Button

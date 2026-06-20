@@ -7813,15 +7813,16 @@
 }
 
 .videoRetentionChart {
-  --video-retention-axis: var(--design-chart-axis, var(--text-mute));
+  --video-retention-axis: color-mix(in srgb, var(--on-accent, var(--text)) 82%, var(--video-retention-line) 18%);
   --video-retention-border: var(--border-strong);
-  --video-retention-fill: color-mix(in srgb, var(--design-chart-primary, var(--accent)) 24%, transparent);
-  --video-retention-grid: var(--design-chart-grid, var(--chart-grid));
   --video-retention-line: var(--design-chart-primary, var(--accent));
+  --video-retention-fill: color-mix(in srgb, var(--video-retention-line) 32%, transparent);
+  --video-retention-grid: color-mix(in srgb, var(--on-accent, var(--text)) 46%, transparent);
+  --video-retention-control-clearance: 86px;
   --video-retention-plot-top: 28px;
-  --video-retention-plot-right: 12px;
-  --video-retention-plot-bottom: 92px;
-  --video-retention-plot-left: 12px;
+  --video-retention-plot-right: 0px;
+  --video-retention-plot-bottom: 0px;
+  --video-retention-plot-left: 0px;
   position: relative;
   aspect-ratio: 16 / 9;
   min-height: 420px;
@@ -7841,8 +7842,8 @@
 }
 
 .videoRetentionMedia {
-  background: #000000;
-  filter: brightness(0.6) saturate(0.86) contrast(1.08);
+  background: black;
+  filter: brightness(0.38) saturate(0.82) contrast(1.14);
   object-fit: contain;
   object-position: center center;
 }
@@ -7863,9 +7864,8 @@
   inset: 0;
   z-index: 1;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-solid, var(--surface)) 76%, transparent), color-mix(in srgb, var(--surface-solid, var(--surface)) 32%, transparent) 24%, transparent 48%),
-    linear-gradient(0deg, color-mix(in srgb, var(--surface-solid, var(--surface)) 82%, transparent), color-mix(in srgb, var(--surface-solid, var(--surface)) 42%, transparent) 34%, transparent 62%),
-    linear-gradient(90deg, color-mix(in srgb, var(--surface-solid, var(--surface)) 48%, transparent), transparent 24%, transparent 76%, color-mix(in srgb, var(--surface-solid, var(--surface)) 44%, transparent));
+    linear-gradient(180deg, color-mix(in srgb, black 54%, transparent), color-mix(in srgb, black 36%, transparent) 36%, color-mix(in srgb, black 52%, transparent)),
+    linear-gradient(90deg, color-mix(in srgb, black 64%, transparent), transparent 22%, transparent 78%, color-mix(in srgb, black 60%, transparent));
   pointer-events: none;
 }
 
@@ -7928,28 +7928,31 @@
 
 .videoRetentionGrid span {
   position: relative;
-  display: flex;
-  justify-content: flex-end;
+  display: block;
+  padding-right: 12px;
   color: var(--video-retention-axis);
   font-size: 0.72rem;
+  font-weight: 600;
   line-height: 1;
-  text-shadow: 0 1px 2px var(--surface-solid, var(--surface));
+  text-align: right;
+  text-shadow: 0 1px 3px black;
+  transform: translateY(-0.38em);
 }
 
 .videoRetentionGrid span::before {
   content: '';
   position: absolute;
-  top: 0;
+  top: 0.38em;
   right: 0;
   left: 0;
-  border-top: 1px dashed color-mix(in srgb, var(--video-retention-axis) 68%, transparent);
-  filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--surface-solid, var(--surface)) 68%, transparent));
+  border-top: 1px dashed var(--video-retention-grid);
+  filter: drop-shadow(0 1px 2px black);
 }
 
 .videoRetentionPlayhead {
   position: absolute;
   top: 0;
-  bottom: 0;
+  bottom: var(--video-retention-control-clearance);
   left: clamp(0%, var(--video-retention-playhead, 0%), 100%);
   z-index: 4;
   width: 2px;
@@ -7957,7 +7960,7 @@
     180deg,
     transparent,
     color-mix(in srgb, var(--on-accent, var(--text)) 90%, var(--video-retention-line) 10%) 12%,
-    color-mix(in srgb, var(--on-accent, var(--text)) 88%, var(--video-retention-line) 12%) 72%,
+    color-mix(in srgb, var(--on-accent, var(--text)) 88%, var(--video-retention-line) 12%) 78%,
     transparent
   );
   box-shadow: 0 0 10px color-mix(in srgb, var(--video-retention-line) 38%, transparent);
@@ -7986,21 +7989,6 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-
-.videoRetentionTimes {
-  position: absolute;
-  right: 12px;
-  bottom: 58px;
-  left: 12px;
-  z-index: 3;
-  display: flex;
-  justify-content: space-between;
-  color: var(--video-retention-axis);
-  font-family: var(--num-font);
-  font-size: 0.76rem;
-  pointer-events: none;
-  text-shadow: 0 1px 2px var(--surface-solid, var(--surface));
 }
 
 .videoRetentionControls {
@@ -19934,10 +19922,11 @@
   }
 
   .videoRetentionChart {
+    --video-retention-control-clearance: 92px;
     --video-retention-plot-top: 22px;
-    --video-retention-plot-right: 10px;
-    --video-retention-plot-bottom: 86px;
-    --video-retention-plot-left: 10px;
+    --video-retention-plot-right: 0px;
+    --video-retention-plot-bottom: 0px;
+    --video-retention-plot-left: 0px;
     min-height: 300px;
   }
 
