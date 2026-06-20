@@ -5142,22 +5142,22 @@ export const DesktopChat: React.FC = () => {
 	                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
 	                ) : null}
 	                {isEmailComposer ? (
-	                  <>
-	                    <div className={styles.emailComposerHeaderRow}>
-	                      <div className={styles.emailComposerChannelSelect}>
-	                        <CustomSelect
-	                          value={composerRouteValue}
+		                  <>
+		                    <div className={styles.emailComposerHeaderRow}>
+		                      {renderComposerAgentControl()}
+		                      <div className={styles.emailComposerChannelSelect}>
+		                        <CustomSelect
+		                          value={composerRouteValue}
 	                          options={composerChannelOptions}
 	                          onValueChange={handleComposerChannelChange}
 	                          portal
 	                          dropdownPlacement="top"
 	                          iconOnly
 	                          dropdownMinWidth={240}
-	                          aria-label="Canal de envío"
-	                        />
-	                      </div>
-	                      {renderComposerAgentControl()}
-	                      <label className={styles.emailSubjectField}>
+		                          aria-label="Canal de envío"
+		                        />
+		                      </div>
+		                      <label className={styles.emailSubjectField}>
 	                        <span>Asunto</span>
 	                        <input
 	                          data-ristak-unstyled
