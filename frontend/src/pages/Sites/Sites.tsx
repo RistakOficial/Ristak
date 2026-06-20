@@ -20085,20 +20085,20 @@ type TemplateGalleryCategory = {
 const LANDING_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
   {
     id: 'full-page',
-    title: 'Web grandes',
-    description: 'Embudos completos con página principal, captura, agenda o confirmación.',
+    title: 'Sitios completos',
+    description: 'Paginas con propuesta clara, confianza, captura, agenda y confirmacion listas para editar.',
     ids: ['ristak', 'executive', 'local']
   },
   {
     id: 'sales-pages',
-    title: 'Cartas y lanzamientos',
-    description: 'Flujos completos para vender, registrar interesados y cerrar con página de gracias.',
+    title: 'Ventas y lanzamientos',
+    description: 'Flujos con urgencia, prueba, registro y cierre para ofertas que necesitan accion.',
     ids: ['vsl', 'launch', 'premium']
   },
   {
     id: 'social',
     title: 'Redes sociales',
-    description: 'Flujos cortos para anuncios sociales con captura y confirmación final.',
+    description: 'Paginas cortas que mantienen el contexto del anuncio y capturan datos sin friccion.',
     ids: ['facebook', 'instagram', 'tiktok']
   }
 ]
@@ -20106,22 +20106,22 @@ const LANDING_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
 const FORM_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
   {
     id: 'capture-forms',
-    title: 'Captura rapida',
-    description: 'Formularios cortos para pedir datos, cotizar o preparar una llamada.',
+    title: 'Captura y llamadas',
+    description: 'Formularios cortos para pedir datos, cotizar o preparar una conversacion util.',
     ids: ['compact', 'quote', 'callback'],
     siteType: 'standard_form'
   },
   {
     id: 'registration-forms',
     title: 'Registros y cupos',
-    description: 'Formularios para eventos, listas de espera, clases, preventas o confirmaciones.',
+    description: 'Formularios para eventos, preventas, listas de espera, clases o confirmaciones.',
     ids: ['event', 'waitlist'],
     siteType: 'standard_form'
   },
   {
     id: 'social-forms',
     title: 'Redes sociales',
-    description: 'Formularios pequenos con apariencia nativa de Facebook, Instagram o TikTok.',
+    description: 'Formularios pequenos con apariencia de Facebook, Instagram o TikTok.',
     ids: ['facebook', 'instagram', 'tiktok'],
     siteType: 'standard_form'
   }
@@ -20131,7 +20131,7 @@ const INTERACTIVE_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
   {
     id: 'guided',
     title: 'Quiz y formularios guiados',
-    description: 'Una pregunta por pantalla para calificar prospectos paso a paso.',
+    description: 'Una pregunta por pantalla para calificar prospectos con ritmo y claridad.',
     ids: ['interactive', 'callback', 'quote'],
     siteType: 'interactive_form'
   },
@@ -20145,7 +20145,7 @@ const INTERACTIVE_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
   {
     id: 'social-guided',
     title: 'Redes sociales',
-    description: 'Quiz con apariencia de plataforma social para mantener el mismo contexto visual.',
+    description: 'Quiz con apariencia social para que el salto desde el anuncio se sienta natural.',
     ids: ['facebook', 'instagram', 'tiktok'],
     siteType: 'interactive_form'
   }

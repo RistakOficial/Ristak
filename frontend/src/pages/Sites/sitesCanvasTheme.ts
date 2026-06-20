@@ -52,13 +52,13 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
   ristak: {
     id: 'ristak', mode: 'light', chrome: 'none', font: RSTK_SANS,
     vars: {
-      pageBg: '#f5f6f8',
+      pageBg: '#eef2f7',
       pageImage: 'none',
-      ink: '#0f172a', muted: '#64748b', surface: '#ffffff', surface2: '#f8fafc', border: '#e6e8ec',
-      accent: '#111827', accentStrong: '#000000', onAccent: '#ffffff', ring: 'rgba(17,24,39,.16)',
-      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#dfe3e8',
-      radius: '12px', radiusLg: '18px', shadow: '0 30px 60px -42px rgba(15,23,42,.4)',
-      headingWeight: '800', btnRadius: '12px', btnWeight: '750'
+      ink: '#0f172a', muted: '#64748b', surface: '#ffffff', surface2: '#f8fafc', border: '#d7dee8',
+      accent: '#0f172a', accentStrong: '#020617', onAccent: '#ffffff', ring: 'rgba(15,23,42,.16)',
+      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#d7dee8',
+      radius: '14px', radiusLg: '24px', shadow: '0 34px 80px -52px rgba(15,23,42,.45)',
+      headingWeight: '820', btnRadius: '14px', btnWeight: '800'
     }
   },
   imported_html: {
@@ -76,13 +76,13 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
   executive: {
     id: 'executive', mode: 'light', chrome: 'none', font: RSTK_SANS,
     vars: {
-      pageBg: '#f8fafc',
+      pageBg: '#eff6ff',
       pageImage: 'none',
-      ink: '#0f172a', muted: '#475569', surface: '#ffffff', surface2: '#ecfeff', border: '#cbd5e1',
+      ink: '#0f172a', muted: '#475569', surface: '#ffffff', surface2: '#ecfeff', border: '#bae6fd',
       accent: '#0f766e', accentStrong: '#115e59', onAccent: '#ffffff', ring: 'rgba(15,118,110,.18)',
-      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#cbd5e1',
-      radius: '10px', radiusLg: '18px', shadow: '0 28px 70px -46px rgba(15,23,42,.42)',
-      headingWeight: '800', btnRadius: '10px', btnWeight: '800'
+      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#99f6e4',
+      radius: '12px', radiusLg: '22px', shadow: '0 34px 84px -54px rgba(15,118,110,.38)',
+      headingWeight: '820', btnRadius: '12px', btnWeight: '820'
     }
   },
   launch: {
@@ -93,20 +93,20 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       ink: '#1f2937', muted: '#7c2d12', surface: '#ffffff', surface2: '#ffedd5', border: '#fed7aa',
       accent: '#ea580c', accentStrong: '#c2410c', onAccent: '#ffffff', ring: 'rgba(234,88,12,.2)',
       inputBg: '#ffffff', inputInk: '#1f2937', inputBorder: '#fdba74',
-      radius: '14px', radiusLg: '22px', shadow: '0 32px 72px -46px rgba(124,45,18,.45)',
-      headingWeight: '850', btnRadius: '999px', btnWeight: '850'
+      radius: '16px', radiusLg: '26px', shadow: '0 36px 84px -52px rgba(124,45,18,.48)',
+      headingWeight: '860', btnRadius: '999px', btnWeight: '860'
     }
   },
   premium: {
     id: 'premium', mode: 'dark', chrome: 'none', font: RSTK_SANS,
     vars: {
-      pageBg: '#101010',
+      pageBg: '#0f0f10',
       pageImage: 'none',
-      ink: '#f8fafc', muted: '#a1a1aa', surface: '#18181b', surface2: '#222225', border: 'rgba(255,255,255,.14)',
+      ink: '#f8fafc', muted: '#a1a1aa', surface: '#17171a', surface2: '#242428', border: 'rgba(255,255,255,.14)',
       accent: '#d4af37', accentStrong: '#b88916', onAccent: '#121212', ring: 'rgba(212,175,55,.26)',
-      inputBg: '#202023', inputInk: '#f8fafc', inputBorder: 'rgba(255,255,255,.16)',
-      radius: '8px', radiusLg: '18px', shadow: '0 48px 90px -52px rgba(0,0,0,.9)',
-      headingWeight: '850', btnRadius: '8px', btnWeight: '850'
+      inputBg: '#202024', inputInk: '#f8fafc', inputBorder: 'rgba(255,255,255,.16)',
+      radius: '10px', radiusLg: '22px', shadow: '0 54px 110px -58px rgba(0,0,0,.92)',
+      headingWeight: '860', btnRadius: '10px', btnWeight: '860'
     }
   },
   local: {
@@ -117,20 +117,20 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       ink: '#14532d', muted: '#4b5563', surface: '#ffffff', surface2: '#dcfce7', border: '#bbf7d0',
       accent: '#15803d', accentStrong: '#166534', onAccent: '#ffffff', ring: 'rgba(21,128,61,.2)',
       inputBg: '#ffffff', inputInk: '#14532d', inputBorder: '#86efac',
-      radius: '16px', radiusLg: '24px', shadow: '0 30px 70px -46px rgba(20,83,45,.38)',
-      headingWeight: '800', btnRadius: '16px', btnWeight: '800'
+      radius: '18px', radiusLg: '28px', shadow: '0 34px 82px -52px rgba(20,83,45,.38)',
+      headingWeight: '820', btnRadius: '18px', btnWeight: '820'
     }
   },
   compact: {
     id: 'compact', mode: 'light', chrome: 'none', font: RSTK_SANS,
     vars: {
-      pageBg: '#f8fafc',
+      pageBg: '#eff6ff',
       pageImage: 'none',
-      ink: '#0f172a', muted: '#64748b', surface: '#ffffff', surface2: '#f1f5f9', border: '#dbe3ef',
+      ink: '#0f172a', muted: '#475569', surface: '#ffffff', surface2: '#dbeafe', border: '#bfdbfe',
       accent: '#2563eb', accentStrong: '#1d4ed8', onAccent: '#ffffff', ring: 'rgba(37,99,235,.18)',
-      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#cbd5e1',
-      radius: '8px', radiusLg: '18px', shadow: '0 24px 54px -40px rgba(15,23,42,.35)',
-      headingWeight: '800', btnRadius: '10px', btnWeight: '800'
+      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#bfdbfe',
+      radius: '12px', radiusLg: '24px', shadow: '0 28px 70px -48px rgba(37,99,235,.36)',
+      headingWeight: '820', btnRadius: '14px', btnWeight: '820'
     }
   },
   event: {
@@ -141,8 +141,8 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       ink: '#500724', muted: '#831843', surface: '#ffffff', surface2: '#fce7f3', border: '#fbcfe8',
       accent: '#be123c', accentStrong: '#9f1239', onAccent: '#ffffff', ring: 'rgba(190,18,60,.2)',
       inputBg: '#ffffff', inputInk: '#500724', inputBorder: '#f9a8d4',
-      radius: '14px', radiusLg: '24px', shadow: '0 30px 68px -44px rgba(131,24,67,.42)',
-      headingWeight: '850', btnRadius: '999px', btnWeight: '850'
+      radius: '16px', radiusLg: '26px', shadow: '0 34px 78px -48px rgba(131,24,67,.42)',
+      headingWeight: '860', btnRadius: '999px', btnWeight: '860'
     }
   },
   quote: {
@@ -151,10 +151,10 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       pageBg: '#f5f3ff',
       pageImage: 'none',
       ink: '#2e1065', muted: '#6d28d9', surface: '#ffffff', surface2: '#ede9fe', border: '#ddd6fe',
-      accent: '#7c3aed', accentStrong: '#6d28d9', onAccent: '#ffffff', ring: 'rgba(124,58,237,.2)',
+      accent: '#5b21b6', accentStrong: '#4c1d95', onAccent: '#ffffff', ring: 'rgba(91,33,182,.2)',
       inputBg: '#ffffff', inputInk: '#2e1065', inputBorder: '#c4b5fd',
-      radius: '12px', radiusLg: '22px', shadow: '0 30px 68px -44px rgba(76,29,149,.4)',
-      headingWeight: '850', btnRadius: '14px', btnWeight: '850'
+      radius: '14px', radiusLg: '24px', shadow: '0 34px 78px -48px rgba(76,29,149,.42)',
+      headingWeight: '850', btnRadius: '16px', btnWeight: '850'
     }
   },
   callback: {
@@ -165,8 +165,8 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       ink: '#164e63', muted: '#0e7490', surface: '#ffffff', surface2: '#cffafe', border: '#a5f3fc',
       accent: '#0e7490', accentStrong: '#155e75', onAccent: '#ffffff', ring: 'rgba(14,116,144,.2)',
       inputBg: '#ffffff', inputInk: '#164e63', inputBorder: '#67e8f9',
-      radius: '10px', radiusLg: '18px', shadow: '0 28px 64px -42px rgba(22,78,99,.38)',
-      headingWeight: '800', btnRadius: '10px', btnWeight: '850'
+      radius: '12px', radiusLg: '20px', shadow: '0 32px 74px -48px rgba(22,78,99,.38)',
+      headingWeight: '820', btnRadius: '12px', btnWeight: '850'
     }
   },
   waitlist: {
@@ -177,8 +177,8 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       ink: '#7c2d12', muted: '#9a3412', surface: '#ffffff', surface2: '#ffedd5', border: '#fed7aa',
       accent: '#c2410c', accentStrong: '#9a3412', onAccent: '#ffffff', ring: 'rgba(194,65,12,.2)',
       inputBg: '#ffffff', inputInk: '#7c2d12', inputBorder: '#fdba74',
-      radius: '16px', radiusLg: '28px', shadow: '0 30px 68px -44px rgba(124,45,18,.42)',
-      headingWeight: '850', btnRadius: '999px', btnWeight: '850'
+      radius: '18px', radiusLg: '30px', shadow: '0 34px 78px -48px rgba(124,45,18,.42)',
+      headingWeight: '860', btnRadius: '999px', btnWeight: '860'
     }
   },
   facebook: {
@@ -188,8 +188,8 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       ink: '#1c1e21', muted: '#65676b', surface: '#ffffff', surface2: '#f7f8fa', border: '#ced0d4',
       accent: '#1877f2', accentStrong: '#166fe5', onAccent: '#ffffff', ring: 'rgba(24,119,242,.22)',
       inputBg: '#ffffff', inputInk: '#1c1e21', inputBorder: '#ccd0d5',
-      radius: '8px', radiusLg: '12px', shadow: '0 1px 2px rgba(0,0,0,.1), 0 22px 48px -34px rgba(0,0,0,.5)',
-      headingWeight: '800', btnRadius: '8px', btnWeight: '800'
+      radius: '10px', radiusLg: '16px', shadow: '0 1px 2px rgba(0,0,0,.1), 0 24px 54px -36px rgba(0,0,0,.45)',
+      headingWeight: '820', btnRadius: '10px', btnWeight: '820'
     }
   },
   instagram: {
@@ -200,8 +200,8 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       ink: '#262626', muted: '#8e8e8e', surface: '#ffffff', surface2: '#fafafa', border: '#dbdbdb',
       accent: '#0095f6', accentStrong: '#1877f2', onAccent: '#ffffff', ring: 'rgba(0,149,246,.2)',
       inputBg: '#ffffff', inputInk: '#262626', inputBorder: '#dbdbdb',
-      radius: '12px', radiusLg: '16px', shadow: '0 24px 54px -38px rgba(0,0,0,.45)',
-      headingWeight: '800', btnRadius: '10px', btnWeight: '800'
+      radius: '12px', radiusLg: '18px', shadow: '0 26px 58px -40px rgba(0,0,0,.42)',
+      headingWeight: '820', btnRadius: '12px', btnWeight: '820'
     }
   },
   tiktok: {
@@ -211,30 +211,30 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       ink: '#ffffff', muted: '#a1a1aa', surface: '#161616', surface2: '#1f1f1f', border: 'rgba(255,255,255,.12)',
       accent: '#fe2c55', accentStrong: '#ef1f49', onAccent: '#ffffff', ring: 'rgba(254,44,85,.32)',
       inputBg: '#1f1f1f', inputInk: '#ffffff', inputBorder: 'rgba(255,255,255,.16)',
-      radius: '10px', radiusLg: '18px', shadow: '0 36px 70px -42px rgba(0,0,0,.9)',
-      headingWeight: '900', btnRadius: '10px', btnWeight: '800'
+      radius: '12px', radiusLg: '20px', shadow: '0 38px 78px -44px rgba(0,0,0,.92)',
+      headingWeight: '900', btnRadius: '12px', btnWeight: '820'
     }
   },
   vsl: {
-    id: 'vsl', mode: 'light', chrome: 'none', centered: true, font: RSTK_SANS,
+    id: 'vsl', mode: 'dark', chrome: 'none', centered: true, font: RSTK_SANS,
     vars: {
       pageBg: '#0a0b0d', pageImage: 'none',
-      ink: '#0f172a', muted: '#64748b', surface: '#ffffff', surface2: '#f8fafc', border: '#e6e8ec',
-      accent: '#111827', accentStrong: '#000000', onAccent: '#ffffff', ring: 'rgba(17,24,39,.16)',
-      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#dfe3e8',
-      radius: '14px', radiusLg: '22px', shadow: '0 50px 90px -46px rgba(0,0,0,.75)',
-      headingWeight: '800', btnRadius: '14px', btnWeight: '800'
+      ink: '#f8fafc', muted: '#cbd5e1', surface: 'rgba(255,255,255,.08)', surface2: 'rgba(255,255,255,.12)', border: 'rgba(255,255,255,.16)',
+      accent: '#f8fafc', accentStrong: '#ffffff', onAccent: '#0a0b0d', ring: 'rgba(248,250,252,.18)',
+      inputBg: 'rgba(255,255,255,.08)', inputInk: '#f8fafc', inputBorder: 'rgba(255,255,255,.18)',
+      radius: '14px', radiusLg: '24px', shadow: '0 56px 110px -52px rgba(0,0,0,.82)',
+      headingWeight: '840', btnRadius: '14px', btnWeight: '840'
     }
   },
   interactive: {
-    id: 'interactive', mode: 'light', chrome: 'none', centered: true, font: RSTK_SANS,
+    id: 'interactive', mode: 'dark', chrome: 'none', centered: true, font: RSTK_SANS,
     vars: {
       pageBg: '#0a0b0d', pageImage: 'none',
-      ink: '#0f172a', muted: '#64748b', surface: '#ffffff', surface2: '#f6f7f9', border: '#e6e8ec',
-      accent: '#111827', accentStrong: '#000000', onAccent: '#ffffff', ring: 'rgba(17,24,39,.14)',
-      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#dfe3e8',
-      radius: '14px', radiusLg: '24px', shadow: '0 60px 100px -52px rgba(0,0,0,.8)',
-      headingWeight: '800', btnRadius: '14px', btnWeight: '800'
+      ink: '#f8fafc', muted: '#cbd5e1', surface: 'rgba(255,255,255,.08)', surface2: 'rgba(255,255,255,.12)', border: 'rgba(255,255,255,.16)',
+      accent: '#f8fafc', accentStrong: '#ffffff', onAccent: '#0a0b0d', ring: 'rgba(248,250,252,.18)',
+      inputBg: 'rgba(255,255,255,.08)', inputInk: '#f8fafc', inputBorder: 'rgba(255,255,255,.18)',
+      radius: '16px', radiusLg: '28px', shadow: '0 64px 120px -58px rgba(0,0,0,.86)',
+      headingWeight: '840', btnRadius: '16px', btnWeight: '840'
     }
   }
 }
