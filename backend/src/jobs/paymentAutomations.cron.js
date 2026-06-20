@@ -1,0 +1,42 @@
+import { processDuePaymentAutomations } from '../services/paymentAutomationsService.js'
+import { logger } from '../utils/logger.js'
+
+const PAYMENT_AUTOMATIONS_INTERVAL_MS = 30 * 60 * 1000
+
+let started = false
+let running = false
+
+async function runPaymentAutomations(source = 'interval') {
+  if (running) return
+  running = true
+
+  try {
+    const results = await processDuePaymentAutomations()
+    const sent = results.filter((result) => result.sent).length
+    const failed = results.filter((result) => result.error).length
+
+    if (sent || failed) {
+      logger.info(`[Pagos] ${source}: ${sent} automatizaciones enviadas, ${failed} con error`)
+    }
+  } catch (error) {
+    logger.error(`[Pagos] Error revisando automatizaciones: ${error.message}`)
+  } finally {
+    running = false
+  }
+}
+
+export function startPaymentAutomationsCron() {
+  if (started) return
+  started = true
+
+  logger.info('Iniciando cola de automatizaciones de pago')
+  setInterval(() => {
+    runPaymentAutomations().catch((error) => {
+      logger.error(`[Pagos] Error no manejado en automatizaciones: ${error.message}`)
+    })
+  }, PAYMENT_AUTOMATIONS_INTERVAL_MS)
+
+  runPaymentAutomations('startup').catch((error) => {
+    logger.error(`[Pagos] Error inicial en automatizaciones: ${error.message}`)
+  })
+}

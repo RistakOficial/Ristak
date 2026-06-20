@@ -11,14 +11,23 @@ describe('payment settings automations', () => {
         reminderDaysBefore: 5,
         reminderChannel: 'both',
         reminderQrFallbackEnabled: true,
+        reminderTemplateId: 'tpl_reminder',
+        reminderTemplateName: 'mi_recordatorio',
+        reminderTemplateLanguage: 'es_MX',
         receiptDeliveryEnabled: true,
         receiptDeliveryChannel: 'whatsapp',
         receiptQrFallbackEnabled: true,
+        receiptTemplateId: 'tpl_receipt',
+        receiptTemplateName: 'mi_comprobante',
+        receiptTemplateLanguage: 'es_MX',
         afterPaymentAction: 'send_receipt',
         afterPaymentMessage: 'Pago recibido',
         failedPaymentEnabled: true,
         failedPaymentChannel: 'email',
         failedPaymentQrFallbackEnabled: true,
+        failedPaymentTemplateId: 'tpl_failed',
+        failedPaymentTemplateName: 'mi_cobro_fallido',
+        failedPaymentTemplateLanguage: 'es_MX',
         failedPaymentDelayHours: 6
       }
     })
@@ -28,14 +37,23 @@ describe('payment settings automations', () => {
       reminderDaysBefore: 5,
       reminderChannel: 'both',
       reminderQrFallbackEnabled: true,
+      reminderTemplateId: 'tpl_reminder',
+      reminderTemplateName: 'mi_recordatorio',
+      reminderTemplateLanguage: 'es_MX',
       receiptDeliveryEnabled: true,
       receiptDeliveryChannel: 'whatsapp',
       receiptQrFallbackEnabled: true,
+      receiptTemplateId: 'tpl_receipt',
+      receiptTemplateName: 'mi_comprobante',
+      receiptTemplateLanguage: 'es_MX',
       afterPaymentAction: 'send_receipt',
       afterPaymentMessage: 'Pago recibido',
       failedPaymentEnabled: true,
       failedPaymentChannel: 'email',
       failedPaymentQrFallbackEnabled: true,
+      failedPaymentTemplateId: 'tpl_failed',
+      failedPaymentTemplateName: 'mi_cobro_fallido',
+      failedPaymentTemplateLanguage: 'es_MX',
       failedPaymentDelayHours: 6
     })
   })
@@ -52,6 +70,9 @@ describe('payment settings automations', () => {
     assert.equal(settings.automations.reminderChannel, 'whatsapp')
     assert.equal(settings.automations.receiptDeliveryChannel, 'email')
     assert.equal(settings.automations.failedPaymentChannel, 'whatsapp')
+    assert.equal(settings.automations.reminderTemplateName, 'recordatorio_pago_pendiente')
+    assert.equal(settings.automations.receiptTemplateName, 'comprobante_pago_recibido')
+    assert.equal(settings.automations.failedPaymentTemplateName, 'pago_fallido_reintento')
   })
 })
 

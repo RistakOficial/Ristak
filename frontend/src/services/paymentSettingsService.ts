@@ -36,14 +36,23 @@ export interface PaymentAutomationSettings {
   reminderDaysBefore: number
   reminderChannel: 'whatsapp' | 'email' | 'both'
   reminderQrFallbackEnabled: boolean
+  reminderTemplateId: string
+  reminderTemplateName: string
+  reminderTemplateLanguage: string
   receiptDeliveryEnabled: boolean
   receiptDeliveryChannel: 'whatsapp' | 'email' | 'both'
   receiptQrFallbackEnabled: boolean
+  receiptTemplateId: string
+  receiptTemplateName: string
+  receiptTemplateLanguage: string
   afterPaymentAction: 'none' | 'send_receipt' | 'start_automation' | 'tag_contact'
   afterPaymentMessage: string
   failedPaymentEnabled: boolean
   failedPaymentChannel: 'whatsapp' | 'email' | 'both'
   failedPaymentQrFallbackEnabled: boolean
+  failedPaymentTemplateId: string
+  failedPaymentTemplateName: string
+  failedPaymentTemplateLanguage: string
   failedPaymentDelayHours: number
 }
 
@@ -109,14 +118,23 @@ export const defaultPaymentSettings: PaymentSettings = {
     reminderDaysBefore: 3,
     reminderChannel: 'whatsapp',
     reminderQrFallbackEnabled: false,
+    reminderTemplateId: '',
+    reminderTemplateName: 'recordatorio_pago_pendiente',
+    reminderTemplateLanguage: 'es_MX',
     receiptDeliveryEnabled: true,
     receiptDeliveryChannel: 'email',
     receiptQrFallbackEnabled: false,
+    receiptTemplateId: '',
+    receiptTemplateName: 'comprobante_pago_recibido',
+    receiptTemplateLanguage: 'es_MX',
     afterPaymentAction: 'send_receipt',
     afterPaymentMessage: 'Gracias, recibimos tu pago. Te compartimos tu comprobante.',
     failedPaymentEnabled: true,
     failedPaymentChannel: 'whatsapp',
     failedPaymentQrFallbackEnabled: false,
+    failedPaymentTemplateId: '',
+    failedPaymentTemplateName: 'pago_fallido_reintento',
+    failedPaymentTemplateLanguage: 'es_MX',
     failedPaymentDelayHours: 2
   },
   taxes: {

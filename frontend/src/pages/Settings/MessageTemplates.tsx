@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   ArrowLeft,
   ChevronDown,
@@ -425,6 +426,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   title = 'Plantillas',
   subtitle = 'WhatsApp · Variables · WhatsApp API'
 }) => {
+  const location = useLocation()
   const { user } = useAuth()
   const { showToast, showConfirm } = useNotification()
   const [bundle, setBundle] = useState<MessageTemplateBundle>({
@@ -459,6 +461,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [expandedVariableCategories, setExpandedVariableCategories] = useState<Set<string>>(() => new Set())
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null)
   const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null)
+  const focusedTemplateSearchRef = useRef('')
 
   useEffect(() => {
     loadBundle()
@@ -696,6 +699,46 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     setTestPhone('')
     setView('editor')
   }
+
+  useEffect(() => {
+    if (loading) return
+
+    const params = new URLSearchParams(location.search)
+    const action = params.get('action') || ''
+    const templateId = params.get('template') || ''
+    const templateName = params.get('templateName') || ''
+    const focusKey = `${action}|${templateId}|${templateName}`
+
+    if (!action && !templateId && !templateName) {
+      focusedTemplateSearchRef.current = ''
+      return
+    }
+    if (focusedTemplateSearchRef.current === focusKey) return
+    focusedTemplateSearchRef.current = focusKey
+
+    if (action === 'new') {
+      startNewTemplate()
+      return
+    }
+
+    const normalizedName = templateName.trim().toLowerCase()
+    const targetTemplate = bundle.templates.find((template) => (
+      template.id === templateId ||
+      template.ycloudTemplateId === templateId ||
+      (normalizedName && template.name.toLowerCase() === normalizedName)
+    ))
+
+    if (targetTemplate) {
+      editTemplate(targetTemplate)
+      return
+    }
+
+    if (templateName) {
+      setSearchTerm(templateName)
+      setActiveFolderId('all')
+      setView('list')
+    }
+  }, [bundle.templates, loading, location.search])
 
   const cleanBindingsForPayload = (payload: MessageTemplatePayload): MessageTemplatePayload => {
     const cleanTarget = (target: MessageTemplateVariableTarget) => {

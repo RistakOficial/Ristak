@@ -12,6 +12,7 @@ import {
   isLicenseEnforced
 } from './licenseService.js'
 import { calculatePaymentTax, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
+import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 
 const CONFIG_KEYS = {
   enabled: 'stripe_enabled',
@@ -1787,6 +1788,10 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
     }
   }
 
+  if (row?.contact_id && nextStatus === 'paid') {
+    queuePaymentAutomationMessage('receipt', { ...row, status: nextStatus, stripe_payment_intent_id: intent.id })
+  }
+
   return nextStatus
 }
 
@@ -1835,11 +1840,15 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
     ]
   )
 
-  const row = await db.get(`SELECT contact_id FROM payments WHERE ${whereColumn} = ?`, [whereValue])
+  const row = await db.get(`SELECT * FROM payments WHERE ${whereColumn} = ?`, [whereValue])
   if (row?.contact_id && nextStatus === 'paid') {
     updateSingleContactStats(row.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por invoice Stripe ${whereValue}: ${error.message}`)
     })
+  }
+
+  if (row?.contact_id && nextStatus === 'paid') {
+    queuePaymentAutomationMessage('receipt', { ...row, status: nextStatus, stripe_payment_intent_id: paymentIntentId || row.stripe_payment_intent_id })
   }
 
   return nextStatus

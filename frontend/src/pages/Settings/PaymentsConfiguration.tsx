@@ -50,7 +50,7 @@ import {
   type PaymentTaxSettings
 } from '@/services/paymentSettingsService'
 import { stripePaymentsService, type StripePaymentConfig, type StripeWebhookEndpoint } from '@/services/stripePaymentsService'
-import { whatsappApiService } from '@/services/whatsappApiService'
+import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import {
   buildInvoiceStyleVars,
   invoicePaletteOptions,
@@ -74,6 +74,7 @@ type PaymentsSectionId = 'checkout' | 'receipt' | 'automations' | 'gateways' | '
 type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip'
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 type StripeConnectMode = 'test' | 'live'
+type PaymentAutomationTemplateKind = 'reminder' | 'receipt' | 'failed'
 
 interface StripeConnectWizardState {
   active: boolean
@@ -370,6 +371,40 @@ const afterPaymentActionLabelById: Record<PaymentAutomationSettings['afterPaymen
   none: 'No hacer nada'
 }
 
+const paymentAutomationTemplateDefaults: Record<PaymentAutomationTemplateKind, {
+  label: string
+  defaultName: string
+  defaultLanguage: string
+  templateIdKey: keyof PaymentAutomationSettings
+  templateNameKey: keyof PaymentAutomationSettings
+  templateLanguageKey: keyof PaymentAutomationSettings
+}> = {
+  reminder: {
+    label: 'Recordatorio de pago',
+    defaultName: 'recordatorio_pago_pendiente',
+    defaultLanguage: 'es_MX',
+    templateIdKey: 'reminderTemplateId',
+    templateNameKey: 'reminderTemplateName',
+    templateLanguageKey: 'reminderTemplateLanguage'
+  },
+  receipt: {
+    label: 'Comprobante de pago',
+    defaultName: 'comprobante_pago_recibido',
+    defaultLanguage: 'es_MX',
+    templateIdKey: 'receiptTemplateId',
+    templateNameKey: 'receiptTemplateName',
+    templateLanguageKey: 'receiptTemplateLanguage'
+  },
+  failed: {
+    label: 'Cobro fallido',
+    defaultName: 'pago_fallido_reintento',
+    defaultLanguage: 'es_MX',
+    templateIdKey: 'failedPaymentTemplateId',
+    templateNameKey: 'failedPaymentTemplateName',
+    templateLanguageKey: 'failedPaymentTemplateLanguage'
+  }
+}
+
 const channelUsesWhatsApp = (channel: PaymentAutomationSettings['reminderChannel']) => (
   channel === 'whatsapp' || channel === 'both'
 )
@@ -438,6 +473,8 @@ export const PaymentsConfiguration: React.FC = () => {
   const [receiptLogoUploadProgress, setReceiptLogoUploadProgress] = useState(0)
   const [previewingReceipt, setPreviewingReceipt] = useState(false)
   const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
+  const [paymentWhatsappTemplates, setPaymentWhatsappTemplates] = useState<WhatsAppApiTemplate[]>([])
+  const [loadingPaymentWhatsappTemplates, setLoadingPaymentWhatsappTemplates] = useState(false)
   const receiptLogoInputRef = useRef<HTMLInputElement>(null)
   const latestSettingsRef = useRef(settings)
   const loadedSettingsRef = useRef(false)
@@ -465,6 +502,7 @@ export const PaymentsConfiguration: React.FC = () => {
     loadPaymentSettings()
     loadStripeConfig()
     loadWhatsAppAvailability()
+    loadPaymentWhatsappTemplates()
   }, [])
 
   useEffect(() => {
@@ -619,6 +657,25 @@ export const PaymentsConfiguration: React.FC = () => {
   const stripeShowConnectSetup = !stripeDualModeConnected
   const stripeShowManualFallback = !stripeOAuthConnected
   const isLoadingPage = loadingSettings || loadingHighLevelConnection || loadingStripeConfig
+  const paymentWhatsappTemplateOptions = useMemo(() => {
+    const options = Object.values(paymentAutomationTemplateDefaults).map((template) => ({
+      value: template.defaultName,
+      label: `Predeterminada · ${template.label}`
+    }))
+    const seen = new Set(options.map((option) => option.value))
+
+    paymentWhatsappTemplates.forEach((template) => {
+      const value = template.id || template.name
+      if (!value || seen.has(value)) return
+      seen.add(value)
+      options.push({
+        value,
+        label: `${template.name}${template.language ? ` · ${template.language}` : ''}`
+      })
+    })
+
+    return options
+  }, [paymentWhatsappTemplates])
 
   const setCheckoutValue = <K extends keyof PaymentCheckoutSettings>(key: K, value: PaymentCheckoutSettings[K]) => {
     setSettings((current) => ({
@@ -645,6 +702,13 @@ export const PaymentsConfiguration: React.FC = () => {
     setSettings((current) => ({
       ...current,
       automations: { ...current.automations, [key]: value }
+    }))
+  }
+
+  const patchAutomationValues = (patch: Partial<PaymentAutomationSettings>) => {
+    setSettings((current) => ({
+      ...current,
+      automations: { ...current.automations, ...patch }
     }))
   }
 
@@ -706,6 +770,26 @@ export const PaymentsConfiguration: React.FC = () => {
       setWhatsappAvailability(getWhatsAppStatusConnectionAvailability(status))
     } catch {
       setWhatsappAvailability(defaultWhatsAppAvailability)
+    }
+  }
+
+  const loadPaymentWhatsappTemplates = async () => {
+    setLoadingPaymentWhatsappTemplates(true)
+    try {
+      let items = (await whatsappApiService.getTemplates('APPROVED')).items || []
+      if (!items.length) {
+        try {
+          await whatsappApiService.refresh()
+          items = (await whatsappApiService.getTemplates('APPROVED')).items || []
+        } catch {
+          // La pantalla sigue permitiendo las plantillas predeterminadas por nombre.
+        }
+      }
+      setPaymentWhatsappTemplates(items.filter((template) => String(template.status || '').toUpperCase() === 'APPROVED'))
+    } catch {
+      setPaymentWhatsappTemplates([])
+    } finally {
+      setLoadingPaymentWhatsappTemplates(false)
     }
   }
 
@@ -1709,6 +1793,100 @@ export const PaymentsConfiguration: React.FC = () => {
     return 'Conecta WhatsApp API para enviar mensajes por WhatsApp desde esta automatización.'
   }
 
+  const getAutomationTemplateValue = (kind: PaymentAutomationTemplateKind) => {
+    const template = paymentAutomationTemplateDefaults[kind]
+    const id = String(automations[template.templateIdKey] || '')
+    const name = String(automations[template.templateNameKey] || template.defaultName)
+    return id || name
+  }
+
+  const getAutomationTemplateName = (kind: PaymentAutomationTemplateKind) => {
+    const template = paymentAutomationTemplateDefaults[kind]
+    return String(automations[template.templateNameKey] || template.defaultName)
+  }
+
+  const setAutomationTemplateValue = (kind: PaymentAutomationTemplateKind, value: string) => {
+    const config = paymentAutomationTemplateDefaults[kind]
+    const selectedTemplate = paymentWhatsappTemplates.find((template) => (
+      template.id === value || template.name === value
+    ))
+    const selectedDefault = Object.values(paymentAutomationTemplateDefaults).find((template) => template.defaultName === value)
+    const patch = {
+      [config.templateIdKey]: selectedTemplate?.id || '',
+      [config.templateNameKey]: selectedTemplate?.name || selectedDefault?.defaultName || value || config.defaultName,
+      [config.templateLanguageKey]: selectedTemplate?.language || selectedDefault?.defaultLanguage || config.defaultLanguage
+    } as Partial<PaymentAutomationSettings>
+
+    patchAutomationValues(patch)
+  }
+
+  const openPaymentTemplateEditor = (kind: PaymentAutomationTemplateKind) => {
+    const config = paymentAutomationTemplateDefaults[kind]
+    const templateId = String(automations[config.templateIdKey] || '')
+    const templateName = String(automations[config.templateNameKey] || config.defaultName)
+    const params = new URLSearchParams()
+
+    if (templateId) {
+      params.set('template', templateId)
+    } else if (templateName) {
+      params.set('templateName', templateName)
+    }
+
+    navigate(`/settings/whatsapp/templates${params.toString() ? `?${params.toString()}` : ''}`)
+  }
+
+  const openNewPaymentTemplate = () => {
+    navigate('/settings/whatsapp/templates?action=new')
+  }
+
+  const renderAutomationTemplateControl = (
+    kind: PaymentAutomationTemplateKind,
+    channel: PaymentAutomationSettings['reminderChannel']
+  ) => {
+    if (!channelUsesWhatsApp(channel)) return null
+
+    const config = paymentAutomationTemplateDefaults[kind]
+    const value = getAutomationTemplateValue(kind)
+    const selectedTemplate = paymentWhatsappTemplates.find((template) => (
+      template.id === value || template.name === value
+    ))
+    const templateName = selectedTemplate?.name || getAutomationTemplateName(kind)
+
+    return (
+      <div className={styles.automationTemplateBlock}>
+        {renderField(
+          'Plantilla WhatsApp API',
+          <CustomSelect
+            value={value}
+            onValueChange={(nextValue) => setAutomationTemplateValue(kind, nextValue)}
+            options={paymentWhatsappTemplateOptions}
+            placeholder={loadingPaymentWhatsappTemplates ? 'Cargando plantillas...' : 'Selecciona una plantilla'}
+            disabled={loadingPaymentWhatsappTemplates && paymentWhatsappTemplateOptions.length === 0}
+          />,
+          selectedTemplate
+            ? `Usará ${selectedTemplate.name} (${selectedTemplate.language || config.defaultLanguage}).`
+            : `Usará la plantilla predeterminada ${templateName}.`
+        )}
+        <div className={styles.automationTemplateActions}>
+          <Button type="button" variant="secondary" size="sm" onClick={() => openPaymentTemplateEditor(kind)}>
+            <FileCheck2 size={15} />
+            Editar mensaje
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={openNewPaymentTemplate}>
+            <Sparkles size={15} />
+            Crear propia
+          </Button>
+        </div>
+        {loadingPaymentWhatsappTemplates && (
+          <span className={styles.automationTemplateLoading}>
+            <Loader2 size={14} />
+            Cargando plantillas aprobadas
+          </span>
+        )}
+      </div>
+    )
+  }
+
   const renderAutomationsSection = () => (
     <div className={styles.singleColumnLayout}>
       <Card className={styles.sectionCard}>
@@ -1752,6 +1930,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 />,
                 getAutomationWhatsAppHelp(automations.reminderChannel, 'Los mensajes de WhatsApp salen por WhatsApp API.')
               )}
+              {renderAutomationTemplateControl('reminder', automations.reminderChannel)}
               {renderAutomationQrFallbackControl(
                 'reminderQrFallbackEnabled',
                 automations.reminderQrFallbackEnabled,
@@ -1780,6 +1959,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 />,
                 getAutomationWhatsAppHelp(automations.receiptDeliveryChannel, 'El comprobante por WhatsApp usa WhatsApp API como ruta principal.')
               )}
+              {renderAutomationTemplateControl('receipt', automations.receiptDeliveryChannel)}
               {renderAutomationQrFallbackControl(
                 'receiptQrFallbackEnabled',
                 automations.receiptQrFallbackEnabled,
@@ -1838,6 +2018,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 />,
                 getAutomationWhatsAppHelp(automations.failedPaymentChannel, 'El aviso por WhatsApp usa WhatsApp API como ruta principal.')
               )}
+              {renderAutomationTemplateControl('failed', automations.failedPaymentChannel)}
               {renderAutomationQrFallbackControl(
                 'failedPaymentQrFallbackEnabled',
                 automations.failedPaymentQrFallbackEnabled,
@@ -1855,17 +2036,17 @@ export const PaymentsConfiguration: React.FC = () => {
         <div>
           <Clock size={17} />
           <strong>{automations.remindersEnabled ? `${automations.reminderDaysBefore} días antes` : 'Recordatorios apagados'}</strong>
-          <span>{channelLabelById[automations.reminderChannel]}{whatsappAvailability.canShowQrFallbackSwitch && automations.reminderQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
+          <span>{channelLabelById[automations.reminderChannel]}{channelUsesWhatsApp(automations.reminderChannel) ? ` · ${getAutomationTemplateName('reminder')}` : ''}{whatsappAvailability.canShowQrFallbackSwitch && automations.reminderQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
         </div>
         <div>
           <CheckCircle size={17} />
           <strong>{automations.receiptDeliveryEnabled ? 'Comprobante activo' : 'Comprobante apagado'}</strong>
-          <span>{afterPaymentActionLabelById[automations.afterPaymentAction]} · {channelLabelById[automations.receiptDeliveryChannel]}{whatsappAvailability.canShowQrFallbackSwitch && automations.receiptQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
+          <span>{afterPaymentActionLabelById[automations.afterPaymentAction]} · {channelLabelById[automations.receiptDeliveryChannel]}{channelUsesWhatsApp(automations.receiptDeliveryChannel) ? ` · ${getAutomationTemplateName('receipt')}` : ''}{whatsappAvailability.canShowQrFallbackSwitch && automations.receiptQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
         </div>
         <div>
           <AlertTriangle size={17} />
           <strong>{automations.failedPaymentEnabled ? `${automations.failedPaymentDelayHours} h tras fallo` : 'Sin seguimiento'}</strong>
-          <span>{channelLabelById[automations.failedPaymentChannel]}{whatsappAvailability.canShowQrFallbackSwitch && automations.failedPaymentQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
+          <span>{channelLabelById[automations.failedPaymentChannel]}{channelUsesWhatsApp(automations.failedPaymentChannel) ? ` · ${getAutomationTemplateName('failed')}` : ''}{whatsappAvailability.canShowQrFallbackSwitch && automations.failedPaymentQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
         </div>
       </div>
     </div>

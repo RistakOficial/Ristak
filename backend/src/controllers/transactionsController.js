@@ -10,6 +10,7 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerWhatsappFirstPurchaseEvent } from '../services/metaWhatsappEventsService.js'
 import { sendPaymentNotification } from '../services/pushNotificationsService.js'
+import { queuePaymentAutomationMessage } from '../services/paymentAutomationsService.js'
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
 import { findContactByPhoneCandidates } from '../services/contactIdentityService.js'
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
@@ -540,6 +541,7 @@ export const createTransaction = async (req, res) => {
     const createdTransaction = await getTransactionByIdForResponse(transactionId)
 
     if (createdTransaction && SUCCESS_PAYMENT_STATUSES.has(finalStatus)) {
+      queuePaymentAutomationMessage('receipt', transactionId)
       sendPaymentNotification(createdTransaction).catch((pushError) => {
         logger.warn(`No se pudo enviar aviso de pago ${transactionId}: ${pushError.message}`)
       })
@@ -1384,6 +1386,7 @@ export const recordPayment = async (req, res) => {
 
     const paidTransaction = await getTransactionByIdForResponse(id)
     if (paidTransaction) {
+      queuePaymentAutomationMessage('receipt', id)
       sendPaymentNotification(paidTransaction).catch((pushError) => {
         logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
       })

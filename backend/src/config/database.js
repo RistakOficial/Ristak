@@ -2055,6 +2055,27 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)')
 
     await db.run(`
+      CREATE TABLE IF NOT EXISTS payment_automation_dispatches (
+        id TEXT PRIMARY KEY,
+        payment_id TEXT NOT NULL,
+        automation_type TEXT NOT NULL,
+        channel TEXT NOT NULL DEFAULT 'whatsapp',
+        status TEXT NOT NULL DEFAULT 'pending',
+        template_id TEXT,
+        template_name TEXT,
+        error_message TEXT,
+        raw_response_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(payment_id, automation_type, channel),
+        FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_automation_dispatches_payment ON payment_automation_dispatches(payment_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_automation_dispatches_status ON payment_automation_dispatches(status, updated_at)')
+
+    await db.run(`
       CREATE TABLE IF NOT EXISTS stripe_payment_methods (
         id TEXT PRIMARY KEY,
         contact_id TEXT,
