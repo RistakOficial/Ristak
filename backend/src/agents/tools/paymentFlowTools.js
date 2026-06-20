@@ -54,6 +54,24 @@ const OPTIONAL_CHANNEL_PARAM = CHANNEL_PARAM
   .nullable()
   .describe('Canal de envío si la pasarela es HighLevel: email, whatsapp, sms o all. Para Stripe/Mercado Pago puede ser null porque devuelven un enlace público.')
 
+const FIRST_PAYMENT_METHOD_PARAM = z.enum([
+  'cash',
+  'bank_transfer',
+  'transfer',
+  'deposit',
+  'card',
+  'saved_card',
+  'manual',
+  'offline',
+  'check',
+  'other'
+])
+  .describe('Método del primer pago: card/saved_card para tarjeta, cash/transfer/deposit/bank_transfer/manual/offline/check/other para pagos manuales.')
+
+const PAYMENT_FREQUENCY_PARAM = z.enum(['custom', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly'])
+  .nullable()
+  .describe('Cadencia semántica del pago. Usa custom cuando las fechas son irregulares, con meses saltados o montos distintos.')
+
 async function getPaymentContact(contactId) {
   const row = await db.get('SELECT id, full_name, email, phone FROM contacts WHERE id = ?', [contactId])
   if (!row) return null
@@ -228,7 +246,77 @@ function buildGatewayPaymentPayload({ contact, amount, currency, concept, dueDat
   }
 }
 
-function buildInstallmentPayload({ contact, totalAmount, currency, concept, firstPayment, remainingPayments, remainingFrequency = 'custom' }) {
+function normalizePositiveNumber(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) return null
+  return Math.round(number * 100) / 100
+}
+
+function normalizePercentage(value) {
+  const percentage = Number(value)
+  if (!Number.isFinite(percentage) || percentage <= 0) return null
+  return Math.round(percentage * 100) / 100
+}
+
+function amountFromAmountOrPercentage({ amount, percentage, totalAmount }) {
+  const explicitAmount = normalizePositiveNumber(amount)
+  if (explicitAmount !== null) return explicitAmount
+
+  const explicitPercentage = normalizePercentage(percentage)
+  if (explicitPercentage === null) return null
+
+  return Math.round((Number(totalAmount || 0) * explicitPercentage / 100) * 100) / 100
+}
+
+function normalizeFirstPaymentForPlan(firstPayment, totalAmount) {
+  if (!firstPayment) return { enabled: false }
+
+  const percentage = normalizePercentage(firstPayment.percentage)
+  const amount = amountFromAmountOrPercentage({
+    amount: firstPayment.amount,
+    percentage,
+    totalAmount
+  })
+
+  if (amount === null) return { enabled: false }
+
+  return {
+    enabled: true,
+    amount,
+    percentage,
+    type: percentage !== null && (firstPayment.amount === null || firstPayment.amount === undefined) ? 'percentage' : (firstPayment.type || 'amount'),
+    value: percentage !== null && (firstPayment.amount === null || firstPayment.amount === undefined) ? percentage : amount,
+    date: firstPayment.date || undefined,
+    method: firstPayment.method
+  }
+}
+
+function normalizeRemainingPaymentForPlan(payment, index, totalAmount, remainingFrequency) {
+  const percentage = normalizePercentage(payment.percentage)
+  const amount = amountFromAmountOrPercentage({
+    amount: payment.amount,
+    percentage,
+    totalAmount
+  })
+
+  if (amount === null) {
+    throw new Error(`La parcialidad ${index + 1} necesita monto o porcentaje válido.`)
+  }
+
+  return {
+    sequence: Number(payment.sequence || index + 1),
+    amount,
+    percentage,
+    dueDate: payment.dueDate,
+    frequency: payment.frequency || remainingFrequency || 'custom',
+    ...(payment.paymentMethod ? { paymentMethod: payment.paymentMethod } : {}),
+    ...(payment.notes ? { notes: payment.notes } : {})
+  }
+}
+
+export function buildInstallmentPayload({ contact, totalAmount, currency, concept, firstPayment, remainingPayments, remainingFrequency = 'custom', paymentMethodId = null }) {
+  const normalizedFirstPayment = normalizeFirstPaymentForPlan(firstPayment, totalAmount)
+
   return {
     contact,
     totalAmount,
@@ -236,16 +324,10 @@ function buildInstallmentPayload({ contact, totalAmount, currency, concept, firs
     title: concept,
     description: concept,
     concept,
-    firstPayment: firstPayment
-      ? { enabled: true, amount: firstPayment.amount, date: firstPayment.date || undefined, method: firstPayment.method }
-      : { enabled: false },
-    remainingPayments: remainingPayments.map((payment, index) => ({
-      sequence: index + 1,
-      amount: payment.amount,
-      dueDate: payment.dueDate,
-      frequency: remainingFrequency
-    })),
+    firstPayment: normalizedFirstPayment,
+    remainingPayments: remainingPayments.map((payment, index) => normalizeRemainingPaymentForPlan(payment, index, totalAmount, remainingFrequency)),
     remainingFrequency,
+    paymentMethodId: paymentMethodId || undefined,
     source: 'ai_agent'
   }
 }
@@ -391,20 +473,27 @@ export const createInstallmentPlanTool = tool({
     currency: z.string().nullable().describe('Moneda ISO (default: moneda de la cuenta)'),
     concept: z.string().describe('Concepto del plan, ej. "Programa de 3 meses"'),
     firstPayment: z.object({
-      amount: z.number().positive().describe('Monto del primer pago'),
-      date: z.string().nullable().describe('Fecha del primer pago YYYY-MM-DD (default hoy)'),
-      method: z.enum(['cash', 'transfer', 'deposit', 'card', 'other']).describe('Método del primer pago')
+      amount: z.number().positive().nullable().optional().describe('Monto del primer pago. Puede ser null si usas percentage.'),
+      percentage: z.number().positive().max(100).nullable().optional().describe('Porcentaje del total para el primer pago. Úsalo cuando el usuario diga anticipo/enganche en %.'),
+      date: z.string().nullable().optional().describe('Fecha del primer pago YYYY-MM-DD (default hoy)'),
+      method: FIRST_PAYMENT_METHOD_PARAM
     }).nullable().describe('Primer pago inmediato; null si el plan no tiene primer pago'),
     remainingPayments: z.array(z.object({
-      amount: z.number().positive().describe('Monto de la parcialidad'),
-      dueDate: z.string().describe('Fecha de cobro YYYY-MM-DD')
-    })).min(1).describe('Pagos restantes programados'),
+      amount: z.number().positive().nullable().optional().describe('Monto de la parcialidad. Puede ser null si usas percentage.'),
+      percentage: z.number().positive().max(100).nullable().optional().describe('Porcentaje del total para esta parcialidad. Úsalo para planes por porcentajes.'),
+      dueDate: z.string().describe('Fecha exacta de cobro YYYY-MM-DD. Para "un mes sí y un mes no", NO crees pagos de 0: sólo incluye las fechas donde sí se cobra.'),
+      frequency: PAYMENT_FREQUENCY_PARAM.optional(),
+      paymentMethod: z.string().nullable().optional().describe('Método opcional de esa parcialidad: card, manual, bank_transfer, etc.'),
+      notes: z.string().nullable().optional().describe('Nota opcional, por ejemplo "se saltó febrero"')
+    })).min(1).describe('Pagos restantes programados. Incluye sólo cobros reales; los meses sin cobro se representan saltando la fecha, no con monto 0.'),
     remainingAutomatic: z.boolean().describe('true para cobrar automáticamente con tarjeta domiciliada; false para enviar invoices a pagar manualmente'),
+    remainingFrequency: PAYMENT_FREQUENCY_PARAM.optional(),
+    paymentMethodId: z.string().nullable().optional().describe('ID de tarjeta guardada de Stripe si el plan debe usar una tarjeta ya guardada. Usa list_saved_payment_methods antes si falta.'),
     gateway: GATEWAY_PARAM,
     channel: OPTIONAL_CHANNEL_PARAM,
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente el plan')
   }),
-  execute: async ({ contactId, totalAmount, currency, concept, firstPayment, remainingPayments, remainingAutomatic, gateway, channel, confirm }) => {
+  execute: async ({ contactId, totalAmount, currency, concept, firstPayment, remainingPayments, remainingAutomatic, remainingFrequency, paymentMethodId, gateway, channel, confirm }) => {
     if (!confirm) {
       return { ok: false, error: 'Falta confirmación del usuario. Resume el plan (total, pasarela, primer pago, parcialidades con fechas y canal si aplica) y pide aprobación.' }
     }
@@ -415,7 +504,16 @@ export const createInstallmentPlanTool = tool({
       const selected = await selectPaymentGateway(gateway, 'installmentPlans')
       if (!selected.ok) return selected
 
-      const planPayload = buildInstallmentPayload({ contact, totalAmount, currency, concept, firstPayment, remainingPayments })
+      const planPayload = buildInstallmentPayload({
+        contact,
+        totalAmount,
+        currency,
+        concept,
+        firstPayment,
+        remainingPayments,
+        remainingFrequency: remainingFrequency || 'custom',
+        paymentMethodId
+      })
 
       if (selected.gateway.id === 'stripe') {
         const result = await createStripePaymentPlan(planPayload, { baseUrl: await getPaymentBaseUrl() })
@@ -432,7 +530,6 @@ export const createInstallmentPlanTool = tool({
       }
       const result = await createInstallmentPaymentFlow({
         ...planPayload,
-        remainingPayments: remainingPayments.map((payment) => ({ amount: payment.amount, dueDate: payment.dueDate })),
         remainingAutomatic,
         channels: buildChannels(channel),
         source: 'ai_agent'
