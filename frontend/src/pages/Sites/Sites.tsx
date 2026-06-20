@@ -784,6 +784,8 @@ const VIDEO_TRICK_PROGRESS_PEAK_MAX = 96
 const VIDEO_PREVIEW_MAX_SPAN_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
+const VIDEO_PREVIEW_FRAME_COUNT = 12
+const VIDEO_PREVIEW_FRAME_INDEXES = Array.from({ length: VIDEO_PREVIEW_FRAME_COUNT }, (_, index) => index)
 const VIDEO_FORM_GATE_FIT_ENTER_PX = 12
 const VIDEO_FORM_GATE_FIT_EXIT_PX = 28
 const VIDEO_FORM_GATE_FIT_SAFE_AREA_PX = 14
@@ -2779,6 +2781,14 @@ const formatVideoPreviewSecond = (value: number) => {
     ? String(seconds).padStart(2, '0')
     : seconds.toFixed(1).padStart(4, '0')
   return `${minutes}:${formattedSeconds}`
+}
+
+const formatVideoPreviewDuration = (value: number) => {
+  const safe = Math.max(0, Number.isFinite(value) ? value : 0)
+  if (safe < 60) {
+    return `${Number(safe.toFixed(safe % 1 === 0 ? 0 : 1))} s`
+  }
+  return `${formatVideoPreviewSecond(safe)} min`
 }
 
 const formatVideoProgressPercent = (value: number) => {
@@ -23170,15 +23180,98 @@ const MediaUploadControl: React.FC<{
 
 const VideoPreviewRangeControl: React.FC<{
   settings: Record<string, unknown>
+  mediaUrl: string
   durationSeconds: number
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ settings, durationSeconds, onPatchSettings, onSave }) => {
+}> = ({ settings, mediaUrl, durationSeconds, onPatchSettings, onSave }) => {
   const trackRef = useRef<HTMLDivElement | null>(null)
   const dragStateRef = useRef<{ startX: number; start: number; end: number; width: number } | null>(null)
+  const [frameSources, setFrameSources] = useState<string[]>([])
   const range = normalizeVideoPreviewRange(settings, durationSeconds)
   const startPercent = range.max > 0 ? (range.start / range.max) * 100 : 0
   const endPercent = range.max > 0 ? (range.end / range.max) * 100 : 100
+  const spanSeconds = Math.max(0, range.end - range.start)
+
+  useEffect(() => {
+    const source = mediaUrl.trim()
+    if (!source) {
+      setFrameSources([])
+      return
+    }
+
+    let cancelled = false
+    const video = document.createElement('video')
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      setFrameSources([])
+      return
+    }
+
+    canvas.width = 132
+    canvas.height = 74
+    video.crossOrigin = 'anonymous'
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'metadata'
+
+    const waitForEvent = (name: 'loadedmetadata' | 'loadeddata' | 'seeked') => new Promise<boolean>((resolve) => {
+      let timeout: number | undefined
+      const finish = () => {
+        if (timeout !== undefined) window.clearTimeout(timeout)
+        video.removeEventListener(name, finish)
+        resolve(true)
+      }
+      timeout = window.setTimeout(() => {
+        video.removeEventListener(name, finish)
+        resolve(false)
+      }, 1800)
+      video.addEventListener(name, finish, { once: true })
+    })
+
+    const captureFrames = async () => {
+      try {
+        video.src = source
+        if (!await waitForEvent('loadedmetadata') || cancelled) return
+        await waitForEvent('loadeddata')
+        if (cancelled) return
+
+        const rawDuration = Number.isFinite(video.duration) && video.duration > 0
+          ? video.duration
+          : range.max
+        const captureDuration = Math.max(VIDEO_PREVIEW_STEP_SECONDS, rawDuration)
+        const frames: string[] = []
+
+        for (const index of VIDEO_PREVIEW_FRAME_INDEXES) {
+          if (cancelled) return
+          const ratio = (index + 0.5) / VIDEO_PREVIEW_FRAME_COUNT
+          const target = Math.min(
+            Math.max(0, captureDuration - VIDEO_PREVIEW_STEP_SECONDS),
+            Math.max(0, captureDuration * ratio)
+          )
+          video.currentTime = target
+          await waitForEvent('seeked')
+          if (cancelled) return
+          context.drawImage(video, 0, 0, canvas.width, canvas.height)
+          frames.push(canvas.toDataURL('image/jpeg', 0.68))
+        }
+
+        if (!cancelled) setFrameSources(frames)
+      } catch {
+        if (!cancelled) setFrameSources([])
+      }
+    }
+
+    void captureFrames()
+
+    return () => {
+      cancelled = true
+      video.removeAttribute('src')
+      video.load()
+    }
+  }, [mediaUrl, range.max])
 
   const patchRange = useCallback((nextStart: number, nextEnd: number, commit = false) => {
     const normalized = normalizeVideoPreviewRange({
@@ -23250,7 +23343,7 @@ const VideoPreviewRangeControl: React.FC<{
     <div className={styles.videoPreviewRange}>
       <div className={styles.videoPreviewRangeHeader}>
         <span>Loop del preview</span>
-        <strong>{formatVideoPreviewSecond(range.start)} - {formatVideoPreviewSecond(range.end)}</strong>
+        <strong>{formatVideoPreviewDuration(spanSeconds)}</strong>
       </div>
       <div
         ref={trackRef}
@@ -23260,7 +23353,15 @@ const VideoPreviewRangeControl: React.FC<{
           ['--video-preview-end' as string]: `${endPercent}%`
         } as React.CSSProperties}
       >
-        <div className={styles.videoPreviewTrackBase} aria-hidden="true" />
+        <div className={styles.videoPreviewFrameStrip} aria-hidden="true">
+          {VIDEO_PREVIEW_FRAME_INDEXES.map(index => (
+            <span key={index} className={styles.videoPreviewFrame}>
+              {frameSources[index] ? <img src={frameSources[index]} alt="" draggable={false} /> : null}
+            </span>
+          ))}
+        </div>
+        <div className={styles.videoPreviewOutsideLeft} aria-hidden="true" />
+        <div className={styles.videoPreviewOutsideRight} aria-hidden="true" />
         <div
           className={styles.videoPreviewSelection}
           onPointerDown={handleSelectionPointerDown}
@@ -23269,6 +23370,12 @@ const VideoPreviewRangeControl: React.FC<{
           onPointerCancel={handleSelectionPointerUp}
           aria-hidden="true"
         />
+        <span className={`${styles.videoPreviewMarker} ${styles.videoPreviewMarkerStart}`} aria-hidden="true">
+          <GripVertical size={13} />
+        </span>
+        <span className={`${styles.videoPreviewMarker} ${styles.videoPreviewMarkerEnd}`} aria-hidden="true">
+          <GripVertical size={13} />
+        </span>
         <input
           className={styles.videoPreviewThumb}
           type="range"
@@ -23294,9 +23401,19 @@ const VideoPreviewRangeControl: React.FC<{
           onTouchEnd={onSave}
         />
       </div>
-      <div className={styles.videoPreviewRangeFooter}>
+      <div className={styles.videoPreviewTimelineLabels}>
         <span>0:00</span>
-        <span>Max {formatVideoPreviewSecond(range.max)}</span>
+        <span>{formatVideoPreviewSecond(range.max)}</span>
+      </div>
+      <div className={styles.videoPreviewRangeFooter}>
+        <span>
+          <small>Inicio</small>
+          <strong>{formatVideoPreviewSecond(range.start)}</strong>
+        </span>
+        <span>
+          <small>Final</small>
+          <strong>{formatVideoPreviewSecond(range.end)}</strong>
+        </span>
       </div>
     </div>
   )
@@ -23558,6 +23675,7 @@ const VideoPlayerSettingsControls: React.FC<{
             {settings.videoPreviewEnabled !== false && (
               <VideoPreviewRangeControl
                 settings={settings}
+                mediaUrl={mediaUrl}
                 durationSeconds={metadataDuration}
                 onPatchSettings={onPatchSettings}
                 onSave={onSave}
