@@ -22133,7 +22133,7 @@ const SiteSettingsPanelContent: React.FC<{
       )}
 
       <section className={styles.editorSettingsSection}>
-        {metaPixelConnected && isLanding(site) && activePage ? (
+        {metaPixelConnected && hasEditablePages(site) && activePage ? (
           <MetaPageConversionSettingsPanel
             site={site}
             pages={pages}

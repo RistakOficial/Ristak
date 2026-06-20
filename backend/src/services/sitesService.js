@@ -118,6 +118,7 @@ const SITE_META_NO_EVENT = 'none'
 const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const SITE_META_TRIGGERS = new Set(['page_view', 'form_submit'])
+const SITE_TYPES_WITH_PAGE_META = new Set(['landing_page', 'interactive_form', 'standard_form'])
 const SITE_META_PARAMETER_FIELDS = {
   Lead: ['value', 'predictedLtv', 'currency', 'status'],
   Schedule: ['value', 'predictedLtv', 'currency', 'status'],
@@ -12151,7 +12152,7 @@ function getSitePage(site, pageId) {
 }
 
 function getPageMetaConfig(site, pageId) {
-  if (!site || site.siteType !== 'landing_page') return null
+  if (!site || !SITE_TYPES_WITH_PAGE_META.has(site.siteType)) return null
   const page = getSitePage(site, pageId)
   if (!page || !page.metaCapiEnabled) return null
   const eventName = normalizeSiteMetaEventName(page.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
@@ -12166,21 +12167,26 @@ function getPageMetaConfig(site, pageId) {
 }
 
 function getFormSubmitMetaEventName(site, pageId) {
-  if (site?.siteType === 'landing_page') {
+  if (site && SITE_TYPES_WITH_PAGE_META.has(site.siteType)) {
     const page = getSitePage(site, pageId)
     if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) === 'form_submit') {
       return normalizeSiteMetaEventName(page.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
     }
-    return SITE_META_NO_EVENT
+    if (site.siteType === 'landing_page') return SITE_META_NO_EVENT
   }
 
-  return normalizeSiteMetaEventName(site.metaEventName, { allowNone: true })
+  return normalizeSiteMetaEventName(site?.metaEventName, { allowNone: true })
 }
 
 function getFormSubmitMetaEventParameters(site, pageId, eventName) {
-  if (site?.siteType === 'landing_page') {
+  if (site && SITE_TYPES_WITH_PAGE_META.has(site.siteType)) {
     const page = getSitePage(site, pageId)
-    return pruneSiteMetaEventParametersForEvent(page?.metaEventParameters, eventName)
+    if (page?.metaCapiEnabled && normalizeSiteMetaTrigger(page.metaTrigger) === 'form_submit') {
+      return pruneSiteMetaEventParametersForEvent(page?.metaEventParameters, eventName)
+    }
+    if (site.siteType === 'landing_page') {
+      return pruneSiteMetaEventParametersForEvent(page?.metaEventParameters, eventName)
+    }
   }
 
   return pruneSiteMetaEventParametersForEvent(site?.theme?.metaEventParameters || site?.theme?.meta_event_parameters, eventName)
