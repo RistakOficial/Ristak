@@ -195,6 +195,25 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, new RegExp(`data-rstk-video-action-target="${targetBlock.id}"`))
     assert.match(html, /data-rstk-video-action-hidden="true"/)
 
+    const legacyHtml = await renderPublicSiteHtml({
+      ...landingSite,
+      blocks: (landingSite.blocks || []).map(block => block.id === videoBlock.id
+        ? {
+            ...block,
+            settings: {
+              ...block.settings,
+              videoFormGateCompletionAction: 'disqualify_message'
+            }
+          }
+        : block)
+    }, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    assert.match(legacyHtml, /data-completion-action="continue_video"/)
+    assert.doesNotMatch(legacyHtml, /data-completion-action="disqualify_message"/)
+
     const result = await createSubmissionFromRequest(
       {
         headers: { host: 'example.test', 'user-agent': 'node-test' },
@@ -267,8 +286,8 @@ test('video form gate renders inside the video player and posts as the source fo
       }
     )
 
-    assert.equal(forcedResult.status, 'disqualified')
-    assert.equal(forcedResult.message, 'No calificas para este video.')
+    assert.equal(forcedResult.status, 'received')
+    assert.notEqual(forcedResult.message, 'No calificas para este video.')
   } finally {
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))
     if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)

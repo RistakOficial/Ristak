@@ -1057,7 +1057,7 @@ const isEditorSurfaceSelection = (id: string) => id === PAGE_SELECTED_ID || id =
 type VideoActionKind = 'show' | 'hide' | 'open_form' | 'open_video_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout' | 'meta_event'
 type VideoActionBeforeState = 'hidden' | 'visible' | 'unchanged'
 type VideoFormGateAnimation = 'fade' | 'instant' | 'slide_up'
-type VideoFormGateCompletionAction = 'continue_video' | 'redirect' | 'disqualify_message' | 'show_targets' | 'hide_targets'
+type VideoFormGateCompletionAction = 'continue_video' | 'redirect' | 'show_targets' | 'hide_targets'
 type VideoFormGateRepeatMode = 'every_visit' | 'session' | 'remember_visitor'
 type VideoFormGateStorageUnit = 'days' | 'months'
 
@@ -1139,7 +1139,6 @@ const videoFormGateAnimationOptions: Array<{ value: VideoFormGateAnimation; labe
 const videoFormGateCompletionActionOptions: Array<{ value: VideoFormGateCompletionAction; label: string }> = [
   { value: 'continue_video', label: 'Continuar video' },
   { value: 'redirect', label: 'Redirigir a sitio' },
-  { value: 'disqualify_message', label: 'Descalificar y mostrar mensaje' },
   { value: 'show_targets', label: 'Mostrar elementos ocultos' },
   { value: 'hide_targets', label: 'Ocultar elementos' }
 ]
@@ -31588,7 +31587,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
 
           {(option.action === 'disqualify' || option.action === 'disqualify_after_submit') && (
             <label className={styles.field}>
-              <span>Mensaje</span>
+              <span>Mensaje cuando se descalifique</span>
               <textarea
                 rows={2}
                 value={option.message || ''}
@@ -32322,18 +32321,6 @@ const VideoFormGateSettingsPanel: React.FC<{
                       onPatchSettings({ videoFormGateRedirectUrl: event.target.value })
                       patchVideoGateTheme({ formQualifiedRedirectUrl: event.target.value })
                     }}
-                    onBlur={onSave}
-                  />
-                </label>
-              )}
-              {finalAction === 'disqualify_message' && (
-                <label className={styles.field}>
-                  <span>Mensaje de descalificación</span>
-                  <textarea
-                    rows={2}
-                    value={videoGateTheme.finalMessages?.disqualified || ''}
-                    placeholder="Gracias por responder. Por ahora no parece ser el siguiente paso ideal."
-                    onChange={(event) => patchVideoGateTheme({ finalMessages: { ...(videoGateTheme.finalMessages || {}), disqualified: event.target.value } })}
                     onBlur={onSave}
                   />
                 </label>

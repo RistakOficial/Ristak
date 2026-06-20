@@ -11736,7 +11736,7 @@ function normalizeVideoFormGateAnimation(settings = {}) {
   return ['fade', 'instant', 'slide_up'].includes(animation) ? animation : 'fade'
 }
 
-const VIDEO_FORM_GATE_COMPLETION_ACTIONS = new Set(['continue_video', 'redirect', 'disqualify_message', 'show_targets', 'hide_targets'])
+const VIDEO_FORM_GATE_COMPLETION_ACTIONS = new Set(['continue_video', 'redirect', 'show_targets', 'hide_targets'])
 const VIDEO_FORM_GATE_REPEAT_MODES = new Set(['every_visit', 'session', 'remember_visitor'])
 
 function normalizeVideoFormGateCompletionAction(settings = {}) {
@@ -12310,10 +12310,6 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             completeGate();
             return true;
           }
-          if (completionAction === 'disqualify_message' && options.remembered !== true) {
-            showCompletionMessage(submission.message || 'Gracias. Por ahora esta solicitud no califica.');
-            return true;
-          }
           completeGate();
           return true;
         };
@@ -12358,7 +12354,6 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
                   ruleFieldId: options.fieldId || '',
                   immediateDisqualify: options.immediateDisqualify === true,
                   videoFormGateCompletionAction: completionAction,
-                  videoFormGateForceDisqualified: completionAction === 'disqualify_message',
                   tracking: nativeTracking,
                   fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
                   fbc: (document.cookie.match(/(?:^|; )_fbc=([^;]+)/) || [])[1] || null
@@ -21647,20 +21642,6 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   }
 
   let ruleEvaluation = evaluateSubmissionRules(submissionBlocks, responses)
-  const forceVideoFormGateDisqualified = Boolean(videoFormGateContext) && normalizeBoolean(
-    body.meta?.videoFormGateForceDisqualified ||
-    body.meta?.video_form_gate_force_disqualified ||
-    (cleanString(body.meta?.videoFormGateCompletionAction || body.meta?.video_form_gate_completion_action) === 'disqualify_message' ? true : false)
-  ) === 1
-  if (forceVideoFormGateDisqualified) {
-    ruleEvaluation = {
-      ...ruleEvaluation,
-      status: 'disqualified',
-      disqualified: true,
-      redirectUrl: '',
-      targetPageId: ''
-    }
-  }
   const ruleRedirectUrl = ruleEvaluation.redirectUrl ||
     (ruleEvaluation.targetPageId ? buildPageHref(ruleEvaluation.targetPageId, { site }) : '')
 
