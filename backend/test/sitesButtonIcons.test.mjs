@@ -31,7 +31,8 @@ test('landing buttons render configured icons without changing plain button mark
           pageId: 'page-1',
           buttonText: 'Reservar ahora',
           buttonIcon: 'arrowRight',
-          buttonIconSide: 'right'
+          buttonIconSide: 'right',
+          buttonPaddingY: 18
         },
         createdAt: '',
         updatedAt: ''
@@ -65,6 +66,8 @@ test('landing buttons render configured icons without changing plain button mark
   assert.match(html, /<span class="rstk-button-content rstk-button-icon-right">/)
   assert.match(html, /<span class="rstk-button-label">Reservar ahora<\/span>/)
   assert.match(html, /<span class="rstk-button-icon" aria-hidden="true"><svg/)
+  assert.match(html, /rstkButtonPaddingOverride/)
+  assert.match(html, /--rstk-button-pad-y:18px/)
   assert.match(html, /<span class="rstk-button-label">Continuar<\/span><\/a>/)
   assert.doesNotMatch(html, /<span class="rstk-button-content rstk-button-icon-right"><span class="rstk-button-text-stack"><span class="rstk-button-label">Continuar/)
 })

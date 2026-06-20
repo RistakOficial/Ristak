@@ -14783,6 +14783,7 @@ function renderBlockStyleVars(block) {
   const buttonRadius = blockSettingNumber(settings, 'buttonRadius', 0, 80)
   const buttonHeight = blockSettingNumber(settings, 'buttonHeight', 34, 88)
   const buttonPaddingX = blockSettingNumber(settings, 'buttonPaddingX', 8, 72)
+  const buttonPaddingY = blockSettingNumber(settings, 'buttonPaddingY', 0, 40)
   const buttonFontSize = blockSettingNumber(settings, 'buttonFontSize', 11, 32)
   const buttonBorderWidth = blockSettingNumber(settings, 'buttonBorderWidth', 0, 8)
   const lineHeight = blockSettingNumber(settings, 'lineHeight', 0.8, 2.6)
@@ -14881,6 +14882,7 @@ function renderBlockStyleVars(block) {
   if (buttonRadius !== null) vars.push(`--rstk-block-button-radius:${buttonRadius}px`)
   if (buttonHeight !== null) vars.push(`--rstk-button-height:${buttonHeight}px`)
   if (buttonPaddingX !== null) vars.push(`--rstk-button-pad-x:${buttonPaddingX}px`)
+  if (buttonPaddingY !== null) vars.push(`--rstk-button-pad-y:${buttonPaddingY}px`)
   if (buttonFontSize !== null) vars.push(`--rstk-button-size:${buttonFontSize}px`)
   if (settings.buttonSubtitleFontSize !== undefined) {
     const buttonSubtitleFontSize = blockSettingNumber(settings, 'buttonSubtitleFontSize', 10, 24)
@@ -14929,6 +14931,7 @@ function renderBlockStyleClassName(block) {
     cleanString(settings.blockText) ? 'rstkBlockTextOverride' : '',
     isCssGradient(settings.blockText) ? 'rstkTextGradient' : '',
     isCssGradient(settings.buttonTextColor) ? 'rstkButtonTextGradient' : '',
+    settings.buttonPaddingY !== undefined ? 'rstkButtonPaddingOverride' : '',
     cleanString(settings.blockBackgroundMediaType) === 'video' && safePublicMediaUrl(settings.blockBackgroundImage, 'video') ? 'rstkHasBgVideo' : '',
     cleanString(settings.fontFamily) ? 'rstkFontOverride' : '',
     settings.fontSize !== undefined ? 'rstkSizeOverride' : '',
@@ -16493,7 +16496,7 @@ const RSTK_BASE_CSS = `
     border:var(--rstk-button-border-width,1px) solid var(--rstk-button-border,var(--rstk-button-bg,var(--rstk-accent)));border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius));
     background:var(--rstk-button-bg,var(--rstk-accent));color:var(--rstk-button-text,var(--rstk-on-accent));
     font-family:var(--rstk-button-font,inherit);font-weight:var(--rstk-button-weight,var(--rstk-btn-weight));font-size:var(--rstk-button-size,1.02rem);font-style:var(--rstk-button-font-style,normal);line-height:var(--rstk-button-line-height,1.08);
-    padding:8px var(--rstk-button-pad-x,22px);text-decoration:var(--rstk-button-text-decoration,none);text-transform:var(--rstk-button-text-transform,none);
+    padding:var(--rstk-button-pad-y,8px) var(--rstk-button-pad-x,22px);text-decoration:var(--rstk-button-text-decoration,none);text-transform:var(--rstk-button-text-transform,none);
     transition:background .15s ease,border-color .15s ease,transform .04s ease,box-shadow .15s ease;
   }
 	  .rstk-button-link{justify-self:var(--rstk-button-justify,center);width:var(--rstk-button-width,fit-content);margin-left:var(--rstk-button-margin-left,auto);margin-right:var(--rstk-button-margin-right,auto)}
@@ -16766,7 +16769,8 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-cta h2{font-size:clamp(2rem,4vw,3.1rem)}
   .rstk-kind-landing .rstk-cta p{font-size:1.1rem;max-width:var(--rstk-content-max,52ch);margin-left:var(--rstk-content-margin-left,auto);margin-right:var(--rstk-content-margin-right,auto)}
 
-  .rstk-kind-landing .rstk-button-link{border-radius:var(--rstk-block-button-radius,999px);min-height:var(--rstk-button-height,54px);padding:0 var(--rstk-button-pad-x,28px);font-family:var(--rstk-button-font,var(--rstk-display));font-weight:var(--rstk-button-weight,600);transition:transform .25s var(--rstk-ease),box-shadow .25s var(--rstk-ease),background .2s ease}
+  .rstk-kind-landing .rstk-button-link{border-radius:var(--rstk-block-button-radius,999px);min-height:var(--rstk-button-height,54px);padding:var(--rstk-button-pad-y,0) var(--rstk-button-pad-x,28px);font-family:var(--rstk-button-font,var(--rstk-display));font-weight:var(--rstk-button-weight,600);transition:transform .25s var(--rstk-ease),box-shadow .25s var(--rstk-ease),background .2s ease}
+  .rstkButtonPaddingOverride .rstk-button-link,.rstkButtonPaddingOverride .rstk-actions button{min-height:auto}
   .rstk-kind-landing .rstk-button-link:hover{transform:none;box-shadow:none}
 
   .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-video,.rstk-kind-landing .rstk-embed{border-radius:var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px)));box-shadow:none}

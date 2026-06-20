@@ -2814,7 +2814,7 @@ type HorizontalAlign = 'left' | 'center' | 'right' | 'justify'
 type ButtonAlign = HorizontalAlign | 'full'
 type ButtonIconName = '' | 'arrowRight' | 'sparkles' | 'calendar' | 'send' | 'check' | 'external'
 type ButtonIconSide = 'left' | 'right'
-type ButtonStylePresetId = 'solid' | 'gradient' | 'outline' | 'minimal'
+type ButtonStylePresetId = string
 type SocialPlatform = 'facebook' | 'instagram' | 'tiktok' | 'threads'
 type FormChoiceStyle = NonNullable<SiteTheme['formChoiceStyle']>
 type FormSelectStyle = NonNullable<SiteTheme['formSelectStyle']>
@@ -2849,18 +2849,235 @@ const buttonIconSideOptions: Array<{ value: ButtonIconSide; label: string }> = [
 const buttonIconValues = new Set<ButtonIconName>(buttonIconOptions.map(option => option.value))
 const buttonIconSideValues = new Set<ButtonIconSide>(buttonIconSideOptions.map(option => option.value))
 
-const buttonStylePresets: Array<{
+type ButtonStylePreset = {
   id: ButtonStylePresetId
   label: string
   description: string
-  previewClassName: 'buttonPresetPreviewSolid' | 'buttonPresetPreviewGradient' | 'buttonPresetPreviewOutline' | 'buttonPresetPreviewMinimal'
+  previewLabel: string
+  previewClassName: string
   defaultIcon: ButtonIconName
   defaultIconSide: ButtonIconSide
-}> = [
-  { id: 'solid', label: 'Sólido moderno', description: 'Limpio, fuerte y listo para CTA principal.', previewClassName: 'buttonPresetPreviewSolid', defaultIcon: '', defaultIconSide: 'right' },
-  { id: 'gradient', label: 'Gradiente pill', description: 'Redondeado con energía para ofertas y lanzamientos.', previewClassName: 'buttonPresetPreviewGradient', defaultIcon: 'sparkles', defaultIconSide: 'left' },
-  { id: 'outline', label: 'Borde premium', description: 'Sin relleno, claro y elegante.', previewClassName: 'buttonPresetPreviewOutline', defaultIcon: 'arrowRight', defaultIconSide: 'right' },
-  { id: 'minimal', label: 'Texto con flecha', description: 'Sencillo, ligero y muy usable.', previewClassName: 'buttonPresetPreviewMinimal', defaultIcon: 'arrowRight', defaultIconSide: 'right' }
+  buildPatch: (defaultAccent: string) => Record<string, unknown>
+}
+
+const buttonPresetBasePatch = {
+  buttonHeight: undefined,
+  buttonTextTransform: 'none',
+  buttonLineHeight: '',
+  buttonSubtitleFontSize: 13
+}
+
+const buttonStylePresets: ButtonStylePreset[] = [
+  {
+    id: 'solid-modern',
+    label: 'Sólido moderno',
+    description: 'CTA fuerte, limpio y directo.',
+    previewLabel: 'Continuar',
+    previewClassName: 'buttonPresetPreviewSolid',
+    defaultIcon: '',
+    defaultIconSide: 'right',
+    buildPatch: (accent) => ({ ...buttonPresetBasePatch, buttonBg: accent, buttonTextColor: onAccentFor(accent), buttonBorderColor: accent, buttonBorderWidth: 1, buttonRadius: 18, buttonPaddingX: 30, buttonPaddingY: 14, buttonFontSize: 16, buttonFontWeight: 'bold', buttonIcon: '', buttonIconSide: 'right' })
+  },
+  {
+    id: 'gradient-pill',
+    label: 'Gradiente pill',
+    description: 'Cápsula moderna con energía.',
+    previewLabel: 'Empezar',
+    previewClassName: 'buttonPresetPreviewGradient',
+    defaultIcon: 'sparkles',
+    defaultIconSide: 'left',
+    buildPatch: (accent) => ({ ...buttonPresetBasePatch, buttonBg: isHex6(accent) ? `linear-gradient(135deg, ${accent} 0%, #7c3aed 100%)` : 'linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)', buttonTextColor: '#ffffff', buttonBorderColor: 'transparent', buttonBorderWidth: 0, buttonRadius: 80, buttonPaddingX: 34, buttonPaddingY: 16, buttonFontSize: 17, buttonFontWeight: 'bold', buttonIcon: 'sparkles', buttonIconSide: 'left' })
+  },
+  {
+    id: 'outline-premium',
+    label: 'Borde premium',
+    description: 'Sin relleno, elegante y claro.',
+    previewLabel: 'Reservar',
+    previewClassName: 'buttonPresetPreviewOutline',
+    defaultIcon: 'arrowRight',
+    defaultIconSide: 'right',
+    buildPatch: (accent) => ({ ...buttonPresetBasePatch, buttonBg: 'transparent', buttonTextColor: accent, buttonBorderColor: accent, buttonBorderWidth: 2, buttonRadius: 16, buttonPaddingX: 30, buttonPaddingY: 14, buttonFontSize: 16, buttonFontWeight: 'bold', buttonIcon: 'arrowRight', buttonIconSide: 'right' })
+  },
+  {
+    id: 'minimal-arrow',
+    label: 'Texto con flecha',
+    description: 'Ligero para acciones secundarias.',
+    previewLabel: 'Read more',
+    previewClassName: 'buttonPresetPreviewMinimal',
+    defaultIcon: 'arrowRight',
+    defaultIconSide: 'right',
+    buildPatch: (accent) => ({ ...buttonPresetBasePatch, buttonBg: 'transparent', buttonTextColor: accent, buttonBorderColor: 'transparent', buttonBorderWidth: 0, buttonRadius: 8, buttonPaddingX: 10, buttonPaddingY: 8, buttonFontSize: 16, buttonFontWeight: 'bold', buttonIcon: 'arrowRight', buttonIconSide: 'right' })
+  },
+  {
+    id: 'neon-line',
+    label: 'Neón lineal',
+    description: 'Borde vibrante estilo nocturno.',
+    previewLabel: 'Leer más',
+    previewClassName: 'buttonPresetPreviewNeon',
+    defaultIcon: 'arrowRight',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: 'transparent', buttonTextColor: '#f472b6', buttonBorderColor: '#f472b6', buttonBorderWidth: 2, buttonRadius: 80, buttonPaddingX: 28, buttonPaddingY: 11, buttonFontSize: 14, buttonFontWeight: 'bold', buttonIcon: 'arrowRight', buttonIconSide: 'right' })
+  },
+  {
+    id: 'archive-blue',
+    label: 'Archive blue',
+    description: 'Rectangular con icono a la izquierda.',
+    previewLabel: 'Archive',
+    previewClassName: 'buttonPresetPreviewArchive',
+    defaultIcon: 'external',
+    defaultIconSide: 'left',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: '#3154b8', buttonTextColor: '#ffffff', buttonBorderColor: '#ffffff', buttonBorderWidth: 2, buttonRadius: 6, buttonPaddingX: 30, buttonPaddingY: 15, buttonFontSize: 17, buttonFontWeight: 'bold', buttonIcon: 'external', buttonIconSide: 'left' })
+  },
+  {
+    id: 'booking-soft',
+    label: 'Booking suave',
+    description: 'Borde fino y aireado.',
+    previewLabel: 'Booking now',
+    previewClassName: 'buttonPresetPreviewBooking',
+    defaultIcon: '',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: 'transparent', buttonTextColor: '#7da2ff', buttonBorderColor: '#7da2ff', buttonBorderWidth: 1, buttonRadius: 18, buttonPaddingX: 34, buttonPaddingY: 14, buttonFontSize: 17, buttonFontWeight: 'bold', buttonIcon: '', buttonIconSide: 'right' })
+  },
+  {
+    id: 'fire-contact',
+    label: 'Get in touch',
+    description: 'Cálido, compacto y vendedor.',
+    previewLabel: 'Get In Touch',
+    previewClassName: 'buttonPresetPreviewFire',
+    defaultIcon: 'arrowRight',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: 'linear-gradient(135deg, #fb923c 0%, #f97316 100%)', buttonTextColor: '#ffffff', buttonBorderColor: 'transparent', buttonBorderWidth: 0, buttonRadius: 12, buttonPaddingX: 24, buttonPaddingY: 12, buttonFontSize: 14, buttonFontWeight: 'bold', buttonIcon: 'arrowRight', buttonIconSide: 'right' })
+  },
+  {
+    id: 'executive-gray',
+    label: 'Ejecutivo gris',
+    description: 'Sobrio, limpio y profesional.',
+    previewLabel: 'Continuar',
+    previewClassName: 'buttonPresetPreviewExecutive',
+    defaultIcon: 'arrowRight',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: '#334155', buttonTextColor: '#ffffff', buttonBorderColor: '#334155', buttonBorderWidth: 1, buttonRadius: 12, buttonPaddingX: 26, buttonPaddingY: 13, buttonFontSize: 15, buttonFontWeight: 'bold', buttonIcon: 'arrowRight', buttonIconSide: 'right' })
+  },
+  {
+    id: 'black-luxe',
+    label: 'Black luxe',
+    description: 'Negro elegante con presencia.',
+    previewLabel: 'Comprar',
+    previewClassName: 'buttonPresetPreviewBlack',
+    defaultIcon: 'sparkles',
+    defaultIconSide: 'left',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: '#0b0b0f', buttonTextColor: '#ffffff', buttonBorderColor: '#0b0b0f', buttonBorderWidth: 1, buttonRadius: 80, buttonPaddingX: 32, buttonPaddingY: 14, buttonFontSize: 15, buttonFontWeight: 'bold', buttonIcon: 'sparkles', buttonIconSide: 'left' })
+  },
+  {
+    id: 'gold-premium',
+    label: 'Gold premium',
+    description: 'Lujo cálido para ofertas altas.',
+    previewLabel: 'Premium',
+    previewClassName: 'buttonPresetPreviewGold',
+    defaultIcon: 'sparkles',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: 'linear-gradient(135deg, #111111 0%, #d4af37 100%)', buttonTextColor: '#ffffff', buttonBorderColor: '#d4af37', buttonBorderWidth: 1, buttonRadius: 16, buttonPaddingX: 30, buttonPaddingY: 15, buttonFontSize: 16, buttonFontWeight: 'bold', buttonIcon: 'sparkles', buttonIconSide: 'right' })
+  },
+  {
+    id: 'blue-capsule',
+    label: 'Cápsula azul',
+    description: 'Simple, redondo y confiable.',
+    previewLabel: 'Choose room',
+    previewClassName: 'buttonPresetPreviewBlueCapsule',
+    defaultIcon: '',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: '#7da2ff', buttonTextColor: '#ffffff', buttonBorderColor: '#7da2ff', buttonBorderWidth: 1, buttonRadius: 20, buttonPaddingX: 36, buttonPaddingY: 16, buttonFontSize: 17, buttonFontWeight: 'bold', buttonIcon: '', buttonIconSide: 'right' })
+  },
+  {
+    id: 'pink-cyber',
+    label: 'Cyber rosa',
+    description: 'Gradiente llamativo y moderno.',
+    previewLabel: 'Button',
+    previewClassName: 'buttonPresetPreviewPinkCyber',
+    defaultIcon: '',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: 'linear-gradient(135deg, #6d28d9 0%, #c026d3 100%)', buttonTextColor: '#ffffff', buttonBorderColor: 'transparent', buttonBorderWidth: 0, buttonRadius: 80, buttonPaddingX: 38, buttonPaddingY: 15, buttonFontSize: 18, buttonFontWeight: 'bold', buttonIcon: '', buttonIconSide: 'right' })
+  },
+  {
+    id: 'green-sale',
+    label: 'Venta verde',
+    description: 'Para confirmaciones y compra.',
+    previewLabel: 'Confirmar',
+    previewClassName: 'buttonPresetPreviewGreen',
+    defaultIcon: 'check',
+    defaultIconSide: 'left',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: '#16a34a', buttonTextColor: '#ffffff', buttonBorderColor: '#16a34a', buttonBorderWidth: 1, buttonRadius: 14, buttonPaddingX: 28, buttonPaddingY: 13, buttonFontSize: 15, buttonFontWeight: 'bold', buttonIcon: 'check', buttonIconSide: 'left' })
+  },
+  {
+    id: 'glass-light',
+    label: 'Glass claro',
+    description: 'Ligero con borde suave.',
+    previewLabel: 'Explorar',
+    previewClassName: 'buttonPresetPreviewGlass',
+    defaultIcon: 'external',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: 'rgba(255, 255, 255, 0.16)', buttonTextColor: '#ffffff', buttonBorderColor: 'rgba(255, 255, 255, 0.58)', buttonBorderWidth: 1, buttonRadius: 16, buttonPaddingX: 30, buttonPaddingY: 13, buttonFontSize: 15, buttonFontWeight: 'bold', buttonIcon: 'external', buttonIconSide: 'right' })
+  },
+  {
+    id: 'tech-square',
+    label: 'Tech square',
+    description: 'Cuadrado, firme y digital.',
+    previewLabel: 'Launch',
+    previewClassName: 'buttonPresetPreviewTech',
+    defaultIcon: 'send',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: '#111827', buttonTextColor: '#ffffff', buttonBorderColor: '#60a5fa', buttonBorderWidth: 2, buttonRadius: 4, buttonPaddingX: 28, buttonPaddingY: 13, buttonFontSize: 14, buttonFontWeight: 'bold', buttonTextTransform: 'uppercase', buttonIcon: 'send', buttonIconSide: 'right' })
+  },
+  {
+    id: 'soft-white',
+    label: 'Soft blanco',
+    description: 'Blanco con feeling editorial.',
+    previewLabel: 'Agendar',
+    previewClassName: 'buttonPresetPreviewSoft',
+    defaultIcon: 'calendar',
+    defaultIconSide: 'left',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: '#ffffff', buttonTextColor: '#111827', buttonBorderColor: '#e5e7eb', buttonBorderWidth: 1, buttonRadius: 80, buttonPaddingX: 30, buttonPaddingY: 14, buttonFontSize: 15, buttonFontWeight: 'bold', buttonIcon: 'calendar', buttonIconSide: 'left' })
+  },
+  {
+    id: 'coral-compact',
+    label: 'Coral compacto',
+    description: 'Chico, cálido y directo.',
+    previewLabel: 'Aplicar',
+    previewClassName: 'buttonPresetPreviewCoral',
+    defaultIcon: 'check',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: '#f43f5e', buttonTextColor: '#ffffff', buttonBorderColor: '#f43f5e', buttonBorderWidth: 1, buttonRadius: 10, buttonPaddingX: 22, buttonPaddingY: 10, buttonFontSize: 14, buttonFontWeight: 'bold', buttonIcon: 'check', buttonIconSide: 'right' })
+  },
+  {
+    id: 'slim-outline',
+    label: 'Outline fino',
+    description: 'Discreto para páginas limpias.',
+    previewLabel: 'Detalles',
+    previewClassName: 'buttonPresetPreviewSlim',
+    defaultIcon: '',
+    defaultIconSide: 'right',
+    buildPatch: (accent) => ({ ...buttonPresetBasePatch, buttonBg: 'transparent', buttonTextColor: accent, buttonBorderColor: accent, buttonBorderWidth: 1, buttonRadius: 80, buttonPaddingX: 24, buttonPaddingY: 9, buttonFontSize: 14, buttonFontWeight: 'normal', buttonIcon: '', buttonIconSide: 'right' })
+  },
+  {
+    id: 'full-width-hero',
+    label: 'Hero ancho',
+    description: 'Botón grande para primer pantalla.',
+    previewLabel: 'Quiero entrar',
+    previewClassName: 'buttonPresetPreviewHero',
+    defaultIcon: 'arrowRight',
+    defaultIconSide: 'right',
+    buildPatch: (accent) => ({ ...buttonPresetBasePatch, buttonBg: accent, buttonTextColor: onAccentFor(accent), buttonBorderColor: accent, buttonBorderWidth: 1, buttonRadius: 14, buttonPaddingX: 34, buttonPaddingY: 17, buttonFontSize: 17, buttonFontWeight: 'bold', buttonWidth: 100, buttonAlign: 'full', buttonIcon: 'arrowRight', buttonIconSide: 'right' })
+  },
+  {
+    id: 'ghost-dark',
+    label: 'Ghost oscuro',
+    description: 'Relleno oscuro transparente.',
+    previewLabel: 'Ver demo',
+    previewClassName: 'buttonPresetPreviewGhost',
+    defaultIcon: 'external',
+    defaultIconSide: 'right',
+    buildPatch: () => ({ ...buttonPresetBasePatch, buttonBg: 'rgba(15, 23, 42, 0.72)', buttonTextColor: '#ffffff', buttonBorderColor: 'rgba(255, 255, 255, 0.26)', buttonBorderWidth: 1, buttonRadius: 18, buttonPaddingX: 28, buttonPaddingY: 12, buttonFontSize: 15, buttonFontWeight: 'bold', buttonIcon: 'external', buttonIconSide: 'right' })
+  }
 ]
 
 const normalizeButtonIconName = (value: unknown): ButtonIconName => {
@@ -2883,82 +3100,11 @@ const ButtonIconGlyph: React.FC<{ name: ButtonIconName; size?: number }> = ({ na
   return null
 }
 
-const getButtonStylePresetPatch = (presetId: ButtonStylePresetId, defaultAccent: string): Record<string, unknown> => {
-  const readableAccentText = onAccentFor(defaultAccent)
-  const gradientAccent = isHex6(defaultAccent)
-    ? `linear-gradient(135deg, ${defaultAccent} 0%, #7c3aed 100%)`
-    : 'linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)'
-
-  if (presetId === 'gradient') {
-    return {
-      buttonBg: gradientAccent,
-      buttonTextColor: '#ffffff',
-      buttonBorderColor: 'transparent',
-      buttonBorderWidth: 0,
-      buttonRadius: 80,
-      buttonHeight: 58,
-      buttonPaddingX: 34,
-      buttonFontSize: 17,
-      buttonSubtitleFontSize: 13,
-      buttonFontWeight: 'bold',
-      buttonTextTransform: 'none',
-      buttonIcon: 'sparkles',
-      buttonIconSide: 'left'
-    }
-  }
-
-  if (presetId === 'outline') {
-    return {
-      buttonBg: 'transparent',
-      buttonTextColor: defaultAccent,
-      buttonBorderColor: defaultAccent,
-      buttonBorderWidth: 2,
-      buttonRadius: 16,
-      buttonHeight: 54,
-      buttonPaddingX: 30,
-      buttonFontSize: 16,
-      buttonSubtitleFontSize: 13,
-      buttonFontWeight: 'bold',
-      buttonTextTransform: 'none',
-      buttonIcon: 'arrowRight',
-      buttonIconSide: 'right'
-    }
-  }
-
-  if (presetId === 'minimal') {
-    return {
-      buttonBg: 'transparent',
-      buttonTextColor: defaultAccent,
-      buttonBorderColor: 'transparent',
-      buttonBorderWidth: 0,
-      buttonRadius: 8,
-      buttonHeight: 44,
-      buttonPaddingX: 12,
-      buttonFontSize: 16,
-      buttonSubtitleFontSize: 12,
-      buttonFontWeight: 'bold',
-      buttonTextTransform: 'none',
-      buttonIcon: 'arrowRight',
-      buttonIconSide: 'right'
-    }
-  }
-
-  return {
-    buttonBg: defaultAccent,
-    buttonTextColor: readableAccentText,
-    buttonBorderColor: defaultAccent,
-    buttonBorderWidth: 1,
-    buttonRadius: 18,
-    buttonHeight: 54,
-    buttonPaddingX: 30,
-    buttonFontSize: 16,
-    buttonSubtitleFontSize: 13,
-    buttonFontWeight: 'bold',
-    buttonTextTransform: 'none',
-    buttonIcon: '',
-    buttonIconSide: 'right'
-  }
-}
+const getButtonStylePresetPatch = (presetId: ButtonStylePresetId, defaultAccent: string): Record<string, unknown> => (
+  buttonStylePresets.find(preset => preset.id === presetId)?.buildPatch(defaultAccent) ||
+  buttonStylePresets[0]?.buildPatch(defaultAccent) ||
+  {}
+)
 
 const backgroundMediaTypeOptions = [
   { value: 'image', label: 'Imagen' },
@@ -3467,6 +3613,7 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (settings.buttonRadius !== undefined) style['--rstk-block-button-radius'] = `${getSettingNumber(settings, 'buttonRadius', 28, 0, 80)}px`
   if (settings.buttonHeight !== undefined) style['--rstk-button-height'] = `${getSettingNumber(settings, 'buttonHeight', 54, 34, 88)}px`
   if (settings.buttonPaddingX !== undefined) style['--rstk-button-pad-x'] = `${getSettingNumber(settings, 'buttonPaddingX', 28, 8, 72)}px`
+  if (settings.buttonPaddingY !== undefined) style['--rstk-button-pad-y'] = `${getSettingNumber(settings, 'buttonPaddingY', 8, 0, 40)}px`
   if (settings.buttonFontSize !== undefined) style['--rstk-button-size'] = `${getSettingNumber(settings, 'buttonFontSize', 16, 11, 32)}px`
   if (settings.buttonSubtitleFontSize !== undefined) style['--rstk-button-subtitle-size'] = `${getSettingNumber(settings, 'buttonSubtitleFontSize', 13, 10, 24)}px`
   if (settings.buttonBorderWidth !== undefined) style['--rstk-button-border-width'] = `${getSettingNumber(settings, 'buttonBorderWidth', 1, 0, 8)}px`
@@ -3514,6 +3661,7 @@ const getBlockStyleClassName = (block: SiteBlock, extra = '') => {
     getSettingString(settings, 'blockText') ? 'rstkBlockTextOverride' : '',
     isCssGradient(getSettingString(settings, 'blockText')) ? 'rstkTextGradient' : '',
     isCssGradient(getSettingString(settings, 'buttonTextColor')) ? 'rstkButtonTextGradient' : '',
+    settings.buttonPaddingY !== undefined ? 'rstkButtonPaddingOverride' : '',
     getSettingString(settings, 'blockBackgroundMediaType') === 'video' && safePublicMediaUrl(getSettingString(settings, 'blockBackgroundImage'), 'video') ? 'rstkHasBgVideo' : '',
     isBlockHidden(block) ? 'rstkHiddenBlock' : '',
     settings.fontFamily ? 'rstkFontOverride' : '',
@@ -26090,6 +26238,85 @@ type TypographyTarget = 'text' | 'button'
 type TextDecorationToken = 'underline' | 'line-through'
 type InlineBlockStyleControlsMode = 'all' | 'typography' | 'design'
 
+const ButtonPresetPicker: React.FC<{
+  site: PublicSite
+  settings: Record<string, unknown>
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ site, settings, onPatchSettings, onSave }) => {
+  const defaultAccent = defaultAccentForSite(site)
+  const currentButtonIcon = normalizeButtonIconName(settings.buttonIcon)
+  const currentButtonIconSide = normalizeButtonIconSide(settings.buttonIconSide)
+  const applyButtonStylePreset = (presetId: ButtonStylePresetId) => {
+    onPatchSettings(getButtonStylePresetPatch(presetId, defaultAccent))
+    window.setTimeout(onSave, 0)
+  }
+
+  return (
+    <div className={styles.buttonPresetSection}>
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Ícono</span>
+          <CustomSelect
+            value={currentButtonIcon}
+            onChange={(event) => {
+              const icon = normalizeButtonIconName(event.target.value)
+              onPatchSettings({ buttonIcon: icon })
+              window.setTimeout(onSave, 0)
+            }}
+            onBlur={onSave}
+          >
+            {buttonIconOptions.map(option => (
+              <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
+          <span>Lado del icono</span>
+          <CustomSelect
+            value={currentButtonIconSide}
+            onChange={(event) => {
+              onPatchSettings({ buttonIconSide: normalizeButtonIconSide(event.target.value) })
+              window.setTimeout(onSave, 0)
+            }}
+            onBlur={onSave}
+          >
+            {buttonIconSideOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      </div>
+      <div className={styles.buttonPresetHeader}>
+        <span>Presets de botón</span>
+        <small>Elige una base y ajusta después</small>
+      </div>
+      <div className={styles.buttonPresetGrid}>
+        {buttonStylePresets.map(preset => {
+          const previewIcon = preset.defaultIcon ? <ButtonIconGlyph name={preset.defaultIcon} size={13} /> : null
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              className={styles.buttonPresetOption}
+              onClick={() => applyButtonStylePreset(preset.id)}
+              aria-label={`Aplicar preset ${preset.label}`}
+            >
+              <span className={`${styles.buttonPresetPreview} ${styles[preset.previewClassName]}`}>
+                {preset.defaultIconSide === 'left' ? previewIcon : null}
+                <span>{preset.previewLabel}</span>
+                {preset.defaultIconSide === 'right' ? previewIcon : null}
+              </span>
+              <strong>{preset.label}</strong>
+              <small>{preset.description}</small>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 const editTabTypographyBlockTypes = new Set<SiteBlockType>([
   'headline',
   'title',
@@ -26376,12 +26603,6 @@ const InlineBlockStyleControls: React.FC<{
   const currentButtonFontFamily = getSettingString(settings, 'buttonFontFamily')
   const fontOptions = getFontOptionsWithCurrent(currentFontFamily)
   const buttonFontOptions = getFontOptionsWithCurrent(currentButtonFontFamily)
-  const currentButtonIcon = normalizeButtonIconName(settings.buttonIcon)
-  const currentButtonIconSide = normalizeButtonIconSide(settings.buttonIconSide)
-  const applyButtonStylePreset = (presetId: ButtonStylePresetId) => {
-    onPatchSettings(getButtonStylePresetPatch(presetId, defaultAccent))
-    window.setTimeout(onSave, 0)
-  }
 
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
@@ -26446,67 +26667,6 @@ const InlineBlockStyleControls: React.FC<{
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
-          <div className={styles.buttonPresetSection}>
-            <div className={styles.buttonPresetHeader}>
-              <span>Presets de botón</span>
-              <small>Elige una base y ajusta después</small>
-            </div>
-            <div className={styles.buttonPresetGrid}>
-              {buttonStylePresets.map(preset => {
-                const previewIcon = preset.defaultIcon ? <ButtonIconGlyph name={preset.defaultIcon} size={13} /> : null
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    className={styles.buttonPresetOption}
-                    onClick={() => applyButtonStylePreset(preset.id)}
-                    aria-label={`Aplicar preset ${preset.label}`}
-                  >
-                    <span className={`${styles.buttonPresetPreview} ${styles[preset.previewClassName]}`}>
-                      {preset.defaultIconSide === 'left' ? previewIcon : null}
-                      <span>{preset.id === 'minimal' ? 'Read more' : 'Botón'}</span>
-                      {preset.defaultIconSide === 'right' ? previewIcon : null}
-                    </span>
-                    <strong>{preset.label}</strong>
-                    <small>{preset.description}</small>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-          <div className={styles.twoColumn}>
-            <label className={styles.field}>
-              <span>Ícono</span>
-              <CustomSelect
-                value={currentButtonIcon}
-                onChange={(event) => {
-                  const icon = normalizeButtonIconName(event.target.value)
-                  onPatchSettings({ buttonIcon: icon })
-                  window.setTimeout(onSave, 0)
-                }}
-                onBlur={onSave}
-              >
-                {buttonIconOptions.map(option => (
-                  <option key={option.value || 'none'} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-            </label>
-            <label className={styles.field}>
-              <span>Lado del icono</span>
-              <CustomSelect
-                value={currentButtonIconSide}
-                onChange={(event) => {
-                  onPatchSettings({ buttonIconSide: normalizeButtonIconSide(event.target.value) })
-                  window.setTimeout(onSave, 0)
-                }}
-                onBlur={onSave}
-              >
-                {buttonIconSideOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </CustomSelect>
-            </label>
-          </div>
           <ColorField
             label="Fondo del botón"
             value={getSettingPaint(settings, 'buttonBg', defaultAccent)}
@@ -26524,11 +26684,11 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
             <DimensionField
-              label="Alto botón"
-              value={getSettingNumber(settings, 'buttonHeight', 54, 34, 88)}
-              min={34}
-              max={88}
-              onChange={(value) => onPatchSettings({ buttonHeight: value })}
+              label="Relleno alto"
+              value={getSettingNumber(settings, 'buttonPaddingY', 16, 0, 40)}
+              min={0}
+              max={40}
+              onChange={(value) => onPatchSettings({ buttonPaddingY: value })}
               onCommit={onSave}
             />
           </div>
@@ -30523,19 +30683,27 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       )}
 
       {hasButtonCopy && (
-        <div className={styles.twoColumn}>
-          <label className={styles.field}>
-            <span>Texto del botón</span>
-            <input
-              value={buttonTextEditorValue}
-              onChange={(event) => onPatchSettings({ buttonText: event.target.value })}
-              onBlur={onSave}
-            />
-          </label>
-          <label className={styles.field}>
-            <span>Subtexto del botón</span>
-            <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
-          </label>
+        <div className={styles.buttonEditStack}>
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Texto del botón</span>
+              <input
+                value={buttonTextEditorValue}
+                onChange={(event) => onPatchSettings({ buttonText: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+            <label className={styles.field}>
+              <span>Subtexto del botón</span>
+              <input value={getSettingString(settings, 'buttonSubtitle')} onChange={(event) => onPatchSettings({ buttonSubtitle: event.target.value })} onBlur={onSave} />
+            </label>
+          </div>
+          <ButtonPresetPicker
+            site={site}
+            settings={settings}
+            onPatchSettings={onPatchSettings}
+            onSave={onSave}
+          />
         </div>
       )}
 
