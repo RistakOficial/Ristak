@@ -5,11 +5,13 @@ import { registerPwa } from './pwa'
 import { ensureLocalDevAuth, installAuthFetch } from './services/authFetch'
 import { mobileAppService } from './services/mobileAppService'
 import { installEnterSubmitShortcuts } from './utils/enterSubmitShortcuts'
+import { installNumberInputWheelGuard } from './utils/numberInputSafety'
 import './styles/index.css'
 
 async function bootstrapRistak() {
   installAuthFetch()
   installEnterSubmitShortcuts()
+  installNumberInputWheelGuard()
   await ensureLocalDevAuth()
   registerPwa()
   mobileAppService.configureShell()

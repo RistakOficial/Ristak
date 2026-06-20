@@ -11,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Modal,
+  NumberInput,
   PageContainer,
   PageHeader,
   Table
@@ -412,7 +413,7 @@ export const PaymentProducts: React.FC = () => {
           isOpen={formMode !== null}
           onClose={closeProductForm}
           title={formMode === 'edit' ? 'Editar producto' : 'Nuevo producto'}
-          size="lg"
+          size="md"
           type="custom"
         >
           <form className={styles.form} onSubmit={(event) => {
@@ -453,6 +454,8 @@ export const PaymentProducts: React.FC = () => {
               <div className={styles.formGroup}>
                 <label>Moneda</label>
                 <CustomSelect
+                  portal
+                  dropdownMinWidth={280}
                   value={productForm.currency}
                   onChange={(event) => patchProductForm('currency', event.target.value)}
                 >
@@ -466,13 +469,11 @@ export const PaymentProducts: React.FC = () => {
 
               <div className={styles.formGroup}>
                 <label>Monto</label>
-                <input
+                <NumberInput
                   value={productForm.amount}
                   onChange={(event) => patchProductForm('amount', event.target.value)}
-                  type="number"
                   min="0"
                   step="0.01"
-                  inputMode="decimal"
                   placeholder="0.00"
                   required
                 />
