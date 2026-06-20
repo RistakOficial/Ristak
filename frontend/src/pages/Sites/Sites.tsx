@@ -28589,6 +28589,17 @@ const VideoActionsPanel: React.FC<{
     setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(rule.timeSeconds) }))
   }, [])
 
+  const handleDeleteRule = useCallback((ruleId: string) => {
+    patchRules(rules.filter(rule => rule.id !== ruleId))
+    setExpandedRuleId(current => current === ruleId ? '' : current)
+    setTimeInputs(current => {
+      const next = { ...current }
+      delete next[ruleId]
+      return next
+    })
+    onTargetHover?.('')
+  }, [onTargetHover, patchRules, rules])
+
   const handleToggleTarget = useCallback((rule: VideoActionRule, targetId: string) => {
     const currentIds = getVideoActionTargetIds(rule).filter(id => id !== POPUP_SURFACE_ID)
     const allowsMultiple = videoActionMultiTargetKinds.has(rule.action)
@@ -28632,13 +28643,13 @@ const VideoActionsPanel: React.FC<{
       <div className={styles.videoActionTargetList}>
         {candidateTargets.map(target => {
           const selected = selectedIds.includes(target.id)
+          const targetIcon = target.blockType && target.blockType !== 'popup'
+            ? blockIcons[target.blockType as SiteBlockType] || <LayoutTemplate size={15} />
+            : <LayoutTemplate size={15} />
           return (
-            <Button
+            <button
               key={target.id}
               type="button"
-              variant={selected ? 'secondary' : 'ghost'}
-              size="sm"
-              fullWidth
               aria-pressed={selected}
               className={`${styles.videoActionTargetChoice} ${selected ? styles.videoActionTargetChoiceActive : ''}`}
               onMouseEnter={() => handleTargetHover(target.id)}
@@ -28647,12 +28658,15 @@ const VideoActionsPanel: React.FC<{
               onBlur={() => handleTargetHover('')}
               onClick={() => handleToggleTarget(rule, target.id)}
             >
+              <span className={styles.videoActionTargetIcon}>{targetIcon}</span>
               <span className={styles.videoActionTargetText}>
                 <span>{target.label}</span>
                 <small>{target.kindLabel}</small>
               </span>
-              {selected && <Check size={14} />}
-            </Button>
+              <span className={styles.videoActionTargetCheck} aria-hidden="true">
+                {selected ? <Check size={13} /> : null}
+              </span>
+            </button>
           )
         })}
       </div>
@@ -28751,6 +28765,19 @@ const VideoActionsPanel: React.FC<{
             {renderTargetPicker(rule)}
           </div>
         )}
+
+        <div className={styles.videoActionRuleActions}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            leftIcon={<Trash2 size={14} />}
+            className={styles.videoActionDeleteButton}
+            onClick={() => handleDeleteRule(rule.id)}
+          >
+            Eliminar acción
+          </Button>
+        </div>
       </div>
     )
   }

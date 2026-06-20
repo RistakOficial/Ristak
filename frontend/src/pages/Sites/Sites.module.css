@@ -6404,18 +6404,55 @@
 }
 
 .videoActionTargetChoice {
-  justify-content: space-between;
-  min-height: 42px;
-  border-left-width: 3px;
-  border-left-color: transparent;
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  border: 1px solid var(--sites-editor-border, var(--border));
+  border-radius: var(--design-control-radius, var(--radius-ctl));
+  background: var(--sites-editor-control-bg, var(--surface));
+  color: var(--text, var(--color-text-primary));
+  padding: 5px 6px;
+  font: inherit;
   text-align: left;
+  cursor: pointer;
+}
+
+.videoActionTargetChoice:hover,
+.videoActionTargetChoice:focus-visible {
+  border-color: var(--sites-editor-border-strong, var(--border-strong));
+  background: var(--sites-editor-hover-bg, var(--surface-hover));
+  outline: none;
 }
 
 .videoActionTargetChoiceActive {
-  border-color: var(--border-strong) !important;
-  border-left-color: var(--accent) !important;
-  background: var(--surface-2) !important;
-  color: var(--text) !important;
+  border-color: var(--sites-editor-focus, var(--accent));
+  background: var(--sites-editor-hover-bg, var(--surface-hover));
+}
+
+.videoActionTargetIcon,
+.videoActionTargetCheck {
+  width: 28px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--design-control-radius, var(--radius-ctl));
+}
+
+.videoActionTargetIcon {
+  color: var(--text-dim, var(--color-text-secondary));
+  background: var(--design-panel-bg, var(--surface));
+}
+
+.videoActionTargetCheck {
+  color: var(--accent);
+}
+
+.videoActionTargetChoiceActive .videoActionTargetIcon {
+  color: var(--text, var(--color-text-primary));
 }
 
 .videoActionTargetText {
@@ -6441,6 +6478,22 @@
   color: var(--text-mute);
   font-size: 0.72rem;
   font-weight: 400;
+}
+
+.videoActionRuleActions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--sites-editor-section-border, var(--border));
+  padding-top: 2px;
+}
+
+.videoActionPanel .videoActionDeleteButton {
+  color: var(--neg);
+}
+
+.videoActionPanel .videoActionDeleteButton:hover {
+  border-color: var(--neg);
+  color: var(--neg);
 }
 
 @media (max-width: 720px) {
