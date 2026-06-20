@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { renderPublicSiteHtml } from '../src/services/sitesService.js'
+import { createBlock, createSite, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
 
 test('landing form embeds render multiple form pages as an inline stepform', async () => {
   const site = {
@@ -203,4 +203,106 @@ test('standard form content-only pages still render navigation actions', async (
   assert.doesNotMatch(lastContentPageHtml, /<button type="button" data-form-next>/)
   assert.doesNotMatch(lastContentPageHtml, /<button type="submit" hidden data-submit>/)
   assert.match(lastContentPageHtml, /<button type="submit"\s+data-submit><span class="rstk-button-label">Enviar mi solicitud<\/span><\/button>/)
+})
+
+test('landing form embeds proxy linked form source instead of stale embedded copies', async () => {
+  let formSite
+
+  try {
+    formSite = await createSite({
+      name: 'Formulario fuente proxy',
+      slug: `form-source-proxy-${Date.now()}`,
+      siteType: 'standard_form',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        template: 'ristak',
+        backgroundColor: '#112233',
+        pages: [
+          { id: 'source-step-1', title: 'Fuente 1', sortOrder: 0, buttonText: 'Siguiente desde fuente' },
+          { id: 'source-step-2', title: 'Fuente 2', sortOrder: 1, buttonText: 'Enviar fuente' }
+        ]
+      }
+    })
+
+    await createBlock(formSite.id, {
+      blockType: 'short_text',
+      label: 'Campo real fuente',
+      placeholder: 'Respuesta real',
+      required: true,
+      settings: { pageId: 'source-step-1' }
+    })
+    formSite = await createBlock(formSite.id, {
+      blockType: 'email',
+      label: 'Correo fuente',
+      placeholder: 'real@example.test',
+      required: true,
+      settings: { pageId: 'source-step-2' }
+    })
+
+    const landing = {
+      id: 'landing_proxy_embed',
+      name: 'Landing proxy',
+      title: 'Landing proxy',
+      description: '',
+      slug: 'landing-proxy',
+      siteType: 'landing_page',
+      status: 'published',
+      theme: {
+        template: 'ristak',
+        pages: [{ id: 'page-1', title: 'Pagina 1', sortOrder: 0 }]
+      },
+      blocks: [
+        {
+          id: 'embed-form-proxy',
+          siteId: 'landing_proxy_embed',
+          blockType: 'form_embed',
+          label: 'Formulario',
+          content: '',
+          placeholder: '',
+          required: false,
+          options: [],
+          sortOrder: 0,
+          settings: {
+            pageId: 'page-1',
+            formSiteId: formSite.id,
+            embeddedPages: [{ id: 'stale-step', title: 'Viejo', sortOrder: 0, buttonText: 'Boton viejo' }],
+            embeddedBlocks: [
+              {
+                id: 'stale-field',
+                siteId: 'landing_proxy_embed',
+                blockType: 'short_text',
+                label: 'Campo viejo',
+                content: '',
+                placeholder: 'Viejo',
+                required: false,
+                options: [],
+                sortOrder: 0,
+                settings: { pageId: 'stale-step' }
+              }
+            ]
+          },
+          createdAt: '',
+          updatedAt: ''
+        }
+      ]
+    }
+
+    const html = await renderPublicSiteHtml(landing, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(html, /Campo real fuente/)
+    assert.match(html, /Correo fuente/)
+    assert.match(html, /<button type="button" data-embedded-next>Siguiente desde fuente<\/button>/)
+    assert.match(html, /data-submit-label="Enviar fuente"/)
+    assert.match(html, /--rstk-block-bg:#112233;/)
+    assert.doesNotMatch(html, /Campo viejo/)
+    assert.doesNotMatch(html, /Boton viejo/)
+    assert.doesNotMatch(html, /data-embedded-page-content="stale-step"/)
+  } finally {
+    if (formSite?.id) await deleteSite(formSite.id).catch(() => undefined)
+  }
 })

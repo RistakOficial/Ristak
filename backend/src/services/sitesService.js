@@ -10079,12 +10079,16 @@ async function hydrateEmbeddedForms(blocks = []) {
     const settings = block.settings || {}
     const formSiteId = cleanString(settings.formSiteId || settings.form_site_id)
 
-    if (!formSiteId || Array.isArray(settings.embeddedBlocks)) {
+    if (!formSiteId) {
       hydrated.push(block)
       continue
     }
 
-    const embeddedSite = await getSite(formSiteId, { includeBlocks: true, includeSubmissions: false })
+    const embeddedSite = await getSite(formSiteId, { includeBlocks: true, includeSubmissions: false }).catch(() => null)
+    if (!embeddedSite) {
+      hydrated.push(block)
+      continue
+    }
     const embeddedBlocks = embeddedSite?.blocks || []
     const embeddedPages = normalizeEmbeddedFormPages(normalizeSitePages(embeddedSite))
     hydrated.push({
@@ -10093,6 +10097,8 @@ async function hydrateEmbeddedForms(blocks = []) {
         ...settings,
         embeddedSiteId: embeddedSite?.id || formSiteId,
         embeddedSiteName: embeddedSite?.name || '',
+        embeddedSiteType: embeddedSite?.siteType || embeddedSite?.site_type || 'standard_form',
+        embeddedTheme: embeddedSite?.theme || {},
         embeddedPages,
         embeddedBlocks
       }
@@ -13580,6 +13586,33 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   `
 }
 
+function buildEmbeddedFormProxyStyle(theme = {}, formStyleContext = null) {
+  if (!formStyleContext) return ''
+
+  const rawBg = normalizeCssPaint(theme.backgroundColor, '')
+  const hasExplicitBg = rawBg && rawBg.toLowerCase() !== String(DEFAULT_THEME.backgroundColor).toLowerCase()
+  const rawTextPaint = normalizeCssPaint(theme.textColor, '')
+  const textPaint = rawTextPaint && (theme.textColorCustom || rawTextPaint.toLowerCase() !== String(DEFAULT_THEME.textColor).toLowerCase()) ? rawTextPaint : ''
+  const ink = textPaint ? paintFallbackColor(textPaint, formStyleContext.ink) : formStyleContext.ink
+  const muted = textPaint && isCssColor(textPaint)
+    ? `color-mix(in srgb, ${ink} 60%, ${hasExplicitBg && isCssColor(rawBg) ? rawBg : formStyleContext.pageBg || formStyleContext.v.pageBg})`
+    : formStyleContext.muted
+  const styleVars = buildFormThemeStyleVars(theme, {
+    baseFont: formStyleContext.baseFont,
+    v: formStyleContext.v,
+    accent: formStyleContext.accent,
+    ink,
+    muted
+  })
+
+  return `
+    --rstk-ink:${ink};
+    --rstk-muted:${muted};
+    ${hasExplicitBg ? `--rstk-block-bg:${rawBg};` : ''}
+    ${styleVars}
+  `
+}
+
 function renderContentBlock(block, context = {}) {
   const content = escapeHtml(block.content)
   const settings = block.settings || {}
@@ -13742,6 +13775,14 @@ function renderContentBlock(block, context = {}) {
   }
 
   if (block.blockType === 'form_embed') {
+    const embeddedTheme = isPlainObject(settings.embeddedTheme) ? { ...DEFAULT_THEME, ...settings.embeddedTheme } : context.site?.theme || {}
+    const embeddedSiteForCopy = isPlainObject(settings.embeddedTheme)
+      ? { ...(context.site || {}), siteType: settings.embeddedSiteType || 'standard_form', theme: embeddedTheme }
+      : context.site
+    const embeddedSubmitText = cleanString(embeddedTheme.submitText) || context.submitText
+    const embeddedSubmitSubtitle = cleanString(embeddedTheme.submitSubtitle || embeddedTheme.submitSubtext || embeddedTheme.formButtonSubtitle) || context.submitSubtitle
+    const embeddedContinueText = cleanString(embeddedTheme.continueText) || context.continueText
+    const embeddedNextText = cleanString(embeddedTheme.nextText) || context.nextText
     const embeddedPages = normalizeEmbeddedFormPages(settings.embeddedPages)
     const embeddedPageIds = new Set(embeddedPages.map(page => page.id))
     const embeddedItems = (Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : [])
@@ -13754,22 +13795,22 @@ function renderContentBlock(block, context = {}) {
     const firstEmbeddedPageId = embeddedPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
     const lastEmbeddedPageId = embeddedPages[embeddedPages.length - 1]?.id || firstEmbeddedPageId
     const firstButtonCopy = getFormPageButtonCopy({
-      site: context.site,
+      site: embeddedSiteForCopy,
       pages: embeddedPages,
       pageId: firstEmbeddedPageId,
-      submitText: context.submitText,
-      submitSubtitle: context.submitSubtitle,
-      continueText: context.continueText,
-      nextText: context.nextText
+      submitText: embeddedSubmitText,
+      submitSubtitle: embeddedSubmitSubtitle,
+      continueText: embeddedContinueText,
+      nextText: embeddedNextText
     })
     const finalButtonCopy = getFormPageButtonCopy({
-      site: context.site,
+      site: embeddedSiteForCopy,
       pages: embeddedPages,
       pageId: hasEmbeddedPages ? lastEmbeddedPageId : firstEmbeddedPageId,
-      submitText: context.submitText,
-      submitSubtitle: context.submitSubtitle,
-      continueText: context.continueText,
-      nextText: context.nextText
+      submitText: embeddedSubmitText,
+      submitSubtitle: embeddedSubmitSubtitle,
+      continueText: embeddedContinueText,
+      nextText: embeddedNextText
     })
     const submitButtonContent = renderSubmitButtonContent(finalButtonCopy.label, finalButtonCopy.subtitle)
     const renderEmbeddedItem = (item, pageId) => {
@@ -13789,13 +13830,13 @@ function renderContentBlock(block, context = {}) {
           ${embeddedPages.map((page, index) => {
             const pageItems = getEmbeddedFormPageFields(embeddedItems, embeddedPages, page.id)
             const buttonCopy = getFormPageButtonCopy({
-              site: context.site,
+              site: embeddedSiteForCopy,
               pages: embeddedPages,
               pageId: page.id,
-              submitText: context.submitText,
-              submitSubtitle: context.submitSubtitle,
-              continueText: context.continueText,
-              nextText: context.nextText
+              submitText: embeddedSubmitText,
+              submitSubtitle: embeddedSubmitSubtitle,
+              continueText: embeddedContinueText,
+              nextText: embeddedNextText
             })
             return `
               <div data-embedded-page-content="${escapeHtml(page.id)}"${index === 0 ? '' : ' hidden'} data-next-label="${escapeHtml(buttonCopy.label)}" data-submit-label="${escapeHtml(buttonCopy.label)}" data-submit-subtitle="${escapeHtml(buttonCopy.subtitle)}">
@@ -13808,7 +13849,13 @@ function renderContentBlock(block, context = {}) {
         </div>
       `
     }
-    return `
+    const embeddedStyle = buildEmbeddedFormProxyStyle(embeddedTheme, context.formStyleContext).replace(/\s+/g, ' ').trim()
+    const embeddedThemeClass = [
+      'rstk-embedded-form-theme',
+      `rstk-choice-${normalizeFormChoiceStyle(embeddedTheme.formChoiceStyle)}`,
+      `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`
+    ].join(' ')
+    const embeddedSection = `
       <section class="rstk-embedded-form" id="form">
         ${renderEmbeddedItems()}
         ${fields.length ? `
@@ -13821,6 +13868,9 @@ function renderContentBlock(block, context = {}) {
         ` : ''}
       </section>
     `
+    return embeddedStyle
+      ? `<div class="${embeddedThemeClass}" style="${escapeHtml(embeddedStyle)}">${embeddedSection}</div>`
+      : embeddedSection
   }
 
   if (block.blockType === 'cta') {
@@ -16192,6 +16242,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   if (isStandardFormType && activePage?.id === FORM_DISQUALIFIED_PAGE_ID && blocks.length === 0) {
     blocks = getDefaultFormDisqualifiedBlocks(site.id)
   }
+  if (isLandingType) {
+    blocks = await hydrateEmbeddedForms(blocks)
+  }
   const fieldBlocks = collectFieldBlocks(blocks)
   const interactivePageIds = isInteractive
     ? pages
@@ -16248,7 +16301,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const rawTextPaint = normalizeCssPaint(site.theme?.textColor, '')
   const textPaint = rawTextPaint && (site.theme?.textColorCustom || rawTextPaint.toLowerCase() !== String(DEFAULT_THEME.textColor).toLowerCase()) ? rawTextPaint : ''
   const maxWidth = `${pageMaxWidth}px`
-  const styleSheet = buildStyleSheet(template, maxWidth, resolveRenderOverrides(template, theme, isLandingType), {
+  const renderOverrides = resolveRenderOverrides(template, theme, isLandingType)
+  const renderVars = { ...template.vars, ...(renderOverrides.vars || {}) }
+  const renderAccent = renderOverrides.accent || renderVars.accent
+  const renderInk = textPaint ? paintFallbackColor(textPaint, renderVars.ink) : renderVars.ink
+  const renderMuted = textPaint && isCssColor(textPaint) ? `color-mix(in srgb, ${renderInk} 60%, ${pageBg || renderVars.pageBg})` : renderVars.muted
+  const styleSheet = buildStyleSheet(template, maxWidth, renderOverrides, {
     framePad: `${pagePadding}px`,
     pageBorder,
     pageBorderWidth: `${pageBorderWidth}px`,
@@ -16286,7 +16344,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
     buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: true })
   ])
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, formStyleContext: { baseFont: template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')

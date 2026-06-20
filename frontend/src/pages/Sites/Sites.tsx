@@ -4703,58 +4703,138 @@ const createEmbeddedFieldBlock = (
   }
 }
 
+const getEmbeddedFormSourceId = (block?: SiteBlock | null) =>
+  getSettingString(block?.settings || {}, 'formSiteId')
+
 const getEditableEmbeddedFormPages = (block: SiteBlock, forms: PublicSite[]): SitePage[] => {
   const settings = block.settings || {}
+  const linkedFormId = getEmbeddedFormSourceId(block)
+  const linkedForm = forms.find(form => form.id === linkedFormId)
+  if (linkedFormId) return getEmbeddedFormContentPagesFromSite(linkedForm)
+
   const embeddedPages = normalizeEmbeddedFormPages(settings.embeddedPages)
   if (Array.isArray(settings.embeddedPages) && embeddedPages.length) return embeddedPages
 
-  const linkedFormId = getSettingString(settings, 'formSiteId')
-  const linkedForm = forms.find(form => form.id === linkedFormId)
-  return getEmbeddedFormContentPagesFromSite(linkedForm)
+  return getEmbeddedFormContentPagesFromSite(null)
 }
 
-const cloneFormBlocksForEmbed = (site: PublicSite, sourceBlocks: SiteBlock[], parentBlockId: string): SiteBlock[] => {
-  const idMap = new Map<string, string>()
-  sourceBlocks.forEach(block => {
-    idMap.set(block.id, `embedded_${parentBlockId}_${block.id}`.replace(/[^a-zA-Z0-9_-]/g, '_'))
-  })
-
-  return sourceBlocks.map((block, index) => {
-    const nextId = idMap.get(block.id) || `embedded_${crypto.randomUUID()}`
-    return {
-      ...cloneJson(block),
-      id: nextId,
-      siteId: site.id,
-      sortOrder: index,
-      options: (block.options || []).map((option, optionIndex) => {
-        const normalizedOption = normalizeOption(option, optionIndex)
-        return {
-          ...normalizedOption,
-          targetBlockId: normalizedOption.targetBlockId ? idMap.get(normalizedOption.targetBlockId) || normalizedOption.targetBlockId : ''
-        }
-      }),
-      settings: cloneJson(block.settings || {})
-    }
-  })
-}
-
-const getEditableEmbeddedFormBlocks = (site: PublicSite, block: SiteBlock, forms: PublicSite[]): SiteBlock[] => {
+const getEditableEmbeddedFormBlocks = (block: SiteBlock, forms: PublicSite[]): SiteBlock[] => {
   const settings = block.settings || {}
-  const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
-  if (embeddedBlocks.length) return embeddedBlocks
-
-  const linkedFormId = getSettingString(settings, 'formSiteId')
+  const linkedFormId = getEmbeddedFormSourceId(block)
   const linkedForm = forms.find(form => form.id === linkedFormId)
-  const linkedPages = getEmbeddedFormContentPagesFromSite(linkedForm)
-  const linkedPageIds = new Set(linkedPages.map(page => page.id))
-  const linkedBlocks = Array.isArray(linkedForm?.blocks)
-    ? linkedForm.blocks.filter(item => {
-      const rawPageId = getSettingString(item.settings || {}, 'pageId')
-      return embeddedFormBlockTypeSet.has(item.blockType) && (!rawPageId || linkedPageIds.has(rawPageId))
-    })
-    : []
+  if (linkedFormId) {
+    const linkedPages = getEmbeddedFormContentPagesFromSite(linkedForm)
+    const linkedPageIds = new Set(linkedPages.map(page => page.id))
+    return Array.isArray(linkedForm?.blocks)
+      ? linkedForm.blocks
+        .filter(item => {
+          const rawPageId = getSettingString(item.settings || {}, 'pageId')
+          return embeddedFormBlockTypeSet.has(item.blockType) && (!rawPageId || linkedPageIds.has(rawPageId))
+        })
+        .map((item, index) => ({ ...item, sortOrder: index }))
+      : []
+  }
 
-  return linkedBlocks.length ? cloneFormBlocksForEmbed(site, linkedBlocks, block.id) : []
+  const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
+  return embeddedBlocks
+}
+
+const EMBEDDED_FORM_PROXY_THEME_KEYS: Array<keyof SiteTheme> = [
+  'accentColor',
+  'backgroundColor',
+  'backgroundImage',
+  'backgroundMediaType',
+  'backgroundFit',
+  'backgroundRepeat',
+  'backgroundPosition',
+  'backgroundAttachment',
+  'textColor',
+  'textColorCustom',
+  'submitText',
+  'submitSubtitle',
+  'continueText',
+  'nextText',
+  'backText',
+  'submitBg',
+  'submitTextColor',
+  'submitBorderColor',
+  'submitRadius',
+  'submitHeight',
+  'submitPaddingX',
+  'submitFontSize',
+  'submitBorderWidth',
+  'submitWidth',
+  'submitAlign',
+  'formFontFamily',
+  'formLabelSize',
+  'formInputSize',
+  'formHelpSize',
+  'formFontWeight',
+  'formFontStyle',
+  'formTextDecoration',
+  'formLabelColor',
+  'formHelpColor',
+  'formFieldBg',
+  'formFieldText',
+  'formFieldBorder',
+  'formPlaceholderColor',
+  'formFieldRadius',
+  'formFieldBorderWidth',
+  'formFieldHeight',
+  'formFieldPaddingX',
+  'formFieldPaddingY',
+  'formFieldWidth',
+  'formChoiceStyle',
+  'formChoiceSelectedBg',
+  'formChoiceSelectedBorder',
+  'formSelectStyle',
+  'finalMessages'
+]
+
+const buildEmbeddedFormSourceTheme = (
+  sourceSite: PublicSite,
+  settings: Record<string, unknown>,
+  pages: SitePage[]
+): SiteTheme => {
+  const sourceTheme = sourceSite.theme || {}
+  const theme = {
+    ...getTemplateThemeDefaults('ristak', 'standard_form'),
+    template: 'ristak',
+    pages: normalizePagesForSave(normalizeEmbeddedFormPages(pages))
+  } as Record<string, unknown>
+
+  for (const key of EMBEDDED_FORM_PROXY_THEME_KEYS) {
+    const value = sourceTheme[key]
+    if (value !== undefined) theme[key] = cloneJson(value)
+  }
+
+  const completionAction = getFormCompletionAction(settings)
+  theme.formCompletionAction = completionAction === 'form_default' ? 'next_page_if_qualified' : completionAction
+
+  return theme as SiteTheme
+}
+
+const stripEmbeddedFormDraftSettings = (settings: Record<string, unknown>, formSiteId: string) => {
+  const next = { ...settings }
+  delete next.embeddedBlocks
+  delete next.embeddedPages
+  delete next.embeddedSiteId
+  delete next.embeddedSiteName
+  delete next.embeddedTheme
+  delete next.embeddedSiteType
+  next.formSiteId = formSiteId
+  return next
+}
+
+const getEmbeddedFormDraftBlocks = (block: SiteBlock) => {
+  const settings = block.settings || {}
+  const pages = normalizeEmbeddedFormPages(settings.embeddedPages)
+  const pageIds = new Set(pages.map(page => page.id))
+  const blocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
+  return blocks.filter(item => {
+    const pageId = getSettingString(item.settings || {}, 'pageId')
+    return embeddedFormBlockTypeSet.has(item.blockType) && (!pageId || pageIds.has(pageId))
+  })
 }
 
 function FormModePalette({
@@ -5475,6 +5555,8 @@ export const Sites: React.FC = () => {
   const pendingBlockSaveIdsRef = useRef<Set<string>>(new Set())
   const pendingBlockOrderScopesRef = useRef<Set<string>>(new Set())
   const pendingImportedCodeDraftsRef = useRef<Map<string, string>>(new Map())
+  const pendingEmbeddedFormSourceDraftsRef = useRef<Map<string, PublicSite>>(new Map())
+  const pendingEmbeddedFormDeletedBlockIdsRef = useRef<Map<string, Set<string>>>(new Map())
   const savingPendingEditorRef = useRef(false)
 
   useEffect(() => {
@@ -5717,8 +5799,14 @@ export const Sites: React.FC = () => {
       : null
   const formEditBlock = selectedBlock?.blockType === 'form_embed' ? selectedBlock : null
   const formEditMode = Boolean(editorSite && formEditBlock)
+  const formEditSourceId = formEditBlock ? getEmbeddedFormSourceId(formEditBlock) : ''
+  const formEditSourceSite = useMemo(
+    () => formEditSourceId ? forms.find(form => form.id === formEditSourceId) || null : null,
+    [formEditSourceId, forms]
+  )
+  const formEditPanelSite = formEditSourceSite || editorSite
   const formEditFields = useMemo(
-    () => editorSite && formEditBlock ? getEditableEmbeddedFormBlocks(editorSite, formEditBlock, forms) : [],
+    () => editorSite && formEditBlock ? getEditableEmbeddedFormBlocks(formEditBlock, forms) : [],
     [editorSite, formEditBlock, forms]
   )
   const formEditPages = useMemo(
@@ -5935,6 +6023,8 @@ export const Sites: React.FC = () => {
     pendingBlockSaveIdsRef.current.clear()
     pendingBlockOrderScopesRef.current.clear()
     pendingImportedCodeDraftsRef.current.clear()
+    pendingEmbeddedFormSourceDraftsRef.current.clear()
+    pendingEmbeddedFormDeletedBlockIdsRef.current.clear()
   }
 
   function clearEditorDirtyState() {
@@ -6031,6 +6121,132 @@ export const Sites: React.FC = () => {
     }
   }
 
+  function upsertSiteInEditorList(site: PublicSite) {
+    const normalizedSite = normalizeSiteForEditor(site)
+    setSites(current => {
+      const exists = current.some(item => item.id === normalizedSite.id)
+      if (!exists) return [normalizedSite, ...current]
+      return current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item)
+    })
+    return normalizedSite
+  }
+
+  function normalizeEmbeddedFormSourceBlocks(formId: string, fields: SiteBlock[]) {
+    return fields.map((field, index) => ({
+      ...cloneJson(field),
+      siteId: formId,
+      sortOrder: index,
+      settings: cloneJson(field.settings || {}),
+      updatedAt: new Date().toISOString()
+    }))
+  }
+
+  function markEmbeddedFormSourceBlockDeleted(formId: string, blockId: string) {
+    if (!formId || !blockId) return
+    const deletedIds = pendingEmbeddedFormDeletedBlockIdsRef.current.get(formId) || new Set<string>()
+    deletedIds.add(blockId)
+    pendingEmbeddedFormDeletedBlockIdsRef.current.set(formId, deletedIds)
+  }
+
+  function syncEmbeddedFormSourceDraft(nextForm: PublicSite) {
+    const normalizedForm = upsertSiteInEditorList(nextForm)
+    pendingEmbeddedFormSourceDraftsRef.current.set(normalizedForm.id, normalizedForm)
+    setHasUnsavedChanges(true)
+    return normalizedForm
+  }
+
+  async function persistEmbeddedFormSourceDrafts() {
+    const drafts = [...pendingEmbeddedFormSourceDraftsRef.current.entries()]
+    for (const [formId, draftForm] of drafts) {
+      const blocksForSave = normalizeEmbeddedFormSourceBlocks(formId, draftForm.blocks || [])
+      const pagesForSave = normalizePagesForSave(getEmbeddedFormContentPagesFromSite(draftForm))
+      let savedForm = await sitesService.updateSite(formId, {
+        name: draftForm.name,
+        slug: normalizeRouteInput(draftForm.slug) || normalizeRouteInput(draftForm.name) || 'formulario',
+        siteType: draftForm.siteType,
+        status: draftForm.status,
+        title: getPublicTitleForSave(draftForm),
+        description: draftForm.description,
+        theme: {
+          ...(draftForm.theme || {}),
+          pages: pagesForSave
+        },
+        metaCapiEnabled: draftForm.metaCapiEnabled,
+        metaEventName: draftForm.metaEventName
+      })
+
+      const deletedIds = [...(pendingEmbeddedFormDeletedBlockIdsRef.current.get(formId) || new Set<string>())]
+        .filter(blockId => !blocksForSave.some(block => block.id === blockId))
+      for (const blockId of deletedIds) {
+        savedForm = await sitesService.deleteBlock(formId, blockId)
+      }
+
+      if (blocksForSave.length) {
+        savedForm = await sitesService.restoreBlocks(formId, blocksForSave)
+        savedForm = await sitesService.reorderBlocks(formId, blocksForSave.map(block => block.id))
+      }
+
+      upsertSiteInEditorList(savedForm)
+    }
+  }
+
+  async function materializeDraftEmbeddedForms(siteToSave: PublicSite) {
+    const siteBlocks = siteToSave.blocks || []
+    if (!siteBlocks.length) return siteToSave
+
+    let changed = false
+    const nextBlocks: SiteBlock[] = []
+
+    for (const [index, block] of siteBlocks.entries()) {
+      const settings = block.settings || {}
+      const hasDraftBlocks = Array.isArray(settings.embeddedBlocks)
+      if (block.blockType !== 'form_embed' || getEmbeddedFormSourceId(block) || !hasDraftBlocks) {
+        nextBlocks.push(block)
+        continue
+      }
+
+      const draftPages = normalizeEmbeddedFormPages(settings.embeddedPages)
+      const draftBlocks = getEmbeddedFormDraftBlocks(block)
+      const formLabel = block.label || block.content || `Formulario ${index + 1}`
+      const formName = `${siteToSave.name || 'Sitio web'} - ${formLabel}`
+      let sourceForm = normalizeSiteForEditor(await sitesService.createSite({
+        name: formName,
+        siteType: 'standard_form',
+        slug: normalizeRouteInput(`${siteToSave.slug || siteToSave.name || 'sitio'}-${formLabel}`),
+        title: '',
+        theme: {
+          ...buildEmbeddedFormSourceTheme(siteToSave, settings, draftPages),
+          blankCanvas: true
+        },
+        metaCapiEnabled: siteToSave.metaCapiEnabled,
+        metaEventName: siteToSave.metaEventName
+      }))
+
+      const sourceBlocks = normalizeEmbeddedFormSourceBlocks(sourceForm.id, draftBlocks)
+      if (sourceBlocks.length) {
+        sourceForm = normalizeSiteForEditor(await sitesService.restoreBlocks(sourceForm.id, sourceBlocks))
+        sourceForm = normalizeSiteForEditor(await sitesService.reorderBlocks(sourceForm.id, sourceBlocks.map(field => field.id)))
+      }
+      upsertSiteInEditorList(sourceForm)
+
+      const nextBlock = {
+        ...block,
+        settings: stripEmbeddedFormDraftSettings(settings, sourceForm.id),
+        updatedAt: new Date().toISOString()
+      }
+      pendingBlockSaveIdsRef.current.add(nextBlock.id)
+      nextBlocks.push(nextBlock)
+      changed = true
+    }
+
+    if (!changed) return siteToSave
+
+    const nextSite = { ...siteToSave, blocks: nextBlocks }
+    selectedSiteRef.current = nextSite
+    setSelectedSite(nextSite)
+    return nextSite
+  }
+
   function addBlocksLocal(nextBlocks: SiteBlock[], selectBlockId?: string, orderPageId?: string) {
     const current = selectedSiteRef.current || selectedSite
     if (!current) return
@@ -6047,7 +6263,7 @@ export const Sites: React.FC = () => {
   }
 
   async function flushPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
-    const siteToSave = selectedSiteRef.current || selectedSite
+    let siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave || savingPendingEditorRef.current) return false
 
     if (options.statusOverride === 'published' && (!domainConfig.domain || !domainConfig.renderDomainVerified)) {
@@ -6055,6 +6271,12 @@ export const Sites: React.FC = () => {
       return false
     }
 
+    try {
+      siteToSave = await materializeDraftEmbeddedForms(siteToSave)
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo preparar el formulario')
+      return false
+    }
     const localBlocksById = new Map((siteToSave.blocks || []).map(block => [block.id, block]))
     const createdBlockIds = [...pendingCreatedBlockIdsRef.current].filter(blockId =>
       localBlocksById.has(blockId) && !pendingDeletedBlockIdsRef.current.has(blockId)
@@ -6069,9 +6291,10 @@ export const Sites: React.FC = () => {
     )
     const orderScopeKeys = [...pendingBlockOrderScopesRef.current]
     const importedCodeFilesToSave = [...pendingImportedCodeDraftsRef.current.entries()].map(([path, content]) => ({ path, content }))
+    const embeddedFormSourceDraftsToSave = pendingEmbeddedFormSourceDraftsRef.current.size
     const shouldSaveSite = Boolean(options.forceSite || options.statusOverride || pendingSiteSaveRef.current)
 
-    if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length && !importedCodeFilesToSave.length) {
+    if (!shouldSaveSite && !createdBlockIds.length && !deletedBlockIds.length && !blockIdsToSave.length && !orderScopeKeys.length && !importedCodeFilesToSave.length && !embeddedFormSourceDraftsToSave) {
       clearEditorDirtyState()
       return true
     }
@@ -6124,6 +6347,10 @@ export const Sites: React.FC = () => {
         site = normalizeSiteForEditor(result.site)
         setSelectedImportData(result.import)
         setImportedCodeDrafts({})
+      }
+
+      if (embeddedFormSourceDraftsToSave) {
+        await persistEmbeddedFormSourceDrafts()
       }
 
       syncSelectedSite(site)
@@ -7022,6 +7249,23 @@ export const Sites: React.FC = () => {
     const next = { ...current, theme: { ...(current.theme || {}), ...patch } }
     selectedSiteRef.current = next
     setSelectedSite(next)
+  }
+
+  const patchEmbeddedFormSourceTheme = (patch: Partial<SiteTheme>) => {
+    if (!formEditSourceSite) {
+      patchSiteTheme(patch)
+      return
+    }
+    const sourceForm = pendingEmbeddedFormSourceDraftsRef.current.get(formEditSourceSite.id) || formEditSourceSite
+    const currentTheme = (sourceForm.theme || {}) as Record<string, unknown>
+    if (!editorPatchHasChanges(currentTheme, patch as Record<string, unknown>)) return
+    syncEmbeddedFormSourceDraft({
+      ...sourceForm,
+      theme: {
+        ...(sourceForm.theme || {}),
+        ...patch
+      }
+    })
   }
 
   const saveSiteTheme = async (site: PublicSite, theme: SiteTheme) => {
@@ -8469,14 +8713,20 @@ export const Sites: React.FC = () => {
     const currentFormBlock = formEditBlock
     if (!currentSite || !currentFormBlock) return null
     const currentBlock = (currentSite.blocks || []).find(block => block.id === currentFormBlock.id) || currentFormBlock
+    const sourceFormId = getEmbeddedFormSourceId(currentBlock)
+    const sourceForm = sourceFormId
+      ? pendingEmbeddedFormSourceDraftsRef.current.get(sourceFormId) || forms.find(form => form.id === sourceFormId) || null
+      : null
     const embeddedPages = getEditableEmbeddedFormPages(currentBlock, forms)
     const activePageId = embeddedPages.some(page => page.id === activeEmbeddedFormPageId)
       ? activeEmbeddedFormPageId
       : embeddedPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
     return {
       site: currentSite,
+      sourceForm,
+      sourceSite: sourceForm || currentSite,
       block: currentBlock,
-      fields: getEditableEmbeddedFormBlocks(currentSite, currentBlock, forms),
+      fields: getEditableEmbeddedFormBlocks(currentBlock, forms),
       pages: embeddedPages,
       activePageId
     }
@@ -8486,6 +8736,22 @@ export const Sites: React.FC = () => {
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
     const pagesForSave = normalizeEmbeddedFormPages(nextPages || context.pages)
+    if (context.sourceForm) {
+      const currentEditableIds = new Set(context.fields.map(field => field.id))
+      const preservedBlocks = (context.sourceForm.blocks || []).filter(field => !currentEditableIds.has(field.id))
+      const normalizedFields = normalizeEmbeddedFormSourceBlocks(context.sourceForm.id, nextFields)
+      syncEmbeddedFormSourceDraft({
+        ...context.sourceForm,
+        blocks: [...preservedBlocks, ...normalizedFields],
+        theme: {
+          ...(context.sourceForm.theme || {}),
+          pages: normalizePagesForSave(pagesForSave)
+        }
+      })
+      if (selectFieldId !== undefined) setActiveEmbeddedFormFieldId(selectFieldId)
+      return
+    }
+
     patchBlockSettingsLocal(context.block, {
       formSiteId: '',
       embeddedPages: normalizePagesForSave(pagesForSave),
@@ -8551,7 +8817,7 @@ export const Sites: React.FC = () => {
     if (!embeddedFormBlockTypeSet.has(blockType)) return
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
-    const nextField = createEmbeddedFieldBlock(context.site, blockType, context.fields.length, context.activePageId, initialSettings)
+    const nextField = createEmbeddedFieldBlock(context.sourceSite, blockType, context.fields.length, context.activePageId, initialSettings)
     const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, context.activePageId)
     const boundedIndex = Number.isFinite(Number(insertIndex))
       ? Math.max(0, Math.min(Number(insertIndex), pageFields.length))
@@ -8590,6 +8856,7 @@ export const Sites: React.FC = () => {
   const removeEmbeddedFormField = (fieldId: string) => {
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
+    if (context.sourceForm) markEmbeddedFormSourceBlockDeleted(context.sourceForm.id, fieldId)
     const field = context.fields.find(item => item.id === fieldId)
     const pageId = field ? getBlockPageId(field, context.pages) : context.activePageId
     const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, pageId)
@@ -8673,7 +8940,8 @@ export const Sites: React.FC = () => {
       !pendingDeletedBlockIdsRef.current.has(blockId) &&
       !pendingBlockSaveIdsRef.current.has(blockId) &&
       pendingBlockOrderScopesRef.current.size === 0 &&
-      pendingImportedCodeDraftsRef.current.size === 0
+      pendingImportedCodeDraftsRef.current.size === 0 &&
+      pendingEmbeddedFormSourceDraftsRef.current.size === 0
     ) {
       return
     }
@@ -9858,7 +10126,7 @@ export const Sites: React.FC = () => {
 
                 {formEditMode && formEditBlock ? (
                   <FormEmbedEditorPanel
-                    site={editorSite}
+                    site={formEditPanelSite || editorSite}
                     block={formEditBlock}
                     forms={forms}
                     fields={formEditFields}
@@ -9872,13 +10140,13 @@ export const Sites: React.FC = () => {
                     activeSitePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                     onPatchBlock={(patch) => patchSelectedBlock(patch)}
                     onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
-                    onPatchTheme={patchSiteTheme}
+                    onPatchTheme={patchEmbeddedFormSourceTheme}
                     onPatchField={patchEmbeddedFormField}
                     onPatchFieldSettings={patchEmbeddedFormFieldSettings}
                     onDeleteField={removeEmbeddedFormField}
                     onCustomFieldCreated={handleCustomFieldCreated}
                     onSave={() => handleSaveBlock()}
-                    onSaveSite={() => handleSaveSite()}
+                    onSaveSite={() => formEditSourceSite ? handleSaveBlock(formEditBlock.id) : handleSaveSite()}
                     onActivePageChange={selectEmbeddedFormPage}
                     onAddPage={addEmbeddedFormPage}
                     onPatchPage={patchEmbeddedFormPage}
@@ -25173,6 +25441,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const formSiteId = getSettingString(settings, 'formSiteId')
     const form = forms.find(item => item.id === formSiteId)
     const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
+    const hasLinkedForm = Boolean(formSiteId)
     const selectedFormPages = getEmbeddedFormContentPagesFromSite(form)
     const selectedFormPageIds = new Set(selectedFormPages.map(page => page.id))
     const selectedFormBlocks = Array.isArray(form?.blocks)
@@ -25181,8 +25450,8 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         return embeddedFormBlockTypeSet.has(item.blockType) && (!rawPageId || selectedFormPageIds.has(rawPageId))
       })
       : []
-    const resolvedItems = embeddedBlocks.length ? embeddedBlocks : selectedFormBlocks
-    const resolvedPages = embeddedFormEditor?.pages || (embeddedBlocks.length ? normalizeEmbeddedFormPages(settings.embeddedPages) : selectedFormPages)
+    const resolvedItems = hasLinkedForm ? selectedFormBlocks : embeddedBlocks.length ? embeddedBlocks : selectedFormBlocks
+    const resolvedPages = embeddedFormEditor?.pages || (hasLinkedForm ? selectedFormPages : embeddedBlocks.length ? normalizeEmbeddedFormPages(settings.embeddedPages) : selectedFormPages)
     const activeEmbeddedPageId = embeddedFormEditor?.activePageId || resolvedPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
     const visibleEditorItems = embeddedFormEditor
       ? getEmbeddedFormPageFields(resolvedItems, resolvedPages, activeEmbeddedPageId)
@@ -25192,13 +25461,22 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const buttonCopySite = form || site
     const embeddedButtonLabel = getFormPageActionLabel(buttonCopySite, resolvedPages, activeEmbeddedPageId)
     const embeddedButtonSubtitle = getFormPageActionSubtitle(buttonCopySite, resolvedPages, activeEmbeddedPageId)
-    return (
+    const sourceCanvasTheme = form ? buildCanvasTheme(form, 'desktop') : null
+    const sourceCanvasVars = sourceCanvasTheme?.vars as (React.CSSProperties & Record<string, string | number>) | undefined
+    const sourceThemeVars = sourceCanvasTheme
+      ? ({
+          ...sourceCanvasVars,
+          width: '100%',
+          ['--rstk-block-bg' as string]: sourceCanvasVars?.['--rstk-page-bg'] || 'transparent'
+        } as React.CSSProperties)
+      : undefined
+    const embeddedFormPreview = (
       <section className="rstk-embedded-form">
         {embeddedFormEditor ? (
           <EmbeddedFormCanvasFields
             fields={visibleEditorItems}
             editor={embeddedFormEditor}
-            site={site}
+            site={buttonCopySite}
             forms={forms}
             calendars={calendars}
           />
@@ -25208,7 +25486,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               <EmbeddedFormStaticBlockPreview
                 key={item.id}
                 block={item}
-                site={site}
+                site={buttonCopySite}
                 forms={forms}
                 calendars={calendars}
               />
@@ -25224,11 +25502,17 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               embeddedFormEditor.onSelectSubmit()
             } : undefined}
           >
-            <SubmitButtonContent theme={site?.theme} label={embeddedButtonLabel} subtitle={embeddedButtonSubtitle} />
+            <SubmitButtonContent theme={buttonCopySite?.theme} label={embeddedButtonLabel} subtitle={embeddedButtonSubtitle} />
           </button>
         </div>
       </section>
     )
+
+    return sourceCanvasTheme ? (
+      <div className={`rstkCanvas ${sourceCanvasTheme.bodyClass}`} style={sourceThemeVars}>
+        {embeddedFormPreview}
+      </div>
+    ) : embeddedFormPreview
   }
 
   if (block.blockType === 'cta') {

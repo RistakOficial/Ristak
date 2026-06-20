@@ -17228,7 +17228,7 @@
 
 .formModeStatus strong {
   font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .formModeStatus small {
@@ -17283,7 +17283,7 @@
 .formModePanelHeader strong {
   color: var(--color-text-primary);
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .formModePaletteHeader small,
@@ -17309,7 +17309,7 @@
 .formModePaletteSection > span {
   color: var(--color-text-tertiary);
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -17370,7 +17370,7 @@
   min-width: 0;
   overflow: visible;
   font-size: 0.82rem;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.15;
   text-overflow: clip;
   white-space: normal;
@@ -17534,7 +17534,7 @@
 .formFieldEditorHeader strong {
   overflow: hidden;
   font-size: 0.84rem;
-  font-weight: 600;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
