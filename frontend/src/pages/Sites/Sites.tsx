@@ -342,6 +342,11 @@ const metaTriggerOptions: Array<{ value: SiteMetaTrigger; label: string }> = [
 const normalizeMetaEventName = (value?: string, fallback = 'Lead') =>
   metaEventOptions.some(option => option.value === value) ? value || fallback : fallback
 
+const normalizeEnabledMetaEventName = (value?: string) => {
+  const eventName = normalizeMetaEventName(value, 'Lead')
+  return eventName === 'none' ? 'Lead' : eventName
+}
+
 const normalizeMetaTrigger = (value?: string): SiteMetaTrigger =>
   value === 'form_submit' ? 'form_submit' : 'page_view'
 
@@ -1049,7 +1054,7 @@ const PAGE_SELECTED_ID = '__page__'
 const POPUP_SELECTED_ID = '__popup__'
 const POPUP_SURFACE_ID = 'site-popup'
 const isEditorSurfaceSelection = (id: string) => id === PAGE_SELECTED_ID || id === POPUP_SELECTED_ID
-type VideoActionKind = 'show' | 'hide' | 'open_form' | 'open_video_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout'
+type VideoActionKind = 'show' | 'hide' | 'open_form' | 'open_video_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout' | 'meta_event'
 type VideoActionBeforeState = 'hidden' | 'visible' | 'unchanged'
 type VideoFormGateAnimation = 'fade' | 'instant' | 'slide_up'
 type VideoFormGateCompletionAction = 'continue_video' | 'redirect' | 'disqualify_message' | 'show_targets' | 'hide_targets'
@@ -1067,6 +1072,9 @@ interface VideoActionRule {
   targetPageId?: string
   redirectUrl?: string
   pauseUntilComplete?: boolean
+  metaCapiEnabled?: boolean
+  metaEventName?: string
+  metaEventParameters?: SiteMetaEventParameters
 }
 
 interface VideoActionTargetOption {
@@ -1080,9 +1088,9 @@ const VIDEO_ACTIONS_SETTING_KEY = 'videoActions'
 const VIDEO_FORM_GATE_ACTION_ID = 'video-form-gate-action'
 const VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS = 600
 const VIDEO_ACTION_TIMELINE_PADDING_SECONDS = 60
-const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout']
+const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event']
 const videoActionBeforeStates: VideoActionBeforeState[] = ['hidden', 'visible', 'unchanged']
-const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'scroll_to']
+const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'scroll_to', 'meta_event']
 const videoActionTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 const videoActionMultiTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form'])
 
@@ -1097,7 +1105,8 @@ const videoActionLabels: Record<VideoActionKind, string> = {
   change_text: 'Cambiar texto',
   change_link: 'Cambiar enlace',
   scroll_to: 'Ir a una sección',
-  activate_checkout: 'Activar checkout'
+  activate_checkout: 'Activar checkout',
+  meta_event: 'Disparar evento Meta'
 }
 
 const videoActionRuleLabels: Record<VideoActionKind, string> = {
@@ -1111,7 +1120,8 @@ const videoActionRuleLabels: Record<VideoActionKind, string> = {
   change_text: 'cambiar texto de',
   change_link: 'cambiar enlace de',
   scroll_to: 'ir a',
-  activate_checkout: 'activar checkout'
+  activate_checkout: 'activar checkout',
+  meta_event: 'disparar evento Meta'
 }
 
 const videoActionBeforeLabels: Record<VideoActionBeforeState, string> = {
@@ -4191,6 +4201,17 @@ const normalizeVideoActionRule = (value: unknown, index = 0): VideoActionRule | 
   const id = getSettingString(source, 'id') || `video-action-${index + 1}`
   const targetPageId = getSettingString(source, 'targetPageId') || getSettingString(source, 'target_page_id')
   const redirectUrl = getSettingString(source, 'redirectUrl') || getSettingString(source, 'redirect_url')
+  const rawMetaEventName = getSettingString(source, 'metaEventName') || getSettingString(source, 'meta_event_name')
+  const metaEventName = action === 'meta_event'
+    ? normalizeMetaEventName(rawMetaEventName, 'Lead')
+    : ''
+  const rawMetaEventParameters = (
+    source.metaEventParameters && typeof source.metaEventParameters === 'object'
+      ? source.metaEventParameters
+      : source.meta_event_parameters && typeof source.meta_event_parameters === 'object'
+        ? source.meta_event_parameters
+        : undefined
+  ) as SiteMetaEventParameters | undefined
 
   return {
     id,
@@ -4202,7 +4223,12 @@ const normalizeVideoActionRule = (value: unknown, index = 0): VideoActionRule | 
     value: getSettingString(source, 'value'),
     targetPageId,
     redirectUrl,
-    pauseUntilComplete: source.pauseUntilComplete === true || source.pause_until_complete === true
+    pauseUntilComplete: source.pauseUntilComplete === true || source.pause_until_complete === true,
+    ...(action === 'meta_event' ? {
+      metaCapiEnabled: source.metaCapiEnabled !== false && source.meta_capi_enabled !== false,
+      metaEventName,
+      metaEventParameters: pruneMetaEventParametersForEvent(rawMetaEventParameters, metaEventName)
+    } : {})
   }
 }
 
@@ -4341,6 +4367,9 @@ const getVideoActionRuleText = (rule: VideoActionRule, targets: VideoActionTarge
   }
   if (rule.action === 'redirect') {
     return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, redirigir a ${rule.redirectUrl || 'URL destino'}.`
+  }
+  if (rule.action === 'meta_event') {
+    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, disparar ${normalizeMetaEventName(rule.metaEventName, 'Lead')}.`
   }
   const actionText = videoActionRuleLabels[rule.action]
   return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, ${actionText} ${targetLabel}.`
@@ -11332,6 +11361,7 @@ export const Sites: React.FC = () => {
                   aiAgentAvailable={aiAgentConfigured}
                   importData={selectedImportData}
                   customFields={customFields}
+                  metaPixelConnected={metaPixelConnected}
                   codeEditorOpen={true}
                   codeDrafts={importedCodeDrafts}
                   popupCodeActive={popupSurfaceSelected}
@@ -11345,6 +11375,8 @@ export const Sites: React.FC = () => {
                   onContentUpdated={handleImportedContentUpdated}
                   onImportMappingUpdated={setSelectedImportData}
                   onUpdateRoute={handleUpdateLibraryRoute}
+                  onPatchSite={updateSelectedSite}
+                  onSaveSite={() => handleSaveSite(undefined, { silent: true })}
                   onDelete={() => void handleDeleteSite(editorSite)}
                 />
               ) : (
@@ -16137,6 +16169,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   aiAgentAvailable: boolean
   importData: ImportedSiteImport | null
   customFields: CustomFieldDefinition[]
+  metaPixelConnected: boolean
   codeEditorOpen: boolean
   codeDrafts: Record<string, string>
   popupCodeActive: boolean
@@ -16150,6 +16183,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   onContentUpdated: (result: ImportedSiteCreateResult) => void
   onImportMappingUpdated: (importData: ImportedSiteImport) => void
   onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onSaveSite: () => void | Promise<void>
   onDelete: () => void
 }> = ({
   site,
@@ -16161,6 +16196,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   aiAgentAvailable,
   importData,
   customFields,
+  metaPixelConnected,
   codeEditorOpen,
   codeDrafts,
   popupCodeActive,
@@ -16174,6 +16210,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   onContentUpdated,
   onImportMappingUpdated,
   onUpdateRoute,
+  onPatchSite,
+  onSaveSite,
   onDelete
 }) => {
   const { showToast } = useNotification()
@@ -18754,6 +18792,9 @@ const ImportedHtmlEditorPanel: React.FC<{
                 pages={pages}
                 activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                 importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
+                metaPixelConnected={metaPixelConnected}
+                onPatchSite={onPatchSite}
+                onSaveSite={onSaveSite}
                 onPatchSettings={(patch) => {
                   setCodeElementEditor(current => current ? {
                     ...current,
@@ -18934,6 +18975,9 @@ const ImportedHtmlEditorPanel: React.FC<{
                 pages={pages}
                 activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
                 importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
+                metaPixelConnected={metaPixelConnected}
+                onPatchSite={onPatchSite}
+                onSaveSite={onSaveSite}
                 onPatchSettings={(patch) => {
                   setImportedVideoEditorState(current => current ? {
                     ...current,
@@ -24249,6 +24293,114 @@ const MetaPageConversionSettingsPanel: React.FC<{
           disabled={disabled}
           onChange={(metaEventParameters) => patchActivePage({ metaEventParameters })}
           onCommit={saveSoon}
+        />
+      )}
+    </div>
+  )
+}
+
+const MetaVideoEventSettings: React.FC<{
+  title: string
+  description: string
+  siteMetaEnabled: boolean
+  metaPixelConnected: boolean
+  eventEnabled: boolean
+  eventName?: string
+  parameters?: SiteMetaEventParameters
+  disabled?: boolean
+  onToggle: (enabled: boolean) => void
+  onChangeEvent: (eventName: string) => void
+  onChangeParameters: (parameters: SiteMetaEventParameters) => void
+  onCommit: () => void
+}> = ({
+  title,
+  description,
+  siteMetaEnabled,
+  metaPixelConnected,
+  eventEnabled,
+  eventName,
+  parameters,
+  disabled,
+  onToggle,
+  onChangeEvent,
+  onChangeParameters,
+  onCommit
+}) => {
+  const [paramsOpen, setParamsOpen] = useState(false)
+  const activeEventName = eventEnabled ? normalizeMetaEventName(eventName, 'Lead') : 'none'
+  const active = metaPixelConnected && siteMetaEnabled && eventEnabled && activeEventName !== 'none'
+  const hasParameters = hasMetaEventParameters(parameters)
+
+  useEffect(() => {
+    if (!active) setParamsOpen(false)
+  }, [active])
+
+  const statusText = !metaPixelConnected
+    ? 'Conecta Meta en Configuración'
+    : active
+      ? description
+      : 'Apagado para este disparador'
+
+  return (
+    <div className={styles.editorSettingsMetaControls}>
+      <div className={`${styles.editorSettingsMetaRow} ${active ? styles.editorSettingsMetaRowActive : ''}`}>
+        <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
+          <MetaBrandMark size={18} />
+        </span>
+        <div>
+          <strong>{title}</strong>
+          <small>{statusText}</small>
+        </div>
+        <label className={styles.metaSwitch}>
+          <input
+            type="checkbox"
+            checked={active}
+            disabled={disabled || !metaPixelConnected}
+            aria-label={title}
+            onChange={(event) => onToggle(event.target.checked)}
+          />
+          <span className={styles.metaSwitchTrack} />
+        </label>
+      </div>
+
+      <label className={styles.editorSettingsField}>
+        <span>Evento personalizado</span>
+        <CustomSelect
+          value={activeEventName}
+          disabled={disabled || !active}
+          portal
+          onChange={(event) => onChangeEvent(event.target.value)}
+          onBlur={onCommit}
+        >
+          {metaEventOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+
+      <button
+        type="button"
+        className={[
+          styles.editorSettingsInlineToggle,
+          paramsOpen ? styles.editorSettingsInlineToggleActive : '',
+          hasParameters ? styles.editorSettingsInlineToggleFilled : ''
+        ].filter(Boolean).join(' ')}
+        disabled={disabled || !active}
+        aria-expanded={paramsOpen}
+        onClick={() => setParamsOpen(open => !open)}
+      >
+        <Settings2 size={14} />
+        <span>Parámetros opcionales</span>
+        <ChevronDown size={13} />
+      </button>
+
+      {paramsOpen && active && (
+        <MetaEventParametersEditor
+          eventName={activeEventName}
+          parameters={parameters}
+          disabled={disabled}
+          onChange={onChangeParameters}
+          onCommit={onCommit}
         />
       )}
     </div>
@@ -30333,6 +30485,9 @@ const VideoActionsPanel: React.FC<{
   customFieldFolders?: CustomFieldFolder[]
   onCustomFieldCreated?: (field: CustomFieldDefinition) => void
   enableVideoFormGateAction?: boolean
+  metaPixelConnected: boolean
+  onPatchSite: (patch: Partial<PublicSite>) => void
+  onSaveSite?: () => void | Promise<void>
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
   onTargetHover?: (blockId: string) => void
@@ -30349,6 +30504,9 @@ const VideoActionsPanel: React.FC<{
   customFieldFolders = [],
   onCustomFieldCreated = () => undefined,
   enableVideoFormGateAction = false,
+  metaPixelConnected,
+  onPatchSite,
+  onSaveSite,
   onPatchSettings,
   onSave,
   onTargetHover
@@ -30481,6 +30639,17 @@ const VideoActionsPanel: React.FC<{
     }
   }, [block.id, patchRules, rules])
 
+  const saveSiteSoon = useCallback(() => {
+    if (!onSaveSite) return
+    window.setTimeout(() => { void onSaveSite() }, 0)
+  }, [onSaveSite])
+
+  const enableSiteMetaIfNeeded = useCallback(() => {
+    if (!metaPixelConnected || site.metaCapiEnabled) return
+    onPatchSite({ metaCapiEnabled: true })
+    saveSiteSoon()
+  }, [metaPixelConnected, onPatchSite, saveSiteSoon, site.metaCapiEnabled])
+
   const openNewRule = useCallback(() => {
     const timeSeconds = Math.min(timelineMaxSeconds, getCurrentEditorVideoTime(block.id))
     const defaultAction: VideoActionKind = contentTargets.length
@@ -30517,6 +30686,7 @@ const VideoActionsPanel: React.FC<{
   }, [contentTargets, formTargets, sectionTargets])
 
   const handleChangeAction = useCallback((rule: VideoActionRule, action: VideoActionKind) => {
+    if (action === 'meta_event') enableSiteMetaIfNeeded()
     const previousRecommended = getRecommendedVideoActionBefore(rule.action)
     const nextBefore = action === 'open_video_form'
       ? 'unchanged'
@@ -30540,9 +30710,18 @@ const VideoActionsPanel: React.FC<{
       targetBlockIds: nextTargetIds,
       targetPageId: action === 'site_page' ? rule.targetPageId || pageTargets[0]?.id || '' : '',
       redirectUrl: action === 'redirect' ? rule.redirectUrl || '' : '',
-      pauseUntilComplete: action === 'open_form' ? rule.pauseUntilComplete !== false : false
+      pauseUntilComplete: action === 'open_form' ? rule.pauseUntilComplete !== false : false,
+      ...(action === 'meta_event' ? {
+        metaCapiEnabled: rule.metaCapiEnabled !== false,
+        metaEventName: normalizeEnabledMetaEventName(rule.metaEventName),
+        metaEventParameters: pruneMetaEventParametersForEvent(rule.metaEventParameters, normalizeEnabledMetaEventName(rule.metaEventName))
+      } : {
+        metaCapiEnabled: undefined,
+        metaEventName: undefined,
+        metaEventParameters: undefined
+      })
     })
-  }, [getTargetOptionsForAction, pageTargets, patchRule])
+  }, [enableSiteMetaIfNeeded, getTargetOptionsForAction, pageTargets, patchRule])
 
   const handleTimelineTimeChange = useCallback((ruleId: string, timeSeconds: number) => {
     const nextTime = Math.min(timelineMaxSeconds, clampVideoActionTime(timeSeconds))
@@ -30690,7 +30869,7 @@ const VideoActionsPanel: React.FC<{
           </CustomSelect>
         </label>
 
-        {rule.action !== 'open_video_form' && (
+        {rule.action !== 'open_video_form' && rule.action !== 'meta_event' && (
           <label className={styles.field}>
             <span>Antes de este momento</span>
             <CustomSelect
@@ -30733,6 +30912,42 @@ const VideoActionsPanel: React.FC<{
           </label>
         )}
 
+        {rule.action === 'meta_event' && (
+          <div className={styles.videoActionStep}>
+            <div className={styles.videoActionStepHeader}>
+              <span className={styles.videoActionStepTitle}>Evento personalizado de Meta</span>
+            </div>
+            <MetaVideoEventSettings
+              title="Meta Pixel + CAPI"
+              description="Se dispara cuando el video llegue a este momento"
+              siteMetaEnabled={Boolean(site.metaCapiEnabled)}
+              metaPixelConnected={metaPixelConnected}
+              eventEnabled={rule.metaCapiEnabled !== false}
+              eventName={rule.metaEventName}
+              parameters={rule.metaEventParameters}
+              onToggle={(enabled) => {
+                if (enabled) enableSiteMetaIfNeeded()
+                patchRule(rule.id, {
+                  metaCapiEnabled: enabled,
+                  metaEventName: enabled ? normalizeEnabledMetaEventName(rule.metaEventName) : 'none',
+                  metaEventParameters: enabled
+                    ? pruneMetaEventParametersForEvent(rule.metaEventParameters, normalizeEnabledMetaEventName(rule.metaEventName))
+                    : {}
+                })
+              }}
+              onChangeEvent={(metaEventName) => {
+                patchRule(rule.id, {
+                  metaCapiEnabled: metaEventName !== 'none',
+                  metaEventName,
+                  metaEventParameters: pruneMetaEventParametersForEvent(rule.metaEventParameters, metaEventName)
+                })
+              }}
+              onChangeParameters={(metaEventParameters) => patchRule(rule.id, { metaEventParameters })}
+              onCommit={onSave}
+            />
+          </div>
+        )}
+
         {rule.action === 'open_video_form' && (
           <VideoFormGateSettingsPanel
             site={site}
@@ -30742,14 +30957,17 @@ const VideoActionsPanel: React.FC<{
             customFieldFolders={customFieldFolders}
             pages={pages}
             activePageId={activePageId}
+            metaPixelConnected={metaPixelConnected}
             completionTargets={contentTargets}
             forceEnabled
             showEnableSwitch={false}
             showTriggerControl={false}
             showCompletionControls
             showDesignControls
+            onPatchSite={onPatchSite}
             onPatchSettings={onPatchSettings}
             onCustomFieldCreated={onCustomFieldCreated}
+            onSaveSite={onSaveSite}
             onSave={onSave}
             onTargetHover={onTargetHover}
           />
@@ -31194,6 +31412,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       pages={pages}
       activePageId={activePageId}
       importedPopupDetected={importedPopupDetected}
+      metaPixelConnected={metaPixelConnected}
+      onPatchSite={onPatchSite}
+      onSaveSite={onSaveSite}
       forms={forms}
       customFields={customFields}
       customFieldFolders={customFieldFolders}
@@ -31580,14 +31801,17 @@ const VideoFormGateSettingsPanel: React.FC<{
   customFieldFolders: CustomFieldFolder[]
   pages: SitePage[]
   activePageId: string
+  metaPixelConnected: boolean
   completionTargets?: VideoActionTargetOption[]
   forceEnabled?: boolean
   showEnableSwitch?: boolean
   showTriggerControl?: boolean
   showCompletionControls?: boolean
   showDesignControls?: boolean
+  onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onCustomFieldCreated: (field: CustomFieldDefinition) => void
+  onSaveSite?: () => void | Promise<void>
   onSave: () => void
   onTargetHover?: (blockId: string) => void
 }> = ({
@@ -31598,14 +31822,17 @@ const VideoFormGateSettingsPanel: React.FC<{
   customFieldFolders,
   pages,
   activePageId,
+  metaPixelConnected,
   completionTargets = [],
   forceEnabled = false,
   showEnableSwitch = true,
   showTriggerControl = true,
   showCompletionControls = false,
   showDesignControls = false,
+  onPatchSite,
   onPatchSettings,
   onCustomFieldCreated,
+  onSaveSite,
   onSave,
   onTargetHover
 }) => {
@@ -31636,6 +31863,17 @@ const VideoFormGateSettingsPanel: React.FC<{
   const patchAndSaveSoon = (patch: Record<string, unknown>) => {
     onPatchSettings(patch)
     window.setTimeout(onSave, 0)
+  }
+
+  const saveSiteSoon = () => {
+    if (!onSaveSite) return
+    window.setTimeout(() => { void onSaveSite() }, 0)
+  }
+
+  const enableSiteMetaIfNeeded = () => {
+    if (!metaPixelConnected || site.metaCapiEnabled) return
+    onPatchSite({ metaCapiEnabled: true })
+    saveSiteSoon()
   }
 
   const patchVideoGateTheme = (patch: Partial<SiteTheme>) => {
@@ -31779,6 +32017,14 @@ const VideoFormGateSettingsPanel: React.FC<{
   const repeatMode = getVideoFormGateRepeatMode(settings)
   const completionTargetIds = getVideoFormGateCompletionTargetIds(settings)
   const needsCompletionTargets = finalAction === 'show_targets' || finalAction === 'hide_targets'
+  const videoFormGateMetaEnabled = settings.videoFormGateMetaEnabled === true
+  const videoFormGateMetaEventName = videoFormGateMetaEnabled
+    ? normalizeMetaEventName(getSettingString(settings, 'videoFormGateMetaEventName'), 'Lead')
+    : 'none'
+  const videoFormGateMetaParameters = pruneMetaEventParametersForEvent(
+    settings.videoFormGateMetaEventParameters as SiteMetaEventParameters | undefined,
+    videoFormGateMetaEventName
+  )
   const previewAccent = defaultAccentForSite(videoGateSite)
   const previewRawVideoUrl = getSettingString(settings, 'mediaUrl') || block.content || ''
   const previewVideoSrc = isDirectVideoUrl(previewRawVideoUrl)
@@ -32140,6 +32386,38 @@ const VideoFormGateSettingsPanel: React.FC<{
                   </p>
                 )}
               </div>
+            </div>
+          )}
+
+          {showCompletionControls && (
+            <div className={styles.settingsGroup}>
+              <div className={styles.panelSubheader}>Evento Meta al completar</div>
+              <MetaVideoEventSettings
+                title="Meta Pixel + CAPI"
+                description="Se dispara cuando el visitante termina este formulario"
+                siteMetaEnabled={Boolean(site.metaCapiEnabled)}
+                metaPixelConnected={metaPixelConnected}
+                eventEnabled={videoFormGateMetaEnabled}
+                eventName={videoFormGateMetaEventName}
+                parameters={videoFormGateMetaParameters}
+                onToggle={(enabled) => {
+                  if (enabled) enableSiteMetaIfNeeded()
+                  patchAndSaveSoon({
+                    videoFormGateMetaEnabled: enabled,
+                    videoFormGateMetaEventName: enabled ? normalizeEnabledMetaEventName(videoFormGateMetaEventName) : 'none',
+                    videoFormGateMetaEventParameters: enabled ? videoFormGateMetaParameters : {}
+                  })
+                }}
+                onChangeEvent={(metaEventName) => {
+                  patchAndSaveSoon({
+                    videoFormGateMetaEnabled: metaEventName !== 'none',
+                    videoFormGateMetaEventName: metaEventName,
+                    videoFormGateMetaEventParameters: pruneMetaEventParametersForEvent(videoFormGateMetaParameters, metaEventName)
+                  })
+                }}
+                onChangeParameters={(metaEventParameters) => onPatchSettings({ videoFormGateMetaEventParameters: metaEventParameters })}
+                onCommit={onSave}
+              />
             </div>
           )}
 

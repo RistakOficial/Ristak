@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
+import { API_URLS } from '../src/config/constants.js'
 import { createBlock, createSite, createSubmissionFromRequest, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
 
 const DOMAIN_KEYS = {
@@ -21,10 +23,36 @@ test('video form gate renders inside the video player and posts as the source fo
   const suffix = Date.now()
   const email = `video-gate-${suffix}@example.test`
   const forcedEmail = `video-gate-forced-${suffix}@example.test`
+  const previousMetaEnv = {
+    pixelId: process.env.META_PIXEL_ID,
+    datasetId: process.env.META_DATASET_ID,
+    accessToken: process.env.META_ACCESS_TOKEN
+  }
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const metaCalls = []
+  let metaServer
   let formSite
   let landingSite
 
   try {
+    process.env.META_PIXEL_ID = 'pixel-video-gate-test'
+    process.env.META_DATASET_ID = ''
+    process.env.META_ACCESS_TOKEN = 'token-video-gate-test'
+    metaServer = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        metaCalls.push({ url: req.url, body })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ events_received: 1 }))
+      })
+    })
+    await new Promise(resolve => metaServer.listen(0, '127.0.0.1', resolve))
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
     await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
     await setAppConfig(DOMAIN_KEYS.verified, '1')
     await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
@@ -90,6 +118,7 @@ test('video form gate renders inside the video player and posts as the source fo
       siteType: 'landing_page',
       status: 'published',
       blankCanvas: true,
+      metaCapiEnabled: true,
       theme: {
         template: 'ristak',
         pages: [{ id: 'page-1', title: 'Pagina 1', sortOrder: 0 }]
@@ -125,7 +154,16 @@ test('video form gate renders inside the video player and posts as the source fo
         videoFormGateCompletionTargetIds: [targetBlock.id],
         videoFormGateRepeatMode: 'remember_visitor',
         videoFormGateStorageValue: 45,
-        videoFormGateStorageUnit: 'days'
+        videoFormGateStorageUnit: 'days',
+        videoFormGateMetaEnabled: true,
+        videoFormGateMetaEventName: 'CompleteRegistration',
+        videoFormGateMetaEventParameters: {
+          value: '25',
+          predictedLtv: '1500',
+          currency: 'MXN',
+          status: 'qualified',
+          custom: [{ key: 'video_gate', value: 'completed' }]
+        }
       }
     })
 
@@ -151,6 +189,9 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, /data-completion-action="show_targets"/)
     assert.match(html, /data-repeat-mode="remember_visitor"/)
     assert.match(html, /data-storage-ttl-seconds="3888000"/)
+    assert.match(html, /data-meta-event-name="CompleteRegistration"/)
+    assert.match(html, /&quot;predicted_ltv&quot;:1500/)
+    assert.match(html, /&quot;video_gate&quot;:&quot;completed&quot;/)
     assert.match(html, new RegExp(`data-rstk-video-action-target="${targetBlock.id}"`))
     assert.match(html, /data-rstk-video-action-hidden="true"/)
 
@@ -182,6 +223,15 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.equal(result.message, 'No calificas para este video.')
     assert.equal(result.mappedFields.standard.email, email)
     assert.equal(result.mappedFields.custom.empresa_video, 'Ristak Labs')
+    assert.equal(result.capi.sent, true)
+    assert.equal(result.capi.eventName, 'CompleteRegistration')
+    assert.equal(metaCalls.length, 1)
+    const metaPayload = JSON.parse(metaCalls[0].body)
+    assert.equal(metaPayload.data[0].event_name, 'CompleteRegistration')
+    assert.equal(metaPayload.data[0].custom_data.conversion_type, 'video_form_gate_submit')
+    assert.equal(metaPayload.data[0].custom_data.video_block_id, videoBlock.id)
+    assert.equal(metaPayload.data[0].custom_data.predicted_ltv, 1500)
+    assert.equal(metaPayload.data[0].custom_data.video_gate, 'completed')
 
     const submission = await db.get('SELECT site_id, form_site_id, meta_json FROM public_site_submissions WHERE id = ?', [result.submissionId])
     assert.equal(submission.site_id, landingSite.id)
@@ -220,6 +270,14 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.equal(forcedResult.status, 'disqualified')
     assert.equal(forcedResult.message, 'No calificas para este video.')
   } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    if (previousMetaEnv.pixelId === undefined) delete process.env.META_PIXEL_ID
+    else process.env.META_PIXEL_ID = previousMetaEnv.pixelId
+    if (previousMetaEnv.datasetId === undefined) delete process.env.META_DATASET_ID
+    else process.env.META_DATASET_ID = previousMetaEnv.datasetId
+    if (previousMetaEnv.accessToken === undefined) delete process.env.META_ACCESS_TOKEN
+    else process.env.META_ACCESS_TOKEN = previousMetaEnv.accessToken
     await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE email = ?', [forcedEmail]).catch(() => undefined)
     if (landingSite?.id) await deleteSite(landingSite.id).catch(() => undefined)

@@ -10959,7 +10959,7 @@ function buildVideoTrackingAttributes({ enabled = false, block = {}, asset = nul
   })
 }
 
-const VIDEO_ACTION_KINDS = new Set(['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
+const VIDEO_ACTION_KINDS = new Set(['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event'])
 const VIDEO_ACTION_BEFORE_STATES = new Set(['hidden', 'visible', 'unchanged'])
 const VIDEO_ACTION_TARGET_KINDS = new Set(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 
@@ -10996,6 +10996,11 @@ function normalizeVideoActionRule(value, index = 0) {
   const targetBlockId = targetBlockIds[0] || ''
   if (VIDEO_ACTION_TARGET_KINDS.has(action) && !targetBlockId) return null
   const before = VIDEO_ACTION_BEFORE_STATES.has(cleanString(source.before)) ? cleanString(source.before) : getRecommendedVideoActionBefore(action)
+  const metaEventName = action === 'meta_event'
+    ? normalizeSiteMetaEventName(source.metaEventName || source.meta_event_name, { allowNone: true, fallback: 'Lead' })
+    : SITE_META_NO_EVENT
+  const metaEventParametersSource = source.metaEventParameters || source.meta_event_parameters || {}
+
   return {
     id: cleanString(source.id) || `video-action-${index + 1}`,
     timeSeconds: normalizeVideoActionTime(source.timeSeconds ?? source.time_seconds ?? source.time),
@@ -11006,7 +11011,12 @@ function normalizeVideoActionRule(value, index = 0) {
     value: cleanString(source.value),
     targetPageId: cleanString(source.targetPageId || source.target_page_id),
     redirectUrl: safeHref(source.redirectUrl || source.redirect_url || '', ''),
-    pauseUntilComplete: source.pauseUntilComplete === true || source.pause_until_complete === true
+    pauseUntilComplete: source.pauseUntilComplete === true || source.pause_until_complete === true,
+    ...(action === 'meta_event' ? {
+      metaCapiEnabled: source.metaCapiEnabled !== false && source.meta_capi_enabled !== false,
+      metaEventName,
+      metaEventParameters: pruneSiteMetaEventParametersForEvent(metaEventParametersSource, metaEventName)
+    } : {})
   }
 }
 
@@ -11020,6 +11030,25 @@ function getVideoActionRulesFromSettings(settings = {}) {
     .map(normalizeVideoActionRule)
     .filter(Boolean)
     .sort((a, b) => a.timeSeconds - b.timeSeconds)
+}
+
+function getVideoActionMetaEventConfig(site, videoBlockId = '', actionId = '') {
+  const block = findVideoFormGateBlock(site?.blocks || [], videoBlockId)
+  if (!block) return null
+
+  const rule = getVideoActionRulesFromSettings(block.settings || {})
+    .find(item => item.id === cleanString(actionId) && item.action === 'meta_event')
+  if (!rule || rule.metaCapiEnabled === false) return null
+
+  const eventName = normalizeSiteMetaEventName(rule.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
+  if (eventName === SITE_META_NO_EVENT) return null
+
+  return {
+    block,
+    rule,
+    eventName,
+    parameters: pruneSiteMetaEventParametersForEvent(rule.metaEventParameters, eventName)
+  }
 }
 
 function collectVideoActionTargetIds(blocks = [], ids = new Set()) {
@@ -11086,6 +11115,12 @@ function renderVideoActionAttributes(block = {}, settings = {}, context = {}) {
   const rules = getVideoActionRulesFromSettings(settings)
   if (!rules.length) return ''
   const publicRules = rules.map(rule => {
+    if (rule.action === 'meta_event') {
+      return {
+        ...rule,
+        metaCustomData: buildSiteMetaConfiguredCustomData(rule.metaEventParameters, rule.metaEventName)
+      }
+    }
     if (rule.action !== 'site_page' || !rule.targetPageId) return rule
     return {
       ...rule,
@@ -11094,6 +11129,8 @@ function renderVideoActionAttributes(block = {}, settings = {}, context = {}) {
   })
   return [
     `data-rstk-video-action-source="${escapeHtml(block.id || '')}"`,
+    `data-rstk-video-action-site-id="${escapeHtml(context.site?.id || '')}"`,
+    `data-rstk-video-action-page-id="${escapeHtml(context.pageId || '')}"`,
     `data-rstk-video-actions="${escapeHtml(JSON.stringify(publicRules))}"`
   ].join(' ')
 }
@@ -11287,6 +11324,64 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const preserveUrl = value => (
         value && window.ristakPreserveParams ? window.ristakPreserveParams(value) : value
       );
+      const getCookie = name => {
+        const prefix = String(name || '') + '=';
+        const cookie = String(document.cookie || '').split(';').map(item => item.trim()).find(item => item.indexOf(prefix) === 0);
+        return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : '';
+      };
+      const getCurrentParams = () => {
+        let current = {};
+        try { current = Object.fromEntries(new URL(window.location.href).searchParams.entries()); } catch (_) {}
+        const stored = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+        return Object.assign({}, stored, current);
+      };
+      const generateMetaEventId = (video, action) => [
+        'site_video_action',
+        video.getAttribute('data-rstk-video-action-site-id') || '',
+        video.getAttribute('data-rstk-video-action-source') || '',
+        action.id || '',
+        Date.now(),
+        Math.random().toString(16).slice(2)
+      ].join('_');
+      const sendMetaActionEvent = (state, action) => {
+        const eventName = String(action.metaEventName || '');
+        if (!eventName || eventName === 'none') return;
+        const siteId = state.video.getAttribute('data-rstk-video-action-site-id') || '';
+        const pageId = state.video.getAttribute('data-rstk-video-action-page-id') || '';
+        const videoBlockId = state.video.getAttribute('data-rstk-video-action-source') || '';
+        const eventId = generateMetaEventId(state.video, action);
+        const configuredData = action.metaCustomData && typeof action.metaCustomData === 'object'
+          ? action.metaCustomData
+          : {};
+        const customData = Object.assign({}, configuredData, {
+          conversion_type: 'video_action',
+          public_page_id: pageId,
+          video_block_id: videoBlockId,
+          video_action_id: action.id || '',
+          video_action_time_seconds: Math.max(0, Number(action.timeSeconds || 0) || 0)
+        });
+        if (typeof window.ristakMetaTrackSiteEvent === 'function') {
+          window.ristakMetaTrackSiteEvent(eventName, eventId, customData);
+        }
+        if (siteId && typeof window.ristakMetaSendServerEvent === 'function') {
+          window.ristakMetaSendServerEvent({
+            siteId,
+            pageId,
+            eventId,
+            eventScope: 'video_action',
+            videoBlockId,
+            videoActionId: action.id || '',
+            meta: {
+              pageUrl: window.location.href,
+              referrer: document.referrer,
+              params: getCurrentParams(),
+              fbp: getCookie('_fbp') || null,
+              fbc: getCookie('_fbc') || null,
+              videoActionTimeSeconds: Math.max(0, Number(action.timeSeconds || 0) || 0)
+            }
+          });
+        }
+      };
       const redirectTo = action => {
         const targetUrl = String(action.targetUrl || action.redirectUrl || '');
         if (!targetUrl) return;
@@ -11330,6 +11425,14 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
             if (reached && !state.triggered.has(action.id)) {
               state.triggered.add(action.id);
               redirectTo(action);
+            }
+            if (!reached) state.triggered.delete(action.id);
+            return;
+          }
+          if (action.action === 'meta_event') {
+            if (reached && !state.triggered.has(action.id)) {
+              state.triggered.add(action.id);
+              sendMetaActionEvent(state, action);
             }
             if (!reached) state.triggered.delete(action.id);
             return;
@@ -11731,6 +11834,16 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
   const completionTargetIds = getVideoFormGateCompletionTargetIds(settings)
   const repeatMode = normalizeVideoFormGateRepeatMode(settings)
   const storageTtlSeconds = videoFormGateStorageTtlSeconds(settings)
+  const metaEventEnabled = normalizeBoolean(settings.videoFormGateMetaEnabled || settings.video_form_gate_meta_enabled) === 1
+  const metaEventName = metaEventEnabled
+    ? normalizeSiteMetaEventName(settings.videoFormGateMetaEventName || settings.video_form_gate_meta_event_name, { allowNone: true, fallback: 'Lead' })
+    : SITE_META_NO_EVENT
+  const metaEventParameters = metaEventName !== SITE_META_NO_EVENT
+    ? pruneSiteMetaEventParametersForEvent(settings.videoFormGateMetaEventParameters || settings.video_form_gate_meta_event_parameters, metaEventName)
+    : {}
+  const metaCustomData = metaEventName !== SITE_META_NO_EVENT
+    ? buildSiteMetaConfiguredCustomData(metaEventParameters, metaEventName)
+    : {}
   const classes = [
     'rstk-video-form-gate',
     `rstk-video-form-gate-anim-${animation}`,
@@ -11739,7 +11852,7 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
   ].join(' ')
 
   return `
-    <div class="${classes}" data-rstk-video-form-gate data-site-id="${escapeHtml(context.site?.id || '')}" data-page-id="${escapeHtml(context.pageId || '')}" data-video-block-id="${escapeHtml(block.id || '')}" data-form-site-id="${escapeHtml(formSiteId)}" data-form-site-name="${escapeHtml(formSiteName)}" data-trigger-seconds="${escapeHtml(String(getVideoFormGateTriggerSeconds(settings)))}" data-next-text="${escapeHtml(nextText)}" data-back-text="${escapeHtml(backText)}" data-submit-text="${escapeHtml(submitText)}" data-completion-action="${escapeHtml(completionAction)}" data-completion-redirect-url="${escapeHtml(completionRedirectUrl)}" data-completion-target-ids="${escapeHtml(JSON.stringify(completionTargetIds))}" data-repeat-mode="${escapeHtml(repeatMode)}" data-storage-ttl-seconds="${escapeHtml(String(storageTtlSeconds))}" style="${style}" hidden>
+    <div class="${classes}" data-rstk-video-form-gate data-site-id="${escapeHtml(context.site?.id || '')}" data-page-id="${escapeHtml(context.pageId || '')}" data-video-block-id="${escapeHtml(block.id || '')}" data-form-site-id="${escapeHtml(formSiteId)}" data-form-site-name="${escapeHtml(formSiteName)}" data-trigger-seconds="${escapeHtml(String(getVideoFormGateTriggerSeconds(settings)))}" data-next-text="${escapeHtml(nextText)}" data-back-text="${escapeHtml(backText)}" data-submit-text="${escapeHtml(submitText)}" data-completion-action="${escapeHtml(completionAction)}" data-completion-redirect-url="${escapeHtml(completionRedirectUrl)}" data-completion-target-ids="${escapeHtml(JSON.stringify(completionTargetIds))}" data-repeat-mode="${escapeHtml(repeatMode)}" data-storage-ttl-seconds="${escapeHtml(String(storageTtlSeconds))}" data-meta-event-name="${escapeHtml(metaEventName)}" data-meta-event-custom-data="${escapeHtml(JSON.stringify(metaCustomData))}" style="${style}" hidden>
       <div class="rstk-video-form-gate-panel">
         <header class="rstk-video-form-gate-header">
           <strong>${escapeHtml(title)}</strong>
@@ -12260,8 +12373,16 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             const metaEventId = submission.capi && submission.capi.eventId
               ? submission.capi.eventId
               : (submission.submissionId ? 'site_' + (gate.getAttribute('data-site-id') || '') + '_' + submission.submissionId : '');
-            const metaEventName = submission.capi && submission.capi.eventName ? submission.capi.eventName : '';
-            if (window.ristakMetaTrackSiteSubmit) {
+            const gateMetaEventName = gate.getAttribute('data-meta-event-name') || '';
+            const gateMetaCustomData = parseJson(gate.getAttribute('data-meta-event-custom-data')) || {};
+            const hasGateMetaEvent = gateMetaEventName && gateMetaEventName !== 'none';
+            const metaEventName = submission.capi && submission.capi.eventName ? submission.capi.eventName : gateMetaEventName;
+            if (hasGateMetaEvent && window.ristakMetaTrackSiteEvent) {
+              window.ristakMetaTrackSiteEvent(metaEventName, metaEventId, Object.assign({}, gateMetaCustomData, {
+                status: submission.status || 'submitted',
+                conversion_type: 'video_form_gate_submit'
+              }));
+            } else if (window.ristakMetaTrackSiteSubmit) {
               window.ristakMetaTrackSiteSubmit(metaEventId, {
                 status: submission.status || 'submitted',
                 conversion_type: 'video_form_gate_submit'
@@ -13663,6 +13784,26 @@ function getVideoFormGateSubmissionContext(site, blocks = [], videoBlockId = '')
     formSiteName,
     formTheme,
     videoBlockId: block.id
+  }
+}
+
+function getVideoFormGateMetaEventConfig(site, videoBlockId = '') {
+  const block = findVideoFormGateBlock(site?.blocks || [], videoBlockId)
+  if (!block) return null
+
+  const settings = block.settings || {}
+  if (normalizeBoolean(settings.videoFormGateMetaEnabled || settings.video_form_gate_meta_enabled) !== 1) return null
+
+  const eventName = normalizeSiteMetaEventName(settings.videoFormGateMetaEventName || settings.video_form_gate_meta_event_name, {
+    allowNone: true,
+    fallback: SITE_META_NO_EVENT
+  })
+  if (eventName === SITE_META_NO_EVENT) return null
+
+  return {
+    block,
+    eventName,
+    parameters: pruneSiteMetaEventParametersForEvent(settings.videoFormGateMetaEventParameters || settings.video_form_gate_meta_event_parameters, eventName)
   }
 }
 
@@ -20600,7 +20741,12 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     return { sent: false, reason: 'disabled' }
   }
 
-  const eventName = getFormSubmitMetaEventName(site, submittedPageId)
+  const videoGateMetaConfig = normalizeBoolean(requestMeta?.meta?.videoFormGate || requestMeta?.meta?.video_form_gate) === 1
+    ? getVideoFormGateMetaEventConfig(site, cleanString(requestMeta?.meta?.videoFormGateBlockId || requestMeta?.meta?.video_form_gate_block_id))
+    : null
+  const eventName = videoGateMetaConfig?.eventName || getFormSubmitMetaEventName(site, submittedPageId)
+  const configuredParameters = videoGateMetaConfig?.parameters || getFormSubmitMetaEventParameters(site, submittedPageId, eventName)
+  const eventType = videoGateMetaConfig ? 'site_video_form_submission' : 'site_form_submission'
   const eventId = `site_${site.id}_${submissionId}`
   if (eventName === SITE_META_NO_EVENT) {
     return { sent: false, reason: 'no_event_configured', eventId, eventName }
@@ -20616,7 +20762,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   if (!datasetId || !accessToken) {
     await logMetaEvent({
       contactId,
-      eventType: 'site_form_submission',
+      eventType,
       metaEventName: eventName,
       eventId,
       status: 'skipped',
@@ -20645,7 +20791,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   if (!userData.em && !userData.ph && !userData.external_id) {
     await logMetaEvent({
       contactId,
-      eventType: 'site_form_submission',
+      eventType,
       metaEventName: eventName,
       eventId,
       status: 'skipped',
@@ -20665,13 +20811,15 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
         user_data: userData,
         custom_data: mergeSiteMetaCustomData({
           source: 'ristak_site',
+          conversion_type: videoGateMetaConfig ? 'video_form_gate_submit' : 'form_submit',
           site_id: site.id,
           site_name: site.name,
+          ...(videoGateMetaConfig ? {
+            video_block_id: videoGateMetaConfig.block?.id || '',
+            video_block_label: videoGateMetaConfig.block?.label || ''
+          } : {}),
           content_name: site.title || site.name
-        }, buildSiteMetaConfiguredCustomData(
-          getFormSubmitMetaEventParameters(site, submittedPageId, eventName),
-          eventName
-        ))
+        }, buildSiteMetaConfiguredCustomData(configuredParameters, eventName))
       }
     ]
   }
@@ -20695,7 +20843,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
 
     await logMetaEvent({
       contactId,
-      eventType: 'site_form_submission',
+      eventType,
       metaEventName: eventName,
       eventId,
       status: 'success',
@@ -20707,7 +20855,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   } catch (error) {
     await logMetaEvent({
       contactId,
-      eventType: 'site_form_submission',
+      eventType,
       metaEventName: eventName,
       eventId,
       status: 'error',
@@ -20820,6 +20968,124 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
     await logMetaEvent({
       contactId,
       eventType: 'site_page_view',
+      metaEventName: eventName,
+      eventId,
+      status: 'error',
+      requestPayload: payload,
+      errorMessage: error.message
+    })
+    return { sent: false, reason: 'meta_error', error: error.message, eventId, eventName }
+  }
+}
+
+async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, parameters, eventId, contactId, requestMeta }) {
+  if (shouldSkipTracking({ meta: requestMeta?.meta })) {
+    return { sent: false, reason: NO_TRACK_REASON, eventId, eventName }
+  }
+
+  const metaConfig = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer configuración Meta para acción de video Site: ${error.message}`)
+    return null
+  })
+  const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
+  const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token)
+
+  if (!datasetId || !accessToken) {
+    await logMetaEvent({
+      contactId,
+      eventType: 'site_video_action',
+      metaEventName: eventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Falta Pixel/Dataset ID o Pixel API Token de Meta'
+    })
+    return { sent: false, reason: 'missing_meta_config', eventId, eventName }
+  }
+
+  const userData = {
+    external_id: contactId ? hashValue(contactId) : undefined,
+    client_ip_address: requestMeta.ip || undefined,
+    client_user_agent: requestMeta.userAgent || undefined,
+    fbp: cleanString(requestMeta.meta?.fbp) || undefined,
+    fbc: cleanString(requestMeta.meta?.fbc) || undefined
+  }
+
+  Object.keys(userData).forEach(key => {
+    if (!userData[key]) delete userData[key]
+  })
+
+  if (!userData.client_ip_address && !userData.client_user_agent && !userData.fbp && !userData.fbc && !userData.external_id) {
+    await logMetaEvent({
+      contactId,
+      eventType: 'site_video_action',
+      metaEventName: eventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'user_data insuficiente para Meta'
+    })
+    return { sent: false, reason: 'insufficient_user_data', eventId, eventName }
+  }
+
+  const pageId = cleanString(requestMeta.meta?.pageId || requestMeta.meta?.page_id)
+  const page = getSitePage(site, pageId)
+  const payload = {
+    data: [
+      {
+        event_name: eventName,
+        event_time: Math.floor(Date.now() / 1000),
+        action_source: 'website',
+        event_source_url: cleanString(requestMeta.meta?.pageUrl) || `https://${site.domain}`,
+        event_id: eventId,
+        user_data: userData,
+        custom_data: mergeSiteMetaCustomData({
+          source: 'ristak_site',
+          conversion_type: 'video_action',
+          site_id: site.id,
+          site_name: site.name,
+          public_page_id: page?.id || pageId,
+          public_page_title: page?.title || '',
+          video_block_id: block?.id || '',
+          video_block_label: block?.label || '',
+          video_action_id: rule?.id || '',
+          video_action_time_seconds: Number(rule?.timeSeconds || requestMeta.meta?.videoActionTimeSeconds || 0) || 0,
+          content_name: block?.label || page?.title || site.title || site.name
+        }, buildSiteMetaConfiguredCustomData(parameters, eventName))
+      }
+    ]
+  }
+
+  const testEventCode = cleanString(await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE)
+  if (testEventCode) {
+    payload.test_event_code = testEventCode
+  }
+
+  try {
+    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const responsePayload = await response.json().catch(() => ({}))
+
+    if (!response.ok || responsePayload?.error) {
+      throw new Error(responsePayload?.error?.message || `Meta CAPI ${response.status}`)
+    }
+
+    await logMetaEvent({
+      contactId,
+      eventType: 'site_video_action',
+      metaEventName: eventName,
+      eventId,
+      status: 'success',
+      requestPayload: payload,
+      responsePayload
+    })
+
+    return { sent: true, eventId, eventName, responsePayload }
+  } catch (error) {
+    await logMetaEvent({
+      contactId,
+      eventType: 'site_video_action',
       metaEventName: eventName,
       eventId,
       status: 'error',
@@ -21585,6 +21851,42 @@ export async function createMetaPageEventFromRequest(req, body = {}, options = {
   }
 
   const pageId = cleanString(body.pageId || body.page_id)
+  const eventScope = cleanString(body.eventScope || body.event_scope)
+  if (eventScope === 'video_action') {
+    const blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
+    site.blocks = blocks
+    const videoBlockId = cleanString(body.videoBlockId || body.video_block_id)
+    const videoActionId = cleanString(body.videoActionId || body.video_action_id)
+    const videoActionMeta = getVideoActionMetaEventConfig(site, videoBlockId, videoActionId)
+    if (!videoActionMeta) {
+      return { sent: false, reason: 'video_action_event_disabled' }
+    }
+
+    const meta = {
+      ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
+      pageId,
+      previewSession: Boolean(previewContext),
+      previewPageId: previewContext?.pageId || ''
+    }
+    const eventId = cleanString(body.eventId || body.event_id) || `site_video_action_${site.id}_${videoBlockId}_${videoActionId}_${crypto.randomUUID()}`
+    const contactId = cleanString(body.contactId || body.contact_id)
+
+    return sendSiteVideoActionMetaEvent({
+      site,
+      block: videoActionMeta.block,
+      rule: videoActionMeta.rule,
+      eventName: videoActionMeta.eventName,
+      parameters: videoActionMeta.parameters,
+      eventId,
+      contactId,
+      requestMeta: {
+        ip: getClientIp(req),
+        userAgent: req.headers['user-agent'] || '',
+        meta
+      }
+    })
+  }
+
   const pageMeta = getPageMetaConfig(site, pageId)
   if (!pageMeta || pageMeta.trigger !== 'page_view') {
     return { sent: false, reason: 'page_event_disabled' }

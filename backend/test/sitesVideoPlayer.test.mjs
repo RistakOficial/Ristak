@@ -1,9 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
+import http from 'node:http'
 
-import { db } from '../src/config/database.js'
-import { renderPublicSiteHtml } from '../src/services/sitesService.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
+import { API_URLS } from '../src/config/constants.js'
+import { createBlock, createMetaPageEventFromRequest, createSite, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
 
 const baseSite = (settings) => ({
   id: 'site_video_player',
@@ -38,6 +40,13 @@ const baseSite = (settings) => ({
     }
   ]
 })
+
+const DOMAIN_KEYS = {
+  domain: 'sites_public_domain',
+  verified: 'sites_public_domain_verified',
+  checkedAt: 'sites_public_domain_checked_at',
+  error: 'sites_public_domain_error'
+}
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -309,6 +318,20 @@ test('video actions render public target state and runtime', async () => {
         action: 'site_page',
         targetPageId: 'page-2',
         before: 'unchanged'
+      },
+      {
+        id: 'meta-event-at-420',
+        timeSeconds: 420,
+        action: 'meta_event',
+        before: 'unchanged',
+        metaEventName: 'ViewContent',
+        metaEventParameters: {
+          value: '10',
+          currency: 'MXN',
+          contentName: 'Video visto',
+          contentCategory: 'VSL',
+          custom: [{ key: 'watch_bucket', value: '420s' }]
+        }
       }
     ]
   })
@@ -370,6 +393,8 @@ test('video actions render public target state and runtime', async () => {
   })
 
   assert.match(html, /data-rstk-video-action-source="video-block"/)
+  assert.match(html, /data-rstk-video-action-site-id="site_video_player"/)
+  assert.match(html, /data-rstk-video-action-page-id="page-1"/)
   assert.match(html, /data-rstk-video-actions="/)
   assert.match(html, /&quot;id&quot;:&quot;show-button-at-260&quot;/)
   assert.match(html, /&quot;timeSeconds&quot;:260/)
@@ -379,6 +404,10 @@ test('video actions render public target state and runtime', async () => {
   assert.match(html, /&quot;pauseUntilComplete&quot;:true/)
   assert.match(html, /&quot;targetPageId&quot;:&quot;page-2&quot;/)
   assert.match(html, /&quot;targetUrl&quot;:&quot;\?page=page-2&quot;/)
+  assert.match(html, /&quot;id&quot;:&quot;meta-event-at-420&quot;/)
+  assert.match(html, /&quot;action&quot;:&quot;meta_event&quot;/)
+  assert.match(html, /&quot;metaEventName&quot;:&quot;ViewContent&quot;/)
+  assert.match(html, /&quot;metaCustomData&quot;:\{[^}]*&quot;content_name&quot;:&quot;Video visto&quot;[^}]*&quot;watch_bucket&quot;:&quot;420s&quot;/)
   assert.match(html, /data-rstk-video-action-target="button-target" data-rstk-video-action-hidden="true" aria-hidden="true"/)
   assert.match(html, /data-rstk-video-action-target="offer-target" data-rstk-video-action-hidden="true" aria-hidden="true"/)
   assert.match(html, /data-rstk-video-action-target="form-target" data-rstk-video-action-hidden="true" aria-hidden="true"/)
@@ -396,6 +425,144 @@ test('video actions render public target state and runtime', async () => {
   assert.match(html, /blockedForms/)
   assert.match(html, /ristak:submitted/)
   assert.match(html, /redirectTo\(action\)/)
+  assert.match(html, /sendMetaActionEvent/)
+  assert.match(html, /ristakMetaTrackSiteEvent/)
+  assert.match(html, /ristakMetaSendServerEvent/)
+  assert.match(html, /eventScope: 'video_action'/)
+})
+
+test('video action meta event endpoint sends configured CAPI event', async () => {
+  const previousMetaEnv = {
+    pixelId: process.env.META_PIXEL_ID,
+    datasetId: process.env.META_DATASET_ID,
+    accessToken: process.env.META_ACCESS_TOKEN
+  }
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const metaCalls = []
+  const suffix = Date.now()
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  let metaServer
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    process.env.META_PIXEL_ID = 'pixel-video-action-test'
+    process.env.META_DATASET_ID = ''
+    process.env.META_ACCESS_TOKEN = 'token-video-action-test'
+    metaServer = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        metaCalls.push({ url: req.url, body })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ events_received: 1 }))
+      })
+    })
+    await new Promise(resolve => metaServer.listen(0, '127.0.0.1', resolve))
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    site = await createSite({
+      name: 'Landing video action meta',
+      slug: `landing-video-action-meta-${suffix}`,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true,
+      metaCapiEnabled: true,
+      theme: {
+        template: 'ristak',
+        pages: [{ id: 'page-1', title: 'Pagina 1', sortOrder: 0 }]
+      }
+    })
+
+    site = await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video con CAPI',
+      sortOrder: 0,
+      settings: {
+        pageId: 'page-1',
+        mediaUrl: 'https://cdn.example.com/video-action.mp4',
+        videoActions: [
+          {
+            id: 'meta-event-at-75',
+            timeSeconds: 75,
+            action: 'meta_event',
+            before: 'unchanged',
+            metaEventName: 'Lead',
+            metaEventParameters: {
+              value: '99',
+              predictedLtv: '450',
+              currency: 'MXN',
+              status: 'watched_75'
+            }
+          }
+        ]
+      }
+    })
+
+    const videoBlock = site.blocks.find(block => block.blockType === 'video')
+    assert.ok(videoBlock)
+
+    const result = await createMetaPageEventFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: site.id,
+        pageId: 'page-1',
+        eventScope: 'video_action',
+        videoBlockId: videoBlock.id,
+        videoActionId: 'meta-event-at-75',
+        eventId: 'site_video_action_test_event',
+        meta: {
+          pageUrl: 'https://example.test/video',
+          fbp: 'fbp-test'
+        }
+      }
+    )
+
+    assert.equal(result.sent, true)
+    assert.equal(result.eventName, 'Lead')
+    assert.equal(metaCalls.length, 1)
+    const payload = JSON.parse(metaCalls[0].body)
+    assert.equal(payload.data[0].event_name, 'Lead')
+    assert.equal(payload.data[0].event_id, 'site_video_action_test_event')
+    assert.equal(payload.data[0].custom_data.conversion_type, 'video_action')
+    assert.equal(payload.data[0].custom_data.video_block_id, videoBlock.id)
+    assert.equal(payload.data[0].custom_data.video_action_id, 'meta-event-at-75')
+    assert.equal(payload.data[0].custom_data.video_action_time_seconds, 75)
+    assert.equal(payload.data[0].custom_data.predicted_ltv, 450)
+    assert.equal(payload.data[0].custom_data.status, 'watched_75')
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    if (previousMetaEnv.pixelId === undefined) delete process.env.META_PIXEL_ID
+    else process.env.META_PIXEL_ID = previousMetaEnv.pixelId
+    if (previousMetaEnv.datasetId === undefined) delete process.env.META_DATASET_ID
+    else process.env.META_DATASET_ID = previousMetaEnv.datasetId
+    if (previousMetaEnv.accessToken === undefined) delete process.env.META_ACCESS_TOKEN
+    else process.env.META_ACCESS_TOKEN = previousMetaEnv.accessToken
+    if (site?.id) await deleteSite(site.id).catch(() => undefined)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
 })
 
 test('video actions fire when preview playback becomes real without a second play event', async () => {
