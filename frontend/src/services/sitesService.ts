@@ -21,6 +21,7 @@ export type SiteBlockType =
   | 'subtitle'
   | 'description'
   | 'text'
+  | 'countdown'
   | 'embed'
   | 'calendar_embed'
   | 'section'
@@ -618,6 +619,7 @@ export const blockLabels: Record<SiteBlockType, string> = {
   subtitle: 'Subtítulo',
   description: 'Texto descriptivo',
   text: 'Texto',
+  countdown: 'Cuenta regresiva',
   embed: 'Código',
   calendar_embed: 'Calendario',
   section: 'Franja',
@@ -652,6 +654,7 @@ export const landingBlockTypes: SiteBlockType[] = [
   'title',
   'subtitle',
   'text',
+  'countdown',
   'image',
   'video',
   'button',
@@ -681,6 +684,7 @@ export const formBlockTypes: SiteBlockType[] = [
   'title',
   'subtitle',
   'description',
+  'countdown',
   'image',
   'video',
   'embed',

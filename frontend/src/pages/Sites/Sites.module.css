@@ -16738,6 +16738,17 @@
   background: var(--sites-editor-hover-bg, var(--surface-hover));
 }
 
+.paletteElementRowHidden {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--sites-editor-control-bg, var(--surface)) 74%, var(--sites-editor-hover-bg, var(--surface-hover)) 26%);
+}
+
+.paletteElementRowHidden .paletteElementName,
+.paletteElementRowHidden .paletteElementDetail,
+.paletteElementRowHidden .paletteIcon {
+  opacity: 0.62;
+}
+
 .paletteElementHandle {
   width: 24px;
   height: 30px;
@@ -16819,6 +16830,12 @@
 .paletteElementActions button:disabled {
   opacity: 0.42;
   cursor: not-allowed;
+}
+
+.paletteElementActions button.paletteElementVisibilityOff {
+  border-color: var(--sites-editor-border-strong, var(--border-strong));
+  background: var(--sites-editor-hover-bg, var(--surface-hover));
+  color: var(--text, var(--color-text-primary));
 }
 
 .paletteEmpty {

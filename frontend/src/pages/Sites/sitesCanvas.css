@@ -238,9 +238,61 @@
 .rstkCanvas .rstk-subheading { margin: 0; color: var(--rstk-muted); font-size: clamp(1rem, 2vw, 1.18rem); max-width: var(--rstk-content-max, 60ch); }
 .rstkCanvas .rstk-kicker { margin: 0; color: var(--rstk-accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
 .rstkCanvas .rstk-text { margin: 0; color: color-mix(in srgb, var(--rstk-ink) 80%, transparent); max-width: var(--rstk-content-max, 66ch); }
-.rstkCanvas .rstk-hero, .rstkCanvas .rstk-section-break, .rstkCanvas .rstk-cta, .rstkCanvas .rstk-section-list, .rstkCanvas .rstk-embedded-form { display: grid; gap: 14px; justify-items: var(--rstk-block-justify, stretch); text-align: var(--rstk-block-align, inherit); }
+.rstkCanvas .rstk-hero, .rstkCanvas .rstk-section-break, .rstkCanvas .rstk-cta, .rstkCanvas .rstk-section-list, .rstkCanvas .rstk-countdown, .rstkCanvas .rstk-embedded-form { display: grid; gap: 14px; justify-items: var(--rstk-block-justify, stretch); text-align: var(--rstk-block-align, inherit); }
 .rstkCanvas .rstk-hero { gap: 16px; }
 .rstkCanvas .rstk-section-break h2, .rstkCanvas .rstk-section-list h2, .rstkCanvas .rstk-cta h2, .rstkCanvas .rstk-embedded-form h2 { margin: 0; font-size: clamp(1.25rem, 2.6vw, 1.7rem); font-weight: var(--rstk-heading-weight); letter-spacing: 0; }
+.rstkCanvas .rstk-countdown {
+  width: 100%;
+  max-width: var(--rstk-content-max, 720px);
+  margin-left: var(--rstk-content-margin-left, 0);
+  margin-right: var(--rstk-content-margin-right, 0);
+}
+.rstkCanvas .rstk-countdown-title,
+.rstkCanvas .rstk-countdown-note {
+  margin: 0;
+}
+.rstkCanvas .rstk-countdown-title {
+  color: var(--rstk-block-text, var(--rstk-ink));
+  font-weight: var(--rstk-block-weight, 700);
+  font-size: var(--rstk-block-size, 1.05rem);
+  line-height: var(--rstk-block-line-height, 1.35);
+}
+.rstkCanvas .rstk-countdown-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--rstk-countdown-gap, 10px);
+}
+.rstkCanvas .rstk-countdown-unit {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  align-content: center;
+  border: var(--rstk-block-border-width, 1px) solid var(--rstk-countdown-unit-border, var(--rstk-block-border, var(--rstk-border)));
+  border-radius: var(--rstk-countdown-unit-radius, var(--rstk-block-radius, var(--rstk-radius)));
+  background: var(--rstk-countdown-unit-bg, var(--rstk-block-bg, transparent));
+  padding: clamp(12px, 2vw, 20px) 8px;
+}
+.rstkCanvas .rstk-countdown-unit strong {
+  color: var(--rstk-countdown-number, var(--rstk-block-text, var(--rstk-ink)));
+  font-family: var(--rstk-block-font, var(--rstk-display));
+  font-size: var(--rstk-countdown-number-size, clamp(2rem, 5vw, 3rem));
+  font-weight: 850;
+  line-height: .95;
+  letter-spacing: 0;
+}
+.rstkCanvas .rstk-countdown-unit span {
+  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 66%, var(--rstk-muted) 34%);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.rstkCanvas .rstk-countdown-note {
+  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 72%, var(--rstk-muted) 28%);
+  font-size: .9rem;
+}
 
 .rstkCanvas .rstk-button-link, .rstkCanvas .rstk-actions button {
   -webkit-appearance: none; appearance: none; cursor: pointer;
@@ -1172,6 +1224,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 
 @media (max-width: 760px) {
   .rstkCanvas .rstk-section-columns { grid-template-columns: 1fr; }
+  .rstkCanvas .rstk-countdown-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rstkCanvas .rstk-site-panel { align-items: flex-start; flex-direction: column; }
   .rstkCanvas .rstk-site-panel-footer { align-items: center; }
   .rstkCanvas .rstk-site-panel-links { justify-content: flex-start; }
@@ -1382,6 +1435,31 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   cursor: grabbing;
   pointer-events: none;
 }
+.rstkCanvas .rstkHiddenBlock {
+  opacity: .48;
+  filter: saturate(.72);
+}
+.rstkCanvas .rstkHiddenBlock::before {
+  content: "Oculto";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 12;
+  border: 1px solid var(--rstk-input-border);
+  border-radius: 999px;
+  background: var(--rstk-surface);
+  color: var(--rstk-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  padding: 6px 8px;
+  pointer-events: none;
+}
+.rstkCanvas .rstkHiddenBlock::after {
+  border-color: var(--rstk-muted);
+  border-style: dashed;
+}
 .rstkCanvas .rstkSel::after {
   content: ""; position: absolute; inset: -6px; border-radius: 12px;
   border: 2px dashed transparent; pointer-events: none;
@@ -1403,6 +1481,10 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   inset: -7px;
   border-width: 2.5px;
   border-color: var(--rstk-selection-border-hover, #1d4ed8);
+}
+.rstkCanvas .rstkHiddenBlock:not(.rstkSelActive)::after {
+  border-color: var(--rstk-muted);
+  border-style: dashed;
 }
 
 .rstkCanvas .rstk-section-lane.rstkSelActive::after {

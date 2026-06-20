@@ -42,6 +42,7 @@ import {
   CornerDownRight,
   DollarSign,
   Eye,
+  EyeOff,
   ExternalLink,
   FileText,
   Filter,
@@ -1439,6 +1440,7 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
   subtitle: <Type size={15} />,
   description: <FileText size={15} />,
   text: <FileText size={15} />,
+  countdown: <Clock3 size={15} />,
   embed: <Code2 size={15} />,
   calendar_embed: <CalendarDays size={15} />,
   section: <LayoutTemplate size={15} />,
@@ -1470,7 +1472,9 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
 const isChoiceBlock = (blockType: SiteBlockType) =>
   blockType === 'dropdown' || blockType === 'radio' || blockType === 'checkboxes'
 
-const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile', 'image', 'video', 'embed', 'calendar_embed'])
+const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile', 'image', 'video', 'countdown', 'embed', 'calendar_embed'])
+
+const isBlockHidden = (block?: SiteBlock | null) => block?.settings?.hidden === true
 
 const isLanding = (site?: PublicSite | null) => site?.siteType === 'landing_page'
 const isStandardForm = (site?: PublicSite | null) => site?.siteType === 'standard_form'
@@ -2285,6 +2289,86 @@ const getSettingString = (settings: Record<string, unknown>, key: string) => {
   return typeof value === 'string' ? value : ''
 }
 
+const getSettingBoolean = (settings: Record<string, unknown>, key: string, fallback = false) => {
+  const value = settings?.[key]
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
+  if (typeof value === 'string') return ['1', 'true', 'yes', 'on', 'enabled'].includes(value.trim().toLowerCase())
+  return fallback
+}
+
+type CountdownMode = 'date' | 'duration'
+type CountdownVisitorMode = 'shared' | 'visitor'
+type CountdownStorageUnit = 'days' | 'months'
+type CountdownCompletionAction = 'none' | 'redirect' | 'hide_target' | 'show_target' | 'hide_self' | 'restart'
+
+const countdownModeOptions: Array<{ value: CountdownMode; label: string }> = [
+  { value: 'duration', label: 'Duración personalizada' },
+  { value: 'date', label: 'Hasta una fecha específica' }
+]
+
+const countdownVisitorModeOptions: Array<{ value: CountdownVisitorMode; label: string }> = [
+  { value: 'shared', label: 'Mismo contador para todos' },
+  { value: 'visitor', label: 'Guardar por visitante' }
+]
+
+const countdownStorageUnitOptions: Array<{ value: CountdownStorageUnit; label: string }> = [
+  { value: 'days', label: 'Días' },
+  { value: 'months', label: 'Meses' }
+]
+
+const countdownCompletionActionOptions: Array<{ value: CountdownCompletionAction; label: string }> = [
+  { value: 'none', label: 'No hacer nada' },
+  { value: 'redirect', label: 'Redirigir a URL' },
+  { value: 'hide_target', label: 'Ocultar elemento' },
+  { value: 'show_target', label: 'Mostrar elemento' },
+  { value: 'hide_self', label: 'Ocultar este contador' },
+  { value: 'restart', label: 'Reiniciar automáticamente' }
+]
+
+const getCountdownMode = (settings: Record<string, unknown>): CountdownMode =>
+  getSettingString(settings, 'countdownMode') === 'date' ? 'date' : 'duration'
+
+const getCountdownVisitorMode = (settings: Record<string, unknown>): CountdownVisitorMode =>
+  getSettingString(settings, 'countdownVisitorMode') === 'visitor' ? 'visitor' : 'shared'
+
+const getCountdownStorageUnit = (settings: Record<string, unknown>): CountdownStorageUnit =>
+  getSettingString(settings, 'countdownStorageUnit') === 'months' ? 'months' : 'days'
+
+const getCountdownCompletionAction = (settings: Record<string, unknown>): CountdownCompletionAction => {
+  const value = getSettingString(settings, 'countdownCompletionAction') as CountdownCompletionAction
+  return countdownCompletionActionOptions.some(option => option.value === value) ? value : 'none'
+}
+
+const getCountdownDurationSeconds = (settings: Record<string, unknown>) => {
+  const days = getSettingNumber(settings, 'countdownDurationDays', 1, 0, 3650)
+  const hours = getSettingNumber(settings, 'countdownDurationHours', 0, 0, 23)
+  const minutes = getSettingNumber(settings, 'countdownDurationMinutes', 0, 0, 59)
+  const seconds = getSettingNumber(settings, 'countdownDurationSeconds', 0, 0, 59)
+  return Math.max(1, days * 86400 + hours * 3600 + minutes * 60 + seconds)
+}
+
+const splitCountdownSeconds = (totalSeconds: number) => {
+  const safe = Math.max(0, Math.floor(Number.isFinite(totalSeconds) ? totalSeconds : 0))
+  const days = Math.floor(safe / 86400)
+  const hours = Math.floor((safe % 86400) / 3600)
+  const minutes = Math.floor((safe % 3600) / 60)
+  const seconds = safe % 60
+  return { days, hours, minutes, seconds }
+}
+
+const getCountdownPreviewParts = (settings: Record<string, unknown>) => {
+  const now = Date.now()
+  const mode = getCountdownMode(settings)
+  if (mode === 'date') {
+    const targetTime = Date.parse(getSettingString(settings, 'countdownTargetDate'))
+    if (Number.isFinite(targetTime)) return splitCountdownSeconds(Math.max(0, Math.floor((targetTime - now) / 1000)))
+  }
+  return splitCountdownSeconds(getCountdownDurationSeconds(settings))
+}
+
+const formatCountdownPart = (value: number) => String(Math.max(0, Math.floor(value))).padStart(2, '0')
+
 const isVideoControlsMode = (value: string): value is VideoControlsMode =>
   videoControlsModeOptions.some(option => option.value === value)
 
@@ -3024,6 +3108,9 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const buttonBorder = getSettingString(settings, 'buttonBorderColor')
   const cardBg = getSettingString(settings, 'cardBg')
   const cardBorder = getSettingString(settings, 'cardBorderColor')
+  const countdownNumberColor = getSettingString(settings, 'countdownNumberColor')
+  const countdownUnitBg = getSettingString(settings, 'countdownUnitBg')
+  const countdownUnitBorder = getSettingString(settings, 'countdownUnitBorder')
   const fontFamily = normalizeSiteFontFamily(getSettingString(settings, 'fontFamily'))
   const buttonFontFamily = normalizeSiteFontFamily(getSettingString(settings, 'buttonFontFamily'))
   const textStrokeColor = getSettingString(settings, 'textStrokeColor')
@@ -3071,6 +3158,9 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (isCssPaint(buttonBorder)) style['--rstk-button-border'] = paintFallbackColor(normalizeCssPaint(buttonBorder, '#111827'), '#111827')
   if (isCssPaint(cardBg)) style['--rstk-card-bg'] = normalizeCssPaint(cardBg, '#ffffff')
   if (isCssPaint(cardBorder)) style['--rstk-card-border'] = paintFallbackColor(normalizeCssPaint(cardBorder, '#dbe3ef'), '#dbe3ef')
+  if (isCssPaint(countdownNumberColor)) style['--rstk-countdown-number'] = paintFallbackColor(normalizeCssPaint(countdownNumberColor, '#111827'), '#111827')
+  if (isCssPaint(countdownUnitBg)) style['--rstk-countdown-unit-bg'] = normalizeCssPaint(countdownUnitBg, '#ffffff')
+  if (isCssPaint(countdownUnitBorder)) style['--rstk-countdown-unit-border'] = paintFallbackColor(normalizeCssPaint(countdownUnitBorder, '#dbe3ef'), '#dbe3ef')
   if (fontFamily) style['--rstk-block-font'] = fontFamily
   if (buttonFontFamily) style['--rstk-button-font'] = buttonFontFamily
   if (settings.fontStyle === 'italic') style['--rstk-block-font-style'] = 'italic'
@@ -3161,6 +3251,9 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (settings.cardAlign !== undefined) style['--rstk-card-align'] = getHorizontalAlign(settings, 'cardAlign', 'left')
   if (settings.fieldWidth !== undefined) style['--rstk-field-width'] = `${getSettingNumber(settings, 'fieldWidth', 100, 20, 100)}%`
   if (settings.fieldRadius !== undefined) style['--rstk-field-radius'] = `${getSettingNumber(settings, 'fieldRadius', 12, 0, 32)}px`
+  if (settings.countdownNumberSize !== undefined) style['--rstk-countdown-number-size'] = `${getSettingNumber(settings, 'countdownNumberSize', 38, 14, 96)}px`
+  if (settings.countdownUnitRadius !== undefined) style['--rstk-countdown-unit-radius'] = `${getSettingNumber(settings, 'countdownUnitRadius', 14, 0, 48)}px`
+  if (settings.countdownUnitGap !== undefined) style['--rstk-countdown-gap'] = `${getSettingNumber(settings, 'countdownUnitGap', 10, 0, 48)}px`
   if (block.blockType === SECTION_BLOCK_TYPE) {
     style['--rstk-section-columns'] = `${getSectionColumns(block)}`
     style['--rstk-section-gap'] = `${getSettingNumber(settings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)}px`
@@ -3179,6 +3272,7 @@ const getBlockStyleClassName = (block: SiteBlock, extra = '') => {
     isCssGradient(getSettingString(settings, 'blockText')) ? 'rstkTextGradient' : '',
     isCssGradient(getSettingString(settings, 'buttonTextColor')) ? 'rstkButtonTextGradient' : '',
     getSettingString(settings, 'blockBackgroundMediaType') === 'video' && safePublicMediaUrl(getSettingString(settings, 'blockBackgroundImage'), 'video') ? 'rstkHasBgVideo' : '',
+    isBlockHidden(block) ? 'rstkHiddenBlock' : '',
     settings.fontFamily ? 'rstkFontOverride' : '',
     settings.fontSize !== undefined ? 'rstkSizeOverride' : '',
     settings.fontWeight === 'bold' || settings.fontWeight === 'normal' ? 'rstkWeightOverride' : '',
@@ -4684,6 +4778,30 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       label,
       content: label,
       settings: blockSettings({ items: [{ title: 'Elemento 1', text: 'Descripción breve.' }, { title: 'Elemento 2', text: 'Descripción breve.' }] })
+    }
+  }
+
+  if (blockType === 'countdown') {
+    return {
+      blockType,
+      label,
+      content: 'La oferta termina en',
+      settings: blockSettings({
+        countdownMode: 'duration',
+        countdownDurationDays: 1,
+        countdownDurationHours: 0,
+        countdownDurationMinutes: 0,
+        countdownDurationSeconds: 0,
+        countdownVisitorMode: 'visitor',
+        countdownStorageValue: 30,
+        countdownStorageUnit: 'days',
+        countdownCompletionAction: 'none',
+        countdownRestartOnVisit: false,
+        countdownResetOnReturn: false,
+        countdownAutoExpire: true,
+        countdownExpiredText: 'Tiempo terminado',
+        countdownShowLabels: true
+      })
     }
   }
 
@@ -8931,6 +9049,11 @@ export const Sites: React.FC = () => {
     })
   }
 
+  const toggleBlockVisibility = (block: SiteBlock) => {
+    patchBlockSettingsLocal(block, { hidden: !isBlockHidden(block) })
+    window.setTimeout(() => void handleSaveBlock(block.id), 0)
+  }
+
   const getCurrentEmbeddedFormContext = () => {
     const currentSite = selectedSiteRef.current || editorSite
     const currentFormBlock = formEditBlock
@@ -10197,6 +10320,7 @@ export const Sites: React.FC = () => {
 		                    onAdd={handleAddBlockManually}
                         onSelectElement={selectEditorBlock}
                         onMoveElement={handleMoveBlock}
+                        onToggleElementVisibility={toggleBlockVisibility}
                         getMoveState={getBlockMoveState}
                         onReorderElements={(orderedBlocks) => {
                           void persistCanvasBlockOrder(orderedBlocks, { popup: popupSurfaceSelected })
@@ -21248,7 +21372,7 @@ const paletteGroups: Array<{ label: string; items: PaletteItem[] }> = [
   },
   {
     label: 'Contenido',
-    items: ['title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed', 'social_profile']
+    items: ['title', 'subtitle', 'text', 'countdown', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed', 'social_profile']
       .map(blockType => ({ id: blockType, label: blockLabels[blockType as SiteBlockType], blockType: blockType as SiteBlockType }))
   }
 ]
@@ -23146,6 +23270,7 @@ const Palette: React.FC<{
   onAdd: (blockType: SiteBlockType, options?: AddBlockOptions) => void
   onSelectElement?: (blockId: string) => void
   onMoveElement?: (blockId: string, direction: BlockMoveDirection) => void
+  onToggleElementVisibility?: (block: SiteBlock) => void
   onReorderElements?: (orderedBlocks: SiteBlock[]) => void
   getMoveState?: (block: SiteBlock) => BlockMoveState
   onPaletteDragStart: (payload: PaletteDragPayload, position: PaletteDragPosition | null) => void
@@ -23159,6 +23284,7 @@ const Palette: React.FC<{
   onAdd,
   onSelectElement,
   onMoveElement,
+  onToggleElementVisibility,
   onReorderElements,
   getMoveState,
   onPaletteDragStart,
@@ -23219,6 +23345,7 @@ const Palette: React.FC<{
                       onSelect={() => onSelectElement?.(block.id)}
                       onMoveUp={() => onMoveElement?.(block.id, 'up')}
                       onMoveDown={() => onMoveElement?.(block.id, 'down')}
+                      onToggleVisibility={() => onToggleElementVisibility?.(block)}
                     />
                   )
                 })}
@@ -23304,7 +23431,8 @@ const PaletteElementItem: React.FC<{
   onSelect: () => void
   onMoveUp: () => void
   onMoveDown: () => void
-}> = ({ block, selected, canMoveUp, canMoveDown, onSelect, onMoveUp, onMoveDown }) => {
+  onToggleVisibility: () => void
+}> = ({ block, selected, canMoveUp, canMoveDown, onSelect, onMoveUp, onMoveDown, onToggleVisibility }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: block.id,
     animateLayoutChanges: sortableAnimateLayoutChanges,
@@ -23317,11 +23445,12 @@ const PaletteElementItem: React.FC<{
     zIndex: isDragging ? 5 : undefined
   }
   const name = getElementPanelName(block)
+  const hidden = isBlockHidden(block)
 
   return (
     <div
       ref={setNodeRef}
-      className={`${styles.paletteElementRow} ${selected ? styles.paletteElementRowActive : ''}`}
+      className={`${styles.paletteElementRow} ${selected ? styles.paletteElementRowActive : ''} ${hidden ? styles.paletteElementRowHidden : ''}`}
       data-depth={getElementPanelDepth(block)}
       style={rowStyle}
     >
@@ -23342,6 +23471,16 @@ const PaletteElementItem: React.FC<{
         </span>
       </button>
       <span className={styles.paletteElementActions}>
+        <button
+          type="button"
+          className={hidden ? styles.paletteElementVisibilityOff : ''}
+          onClick={onToggleVisibility}
+          aria-pressed={!hidden}
+          aria-label={hidden ? `Mostrar ${name}` : `Ocultar ${name}`}
+          title={hidden ? 'Mostrar elemento' : 'Ocultar elemento'}
+        >
+          {hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+        </button>
         <button type="button" disabled={!canMoveUp} onClick={onMoveUp} aria-label={`Subir ${name}`} title="Subir">
           <ArrowUp size={13} />
         </button>
@@ -24555,9 +24694,10 @@ const InlineBlockStyleControls: React.FC<{
   const supportsButton = !surfaceOnly && (block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed')
   const supportsField = !surfaceOnly && fieldBlockTypes.has(block.blockType)
   const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
-  const supportsTextStyle = !surfaceOnly && (supportsField || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType))
+  const supportsTextStyle = !surfaceOnly && (supportsField || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'countdown', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType))
   const supportsMedia = !surfaceOnly && (block.blockType === 'image' || block.blockType === 'video')
   const supportsCards = !surfaceOnly && ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
+  const supportsCountdown = !surfaceOnly && block.blockType === 'countdown'
   const defaultBorderWidth = getBlockBorderWidthFallback(site, block)
   const blockTextPaint = getSettingPaint(settings, 'blockText', getPageTextPaint(site))
   const currentFontFamily = getSettingString(settings, 'fontFamily')
@@ -24832,6 +24972,61 @@ const InlineBlockStyleControls: React.FC<{
             min={0}
             max={8}
             onChange={(value) => onPatchSettings({ cardBorderWidth: value })}
+            onCommit={onSave}
+          />
+        </>
+      )}
+
+      {supportsCountdown && (
+        <>
+          <div className={styles.panelSubheader}>Diseño del contador</div>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Números"
+              value={getSettingPaint(settings, 'countdownNumberColor', blockTextPaint)}
+              allowGradient
+              onChange={(value) => onPatchSettings({ countdownNumberColor: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Fondo unidades"
+              value={getSettingPaint(settings, 'countdownUnitBg', 'transparent')}
+              allowGradient
+              onChange={(value) => onPatchSettings({ countdownUnitBg: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <ColorField
+            label="Borde unidades"
+            value={getSettingPaint(settings, 'countdownUnitBorder', 'transparent')}
+            allowGradient
+            onChange={(value) => onPatchSettings({ countdownUnitBorder: value })}
+            onCommit={onSave}
+          />
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Tamaño números"
+              value={getSettingNumber(settings, 'countdownNumberSize', 38, 14, 96)}
+              min={14}
+              max={96}
+              onChange={(value) => onPatchSettings({ countdownNumberSize: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Espacio"
+              value={getSettingNumber(settings, 'countdownUnitGap', 10, 0, 48)}
+              min={0}
+              max={48}
+              onChange={(value) => onPatchSettings({ countdownUnitGap: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <DimensionField
+            label="Radio unidades"
+            value={getSettingNumber(settings, 'countdownUnitRadius', 14, 0, 48)}
+            min={0}
+            max={48}
+            onChange={(value) => onPatchSettings({ countdownUnitRadius: value })}
             onCommit={onSave}
           />
         </>
@@ -25849,6 +26044,43 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   if (block.blockType === 'text') {
     return (
       <InlineEditable as="div" className="rstk-text" multiline value={block.content || ''} placeholder="Texto de contenido" disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+    )
+  }
+
+  if (block.blockType === 'countdown') {
+    const parts = getCountdownPreviewParts(settings)
+    const showLabels = getSettingBoolean(settings, 'countdownShowLabels', true)
+    const units = [
+      { key: 'days', label: 'Días', value: parts.days },
+      { key: 'hours', label: 'Horas', value: parts.hours },
+      { key: 'minutes', label: 'Min', value: parts.minutes },
+      { key: 'seconds', label: 'Seg', value: parts.seconds }
+    ]
+
+    return (
+      <section className="rstk-countdown" data-rstk-countdown-preview="true">
+        <InlineEditable
+          as="p"
+          className="rstk-countdown-title"
+          multiline
+          value={block.content || ''}
+          placeholder="Título del contador"
+          disabled={!editable}
+          onChange={(value) => patchBlock({ content: value })}
+          onCommit={save}
+        />
+        <div className="rstk-countdown-grid" aria-label="Cuenta regresiva">
+          {units.map(unit => (
+            <span key={unit.key} className="rstk-countdown-unit">
+              <strong>{formatCountdownPart(unit.value)}</strong>
+              {showLabels && <span>{unit.label}</span>}
+            </span>
+          ))}
+        </div>
+        {getSettingString(settings, 'countdownExpiredText') && (
+          <p className="rstk-countdown-note">{getSettingString(settings, 'countdownExpiredText')}</p>
+        )}
+      </section>
     )
   }
 
@@ -27041,6 +27273,7 @@ const hasBlockExtraSettingsContent = (block: SiteBlock) => (
     'social_profile',
     'image',
     'video',
+    'countdown',
     'calendar_embed',
     'form_embed'
   ].includes(block.blockType)
@@ -28159,7 +28392,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const isPrimaryTextBlock = ['headline', 'title'].includes(block.blockType)
   const isSecondaryTextBlock = ['subheading', 'subtitle', 'description'].includes(block.blockType)
   const systemFieldPreset = getSystemFormFieldPresetForBlock(block)
-  const showBlockNameFirst = isField || block.blockType === SECTION_BLOCK_TYPE
+  const showBlockNameFirst = isField || block.blockType === SECTION_BLOCK_TYPE || block.blockType === 'countdown'
   const isMediaBlock = block.blockType === 'image' || block.blockType === 'video'
   const showContentField = block.blockType !== 'calendar_embed' && block.blockType !== 'button' && !isMediaBlock
   const contentLabel = isField
@@ -28174,6 +28407,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             ? 'Título'
             : hasListCopy
               ? 'Título de seccion'
+              : block.blockType === 'countdown'
+                ? 'Título del contador'
               : isPrimaryTextBlock
                 ? 'Texto del título'
                 : isSecondaryTextBlock
@@ -28313,6 +28548,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         <LandingBlockSettings
           site={site}
           block={block}
+          blocks={allBlocks || blocks}
           forms={forms}
           calendars={calendars}
           pages={pages}
@@ -28602,6 +28838,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
 interface LandingBlockSettingsProps {
   site: PublicSite
   block: SiteBlock
+  blocks: SiteBlock[]
   forms: PublicSite[]
   calendars: CalendarType[]
   pages: SitePage[]
@@ -28782,7 +29019,7 @@ const SocialProfileSettings: React.FC<{
   )
 }
 
-const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
+const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
 
   if (isPanelBlock(block)) {
@@ -28861,6 +29098,171 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
         onPatchSettings={onPatchSettings}
         onSave={onSave}
       />
+    )
+  }
+
+  if (block.blockType === 'countdown') {
+    const mode = getCountdownMode(settings)
+    const visitorMode = getCountdownVisitorMode(settings)
+    const storageUnit = getCountdownStorageUnit(settings)
+    const completionAction = getCountdownCompletionAction(settings)
+    const targetBlocks = blocks.filter(item => item.id !== block.id && !isPanelBlock(item))
+    const selectedTargetId = getSettingString(settings, 'countdownTargetBlockId')
+
+    return (
+      <>
+        <div className={styles.settingsGroup}>
+          <div className={styles.panelSubheader}>Cuenta regresiva</div>
+          <label className={styles.field}>
+            <span>Tipo de contador</span>
+            <CustomSelect value={mode} onChange={(event) => onPatchSettings({ countdownMode: event.target.value })} onBlur={onSave}>
+              {countdownModeOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+
+          {mode === 'date' ? (
+            <label className={styles.field}>
+              <span>Fecha final</span>
+              <input
+                type="datetime-local"
+                value={getSettingString(settings, 'countdownTargetDate')}
+                onChange={(event) => onPatchSettings({ countdownTargetDate: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          ) : (
+            <div className={styles.twoColumn}>
+              <DimensionField label="Días" value={getSettingNumber(settings, 'countdownDurationDays', 1, 0, 3650)} min={0} max={3650} unit="" onChange={(value) => onPatchSettings({ countdownDurationDays: value })} onCommit={onSave} />
+              <DimensionField label="Horas" value={getSettingNumber(settings, 'countdownDurationHours', 0, 0, 23)} min={0} max={23} unit="" onChange={(value) => onPatchSettings({ countdownDurationHours: value })} onCommit={onSave} />
+              <DimensionField label="Minutos" value={getSettingNumber(settings, 'countdownDurationMinutes', 0, 0, 59)} min={0} max={59} unit="" onChange={(value) => onPatchSettings({ countdownDurationMinutes: value })} onCommit={onSave} />
+              <DimensionField label="Segundos" value={getSettingNumber(settings, 'countdownDurationSeconds', 0, 0, 59)} min={0} max={59} unit="" onChange={(value) => onPatchSettings({ countdownDurationSeconds: value })} onCommit={onSave} />
+            </div>
+          )}
+
+          <label className={styles.field}>
+            <span>Persistencia</span>
+            <CustomSelect value={visitorMode} onChange={(event) => onPatchSettings({ countdownVisitorMode: event.target.value })} onBlur={onSave}>
+              {countdownVisitorModeOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Caducidad"
+              value={getSettingNumber(settings, 'countdownStorageValue', 30, 1, 730)}
+              min={1}
+              max={730}
+              unit=""
+              onChange={(value) => onPatchSettings({ countdownStorageValue: value })}
+              onCommit={onSave}
+            />
+            <label className={styles.field}>
+              <span>Unidad</span>
+              <CustomSelect value={storageUnit} onChange={(event) => onPatchSettings({ countdownStorageUnit: event.target.value })} onBlur={onSave}>
+                {countdownStorageUnitOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          </div>
+
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={getSettingBoolean(settings, 'countdownRestartOnVisit', false)}
+              onChange={(event) => {
+                onPatchSettings({ countdownRestartOnVisit: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Reiniciar en cada visita</span>
+          </label>
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={getSettingBoolean(settings, 'countdownResetOnReturn', false)}
+              onChange={(event) => {
+                onPatchSettings({ countdownResetOnReturn: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Restablecer cuando vuelva a entrar</span>
+          </label>
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={getSettingBoolean(settings, 'countdownAutoExpire', true)}
+              onChange={(event) => {
+                onPatchSettings({ countdownAutoExpire: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Expirar automáticamente el registro</span>
+          </label>
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={getSettingBoolean(settings, 'countdownShowLabels', true)}
+              onChange={(event) => {
+                onPatchSettings({ countdownShowLabels: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Mostrar etiquetas de tiempo</span>
+          </label>
+        </div>
+
+        <div className={styles.settingsGroup}>
+          <div className={styles.panelSubheader}>Cuando termine</div>
+          <label className={styles.field}>
+            <span>Acción final</span>
+            <CustomSelect value={completionAction} onChange={(event) => onPatchSettings({ countdownCompletionAction: event.target.value })} onBlur={onSave}>
+              {countdownCompletionActionOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+
+          {completionAction === 'redirect' && (
+            <label className={styles.field}>
+              <span>URL destino</span>
+              <input
+                type="url"
+                value={getSettingString(settings, 'countdownRedirectUrl')}
+                placeholder="https://tudominio.com/oferta"
+                onChange={(event) => onPatchSettings({ countdownRedirectUrl: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          )}
+
+          {(completionAction === 'hide_target' || completionAction === 'show_target') && (
+            <label className={styles.field}>
+              <span>Elemento objetivo</span>
+              <CustomSelect value={selectedTargetId} onChange={(event) => onPatchSettings({ countdownTargetBlockId: event.target.value })} onBlur={onSave}>
+                <option value="">Selecciona un elemento</option>
+                {targetBlocks.map(target => (
+                  <option key={target.id} value={target.id}>{getElementPanelName(target)}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          )}
+
+          <label className={styles.field}>
+            <span>Texto al vencer</span>
+            <input
+              value={getSettingString(settings, 'countdownExpiredText')}
+              placeholder="Tiempo terminado"
+              onChange={(event) => onPatchSettings({ countdownExpiredText: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+        </div>
+      </>
     )
   }
 

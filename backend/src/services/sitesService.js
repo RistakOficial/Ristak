@@ -45,6 +45,7 @@ export const CONTENT_BLOCK_TYPES = new Set([
   'subtitle',
   'description',
   'text',
+  'countdown',
   'embed',
   'calendar_embed',
   'section',
@@ -10871,6 +10872,106 @@ function renderVideoActionTargetAttribute(block = {}, context = {}) {
   return ` data-rstk-video-action-target="${escapeHtml(block.id)}"${startsHidden ? ' data-rstk-video-action-hidden="true" aria-hidden="true"' : ''}`
 }
 
+const COUNTDOWN_COMPLETION_ACTIONS = new Set(['none', 'redirect', 'hide_target', 'show_target', 'hide_self', 'restart'])
+
+function isBlockHiddenBySettings(block = {}) {
+  return block?.settings?.hidden === true || normalizeBoolean(block?.settings?.hidden) === 1
+}
+
+function normalizeCountdownMode(value) {
+  return cleanString(value) === 'date' ? 'date' : 'duration'
+}
+
+function normalizeCountdownVisitorMode(value) {
+  return cleanString(value) === 'visitor' ? 'visitor' : 'shared'
+}
+
+function normalizeCountdownCompletionAction(value) {
+  const action = cleanString(value)
+  return COUNTDOWN_COMPLETION_ACTIONS.has(action) ? action : 'none'
+}
+
+function normalizeCountdownStorageUnit(value) {
+  return cleanString(value) === 'months' ? 'months' : 'days'
+}
+
+function blockSettingNumberWithFallback(settings = {}, key, fallback, min, max) {
+  const value = Number(settings[key])
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, value))
+}
+
+function countdownDurationSeconds(settings = {}) {
+  const days = blockSettingNumberWithFallback(settings, 'countdownDurationDays', 1, 0, 3650)
+  const hours = blockSettingNumberWithFallback(settings, 'countdownDurationHours', 0, 0, 23)
+  const minutes = blockSettingNumberWithFallback(settings, 'countdownDurationMinutes', 0, 0, 59)
+  const seconds = blockSettingNumberWithFallback(settings, 'countdownDurationSeconds', 0, 0, 59)
+  return Math.max(1, Math.round(days * 86400 + hours * 3600 + minutes * 60 + seconds))
+}
+
+function countdownStorageTtlSeconds(settings = {}) {
+  const value = blockSettingNumberWithFallback(settings, 'countdownStorageValue', 30, 1, 730)
+  const unit = normalizeCountdownStorageUnit(settings.countdownStorageUnit)
+  return Math.round(value * (unit === 'months' ? 30 * 86400 : 86400))
+}
+
+function countdownShowLabels(settings = {}) {
+  return settings.countdownShowLabels !== false
+}
+
+function getCountdownRuntimeConfig(block = {}) {
+  const settings = block.settings || {}
+  return {
+    blockId: cleanString(block.id),
+    mode: normalizeCountdownMode(settings.countdownMode),
+    targetDate: cleanString(settings.countdownTargetDate),
+    durationSeconds: countdownDurationSeconds(settings),
+    visitorMode: normalizeCountdownVisitorMode(settings.countdownVisitorMode),
+    storageTtlSeconds: countdownStorageTtlSeconds(settings),
+    autoExpire: settings.countdownAutoExpire !== false,
+    restartOnVisit: normalizeBoolean(settings.countdownRestartOnVisit) === 1,
+    resetOnReturn: normalizeBoolean(settings.countdownResetOnReturn) === 1,
+    completionAction: normalizeCountdownCompletionAction(settings.countdownCompletionAction),
+    targetBlockId: cleanString(settings.countdownTargetBlockId),
+    redirectUrl: safeHref(settings.countdownRedirectUrl || '', ''),
+    expiredText: cleanString(settings.countdownExpiredText || 'Tiempo terminado')
+  }
+}
+
+function collectCountdownActionTargetIds(blocks = [], ids = new Set()) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'countdown') {
+      const action = normalizeCountdownCompletionAction(settings.countdownCompletionAction)
+      const targetBlockId = cleanString(settings.countdownTargetBlockId)
+      if ((action === 'hide_target' || action === 'show_target') && targetBlockId) ids.add(targetBlockId)
+    }
+
+    if (Array.isArray(settings.embeddedBlocks) && settings.embeddedBlocks.length) {
+      collectCountdownActionTargetIds(settings.embeddedBlocks, ids)
+    }
+  }
+  return ids
+}
+
+function hasCountdownBlocks(blocks = []) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'countdown') return true
+    if (Array.isArray(settings.embeddedBlocks) && hasCountdownBlocks(settings.embeddedBlocks)) return true
+  }
+  return false
+}
+
+function renderCountdownActionTargetAttribute(block = {}, context = {}) {
+  if (!block?.id || !context.countdownActionTargetIds?.has?.(block.id)) return ''
+  return ` data-rstk-countdown-action-target="${escapeHtml(block.id)}"`
+}
+
+function renderBlockHiddenAttributes(block = {}) {
+  return isBlockHiddenBySettings(block) ? ' data-rstk-user-hidden="true" hidden aria-hidden="true"' : ''
+}
+
 function buildVideoActionsRuntimeScript(blocks = []) {
   if (!hasVideoActionRules(blocks)) return ''
 
@@ -11024,6 +11125,213 @@ function buildVideoActionsRuntimeScript(blocks = []) {
       attachAll();
       const observer = new MutationObserver(attachAll);
       observer.observe(document.documentElement, { childList: true, subtree: true });
+    })();
+  </script>`
+}
+
+function buildCountdownRuntimeScript(blocks = []) {
+  if (!hasCountdownBlocks(blocks)) return ''
+
+  return `<style>[data-rstk-user-hidden="true"],[data-rstk-countdown-hidden="true"]{display:none!important}</style>
+  <script>
+    (() => {
+      if (window.ristakCountdownRuntimeLoaded) return;
+      window.ristakCountdownRuntimeLoaded = true;
+      const SOURCE_SELECTOR = '[data-rstk-countdown]';
+      const attached = new WeakSet();
+      const intervalIds = new Set();
+      const parseConfig = source => {
+        try {
+          const parsed = JSON.parse(source.getAttribute('data-rstk-countdown') || '{}');
+          return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (_) {
+          return null;
+        }
+      };
+      const escapeSelectorValue = value => {
+        const text = String(value || '');
+        if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(text);
+        return text.replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\"');
+      };
+      const readLocal = key => {
+        try { return window.localStorage.getItem(key); } catch (_) { return null; }
+      };
+      const writeLocal = (key, value) => {
+        try { window.localStorage.setItem(key, value); } catch (_) {}
+      };
+      const removeLocal = key => {
+        try { window.localStorage.removeItem(key); } catch (_) {}
+      };
+      const getCookie = name => {
+        const prefix = String(name || '') + '=';
+        const cookie = String(document.cookie || '').split(';').map(item => item.trim()).find(item => item.indexOf(prefix) === 0);
+        return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : '';
+      };
+      const setCookie = (name, value, maxAge) => {
+        document.cookie = name + '=' + encodeURIComponent(value) + '; Max-Age=' + String(maxAge || 31536000) + '; Path=/; SameSite=Lax';
+      };
+      const generateId = () => {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+        return 'cd_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+      };
+      const getVisitorId = () => {
+        try {
+          if (typeof window.ristakNativeIdentity === 'function') {
+            const identity = window.ristakNativeIdentity() || {};
+            if (identity.visitorId) return String(identity.visitorId);
+          }
+        } catch (_) {}
+        try {
+          const ristak = JSON.parse(readLocal('ristak') || '{}');
+          if (ristak && ristak.visitor_id) return String(ristak.visitor_id);
+          if (ristak && ristak.visitorId) return String(ristak.visitorId);
+        } catch (_) {}
+        const cookieValue = getCookie('ristak_countdown_vid');
+        if (cookieValue) return cookieValue;
+        const next = generateId();
+        setCookie('ristak_countdown_vid', next, 31536000);
+        return next;
+      };
+      const durationMs = config => Math.max(1000, Number(config.durationSeconds || 1) * 1000);
+      const ttlMs = config => Math.max(3600, Number(config.storageTtlSeconds || 2592000) * 1000);
+      const getDateEnd = config => {
+        const parsed = Date.parse(String(config.targetDate || ''));
+        return Number.isFinite(parsed) ? parsed : Date.now();
+      };
+      const storageKey = config => {
+        const scope = config.visitorMode === 'visitor' ? 'visitor:' + getVisitorId() : 'shared';
+        return 'ristak:countdown:' + String(config.blockId || 'block') + ':' + scope;
+      };
+      const makeDurationRecord = config => {
+        const createdAt = Date.now();
+        return {
+          createdAt,
+          endAt: createdAt + durationMs(config),
+          expiresAt: createdAt + ttlMs(config)
+        };
+      };
+      const readRecord = config => {
+        if (config.mode === 'date') {
+          return { createdAt: Date.now(), endAt: getDateEnd(config), expiresAt: Date.now() + ttlMs(config) };
+        }
+        const key = storageKey(config);
+        if (config.restartOnVisit) {
+          const record = makeDurationRecord(config);
+          writeLocal(key, JSON.stringify(record));
+          return record;
+        }
+        let record = null;
+        try {
+          record = JSON.parse(readLocal(key) || 'null');
+        } catch (_) {
+          record = null;
+        }
+        const now = Date.now();
+        const valid = record && Number.isFinite(Number(record.endAt)) && Number.isFinite(Number(record.createdAt));
+        const expiredStorage = valid && config.autoExpire !== false && Number.isFinite(Number(record.expiresAt)) && now > Number(record.expiresAt);
+        const finished = valid && Number(record.endAt) <= now;
+        if (!valid || expiredStorage || (finished && config.resetOnReturn)) {
+          record = makeDurationRecord(config);
+          writeLocal(key, JSON.stringify(record));
+          return record;
+        }
+        if (!valid) removeLocal(key);
+        return record || makeDurationRecord(config);
+      };
+      const formatPart = value => String(Math.max(0, Math.floor(Number(value) || 0))).padStart(2, '0');
+      const splitSeconds = total => {
+        const safe = Math.max(0, Math.floor(Number(total) || 0));
+        return {
+          days: Math.floor(safe / 86400),
+          hours: Math.floor((safe % 86400) / 3600),
+          minutes: Math.floor((safe % 3600) / 60),
+          seconds: safe % 60
+        };
+      };
+      const findTarget = id => {
+        const targetId = String(id || '');
+        if (!targetId) return null;
+        const escaped = escapeSelectorValue(targetId);
+        return document.querySelector('[data-rstk-countdown-action-target="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-block-id="' + escaped + '"]') ||
+          document.getElementById(targetId);
+      };
+      const setTargetHidden = (target, hidden) => {
+        if (!target) return;
+        if (hidden) {
+          target.hidden = true;
+          target.setAttribute('data-rstk-countdown-hidden', 'true');
+          target.setAttribute('aria-hidden', 'true');
+          return;
+        }
+        target.hidden = false;
+        target.removeAttribute('hidden');
+        target.removeAttribute('data-rstk-countdown-hidden');
+        target.removeAttribute('data-rstk-user-hidden');
+        target.removeAttribute('data-rstk-video-action-hidden');
+        target.removeAttribute('aria-hidden');
+      };
+      const preserveUrl = value => (
+        value && window.ristakPreserveParams ? window.ristakPreserveParams(value) : value
+      );
+      const attach = source => {
+        if (!source || attached.has(source)) return;
+        const config = parseConfig(source);
+        if (!config || !config.blockId) return;
+        const state = { record: readRecord(config), expired: false };
+        const note = source.querySelector('[data-rstk-countdown-expired]');
+        const parts = {
+          days: source.querySelector('[data-rstk-countdown-part="days"]'),
+          hours: source.querySelector('[data-rstk-countdown-part="hours"]'),
+          minutes: source.querySelector('[data-rstk-countdown-part="minutes"]'),
+          seconds: source.querySelector('[data-rstk-countdown-part="seconds"]')
+        };
+        const renderParts = remainingSeconds => {
+          const split = splitSeconds(remainingSeconds);
+          Object.keys(parts).forEach(key => {
+            if (parts[key]) parts[key].textContent = formatPart(split[key]);
+          });
+        };
+        const restart = () => {
+          const key = storageKey(config);
+          state.record = makeDurationRecord(config);
+          writeLocal(key, JSON.stringify(state.record));
+          state.expired = false;
+          if (note) note.hidden = true;
+          tick();
+        };
+        const complete = () => {
+          if (state.expired) return;
+          state.expired = true;
+          renderParts(0);
+          if (note) note.hidden = false;
+          const action = String(config.completionAction || 'none');
+          if (action === 'redirect' && config.redirectUrl) {
+            window.setTimeout(() => { window.location.href = preserveUrl(String(config.redirectUrl)); }, 80);
+            return;
+          }
+          if (action === 'hide_target') setTargetHidden(findTarget(config.targetBlockId), true);
+          if (action === 'show_target') setTargetHidden(findTarget(config.targetBlockId), false);
+          if (action === 'hide_self') setTargetHidden(source.closest('.rstk-block-style') || source, true);
+          if (action === 'restart') restart();
+        };
+        const tick = () => {
+          const remaining = Math.max(0, Math.ceil((Number(state.record.endAt || 0) - Date.now()) / 1000));
+          renderParts(remaining);
+          if (remaining <= 0) complete();
+        };
+        intervalIds.add(window.setInterval(tick, 1000));
+        tick();
+        attached.add(source);
+      };
+      const attachAll = () => document.querySelectorAll(SOURCE_SELECTOR).forEach(attach);
+      attachAll();
+      const observer = new MutationObserver(attachAll);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      window.addEventListener('pagehide', () => {
+        intervalIds.forEach(intervalId => window.clearInterval(intervalId));
+        intervalIds.clear();
+      });
     })();
   </script>`
 }
@@ -13537,6 +13845,9 @@ function renderBlockStyleVars(block) {
   const buttonBorder = blockSettingPaint(settings, 'buttonBorderColor')
   const cardBg = blockSettingPaint(settings, 'cardBg')
   const cardBorder = blockSettingPaint(settings, 'cardBorderColor')
+  const countdownNumberColor = blockSettingPaint(settings, 'countdownNumberColor')
+  const countdownUnitBg = blockSettingPaint(settings, 'countdownUnitBg')
+  const countdownUnitBorder = blockSettingPaint(settings, 'countdownUnitBorder')
   const fieldBg = blockSettingPaint(settings, 'fieldBg')
   const fieldBorder = blockSettingPaint(settings, 'fieldBorder')
   const fontFamily = normalizeSiteFontFamily(settings.fontFamily)
@@ -13574,8 +13885,11 @@ function renderBlockStyleVars(block) {
   const listColumns = blockSettingNumber(settings, 'listColumns', 1, 4)
   const fieldWidth = blockSettingNumber(settings, 'fieldWidth', 20, 100)
   const fieldRadius = blockSettingNumber(settings, 'fieldRadius', 0, 32)
+  const countdownNumberSize = blockSettingNumber(settings, 'countdownNumberSize', 14, 96)
+  const countdownUnitRadius = blockSettingNumber(settings, 'countdownUnitRadius', 0, 48)
+  const countdownUnitGap = blockSettingNumber(settings, 'countdownUnitGap', 0, 48)
   const sectionGap = blockSettingNumber(settings, 'sectionGap', 0, 80)
-  const blockHasNativeBorder = ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'].includes(block.blockType)
+  const blockHasNativeBorder = ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed'].includes(block.blockType)
   const supportsButton = ['hero', 'button', 'cta', 'form_embed'].includes(block.blockType)
 
   if (blockBg) {
@@ -13607,6 +13921,9 @@ function renderBlockStyleVars(block) {
   if (buttonBorder) vars.push(`--rstk-button-border:${paintFallbackColor(buttonBorder, '#111827')}`)
   if (cardBg) vars.push(`--rstk-card-bg:${cardBg}`)
   if (cardBorder) vars.push(`--rstk-card-border:${paintFallbackColor(cardBorder, '#dbe3ef')}`)
+  if (countdownNumberColor) vars.push(`--rstk-countdown-number:${paintFallbackColor(countdownNumberColor, '#111827')}`)
+  if (countdownUnitBg) vars.push(`--rstk-countdown-unit-bg:${countdownUnitBg}`)
+  if (countdownUnitBorder) vars.push(`--rstk-countdown-unit-border:${paintFallbackColor(countdownUnitBorder, '#dbe3ef')}`)
   if (fieldBg) vars.push(`--rstk-field-bg:${fieldBg}`)
   if (fieldBorder) vars.push(`--rstk-field-border:${paintFallbackColor(fieldBorder, '#dbe3ef')}`)
   if (fontFamily) vars.push(`--rstk-block-font:${fontFamily}`)
@@ -13677,6 +13994,9 @@ function renderBlockStyleVars(block) {
   if (settings.cardAlign !== undefined) vars.push(`--rstk-card-align:${blockHorizontalAlign(settings, 'cardAlign', 'left')}`)
   if (fieldWidth !== null) vars.push(`--rstk-field-width:${fieldWidth}%`)
   if (fieldRadius !== null) vars.push(`--rstk-field-radius:${fieldRadius}px`)
+  if (countdownNumberSize !== null) vars.push(`--rstk-countdown-number-size:${countdownNumberSize}px`)
+  if (countdownUnitRadius !== null) vars.push(`--rstk-countdown-unit-radius:${countdownUnitRadius}px`)
+  if (countdownUnitGap !== null) vars.push(`--rstk-countdown-gap:${countdownUnitGap}px`)
   if (block.blockType === 'section') {
     vars.push(`--rstk-section-columns:${getSectionColumns(block)}`)
     if (sectionGap !== null) vars.push(`--rstk-section-gap:${sectionGap}px`)
@@ -13722,8 +14042,10 @@ function wrapRenderedBlock(block, html, context = {}) {
   const className = renderBlockStyleClassName(block)
   const backgroundVideo = renderBlockBackgroundVideo(block)
   const videoActionTargetAttr = renderVideoActionTargetAttribute(block, context)
-  return style || backgroundVideo || videoActionTargetAttr
-    ? `<div class="${escapeHtml(className)}"${videoActionTargetAttr}${style}>${backgroundVideo}${html}</div>`
+  const countdownActionTargetAttr = renderCountdownActionTargetAttribute(block, context)
+  const hiddenAttr = renderBlockHiddenAttributes(block)
+  return style || backgroundVideo || videoActionTargetAttr || countdownActionTargetAttr || hiddenAttr
+    ? `<div class="${escapeHtml(className)}" data-rstk-block-id="${escapeHtml(block.id || '')}"${videoActionTargetAttr}${countdownActionTargetAttr}${hiddenAttr}${style}>${backgroundVideo}${html}</div>`
     : html
 }
 
@@ -13766,6 +14088,8 @@ function renderLandingSectionLane(lane, context = {}) {
   const style = renderBlockStyleVars(section)
   const className = `${renderBlockStyleClassName(section)} rstk-section-lane`
   const videoActionTargetAttr = renderVideoActionTargetAttribute(section, context)
+  const countdownActionTargetAttr = renderCountdownActionTargetAttribute(section, context)
+  const hiddenAttr = renderBlockHiddenAttributes(section)
   const hasHeading = cleanString(section.content) || cleanString(settings.subtitle)
   const heading = hasHeading
     ? `
@@ -13777,7 +14101,7 @@ function renderLandingSectionLane(lane, context = {}) {
     : ''
 
   return `
-    <section class="${escapeHtml(className)}"${videoActionTargetAttr}${style}>
+    <section class="${escapeHtml(className)}" data-rstk-block-id="${escapeHtml(section.id || '')}"${videoActionTargetAttr}${countdownActionTargetAttr}${hiddenAttr}${style}>
       ${renderBlockBackgroundVideo(section)}
       <div class="rstk-section-inner">
         ${heading}
@@ -13964,6 +14288,60 @@ function buildEmbeddedFormProxyStyle(theme = {}, formStyleContext = null) {
   `
 }
 
+function splitCountdownSeconds(totalSeconds) {
+  const safe = Math.max(0, Math.floor(Number.isFinite(Number(totalSeconds)) ? Number(totalSeconds) : 0))
+  const days = Math.floor(safe / 86400)
+  const hours = Math.floor((safe % 86400) / 3600)
+  const minutes = Math.floor((safe % 3600) / 60)
+  const seconds = safe % 60
+  return { days, hours, minutes, seconds }
+}
+
+function formatCountdownPart(value) {
+  return String(Math.max(0, Math.floor(Number(value) || 0))).padStart(2, '0')
+}
+
+function getCountdownInitialParts(settings = {}) {
+  if (normalizeCountdownMode(settings.countdownMode) === 'date') {
+    const targetTime = Date.parse(cleanString(settings.countdownTargetDate))
+    if (Number.isFinite(targetTime)) {
+      return splitCountdownSeconds(Math.max(0, Math.floor((targetTime - Date.now()) / 1000)))
+    }
+  }
+
+  return splitCountdownSeconds(countdownDurationSeconds(settings))
+}
+
+function renderCountdownBlock(block = {}) {
+  const settings = block.settings || {}
+  const config = getCountdownRuntimeConfig(block)
+  const parts = getCountdownInitialParts(settings)
+  const showLabels = countdownShowLabels(settings)
+  const units = [
+    { key: 'days', label: 'Días', value: parts.days },
+    { key: 'hours', label: 'Horas', value: parts.hours },
+    { key: 'minutes', label: 'Min', value: parts.minutes },
+    { key: 'seconds', label: 'Seg', value: parts.seconds }
+  ]
+  const title = cleanString(block.content)
+  const expiredText = cleanString(config.expiredText)
+
+  return `
+    <section class="rstk-countdown" data-rstk-countdown="${escapeHtml(JSON.stringify(config))}">
+      ${title ? `<p class="rstk-countdown-title">${escapeHtml(title)}</p>` : ''}
+      <div class="rstk-countdown-grid" aria-label="Cuenta regresiva">
+        ${units.map(unit => `
+          <span class="rstk-countdown-unit" data-rstk-countdown-unit="${escapeHtml(unit.key)}">
+            <strong data-rstk-countdown-part="${escapeHtml(unit.key)}">${formatCountdownPart(unit.value)}</strong>
+            ${showLabels ? `<span>${escapeHtml(unit.label)}</span>` : ''}
+          </span>
+        `).join('')}
+      </div>
+      ${expiredText ? `<p class="rstk-countdown-note" data-rstk-countdown-expired hidden>${escapeHtml(expiredText)}</p>` : ''}
+    </section>
+  `
+}
+
 function renderContentBlock(block, context = {}) {
   const content = escapeHtml(block.content)
   const settings = block.settings || {}
@@ -14072,6 +14450,10 @@ function renderContentBlock(block, context = {}) {
     }
 
     return `<div class="rstk-media rstk-media-empty"><span class="rstk-play">${RSTK_ICONS.play}</span>Agrega la URL del video</div>`
+  }
+
+  if (block.blockType === 'countdown') {
+    return renderCountdownBlock(block)
   }
 
   if (block.blockType === 'button') {
@@ -15061,6 +15443,7 @@ const RSTK_BASE_CSS = `
   *,*::before,*::after{box-sizing:border-box}
   [hidden]{display:none !important}
   [data-rstk-video-action-hidden="true"]{display:none!important}
+  [data-rstk-user-hidden="true"],[data-rstk-countdown-hidden="true"]{display:none!important}
   html{-webkit-text-size-adjust:100%}
   body{
     margin:0;min-height:100vh;
@@ -15166,9 +15549,17 @@ const RSTK_BASE_CSS = `
   .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);max-width:var(--rstk-content-max,60ch)}
   .rstk-kicker{margin:0;color:var(--rstk-accent);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em}
   .rstk-text{margin:0;color:color-mix(in srgb,var(--rstk-ink) 80%,transparent);max-width:var(--rstk-content-max,66ch)}
-  .rstk-hero,.rstk-section-break,.rstk-cta,.rstk-section-list,.rstk-embedded-form{display:grid;gap:14px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
+  .rstk-hero,.rstk-section-break,.rstk-cta,.rstk-section-list,.rstk-countdown,.rstk-embedded-form{display:grid;gap:14px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
   .rstk-hero{gap:16px}
   .rstk-section-break h2,.rstk-section-list h2,.rstk-cta h2,.rstk-embedded-form h2{margin:0;font-size:clamp(1.25rem,2.6vw,1.7rem);font-weight:var(--rstk-heading-weight);letter-spacing:0}
+  .rstk-countdown{width:100%;max-width:var(--rstk-content-max,720px);margin-left:var(--rstk-content-margin-left,0);margin-right:var(--rstk-content-margin-right,0)}
+  .rstk-countdown-title,.rstk-countdown-note{margin:0}
+  .rstk-countdown-title{color:var(--rstk-block-text,var(--rstk-ink));font-weight:var(--rstk-block-weight,700);font-size:var(--rstk-block-size,1.05rem);line-height:var(--rstk-block-line-height,1.35)}
+  .rstk-countdown-grid{width:100%;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--rstk-countdown-gap,10px)}
+  .rstk-countdown-unit{min-width:0;display:grid;gap:4px;justify-items:center;align-content:center;border:var(--rstk-block-border-width,1px) solid var(--rstk-countdown-unit-border,var(--rstk-block-border,var(--rstk-border)));border-radius:var(--rstk-countdown-unit-radius,var(--rstk-block-radius,var(--rstk-radius)));background:var(--rstk-countdown-unit-bg,var(--rstk-block-bg,transparent));padding:clamp(12px,2vw,20px) 8px}
+  .rstk-countdown-unit strong{color:var(--rstk-countdown-number,var(--rstk-block-text,var(--rstk-ink)));font-family:var(--rstk-block-font,var(--rstk-display));font-size:var(--rstk-countdown-number-size,clamp(2rem,5vw,3rem));font-weight:850;line-height:.95;letter-spacing:0}
+  .rstk-countdown-unit span{color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 66%,var(--rstk-muted) 34%);font-size:.72rem;font-weight:700;letter-spacing:0;text-transform:uppercase}
+  .rstk-countdown-note{color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 72%,var(--rstk-muted) 28%);font-size:.9rem}
 
   .rstk-button-link,.rstk-actions button{
     -webkit-appearance:none;appearance:none;cursor:pointer;
@@ -15335,6 +15726,7 @@ const RSTK_BASE_CSS = `
 
   @media (max-width:640px){
     .rstk-list-grid{grid-template-columns:1fr}
+    .rstk-countdown-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
     .rstk-site-panel{align-items:flex-start;flex-direction:column}
     .rstk-site-panel-footer{align-items:center}
     .rstk-site-panel-links{justify-content:flex-start}
@@ -16702,12 +17094,13 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const videoLookupBlocks = [...blocks, ...popupBlocks]
   const videoActionTargetIds = collectVideoActionTargetIds(videoLookupBlocks)
   const videoActionInitialHiddenTargetIds = collectVideoActionInitialHiddenTargetIds(videoLookupBlocks)
+  const countdownActionTargetIds = collectCountdownActionTargetIds(videoLookupBlocks)
   const noTrack = !trackingEnabled || preview
   const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
     buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
     buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: true })
   ])
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, formStyleContext: { baseFont: template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, countdownActionTargetIds, formStyleContext: { baseFont: template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
@@ -16740,6 +17133,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     : ''
   const videoTrackingScript = !noTrack ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
   const videoActionsScript = buildVideoActionsRuntimeScript(videoLookupBlocks)
+  const countdownRuntimeScript = buildCountdownRuntimeScript(videoLookupBlocks)
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
   const paramPreservationScript = preview ? '' : buildParamPreservationScript()
@@ -16784,6 +17178,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   </div>
   ${popupHtml}
   ${videoActionsScript}
+  ${countdownRuntimeScript}
   ${paramPreservationScript}
   ${siteNavHtml ? `<script>${SITE_NAV_SCRIPT}</script>` : ''}
   <script>
