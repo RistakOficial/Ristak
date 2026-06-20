@@ -30,8 +30,8 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
         settings: {
           pageId: 'page-1',
           embeddedPages: [
-            { id: 'step-1', title: 'Paso 1', sortOrder: 0 },
-            { id: 'step-2', title: 'Paso 2', sortOrder: 1 }
+            { id: 'step-1', title: 'Paso 1', sortOrder: 0, buttonText: 'Siguiente pregunta' },
+            { id: 'step-2', title: 'Paso 2', sortOrder: 1, buttonText: 'Enviar solicitud', buttonSubtitle: 'Finalizar' }
           ],
           embeddedBlocks: [
             {
@@ -100,6 +100,9 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /data-embedded-page-content="step-1"/)
   assert.match(html, /data-embedded-page-content="step-2" hidden/)
   assert.match(html, /data-embedded-next/)
+  assert.match(html, /<button type="button" data-embedded-next>Siguiente pregunta<\/button>/)
+  assert.match(html, /data-embedded-page-content="step-2" hidden data-next-label="Enviar solicitud" data-submit-label="Enviar solicitud" data-submit-subtitle="Finalizar"/)
+  assert.match(html, /<button type="submit" data-submit hidden><span class="rstk-button-label">Enviar solicitud<\/span><span class="rstk-button-subtitle">Finalizar<\/span><\/button>/)
   assert.match(html, /data-embedded-back hidden/)
   assert.match(html, /data-submit hidden/)
   assert.match(html, /Título interno del formulario/)
@@ -124,8 +127,8 @@ test('standard form content-only pages still render navigation actions', async (
     theme: {
       template: 'compact',
       pages: [
-        { id: 'page-1', title: 'Intro', sortOrder: 0 },
-        { id: 'page-content', title: 'Video', sortOrder: 1 }
+        { id: 'page-1', title: 'Intro', sortOrder: 0, buttonText: 'Ver siguiente parte' },
+        { id: 'page-content', title: 'Video', sortOrder: 1, buttonText: 'Enviar mi solicitud' }
       ]
     },
     blocks: [
@@ -187,7 +190,7 @@ test('standard form content-only pages still render navigation actions', async (
   })
 
   assert.match(firstPageHtml, /Antes de empezar/)
-  assert.match(firstPageHtml, /<button type="button" data-form-next>/)
+  assert.match(firstPageHtml, /<button type="button" data-form-next>Ver siguiente parte<\/button>/)
   assert.match(firstPageHtml, /<button type="submit" hidden data-submit>/)
 
   const lastContentPageHtml = await renderPublicSiteHtml(site, {
@@ -199,5 +202,5 @@ test('standard form content-only pages still render navigation actions', async (
   assert.match(lastContentPageHtml, /Ultima pagina antes de enviar/)
   assert.doesNotMatch(lastContentPageHtml, /<button type="button" data-form-next>/)
   assert.doesNotMatch(lastContentPageHtml, /<button type="submit" hidden data-submit>/)
-  assert.match(lastContentPageHtml, /<button type="submit"\s+data-submit>/)
+  assert.match(lastContentPageHtml, /<button type="submit"\s+data-submit><span class="rstk-button-label">Enviar mi solicitud<\/span><\/button>/)
 })

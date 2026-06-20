@@ -536,7 +536,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
 	    '--rstk-form-label-size': `${themeNumber(theme, 'formLabelSize', 15, 11, 28)}px`,
 	    '--rstk-form-input-size': `${themeNumber(theme, 'formInputSize', 16, 11, 28)}px`,
 	    '--rstk-form-help-size': `${themeNumber(theme, 'formHelpSize', 14, 10, 24)}px`,
-	    '--rstk-form-weight': theme.formFontWeight === 'bold' ? '850' : theme.formFontWeight === 'normal' ? '400' : '700',
+	    '--rstk-form-weight': theme.formFontWeight === 'bold' ? '700' : theme.formFontWeight === 'normal' ? '400' : '500',
 	    '--rstk-form-font-style': theme.formFontStyle === 'italic' ? 'italic' : 'normal',
 	    '--rstk-form-text-decoration': theme.formTextDecoration === 'underline' ? 'underline' : 'none',
 	    '--rstk-form-label-color': paintFallbackColor(themePaint(theme, 'formLabelColor', ink), ink),

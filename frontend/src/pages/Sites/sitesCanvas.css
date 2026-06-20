@@ -786,7 +786,7 @@
   font-family: var(--rstk-form-font, var(--rstk-font));
   font-size: var(--rstk-form-label-size, .95rem);
   font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 700);
+  font-weight: var(--rstk-form-weight, 500);
   text-decoration: var(--rstk-form-text-decoration, none);
 }
 .rstkCanvas .rstk-required { color: #dc2626; margin-left: 3px; }
@@ -819,7 +819,7 @@
   font-family: var(--rstk-form-font, var(--rstk-font));
   font-size: var(--rstk-form-input-size, 1rem);
   font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 700);
+  font-weight: var(--rstk-form-weight, 500);
   text-decoration: var(--rstk-form-text-decoration, none);
   padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px);
 }
@@ -846,7 +846,7 @@
   font-family: var(--rstk-form-font, var(--rstk-font));
   font-size: var(--rstk-form-input-size, 1rem);
   font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 700);
+  font-weight: var(--rstk-form-weight, 500);
   text-decoration: var(--rstk-form-text-decoration, none);
   padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px);
 }
@@ -897,7 +897,7 @@
   font-family: var(--rstk-form-font, var(--rstk-font));
   font-size: var(--rstk-form-input-size, 1rem);
   font-style: var(--rstk-form-font-style, normal);
-  font-weight: var(--rstk-form-weight, 700);
+  font-weight: var(--rstk-form-weight, 500);
   text-decoration: var(--rstk-form-text-decoration, none);
   padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px);
 }
@@ -941,7 +941,7 @@ html body .rstkCanvas input[type='week'] {
   font-family: var(--rstk-form-font, var(--rstk-font)) !important;
   font-size: var(--rstk-form-input-size, 1rem) !important;
   font-style: var(--rstk-form-font-style, normal) !important;
-  font-weight: var(--rstk-form-weight, 700) !important;
+  font-weight: var(--rstk-form-weight, 500) !important;
   padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px) !important;
 }
 

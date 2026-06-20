@@ -100,6 +100,8 @@ export interface SitePage {
   sortOrder: number
   parentPageId?: string
   slug?: string
+  buttonText?: string
+  buttonSubtitle?: string
   importedAssetPath?: string
   importedOriginalTitle?: string
   headerTrackingCode?: string

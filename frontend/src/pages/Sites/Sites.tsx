@@ -3193,22 +3193,34 @@ const editorPatchHasChanges = (current: Record<string, unknown>, patch: Record<s
 const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
   const seen = new Set<string>()
   const normalized = rawPages
-    .map((page, index) => ({
-      id: page?.id || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
-      title: page?.title || `Página ${index + 1}`,
-      sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
-      ...(page?.parentPageId ? { parentPageId: page.parentPageId } : {}),
-      ...(page?.slug ? { slug: page.slug } : {}),
-      ...(page?.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
-      ...(page?.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
-      ...(page?.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
-      metaCapiEnabled: Boolean(page?.metaCapiEnabled),
-      metaEventName: normalizeMetaEventName(page?.metaEventName, 'none'),
-      metaTrigger: normalizeMetaTrigger(page?.metaTrigger),
-      ...(hasMetaEventParameters(page?.metaEventParameters)
-        ? { metaEventParameters: pruneMetaEventParametersForEvent(page?.metaEventParameters, page?.metaEventName) }
-        : {})
-    }))
+    .map((page, index) => {
+      const source = page as SitePage & { button_text?: string; button_subtitle?: string }
+      const buttonText = typeof (source?.buttonText ?? source?.button_text) === 'string'
+        ? String(source.buttonText ?? source.button_text).trim()
+        : ''
+      const buttonSubtitle = typeof (source?.buttonSubtitle ?? source?.button_subtitle) === 'string'
+        ? String(source.buttonSubtitle ?? source.button_subtitle).trim()
+        : ''
+
+      return {
+        id: page?.id || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
+        title: page?.title || `Página ${index + 1}`,
+        sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
+        ...(page?.parentPageId ? { parentPageId: page.parentPageId } : {}),
+        ...(page?.slug ? { slug: page.slug } : {}),
+        ...(buttonText ? { buttonText } : {}),
+        ...(buttonSubtitle ? { buttonSubtitle } : {}),
+        ...(page?.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
+        ...(page?.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
+        ...(page?.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
+        metaCapiEnabled: Boolean(page?.metaCapiEnabled),
+        metaEventName: normalizeMetaEventName(page?.metaEventName, 'none'),
+        metaTrigger: normalizeMetaTrigger(page?.metaTrigger),
+        ...(hasMetaEventParameters(page?.metaEventParameters)
+          ? { metaEventParameters: pruneMetaEventParametersForEvent(page?.metaEventParameters, page?.metaEventName) }
+          : {})
+      }
+    })
     .filter(page => {
       if (!page.id || seen.has(page.id)) return false
       seen.add(page.id)
@@ -3262,6 +3274,51 @@ const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
 
 const getFormContentPages = (pages: SitePage[]) => pages.filter(page => !isFormFinalPage(page))
 
+const getFormActionPages = (site: PublicSite | null | undefined, pages: SitePage[]) => (
+  isStandardForm(site)
+    ? getFormContentPages(pages)
+    : pages.filter(page => !isFormFinalPage(page))
+)
+
+const getPageButtonText = (page?: SitePage | null) => (
+  typeof page?.buttonText === 'string' ? page.buttonText.trim() : ''
+)
+
+const getPageButtonSubtitle = (page?: SitePage | null) => (
+  typeof page?.buttonSubtitle === 'string' ? page.buttonSubtitle.trim() : ''
+)
+
+const getFormPageForAction = (pages: SitePage[], pageId?: string) => (
+  pages.find(page => page.id === pageId) || pages[0] || null
+)
+
+const isLastFormActionPage = (site: PublicSite | null | undefined, pages: SitePage[], pageId?: string) => {
+  const actionPages = getFormActionPages(site, pages)
+  const activePage = actionPages.find(page => page.id === pageId) || getFormPageForAction(actionPages, pageId)
+  if (!activePage || !actionPages.length) return true
+  return actionPages[actionPages.length - 1]?.id === activePage.id
+}
+
+const getFormPageActionLabel = (site: PublicSite | null | undefined, pages: SitePage[], pageId?: string) => {
+  const activePage = getFormPageForAction(pages, pageId)
+  const explicitText = getPageButtonText(activePage)
+  if (explicitText) return explicitText
+  const isLastPage = isLastFormActionPage(site, pages, activePage?.id)
+  if (isLastPage) return getThemeString(site?.theme, 'submitText') || 'Enviar'
+  return isStandardForm(site)
+    ? getThemeString(site?.theme, 'continueText') || 'Continuar'
+    : getThemeString(site?.theme, 'nextText') || 'Siguiente'
+}
+
+const getFormPageActionSubtitle = (site: PublicSite | null | undefined, pages: SitePage[], pageId?: string) => {
+  const activePage = getFormPageForAction(pages, pageId)
+  const explicitSubtitle = getPageButtonSubtitle(activePage)
+  if (explicitSubtitle) return explicitSubtitle
+  return isLastFormActionPage(site, pages, activePage?.id)
+    ? getThemeString(site?.theme, 'submitSubtitle')
+    : ''
+}
+
 const normalizeEmbeddedFormPages = (rawPages?: unknown): SitePage[] => {
   const normalized = normalizePageList(Array.isArray(rawPages) ? rawPages as SitePage[] : [])
   const contentPages = getFormContentPages(normalized)
@@ -3294,12 +3351,6 @@ const getFormAddPageIndex = (site: PublicSite, pages: SitePage[]) => (
     : pages.length
 )
 
-const isLastFormContentPage = (site: PublicSite, pages: SitePage[], pageId?: string) => {
-  if (!isStandardForm(site) || !pageId || isFormFinalPageId(pageId)) return true
-  const contentPages = getFormContentPages(pages)
-  return contentPages[contentPages.length - 1]?.id === pageId
-}
-
 const makeFunnelPage = (index: number, extra?: Partial<SitePage>): SitePage => ({
   id: `page-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
   title: `Página ${index + 1}`,
@@ -3317,6 +3368,8 @@ const normalizePagesForSave = (pages: SitePage[]) =>
     sortOrder: index,
     ...(page.parentPageId ? { parentPageId: page.parentPageId } : {}),
     ...(page.slug ? { slug: page.slug } : {}),
+    ...(getPageButtonText(page) ? { buttonText: getPageButtonText(page) } : {}),
+    ...(getPageButtonSubtitle(page) ? { buttonSubtitle: getPageButtonSubtitle(page) } : {}),
     ...(page.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
     ...(page.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
     ...(page.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
@@ -4739,6 +4792,7 @@ function FormEmbedEditorPanel({
   onSaveSite,
   onActivePageChange,
   onAddPage,
+  onPatchPage,
   onRenamePage,
   onDeletePage
 }: {
@@ -4765,6 +4819,7 @@ function FormEmbedEditorPanel({
   onSaveSite: () => void
   onActivePageChange: (pageId: string) => void
   onAddPage: () => void
+  onPatchPage: (pageId: string, patch: Partial<SitePage>) => void
   onRenamePage: (pageId: string, title: string) => void
   onDeletePage: (pageId: string) => void
 }) {
@@ -4798,6 +4853,7 @@ function FormEmbedEditorPanel({
     patchActiveField({ blockType: nextType, settings: nextSettings })
   }
   const isSubmitSelected = activeElement === 'submit'
+  const activePageButtonPlaceholder = activePage ? getFormPageActionLabel(site, pages, activePage.id) : ''
 
   const renderActiveContentControls = () => {
     if (!activeField) return null
@@ -5056,6 +5112,28 @@ function FormEmbedEditorPanel({
           <small>Texto, navegación y acción final del formulario</small>
         </div>
       </div>
+      {activePage && (
+        <>
+          <label className={styles.field}>
+            <span>Texto en esta página</span>
+            <input
+              value={activePage.buttonText || ''}
+              placeholder={activePageButtonPlaceholder}
+              onChange={(event) => onPatchPage(activePage.id, { buttonText: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+          <label className={styles.field}>
+            <span>Subtítulo en esta página</span>
+            <input
+              value={activePage.buttonSubtitle || ''}
+              placeholder={getFormPageActionSubtitle(site, pages, activePage.id) || 'Opcional'}
+              onChange={(event) => onPatchPage(activePage.id, { buttonSubtitle: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+        </>
+      )}
       <FormSubmitContentControls
         site={site}
         settings={settings}
@@ -5122,6 +5200,24 @@ function FormEmbedEditorPanel({
             <label className={styles.field}>
               <span>Nombre de esta página</span>
               <input value={activePage.title || ''} onChange={(event) => onRenamePage(activePage.id, event.target.value)} onBlur={onSave} />
+            </label>
+            <label className={styles.field}>
+              <span>Texto del botón</span>
+              <input
+                value={activePage.buttonText || ''}
+                placeholder={activePageButtonPlaceholder}
+                onChange={(event) => onPatchPage(activePage.id, { buttonText: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+            <label className={styles.field}>
+              <span>Subtítulo del botón</span>
+              <input
+                value={activePage.buttonSubtitle || ''}
+                placeholder={getFormPageActionSubtitle(site, pages, activePage.id) || 'Opcional'}
+                onChange={(event) => onPatchPage(activePage.id, { buttonSubtitle: event.target.value })}
+                onBlur={onSave}
+              />
             </label>
             <button type="button" onClick={() => onDeletePage(activePage.id)} disabled={pages.length <= 1}>
               <Trash2 size={14} />
@@ -5603,8 +5699,11 @@ export const Sites: React.FC = () => {
       (activePage && isStandardForm(editorSite) && !isFormFinalPage(activePage))
     )
   )
-  const formCanvasActionLabel = editorSite && activePage && isStandardForm(editorSite) && !isLastFormContentPage(editorSite, pages, activePage.id)
-    ? getThemeString(editorSite.theme, 'continueText') || 'Continuar'
+  const formCanvasActionLabel = editorSite && activePage && isFormSite(editorSite)
+    ? getFormPageActionLabel(editorSite, pages, activePage.id)
+    : undefined
+  const formCanvasActionSubtitle = editorSite && activePage && isFormSite(editorSite)
+    ? getFormPageActionSubtitle(editorSite, pages, activePage.id)
     : undefined
   const seoValidation = editorSite ? getSeoValidationState(editorSite) : null
   const editorSaveStatus = useMemo(() => {
@@ -8342,11 +8441,15 @@ export const Sites: React.FC = () => {
     setActiveEmbeddedFormPageId(nextPage.id)
   }
 
-  const renameEmbeddedFormPage = (pageId: string, title: string) => {
+  const patchEmbeddedFormPage = (pageId: string, patch: Partial<SitePage>) => {
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
-    const nextPages = context.pages.map(page => page.id === pageId ? { ...page, title } : page)
+    const nextPages = context.pages.map(page => page.id === pageId ? { ...page, ...patch } : page)
     patchEmbeddedFormFieldsLocal(context.fields, undefined, nextPages)
+  }
+
+  const renameEmbeddedFormPage = (pageId: string, title: string) => {
+    patchEmbeddedFormPage(pageId, { title })
   }
 
   const deleteEmbeddedFormPage = (pageId: string) => {
@@ -9653,7 +9756,7 @@ export const Sites: React.FC = () => {
                               )}
                               {formCanvasShowsActions && (
                                 <div className="rstk-actions">
-                                  <button type="button" data-submit><SubmitButtonContent theme={editorSite.theme} label={formCanvasActionLabel} /></button>
+                                  <button type="button" data-submit><SubmitButtonContent theme={editorSite.theme} label={formCanvasActionLabel} subtitle={formCanvasActionSubtitle} /></button>
                                 </div>
                               )}
                               </div>
@@ -9699,6 +9802,7 @@ export const Sites: React.FC = () => {
                     onSaveSite={() => handleSaveSite()}
                     onActivePageChange={selectEmbeddedFormPage}
                     onAddPage={addEmbeddedFormPage}
+                    onPatchPage={patchEmbeddedFormPage}
                     onRenamePage={renameEmbeddedFormPage}
                     onDeletePage={deleteEmbeddedFormPage}
                   />
@@ -24999,9 +25103,16 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       })
       : []
     const resolvedItems = embeddedBlocks.length ? embeddedBlocks : selectedFormBlocks
+    const resolvedPages = embeddedFormEditor?.pages || (embeddedBlocks.length ? normalizeEmbeddedFormPages(settings.embeddedPages) : selectedFormPages)
+    const activeEmbeddedPageId = embeddedFormEditor?.activePageId || resolvedPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
     const visibleEditorItems = embeddedFormEditor
-      ? getEmbeddedFormPageFields(resolvedItems, embeddedFormEditor.pages, embeddedFormEditor.activePageId)
+      ? getEmbeddedFormPageFields(resolvedItems, resolvedPages, activeEmbeddedPageId)
+      : resolvedPages.length > 1
+        ? getEmbeddedFormPageFields(resolvedItems, resolvedPages, activeEmbeddedPageId)
       : resolvedItems
+    const buttonCopySite = form || site
+    const embeddedButtonLabel = getFormPageActionLabel(buttonCopySite, resolvedPages, activeEmbeddedPageId)
+    const embeddedButtonSubtitle = getFormPageActionSubtitle(buttonCopySite, resolvedPages, activeEmbeddedPageId)
     return (
       <section className="rstk-embedded-form">
         {embeddedFormEditor ? (
@@ -25034,7 +25145,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               embeddedFormEditor.onSelectSubmit()
             } : undefined}
           >
-            <SubmitButtonContent theme={site?.theme} />
+            <SubmitButtonContent theme={site?.theme} label={embeddedButtonLabel} subtitle={embeddedButtonSubtitle} />
           </button>
         </div>
       </section>
@@ -25966,13 +26077,15 @@ const InspectorEmptyState: React.FC<{ children: React.ReactNode }> = ({ children
 )
 
 const ActivePageSettings: React.FC<{
+  site: PublicSite
   pages: SitePage[]
   activePageId: string
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
-}> = ({ pages, activePageId, onPatchTheme, onSaveSite }) => {
+}> = ({ site, pages, activePageId, onPatchTheme, onSaveSite }) => {
   const activePage = pages.find(page => page.id === activePageId) || pages[0]
   if (!activePage) return null
+  const canEditButtonCopy = isFormSite(site) && !isFormFinalPage(activePage)
 
   const patchActivePage = (patch: Partial<SitePage>) => {
     onPatchTheme({
@@ -25994,6 +26107,28 @@ const ActivePageSettings: React.FC<{
           onBlur={onSaveSite}
         />
       </label>
+      {canEditButtonCopy && (
+        <>
+          <label className={styles.field}>
+            <span>Texto del botón</span>
+            <input
+              value={activePage.buttonText || ''}
+              placeholder={getFormPageActionLabel(site, pages, activePage.id)}
+              onChange={(event) => patchActivePage({ buttonText: event.target.value })}
+              onBlur={onSaveSite}
+            />
+          </label>
+          <label className={styles.field}>
+            <span>Subtítulo del botón</span>
+            <input
+              value={activePage.buttonSubtitle || ''}
+              placeholder={getFormPageActionSubtitle(site, pages, activePage.id) || 'Opcional'}
+              onChange={(event) => patchActivePage({ buttonSubtitle: event.target.value })}
+              onBlur={onSaveSite}
+            />
+          </label>
+        </>
+      )}
     </div>
   )
 }
@@ -26065,7 +26200,7 @@ const PageInspector: React.FC<{
 
   const pageConfigContent = (
     <>
-      <ActivePageSettings pages={pages} activePageId={activePageId} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      <ActivePageSettings site={site} pages={pages} activePageId={activePageId} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       {metaPixelConnected && isFormSite(site) && (
         <div className={styles.settingsGroup}>
           <div className={styles.panelSubheader}>Conversión del formulario</div>

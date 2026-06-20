@@ -11287,6 +11287,8 @@ function normalizePageList(rawPages = []) {
       )
       const parentPageId = cleanString(page?.parentPageId || page?.parent_page_id)
       const slug = slugifyPageSegment(page?.slug)
+      const buttonText = cleanString(page?.buttonText || page?.button_text)
+      const buttonSubtitle = cleanString(page?.buttonSubtitle || page?.button_subtitle)
 
       return {
         id: cleanString(page?.id) || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
@@ -11298,6 +11300,8 @@ function normalizePageList(rawPages = []) {
         ...(hasSiteMetaEventParameters(metaEventParameters) ? { metaEventParameters } : {}),
         ...(parentPageId ? { parentPageId } : {}),
         ...(slug ? { slug } : {}),
+        ...(buttonText ? { buttonText } : {}),
+        ...(buttonSubtitle ? { buttonSubtitle } : {}),
         ...(importedAssetPath ? { importedAssetPath } : {}),
         ...(importedOriginalTitle ? { importedOriginalTitle } : {}),
         ...(headerTrackingCode ? { headerTrackingCode } : {})
@@ -11439,6 +11443,41 @@ function normalizeEmbeddedFormPages(rawPages = []) {
   const pages = contentPages.length ? contentPages : normalized
   return (pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Formulario', sortOrder: 0 }])
     .map((page, index) => ({ ...page, sortOrder: index }))
+}
+
+function getFormActionPagesForCopy(site, pages = []) {
+  if (site?.siteType === 'standard_form') {
+    return pages.filter(page => !FORM_FINAL_PAGE_IDS.has(page.id))
+  }
+  return pages.filter(page => !FORM_FINAL_PAGE_IDS.has(page.id))
+}
+
+function getFormPageButtonCopy({
+  site = null,
+  pages = [],
+  pageId = '',
+  submitText = 'Enviar',
+  submitSubtitle = '',
+  continueText = 'Continuar',
+  nextText = 'Siguiente'
+} = {}) {
+  const actionPages = getFormActionPagesForCopy(site, pages)
+  const page = actionPages.find(item => item.id === pageId)
+    || pages.find(item => item.id === pageId)
+    || actionPages[0]
+    || pages[0]
+    || null
+  const actionIndex = page ? actionPages.findIndex(item => item.id === page.id) : -1
+  const isLastPage = actionIndex < 0 || actionIndex >= actionPages.length - 1
+  const explicitText = cleanString(page?.buttonText || page?.button_text)
+  const explicitSubtitle = cleanString(page?.buttonSubtitle || page?.button_subtitle)
+  const intermediateText = site?.siteType === 'standard_form' ? continueText : nextText
+  return {
+    label: explicitText || (isLastPage ? submitText : intermediateText) || (isLastPage ? 'Enviar' : 'Siguiente'),
+    subtitle: explicitSubtitle || (isLastPage ? submitSubtitle : ''),
+    isLastPage,
+    pageId: page?.id || ''
+  }
 }
 
 function getEmbeddedFormPageFields(fields = [], pages = [], pageId = '') {
@@ -13635,7 +13674,27 @@ function renderContentBlock(block, context = {}) {
       })
     const fields = collectFieldBlocks(embeddedItems)
     const hasEmbeddedPages = embeddedPages.length > 1
-    const submitButtonContent = renderSubmitButtonContent(context.submitText, context.submitSubtitle)
+    const firstEmbeddedPageId = embeddedPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+    const lastEmbeddedPageId = embeddedPages[embeddedPages.length - 1]?.id || firstEmbeddedPageId
+    const firstButtonCopy = getFormPageButtonCopy({
+      site: context.site,
+      pages: embeddedPages,
+      pageId: firstEmbeddedPageId,
+      submitText: context.submitText,
+      submitSubtitle: context.submitSubtitle,
+      continueText: context.continueText,
+      nextText: context.nextText
+    })
+    const finalButtonCopy = getFormPageButtonCopy({
+      site: context.site,
+      pages: embeddedPages,
+      pageId: hasEmbeddedPages ? lastEmbeddedPageId : firstEmbeddedPageId,
+      submitText: context.submitText,
+      submitSubtitle: context.submitSubtitle,
+      continueText: context.continueText,
+      nextText: context.nextText
+    })
+    const submitButtonContent = renderSubmitButtonContent(finalButtonCopy.label, finalButtonCopy.subtitle)
     const renderEmbeddedItem = (item, pageId) => {
       if (FIELD_BLOCK_TYPES.has(item.blockType)) {
         return wrapRenderedBlock(item, renderFieldBlock(item, false, pageId || getBlockPageId(item, embeddedPages), context), context)
@@ -13652,8 +13711,17 @@ function renderContentBlock(block, context = {}) {
         <div class="rstk-embedded-pages" data-embedded-form-pages>
           ${embeddedPages.map((page, index) => {
             const pageItems = getEmbeddedFormPageFields(embeddedItems, embeddedPages, page.id)
+            const buttonCopy = getFormPageButtonCopy({
+              site: context.site,
+              pages: embeddedPages,
+              pageId: page.id,
+              submitText: context.submitText,
+              submitSubtitle: context.submitSubtitle,
+              continueText: context.continueText,
+              nextText: context.nextText
+            })
             return `
-              <div data-embedded-page-content="${escapeHtml(page.id)}"${index === 0 ? '' : ' hidden'}>
+              <div data-embedded-page-content="${escapeHtml(page.id)}"${index === 0 ? '' : ' hidden'} data-next-label="${escapeHtml(buttonCopy.label)}" data-submit-label="${escapeHtml(buttonCopy.label)}" data-submit-subtitle="${escapeHtml(buttonCopy.subtitle)}">
                 ${pageItems.length
                   ? pageItems.map(item => renderEmbeddedItem(item, page.id)).join('\n')
                   : `<p class="rstk-help">Esta página no tiene contenido.</p>`}
@@ -13669,7 +13737,7 @@ function renderContentBlock(block, context = {}) {
         ${fields.length ? `
           <div class="rstk-actions rstk-embed-actions">
             ${hasEmbeddedPages ? `<button type="button" class="rstk-secondary" data-embedded-back hidden>${escapeHtml(context.backText || 'Anterior')}</button>` : ''}
-            ${hasEmbeddedPages ? `<button type="button" data-embedded-next>${escapeHtml(context.nextText || 'Siguiente')}</button>` : ''}
+            ${hasEmbeddedPages ? `<button type="button" data-embedded-next>${escapeHtml(firstButtonCopy.label)}</button>` : ''}
             <button type="submit" data-submit${hasEmbeddedPages ? ' hidden' : ''}>${submitButtonContent}</button>
           </div>
           <p class="rstk-submit-message" data-message role="status"></p>
@@ -14730,7 +14798,7 @@ const RSTK_BASE_CSS = `
   .rstk-block-style.rstk-field,.rstk-block-style > .rstk-field{width:min(100%,var(--rstk-field-width,100%));justify-self:center}
 	  .rstk-kind-form form,.rstk-embedded-form{font-family:var(--rstk-form-font,var(--rstk-font))}
 	  label{font-size:.95rem;font-weight:700;color:var(--rstk-ink)}
-	  .rstk-kind-form .rstk-field > label,.rstk-embedded-form .rstk-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-label-size,.95rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none)}
+	  .rstk-kind-form .rstk-field > label,.rstk-embedded-form .rstk-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-label-size,.95rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none)}
 	  .rstk-required{color:#dc2626;margin-left:3px}
 	  .rstk-help{margin:0;color:var(--rstk-muted);font-size:.9rem}
 	  .rstk-kind-form .rstk-help,.rstk-embedded-form .rstk-help{color:var(--rstk-form-help-color,var(--rstk-muted));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-help-size,.9rem);font-style:var(--rstk-form-font-style,normal);text-decoration:var(--rstk-form-text-decoration,none)}
@@ -14739,10 +14807,10 @@ const RSTK_BASE_CSS = `
 	    background:var(--rstk-input-bg);color:var(--rstk-input-ink);font:inherit;font-size:1rem;
 	    padding:13px 14px;outline:none;transition:border-color .15s ease,box-shadow .15s ease;
 	  }
-	  .rstk-kind-form .rstk-field > input,.rstk-kind-form .rstk-field > textarea,.rstk-kind-form .rstk-field > select,.rstk-embedded-form .rstk-field > input,.rstk-embedded-form .rstk-field > textarea,.rstk-embedded-form .rstk-field > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
+	  .rstk-kind-form .rstk-field > input,.rstk-kind-form .rstk-field > textarea,.rstk-kind-form .rstk-field > select,.rstk-embedded-form .rstk-field > input,.rstk-embedded-form .rstk-field > textarea,.rstk-embedded-form .rstk-field > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
 	  .rstk-phone-input{display:grid;grid-template-columns:minmax(92px,.24fr) minmax(0,1fr);gap:8px;align-items:stretch}
 	  .rstk-phone-input > select,.rstk-phone-input > input{min-width:0}
-	  .rstk-kind-form .rstk-field .rstk-phone-input > input,.rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > input,.rstk-embedded-form .rstk-field .rstk-phone-input > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
+	  .rstk-kind-form .rstk-field .rstk-phone-input > input,.rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > input,.rstk-embedded-form .rstk-field .rstk-phone-input > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
 	  textarea{resize:vertical;min-height:108px}
 	  input::placeholder,textarea::placeholder{color:color-mix(in srgb,var(--rstk-muted) 80%,transparent)}
 	  .rstk-kind-form input::placeholder,.rstk-kind-form textarea::placeholder,.rstk-embedded-form input::placeholder,.rstk-embedded-form textarea::placeholder{color:var(--rstk-form-placeholder,color-mix(in srgb,var(--rstk-muted) 80%,transparent))}
@@ -14758,7 +14826,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-option:hover{border-color:var(--rstk-accent)}
 	  .rstk-option:has(input:checked){border-color:var(--rstk-accent);background:color-mix(in srgb,var(--rstk-accent) 8%,var(--rstk-input-bg))}
 	  .rstk-option input{width:19px;height:19px;padding:0;flex:0 0 auto;accent-color:var(--rstk-accent)}
-	  .rstk-kind-form .rstk-options .rstk-option,.rstk-embedded-form .rstk-option{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,700);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
+	  .rstk-kind-form .rstk-options .rstk-option,.rstk-embedded-form .rstk-option{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
 	  .rstk-kind-form .rstk-option:has(input:checked),.rstk-embedded-form .rstk-option:has(input:checked){border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-bg,color-mix(in srgb,var(--rstk-accent) 8%,transparent))}
 	  .rstk-kind-form.rstk-choice-cards .rstk-option,.rstk-kind-form.rstk-choice-pills .rstk-option,.rstk-choice-cards .rstk-embedded-form .rstk-option,.rstk-choice-pills .rstk-embedded-form .rstk-option{position:relative;gap:0}
 	  .rstk-kind-form.rstk-choice-cards .rstk-option input,.rstk-kind-form.rstk-choice-pills .rstk-option input,.rstk-choice-cards .rstk-embedded-form .rstk-option input,.rstk-choice-pills .rstk-embedded-form .rstk-option input{position:absolute;opacity:0;pointer-events:none}
@@ -15097,7 +15165,7 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
 	    --rstk-form-label-size:${themeNumber(theme, 'formLabelSize', 15, 11, 28)}px;
 	    --rstk-form-input-size:${themeNumber(theme, 'formInputSize', 16, 11, 28)}px;
 	    --rstk-form-help-size:${themeNumber(theme, 'formHelpSize', 14, 10, 24)}px;
-	    --rstk-form-weight:${theme.formFontWeight === 'bold' ? '850' : theme.formFontWeight === 'normal' ? '400' : '700'};
+	    --rstk-form-weight:${theme.formFontWeight === 'bold' ? '700' : theme.formFontWeight === 'normal' ? '400' : '500'};
 	    --rstk-form-font-style:${theme.formFontStyle === 'italic' ? 'italic' : 'normal'};
 	    --rstk-form-text-decoration:${theme.formTextDecoration === 'underline' ? 'underline' : 'none'};
 	    --rstk-form-label-color:${paintFallbackColor(formLabel, ink)};
@@ -16079,6 +16147,11 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	  const continueText = cleanString(theme.continueText) || 'Continuar'
 	  const nextText = cleanString(theme.nextText) || 'Siguiente'
 	  const backText = cleanString(theme.backText) || 'Anterior'
+  const pageButtonCopies = Object.fromEntries(pages.map(page => {
+    const copy = getFormPageButtonCopy({ site, pages, pageId: page.id, submitText, submitSubtitle, continueText, nextText })
+    return [page.id, { label: copy.label, subtitle: copy.subtitle }]
+  }))
+  const activeButtonCopy = pageButtonCopies[activePage?.id || ''] || getFormPageButtonCopy({ site, pages, pageId: activePage?.id, submitText, submitSubtitle, continueText, nextText })
 	  const storedPageMaxWidth = Number(theme && theme.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
     ? 1440
@@ -16148,9 +16221,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     ? `
       <div class="rstk-actions">
         ${isInteractive && interactivePageCount > 1 ? `<button type="button" class="rstk-secondary" data-back hidden>${escapeHtml(backText)}</button>` : ''}
-        ${isInteractive && interactivePageCount > 1 ? `<button type="button" data-next>${escapeHtml(nextText)}</button>` : ''}
-        ${isStandardFormIntermediatePage ? `<button type="button" data-form-next>${escapeHtml(continueText)}</button>` : ''}
-	        <button type="submit" ${isInteractive && interactivePageCount > 1 || isStandardFormIntermediatePage ? 'hidden' : ''} data-submit>${renderSubmitButtonContent(submitText, submitSubtitle)}</button>
+        ${isInteractive && interactivePageCount > 1 ? `<button type="button" data-next>${escapeHtml(activeButtonCopy.label || nextText)}</button>` : ''}
+        ${isStandardFormIntermediatePage ? `<button type="button" data-form-next>${escapeHtml(activeButtonCopy.label || continueText)}</button>` : ''}
+	        <button type="submit" ${isInteractive && interactivePageCount > 1 || isStandardFormIntermediatePage ? 'hidden' : ''} data-submit>${renderSubmitButtonContent(activeButtonCopy.label || submitText, activeButtonCopy.subtitle || submitSubtitle)}</button>
       </div>
       <p class="rstk-submit-message" data-message role="status"></p>
     `
@@ -16633,11 +16706,46 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       const standardFormPageIds = ${JSON.stringify(standardFormContentPageIds)};
       const targetBlockPageMap = ${JSON.stringify(fieldBlockPageMap)};
       const completionAction = ${JSON.stringify(completionAction)};
+      const pageButtonCopies = ${scriptJson(pageButtonCopies)};
+      const submitText = ${scriptJson(submitText)};
+      const submitSubtitle = ${scriptJson(submitSubtitle)};
+      const continueText = ${scriptJson(continueText)};
+      const nextText = ${scriptJson(nextText)};
       const nextPageUrl = ${JSON.stringify(nextPageUrl)};
       const standardFormNextPageUrl = ${JSON.stringify(standardFormNextPageUrl)};
       const disqualifiedPageUrl = ${JSON.stringify(disqualifiedPageUrl)};
       let index = Math.max(0, stepPages.indexOf(pageId));
       const storageKey = 'rstk:form:' + siteId;
+
+      const setButtonContent = (button, label, subtitle = '') => {
+        if (!button) return;
+        const safeLabel = String(label || 'Enviar');
+        const safeSubtitle = String(subtitle || '');
+        const labelNode = button.querySelector('.rstk-button-label');
+        const subtitleNode = button.querySelector('.rstk-button-subtitle');
+        if (labelNode) {
+          labelNode.textContent = safeLabel;
+        } else {
+          button.textContent = safeLabel;
+        }
+        if (subtitleNode) {
+          subtitleNode.textContent = safeSubtitle;
+          subtitleNode.hidden = !safeSubtitle;
+        } else if (safeSubtitle && labelNode) {
+          const nextSubtitle = document.createElement('span');
+          nextSubtitle.className = 'rstk-button-subtitle';
+          nextSubtitle.textContent = safeSubtitle;
+          button.appendChild(nextSubtitle);
+        }
+      };
+
+      const getPageButtonCopy = (targetPageId, fallbackLabel, fallbackSubtitle = '') => {
+        const copy = pageButtonCopies && targetPageId ? pageButtonCopies[targetPageId] || null : null;
+        return {
+          label: copy && copy.label ? copy.label : fallbackLabel,
+          subtitle: copy && copy.subtitle ? copy.subtitle : fallbackSubtitle
+        };
+      };
 
       const parseRule = (value) => {
         if (!value) return null;
@@ -16910,13 +17018,21 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       const renderStep = () => {
         if (!isInteractive || stepPages.length === 0) return;
         const currentPageId = getCurrentPageId();
+        const nextCopy = getPageButtonCopy(currentPageId, nextText);
+        const submitCopy = getPageButtonCopy(currentPageId, submitText, submitSubtitle);
         pageContents.forEach((content) => {
           const contentPageId = content.getAttribute('data-interactive-page-content') || '';
           content.hidden = contentPageId !== currentPageId;
         });
         if (backButton) backButton.hidden = index === 0;
-        if (nextButton) nextButton.hidden = index >= stepPages.length - 1;
-        if (submitButton) submitButton.hidden = index < stepPages.length - 1;
+        if (nextButton) {
+          setButtonContent(nextButton, nextCopy.label);
+          nextButton.hidden = index >= stepPages.length - 1;
+        }
+        if (submitButton) {
+          setButtonContent(submitButton, submitCopy.label, submitCopy.subtitle);
+          submitButton.hidden = index < stepPages.length - 1;
+        }
         if (progressLabel) progressLabel.textContent = 'Pantalla ' + (index + 1) + ' de ' + stepPages.length;
         if (progressFill) progressFill.style.width = (((index + 1) / stepPages.length) * 100) + '%';
       };
@@ -16970,12 +17086,21 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 
       const renderEmbeddedForm = (state) => {
         const currentPageId = state.pageIds[state.index] || '';
+        const currentContent = state.pageContents.find((content) => (content.getAttribute('data-embedded-page-content') || '') === currentPageId);
+        const embeddedLabel = currentContent ? currentContent.getAttribute('data-next-label') || currentContent.getAttribute('data-submit-label') || '' : '';
+        const embeddedSubtitle = currentContent ? currentContent.getAttribute('data-submit-subtitle') || '' : '';
         state.pageContents.forEach((content) => {
           content.hidden = (content.getAttribute('data-embedded-page-content') || '') !== currentPageId;
         });
         if (state.backButton) state.backButton.hidden = state.index === 0;
-        if (state.nextButton) state.nextButton.hidden = state.index >= state.pageIds.length - 1;
-        if (state.submitButton) state.submitButton.hidden = state.index < state.pageIds.length - 1;
+        if (state.nextButton) {
+          setButtonContent(state.nextButton, embeddedLabel || nextText);
+          state.nextButton.hidden = state.index >= state.pageIds.length - 1;
+        }
+        if (state.submitButton) {
+          setButtonContent(state.submitButton, embeddedLabel || submitText, embeddedSubtitle || submitSubtitle);
+          state.submitButton.hidden = state.index < state.pageIds.length - 1;
+        }
       };
 
       embeddedForms.forEach((state) => {
