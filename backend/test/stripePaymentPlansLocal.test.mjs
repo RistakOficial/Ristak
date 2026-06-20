@@ -9,6 +9,7 @@ import {
 } from '../src/controllers/highlevelController.js'
 import {
   processDueStripePaymentPlanCharges,
+  refreshStripePaymentFromIntent,
   saveStripePaymentConfig,
   setStripeFactoryForTest
 } from '../src/services/stripePaymentService.js'
@@ -509,6 +510,186 @@ test('cobra automáticamente parcialidades vencidas con tarjeta guardada sin dup
     const secondRun = await processDueStripePaymentPlanCharges({ limit: 5 })
     assert.equal(secondRun.length, 0)
     assert.equal(createCalls.length, 1)
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanup(ids)
+  }
+})
+
+test('usa la nueva tarjeta domiciliada en cobros automáticos posteriores', async () => {
+  const ids = await seedStripePlan()
+  const createCalls = []
+  const stripeCustomerId = `cus_change_${Date.now()}`
+  const oldPaymentMethodId = `pm_old_${Date.now()}`
+  const newPaymentMethodId = `pm_new_${Date.now()}`
+  const cardUpdatePaymentId = `stripe_payment_change_card_${Date.now()}`
+
+  setStripeFactoryForTest(() => ({
+    paymentIntents: {
+      retrieve: async (paymentIntentId) => ({
+        id: paymentIntentId,
+        status: 'succeeded',
+        amount: 2500,
+        amount_received: 2500,
+        currency: 'mxn',
+        customer: stripeCustomerId,
+        payment_method: newPaymentMethodId,
+        latest_charge: 'ch_change_card',
+        metadata: {
+          ristak_payment_id: cardUpdatePaymentId
+        }
+      }),
+      create: async (params, options) => {
+        createCalls.push({ params, options })
+        return {
+          id: `pi_followup_${createCalls.length}`,
+          status: 'succeeded',
+          amount: params.amount,
+          amount_received: params.amount,
+          currency: params.currency,
+          customer: params.customer,
+          payment_method: params.payment_method,
+          latest_charge: `ch_followup_${createCalls.length}`,
+          metadata: params.metadata
+        }
+      }
+    },
+    paymentMethods: {
+      retrieve: async (paymentMethodId) => ({
+        id: paymentMethodId,
+        type: 'card',
+        card: paymentMethodId === newPaymentMethodId
+          ? {
+              brand: 'mastercard',
+              last4: '4444',
+              exp_month: 11,
+              exp_year: 2034,
+              funding: 'credit',
+              country: 'MX'
+            }
+          : {
+              brand: 'visa',
+              last4: '4242',
+              exp_month: 12,
+              exp_year: 2035,
+              funding: 'credit',
+              country: 'MX'
+            }
+      }),
+      list: async () => ({ data: [] })
+    }
+  }))
+
+  try {
+    await initializeMasterKey()
+    await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'test',
+      publishableKey: 'pk_test_local_change_card',
+      secretKey: 'sk_test_local_change_card',
+      defaultCurrency: 'MXN'
+    })
+
+    await db.run(
+      `UPDATE contacts
+       SET stripe_customer_id = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [stripeCustomerId, ids.contactId]
+    )
+
+    await db.run(
+      `INSERT INTO stripe_payment_methods (
+        id, contact_id, stripe_customer_id, stripe_payment_method_id,
+        brand, last4, exp_month, exp_year, funding, country, mode, is_default,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'visa', '4242', 12, 2035, 'credit', 'MX', 'test', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [`stripe_pm_old_${Date.now()}`, ids.contactId, stripeCustomerId, oldPaymentMethodId]
+    )
+
+    await db.run(
+      `UPDATE payment_flows
+       SET current_state = 'installment_plan_active',
+           stripe_customer_id = ?,
+           stripe_payment_method_id = ?,
+           stripe_payment_method_label = 'VISA 4242',
+           card_setup_status = 'paid',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [stripeCustomerId, oldPaymentMethodId, ids.flowId]
+    )
+
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        payment_provider, title, description, metadata_json, date, created_at, updated_at
+      ) VALUES (?, ?, 25, 'MXN', 'pending', 'stripe', 'test', 'stripe', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        cardUpdatePaymentId,
+        ids.contactId,
+        'Cambio de tarjeta domiciliada',
+        'Cambio de tarjeta domiciliada',
+        JSON.stringify({
+          paymentPlan: {
+            flowId: ids.flowId,
+            trigger: 'card_setup',
+            reason: 'card_update'
+          }
+        })
+      ]
+    )
+
+    await refreshStripePaymentFromIntent('pi_change_card')
+
+    const flowAfterChange = await db.get(
+      `SELECT stripe_payment_method_id, stripe_payment_method_label, card_setup_status
+       FROM payment_flows
+       WHERE id = ?`,
+      [ids.flowId]
+    )
+    const oldCard = await db.get(
+      'SELECT is_default FROM stripe_payment_methods WHERE stripe_payment_method_id = ?',
+      [oldPaymentMethodId]
+    )
+    const newCard = await db.get(
+      'SELECT is_default, brand, last4 FROM stripe_payment_methods WHERE stripe_payment_method_id = ?',
+      [newPaymentMethodId]
+    )
+
+    assert.equal(flowAfterChange.stripe_payment_method_id, newPaymentMethodId)
+    assert.match(flowAfterChange.stripe_payment_method_label, /MASTERCARD.*4444/)
+    assert.equal(flowAfterChange.card_setup_status, 'paid')
+    assert.equal(Number(oldCard.is_default), 0)
+    assert.equal(Number(newCard.is_default), 1)
+    assert.equal(newCard.brand, 'mastercard')
+    assert.equal(newCard.last4, '4444')
+
+    await db.run(
+      `UPDATE installment_payments
+       SET status = 'scheduled',
+           payment_method = 'stripe_saved_card',
+           due_date = '2000-01-01',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [ids.installmentId]
+    )
+
+    await db.run(
+      `UPDATE payments
+       SET status = 'pending',
+           payment_method = 'stripe_scheduled_card',
+           due_date = '2000-01-01',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [ids.installmentPaymentId]
+    )
+
+    const dueRun = await processDueStripePaymentPlanCharges({ limit: 5 })
+
+    assert.equal(dueRun.length, 1)
+    assert.equal(createCalls.length, 1)
+    assert.equal(createCalls[0].params.payment_method, newPaymentMethodId)
+    assert.equal(createCalls[0].params.customer, stripeCustomerId)
   } finally {
     setStripeFactoryForTest(null)
     await cleanup(ids)
