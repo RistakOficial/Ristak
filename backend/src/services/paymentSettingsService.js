@@ -36,10 +36,15 @@ const DEFAULT_PAYMENT_SETTINGS = {
     remindersEnabled: true,
     reminderDaysBefore: 3,
     reminderChannel: 'whatsapp',
+    reminderQrFallbackEnabled: false,
     receiptDeliveryEnabled: true,
+    receiptDeliveryChannel: 'email',
+    receiptQrFallbackEnabled: false,
     afterPaymentAction: 'send_receipt',
     afterPaymentMessage: 'Gracias, recibimos tu pago. Te compartimos tu comprobante.',
     failedPaymentEnabled: true,
+    failedPaymentChannel: 'whatsapp',
+    failedPaymentQrFallbackEnabled: false,
     failedPaymentDelayHours: 2
   },
   taxes: {
@@ -146,10 +151,15 @@ export function normalizePaymentSettings(input = {}) {
       remindersEnabled: cleanBoolean(automations.remindersEnabled, DEFAULT_PAYMENT_SETTINGS.automations.remindersEnabled),
       reminderDaysBefore: cleanNumber(automations.reminderDaysBefore, DEFAULT_PAYMENT_SETTINGS.automations.reminderDaysBefore, { min: 1, max: 60 }),
       reminderChannel: cleanEnum(automations.reminderChannel, ['whatsapp', 'email', 'both'], DEFAULT_PAYMENT_SETTINGS.automations.reminderChannel),
+      reminderQrFallbackEnabled: cleanBoolean(automations.reminderQrFallbackEnabled, DEFAULT_PAYMENT_SETTINGS.automations.reminderQrFallbackEnabled),
       receiptDeliveryEnabled: cleanBoolean(automations.receiptDeliveryEnabled, DEFAULT_PAYMENT_SETTINGS.automations.receiptDeliveryEnabled),
+      receiptDeliveryChannel: cleanEnum(automations.receiptDeliveryChannel, ['whatsapp', 'email', 'both'], DEFAULT_PAYMENT_SETTINGS.automations.receiptDeliveryChannel),
+      receiptQrFallbackEnabled: cleanBoolean(automations.receiptQrFallbackEnabled, DEFAULT_PAYMENT_SETTINGS.automations.receiptQrFallbackEnabled),
       afterPaymentAction: cleanEnum(automations.afterPaymentAction, ['none', 'send_receipt', 'start_automation', 'tag_contact'], DEFAULT_PAYMENT_SETTINGS.automations.afterPaymentAction),
       afterPaymentMessage: cleanLongString(automations.afterPaymentMessage, 1000) || DEFAULT_PAYMENT_SETTINGS.automations.afterPaymentMessage,
       failedPaymentEnabled: cleanBoolean(automations.failedPaymentEnabled, DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentEnabled),
+      failedPaymentChannel: cleanEnum(automations.failedPaymentChannel, ['whatsapp', 'email', 'both'], DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentChannel),
+      failedPaymentQrFallbackEnabled: cleanBoolean(automations.failedPaymentQrFallbackEnabled, DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentQrFallbackEnabled),
       failedPaymentDelayHours: cleanNumber(automations.failedPaymentDelayHours, DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentDelayHours, { min: 1, max: 168 })
     },
     taxes: {

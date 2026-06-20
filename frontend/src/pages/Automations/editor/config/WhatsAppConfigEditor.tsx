@@ -9,7 +9,13 @@ import {
   useCatalogOptions
 } from './configPrimitives'
 import { MessageBlocksEditor } from './MessageBlocksEditor'
+import { useNotification } from '@/contexts/NotificationContext'
 import { whatsappApiService } from '@/services/whatsappApiService'
+import {
+  WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
+  WHATSAPP_QR_FALLBACK_TITLE,
+  buildWhatsAppQrFallbackMessage
+} from '@/utils/whatsappQrFallbackWarning'
 import type { MessageBlock } from '../nodeRegistry'
 import { genId } from '../flowUtils'
 import styles from '../AutomationEditor.module.css'
@@ -35,6 +41,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   onChange
 }) => {
   const set = (patch: Config) => onChange({ ...config, ...patch })
+  const { showConfirm } = useNotification()
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
   const allowQrFallback = config.sendViaQr === true || str(config.transport) === 'qr'
@@ -106,11 +113,28 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
     set({ messageType: next })
   }
 
-  const setAllowQrFallback = (checked: boolean) => {
+  const applyQrFallback = (checked: boolean) => {
     set({
       sendViaQr: checked,
       transport: 'api'
     })
+  }
+
+  const setAllowQrFallback = (checked: boolean) => {
+    if (!checked) {
+      applyQrFallback(false)
+      return
+    }
+
+    showConfirm(
+      WHATSAPP_QR_FALLBACK_TITLE,
+      buildWhatsAppQrFallbackMessage('esta automatización'),
+      () => applyQrFallback(true),
+      'Activar respaldo QR',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: WHATSAPP_QR_FALLBACK_CONFIRM_WORD }
+    )
   }
 
   return (

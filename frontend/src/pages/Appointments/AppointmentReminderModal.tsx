@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { Bell, ShieldAlert, Sparkles, Trash2 } from 'lucide-react'
 import { Modal, Button, CustomSelect, NumberInput, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
+import { useNotification } from '@/contexts/NotificationContext'
 import {
   type AppointmentReminder,
   type AppointmentReminderInput,
@@ -12,6 +13,11 @@ import {
   formatReminderOffsetLabel
 } from '@/services/appointmentRemindersService'
 import type { MessageTemplate } from '@/services/messageTemplatesService'
+import {
+  WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
+  WHATSAPP_QR_FALLBACK_TITLE,
+  buildWhatsAppQrFallbackMessage
+} from '@/utils/whatsappQrFallbackWarning'
 import styles from './AppointmentReminderModal.module.css'
 
 interface AppointmentReminderModalProps {
@@ -125,6 +131,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   onSave,
   onDelete
 }) => {
+  const { showConfirm } = useNotification()
   const [draft, setDraft] = useState<AppointmentReminderInput>({})
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -159,6 +166,23 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   const set = <K extends keyof AppointmentReminderInput>(key: K, value: AppointmentReminderInput[K]) => {
     setDraft(prev => ({ ...prev, [key]: value }))
+  }
+
+  const setQrFallbackEnabled = (checked: boolean) => {
+    if (!checked) {
+      set('qrFallbackEnabled', false)
+      return
+    }
+
+    showConfirm(
+      WHATSAPP_QR_FALLBACK_TITLE,
+      buildWhatsAppQrFallbackMessage('este recordatorio de calendario'),
+      () => set('qrFallbackEnabled', true),
+      'Activar respaldo QR',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: WHATSAPP_QR_FALLBACK_CONFIRM_WORD }
+    )
   }
 
   const channel = channels[0]
@@ -600,7 +624,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                 </div>
                 <Switch
                   checked={draft.qrFallbackEnabled === true}
-                  onChange={(checked) => set('qrFallbackEnabled', checked)}
+                  onChange={setQrFallbackEnabled}
                   aria-label="Usar QR como respaldo riesgoso"
                 />
               </div>

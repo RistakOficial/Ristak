@@ -55,6 +55,11 @@ import {
   type PaymentInvoicePaletteId,
   type PaymentInvoiceTemplateId
 } from '@/utils/paymentInvoiceDesign'
+import {
+  WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
+  WHATSAPP_QR_FALLBACK_TITLE,
+  buildWhatsAppQrFallbackMessage
+} from '@/utils/whatsappQrFallbackWarning'
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'automations' | 'gateways' | 'taxes'
@@ -166,6 +171,29 @@ const compactMoney = new Intl.NumberFormat('es-MX', {
   maximumFractionDigits: 0
 })
 
+const channelOptions = [
+  { value: 'whatsapp', label: 'WhatsApp API' },
+  { value: 'email', label: 'Email' },
+  { value: 'both', label: 'WhatsApp API y email' }
+]
+
+const channelLabelById: Record<PaymentAutomationSettings['reminderChannel'], string> = {
+  whatsapp: 'WhatsApp API',
+  email: 'email',
+  both: 'WhatsApp API y email'
+}
+
+const afterPaymentActionLabelById: Record<PaymentAutomationSettings['afterPaymentAction'], string> = {
+  send_receipt: 'Enviar comprobante',
+  start_automation: 'Iniciar automatización',
+  tag_contact: 'Etiquetar contacto',
+  none: 'No hacer nada'
+}
+
+const channelUsesWhatsApp = (channel: PaymentAutomationSettings['reminderChannel']) => (
+  channel === 'whatsapp' || channel === 'both'
+)
+
 const invoiceTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'documentThemeClassic',
   executive: 'documentThemeExecutive',
@@ -176,7 +204,7 @@ const invoiceTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
 export const PaymentsConfiguration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
-  const { showToast } = useNotification()
+  const { showToast, showConfirm } = useNotification()
   const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
 
   const [activeSection, setActiveSection] = useState<PaymentsSectionId>(() => getInitialSection(location.pathname))
@@ -348,6 +376,34 @@ export const PaymentsConfiguration: React.FC = () => {
       ...current,
       automations: { ...current.automations, [key]: value }
     }))
+  }
+
+  const confirmAutomationQrFallback = (
+    contextLabel: string,
+    onConfirm: () => void
+  ) => {
+    showConfirm(
+      WHATSAPP_QR_FALLBACK_TITLE,
+      buildWhatsAppQrFallbackMessage(contextLabel),
+      onConfirm,
+      'Activar respaldo QR',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: WHATSAPP_QR_FALLBACK_CONFIRM_WORD }
+    )
+  }
+
+  const setAutomationQrFallbackValue = (
+    key: 'reminderQrFallbackEnabled' | 'receiptQrFallbackEnabled' | 'failedPaymentQrFallbackEnabled',
+    value: boolean,
+    contextLabel: string
+  ) => {
+    if (!value) {
+      setAutomationValue(key, false)
+      return
+    }
+
+    confirmAutomationQrFallback(contextLabel, () => setAutomationValue(key, true))
   }
 
   const setTaxValue = <K extends keyof PaymentTaxSettings>(key: K, value: PaymentTaxSettings[K]) => {
@@ -1218,75 +1274,166 @@ export const PaymentsConfiguration: React.FC = () => {
     )
   }
 
+  const renderAutomationQrFallbackControl = (
+    key: 'reminderQrFallbackEnabled' | 'receiptQrFallbackEnabled' | 'failedPaymentQrFallbackEnabled',
+    checked: boolean,
+    channel: PaymentAutomationSettings['reminderChannel'],
+    contextLabel: string
+  ) => {
+    if (!channelUsesWhatsApp(channel)) return null
+
+    return (
+      <div className={styles.automationQrFallback}>
+        <div>
+          <strong>QR como respaldo</strong>
+          <span>WhatsApp API se intenta primero. QR sólo entra si la API falla o queda restringida.</span>
+        </div>
+        <Switch
+          checked={checked}
+          onChange={(next) => setAutomationQrFallbackValue(key, next, contextLabel)}
+          aria-label={`Activar QR como respaldo para ${contextLabel}`}
+        />
+      </div>
+    )
+  }
+
   const renderAutomationsSection = () => (
     <div className={styles.singleColumnLayout}>
       <Card className={styles.sectionCard}>
         <div className={styles.sectionHeader}>
           <div>
-            <h2>Recordatorios y acciones de pago</h2>
-            <p>Define el comportamiento estándar antes del vencimiento y después de recibir el pago.</p>
+            <h2>Automatizaciones de pago</h2>
+            <p>Separa lo que pasa antes del vencimiento, después de pagar y cuando un cobro falla.</p>
           </div>
           <Badge variant="warning">
             <BellRing size={14} />
-            Reglas
+            WhatsApp API primero
           </Badge>
         </div>
 
-        <div className={styles.settingsMatrix}>
-          {renderSwitchRow('Recordatorios antes del vencimiento', 'Activa avisos antes de que llegue la fecha de pago.', automations.remindersEnabled, (next) => setAutomationValue('remindersEnabled', next))}
-          {renderField(
-            'Días antes del vencimiento',
-            <NumberInput
-              min="1"
-              max="60"
-              value={automations.reminderDaysBefore}
-              onValueChange={(value) => setAutomationValue('reminderDaysBefore', Math.trunc(value) || 1)}
-            />
-          )}
-          {renderField(
-            'Canal de recordatorio',
-            <CustomSelect
-              value={automations.reminderChannel}
-              onValueChange={(value) => setAutomationValue('reminderChannel', value as PaymentAutomationSettings['reminderChannel'])}
-              options={[
-                { value: 'whatsapp', label: 'WhatsApp' },
-                { value: 'email', label: 'Email' },
-                { value: 'both', label: 'WhatsApp y email' }
-              ]}
-            />
-          )}
-          {renderSwitchRow('Enviar comprobante al pagar', 'Prepara el envío del comprobante cuando el pago se confirme.', automations.receiptDeliveryEnabled, (next) => setAutomationValue('receiptDeliveryEnabled', next))}
-          {renderField(
-            'Acción después del pago',
-            <CustomSelect
-              value={automations.afterPaymentAction}
-              onValueChange={(value) => setAutomationValue('afterPaymentAction', value as PaymentAutomationSettings['afterPaymentAction'])}
-              options={[
-                { value: 'send_receipt', label: 'Enviar comprobante' },
-                { value: 'start_automation', label: 'Iniciar automatización' },
-                { value: 'tag_contact', label: 'Etiquetar contacto' },
-                { value: 'none', label: 'No hacer nada' }
-              ]}
-            />
-          )}
-          {renderField(
-            'Mensaje después del pago',
-            <textarea
-              value={automations.afterPaymentMessage}
-              onChange={(event) => setAutomationValue('afterPaymentMessage', event.target.value)}
-              placeholder="Mensaje que recibirá el cliente cuando el pago entre."
-            />
-          )}
-          {renderSwitchRow('Seguimiento si falla el cobro', 'Deja una regla preparada para avisar cuando un pago falla.', automations.failedPaymentEnabled, (next) => setAutomationValue('failedPaymentEnabled', next))}
-          {renderField(
-            'Horas después de un fallo',
-            <NumberInput
-              min="1"
-              max="168"
-              value={automations.failedPaymentDelayHours}
-              onValueChange={(value) => setAutomationValue('failedPaymentDelayHours', Math.trunc(value) || 1)}
-            />
-          )}
+        <div className={styles.automationColumns}>
+          <section className={styles.automationColumn}>
+            <div className={styles.automationColumnHeader}>
+              <Clock size={18} />
+              <div>
+                <h3>Antes del pago</h3>
+                <p>Recordatorios previos al vencimiento.</p>
+              </div>
+            </div>
+            <div className={styles.automationColumnBody}>
+              {renderSwitchRow('Enviar recordatorios', 'Avisa antes de que llegue la fecha de pago.', automations.remindersEnabled, (next) => setAutomationValue('remindersEnabled', next))}
+              {renderField(
+                'Días antes del vencimiento',
+                <NumberInput
+                  min="1"
+                  max="60"
+                  value={automations.reminderDaysBefore}
+                  onValueChange={(value) => setAutomationValue('reminderDaysBefore', Math.trunc(value) || 1)}
+                />
+              )}
+              {renderField(
+                'Canal',
+                <CustomSelect
+                  value={automations.reminderChannel}
+                  onValueChange={(value) => setAutomationValue('reminderChannel', value as PaymentAutomationSettings['reminderChannel'])}
+                  options={channelOptions}
+                />,
+                channelUsesWhatsApp(automations.reminderChannel) ? 'Los mensajes de WhatsApp salen por WhatsApp API.' : undefined
+              )}
+              {renderAutomationQrFallbackControl(
+                'reminderQrFallbackEnabled',
+                automations.reminderQrFallbackEnabled,
+                automations.reminderChannel,
+                'recordatorios antes del pago'
+              )}
+            </div>
+          </section>
+
+          <section className={styles.automationColumn}>
+            <div className={styles.automationColumnHeader}>
+              <CheckCircle size={18} />
+              <div>
+                <h3>Después del pago</h3>
+                <p>Comprobante y acción cuando el pago queda confirmado.</p>
+              </div>
+            </div>
+            <div className={styles.automationColumnBody}>
+              {renderSwitchRow('Enviar comprobante', 'Manda el comprobante cuando el pago se confirme.', automations.receiptDeliveryEnabled, (next) => setAutomationValue('receiptDeliveryEnabled', next))}
+              {renderField(
+                'Canal del comprobante',
+                <CustomSelect
+                  value={automations.receiptDeliveryChannel}
+                  onValueChange={(value) => setAutomationValue('receiptDeliveryChannel', value as PaymentAutomationSettings['receiptDeliveryChannel'])}
+                  options={channelOptions}
+                />,
+                channelUsesWhatsApp(automations.receiptDeliveryChannel) ? 'El comprobante por WhatsApp usa WhatsApp API como ruta principal.' : undefined
+              )}
+              {renderAutomationQrFallbackControl(
+                'receiptQrFallbackEnabled',
+                automations.receiptQrFallbackEnabled,
+                automations.receiptDeliveryChannel,
+                'comprobantes después del pago'
+              )}
+              {renderField(
+                'Acción después del pago',
+                <CustomSelect
+                  value={automations.afterPaymentAction}
+                  onValueChange={(value) => setAutomationValue('afterPaymentAction', value as PaymentAutomationSettings['afterPaymentAction'])}
+                  options={[
+                    { value: 'send_receipt', label: 'Enviar comprobante' },
+                    { value: 'start_automation', label: 'Iniciar automatización' },
+                    { value: 'tag_contact', label: 'Etiquetar contacto' },
+                    { value: 'none', label: 'No hacer nada' }
+                  ]}
+                />
+              )}
+              {renderField(
+                'Mensaje después del pago',
+                <textarea
+                  value={automations.afterPaymentMessage}
+                  onChange={(event) => setAutomationValue('afterPaymentMessage', event.target.value)}
+                  placeholder="Mensaje que recibirá el cliente cuando el pago entre."
+                />
+              )}
+            </div>
+          </section>
+
+          <section className={styles.automationColumn}>
+            <div className={styles.automationColumnHeader}>
+              <AlertTriangle size={18} />
+              <div>
+                <h3>Cobro fallido</h3>
+                <p>Seguimiento cuando la tarjeta o el cobro automático falla.</p>
+              </div>
+            </div>
+            <div className={styles.automationColumnBody}>
+              {renderSwitchRow('Avisar si falla', 'Prepara una regla para cobros rechazados.', automations.failedPaymentEnabled, (next) => setAutomationValue('failedPaymentEnabled', next))}
+              {renderField(
+                'Horas después del fallo',
+                <NumberInput
+                  min="1"
+                  max="168"
+                  value={automations.failedPaymentDelayHours}
+                  onValueChange={(value) => setAutomationValue('failedPaymentDelayHours', Math.trunc(value) || 1)}
+                />
+              )}
+              {renderField(
+                'Canal',
+                <CustomSelect
+                  value={automations.failedPaymentChannel}
+                  onValueChange={(value) => setAutomationValue('failedPaymentChannel', value as PaymentAutomationSettings['failedPaymentChannel'])}
+                  options={channelOptions}
+                />,
+                channelUsesWhatsApp(automations.failedPaymentChannel) ? 'El aviso por WhatsApp usa WhatsApp API como ruta principal.' : undefined
+              )}
+              {renderAutomationQrFallbackControl(
+                'failedPaymentQrFallbackEnabled',
+                automations.failedPaymentQrFallbackEnabled,
+                automations.failedPaymentChannel,
+                'avisos de cobro fallido'
+              )}
+            </div>
+          </section>
         </div>
 
         {renderSectionSaveBar('Guardar automatizaciones')}
@@ -1295,18 +1442,18 @@ export const PaymentsConfiguration: React.FC = () => {
       <div className={styles.summaryStrip}>
         <div>
           <Clock size={17} />
-          <strong>{automations.reminderDaysBefore} días antes</strong>
-          <span>Recordatorio por {automations.reminderChannel === 'both' ? 'WhatsApp y email' : automations.reminderChannel}</span>
+          <strong>{automations.remindersEnabled ? `${automations.reminderDaysBefore} días antes` : 'Recordatorios apagados'}</strong>
+          <span>{channelLabelById[automations.reminderChannel]}{automations.reminderQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
         </div>
         <div>
           <CheckCircle size={17} />
           <strong>{automations.receiptDeliveryEnabled ? 'Comprobante activo' : 'Comprobante apagado'}</strong>
-          <span>Acción: {automations.afterPaymentAction.replace('_', ' ')}</span>
+          <span>{afterPaymentActionLabelById[automations.afterPaymentAction]} · {channelLabelById[automations.receiptDeliveryChannel]}{automations.receiptQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
         </div>
         <div>
           <AlertTriangle size={17} />
           <strong>{automations.failedPaymentEnabled ? `${automations.failedPaymentDelayHours} h tras fallo` : 'Sin seguimiento'}</strong>
-          <span>Regla estándar para cobros rechazados</span>
+          <span>{channelLabelById[automations.failedPaymentChannel]}{automations.failedPaymentQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
         </div>
       </div>
     </div>

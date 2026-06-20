@@ -35,10 +35,15 @@ export interface PaymentAutomationSettings {
   remindersEnabled: boolean
   reminderDaysBefore: number
   reminderChannel: 'whatsapp' | 'email' | 'both'
+  reminderQrFallbackEnabled: boolean
   receiptDeliveryEnabled: boolean
+  receiptDeliveryChannel: 'whatsapp' | 'email' | 'both'
+  receiptQrFallbackEnabled: boolean
   afterPaymentAction: 'none' | 'send_receipt' | 'start_automation' | 'tag_contact'
   afterPaymentMessage: string
   failedPaymentEnabled: boolean
+  failedPaymentChannel: 'whatsapp' | 'email' | 'both'
+  failedPaymentQrFallbackEnabled: boolean
   failedPaymentDelayHours: number
 }
 
@@ -98,10 +103,15 @@ export const defaultPaymentSettings: PaymentSettings = {
     remindersEnabled: true,
     reminderDaysBefore: 3,
     reminderChannel: 'whatsapp',
+    reminderQrFallbackEnabled: false,
     receiptDeliveryEnabled: true,
+    receiptDeliveryChannel: 'email',
+    receiptQrFallbackEnabled: false,
     afterPaymentAction: 'send_receipt',
     afterPaymentMessage: 'Gracias, recibimos tu pago. Te compartimos tu comprobante.',
     failedPaymentEnabled: true,
+    failedPaymentChannel: 'whatsapp',
+    failedPaymentQrFallbackEnabled: false,
     failedPaymentDelayHours: 2
   },
   taxes: {

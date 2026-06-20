@@ -97,6 +97,12 @@ function cleanString(value) {
   return String(value || '').trim()
 }
 
+function shouldSendStripeReceiptEmail(paymentSettings = {}) {
+  if (paymentSettings.automations?.receiptDeliveryEnabled === false) return false
+  const channel = cleanString(paymentSettings.automations?.receiptDeliveryChannel || 'email').toLowerCase()
+  return channel === 'email' || channel === 'both'
+}
+
 function getEnvValue(names = []) {
   for (const name of names) {
     const value = cleanString(process.env[name])
@@ -1296,7 +1302,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
   const currency = normalizeCurrency(row.currency || config.defaultCurrency)
   const rowMetadata = parseJson(row.metadata_json, {})
   const paymentSettings = await getPaymentSettings()
-  const shouldSendReceipt = paymentSettings.automations.receiptDeliveryEnabled !== false
+  const shouldSendReceipt = shouldSendStripeReceiptEmail(paymentSettings)
   const paymentPlanMetadata = rowMetadata.paymentPlan && typeof rowMetadata.paymentPlan === 'object'
     ? rowMetadata.paymentPlan
     : null
@@ -2210,7 +2216,7 @@ async function chargeStripePaymentRowWithSavedMethod({
     ? metadata.paymentPlan
     : {}
   const paymentSettings = await getPaymentSettings()
-  const shouldSendReceipt = paymentSettings.automations.receiptDeliveryEnabled !== false
+  const shouldSendReceipt = shouldSendStripeReceiptEmail(paymentSettings)
   const description = cleanString(row.description || row.title || 'Pago Ristak')
 
   try {

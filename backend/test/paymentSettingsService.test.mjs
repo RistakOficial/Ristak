@@ -1,7 +1,59 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { calculatePaymentTax } from '../src/services/paymentSettingsService.js'
+import { calculatePaymentTax, normalizePaymentSettings } from '../src/services/paymentSettingsService.js'
+
+describe('payment settings automations', () => {
+  it('normalizes payment automation categories and QR fallback flags', () => {
+    const settings = normalizePaymentSettings({
+      automations: {
+        remindersEnabled: true,
+        reminderDaysBefore: 5,
+        reminderChannel: 'both',
+        reminderQrFallbackEnabled: true,
+        receiptDeliveryEnabled: true,
+        receiptDeliveryChannel: 'whatsapp',
+        receiptQrFallbackEnabled: true,
+        afterPaymentAction: 'send_receipt',
+        afterPaymentMessage: 'Pago recibido',
+        failedPaymentEnabled: true,
+        failedPaymentChannel: 'email',
+        failedPaymentQrFallbackEnabled: true,
+        failedPaymentDelayHours: 6
+      }
+    })
+
+    assert.deepEqual(settings.automations, {
+      remindersEnabled: true,
+      reminderDaysBefore: 5,
+      reminderChannel: 'both',
+      reminderQrFallbackEnabled: true,
+      receiptDeliveryEnabled: true,
+      receiptDeliveryChannel: 'whatsapp',
+      receiptQrFallbackEnabled: true,
+      afterPaymentAction: 'send_receipt',
+      afterPaymentMessage: 'Pago recibido',
+      failedPaymentEnabled: true,
+      failedPaymentChannel: 'email',
+      failedPaymentQrFallbackEnabled: true,
+      failedPaymentDelayHours: 6
+    })
+  })
+
+  it('falls back to safe defaults for invalid payment automation channels', () => {
+    const settings = normalizePaymentSettings({
+      automations: {
+        reminderChannel: 'sms',
+        receiptDeliveryChannel: 'push',
+        failedPaymentChannel: 'qr'
+      }
+    })
+
+    assert.equal(settings.automations.reminderChannel, 'whatsapp')
+    assert.equal(settings.automations.receiptDeliveryChannel, 'email')
+    assert.equal(settings.automations.failedPaymentChannel, 'whatsapp')
+  })
+})
 
 describe('payment settings tax calculation', () => {
   it('adds exclusive percentage tax to Stripe payment totals', () => {
