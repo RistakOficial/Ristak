@@ -137,7 +137,7 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /\.rstk-video-control-bar\{[^}]*box-shadow:none/)
   assert.match(html, /data-rstk-video-toggle/)
   assert.match(html, /data-rstk-video-settings-icon/)
-  assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="0"/)
+  assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="-1"/)
   assert.match(html, /aria-label="Progreso del video"/)
   assert.match(html, /\.rstk-video-control-button svg\{[^}]*width:15px[^}]*height:15px/)
   assert.match(html, /\.rstk-video-progress\{[^}]*flex:1 1 44px[^}]*cursor:pointer[^}]*touch-action:none/)
@@ -225,7 +225,7 @@ test('video player custom bar can hide individual controls and keep editable pan
   assert.equal(signature.selectedSpeed, '1.5')
   assert.match(signature.style, /--rstk-video-control-radius:6px/)
   assert.match(html, /class="rstk-video-speed-control rstk-video-speed-no-settings"/)
-  assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="0"/)
+  assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="-1"/)
 })
 
 test('video player defaults hide the custom control bar at initial render', async () => {
@@ -264,7 +264,7 @@ test('video player renders configurable first-seconds preview loop settings', as
   assert.match(html, /rstkVideoPreviewing/)
   assert.match(html, /const restartFromBeginningForUserPlayback = \(\) =>/)
   assert.match(html, /video\.currentTime = 0/)
-  assert.match(html, /restartFromBeginningForUserPlayback\(\);\s+hasUserPlayed = true/)
+  assert.match(html, /restartFromBeginningForUserPlayback\(\);\s+const wasUserPlayed = hasUserPlayed;\s+markUserPlayback\(\);/)
   assert.doesNotMatch(html, /rstk-video-is-playing:hover \.rstk-video-play-dot/)
 
   const autoplayHtml = await renderPublicSiteHtml(baseSite({
@@ -727,6 +727,7 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     'rstk-video-custom-controls',
     'rstk-video-has-control-bar',
     'rstk-video-controls-hidden',
+    'rstk-video-controls-start-hidden',
     'rstk-video-sound-hint',
     'rstk-video-is-muted',
     'rstk-video-landscape',
@@ -796,6 +797,7 @@ test('video player uses the same visual signature for direct and Bunny Stream re
       'rstk-video-custom-controls',
       'rstk-video-has-control-bar',
       'rstk-video-controls-hidden',
+      'rstk-video-controls-start-hidden',
       'rstk-video-is-muted',
       'rstk-video-landscape',
       'rstk-video-play-shape-rectangle',
@@ -846,8 +848,9 @@ test('video player uses the same visual signature for direct and Bunny Stream re
     }), { trackingEnabled: true, preview: false })
     const visibleInitialSignature = getVideoPlayerVisualSignature(plainVisibleHtml)
 
-    assert.match(visibleInitialSignature.classes, /\brstk-video-controls-visible\b/)
-    assert.doesNotMatch(visibleInitialSignature.classes, /\brstk-video-controls-hidden\b/)
+    assert.match(visibleInitialSignature.classes, /\brstk-video-controls-hidden\b/)
+    assert.match(visibleInitialSignature.classes, /\brstk-video-controls-start-hidden\b/)
+    assert.doesNotMatch(visibleInitialSignature.classes, /\brstk-video-controls-visible\b/)
     assert.deepEqual(getVideoPlayerVisualSignature(streamVisibleHtml), visibleInitialSignature)
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)

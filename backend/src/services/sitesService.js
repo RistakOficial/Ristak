@@ -11303,7 +11303,10 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           target.removeAttribute('aria-hidden');
         }
       };
-      const isPreviewPlayback = video => video?.dataset?.rstkVideoPreviewing === 'true';
+      const isPreviewPlayback = video => (
+        video?.dataset?.rstkVideoPreviewing === 'true' ||
+        video?.dataset?.rstkVideoRenderPreview === 'true'
+      );
       const hasRealPlaybackStarted = video => (
         video && (video.autoplay || video.dataset.rstkVideoRealPlayed === 'true')
       );
@@ -12471,13 +12474,29 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             immediateDisqualify: true
           });
         });
+        const isPreviewVideoPlayback = () => (
+          video?.dataset?.rstkVideoPreviewing === 'true' ||
+          video?.dataset?.rstkVideoRenderPreview === 'true'
+        );
+        const hasRealVideoPlaybackStarted = () => (
+          video && (video.autoplay || video.dataset.rstkVideoRealPlayed === 'true')
+        );
+        const markRealVideoPlayback = () => {
+          if (!video || isPreviewVideoPlayback()) return false;
+          video.dataset.rstkVideoRealPlayed = 'true';
+          return true;
+        };
         const syncVideoTrigger = () => {
           if (state.completed || state.shown || !video) return;
-          if (video.dataset.rstkVideoPreviewing === 'true') return;
+          if (isPreviewVideoPlayback() || !hasRealVideoPlaybackStarted()) return;
           if (triggerSeconds <= 0 || Number(video.currentTime || 0) >= triggerSeconds) showGate();
         };
         if (video) {
-          ['loadedmetadata', 'timeupdate', 'play', 'seeked'].forEach(eventName => video.addEventListener(eventName, syncVideoTrigger, { passive: true }));
+          video.addEventListener('play', () => {
+            markRealVideoPlayback();
+            syncVideoTrigger();
+          }, { passive: true });
+          ['loadedmetadata', 'timeupdate', 'seeked'].forEach(eventName => video.addEventListener(eventName, syncVideoTrigger, { passive: true }));
           syncVideoTrigger();
         } else if (iframe) {
           if (triggerSeconds <= 0) {
@@ -15439,8 +15458,8 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
       : 'clean'
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
-  const showCustomControlBar = showOverlay && settings.videoControlBar === true
-  const showControlBarInitially = settings.videoControlBarInitiallyVisible === true
+  const showCustomControlBar = showOverlay && settings.videoControlBar !== false
+  const showControlBarInitially = settings.videoControlBarInitiallyVisible !== false
   const showCustomPlayControl = settings.videoControlPlay !== false
   const showCustomVolume = settings.videoControlVolume !== false
   const showCustomSpeed = settings.videoControlSpeed !== false
@@ -15452,6 +15471,9 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
   const autoplay = Boolean(settings.videoAutoplay)
+  const renderPreviewMode = Boolean(options.context?.preview)
+  const controlBarLockedAtStart = showCustomControlBar && (!autoplay || renderPreviewMode)
+  const initialControlsVisible = showCustomControlBar && !controlBarLockedAtStart && showControlBarInitially
   const previewLoopEnabled = previewEnabled && !autoplay
   const previewRange = normalizeVideoPreviewRange(settings)
   const showSoundNotice = showOverlay && soundHint && !autoplay
@@ -15478,7 +15500,8 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
     gateMarkup ? 'rstk-video-has-form-gate' : '',
-    showCustomControlBar ? (showControlBarInitially ? 'rstk-video-controls-visible' : 'rstk-video-controls-hidden') : '',
+    showCustomControlBar ? (initialControlsVisible ? 'rstk-video-controls-visible' : 'rstk-video-controls-hidden') : '',
+    controlBarLockedAtStart ? 'rstk-video-controls-start-hidden' : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
     muted ? 'rstk-video-is-muted' : '',
     `rstk-video-${orientation}`,
@@ -15510,9 +15533,12 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     playbackId: trackingEnabled ? (options.tracking?.playbackId || crypto.randomUUID()) : ''
   })
   const videoActionAttrs = renderVideoActionAttributes(block, settings, options.context || {})
+  const controlBarTabIndex = controlBarLockedAtStart ? ' tabindex="-1"' : ''
+  const progressTabIndex = controlBarLockedAtStart ? '-1' : '0'
   const videoSourceAttrs = [
     hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
+    `data-rstk-video-render-preview="${renderPreviewMode ? 'true' : 'false'}"`,
     `data-rstk-video-preview="${previewLoopEnabled ? 'true' : 'false'}"`,
     `data-rstk-video-preview-start="${escapeHtml(String(previewRange.start))}"`,
     `data-rstk-video-preview-end="${escapeHtml(String(previewRange.end))}"`,
@@ -15530,11 +15556,11 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
       ` : ''}
       ${showSoundNotice ? `<span class="rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}"><span class="rstk-video-sound-icon" aria-hidden="true">${RSTK_ICONS.volume}</span>${soundNoticeText ? `<span class="rstk-video-sound-text">${escapeHtml(soundNoticeText)}</span>` : ''}</span>` : ''}
       ${showCustomControlBar ? `
-        <div class="rstk-video-control-bar" data-rstk-video-control-bar>
-          ${showCustomPlayControl ? `<button type="button" class="rstk-video-control-button" data-rstk-video-toggle aria-label="Reproducir video"><span class="rstk-video-control-play">${RSTK_ICONS.play}</span><span class="rstk-video-control-pause">${RSTK_ICONS.pause}</span></button>` : ''}
-          <div class="rstk-video-progress" data-rstk-video-progress-track role="slider" tabindex="0" aria-label="Progreso del video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-rstk-video-progress></span></div>
-          ${showCustomVolume ? `<button type="button" class="rstk-video-control-button" data-rstk-video-mute aria-label="Silenciar video"><span class="rstk-video-control-volume">${RSTK_ICONS.volume}</span><span class="rstk-video-control-muted">${RSTK_ICONS.volumeMuted}</span></button>` : ''}
-          ${showCustomSpeed ? `<label class="rstk-video-speed-control ${showCustomSettings ? 'rstk-video-speed-has-settings' : 'rstk-video-speed-no-settings'}" aria-label="Velocidad de reproducción">${showCustomSettings ? `<span class="rstk-video-settings-icon" data-rstk-video-settings-icon aria-hidden="true">${RSTK_ICONS.settings}</span>` : ''}<select data-rstk-video-speed-select>${renderVideoSpeedOptions(String(speed))}</select></label>` : ''}
+        <div class="rstk-video-control-bar" data-rstk-video-control-bar data-rstk-video-control-bar-start-visible="${showControlBarInitially ? 'true' : 'false'}"${controlBarLockedAtStart ? ' aria-hidden="true"' : ''}>
+          ${showCustomPlayControl ? `<button type="button" class="rstk-video-control-button" data-rstk-video-toggle${controlBarTabIndex} aria-label="Reproducir video"><span class="rstk-video-control-play">${RSTK_ICONS.play}</span><span class="rstk-video-control-pause">${RSTK_ICONS.pause}</span></button>` : ''}
+          <div class="rstk-video-progress" data-rstk-video-progress-track role="slider" tabindex="${progressTabIndex}" aria-label="Progreso del video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-rstk-video-progress></span></div>
+          ${showCustomVolume ? `<button type="button" class="rstk-video-control-button" data-rstk-video-mute${controlBarTabIndex} aria-label="Silenciar video"><span class="rstk-video-control-volume">${RSTK_ICONS.volume}</span><span class="rstk-video-control-muted">${RSTK_ICONS.volumeMuted}</span></button>` : ''}
+          ${showCustomSpeed ? `<label class="rstk-video-speed-control ${showCustomSettings ? 'rstk-video-speed-has-settings' : 'rstk-video-speed-no-settings'}" aria-label="Velocidad de reproducción">${showCustomSettings ? `<span class="rstk-video-settings-icon" data-rstk-video-settings-icon aria-hidden="true">${RSTK_ICONS.settings}</span>` : ''}<select data-rstk-video-speed-select${controlBarTabIndex}>${renderVideoSpeedOptions(String(speed))}</select></label>` : ''}
         </div>
       ` : ''}
       ${gateMarkup}
@@ -16910,6 +16936,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:var(--rstk-video-control-radius,24px);background:var(--rstk-video-player-color,#000000);color:var(--rstk-video-play-color,#fff);box-shadow:none;opacity:1;padding:7px;pointer-events:auto;transform:translateY(0);transition:opacity .2s ease,transform .2s ease;backdrop-filter:blur(14px)}
 	  .rstk-video-controls-hidden .rstk-video-control-bar{opacity:0;pointer-events:none;transform:translateY(8px)}
 	  .rstk-video-controls-hidden .rstk-video-control-bar:focus-within{opacity:1;pointer-events:auto;transform:translateY(0)}
+	  .rstk-video-controls-start-hidden.rstk-video-controls-hidden .rstk-video-control-bar:focus-within{opacity:0;pointer-events:none;transform:translateY(8px)}
 	  .rstk-video-custom-controls.rstk-video-is-playing.rstk-video-controls-hidden video{cursor:none}
 	  .rstk-video-control-button{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;cursor:pointer}
 	  .rstk-video-control-button:hover{background:rgba(255,255,255,.2)}
@@ -18236,6 +18263,7 @@ const IMPORTED_VIDEO_PLAYER_CSS = `
   .rstk-video-is-playing .rstk-video-sound{display:none}
   .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:var(--rstk-video-control-radius,24px);background:var(--rstk-video-player-color,#000);color:var(--rstk-video-play-color,#fff);padding:7px;backdrop-filter:blur(14px);transition:opacity .2s ease,transform .2s ease}
   .rstk-video-controls-hidden .rstk-video-control-bar{opacity:0;pointer-events:none;transform:translateY(8px)}
+  .rstk-video-controls-start-hidden.rstk-video-controls-hidden .rstk-video-control-bar:focus-within{opacity:0;pointer-events:none;transform:translateY(8px)}
   .rstk-video-control-button{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;cursor:pointer}
   .rstk-video-control-button:hover{background:rgba(255,255,255,.2)}
   .rstk-video-control-pause,.rstk-video-control-muted{display:none}
@@ -18307,7 +18335,25 @@ function buildImportedVideoPlayerRuntimeScript() {
         const mutes = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
         const controlBar = host.querySelector('[data-rstk-video-control-bar]');
         const hasControlBar = Boolean(controlBar);
+        const startVisibleAfterPlay = !controlBar || controlBar.getAttribute('data-rstk-video-control-bar-start-visible') !== 'false';
+        const controlFocusTargets = hasControlBar ? Array.from(controlBar.querySelectorAll('button, select, [tabindex]')) : [];
+        let hasUserPlayed = Boolean(video.autoplay);
         let controlsTimer = 0;
+        const shouldBlockControlsBeforePlayback = () => hasControlBar && !hasUserPlayed;
+        const syncControlBarAccess = () => {
+          if (!hasControlBar) return;
+          const blocked = shouldBlockControlsBeforePlayback();
+          controlBar.toggleAttribute('aria-hidden', blocked);
+          controlFocusTargets.forEach(target => {
+            target.tabIndex = blocked ? -1 : 0;
+          });
+        };
+        const markUserPlayback = () => {
+          hasUserPlayed = true;
+          video.dataset.rstkVideoRealPlayed = 'true';
+          syncControlBarAccess();
+          return true;
+        };
         const sync = () => {
           const duration = Number.isFinite(video.duration) ? video.duration : 0;
           const ratio = duration > 0 ? Math.max(0, Math.min(1, video.currentTime / duration)) : 0;
@@ -18320,22 +18366,30 @@ function buildImportedVideoPlayerRuntimeScript() {
         };
         const setControlsVisible = visible => {
           if (!hasControlBar) return;
-          host.classList.toggle('rstk-video-controls-visible', visible);
-          host.classList.toggle('rstk-video-controls-hidden', !visible);
+          const nextVisible = Boolean(visible) && !shouldBlockControlsBeforePlayback();
+          host.classList.toggle('rstk-video-controls-visible', nextVisible);
+          host.classList.toggle('rstk-video-controls-hidden', !nextVisible);
+          syncControlBarAccess();
         };
         const showControls = () => {
+          if (shouldBlockControlsBeforePlayback()) {
+            setControlsVisible(false);
+            return;
+          }
           setControlsVisible(true);
           window.clearTimeout(controlsTimer);
           if (!video.paused) controlsTimer = window.setTimeout(() => setControlsVisible(false), ${VIDEO_CONTROLS_IDLE_MS});
         };
         const play = unmute => {
+          markUserPlayback();
           if (unmute) {
             video.muted = false;
             if (video.volume === 0) video.volume = 1;
           }
           if (video.paused) video.play().catch(() => {});
           else video.pause();
-          showControls();
+          if (startVisibleAfterPlay) showControls();
+          else setControlsVisible(false);
           window.setTimeout(sync, 0);
         };
         overlay?.addEventListener('click', event => {
@@ -18358,6 +18412,10 @@ function buildImportedVideoPlayerRuntimeScript() {
         }));
         if (progressTrack) {
           const seek = clientX => {
+            if (!hasUserPlayed) {
+              setControlsVisible(false);
+              return;
+            }
             const rect = progressTrack.getBoundingClientRect();
             if (!rect.width || !Number.isFinite(video.duration) || video.duration <= 0) return;
             video.currentTime = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * video.duration;
@@ -18380,8 +18438,15 @@ function buildImportedVideoPlayerRuntimeScript() {
             showControls();
           });
         }
-        ['play','pause','timeupdate','volumechange','loadedmetadata','ended'].forEach(eventName => video.addEventListener(eventName, sync));
+        video.addEventListener('play', () => {
+          markUserPlayback();
+          if (startVisibleAfterPlay) showControls();
+          sync();
+        });
+        ['pause','timeupdate','volumechange','loadedmetadata','ended'].forEach(eventName => video.addEventListener(eventName, sync));
         ['pointermove','pointerenter','touchstart','focusin'].forEach(eventName => host.addEventListener(eventName, showControls, { passive: true }));
+        if (hasControlBar) setControlsVisible(hasUserPlayed && host.classList.contains('rstk-video-controls-visible'));
+        else syncControlBarAccess();
         sync();
       };
       const attachAll = () => document.querySelectorAll('.rstk-video-player').forEach(attach);
@@ -18392,14 +18457,14 @@ function buildImportedVideoPlayerRuntimeScript() {
   </script>`
 }
 
-function buildImportedVideoRuntimeInjection(html = '') {
+function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true } = {}) {
   const source = String(html || '')
   const hasRistakVideo = /\brstk-video\b/.test(source)
   if (!hasRistakVideo) return ''
   return [
     IMPORTED_VIDEO_PLAYER_CSS,
     /\brstk-video-player\b/.test(source) ? buildImportedVideoPlayerRuntimeScript() : '',
-    /data-rstk-video-actions=/.test(source) ? buildVideoActionsRuntimeScript([], { force: true }) : ''
+    actionsEnabled && /data-rstk-video-actions=/.test(source) ? buildVideoActionsRuntimeScript([], { force: true }) : ''
   ].filter(Boolean).join('')
 }
 
@@ -18431,12 +18496,13 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
     site,
     pages: normalizeSitePages(site),
     noTrack: !trackingEnabled || preview,
+    preview,
     linkStyle: 'query',
     videoStreamAssetsByStorageUrl: new Map(),
     videoStorageAssetsByStreamVideoId: new Map()
   }
   html = rewriteImportedVideosForRender(site, html, importedVideoRenderContext)
-  const importedVideoRuntime = buildImportedVideoRuntimeInjection(html)
+  const importedVideoRuntime = buildImportedVideoRuntimeInjection(html, { actionsEnabled: !preview })
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled: trackingEnabled && !preview,
@@ -18741,7 +18807,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
     buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: true })
   ])
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, countdownActionTargetIds, formStyleContext: { baseFont: template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, continueText, nextText, backText, phoneLocale, linkStyle, websiteMode, noTrack, preview, videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId, videoActionTargetIds, videoActionInitialHiddenTargetIds, countdownActionTargetIds, formStyleContext: { baseFont: template.font, v: renderVars, accent: renderAccent, ink: renderInk, muted: renderMuted, pageBg: pageBg || renderVars.pageBg } }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
@@ -18773,7 +18839,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     })
     : ''
   const videoTrackingScript = !noTrack ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
-  const videoActionsScript = buildVideoActionsRuntimeScript(videoLookupBlocks)
+  const videoActionsScript = !preview ? buildVideoActionsRuntimeScript(videoLookupBlocks) : ''
   const videoFormGateScript = buildVideoFormGateRuntimeScript(videoLookupBlocks)
   const countdownRuntimeScript = buildCountdownRuntimeScript(videoLookupBlocks)
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
@@ -18952,10 +19018,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        const controlBar = host.querySelector('[data-rstk-video-control-bar]');
 	        const hasControlBar = Boolean(controlBar);
 	        const startsWithHiddenControls = hasControlBar && host.classList.contains('rstk-video-controls-hidden');
+	        const startVisibleAfterPlay = !controlBar || controlBar.getAttribute('data-rstk-video-control-bar-start-visible') !== 'false';
+	        const controlFocusTargets = hasControlBar ? Array.from(controlBar.querySelectorAll('button, select, [tabindex]')) : [];
 	        const previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
 	        let previewing = false;
 	        let hasUserPlayed = Boolean(video.autoplay);
-	        let controlsAreVisible = !startsWithHiddenControls;
+	        let controlsAreVisible = Boolean(hasUserPlayed && !startsWithHiddenControls);
 	        let controlsHideTimer = 0;
 	        let progressFrame = 0;
 	        const formatProgressPercent = ratio => {
@@ -18984,12 +19052,21 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	            if (!video.paused) startProgressFrame();
 	          });
 	        };
-	        const shouldHideControlsAtStart = () => startsWithHiddenControls && !hasUserPlayed;
+	        const shouldHideControlsAtStart = () => hasControlBar && !hasUserPlayed;
+	        const syncControlBarAccess = () => {
+	          if (!hasControlBar) return;
+	          const blocked = shouldHideControlsAtStart();
+	          controlBar.toggleAttribute('aria-hidden', blocked);
+	          controlFocusTargets.forEach(target => {
+	            target.tabIndex = blocked ? -1 : 0;
+	          });
+	        };
 	        const setControlsVisible = visible => {
 	          if (!hasControlBar) return;
-	          controlsAreVisible = Boolean(visible);
+	          controlsAreVisible = Boolean(visible) && !shouldHideControlsAtStart();
 	          host.classList.toggle('rstk-video-controls-visible', controlsAreVisible);
 	          host.classList.toggle('rstk-video-controls-hidden', !controlsAreVisible);
+	          syncControlBarAccess();
 	        };
 	        const clearControlsHideTimer = () => {
 	          if (!controlsHideTimer) return;
@@ -18998,7 +19075,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        };
 	        const hideControlsAfter = delay => {
 	          clearControlsHideTimer();
-	          if (!hasControlBar || (!shouldHideControlsAtStart() && (video.paused || previewing))) return;
+	          if (!hasControlBar) return;
+	          if (shouldHideControlsAtStart()) {
+	            setControlsVisible(false);
+	            return;
+	          }
+	          if (video.paused || previewing) return;
 	          controlsHideTimer = window.setTimeout(() => {
 	            setControlsVisible(false);
 	            controlsHideTimer = 0;
@@ -19006,6 +19088,11 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        };
 	        const showControlsTemporarily = delay => {
 	          if (!hasControlBar) return;
+	          if (shouldHideControlsAtStart()) {
+	            clearControlsHideTimer();
+	            setControlsVisible(false);
+	            return;
+	          }
 	          setControlsVisible(true);
 	          hideControlsAfter(Number.isFinite(delay) ? delay : controlsIdleMs);
 	        };
@@ -19027,6 +19114,14 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          if (!hasUserPlayed) return;
 	          host.classList.remove('rstk-video-sound-hint');
 	          if (soundNotice) soundNotice.hidden = true;
+	        };
+	        const markUserPlayback = () => {
+	          if (previewing) return false;
+	          hasUserPlayed = true;
+	          video.dataset.rstkVideoRealPlayed = 'true';
+	          hideSoundNotice();
+	          syncControlBarAccess();
+	          return true;
 	        };
 	        const stopPreviewLoop = () => {
 	          previewing = false;
@@ -19056,9 +19151,11 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        const seekToProgressRatio = ratio => {
 	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
 	          if (duration <= 0) return false;
+	          if (!hasUserPlayed) {
+	            setControlsVisible(false);
+	            return false;
+	          }
 	          if (previewing) stopPreviewLoop();
-	          hasUserPlayed = true;
-	          hideSoundNotice();
 	          const nextProgress = Math.max(0, Math.min(1, ratio));
 	          video.currentTime = nextProgress * duration;
 	          setProgressRatio(nextProgress);
@@ -19092,12 +19189,14 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
 	          if (hasControlBar) {
 	            if (shouldHideControlsAtStart()) {
-	              if (controlsAreVisible && !controlsHideTimer) hideControlsAfter(controlsIdleMs);
+	              clearControlsHideTimer();
+	              setControlsVisible(false);
 	            } else if (!video.paused && !previewing) {
 	              if (controlsAreVisible && !controlsHideTimer) hideControlsAfter(controlsIdleMs);
 	            } else {
 	              clearControlsHideTimer();
-	              setControlsVisible(true);
+	              if (controlsAreVisible) setControlsVisible(true);
+	              else syncControlBarAccess();
 	            }
 	          }
 	          hideSoundNotice();
@@ -19106,9 +19205,10 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          const wasPreviewing = previewing;
 	          if (wasPreviewing) stopPreviewLoop();
 	          restartFromBeginningForUserPlayback();
-	          hasUserPlayed = true;
-	          hideSoundNotice();
-	          showControlsTemporarily();
+	          const wasUserPlayed = hasUserPlayed;
+	          markUserPlayback();
+	          if (startVisibleAfterPlay || wasUserPlayed) showControlsTemporarily();
+	          else setControlsVisible(false);
 	          if (unmute) {
 	            video.muted = false;
 	            if (video.volume === 0) video.volume = 1;
@@ -19209,8 +19309,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        }
 	        video.addEventListener('play', () => {
 	          if (!previewing) {
-	            hasUserPlayed = true;
-	            hideSoundNotice();
+	            const wasUserPlayed = hasUserPlayed;
+	            markUserPlayback();
+	            if (startVisibleAfterPlay && !wasUserPlayed) showControlsTemporarily();
 	          }
 	          sync();
 	        });

@@ -23273,7 +23273,7 @@ const VideoPlayerSettingsControls: React.FC<{
                     window.setTimeout(onSave, 0)
                   }}
                 />
-                <span>Mostrar al inicio</span>
+                <span>Mostrar al reproducir</span>
               </label>
             </div>
             <div className={styles.twoColumn}>
@@ -27929,7 +27929,7 @@ const VideoPlayerPreview: React.FC<{
   const [durationSeconds, setDurationSeconds] = useState(0)
   const [detectedOrientation, setDetectedOrientation] = useState<Exclude<VideoOrientation, 'auto'> | ''>('')
   const showControlBarInitially = shouldShowVideoControlBarInitially(settings)
-  const [controlsVisible, setControlsVisible] = useState(showControlBarInitially)
+  const [controlsVisible, setControlsVisible] = useState(Boolean(autoplay && showControlBarInitially))
   const controlsMode = getVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native' && !editorPlaybackDisabled
   const showOverlay = controlsMode === 'clean'
@@ -27977,7 +27977,7 @@ const VideoPlayerPreview: React.FC<{
   const controlsHideTimerRef = useRef<number | null>(null)
   const showOverlayLayer = showOverlay && (!isPlaying || isPreviewLooping)
   const showSoundNotice = showOverlay && soundHint && !hasStartedPlayback
-  const shouldHideControlBarAtStart = showCustomControlBar && !showControlBarInitially && !hasStartedPlayback
+  const shouldHideControlBarAtStart = showCustomControlBar && !hasStartedPlayback
   const shouldDismissControlsOnOutsidePointer = showCustomControlBar && controlsVisible && !shouldHideControlBarAtStart
   const controlBarTabIndex = shouldHideControlBarAtStart ? -1 : undefined
   const embeddedGatePreviewQuestions = Array.isArray(settings.videoFormGateEmbeddedBlocks)
@@ -27986,8 +27986,8 @@ const VideoPlayerPreview: React.FC<{
   const gatePreviewQuestions = videoFormGateQuestions.length ? videoFormGateQuestions : embeddedGatePreviewQuestions
   const showGatePreview = selected && settings.videoFormGateEnabled === true && Boolean(site) && gatePreviewQuestions.length > 0
   const isControlBarBlockedAtStart = useCallback(
-    () => showCustomControlBar && !showControlBarInitially && !hasStartedPlaybackRef.current,
-    [showControlBarInitially, showCustomControlBar]
+    () => showCustomControlBar && !hasStartedPlaybackRef.current,
+    [showCustomControlBar]
   )
   const clearControlsHideTimer = useCallback(() => {
     if (!controlsHideTimerRef.current) return
@@ -28146,7 +28146,7 @@ const VideoPlayerPreview: React.FC<{
   useEffect(() => {
     if (!showCustomControlBar) {
       clearControlsHideTimer()
-      setControlsVisible(true)
+      setControlsVisible(false)
       return
     }
     if (shouldHideControlBarAtStart) {
@@ -28154,9 +28154,14 @@ const VideoPlayerPreview: React.FC<{
       setControlsVisible(false)
       return
     }
+    if (!showControlBarInitially) {
+      clearControlsHideTimer()
+      setControlsVisible(false)
+      return
+    }
     setControlsVisible(true)
     hideControlsAfter()
-  }, [clearControlsHideTimer, hideControlsAfter, shouldHideControlBarAtStart, showCustomControlBar])
+  }, [clearControlsHideTimer, hideControlsAfter, shouldHideControlBarAtStart, showControlBarInitially, showCustomControlBar])
 
   const getActivePreviewRange = useCallback(() => {
     const duration = videoRef.current?.duration
@@ -28348,7 +28353,8 @@ const VideoPlayerPreview: React.FC<{
     }
     resetInitialPlaybackToStart()
     markUserPlaybackStarted()
-    showControlsTemporarily()
+    if (showControlBarInitially) showControlsTemporarily()
+    else setControlsVisible(false)
     if (unmute) {
       video.muted = false
       if (video.volume === 0) video.volume = 1
@@ -28443,10 +28449,14 @@ const VideoPlayerPreview: React.FC<{
       showControlsTemporarily()
       return false
     }
+    if (!hasStartedPlaybackRef.current) {
+      clearControlsHideTimer()
+      setControlsVisible(false)
+      return false
+    }
     const duration = Number.isFinite(video.duration) ? video.duration : 0
     if (duration <= 0) return false
     stopPreviewLoop()
-    markUserPlaybackStarted()
     const nextProgress = Math.max(0, Math.min(1, ratio))
     video.currentTime = nextProgress * duration
     setProgress(getVideoTrickProgressRatio(settings, nextProgress))
@@ -28466,13 +28476,18 @@ const VideoPlayerPreview: React.FC<{
     if (shouldLetEditorSelect) return
     event.preventDefault()
     event.stopPropagation()
+    if (!hasStartedPlaybackRef.current) {
+      clearControlsHideTimer()
+      setControlsVisible(false)
+      return
+    }
     event.currentTarget.setPointerCapture(event.pointerId)
     showControlsTemporarily()
     seekToClientPosition(event.clientX, event.currentTarget)
   }
 
   const handleProgressPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (shouldLetEditorSelect || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+    if (shouldLetEditorSelect || !hasStartedPlaybackRef.current || !event.currentTarget.hasPointerCapture(event.pointerId)) return
     event.preventDefault()
     event.stopPropagation()
     showControlsTemporarily()
@@ -28491,6 +28506,7 @@ const VideoPlayerPreview: React.FC<{
 
   const handleProgressKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (shouldLetEditorSelect) return
+    if (!hasStartedPlaybackRef.current) return
     const video = videoRef.current
     const duration = video && Number.isFinite(video.duration) ? video.duration : 0
     if (!video || duration <= 0) return
