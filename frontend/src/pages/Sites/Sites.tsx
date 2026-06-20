@@ -2476,13 +2476,15 @@ const getEmptyEditorMessage = (section: SitesSection) => {
 
 const getLibraryPreviewBlocks = (site: PublicSite) => {
   const blocks = [...(site.blocks || [])].sort((a, b) => a.sortOrder - b.sortOrder)
-  if (!hasEditablePages(site)) return blocks.slice(0, 4)
+  if (!hasEditablePages(site)) return blocks.filter(block => !isPopupBlock(block)).slice(0, 4)
 
   const pages = normalizeFunnelPages(site)
   const firstPageId = pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
-  return blocks
-    .filter(block => getBlockPageId(block, pages) === firstPageId)
-    .slice(0, 4)
+  const pageBlocks = blocks.filter(block => (
+    !isPopupBlock(block) &&
+    (isGlobalHeaderBlock(block) || getBlockPageId(block, pages) === firstPageId)
+  ))
+  return isLanding(site) ? pageBlocks : pageBlocks.slice(0, 4)
 }
 
 const getSettingString = (settings: Record<string, unknown>, key: string) => {
@@ -20741,7 +20743,7 @@ const LibrarySitePreview: React.FC<{
   )
   const previewFrameStyle = {
     minHeight: previewHeight,
-    padding: isLandingPreview ? '28px 24px 56px' : '20px 16px 42px'
+    ...(isLandingPreview ? {} : { padding: '20px 16px 42px' })
   } as React.CSSProperties
   const previewScalerStyle = {
     width: Math.round(previewDesignWidth * previewScale),
@@ -20755,6 +20757,94 @@ const LibrarySitePreview: React.FC<{
     ['--rstk-scale' as string]: previewScale
   } as React.CSSProperties
 
+  const renderBlockPreview = (block: SiteBlock) => (
+    <div key={block.id} className={getBlockStyleClassName(block)} style={getBlockCanvasStyle(block)}>
+      <BlockBackgroundVideo block={block} />
+      <CanvasPreviewBlock
+        block={block}
+        site={site}
+        blocks={blocks}
+        forms={forms}
+        calendars={calendars}
+        pages={pages}
+        activePageId={activePageId}
+      />
+    </div>
+  )
+
+  const renderLandingLane = (lane: LandingSectionLane) => {
+    const section = lane.section
+
+    if (!section) {
+      return (
+        <section key={lane.id} className="rstk-section-lane rstk-section-lane-legacy">
+          <div className="rstk-section-inner">
+            <div className="rstk-section-columns">
+              {lane.columnBlocks.map((columnBlocks, columnIndex) => (
+                <div key={`${lane.id}-${columnIndex}`} className="rstk-section-column">
+                  {columnBlocks.map(renderBlockPreview)}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )
+    }
+
+    const settings = section.settings || {}
+    const subtitle = getSettingString(settings, 'subtitle')
+    const hasHeading = Boolean(section.content || subtitle)
+
+    return (
+      <section
+        key={section.id}
+        className={getBlockStyleClassName(section, 'rstk-section-lane')}
+        style={getBlockCanvasStyle(section)}
+      >
+        <BlockBackgroundVideo block={section} />
+        <div className="rstk-section-inner">
+          {hasHeading && (
+            <div className="rstk-section-heading">
+              {section.content && <h2>{section.content}</h2>}
+              {subtitle && <p>{subtitle}</p>}
+            </div>
+          )}
+          <div className="rstk-section-columns">
+            {lane.columnBlocks.map((columnBlocks, columnIndex) => (
+              <div key={`${lane.id}-${columnIndex}`} className="rstk-section-column">
+                {columnBlocks.map(renderBlockPreview)}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    )
+  }
+
+  const renderLandingPreviewBlocks = () => {
+    const lanes = buildLandingSectionLanes(blocks)
+    const laneBySectionId = new Map(lanes.filter(lane => lane.section).map(lane => [lane.section!.id, lane]))
+    const legacyLane = lanes.find(lane => !lane.section)
+    let legacyRendered = false
+
+    const renderedBlocks = blocks.map(block => {
+      if (isPanelBlock(block)) return renderBlockPreview(block)
+
+      if (!isSectionBlock(block)) {
+        if (!legacyLane || legacyRendered || getBlockSectionId(block)) return null
+        legacyRendered = true
+        return renderLandingLane(legacyLane)
+      }
+
+      const lane = laneBySectionId.get(block.id)
+      return lane ? renderLandingLane(lane) : null
+    })
+
+    if (legacyLane && !legacyRendered) renderedBlocks.push(renderLandingLane(legacyLane))
+
+    return renderedBlocks
+  }
+
   return (
     <div className={styles.libraryPreviewViewport} aria-hidden="true" inert>
       <div className={styles.libraryPreviewScaler} style={previewScalerStyle}>
@@ -20767,19 +20857,7 @@ const LibrarySitePreview: React.FC<{
             <main className="rstk-page">
               <div className="rstk-shell">
                 {blocks.length ? (
-                  blocks.map(block => (
-                    <div key={block.id} className={getBlockStyleClassName(block)} style={getBlockCanvasStyle(block)}>
-                      <CanvasPreviewBlock
-                        block={block}
-                        site={site}
-                        blocks={blocks}
-                        forms={forms}
-                        calendars={calendars}
-                        pages={pages}
-                        activePageId={activePageId}
-                      />
-                    </div>
-                  ))
+                  isLandingPreview ? renderLandingPreviewBlocks() : blocks.map(renderBlockPreview)
                 ) : (
                   <div className="rstkDropEmpty">
                     {isLandingPreview ? <LayoutTemplate size={22} /> : <FormInput size={22} />}
