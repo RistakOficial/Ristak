@@ -38,6 +38,9 @@ import { createSession, getVisitorIdentityExpression, linkVisitorToContact, unif
 
 export const SITE_TYPES = new Set(['standard_form', 'interactive_form', 'landing_page'])
 export const SITE_STATUSES = new Set(['draft', 'published', 'archived'])
+const SITE_LIBRARY_FOLDER_SECTIONS = new Set(['landings', 'forms'])
+const SITE_LIBRARY_HTML_FORMS_FOLDER_ID = 'system-html-forms'
+const SITE_LIBRARY_SOURCE_HTML = 'html'
 export const CONTENT_BLOCK_TYPES = new Set([
   'headline',
   'subheading',
@@ -3048,7 +3051,7 @@ function buildImportedSourceFormTheme({ sourceSite, existingSite, mapping, detec
   const submitText = cleanString(mapping?.submitText || detectedForm?.submitText) || 'Enviar'
   const sourceTemplate = cleanString(sourceSite?.theme?.template)
 
-  return {
+  return withSiteLibraryMetadata({
     ...existingTheme,
     template: cleanString(existingTheme.template) || (sourceTemplate && sourceTemplate !== IMPORTED_SITE_TEMPLATE ? sourceTemplate : 'ristak'),
     formCompletionAction: normalizeFormCompletionAction(existingTheme.formCompletionAction || existingTheme.form_completion_action, 'next_page_if_qualified'),
@@ -3069,7 +3072,10 @@ function buildImportedSourceFormTheme({ sourceSite, existingSite, mapping, detec
     importedHtmlSourcePagePath: cleanString(detectedForm?.pagePath || detectedForm?.page_path),
     importedHtmlSourceTitle: cleanString(mapping?.formTitle || detectedForm?.title),
     importedHtmlSourceSubmitText: submitText
-  }
+  }, {
+    folderId: cleanString(existingTheme.libraryFolderId) || SITE_LIBRARY_HTML_FORMS_FOLDER_ID,
+    source: cleanString(existingTheme.librarySource) || SITE_LIBRARY_SOURCE_HTML
+  })
 }
 
 async function syncImportedSourceFormBlocks(formSiteId, blocks = [], context = {}) {
@@ -3395,6 +3401,34 @@ function mapSite(row) {
         : 0
     }
   }
+}
+
+function normalizeSiteFolderSection(value = 'forms') {
+  const section = cleanString(value).toLowerCase()
+  return SITE_LIBRARY_FOLDER_SECTIONS.has(section) ? section : 'forms'
+}
+
+function mapSiteFolder(row) {
+  if (!row) return null
+
+  return {
+    id: row.id,
+    name: row.name || '',
+    section: normalizeSiteFolderSection(row.section),
+    sortOrder: Number(row.sort_order || 0),
+    archived: Boolean(Number(row.archived || 0)),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function withSiteLibraryMetadata(theme = {}, { folderId = '', source = '' } = {}) {
+  const nextTheme = { ...(theme || {}) }
+  const cleanFolderId = cleanString(folderId)
+  const cleanSource = cleanString(source)
+  if (cleanFolderId) nextTheme.libraryFolderId = cleanFolderId
+  if (cleanSource) nextTheme.librarySource = cleanSource
+  return nextTheme
 }
 
 function mapBlock(row) {
@@ -7005,6 +7039,74 @@ export async function listSites() {
   `)
 
   return rows.map(mapSite)
+}
+
+export async function listSiteFolders() {
+  const rows = await db.all(`
+    SELECT *
+    FROM public_site_folders
+    WHERE archived = 0
+    ORDER BY section ASC, sort_order ASC, name ASC
+  `)
+
+  return rows.map(mapSiteFolder)
+}
+
+export async function createSiteFolder(input = {}) {
+  const name = limitString(cleanString(input.name), 80)
+  if (!name) {
+    const error = new Error('El nombre de la carpeta es obligatorio')
+    error.status = 400
+    throw error
+  }
+
+  const section = normalizeSiteFolderSection(input.section)
+  const row = await db.get(
+    'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM public_site_folders WHERE section = ? AND archived = 0',
+    [section]
+  )
+  const id = crypto.randomUUID()
+  const sortOrder = Number(row?.max_order || 0) + 1
+
+  await db.run(`
+    INSERT INTO public_site_folders (
+      id, name, section, sort_order, archived, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [id, name, section, sortOrder])
+
+  return mapSiteFolder(await db.get('SELECT * FROM public_site_folders WHERE id = ?', [id]))
+}
+
+export async function updateSiteFolder(folderId, input = {}) {
+  const id = cleanString(folderId)
+  if (!id) return null
+
+  const current = await db.get('SELECT * FROM public_site_folders WHERE id = ? AND archived = 0', [id])
+  if (!current) return null
+
+  const name = Object.prototype.hasOwnProperty.call(input, 'name')
+    ? limitString(cleanString(input.name), 80)
+    : current.name
+  if (!name) {
+    const error = new Error('El nombre de la carpeta es obligatorio')
+    error.status = 400
+    throw error
+  }
+
+  const section = Object.prototype.hasOwnProperty.call(input, 'section')
+    ? normalizeSiteFolderSection(input.section)
+    : normalizeSiteFolderSection(current.section)
+  const sortOrder = Number.isFinite(Number(input.sortOrder ?? input.sort_order))
+    ? Number(input.sortOrder ?? input.sort_order)
+    : Number(current.sort_order || 0)
+
+  await db.run(`
+    UPDATE public_site_folders
+    SET name = ?, section = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [name, section, sortOrder, id])
+
+  return mapSiteFolder(await db.get('SELECT * FROM public_site_folders WHERE id = ?', [id]))
 }
 
 async function getSiteTrackingStats(siteId) {

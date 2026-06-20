@@ -148,6 +148,7 @@ export interface SiteTheme {
   textColorCustom?: boolean
   template?: SiteTemplateId
   importedHtml?: boolean
+  importedHtmlSource?: boolean
   importId?: string
   pages?: SitePage[]
   pageMode?: 'funnel' | 'website'
@@ -242,6 +243,8 @@ export interface SiteTheme {
     success?: string
     disqualified?: string
   }
+  libraryFolderId?: string
+  librarySource?: string
 }
 
 export interface SitesTrackingStats {
@@ -672,6 +675,18 @@ export interface PublicSite {
   submissions?: SiteSubmission[]
 }
 
+export type SiteLibraryFolderSection = 'landings' | 'forms'
+
+export interface SiteLibraryFolder {
+  id: string
+  name: string
+  section: SiteLibraryFolderSection
+  sortOrder: number
+  archived?: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 export interface SitesDomainConfig {
   domain: string
   renderDomainVerified: boolean
@@ -1009,6 +1024,18 @@ export const fieldBlockTypes = new Set<SiteBlockType>([
 export const sitesService = {
   listSites() {
     return apiClient.get<PublicSite[]>('/sites')
+  },
+
+  listFolders() {
+    return apiClient.get<SiteLibraryFolder[]>('/sites/folders')
+  },
+
+  createFolder(payload: { name: string; section: SiteLibraryFolderSection }) {
+    return apiClient.post<SiteLibraryFolder>('/sites/folders', payload)
+  },
+
+  updateFolder(folderId: string, payload: Partial<Pick<SiteLibraryFolder, 'name' | 'section' | 'sortOrder'>>) {
+    return apiClient.put<SiteLibraryFolder>(`/sites/folders/${folderId}`, payload)
   },
 
   createSite(payload: Partial<PublicSite> & { siteType?: SiteType }) {

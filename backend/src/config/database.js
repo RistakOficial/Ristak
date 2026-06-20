@@ -1156,6 +1156,18 @@ async function initTables() {
       )
     `)
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS public_site_folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        section TEXT DEFAULT 'forms',
+        sort_order INTEGER DEFAULT 0,
+        archived INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
     for (const [columnName, columnType] of [
       ['domain', 'TEXT UNIQUE'],
       ['title', 'TEXT'],
@@ -1215,6 +1227,7 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_imports_site ON public_site_imports(site_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_import_assets_import ON public_site_import_assets(import_id)')
       await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_public_site_import_assets_site_path ON public_site_import_assets(site_id, asset_path)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_folders_section_order ON public_site_folders(section, archived, sort_order, name)')
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_public_sites_domain_lower ON public_sites(LOWER(domain)) WHERE domain IS NOT NULL AND domain != ''")
     } catch (err) {
       logger.warn('Advertencia al crear índices de public sites:', err.message)

@@ -19,6 +19,8 @@ import {
   getSitePreview,
   getSitesTrackingSummary,
   isDashboardHost,
+  createSiteFolder,
+  listSiteFolders,
   listSites,
   refreshSitesAppDomain,
   refreshSitesPublicDomain,
@@ -32,6 +34,7 @@ import {
   resolvePublicSiteForHost,
   restoreBlocks,
   updateBlock,
+  updateSiteFolder,
   updateImportedSiteEditableContent,
   updateImportedSiteCodeFiles,
   updateImportedSiteHtmlWithAI,
@@ -179,6 +182,38 @@ export async function getSitesHandler(req, res) {
   } catch (error) {
     logger.error(`Error listando sites: ${error.message}`)
     sendError(res, error, 'Error listando sites')
+  }
+}
+
+export async function getSiteFoldersHandler(req, res) {
+  try {
+    res.json({ success: true, data: await listSiteFolders() })
+  } catch (error) {
+    logger.error(`Error listando carpetas de sites: ${error.message}`)
+    sendError(res, error, 'Error listando carpetas')
+  }
+}
+
+export async function createSiteFolderHandler(req, res) {
+  try {
+    const folder = await createSiteFolder(req.body || {})
+    res.status(201).json({ success: true, data: folder })
+  } catch (error) {
+    logger.error(`Error creando carpeta de sites: ${error.message}`)
+    sendError(res, error, 'Error creando carpeta')
+  }
+}
+
+export async function updateSiteFolderHandler(req, res) {
+  try {
+    const folder = await updateSiteFolder(req.params.folderId, req.body || {})
+    if (!folder) {
+      return res.status(404).json({ success: false, error: 'Carpeta no encontrada' })
+    }
+    res.json({ success: true, data: folder })
+  } catch (error) {
+    logger.error(`Error actualizando carpeta de sites: ${error.message}`)
+    sendError(res, error, 'Error actualizando carpeta')
   }
 }
 

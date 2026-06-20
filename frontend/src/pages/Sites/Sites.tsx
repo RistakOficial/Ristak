@@ -47,8 +47,12 @@ import {
   FileText,
   Filter,
   Flame,
+  Folder,
+  FolderOpen,
+  FolderPlus,
   FormInput,
   Globe2,
+  Grid2X2,
   GripVertical,
   Image,
   Instagram,
@@ -82,8 +86,10 @@ import {
   SlidersHorizontal,
   Sparkles,
   Smartphone,
+  Rows3,
   Strikethrough,
   Sun,
+  Table2,
   Trash2,
   Type,
   Underline,
@@ -105,12 +111,14 @@ import {
   Modal,
   NumberInput,
   CustomSelect,
+  SearchField,
   Switch,
   TabList,
   SegmentTabs,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   MediaUploadTray
 } from '@/components/common'
@@ -145,6 +153,7 @@ import {
   type SiteBlock,
   type SiteBlockOption,
   type SiteBlockType,
+  type SiteLibraryFolder,
   type SiteMetaCustomParameter,
   type SiteMetaEventParameters,
   type SiteMetaTrigger,
@@ -188,9 +197,55 @@ import { SITE_FONT_OPTIONS, normalizeSiteFontFamily } from './siteFonts'
 type SitesSection = 'landings' | 'forms' | 'leads' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
 type SitesAnalyticsSiteType = 'sites' | 'forms' | 'videos'
+type LibraryViewMode = 'gallery' | 'list' | 'table'
+type LibraryFolderSource = 'site_embed' | 'html' | 'video_gate' | 'manual'
+type LibraryFolderDefinition = SiteLibraryFolder & {
+  system?: boolean
+  source?: LibraryFolderSource
+  description?: string
+}
 const sitesAnalyticsSiteTypes: SitesAnalyticsSiteType[] = ['sites', 'forms', 'videos']
 const isSitesAnalyticsSiteType = (value?: string | null): value is SitesAnalyticsSiteType =>
   sitesAnalyticsSiteTypes.includes(value as SitesAnalyticsSiteType)
+const SITE_LIBRARY_ROOT_ID = '__root__'
+const SITE_FORMS_FOLDER_ID = 'system-site-forms'
+const HTML_FORMS_FOLDER_ID = 'system-html-forms'
+const VIDEO_FORMS_FOLDER_ID = 'system-video-forms'
+const SYSTEM_FORM_FOLDERS: LibraryFolderDefinition[] = [
+  {
+    id: SITE_FORMS_FOLDER_ID,
+    name: 'Formularios de sitios web',
+    section: 'forms',
+    sortOrder: -30,
+    createdAt: '',
+    updatedAt: '',
+    system: true,
+    source: 'site_embed',
+    description: 'Formularios creados desde bloques dentro de sitios web.'
+  },
+  {
+    id: HTML_FORMS_FOLDER_ID,
+    name: 'Formularios de HTML',
+    section: 'forms',
+    sortOrder: -20,
+    createdAt: '',
+    updatedAt: '',
+    system: true,
+    source: 'html',
+    description: 'Formularios detectados o creados desde sitios HTML importados.'
+  },
+  {
+    id: VIDEO_FORMS_FOLDER_ID,
+    name: 'Formularios de Videos',
+    section: 'forms',
+    sortOrder: -10,
+    createdAt: '',
+    updatedAt: '',
+    system: true,
+    source: 'video_gate',
+    description: 'Formularios que se abren dentro de videos.'
+  }
+]
 type CreateFlow =
   | 'closed'
   | 'landing-start'
@@ -2199,6 +2254,43 @@ const getLibraryEmptyMessage = (section: SitesSection) => {
   if (section === 'forms') return 'Crea un formulario para verlo aquí como tarjeta editable.'
   return getEmptyEditorMessage(section)
 }
+
+const getLibraryDefaultView = (section: SitesSection): LibraryViewMode =>
+  section === 'forms' ? 'list' : 'gallery'
+
+const normalizeLibraryFolderId = (value: unknown) =>
+  typeof value === 'string' ? value.trim() : ''
+
+const getSiteLibrarySource = (site: PublicSite): LibraryFolderSource => {
+  const source = normalizeLibraryFolderId(site.theme?.librarySource)
+  if (source === 'site_embed' || source === 'html' || source === 'video_gate' || source === 'manual') return source
+  if (site.theme?.importedHtmlSource || site.theme?.importedHtml) return 'html'
+  return 'manual'
+}
+
+const getDefaultLibraryFolderId = (site: PublicSite) => {
+  if (!isFormSite(site)) return ''
+  const source = getSiteLibrarySource(site)
+  if (source === 'video_gate') return VIDEO_FORMS_FOLDER_ID
+  if (source === 'html') return HTML_FORMS_FOLDER_ID
+  if (source === 'site_embed') return SITE_FORMS_FOLDER_ID
+  return ''
+}
+
+const getSiteLibraryFolderId = (site: PublicSite) => {
+  const explicitFolderId = normalizeLibraryFolderId(site.theme?.libraryFolderId)
+  if (explicitFolderId) return explicitFolderId
+  return getDefaultLibraryFolderId(site) || SITE_LIBRARY_ROOT_ID
+}
+
+const patchSiteLibraryFolder = (site: PublicSite, folderId: string): PublicSite => ({
+  ...site,
+  theme: {
+    ...(site.theme || {}),
+    libraryFolderId: folderId || SITE_LIBRARY_ROOT_ID,
+    librarySource: getSiteLibrarySource(site)
+  }
+})
 
 const getSiteTypeLabel = (site: PublicSite) => {
   if (site.siteType === 'landing_page') return site.theme?.pageMode === 'website' ? 'Sitio web' : 'Embudo'
@@ -5282,6 +5374,8 @@ const buildEmbeddedFormSourceTheme = (
 
   const completionAction = getFormCompletionAction(settings)
   theme.formCompletionAction = completionAction === 'form_default' ? 'next_page_if_qualified' : completionAction
+  theme.libraryFolderId = SITE_FORMS_FOLDER_ID
+  theme.librarySource = 'site_embed'
 
   return theme as SiteTheme
 }
@@ -5292,6 +5386,8 @@ const buildVideoFormGateSourceTheme = (
 ): SiteTheme => ({
   ...buildEmbeddedFormSourceTheme(sourceSite, settings, getVideoFormGateSinglePage()),
   pages: normalizePagesForSave(getVideoFormGateSinglePage()),
+  libraryFolderId: VIDEO_FORMS_FOLDER_ID,
+  librarySource: 'video_gate',
   submitText: getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT,
   continueText: getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT,
   nextText: getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT,
@@ -5978,6 +6074,11 @@ export const Sites: React.FC = () => {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const [section, setSection] = useState<SitesSection>(routeState.section)
   const [sites, setSites] = useState<PublicSite[]>([])
+  const [siteFolders, setSiteFolders] = useState<SiteLibraryFolder[]>([])
+  const [libraryViewMode, setLibraryViewMode] = useState<Record<'landings' | 'forms', LibraryViewMode>>({
+    landings: 'gallery',
+    forms: 'list'
+  })
   const [domainConfig, setDomainConfig] = useState<SitesDomainConfig>(emptySitesDomainConfig)
   const [domainInput, setDomainInput] = useState('')
   const [calendars, setCalendars] = useState<CalendarType[]>([])
@@ -6809,7 +6910,9 @@ export const Sites: React.FC = () => {
           description: existingSource.description,
           theme: {
             ...(existingSource.theme || {}),
-            ...buildVideoFormGateSourceTheme(siteToSave, settings)
+            ...buildVideoFormGateSourceTheme(siteToSave, settings),
+            libraryFolderId: normalizeLibraryFolderId(existingSource.theme?.libraryFolderId) || VIDEO_FORMS_FOLDER_ID,
+            librarySource: normalizeLibraryFolderId(existingSource.theme?.librarySource) || 'video_gate'
           },
           metaCapiEnabled: existingSource.metaCapiEnabled,
           metaEventName: existingSource.metaEventName
@@ -7236,12 +7339,14 @@ export const Sites: React.FC = () => {
   const loadSites = async (selectId?: string, selectPageId?: string) => {
     setLoading(true)
     try {
-      const [list, nextDomainConfig] = await Promise.all([
+      const [list, nextDomainConfig, folders] = await Promise.all([
         sitesService.listSites(),
-        sitesService.getDomain()
+        sitesService.getDomain(),
+        sitesService.listFolders()
       ])
       const builderSites = await hydrateFormSitesForBuilder(list)
       setSites(builderSites)
+      setSiteFolders(folders)
       setDomainConfig(nextDomainConfig)
       setDomainInput(nextDomainConfig.domain)
       const nextId = selectId || (selectedSite?.id && builderSites.some(site => site.id === selectedSite.id) ? selectedSite.id : '')
@@ -7566,6 +7671,49 @@ export const Sites: React.FC = () => {
     requestLeaveEditor(() => {
       void changeSection(nextSection)
     })
+  }
+
+  const handleLibraryViewChange = (targetSection: 'landings' | 'forms', viewMode: LibraryViewMode) => {
+    setLibraryViewMode(current => ({
+      ...current,
+      [targetSection]: viewMode
+    }))
+  }
+
+  const handleCreateLibraryFolder = async (targetSection: 'landings' | 'forms', name: string) => {
+    const folderName = name.trim()
+    if (!folderName) return null
+
+    try {
+      const folder = await sitesService.createFolder({ section: targetSection, name: folderName })
+      setSiteFolders(current => [...current.filter(item => item.id !== folder.id), folder])
+      showToast('success', 'Carpeta creada', `Ya puedes guardar elementos dentro de "${folder.name}".`)
+      return folder
+    } catch (error) {
+      showToast('error', 'No se pudo crear la carpeta', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+      return null
+    }
+  }
+
+  const handleMoveLibrarySite = async (site: PublicSite, folderId: string) => {
+    const currentFolderId = getSiteLibraryFolderId(site)
+    const nextFolderId = folderId || SITE_LIBRARY_ROOT_ID
+    if (currentFolderId === nextFolderId) return
+
+    const draft = patchSiteLibraryFolder(site, nextFolderId)
+    try {
+      const updated = normalizeSiteForEditor(await sitesService.updateSite(site.id, {
+        theme: draft.theme
+      }))
+      setSites(current => current.map(item => item.id === updated.id ? { ...item, ...updated } : item))
+      if (selectedSiteRef.current?.id === updated.id) {
+        selectedSiteRef.current = updated
+        setSelectedSite(updated)
+      }
+      showToast('success', 'Elemento movido', `${site.name} quedó guardado en la carpeta seleccionada.`)
+    } catch (error) {
+      showToast('error', 'No se pudo mover', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+    }
   }
 
   const handleStartCreateFlow = () => {
@@ -8698,6 +8846,8 @@ export const Sites: React.FC = () => {
     try {
       const importData = await sitesService.updateImportMapping(importReview.site.id, formMappings)
       setSelectedImportData(importData)
+      const refreshedSites = await hydrateFormSitesForBuilder(await sitesService.listSites())
+      setSites(refreshedSites)
       setImportReview(null)
       showToast('success', 'Ruta de datos guardada', 'Ristak ya sabe donde guardar cada dato de este HTML.')
     } catch (error) {
@@ -10603,12 +10753,17 @@ export const Sites: React.FC = () => {
               <SitesLibraryPanel
                 section={section}
                 sites={section === 'landings' ? landings : forms}
+                folders={siteFolders}
+                viewMode={libraryViewMode[section === 'forms' ? 'forms' : 'landings'] || getLibraryDefaultView(section)}
                 forms={forms}
                 calendars={calendars}
                 selectedSiteId={selectedSite?.id || ''}
                 onCreate={handleStartCreateFlow}
+                onCreateFolder={handleCreateLibraryFolder}
                 onEdit={selectSite}
                 onPreview={(site) => void handlePreviewLibrarySite(site)}
+                onMoveToFolder={(site, folderId) => void handleMoveLibrarySite(site, folderId)}
+                onViewModeChange={handleLibraryViewChange}
                 onUpdateRoute={handleUpdateLibraryRoute}
                 onOpenSettings={(site) => { void openLibrarySettings(site) }}
                 onDelete={(site) => void handleDeleteSite(site)}
@@ -19912,13 +20067,18 @@ const ImportedHtmlReviewModal: React.FC<{
 interface SitesLibraryPanelProps {
   section: SitesSection
   sites: PublicSite[]
+  folders: SiteLibraryFolder[]
+  viewMode: LibraryViewMode
   forms: PublicSite[]
   calendars: CalendarType[]
   selectedSiteId: string
   domainConfig: SitesDomainConfig
   onCreate: () => void
+  onCreateFolder: (section: 'landings' | 'forms', name: string) => Promise<SiteLibraryFolder | null>
   onEdit: (siteId: string) => void
   onPreview: (site: PublicSite) => void
+  onMoveToFolder: (site: PublicSite, folderId: string) => void
+  onViewModeChange: (section: 'landings' | 'forms', viewMode: LibraryViewMode) => void
   onUpdateRoute: (site: PublicSite, slug: string) => Promise<void>
   onOpenSettings: (site: PublicSite) => void
   onDelete: (site: PublicSite) => void
@@ -20005,22 +20165,84 @@ const LibrarySitePreview: React.FC<{
 const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   section,
   sites,
+  folders,
+  viewMode,
   forms,
   calendars,
   selectedSiteId,
   domainConfig,
   onCreate,
+  onCreateFolder,
   onEdit,
   onPreview,
+  onMoveToFolder,
+  onViewModeChange,
   onUpdateRoute,
   onOpenSettings,
   onDelete
 }) => {
   const isLandingLibrary = section === 'landings'
+  const librarySection: 'landings' | 'forms' = isLandingLibrary ? 'landings' : 'forms'
   const [routeEditingId, setRouteEditingId] = useState<string | null>(null)
   const [routeDraft, setRouteDraft] = useState('')
   const [routeSavingId, setRouteSavingId] = useState<string | null>(null)
+  const [activeFolderId, setActiveFolderId] = useState(SITE_LIBRARY_ROOT_ID)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [folderDraft, setFolderDraft] = useState('')
+  const [folderCreateOpen, setFolderCreateOpen] = useState(false)
+  const [folderSaving, setFolderSaving] = useState(false)
+  const [draggingSiteId, setDraggingSiteId] = useState('')
+  const [dragOverFolderId, setDragOverFolderId] = useState('')
   const stopCardAction = (event: React.SyntheticEvent) => event.stopPropagation()
+  const sectionFolders = useMemo<LibraryFolderDefinition[]>(() => {
+    const customFolders = folders
+      .filter(folder => folder.section === librarySection && !folder.archived)
+      .map(folder => ({ ...folder, system: false }))
+    const systemFolders = librarySection === 'forms' ? SYSTEM_FORM_FOLDERS : []
+    return [...systemFolders, ...customFolders]
+      .sort((a, b) => (a.sortOrder - b.sortOrder) || a.name.localeCompare(b.name))
+  }, [folders, librarySection])
+  const folderCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    counts.set(SITE_LIBRARY_ROOT_ID, 0)
+    sectionFolders.forEach(folder => counts.set(folder.id, 0))
+    sites.forEach(site => {
+      const folderId = getSiteLibraryFolderId(site)
+      counts.set(folderId, (counts.get(folderId) || 0) + 1)
+    })
+    return counts
+  }, [sectionFolders, sites])
+  const activeFolder = sectionFolders.find(folder => folder.id === activeFolderId) || null
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const visibleSites = useMemo(() => (
+    sites.filter(site => {
+      const folderId = getSiteLibraryFolderId(site)
+      const matchesQuery = !normalizedQuery || [
+        site.name,
+        getSiteTypeLabel(site),
+        getPublicRouteLabel(site, domainConfig),
+        getStatusLabel(site, domainConfig)
+      ].some(value => value.toLowerCase().includes(normalizedQuery))
+      if (!matchesQuery) return false
+      return normalizedQuery ? true : folderId === activeFolderId
+    })
+  ), [activeFolderId, domainConfig, normalizedQuery, sites])
+  const canShowFolders = activeFolderId === SITE_LIBRARY_ROOT_ID && !normalizedQuery
+
+  useEffect(() => {
+    setActiveFolderId(SITE_LIBRARY_ROOT_ID)
+    setSearchQuery('')
+    setFolderCreateOpen(false)
+    setFolderDraft('')
+  }, [librarySection])
+
+  useEffect(() => {
+    if (activeFolderId === SITE_LIBRARY_ROOT_ID) return
+    if (!sectionFolders.some(folder => folder.id === activeFolderId)) {
+      setActiveFolderId(SITE_LIBRARY_ROOT_ID)
+    }
+  }, [activeFolderId, sectionFolders])
+
   const startRouteEdit = (site: PublicSite) => {
     setRouteEditingId(site.id)
     setRouteDraft(getRouteEditorValue(site))
@@ -20048,6 +20270,205 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     }
   }
   const routeEditingSite = routeEditingId ? sites.find(site => site.id === routeEditingId) || null : null
+  const submitFolderCreate = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const name = folderDraft.trim()
+    if (!name) return
+
+    setFolderSaving(true)
+    try {
+      const folder = await onCreateFolder(librarySection, name)
+      if (folder) {
+        setFolderDraft('')
+        setFolderCreateOpen(false)
+        setActiveFolderId(folder.id)
+      }
+    } finally {
+      setFolderSaving(false)
+    }
+  }
+  const handleDragStart = (event: React.DragEvent<HTMLElement>, site: PublicSite) => {
+    setDraggingSiteId(site.id)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', site.id)
+  }
+  const handleDragEnd = () => {
+    setDraggingSiteId('')
+    setDragOverFolderId('')
+  }
+  const handleFolderDragOver = (event: React.DragEvent<HTMLElement>, folderId: string) => {
+    if (!draggingSiteId) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDragOverFolderId(folderId)
+  }
+  const handleFolderDrop = (event: React.DragEvent<HTMLElement>, folderId: string) => {
+    event.preventDefault()
+    const siteId = event.dataTransfer.getData('text/plain') || draggingSiteId
+    const site = sites.find(item => item.id === siteId)
+    setDraggingSiteId('')
+    setDragOverFolderId('')
+    if (!site || getSiteLibraryFolderId(site) === folderId) return
+    onMoveToFolder(site, folderId)
+  }
+  const renderMoveItems = (site: PublicSite) => (
+    <>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onMoveToFolder(site, SITE_LIBRARY_ROOT_ID) }}>
+        <FolderOpen size={15} />
+        Sin carpeta
+      </DropdownMenuItem>
+      {sectionFolders.map(folder => (
+        <DropdownMenuItem key={folder.id} onSelect={(event) => { event.stopPropagation(); onMoveToFolder(site, folder.id) }}>
+          <Folder size={15} />
+          {folder.name}
+        </DropdownMenuItem>
+      ))}
+    </>
+  )
+  const renderActionsMenu = (site: PublicSite, siteKindLabel: string, buttonClassName = styles.libraryCardMenuButton) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={buttonClassName}
+          aria-label={`Acciones para ${site.name}`}
+          data-library-card-action="true"
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+          onMouseUp={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          <MoreVertical size={17} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        sideOffset={6}
+        className={styles.pageMenu}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onEdit(site.id) }}>
+          <Pencil size={15} />
+          Editar {siteKindLabel}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); startRouteEdit(site) }}>
+          <Settings2 size={15} />
+          Editar ruta
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onOpenSettings(site) }}>
+          <Settings2 size={15} />
+          Más ajustes
+        </DropdownMenuItem>
+        {renderMoveItems(site)}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className={styles.pageMenuDanger} onSelect={(event) => { event.stopPropagation(); onDelete(site) }}>
+          <Trash2 size={15} />
+          Eliminar {siteKindLabel}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+  const renderSiteStatus = (site: PublicSite) => (
+    <Badge variant={getStatusVariant(site, domainConfig)}>{getStatusLabel(site, domainConfig)}</Badge>
+  )
+  const renderGalleryCard = (site: PublicSite) => {
+    const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
+
+    return (
+      <article
+        key={site.id}
+        className={`${styles.libraryCard} ${selectedSiteId === site.id ? styles.libraryCardActive : ''} ${draggingSiteId === site.id ? styles.explorerItemDragging : ''}`}
+        draggable
+        onDragStart={(event) => handleDragStart(event, site)}
+        onDragEnd={handleDragEnd}
+      >
+        <div className={styles.libraryCardPreview}>
+          <span className={styles.libraryThumbLabel}>{getSiteTypeLabel(site)}</span>
+          <span className={styles.libraryCardStatus}>{renderSiteStatus(site)}</span>
+          <LibrarySitePreview site={site} forms={forms} calendars={calendars} />
+          <div className={styles.libraryCardHoverActions} data-library-card-action="true">
+            <button type="button" onClick={() => onEdit(site.id)}>
+              <Pencil size={16} />
+              <span>Editar</span>
+            </button>
+            <button type="button" onClick={() => onPreview(site)}>
+              {isPublicSiteLive(site, domainConfig) ? <ExternalLink size={16} /> : <Eye size={16} />}
+              <span>{isPublicSiteLive(site, domainConfig) ? 'Ver en vivo' : 'Previsualizar'}</span>
+            </button>
+            {renderActionsMenu(site, siteKindLabel)}
+          </div>
+        </div>
+
+        <div className={styles.libraryCardBody}>
+          <div className={styles.libraryCardTitleRow}>
+            <strong>{site.name}</strong>
+          </div>
+          <div className={styles.libraryCardMeta}>
+            <span className={styles.siteDomain}>{getPublicRouteLabel(site, domainConfig)}</span>
+            {formatSiteEdited(site.updatedAt) && (
+              <time dateTime={site.updatedAt || undefined}>Editado {formatSiteEdited(site.updatedAt)}</time>
+            )}
+          </div>
+        </div>
+      </article>
+    )
+  }
+  const renderListItem = (site: PublicSite) => {
+    const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
+    return (
+      <article
+        key={site.id}
+        className={`${styles.explorerListItem} ${selectedSiteId === site.id ? styles.explorerListItemActive : ''} ${draggingSiteId === site.id ? styles.explorerItemDragging : ''}`}
+        draggable
+        onDragStart={(event) => handleDragStart(event, site)}
+        onDragEnd={handleDragEnd}
+      >
+        <button type="button" className={styles.explorerListMain} onClick={() => onEdit(site.id)}>
+          <span className={styles.explorerFileIcon}>{isLanding(site) ? <LayoutTemplate size={18} /> : <FormInput size={18} />}</span>
+          <span>
+            <strong>{site.name}</strong>
+            <small>{getPublicRouteLabel(site, domainConfig)}</small>
+          </span>
+        </button>
+        <span className={styles.explorerListType}>{getSiteTypeLabel(site)}</span>
+        <span className={styles.explorerListStatus}>{renderSiteStatus(site)}</span>
+        <span className={styles.explorerListDate}>{formatSiteEdited(site.updatedAt) || 'Sin cambios'}</span>
+        <div className={styles.explorerListActions}>
+          <button type="button" onClick={() => onPreview(site)} aria-label={`Previsualizar ${site.name}`}>
+            {isPublicSiteLive(site, domainConfig) ? <ExternalLink size={16} /> : <Eye size={16} />}
+          </button>
+          {renderActionsMenu(site, siteKindLabel, styles.explorerActionButton)}
+        </div>
+      </article>
+    )
+  }
+  const renderFolderCards = () => (
+    <div className={styles.explorerFolderGrid}>
+      {sectionFolders.map(folder => (
+        <button
+          key={folder.id}
+          type="button"
+          className={`${styles.explorerFolderCard} ${dragOverFolderId === folder.id ? styles.explorerFolderDropActive : ''}`}
+          onClick={() => setActiveFolderId(folder.id)}
+          onDragOver={(event) => handleFolderDragOver(event, folder.id)}
+          onDragLeave={() => setDragOverFolderId('')}
+          onDrop={(event) => handleFolderDrop(event, folder.id)}
+        >
+          <span className={styles.explorerFolderIcon}>
+            <Folder size={20} />
+          </span>
+          <span className={styles.explorerFolderText}>
+            <strong>{folder.name}</strong>
+            <small>{folder.description || `${folderCounts.get(folder.id) || 0} elementos`}</small>
+          </span>
+          <span className={styles.explorerFolderCount}>{folderCounts.get(folder.id) || 0}</span>
+        </button>
+      ))}
+    </div>
+  )
 
   return (
     <section className={styles.libraryPanel}>
@@ -20057,105 +20478,162 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <h2>{getLibraryTitle(section)}</h2>
           <p>{getLibraryDescription(section)}</p>
         </div>
+        <div className={styles.libraryHeaderActions}>
+          <Button variant="secondary" size="sm" onClick={() => setFolderCreateOpen(value => !value)} leftIcon={<FolderPlus size={16} />}>
+            Nueva carpeta
+          </Button>
+          <Button size="sm" onClick={onCreate} leftIcon={<Plus size={16} />}>
+            {getCreateButtonLabel(section)}
+          </Button>
+        </div>
       </div>
 
-      <div className={styles.libraryGrid}>
-        <button type="button" className={styles.createLibraryCard} onClick={onCreate}>
-          <span className={styles.createLibraryIcon}>
-            <Plus size={22} />
-          </span>
-          <strong>{getCreateButtonLabel(section)}</strong>
-          <small>
-            {sites.length === 0
-              ? getLibraryEmptyMessage(section)
-              : isLandingLibrary
-                ? 'Agrega otra página o embudo a tu biblioteca.'
-                : 'Agrega otro formulario público a tu biblioteca.'}
-          </small>
-        </button>
+      {folderCreateOpen && (
+        <form className={styles.explorerFolderCreate} onSubmit={submitFolderCreate}>
+          <FolderPlus size={17} />
+          <input
+            value={folderDraft}
+            placeholder="Nombre de la carpeta"
+            disabled={folderSaving}
+            autoFocus
+            onChange={(event) => setFolderDraft(event.target.value)}
+          />
+          <Button size="sm" loading={folderSaving} disabled={!folderDraft.trim()}>
+            Crear
+          </Button>
+          <Button type="button" variant="ghost" size="sm" disabled={folderSaving} onClick={() => { setFolderCreateOpen(false); setFolderDraft('') }}>
+            Cancelar
+          </Button>
+        </form>
+      )}
 
-        {sites.map(site => {
-          const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
-
-          return (
-            <article
-              key={site.id}
-              className={`${styles.libraryCard} ${selectedSiteId === site.id ? styles.libraryCardActive : ''}`}
+      <div className={styles.explorerToolbar}>
+        <div
+          className={`${styles.explorerCrumbs} ${dragOverFolderId === SITE_LIBRARY_ROOT_ID ? styles.explorerRootDropActive : ''}`}
+          onDragOver={(event) => handleFolderDragOver(event, SITE_LIBRARY_ROOT_ID)}
+          onDragLeave={() => setDragOverFolderId('')}
+          onDrop={(event) => handleFolderDrop(event, SITE_LIBRARY_ROOT_ID)}
+        >
+          <button type="button" onClick={() => setActiveFolderId(SITE_LIBRARY_ROOT_ID)}>
+            <FolderOpen size={16} />
+            Todos
+          </button>
+          {activeFolder && (
+            <>
+              <ChevronRight size={14} />
+              <span>{activeFolder.name}</span>
+            </>
+          )}
+        </div>
+        <SearchField
+          className={styles.explorerSearch}
+          size="sm"
+          placeholder={isLandingLibrary ? 'Buscar sitios...' : 'Buscar formularios...'}
+          value={searchQuery}
+          onChange={setSearchQuery}
+          onClear={() => setSearchQuery('')}
+        />
+        <div className={styles.explorerViewSwitch} aria-label="Cambiar vista">
+          {([
+            ['gallery', 'Galería', <Grid2X2 size={15} />],
+            ['list', 'Lista', <Rows3 size={15} />],
+            ['table', 'Tabla', <Table2 size={15} />]
+          ] as Array<[LibraryViewMode, string, React.ReactNode]>).map(([mode, label, icon]) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={viewMode === mode}
+              onClick={() => onViewModeChange(librarySection, mode)}
+              title={label}
             >
-              <div className={styles.libraryCardPreview}>
-                <span className={styles.libraryThumbLabel}>{getSiteTypeLabel(site)}</span>
-                <span className={styles.libraryCardStatus}>
-                  <Badge variant={getStatusVariant(site, domainConfig)}>{getStatusLabel(site, domainConfig)}</Badge>
-                </span>
-                <LibrarySitePreview site={site} forms={forms} calendars={calendars} />
-                <div className={styles.libraryCardHoverActions} data-library-card-action="true">
-                  <button type="button" onClick={() => onEdit(site.id)}>
-                    <Pencil size={16} />
-                    <span>Editar</span>
-                  </button>
-                  <button type="button" onClick={() => onPreview(site)}>
-                    {isPublicSiteLive(site, domainConfig) ? <ExternalLink size={16} /> : <Eye size={16} />}
-                    <span>{isPublicSiteLive(site, domainConfig) ? 'Ver en vivo' : 'Previsualizar'}</span>
-                  </button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        className={styles.libraryCardMenuButton}
-                        aria-label={`Acciones para ${site.name}`}
-                        data-library-card-action="true"
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onMouseUp={(event) => event.stopPropagation()}
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => event.stopPropagation()}
-                      >
-                        <MoreVertical size={17} />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="end"
-                      sideOffset={6}
-                      className={styles.pageMenu}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onEdit(site.id) }}>
-                        <Pencil size={15} />
-                        Editar {siteKindLabel}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); startRouteEdit(site) }}>
-                        <Settings2 size={15} />
-                        Editar ruta
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onOpenSettings(site) }}>
-                        <Settings2 size={15} />
-                        Más ajustes
-                      </DropdownMenuItem>
-                      <DropdownMenuItem className={styles.pageMenuDanger} onSelect={(event) => { event.stopPropagation(); onDelete(site) }}>
-                        <Trash2 size={15} />
-                        Eliminar {siteKindLabel}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </div>
-
-              <div className={styles.libraryCardBody}>
-                <div className={styles.libraryCardTitleRow}>
-                  <strong>{site.name}</strong>
-                </div>
-                <div className={styles.libraryCardMeta}>
-                  <span className={styles.siteDomain}>{getPublicRouteLabel(site, domainConfig)}</span>
-                  {formatSiteEdited(site.updatedAt) && (
-                    <time dateTime={site.updatedAt || undefined}>Editado {formatSiteEdited(site.updatedAt)}</time>
-                  )}
-                </div>
-              </div>
-            </article>
-          )
-        })}
+              {icon}
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
       </div>
+
+      {canShowFolders && sectionFolders.length > 0 && renderFolderCards()}
+
+      {viewMode === 'gallery' ? (
+        <div className={styles.libraryGrid}>
+          <button type="button" className={styles.createLibraryCard} onClick={onCreate}>
+            <span className={styles.createLibraryIcon}>
+              <Plus size={22} />
+            </span>
+            <strong>{getCreateButtonLabel(section)}</strong>
+            <small>
+              {sites.length === 0
+                ? getLibraryEmptyMessage(section)
+                : isLandingLibrary
+                  ? 'Agrega otra página o embudo a tu biblioteca.'
+                  : 'Agrega otro formulario público a tu biblioteca.'}
+            </small>
+          </button>
+          {visibleSites.map(renderGalleryCard)}
+        </div>
+      ) : viewMode === 'list' ? (
+        <div className={styles.explorerList}>
+          {visibleSites.map(renderListItem)}
+        </div>
+      ) : (
+        <div className={styles.explorerSheet} data-ristak-table>
+          <table data-ristak-table-element>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Tipo</th>
+                <th>Estado</th>
+                <th>Actualización</th>
+                <th aria-label="Acciones" />
+              </tr>
+            </thead>
+            <tbody>
+              {visibleSites.map(site => {
+                const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
+                return (
+                  <tr
+                    key={site.id}
+                    draggable
+                    className={draggingSiteId === site.id ? styles.explorerItemDragging : undefined}
+                    onDragStart={(event) => handleDragStart(event, site)}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <td>
+                      <button type="button" className={styles.explorerSheetName} onClick={() => onEdit(site.id)}>
+                        <span className={styles.explorerFileIcon}>{isLanding(site) ? <LayoutTemplate size={17} /> : <FormInput size={17} />}</span>
+                        <span>
+                          <strong>{site.name}</strong>
+                          <small>{getPublicRouteLabel(site, domainConfig)}</small>
+                        </span>
+                      </button>
+                    </td>
+                    <td>{getSiteTypeLabel(site)}</td>
+                    <td>{renderSiteStatus(site)}</td>
+                    <td>{formatSiteEdited(site.updatedAt) || 'Sin cambios'}</td>
+                    <td>
+                      <div className={styles.explorerSheetActions}>
+                        <button type="button" onClick={() => onPreview(site)} aria-label={`Previsualizar ${site.name}`}>
+                          {isPublicSiteLive(site, domainConfig) ? <ExternalLink size={16} /> : <Eye size={16} />}
+                        </button>
+                        {renderActionsMenu(site, siteKindLabel, styles.explorerActionButton)}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!visibleSites.length && (
+        <div className={styles.explorerEmpty}>
+          <FolderOpen size={24} />
+          <strong>{normalizedQuery ? 'Sin resultados' : activeFolder ? 'Carpeta vacía' : 'Sin elementos sueltos'}</strong>
+          <p>{normalizedQuery ? 'Prueba con otro nombre o ruta.' : 'Crea algo nuevo o arrastra elementos a una carpeta para ordenar la biblioteca.'}</p>
+        </div>
+      )}
 
       {routeEditingSite && (
         <div className={styles.libraryRouteOverlay} data-overlay="" role="presentation" onMouseDown={(event) => {

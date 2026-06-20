@@ -3,6 +3,7 @@ import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
   createBlockHandler,
+  createSiteFolderHandler,
   importSiteHtmlHandler,
   createSiteHandler,
   createSiteWithAIHtmlHandler,
@@ -12,6 +13,7 @@ import {
   getSitesDomainHandler,
   getImportedSiteMappingHandler,
   getSiteHandler,
+  getSiteFoldersHandler,
   getSitesAnalyticsSummaryHandler,
   getSitesHandler,
   getSitesVideoAnalyticsHandler,
@@ -30,6 +32,7 @@ import {
   sitesFontFileHandler,
   submitPublicSiteHandler,
   updateBlockHandler,
+  updateSiteFolderHandler,
   updateImportedSiteCodeFilesHandler,
   updateImportedSiteEditableContentHandler,
   updateImportedSiteHtmlWithAIHandler,
@@ -66,6 +69,9 @@ router.post('/analytics/summary', getSitesAnalyticsSummaryHandler)
 router.get('/video-assets', getSitesVideoAssetsHandler)
 router.get('/video-analytics/:assetId', getSitesVideoAnalyticsHandler)
 router.get('/video-analytics/:assetId/viewers', getSitesVideoViewersHandler)
+router.get('/folders', getSiteFoldersHandler)
+router.post('/folders', createSiteFolderHandler)
+router.put('/folders/:folderId', updateSiteFolderHandler)
 router.get('/:siteId/import-mapping', getImportedSiteMappingHandler)
 router.get('/:siteId', getSiteHandler)
 router.put('/:siteId', updateSiteHandler)
