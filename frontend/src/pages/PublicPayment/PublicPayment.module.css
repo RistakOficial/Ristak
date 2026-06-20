@@ -410,6 +410,10 @@
   text-align: center;
 }
 
+.printDocument {
+  display: none;
+}
+
 .statePanel {
   display: flex;
   flex-direction: column;
@@ -478,5 +482,218 @@
 
   .title {
     font-size: 26px;
+  }
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+
+  .page {
+    min-height: auto;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .shell {
+    display: none;
+  }
+
+  .printDocument {
+    display: block;
+    width: 100%;
+    background: Canvas;
+    color: CanvasText;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  .printSheet {
+    width: 100%;
+    min-height: 100%;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .printHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 18px;
+    border-bottom: 2px solid ButtonBorder;
+  }
+
+  .printIdentity {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .printIdentity img {
+    width: 64px;
+    height: 64px;
+    object-fit: contain;
+    border: 1px solid ButtonBorder;
+    padding: 6px;
+  }
+
+  .printIdentity strong,
+  .printParties strong {
+    display: block;
+    color: CanvasText;
+    font-size: 13px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+
+  .printIdentity p,
+  .printParties p,
+  .printIntro,
+  .printDescription,
+  .printTerms p,
+  .printFooter {
+    margin: 4px 0 0;
+    color: CanvasText;
+    font-size: 10px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+
+  .printMeta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    text-align: right;
+  }
+
+  .printMeta h1 {
+    margin: 0 0 4px;
+    color: CanvasText;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+
+  .printMeta span,
+  .printParties span,
+  .printLineHeader span,
+  .printTotals span,
+  .printTerms strong {
+    color: GrayText;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .printIntro {
+    margin-top: 16px;
+  }
+
+  .printParties {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
+    margin-top: 20px;
+    padding: 14px 0;
+    border-top: 1px solid ButtonBorder;
+    border-bottom: 1px solid ButtonBorder;
+  }
+
+  .printLines {
+    display: grid;
+    margin-top: 22px;
+    border: 1px solid ButtonBorder;
+    break-inside: avoid;
+  }
+
+  .printLineHeader,
+  .printLineItem {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 56px 120px;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .printLineHeader {
+    padding: 9px 10px;
+    border-bottom: 1px solid ButtonBorder;
+  }
+
+  .printLineItem {
+    padding: 13px 10px;
+  }
+
+  .printLineItem strong,
+  .printLineItem span,
+  .printTotals strong {
+    color: CanvasText;
+    font-size: 11px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .printLineHeader span:nth-child(2),
+  .printLineHeader span:nth-child(3),
+  .printLineItem span:nth-child(2),
+  .printLineItem span:nth-child(3) {
+    text-align: right;
+  }
+
+  .printDescription {
+    margin: 0;
+    padding: 0 10px 12px;
+  }
+
+  .printTotals {
+    display: grid;
+    gap: 7px;
+    width: min(100%, 280px);
+    margin: 18px 0 0 auto;
+    break-inside: avoid;
+  }
+
+  .printTotals > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid ButtonBorder;
+  }
+
+  .printTotals > div:last-child {
+    border-bottom: 2px solid ButtonBorder;
+  }
+
+  .printTotals > div:last-child strong {
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .printTerms {
+    margin-top: 24px;
+    padding-top: 12px;
+    border-top: 1px solid ButtonBorder;
+    break-inside: auto;
+  }
+
+  .printTerms p {
+    color: CanvasText;
+  }
+
+  .printFooter {
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid ButtonBorder;
+    font-weight: 600;
+  }
+
+  .button,
+  .statusBadge {
+    display: none;
   }
 }

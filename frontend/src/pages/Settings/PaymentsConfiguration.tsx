@@ -9,6 +9,8 @@ import {
   CreditCard,
   ExternalLink,
   FileCheck2,
+  Image,
+  ImageUp,
   KeyRound,
   Loader2,
   Paintbrush,
@@ -16,6 +18,7 @@ import {
   ReceiptText,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Unplug,
   WalletCards
 } from 'lucide-react'
@@ -33,6 +36,7 @@ import {
 import { useNotification } from '@/contexts/NotificationContext'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
 import { invalidateIntegrationsStatus } from '@/services/integrationsService'
+import mediaService from '@/services/mediaService'
 import {
   defaultPaymentSettings,
   paymentSettingsService,
@@ -186,6 +190,9 @@ export const PaymentsConfiguration: React.FC = () => {
   const [connectingStripe, setConnectingStripe] = useState(false)
   const [syncingStripeConnect, setSyncingStripeConnect] = useState(false)
   const [disconnectingStripe, setDisconnectingStripe] = useState(false)
+  const [uploadingReceiptLogo, setUploadingReceiptLogo] = useState(false)
+  const [receiptLogoUploadProgress, setReceiptLogoUploadProgress] = useState(0)
+  const receiptLogoInputRef = useRef<HTMLInputElement>(null)
   const latestSettingsRef = useRef(settings)
   const loadedSettingsRef = useRef(false)
   const lastSavedSettingsRef = useRef(JSON.stringify(defaultPaymentSettings))
@@ -592,6 +599,36 @@ export const PaymentsConfiguration: React.FC = () => {
     navigate(`/settings/payments/${gateway.id}`)
   }
 
+  const handleReceiptLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      showToast('error', 'Archivo no válido', 'Sube una imagen para el logo del invoice.')
+      return
+    }
+
+    setUploadingReceiptLogo(true)
+    setReceiptLogoUploadProgress(0)
+    try {
+      const uploaded = await mediaService.uploadFile({
+        file,
+        module: 'payments',
+        moduleEntityId: 'receipt-logo',
+        isPublic: true,
+        onProgress: ({ percent }) => setReceiptLogoUploadProgress(percent)
+      })
+      setReceiptValue('logoUrl', uploaded.publicUrl || `/api/media/assets/${encodeURIComponent(uploaded.id)}/file`)
+      showToast('success', 'Logo subido', 'El logo quedó guardado en Media y enlazado al invoice.')
+    } catch (uploadError: any) {
+      showToast('error', 'No se pudo subir el logo', uploadError.message || 'Revisa el archivo e intenta de nuevo.')
+    } finally {
+      setUploadingReceiptLogo(false)
+      setReceiptLogoUploadProgress(0)
+    }
+  }
+
   const renderField = (
     label: string,
     control: React.ReactNode,
@@ -766,158 +803,279 @@ export const PaymentsConfiguration: React.FC = () => {
     </div>
   )
 
-  const renderReceiptSection = () => (
-    <div className={styles.twoColumnLayout}>
-      <Card className={styles.sectionCard}>
-        <div className={styles.sectionHeader}>
-          <div>
-            <h2>Comprobante de pago</h2>
-            <p>Edita lo que verá el cliente cuando el pago quede confirmado.</p>
-          </div>
-          <Badge variant="success">
-            <FileCheck2 size={14} />
-            Post pago
-          </Badge>
-        </div>
+  const renderReceiptSection = () => {
+    const previewBaseAmount = 2490
+    const previewTaxAmount = taxes.enabled
+      ? taxes.rateType === 'percentage'
+        ? Math.round(previewBaseAmount * (taxes.rateValue / 100))
+        : Math.round(taxes.rateValue)
+      : 0
+    const previewSubtotal = taxes.enabled && taxes.calculationMode === 'inclusive'
+      ? Math.max(0, previewBaseAmount - previewTaxAmount)
+      : previewBaseAmount
+    const previewTotal = taxes.enabled && taxes.calculationMode === 'exclusive'
+      ? previewBaseAmount + previewTaxAmount
+      : previewBaseAmount
+    const previewTaxLabel = taxes.taxName || 'Impuesto'
 
-        <div className={styles.formGrid}>
-          {renderField(
-            'Logo del comprobante',
-            <input
-              type="url"
-              value={receipt.logoUrl}
-              onChange={(event) => setReceiptValue('logoUrl', event.target.value)}
-              placeholder="https://tu-dominio.com/logo.png"
-            />
-          )}
-          {renderField(
-            'Título del comprobante',
-            <input
-              type="text"
-              value={receipt.title}
-              onChange={(event) => setReceiptValue('title', event.target.value)}
-              placeholder="Comprobante de pago"
-            />
-          )}
-          {renderField(
-            'Mensaje inicial',
-            <textarea
-              value={receipt.intro}
-              onChange={(event) => setReceiptValue('intro', event.target.value)}
-              placeholder="Tu pago fue recibido correctamente."
-            />
-          )}
-          {renderField(
-            'Mensaje final',
-            <textarea
-              value={receipt.footer}
-              onChange={(event) => setReceiptValue('footer', event.target.value)}
-              placeholder="Gracias por tu pago."
-            />
-          )}
-          {renderField(
-            'Nombre del negocio',
-            <input
-              type="text"
-              value={receipt.businessName}
-              onChange={(event) => setReceiptValue('businessName', event.target.value)}
-              placeholder="Nombre comercial"
-            />
-          )}
-          {renderField(
-            'Email del negocio',
-            <input
-              type="email"
-              value={receipt.businessEmail}
-              onChange={(event) => setReceiptValue('businessEmail', event.target.value)}
-              placeholder="facturacion@tu-negocio.com"
-            />
-          )}
-          {renderField(
-            'Teléfono del negocio',
-            <input
-              type="tel"
-              value={receipt.businessPhone}
-              onChange={(event) => setReceiptValue('businessPhone', event.target.value)}
-              placeholder="+52 656 000 0000"
-            />
-          )}
-          {renderField(
-            'Sitio web',
-            <input
-              type="url"
-              value={receipt.businessWebsite}
-              onChange={(event) => setReceiptValue('businessWebsite', event.target.value)}
-              placeholder="https://tu-negocio.com"
-            />
-          )}
-          {renderField(
-            'Dirección fiscal o comercial',
-            <textarea
-              value={receipt.businessAddress}
-              onChange={(event) => setReceiptValue('businessAddress', event.target.value)}
-              placeholder="Calle, ciudad, estado, país"
-            />
-          )}
-          {renderField(
-            'Términos y condiciones',
-            <textarea
-              value={receipt.terms}
-              onChange={(event) => setReceiptValue('terms', event.target.value)}
-              placeholder="Políticas de pago, reembolso, facturación o condiciones del servicio."
-            />,
-            'También se sincroniza como nota de términos para invoices de GoHighLevel cuando esté conectado.'
-          )}
-        </div>
-
-        <div className={styles.switchStack}>
-          {renderSwitchRow('Mostrar datos del negocio', 'Incluye nombre, contacto y dirección en el comprobante.', receipt.showBusinessInfo, (next) => setReceiptValue('showBusinessInfo', next))}
-          {renderSwitchRow('Mostrar datos del cliente', 'Incluye nombre, email y referencia del pago.', receipt.showCustomerInfo, (next) => setReceiptValue('showCustomerInfo', next))}
-          {renderSwitchRow('Mostrar términos', 'Agrega términos al final del comprobante.', receipt.showTerms, (next) => setReceiptValue('showTerms', next))}
-        </div>
-
-        {renderSectionSaveBar('Guardar comprobante')}
-      </Card>
-
-      <Card className={styles.receiptPreview}>
-        <div className={styles.receiptTop}>
-          {receipt.logoUrl ? <img src={receipt.logoUrl} alt="" /> : <ReceiptText size={24} />}
-          <Badge variant="success">
-            <CheckCircle size={14} />
-            Pagado
-          </Badge>
-        </div>
-        <h3>{receipt.title || 'Comprobante de pago'}</h3>
-        <p>{receipt.intro || 'Tu pago fue recibido correctamente.'}</p>
-        <div className={styles.receiptRows}>
-          {receipt.showBusinessInfo && (
+    return (
+      <div className={styles.twoColumnLayout}>
+        <Card className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
             <div>
-              <span>Negocio</span>
-              <strong>{receipt.businessName || 'Tu negocio'}</strong>
+              <h2>Invoice descargable</h2>
+              <p>Configura la hoja PDF que el cliente podrá descargar desde la confirmación de pago.</p>
             </div>
-          )}
-          {receipt.showCustomerInfo && (
+            <Badge variant="success">
+              <FileCheck2 size={14} />
+              PDF
+            </Badge>
+          </div>
+
+          <div className={styles.formGrid}>
+            <div className={`${styles.formField} ${styles.fullWidthField}`}>
+              <span>Logo del invoice</span>
+              <div className={styles.logoUploadControl}>
+                <div className={styles.logoUploadPreview}>
+                  {receipt.logoUrl ? <img src={receipt.logoUrl} alt="" /> : <Image size={22} />}
+                </div>
+                <div className={styles.logoUploadContent}>
+                  <div className={styles.logoUploadActions}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => receiptLogoInputRef.current?.click()}
+                      disabled={uploadingReceiptLogo}
+                    >
+                      {uploadingReceiptLogo ? (
+                        <>
+                          <Loader2 size={15} className={styles.spinIcon} />
+                          Subiendo {receiptLogoUploadProgress > 0 ? `${receiptLogoUploadProgress}%` : ''}
+                        </>
+                      ) : (
+                        <>
+                          <ImageUp size={15} />
+                          Subir logo
+                        </>
+                      )}
+                    </Button>
+                    {receipt.logoUrl && (
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setReceiptValue('logoUrl', '')}>
+                        <Trash2 size={15} />
+                        Quitar
+                      </Button>
+                    )}
+                  </div>
+                  <input
+                    ref={receiptLogoInputRef}
+                    className={styles.fileInputHidden}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleReceiptLogoUpload}
+                  />
+                  <small>Se guarda en Media y se usa en la hoja PDF del comprobante.</small>
+                  {receipt.logoUrl && (
+                    <input
+                      type="url"
+                      value={receipt.logoUrl}
+                      onChange={(event) => setReceiptValue('logoUrl', event.target.value)}
+                      placeholder="https://tu-dominio.com/logo.png"
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {renderField(
+              'Título del documento',
+              <input
+                type="text"
+                value={receipt.title}
+                onChange={(event) => setReceiptValue('title', event.target.value)}
+                placeholder="Comprobante de pago"
+              />
+            )}
+            {renderField(
+              'Nota superior',
+              <textarea
+                value={receipt.intro}
+                onChange={(event) => setReceiptValue('intro', event.target.value)}
+                placeholder="Tu pago fue recibido correctamente."
+              />
+            )}
+            {renderField(
+              'Nombre del negocio',
+              <input
+                type="text"
+                value={receipt.businessName}
+                onChange={(event) => setReceiptValue('businessName', event.target.value)}
+                placeholder="Nombre comercial"
+              />
+            )}
+            {renderField(
+              'Email del negocio',
+              <input
+                type="email"
+                value={receipt.businessEmail}
+                onChange={(event) => setReceiptValue('businessEmail', event.target.value)}
+                placeholder="facturacion@tu-negocio.com"
+              />
+            )}
+            {renderField(
+              'Teléfono del negocio',
+              <input
+                type="tel"
+                value={receipt.businessPhone}
+                onChange={(event) => setReceiptValue('businessPhone', event.target.value)}
+                placeholder="+52 656 000 0000"
+              />
+            )}
+            {renderField(
+              'Sitio web',
+              <input
+                type="url"
+                value={receipt.businessWebsite}
+                onChange={(event) => setReceiptValue('businessWebsite', event.target.value)}
+                placeholder="https://tu-negocio.com"
+              />
+            )}
+            {renderField(
+              'Dirección fiscal o comercial',
+              <textarea
+                value={receipt.businessAddress}
+                onChange={(event) => setReceiptValue('businessAddress', event.target.value)}
+                placeholder="Calle, ciudad, estado, país"
+              />
+            )}
+            {renderField(
+              'Nota al pie',
+              <textarea
+                value={receipt.footer}
+                onChange={(event) => setReceiptValue('footer', event.target.value)}
+                placeholder="Gracias por tu pago."
+              />
+            )}
+            <div className={`${styles.formField} ${styles.fullWidthField}`}>
+              <span>Términos y condiciones</span>
+              <textarea
+                className={styles.largeTextarea}
+                value={receipt.terms}
+                onChange={(event) => setReceiptValue('terms', event.target.value)}
+                placeholder="Políticas de pago, reembolso, facturación o condiciones del servicio."
+              />
+              <small>Este texto puede ser largo y también se sincroniza como nota de términos para invoices de GoHighLevel cuando esté conectado.</small>
+            </div>
+          </div>
+
+          <div className={styles.switchStack}>
+            {renderSwitchRow('Mostrar datos del negocio', 'Incluye nombre, contacto y dirección en la hoja.', receipt.showBusinessInfo, (next) => setReceiptValue('showBusinessInfo', next))}
+            {renderSwitchRow('Mostrar datos del cliente', 'Incluye nombre, email y referencia del pago.', receipt.showCustomerInfo, (next) => setReceiptValue('showCustomerInfo', next))}
+            {renderSwitchRow('Mostrar términos', 'Agrega términos al final del invoice descargable.', receipt.showTerms, (next) => setReceiptValue('showTerms', next))}
+          </div>
+
+          {renderSectionSaveBar('Guardar invoice')}
+        </Card>
+
+        <Card className={styles.documentPreviewCard}>
+          <div className={styles.documentPreviewHeader}>
             <div>
-              <span>Cliente</span>
-              <strong>María López</strong>
+              <h3>Vista de hoja</h3>
+              <p>Así se imprime o guarda como PDF desde el link pagado.</p>
             </div>
-          )}
-          <div>
-            <span>Referencia</span>
-            <strong>PAY-1048</strong>
+            <Badge variant="success">
+              <CheckCircle size={14} />
+              Pagado
+            </Badge>
           </div>
-          <div>
-            <span>Total</span>
-            <strong>{compactMoney.format(2490)}</strong>
+
+          <div className={styles.documentViewport}>
+            <article className={styles.documentSheet} aria-label="Vista previa del invoice descargable">
+              <header className={styles.documentSheetHeader}>
+                <div className={styles.documentIdentity}>
+                  {receipt.logoUrl ? (
+                    <img src={receipt.logoUrl} alt="" />
+                  ) : (
+                    <span><ReceiptText size={22} /></span>
+                  )}
+                  <div>
+                    <strong>{receipt.businessName || 'Tu negocio'}</strong>
+                    <p>{receipt.businessWebsite || receipt.businessEmail || 'tu-negocio.com'}</p>
+                  </div>
+                </div>
+                <div className={styles.documentMeta}>
+                  <h4>{receipt.title || 'Comprobante de pago'}</h4>
+                  <span>PAY-1048</span>
+                  <span>20 jun 2026</span>
+                </div>
+              </header>
+
+              {receipt.intro && <p className={styles.documentIntro}>{receipt.intro}</p>}
+
+              <section className={styles.documentParties}>
+                {receipt.showBusinessInfo && (
+                  <div>
+                    <span>Emitido por</span>
+                    <strong>{receipt.businessName || 'Tu negocio'}</strong>
+                    {receipt.businessEmail && <p>{receipt.businessEmail}</p>}
+                    {receipt.businessPhone && <p>{receipt.businessPhone}</p>}
+                    {receipt.businessAddress && <p>{receipt.businessAddress}</p>}
+                  </div>
+                )}
+                {receipt.showCustomerInfo && (
+                  <div>
+                    <span>Cliente</span>
+                    <strong>María López</strong>
+                    <p>maria@cliente.com</p>
+                    <p>Referencia PAY-1048</p>
+                  </div>
+                )}
+              </section>
+
+              <section className={styles.documentLines} aria-label="Detalle del pago">
+                <div className={styles.documentLineHead}>
+                  <span>Concepto</span>
+                  <span>Cant.</span>
+                  <span>Importe</span>
+                </div>
+                <div className={styles.documentLineRow}>
+                  <strong>Plan mensual</strong>
+                  <span>1</span>
+                  <span>{compactMoney.format(previewSubtotal)}</span>
+                </div>
+              </section>
+
+              <section className={styles.documentTotals} aria-label="Totales">
+                <div>
+                  <span>Subtotal</span>
+                  <strong>{compactMoney.format(previewSubtotal)}</strong>
+                </div>
+                {taxes.enabled && (
+                  <div>
+                    <span>{taxes.calculationMode === 'inclusive' ? `${previewTaxLabel} incluido` : previewTaxLabel}</span>
+                    <strong>{compactMoney.format(previewTaxAmount)}</strong>
+                  </div>
+                )}
+                <div>
+                  <span>Total pagado</span>
+                  <strong>{compactMoney.format(previewTotal)}</strong>
+                </div>
+              </section>
+
+              {receipt.showTerms && (
+                <section className={styles.documentTerms}>
+                  <strong>Términos y condiciones</strong>
+                  <p>{receipt.terms || 'Agrega aquí políticas de pago, reembolso, facturación o condiciones del servicio.'}</p>
+                </section>
+              )}
+
+              {receipt.footer && <p className={styles.documentFooter}>{receipt.footer}</p>}
+            </article>
           </div>
-        </div>
-        {receipt.showTerms && receipt.terms && (
-          <p className={styles.receiptTerms}>{receipt.terms}</p>
-        )}
-        {receipt.footer && <p className={styles.receiptFooter}>{receipt.footer}</p>}
-      </Card>
-    </div>
-  )
+        </Card>
+      </div>
+    )
+  }
 
   const renderAutomationsSection = () => (
     <div className={styles.singleColumnLayout}>

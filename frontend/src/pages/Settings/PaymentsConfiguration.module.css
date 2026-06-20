@@ -40,6 +40,7 @@
 .sectionCard,
 .previewCard,
 .receiptPreview,
+.documentPreviewCard,
 .jigsawCard,
 .noticeCard {
   min-width: 0;
@@ -59,6 +60,7 @@
 .sectionHeader h3,
 .stripeConnectBox h3,
 .jigsawCard h3,
+.documentPreviewHeader h3,
 .receiptPreview h3,
 .webhookList h3 {
   margin: 0;
@@ -72,6 +74,7 @@
 .sectionHeader p,
 .stripeConnectBox p,
 .jigsawCard p,
+.documentPreviewHeader p,
 .receiptPreview p {
   margin: 6px 0 0;
   color: var(--text-dim);
@@ -141,6 +144,62 @@
   color: var(--text-mute);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.fullWidthField {
+  grid-column: 1 / -1;
+}
+
+.largeTextarea {
+  min-height: 190px;
+}
+
+.logoUploadControl {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid);
+}
+
+.logoUploadPreview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 86px;
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-mute);
+  overflow: hidden;
+}
+
+.logoUploadPreview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 8px;
+}
+
+.logoUploadContent {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.logoUploadActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fileInputHidden {
+  display: none;
 }
 
 .switchStack,
@@ -215,6 +274,7 @@
 
 .previewCard,
 .receiptPreview,
+.documentPreviewCard,
 .jigsawCard {
   position: sticky;
   top: 18px;
@@ -357,6 +417,224 @@
 
 .receiptFooter {
   color: var(--text);
+  font-weight: 600;
+}
+
+.documentPreviewHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.documentViewport {
+  max-height: 760px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.documentSheet {
+  width: 100%;
+  min-height: 720px;
+  margin: 0 auto;
+  padding: 26px;
+  border: 1px solid ButtonBorder;
+  border-radius: 2px;
+  background: Canvas;
+  color: CanvasText;
+  color-scheme: light;
+  font-family: var(--font-body);
+}
+
+.documentSheetHeader {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid ButtonBorder;
+}
+
+.documentIdentity {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.documentIdentity img,
+.documentIdentity > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  border: 1px solid ButtonBorder;
+  border-radius: 2px;
+  background: Canvas;
+  color: GrayText;
+  object-fit: contain;
+}
+
+.documentIdentity img {
+  padding: 7px;
+}
+
+.documentIdentity strong,
+.documentParties strong {
+  display: block;
+  color: CanvasText;
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.documentIdentity p,
+.documentParties p,
+.documentTerms p,
+.documentIntro,
+.documentFooter {
+  margin: 4px 0 0;
+  color: CanvasText;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.documentMeta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  width: 100%;
+  text-align: left;
+}
+
+.documentMeta h4 {
+  margin: 0 0 4px;
+  max-width: 100%;
+  color: CanvasText;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.documentMeta span,
+.documentParties span,
+.documentLineHead span,
+.documentTotals span,
+.documentTerms strong {
+  color: GrayText;
+  font: var(--label-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+}
+
+.documentIntro {
+  margin-top: 18px;
+}
+
+.documentParties {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  margin-top: 22px;
+  padding: 16px 0;
+  border-top: 1px solid ButtonBorder;
+  border-bottom: 1px solid ButtonBorder;
+}
+
+.documentLines {
+  display: grid;
+  margin-top: 22px;
+  border: 1px solid ButtonBorder;
+}
+
+.documentLineHead,
+.documentLineRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px 86px;
+  gap: 8px;
+  align-items: center;
+}
+
+.documentLineHead {
+  padding: 10px 12px;
+  border-bottom: 1px solid ButtonBorder;
+  background: Canvas;
+}
+
+.documentLineRow {
+  padding: 14px 12px;
+}
+
+.documentLineRow strong,
+.documentLineRow span,
+.documentTotals strong {
+  color: CanvasText;
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.documentLineHead span:nth-child(2),
+.documentLineHead span:nth-child(3),
+.documentLineRow span:nth-child(2),
+.documentLineRow span:nth-child(3) {
+  text-align: right;
+}
+
+.documentTotals {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 260px);
+  margin: 18px 0 0 auto;
+}
+
+.documentTotals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid ButtonBorder;
+}
+
+.documentTotals > div:last-child {
+  border-bottom: 2px solid ButtonBorder;
+}
+
+.documentTotals > div:last-child strong {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.documentTerms {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid ButtonBorder;
+}
+
+.documentTerms p {
+  max-height: 220px;
+  overflow: auto;
+}
+
+.documentFooter {
+  margin-top: 22px;
+  padding-top: 12px;
+  border-top: 1px solid ButtonBorder;
+  color: CanvasText;
   font-weight: 600;
 }
 
@@ -640,6 +918,7 @@
 
   .previewCard,
   .receiptPreview,
+  .documentPreviewCard,
   .jigsawCard {
     position: static;
   }
@@ -663,6 +942,10 @@
     grid-template-columns: 1fr;
   }
 
+  .documentParties {
+    grid-template-columns: 1fr;
+  }
+
   .gatewayItemActions,
   .actionsRow,
   .copyField,
@@ -676,5 +959,30 @@
   .gatewayDetailBar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .logoUploadControl {
+    grid-template-columns: 1fr;
+  }
+
+  .logoUploadPreview {
+    width: min(100%, 120px);
+  }
+
+  .documentViewport {
+    padding: 8px;
+  }
+
+  .documentSheet {
+    padding: 22px;
+  }
+
+  .documentSheetHeader {
+    flex-direction: column;
+  }
+
+  .documentMeta {
+    align-items: flex-start;
+    text-align: left;
   }
 }

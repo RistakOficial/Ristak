@@ -122,7 +122,7 @@ export function normalizePaymentSettings(input = {}) {
       businessPhone: cleanString(receipt.businessPhone, 80),
       businessAddress: cleanLongString(receipt.businessAddress, 500),
       businessWebsite: cleanString(receipt.businessWebsite, 250),
-      terms: cleanLongString(receipt.terms, 3000),
+      terms: cleanLongString(receipt.terms, 12000),
       showBusinessInfo: cleanBoolean(receipt.showBusinessInfo, DEFAULT_PAYMENT_SETTINGS.receipt.showBusinessInfo),
       showCustomerInfo: cleanBoolean(receipt.showCustomerInfo, DEFAULT_PAYMENT_SETTINGS.receipt.showCustomerInfo),
       showTerms: cleanBoolean(receipt.showTerms, DEFAULT_PAYMENT_SETTINGS.receipt.showTerms)

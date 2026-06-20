@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe, type StripeElementsOptions } from '@stripe/stripe-js'
-import { AlertCircle, CheckCircle2, CreditCard, Loader2, ShieldCheck } from 'lucide-react'
+import { AlertCircle, CheckCircle2, CreditCard, Download, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import {
   stripePaymentsService,
@@ -221,6 +221,18 @@ export const PublicPayment: React.FC = () => {
     }
   }
 
+  const handleDownloadPdf = () => {
+    if (!payment || typeof window === 'undefined') return
+    const previousTitle = document.title
+    document.title = `comprobante-${payment.publicPaymentId}`
+    window.requestAnimationFrame(() => {
+      window.print()
+      window.setTimeout(() => {
+        document.title = previousTitle
+      }, 500)
+    })
+  }
+
   if (loading) {
     return (
       <main className={styles.page}>
@@ -255,6 +267,10 @@ export const PublicPayment: React.FC = () => {
   const receiptSettings = payment.settings?.receipt
   const taxDetails = payment.tax
   const logoUrl = checkoutSettings?.logoUrl || receiptSettings?.logoUrl || ''
+  const invoiceLogoUrl = receiptSettings?.logoUrl || logoUrl
+  const showBusinessInfo = receiptSettings?.showBusinessInfo !== false
+  const showCustomerInfo = receiptSettings?.showCustomerInfo !== false
+  const showTerms = receiptSettings?.showTerms !== false
   const supportItems = [
     checkoutSettings?.supportEmail,
     checkoutSettings?.supportPhone
@@ -263,6 +279,9 @@ export const PublicPayment: React.FC = () => {
     ? `${taxDetails.taxName || 'Impuesto'} ${taxDetails.rateType === 'percentage' ? `${taxDetails.rateValue}%` : formatCurrency(taxDetails.rateValue || 0, payment.currency)}`
     : ''
   const hasTaxBreakdown = Boolean(taxDetails?.enabled && taxDetails.taxAmount > 0)
+  const subtotalAmount = hasTaxBreakdown ? taxDetails?.subtotalAmount || 0 : payment.amount
+  const taxAmount = hasTaxBreakdown ? taxDetails?.taxAmount || 0 : 0
+  const totalAmount = hasTaxBreakdown ? taxDetails?.totalAmount || payment.amount : payment.amount
 
   return (
     <main className={styles.page}>
@@ -275,12 +294,12 @@ export const PublicPayment: React.FC = () => {
             <span className={styles.eyebrow}>Ristak Payments</span>
             <h1 className={styles.title}>
               {isPaid
-                ? receiptSettings?.title || 'Comprobante de pago'
+                ? 'Pago confirmado'
                 : checkoutSettings?.headline || payment.title || 'Pago pendiente'}
             </h1>
             <p className={styles.subtitle}>
               {isPaid
-                ? receiptSettings?.intro || 'Tu pago fue recibido correctamente.'
+                ? 'Tu pago fue recibido correctamente. Puedes descargar tu comprobante en PDF cuando lo necesites.'
                 : checkoutSettings?.description || 'Revisa los datos del cobro y paga de forma segura con Stripe. Ristak no ve ni guarda el número de tu tarjeta.'}
             </p>
           </div>
@@ -349,10 +368,10 @@ export const PublicPayment: React.FC = () => {
 
           <section className={styles.payPanel} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
-              <h2>{isPaid ? receiptSettings?.title || 'Pago confirmado' : 'Pagar con tarjeta'}</h2>
+              <h2>{isPaid ? 'Pago confirmado' : 'Pagar con tarjeta'}</h2>
               <p>
                 {isPaid
-                  ? receiptSettings?.intro || 'Este invoice ya aparece como pagado en Ristak.'
+                  ? 'Este invoice ya aparece como pagado en Ristak.'
                   : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
@@ -371,13 +390,13 @@ export const PublicPayment: React.FC = () => {
                   <span>Listo. El pago fue recibido y el invoice quedó marcado como pagado.</span>
                 </p>
                 <div className={styles.receiptRows}>
-                  {receiptSettings?.showBusinessInfo && (
+                  {showBusinessInfo && (
                     <div>
                       <span>Negocio</span>
-                      <strong>{receiptSettings.businessName || 'Negocio'}</strong>
+                      <strong>{receiptSettings?.businessName || 'Negocio'}</strong>
                     </div>
                   )}
-                  {receiptSettings?.showCustomerInfo !== false && (
+                  {showCustomerInfo && (
                     <div>
                       <span>Cliente</span>
                       <strong>{payment.contact?.name || 'Cliente'}</strong>
@@ -385,12 +404,12 @@ export const PublicPayment: React.FC = () => {
                   )}
                   <div>
                     <span>Total pagado</span>
-                    <strong>{formatCurrency(payment.amount, payment.currency)}</strong>
+                    <strong>{formatCurrency(totalAmount, payment.currency)}</strong>
                   </div>
                   {hasTaxBreakdown && (
                     <div>
                       <span>Impuesto</span>
-                      <strong>{formatCurrency(taxDetails?.taxAmount || 0, payment.currency)}</strong>
+                      <strong>{formatCurrency(taxAmount, payment.currency)}</strong>
                     </div>
                   )}
                   <div>
@@ -398,19 +417,23 @@ export const PublicPayment: React.FC = () => {
                     <strong>{payment.publicPaymentId}</strong>
                   </div>
                 </div>
-                {receiptSettings?.showBusinessInfo && (
+                <div className={styles.actions}>
+                  <button
+                    type="button"
+                    className={styles.button}
+                    onClick={handleDownloadPdf}
+                  >
+                    <Download size={16} />
+                    Descargar PDF
+                  </button>
+                </div>
+                {showBusinessInfo && receiptSettings && (
                   <div className={styles.businessInfo}>
                     {receiptSettings.businessEmail && <span>{receiptSettings.businessEmail}</span>}
                     {receiptSettings.businessPhone && <span>{receiptSettings.businessPhone}</span>}
                     {receiptSettings.businessAddress && <span>{receiptSettings.businessAddress}</span>}
                     {receiptSettings.businessWebsite && <span>{receiptSettings.businessWebsite}</span>}
                   </div>
-                )}
-                {receiptSettings?.showTerms && receiptSettings.terms && (
-                  <p className={styles.termsBlock}>{receiptSettings.terms}</p>
-                )}
-                {receiptSettings?.footer && (
-                  <p className={styles.receiptFooter}>{receiptSettings.footer}</p>
                 )}
               </div>
             ) : isClosed ? (
@@ -467,6 +490,92 @@ export const PublicPayment: React.FC = () => {
           </p>
         )}
       </div>
+
+      {isPaid && (
+        <article className={styles.printDocument} aria-label="Comprobante de pago para PDF">
+          <section className={styles.printSheet}>
+            <header className={styles.printHeader}>
+              <div className={styles.printIdentity}>
+                {invoiceLogoUrl && <img src={invoiceLogoUrl} alt="" />}
+                <div>
+                  <strong>{receiptSettings?.businessName || 'Negocio'}</strong>
+                  {(receiptSettings?.businessWebsite || receiptSettings?.businessEmail) && (
+                    <p>{receiptSettings?.businessWebsite || receiptSettings?.businessEmail}</p>
+                  )}
+                </div>
+              </div>
+              <div className={styles.printMeta}>
+                <h1>{receiptSettings?.title || 'Comprobante de pago'}</h1>
+                <span>Referencia {payment.publicPaymentId}</span>
+                <span>Fecha de pago {formatDate(payment.paidAt || new Date().toISOString())}</span>
+              </div>
+            </header>
+
+            {receiptSettings?.intro && <p className={styles.printIntro}>{receiptSettings.intro}</p>}
+
+            <section className={styles.printParties}>
+              {showBusinessInfo && (
+                <div>
+                  <span>Emitido por</span>
+                  <strong>{receiptSettings?.businessName || 'Negocio'}</strong>
+                  {receiptSettings?.businessEmail && <p>{receiptSettings.businessEmail}</p>}
+                  {receiptSettings?.businessPhone && <p>{receiptSettings.businessPhone}</p>}
+                  {receiptSettings?.businessAddress && <p>{receiptSettings.businessAddress}</p>}
+                </div>
+              )}
+              {showCustomerInfo && (
+                <div>
+                  <span>Cliente</span>
+                  <strong>{payment.contact?.name || 'Cliente'}</strong>
+                  {payment.contact?.email && <p>{payment.contact.email}</p>}
+                  {payment.contact?.phone && <p>{payment.contact.phone}</p>}
+                  <p>Referencia {payment.publicPaymentId}</p>
+                </div>
+              )}
+            </section>
+
+            <section className={styles.printLines}>
+              <div className={styles.printLineHeader}>
+                <span>Concepto</span>
+                <span>Cant.</span>
+                <span>Importe</span>
+              </div>
+              <div className={styles.printLineItem}>
+                <strong>{payment.title || 'Pago'}</strong>
+                <span>1</span>
+                <span>{formatCurrency(subtotalAmount, payment.currency)}</span>
+              </div>
+              {payment.description && <p className={styles.printDescription}>{payment.description}</p>}
+            </section>
+
+            <section className={styles.printTotals}>
+              <div>
+                <span>Subtotal</span>
+                <strong>{formatCurrency(subtotalAmount, payment.currency)}</strong>
+              </div>
+              {hasTaxBreakdown && (
+                <div>
+                  <span>{taxDetails?.calculationMode === 'inclusive' ? `${taxDetails?.taxName || 'Impuesto'} incluido` : taxDetails?.taxName || 'Impuesto'}</span>
+                  <strong>{formatCurrency(taxAmount, payment.currency)}</strong>
+                </div>
+              )}
+              <div>
+                <span>Total pagado</span>
+                <strong>{formatCurrency(totalAmount, payment.currency)}</strong>
+              </div>
+            </section>
+
+            {showTerms && receiptSettings?.terms && (
+              <section className={styles.printTerms}>
+                <strong>Términos y condiciones</strong>
+                <p>{receiptSettings.terms}</p>
+              </section>
+            )}
+
+            {receiptSettings?.footer && <p className={styles.printFooter}>{receiptSettings.footer}</p>}
+          </section>
+        </article>
+      )}
     </main>
   )
 }
