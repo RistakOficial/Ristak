@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft,
+  ChevronDown,
+  ChevronRight,
   Edit3,
   Eye,
   File,
@@ -58,6 +60,12 @@ const DRAG_DATA_TYPE = 'application/x-ristak-template-manager'
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
 const META_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
 type TemplateFolderFilter = 'all' | 'unfiled' | string
+
+interface VariablePickerGroup {
+  id: string
+  label: string
+  items: MessageTemplateVariable[]
+}
 
 const emptyLocation = {
   latitude: '',
@@ -361,6 +369,51 @@ function getTemplateFolderTargetId(folderId: TemplateFolderFilter | null) {
   return isTemplateFolderId(folderId) ? folderId : null
 }
 
+function getVariableGroupLabel(variable: MessageTemplateVariable) {
+  return String(variable.group || '').trim() || 'Otros datos'
+}
+
+function getVariableGroupId(label: string) {
+  return label
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'otros-datos'
+}
+
+function buildVariablePickerGroups(variables: MessageTemplateVariable[], query: string): VariablePickerGroup[] {
+  const normalizedQuery = query.trim().toLowerCase()
+  const groups = new Map<string, VariablePickerGroup>()
+
+  for (const variable of variables) {
+    const groupLabel = getVariableGroupLabel(variable)
+    const matches = !normalizedQuery || [
+      variable.label,
+      variable.key,
+      variable.mergeField,
+      variable.example,
+      groupLabel
+    ].some((value) => String(value || '').toLowerCase().includes(normalizedQuery))
+
+    if (!matches) continue
+
+    const groupId = getVariableGroupId(groupLabel)
+    const currentGroup = groups.get(groupId)
+    if (currentGroup) {
+      currentGroup.items.push(variable)
+    } else {
+      groups.set(groupId, {
+        id: groupId,
+        label: groupLabel,
+        items: [variable]
+      })
+    }
+  }
+
+  return Array.from(groups.values())
+}
+
 interface MessageTemplatesProps {
   embedded?: boolean
   title?: string
@@ -403,6 +456,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [dragging, setDragging] = useState<{ templateIds: string[]; folderIds: string[] } | null>(null)
   const [activeVariablePicker, setActiveVariablePicker] = useState<string | null>(null)
   const [variableSearchDrafts, setVariableSearchDrafts] = useState<Record<string, string>>({})
+  const [expandedVariableCategories, setExpandedVariableCategories] = useState<Set<string>>(() => new Set())
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null)
   const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null)
 
@@ -623,6 +677,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     setDraft(createEmptyDraft(getTemplateFolderTargetId(activeFolderId)))
     setActiveVariablePicker(null)
     setVariableSearchDrafts({})
+    setExpandedVariableCategories(new Set())
     setTestPhone('')
     setView('editor')
   }
@@ -637,6 +692,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     setDraft(templateToDraft(template))
     setActiveVariablePicker(null)
     setVariableSearchDrafts({})
+    setExpandedVariableCategories(new Set())
     setTestPhone('')
     setView('editor')
   }
@@ -1075,6 +1131,15 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     }))
   }
 
+  const toggleVariableCategory = (categoryId: string) => {
+    setExpandedVariableCategories((current) => {
+      const next = new Set(current)
+      if (next.has(categoryId)) next.delete(categoryId)
+      else next.add(categoryId)
+      return next
+    })
+  }
+
   const addButton = () => {
     if ((draft.buttons || []).length >= 10) {
       showToast('warning', 'Límite de botones', 'Puedes agregar hasta 10 botones')
@@ -1114,17 +1179,9 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           const pickerKey = `${target}-${index}`
           const searchValue = variableSearchDrafts[pickerKey] || ''
           const searchQuery = searchValue.trim().toLowerCase()
-          const pickerMatches = bundle.variables
-            .filter((variable) => {
-              if (!searchQuery) return true
-              return [
-                variable.label,
-                variable.key,
-                variable.mergeField,
-                variable.group
-              ].some((value) => value.toLowerCase().includes(searchQuery))
-            })
-            .slice(0, 8)
+          const isSearchingVariables = searchQuery.length > 0
+          const pickerGroups = buildVariablePickerGroups(bundle.variables, searchValue)
+          const pickerMatches = pickerGroups.flatMap((group) => group.items)
           const pickerOpen = activeVariablePicker === pickerKey && !selectedVariable
           const selectVariable = (variable: MessageTemplateVariable) => {
             updateVariableBinding(target, index, {
@@ -1188,27 +1245,52 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                               setActiveVariablePicker((current) => current === pickerKey ? null : current)
                             }, 0)
                           }}
-                          placeholder="Busca First Name, Email, Phone..."
+                          placeholder="Busca categoría, First Name, Email..."
                           aria-expanded={pickerOpen}
                           aria-autocomplete="list"
                         />
                       </div>
                       {pickerOpen && (
                         <div className={styles.variablePickerMenu} data-ristak-dropdown-panel>
-                          {pickerMatches.length ? pickerMatches.map((variable) => (
-                            <button
-                              key={variable.key}
-                              type="button"
-                              onMouseDown={(event) => event.preventDefault()}
-                              onClick={() => selectVariable(variable)}
-                              data-ristak-dropdown-item
-                            >
-                              <span>
-                                <strong>{variable.label}</strong>
-                                <small>{variable.group} · {variable.mergeField}</small>
-                              </span>
-                            </button>
-                          )) : (
+                          {pickerGroups.length ? (
+                            pickerGroups.map((group) => {
+                              const expanded = isSearchingVariables || expandedVariableCategories.has(group.id)
+                              return (
+                                <div key={group.id} className={styles.variablePickerCategoryGroup}>
+                                  <button
+                                    type="button"
+                                    className={styles.variablePickerCategoryButton}
+                                    aria-expanded={expanded}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => toggleVariableCategory(group.id)}
+                                  >
+                                    {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                    <span className={styles.variablePickerCategoryName}>{group.label}</span>
+                                    <span className={styles.variablePickerCategoryCount}>{group.items.length}</span>
+                                  </button>
+                                  {expanded && (
+                                    <div className={styles.variablePickerCategoryItems}>
+                                      {group.items.map((variable) => (
+                                        <button
+                                          key={variable.key}
+                                          type="button"
+                                          className={styles.variablePickerOptionButton}
+                                          onMouseDown={(event) => event.preventDefault()}
+                                          onClick={() => selectVariable(variable)}
+                                          data-ristak-dropdown-item
+                                        >
+                                          <span>
+                                            <strong>{variable.label}</strong>
+                                            <small>{variable.group} · {variable.mergeField}</small>
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })
+                          ) : (
                             <div className={styles.variablePickerEmpty}>Sin variables encontradas</div>
                           )}
                         </div>
