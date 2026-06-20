@@ -3743,6 +3743,12 @@ const getCurrentEditorVideoTime = (blockId: string) => {
   return clampVideoActionTime(video?.currentTime || 0)
 }
 
+const getEditorVideoDuration = (blockId: string) => {
+  const video = getEditorVideoElement(blockId)
+  const duration = Number(video?.duration)
+  return Number.isFinite(duration) && duration > 0 ? clampVideoActionTime(duration) : 0
+}
+
 const seekEditorVideoToTime = (blockId: string, timeSeconds: unknown) => {
   const video = getEditorVideoElement(blockId)
   if (!video) return
@@ -3754,7 +3760,9 @@ const seekEditorVideoToTime = (blockId: string, timeSeconds: unknown) => {
   }
 }
 
-const getVideoActionTimelineMax = (rules: VideoActionRule[]) => {
+const getVideoActionTimelineMax = (rules: VideoActionRule[], durationSeconds = 0) => {
+  const videoDuration = clampVideoActionTime(durationSeconds)
+  if (videoDuration > 0) return videoDuration
   const maxRuleTime = rules.reduce((max, rule) => Math.max(max, rule.timeSeconds), 0)
   return Math.max(VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS, maxRuleTime + VIDEO_ACTION_TIMELINE_PADDING_SECONDS)
 }
@@ -27688,19 +27696,16 @@ const CustomFieldBindingControl: React.FC<{
   )
 }
 
-const VideoActionsTimeline: React.FC<{
-  rules: VideoActionRule[]
-  targets: VideoActionTargetOption[]
-  pages: SitePage[]
+const VideoActionTimeScale: React.FC<{
+  timeSeconds: number
   maxSeconds: number
-  activeRuleId?: string
-  onChangeTime: (ruleId: string, timeSeconds: number) => void
-  onSelectRule?: (ruleId: string) => void
-}> = ({ rules, targets, pages, maxSeconds, activeRuleId, onChangeTime, onSelectRule }) => {
+  onChangeTime: (timeSeconds: number) => void
+}> = ({ timeSeconds, maxSeconds, onChangeTime }) => {
   const labelSteps = [0, 0.25, 0.5, 0.75, 1].map(step => Math.round(maxSeconds * step))
+  const left = `${Math.min(100, Math.max(0, (timeSeconds / maxSeconds) * 100))}%`
 
   return (
-    <div className={styles.videoActionTimeline} aria-label="Linea de tiempo de acciones del video">
+    <div className={styles.videoActionTimeline} aria-label="Linea de tiempo de la accion">
       <div className={styles.videoActionTimelineLabels} aria-hidden="true">
         {labelSteps.map((seconds, index) => (
           <span key={`${seconds}-${index}`}>{formatVideoActionTime(seconds)}</span>
@@ -27708,32 +27713,24 @@ const VideoActionsTimeline: React.FC<{
       </div>
       <div className={styles.videoActionTimelineTrack}>
         <span className={styles.videoActionTimelineLine} aria-hidden="true" />
-        {rules.map(rule => {
-          const left = `${Math.min(100, Math.max(0, (rule.timeSeconds / maxSeconds) * 100))}%`
-          return (
-            <React.Fragment key={rule.id}>
-              <input
-                className={styles.videoActionMarkerInput}
-                type="range"
-                min={0}
-                max={maxSeconds}
-                step={1}
-                value={rule.timeSeconds}
-                aria-label={`Mover accion: ${getVideoActionRuleText(rule, targets, pages)}`}
-                data-active={activeRuleId === rule.id ? 'true' : undefined}
-                onFocus={() => onSelectRule?.(rule.id)}
-                onChange={(event) => onChangeTime(rule.id, clampVideoActionTime(event.target.value))}
-              />
-              <span
-                className={styles.videoActionTimelineMarkerLabel}
-                data-active={activeRuleId === rule.id ? 'true' : undefined}
-                style={{ ['--video-action-marker-left' as string]: left } as React.CSSProperties}
-              >
-                {formatVideoActionTime(rule.timeSeconds)}
-              </span>
-            </React.Fragment>
-          )
-        })}
+        <input
+          className={styles.videoActionMarkerInput}
+          type="range"
+          min={0}
+          max={maxSeconds}
+          step={1}
+          value={Math.min(timeSeconds, maxSeconds)}
+          aria-label="Mover momento de la accion"
+          data-active="true"
+          onChange={(event) => onChangeTime(clampVideoActionTime(event.target.value))}
+        />
+        <span
+          className={styles.videoActionTimelineMarkerLabel}
+          data-active="true"
+          style={{ ['--video-action-marker-left' as string]: left } as React.CSSProperties}
+        >
+          {formatVideoActionTime(timeSeconds)}
+        </span>
       </div>
     </div>
   )
@@ -27766,10 +27763,11 @@ const VideoActionsPanel: React.FC<{
     [contentTargets]
   )
   const pageTargets = useMemo(() => getManualRedirectPages(pages, activePageId), [pages, activePageId])
-  const timelineMaxSeconds = useMemo(() => getVideoActionTimelineMax(rules), [rules])
   const hasPopupTarget = targets.some(target => target.id === POPUP_SURFACE_ID)
   const [expandedRuleId, setExpandedRuleId] = useState('')
   const [timeInputs, setTimeInputs] = useState<Record<string, string>>({})
+  const [videoDurationSeconds, setVideoDurationSeconds] = useState(0)
+  const timelineMaxSeconds = useMemo(() => getVideoActionTimelineMax(rules, videoDurationSeconds), [rules, videoDurationSeconds])
 
   const firstTargetId = useMemo(() => {
     return contentTargets[0]?.id || ''
@@ -27779,6 +27777,39 @@ const VideoActionsPanel: React.FC<{
     const visibleRuleIds = new Set(rules.map(rule => rule.id))
     setTimeInputs(current => Object.fromEntries(Object.entries(current).filter(([ruleId]) => visibleRuleIds.has(ruleId))))
   }, [rules])
+
+  useEffect(() => {
+    let timeoutId = 0
+    let video: HTMLVideoElement | null = null
+
+    const readDuration = () => {
+      const nextDuration = getEditorVideoDuration(block.id)
+      setVideoDurationSeconds(current => current === nextDuration ? current : nextDuration)
+      return nextDuration
+    }
+
+    const bindVideo = (attempt = 0) => {
+      video = getEditorVideoElement(block.id)
+      const duration = readDuration()
+      if (!video && attempt < 8) {
+        timeoutId = window.setTimeout(() => bindVideo(attempt + 1), 250)
+        return
+      }
+      if (!video || duration > 0) return
+      video.addEventListener('loadedmetadata', readDuration)
+      video.addEventListener('durationchange', readDuration)
+    }
+
+    bindVideo()
+
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId)
+      if (video) {
+        video.removeEventListener('loadedmetadata', readDuration)
+        video.removeEventListener('durationchange', readDuration)
+      }
+    }
+  }, [block.id])
 
   const patchRules = useCallback((nextRules: VideoActionRule[]) => {
     const normalizedRules = nextRules
@@ -27798,7 +27829,7 @@ const VideoActionsPanel: React.FC<{
   }, [block.id, patchRules, rules])
 
   const openNewRule = useCallback(() => {
-    const timeSeconds = getCurrentEditorVideoTime(block.id)
+    const timeSeconds = Math.min(timelineMaxSeconds, getCurrentEditorVideoTime(block.id))
     const defaultAction: VideoActionKind = firstTargetId ? 'show' : hasPopupTarget ? 'show_popup' : pageTargets.length ? 'site_page' : 'redirect'
     const targetBlockIds = defaultAction === 'show_popup'
       ? [POPUP_SURFACE_ID]
@@ -27820,26 +27851,7 @@ const VideoActionsPanel: React.FC<{
     setExpandedRuleId(nextRule.id)
     setTimeInputs(current => ({ ...current, [nextRule.id]: formatVideoActionTime(timeSeconds) }))
     seekEditorVideoToTime(block.id, timeSeconds)
-  }, [block.id, firstTargetId, hasPopupTarget, pageTargets, patchRules, rules])
-
-  const handleDuplicateRule = useCallback((rule: VideoActionRule) => {
-    const nextId = makeVideoActionId()
-    patchRules([
-      ...rules,
-      {
-        ...rule,
-        id: nextId,
-        targetBlockIds: [...getVideoActionTargetIds(rule)],
-        timeSeconds: clampVideoActionTime(rule.timeSeconds + 1)
-      }
-    ])
-    setExpandedRuleId(nextId)
-  }, [patchRules, rules])
-
-  const handleDeleteRule = useCallback((ruleId: string) => {
-    patchRules(rules.filter(rule => rule.id !== ruleId))
-    setExpandedRuleId(current => current === ruleId ? '' : current)
-  }, [patchRules, rules])
+  }, [block.id, firstTargetId, hasPopupTarget, pageTargets, patchRules, rules, timelineMaxSeconds])
 
   const getTargetOptionsForAction = useCallback((action: VideoActionKind) => {
     if (action === 'open_form') return formTargets
@@ -27870,34 +27882,22 @@ const VideoActionsPanel: React.FC<{
   }, [getTargetOptionsForAction, pageTargets, patchRule])
 
   const handleTimelineTimeChange = useCallback((ruleId: string, timeSeconds: number) => {
-    patchRules(rules.map(rule => rule.id === ruleId ? { ...rule, timeSeconds: clampVideoActionTime(timeSeconds) } : rule))
-    setTimeInputs(current => ({ ...current, [ruleId]: formatVideoActionTime(timeSeconds) }))
+    const nextTime = Math.min(timelineMaxSeconds, clampVideoActionTime(timeSeconds))
+    patchRules(rules.map(rule => rule.id === ruleId ? { ...rule, timeSeconds: nextTime } : rule))
+    setTimeInputs(current => ({ ...current, [ruleId]: formatVideoActionTime(nextTime) }))
     setExpandedRuleId(ruleId)
-    seekEditorVideoToTime(block.id, timeSeconds)
-  }, [block.id, patchRules, rules])
+    seekEditorVideoToTime(block.id, nextTime)
+  }, [block.id, patchRules, rules, timelineMaxSeconds])
 
   const handleTimeInputChange = useCallback((rule: VideoActionRule, value: string) => {
     setTimeInputs(current => ({ ...current, [rule.id]: value }))
-    const nextTime = parseVideoActionTimeInput(value)
+    const nextTime = Math.min(timelineMaxSeconds, parseVideoActionTimeInput(value))
     patchRule(rule.id, { timeSeconds: nextTime }, { seek: true })
-  }, [patchRule])
+  }, [patchRule, timelineMaxSeconds])
 
   const handleTimeInputBlur = useCallback((rule: VideoActionRule) => {
     setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(rule.timeSeconds) }))
   }, [])
-
-  const handleUseCurrentMoment = useCallback((rule: VideoActionRule) => {
-    const timeSeconds = getCurrentEditorVideoTime(block.id)
-    setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(timeSeconds) }))
-    patchRule(rule.id, { timeSeconds }, { seek: true })
-  }, [block.id, patchRule])
-
-  const handleQuickTime = useCallback((rule: VideoActionRule, delta: number) => {
-    const currentInput = timeInputs[rule.id] ?? formatVideoActionTime(rule.timeSeconds)
-    const nextTime = clampVideoActionTime(parseVideoActionTimeInput(currentInput) + delta)
-    setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(nextTime) }))
-    patchRule(rule.id, { timeSeconds: nextTime }, { seek: true })
-  }, [patchRule, timeInputs])
 
   const handleToggleTarget = useCallback((rule: VideoActionRule, targetId: string) => {
     const currentIds = getVideoActionTargetIds(rule).filter(id => id !== POPUP_SURFACE_ID)
@@ -27921,13 +27921,6 @@ const VideoActionsPanel: React.FC<{
   const handleTargetHover = useCallback((targetId: string) => {
     onTargetHover?.(targetId === POPUP_SURFACE_ID ? '' : targetId)
   }, [onTargetHover])
-
-  const getRuleTargetMeta = useCallback((rule: VideoActionRule) => {
-    if (rule.action === 'show_popup') return 'Popup del sitio'
-    if (rule.action === 'site_page') return getVideoActionPageLabel(rule.targetPageId, pages)
-    if (rule.action === 'redirect') return rule.redirectUrl || 'URL destino'
-    return getVideoActionTargetsLabel(rule, targets)
-  }, [pages, targets])
 
   const renderTargetPicker = (rule: VideoActionRule) => {
     const candidateTargets = getTargetOptionsForAction(rule.action)
@@ -27978,47 +27971,30 @@ const VideoActionsPanel: React.FC<{
 
   const renderRuleEditor = (rule: VideoActionRule) => {
     const timeInput = timeInputs[rule.id] ?? formatVideoActionTime(rule.timeSeconds)
-    const selectedTargetLabel = getVideoActionTargetsLabel(rule, targets)
-    const requiresBeforeState = rule.action === 'show' || rule.action === 'hide' || rule.action === 'open_form' || rule.action === 'show_popup'
 
     return (
       <div className={styles.videoActionInlineEditor}>
-        <div className={styles.videoActionTimeRow}>
-          <span>Cuando llegue a</span>
-          <input
-            className={styles.videoActionTimeInput}
-            value={timeInput}
-            placeholder="03:45"
-            inputMode="numeric"
-            onChange={(event) => handleTimeInputChange(rule, event.target.value)}
-            onBlur={() => handleTimeInputBlur(rule)}
+        <div className={styles.videoActionTimeControl}>
+          <div className={styles.videoActionTimeRow}>
+            <span>Cuando llegue a</span>
+            <input
+              className={styles.videoActionTimeInput}
+              value={timeInput}
+              placeholder="03:45"
+              inputMode="numeric"
+              onChange={(event) => handleTimeInputChange(rule, event.target.value)}
+              onBlur={() => handleTimeInputBlur(rule)}
+            />
+          </div>
+          <VideoActionTimeScale
+            timeSeconds={rule.timeSeconds}
+            maxSeconds={timelineMaxSeconds}
+            onChangeTime={(timeSeconds) => handleTimelineTimeChange(rule.id, timeSeconds)}
           />
-          <Button type="button" variant="secondary" size="sm" leftIcon={<Play size={14} />} onClick={() => handleUseCurrentMoment(rule)}>
-            Usar momento actual
-          </Button>
         </div>
-
-        <div className={styles.videoActionQuickTimes} aria-label="Ajustes rápidos de tiempo">
-          {[-5, -1, 1, 5].map(delta => (
-            <Button key={delta} type="button" variant="ghost" size="sm" onClick={() => handleQuickTime(rule, delta)}>
-              {delta > 0 ? `+${delta}s` : `${delta}s`}
-            </Button>
-          ))}
-        </div>
-
-        <input
-          className={styles.videoActionTimeSlider}
-          type="range"
-          min={0}
-          max={timelineMaxSeconds}
-          step={1}
-          value={rule.timeSeconds}
-          aria-label="Ajustar momento de la acción"
-          onChange={(event) => handleTimelineTimeChange(rule.id, clampVideoActionTime(event.target.value))}
-        />
 
         <label className={styles.field}>
-          <span>Acción</span>
+          <span>Qué acción quieres tomar</span>
           <CustomSelect
             value={rule.action}
             onChange={(event) => handleChangeAction(rule, event.target.value as VideoActionKind)}
@@ -28032,6 +28008,19 @@ const VideoActionsPanel: React.FC<{
               >
                 {videoActionLabels[action]}
               </option>
+            ))}
+          </CustomSelect>
+        </label>
+
+        <label className={styles.field}>
+          <span>Antes de este momento</span>
+          <CustomSelect
+            value={rule.before}
+            onChange={(event) => patchRule(rule.id, { before: event.target.value as VideoActionBeforeState })}
+            onBlur={onSave}
+          >
+            {videoActionBeforeStates.map(before => (
+              <option key={before} value={before}>{videoActionBeforeLabels[before]}</option>
             ))}
           </CustomSelect>
         </label>
@@ -28068,46 +28057,10 @@ const VideoActionsPanel: React.FC<{
           <div className={styles.videoActionStep}>
             <div className={styles.videoActionStepHeader}>
               <span className={styles.videoActionStepTitle}>{rule.action === 'open_form' ? 'Formulario o bloque a abrir' : 'Elementos a controlar'}</span>
-              <span>{videoActionMultiTargetKinds.has(rule.action) ? 'Puedes seleccionar uno o varios.' : 'Selecciona uno.'}</span>
             </div>
             {renderTargetPicker(rule)}
           </div>
         )}
-
-        {rule.action === 'open_form' && (
-          <div className={styles.videoActionSwitchRow}>
-            <div>
-              <span className={styles.videoActionSwitchTitle}>Bloquear video hasta completar</span>
-              <span>El visitante no sigue viendo hasta enviar el formulario.</span>
-            </div>
-            <Switch
-              checked={rule.pauseUntilComplete !== false}
-              onChange={(checked) => patchRule(rule.id, { pauseUntilComplete: checked })}
-              aria-label="Bloquear video hasta completar formulario"
-            />
-          </div>
-        )}
-
-        {requiresBeforeState && (
-          <label className={styles.field}>
-            <span>Antes de este momento</span>
-            <CustomSelect
-              value={rule.before}
-              onChange={(event) => patchRule(rule.id, { before: event.target.value as VideoActionBeforeState })}
-              onBlur={onSave}
-            >
-              {videoActionBeforeStates.map(before => (
-                <option key={before} value={before}>{videoActionBeforeLabels[before]}</option>
-              ))}
-            </CustomSelect>
-          </label>
-        )}
-
-        <p className={styles.videoActionHint}>
-          Resultado: {getVideoActionRuleText(rule, targets, pages)}
-          {rule.action === 'open_form' && rule.pauseUntilComplete !== false ? ' El video queda pausado hasta que lo completen.' : ''}
-          {rule.action === 'show' && rule.before === 'hidden' ? ` Antes de ${formatVideoActionTime(rule.timeSeconds)}, ${selectedTargetLabel} queda oculto.` : ''}
-        </p>
       </div>
     )
   }
@@ -28119,70 +28072,26 @@ const VideoActionsPanel: React.FC<{
           <h3>Acciones de video</h3>
           <p>Controla qué elementos aparecen, se ocultan o cambian mientras el visitante ve este video.</p>
         </div>
-        <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={openNewRule}>
-          Agregar acción
-        </Button>
+        {rules.length === 0 && (
+          <Button type="button" variant="secondary" size="sm" fullWidth leftIcon={<Plus size={14} />} onClick={openNewRule}>
+            Agregar acción
+          </Button>
+        )}
       </div>
 
-      {rules.length === 0 ? (
-        <div className={styles.videoActionEmpty}>
-          <span className={styles.videoActionEmptyTitle}>No hay acciones todavía.</span>
-          <p>Agrega una acción para mostrar botones, formularios u ofertas en un momento exacto del video.</p>
-          <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={openNewRule}>
-            Agregar primera acción
-          </Button>
-        </div>
-      ) : (
+      {rules.length > 0 && (
         <>
           <div className={styles.videoActionRuleList}>
             {rules.map(rule => (
               <article key={rule.id} className={`${styles.videoActionRule} ${expandedRuleId === rule.id ? styles.videoActionRuleExpanded : ''}`}>
-                <div className={styles.videoActionRuleTop}>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    fullWidth
-                    className={styles.videoActionRuleSummary}
-                    onClick={() => {
-                      setExpandedRuleId(current => current === rule.id ? '' : rule.id)
-                      seekEditorVideoToTime(block.id, rule.timeSeconds)
-                    }}
-                  >
-                    <span className={styles.videoActionRuleCopy}>
-                      <span className={styles.videoActionRuleText}>{getVideoActionRuleText(rule, targets, pages)}</span>
-                      <span className={styles.videoActionRuleMeta}>
-                        <span><Clock3 size={13} />{formatVideoActionTime(rule.timeSeconds)}</span>
-                        <span><MousePointerClick size={13} />{getRuleTargetMeta(rule)}</span>
-                        <span>{videoActionLabels[rule.action]}</span>
-                      </span>
-                    </span>
-                  </Button>
-                  <div className={styles.videoActionRuleControls}>
-                    <Button type="button" variant="ghost" size="sm" className={styles.videoActionIconControl} aria-label="Editar acción" title="Editar" onClick={() => setExpandedRuleId(current => current === rule.id ? '' : rule.id)}>
-                      <Pencil size={14} />
-                    </Button>
-                    <Button type="button" variant="ghost" size="sm" className={styles.videoActionIconControl} aria-label="Duplicar acción" title="Duplicar" onClick={() => handleDuplicateRule(rule)}>
-                      <Copy size={14} />
-                    </Button>
-                    <Button type="button" variant="ghost" size="sm" className={styles.videoActionIconControl} aria-label="Eliminar acción" title="Eliminar" onClick={() => handleDeleteRule(rule.id)}>
-                      <Trash2 size={14} />
-                    </Button>
-                  </div>
-                </div>
-                {expandedRuleId === rule.id && renderRuleEditor(rule)}
+                {renderRuleEditor(rule)}
               </article>
             ))}
           </div>
 
-          <VideoActionsTimeline
-            rules={rules}
-            targets={targets}
-            pages={pages}
-            maxSeconds={timelineMaxSeconds}
-            activeRuleId={expandedRuleId}
-            onChangeTime={handleTimelineTimeChange}
-            onSelectRule={setExpandedRuleId}
-          />
+          <Button type="button" variant="secondary" size="sm" fullWidth leftIcon={<Plus size={14} />} onClick={openNewRule}>
+            Agregar acción
+          </Button>
         </>
       )}
     </div>
