@@ -23405,11 +23405,19 @@ const VideoPreviewRangeControl: React.FC<{
   onSave: () => void
 }> = ({ settings, mediaUrl, durationSeconds, onPatchSettings, onSave }) => {
   const trackRef = useRef<HTMLDivElement | null>(null)
-  const dragStateRef = useRef<{ startX: number; start: number; end: number; width: number } | null>(null)
+  const dragStateRef = useRef<{
+    mode: 'selection' | 'start' | 'end'
+    startX: number
+    start: number
+    end: number
+    left: number
+    width: number
+  } | null>(null)
   const [frameSources, setFrameSources] = useState<string[]>([])
   const range = normalizeVideoPreviewRange(settings, durationSeconds)
   const startPercent = range.max > 0 ? (range.start / range.max) * 100 : 0
   const endPercent = range.max > 0 ? (range.end / range.max) * 100 : 100
+  const centerPercent = (startPercent + endPercent) / 2
   const spanSeconds = Math.max(0, range.end - range.start)
 
   useEffect(() => {
@@ -23506,56 +23514,102 @@ const VideoPreviewRangeControl: React.FC<{
     if (commit) window.setTimeout(onSave, 0)
   }, [durationSeconds, onPatchSettings, onSave, settings])
 
-  const handleStartChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const requestedStart = Math.min(
-      Math.max(0, Number(event.target.value)),
-      Math.max(0, range.max - range.minSpan)
-    )
-    const currentSpan = Math.min(range.maxSpan, Math.max(range.minSpan, range.end - range.start))
-    const nextEnd = requestedStart > range.end - range.minSpan
-      ? Math.min(range.max, requestedStart + currentSpan)
-      : range.end
-    patchRange(requestedStart, nextEnd)
-  }
-
-  const handleEndChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const nextEnd = Math.min(
-      Math.max(Number(event.target.value), range.start + range.minSpan),
-      range.start + range.maxSpan
-    )
-    patchRange(range.start, nextEnd)
-  }
-
-  const handleSelectionPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (range.end <= range.start) return
+  const setDragState = (mode: 'selection' | 'start' | 'end', event: React.PointerEvent<HTMLElement>) => {
     const track = trackRef.current
-    if (!track) return
+    if (!track) return false
     const rect = track.getBoundingClientRect()
     dragStateRef.current = {
+      mode,
       startX: event.clientX,
       start: range.start,
       end: range.end,
+      left: rect.left,
       width: rect.width || 1
     }
     event.currentTarget.setPointerCapture(event.pointerId)
+    return true
   }
 
-  const handleSelectionPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+  const getPointerSecond = (event: React.PointerEvent<HTMLElement>, dragState: NonNullable<typeof dragStateRef.current>) =>
+    Math.min(range.max, Math.max(0, ((event.clientX - dragState.left) / dragState.width) * range.max))
+
+  const handleSelectionPointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    if (range.end <= range.start) return
+    event.preventDefault()
+    setDragState('selection', event)
+  }
+
+  const handleFlagPointerDown = (mode: 'start' | 'end') => (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setDragState(mode, event)
+  }
+
+  const handleDragPointerMove = (event: React.PointerEvent<HTMLElement>) => {
     const dragState = dragStateRef.current
     if (!dragState) return
-    const deltaSeconds = ((event.clientX - dragState.startX) / dragState.width) * range.max
-    const span = dragState.end - dragState.start
-    const nextStart = Math.min(Math.max(0, dragState.start + deltaSeconds), Math.max(0, range.max - span))
-    patchRange(nextStart, nextStart + span)
+
+    if (dragState.mode === 'selection') {
+      const deltaSeconds = ((event.clientX - dragState.startX) / dragState.width) * range.max
+      const span = dragState.end - dragState.start
+      const nextStart = Math.min(Math.max(0, dragState.start + deltaSeconds), Math.max(0, range.max - span))
+      patchRange(nextStart, nextStart + span)
+      return
+    }
+
+    const pointerSecond = getPointerSecond(event, dragState)
+    if (dragState.mode === 'start') {
+      const minStart = Math.max(0, dragState.end - range.maxSpan)
+      const maxStart = Math.max(minStart, dragState.end - range.minSpan)
+      patchRange(Math.min(Math.max(pointerSecond, minStart), maxStart), dragState.end)
+      return
+    }
+
+    const minEnd = Math.min(range.max, dragState.start + range.minSpan)
+    const maxEnd = Math.min(range.max, dragState.start + range.maxSpan)
+    patchRange(dragState.start, Math.min(Math.max(pointerSecond, minEnd), maxEnd))
   }
 
-  const handleSelectionPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+  const handleDragPointerUp = (event: React.PointerEvent<HTMLElement>) => {
     if (!dragStateRef.current) return
     dragStateRef.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     window.setTimeout(onSave, 0)
+  }
+
+  const moveWholeRange = (deltaSeconds: number) => {
+    const span = range.end - range.start
+    const nextStart = Math.min(Math.max(0, range.start + deltaSeconds), Math.max(0, range.max - span))
+    patchRange(nextStart, nextStart + span, true)
+  }
+
+  const handleRangeKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const step = event.shiftKey ? 5 : VIDEO_PREVIEW_STEP_SECONDS
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      moveWholeRange(-step)
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      moveWholeRange(step)
+    }
+  }
+
+  const handleFlagKeyDown = (mode: 'start' | 'end') => (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const step = event.shiftKey ? 5 : VIDEO_PREVIEW_STEP_SECONDS
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    const delta = event.key === 'ArrowLeft' ? -step : step
+    if (mode === 'start') {
+      const minStart = Math.max(0, range.end - range.maxSpan)
+      const maxStart = Math.max(minStart, range.end - range.minSpan)
+      patchRange(Math.min(Math.max(range.start + delta, minStart), maxStart), range.end, true)
+      return
+    }
+    const minEnd = Math.min(range.max, range.start + range.minSpan)
+    const maxEnd = Math.min(range.max, range.start + range.maxSpan)
+    patchRange(range.start, Math.min(Math.max(range.end + delta, minEnd), maxEnd), true)
   }
 
   return (
@@ -23568,7 +23622,8 @@ const VideoPreviewRangeControl: React.FC<{
         className={styles.videoPreviewTrack}
         style={{
           ['--video-preview-start' as string]: `${startPercent}%`,
-          ['--video-preview-end' as string]: `${endPercent}%`
+          ['--video-preview-end' as string]: `${endPercent}%`,
+          ['--video-preview-center' as string]: `${centerPercent}%`
         } as React.CSSProperties}
       >
         <div className={styles.videoPreviewFrameStrip} aria-hidden="true">
@@ -23583,52 +23638,54 @@ const VideoPreviewRangeControl: React.FC<{
           <div
             className={styles.videoPreviewSelection}
             onPointerDown={handleSelectionPointerDown}
-            onPointerMove={handleSelectionPointerMove}
-            onPointerUp={handleSelectionPointerUp}
-            onPointerCancel={handleSelectionPointerUp}
+            onPointerMove={handleDragPointerMove}
+            onPointerUp={handleDragPointerUp}
+            onPointerCancel={handleDragPointerUp}
             aria-hidden="true"
           />
-          <span className={`${styles.videoPreviewPoint} ${styles.videoPreviewPointStart}`} aria-hidden="true" />
-          <span className={`${styles.videoPreviewPoint} ${styles.videoPreviewPointEnd}`} aria-hidden="true" />
-          <input
-            className={styles.videoPreviewThumb}
-            type="range"
-            min={0}
-            max={range.max}
-            step={VIDEO_PREVIEW_STEP_SECONDS}
-            value={range.start}
+          <button
+            type="button"
+            className={`${styles.videoPreviewFlag} ${styles.videoPreviewFlagStart}`}
             aria-label="Inicio del loop"
-            onChange={handleStartChange}
-            onMouseUp={onSave}
-            onTouchEnd={onSave}
-          />
-          <input
-            className={styles.videoPreviewThumb}
-            type="range"
-            min={0}
-            max={range.max}
-            step={VIDEO_PREVIEW_STEP_SECONDS}
-            value={range.end}
+            onPointerDown={handleFlagPointerDown('start')}
+            onPointerMove={handleDragPointerMove}
+            onPointerUp={handleDragPointerUp}
+            onPointerCancel={handleDragPointerUp}
+            onKeyDown={handleFlagKeyDown('start')}
+          >
+            <span>Inicio</span>
+            <strong>{formatVideoPreviewSecond(range.start)}</strong>
+          </button>
+          <button
+            type="button"
+            className={`${styles.videoPreviewFlag} ${styles.videoPreviewFlagEnd}`}
             aria-label="Fin del loop"
-            onChange={handleEndChange}
-            onMouseUp={onSave}
-            onTouchEnd={onSave}
-          />
+            onPointerDown={handleFlagPointerDown('end')}
+            onPointerMove={handleDragPointerMove}
+            onPointerUp={handleDragPointerUp}
+            onPointerCancel={handleDragPointerUp}
+            onKeyDown={handleFlagKeyDown('end')}
+          >
+            <span>Final</span>
+            <strong>{formatVideoPreviewSecond(range.end)}</strong>
+          </button>
+          <button
+            type="button"
+            className={styles.videoPreviewRangeHandle}
+            aria-label={`Mover loop completo de ${formatVideoPreviewSecond(range.start)} a ${formatVideoPreviewSecond(range.end)}`}
+            onPointerDown={handleSelectionPointerDown}
+            onPointerMove={handleDragPointerMove}
+            onPointerUp={handleDragPointerUp}
+            onPointerCancel={handleDragPointerUp}
+            onKeyDown={handleRangeKeyDown}
+          >
+            <span aria-hidden="true" />
+          </button>
         </div>
       </div>
       <div className={styles.videoPreviewTimelineLabels}>
         <span>0:00</span>
         <span>{formatVideoPreviewSecond(range.max)}</span>
-      </div>
-      <div className={styles.videoPreviewRangeFooter}>
-        <span>
-          <small>Inicio</small>
-          <strong>{formatVideoPreviewSecond(range.start)}</strong>
-        </span>
-        <span>
-          <small>Final</small>
-          <strong>{formatVideoPreviewSecond(range.end)}</strong>
-        </span>
       </div>
     </div>
   )

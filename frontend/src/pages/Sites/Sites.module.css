@@ -19467,14 +19467,14 @@
 
 .videoPreviewControlRail {
   position: relative;
-  height: 30px;
+  height: 54px;
   min-width: 0;
 }
 
 .videoPreviewRailBase,
 .videoPreviewSelection {
   position: absolute;
-  top: 11px;
+  top: 30px;
   height: 8px;
   border-radius: var(--radius-pill);
 }
@@ -19497,88 +19497,97 @@
   cursor: grabbing;
 }
 
-.videoPreviewPoint {
+.videoPreviewFlag {
   position: absolute;
-  top: 4px;
-  width: 22px;
-  height: 22px;
-  border: 4px solid var(--surface);
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 58%, var(--border)),
-    var(--shadow-xs);
+  top: 0;
+  min-width: 58px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  padding: 3px 8px;
+  font: inherit;
+  box-shadow: var(--shadow-xs);
   transform: translateX(-50%);
   z-index: 4;
-  pointer-events: none;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
 }
 
-.videoPreviewPointStart {
-  left: clamp(14px, var(--video-preview-start, 0%), calc(100% - 14px));
-}
-
-.videoPreviewPointEnd {
-  left: clamp(14px, var(--video-preview-end, 100%), calc(100% - 14px));
-}
-
-.videoPreviewThumb {
+.videoPreviewFlag::after {
+  content: "";
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 30px;
-  margin: 0;
-  -webkit-appearance: none;
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: transparent;
-  pointer-events: none;
-  z-index: 3;
+  left: 50%;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  border-inline-end: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  border-block-end: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  background: var(--surface);
+  transform: translateX(-50%) rotate(45deg);
 }
 
-.videoPreviewThumb::-webkit-slider-runnable-track {
-  -webkit-appearance: none;
-  height: 30px;
-  border: 0;
-  background: transparent;
-  color: transparent;
+.videoPreviewFlag span {
+  color: var(--text-mute);
+  font-size: 0.56rem;
+  font-weight: 650;
+  line-height: 1;
 }
 
-.videoPreviewThumb::-moz-range-track {
-  height: 30px;
-  border: 0;
-  background: transparent;
-  color: transparent;
+.videoPreviewFlag strong {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1.05;
 }
 
-.videoPreviewThumb::-moz-range-progress {
-  border: 0;
-  background: transparent;
+.videoPreviewFlag:focus-visible,
+.videoPreviewRangeHandle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
-.videoPreviewThumb::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 30px;
-  height: 30px;
-  margin-top: 0;
-  appearance: none;
+.videoPreviewFlagStart {
+  left: clamp(30px, var(--video-preview-start, 0%), calc(100% - 30px));
+}
+
+.videoPreviewFlagEnd {
+  left: clamp(30px, var(--video-preview-end, 100%), calc(100% - 30px));
+}
+
+.videoPreviewRangeHandle {
+  position: absolute;
+  top: 24px;
+  left: clamp(18px, var(--video-preview-center, 50%), calc(100% - 18px));
+  width: 36px;
+  height: 20px;
+  display: grid;
+  place-items: center;
   border: 0;
   border-radius: var(--radius-pill);
-  background: transparent;
-  box-shadow: none;
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 0 0 4px var(--surface), var(--shadow-xs);
+  transform: translateX(-50%);
+  z-index: 5;
   cursor: ew-resize;
-  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
 }
 
-.videoPreviewThumb::-moz-range-thumb {
-  width: 30px;
-  height: 30px;
-  border: 0;
+.videoPreviewRangeHandle span {
+  width: 15px;
+  height: 2px;
   border-radius: var(--radius-pill);
-  background: transparent;
-  box-shadow: none;
-  cursor: ew-resize;
-  pointer-events: auto;
+  background: currentColor;
+  box-shadow:
+    0 -4px 0 currentColor,
+    0 4px 0 currentColor;
 }
 
 .videoPreviewTimelineLabels {
@@ -19588,34 +19597,6 @@
   color: var(--text-mute);
   font-size: 0.71rem;
   font-weight: 500;
-}
-
-.videoPreviewRangeFooter {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.videoPreviewRangeFooter span {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface-2);
-  padding: 8px 9px;
-}
-
-.videoPreviewRangeFooter small {
-  color: var(--text-mute);
-  font-size: 0.68rem;
-  font-weight: 650;
-}
-
-.videoPreviewRangeFooter strong {
-  color: var(--text);
-  font-size: 0.83rem;
-  font-weight: 700;
 }
 
 .videoTrickProgressBox {
