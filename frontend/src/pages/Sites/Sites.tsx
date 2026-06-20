@@ -101,6 +101,7 @@ import {
   Modal,
   NumberInput,
   CustomSelect,
+  Switch,
   TabList,
   SegmentTabs,
   DropdownMenu,
@@ -982,16 +983,20 @@ const PAGE_SELECTED_ID = '__page__'
 const POPUP_SELECTED_ID = '__popup__'
 const POPUP_SURFACE_ID = 'site-popup'
 const isEditorSurfaceSelection = (id: string) => id === PAGE_SELECTED_ID || id === POPUP_SELECTED_ID
-type VideoActionKind = 'show' | 'hide' | 'show_popup' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout'
+type VideoActionKind = 'show' | 'hide' | 'open_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout'
 type VideoActionBeforeState = 'hidden' | 'visible' | 'unchanged'
 
 interface VideoActionRule {
   id: string
   timeSeconds: number
   targetBlockId: string
+  targetBlockIds?: string[]
   action: VideoActionKind
   before: VideoActionBeforeState
   value?: string
+  targetPageId?: string
+  redirectUrl?: string
+  pauseUntilComplete?: boolean
 }
 
 interface VideoActionTargetOption {
@@ -1004,14 +1009,19 @@ interface VideoActionTargetOption {
 const VIDEO_ACTIONS_SETTING_KEY = 'videoActions'
 const VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS = 600
 const VIDEO_ACTION_TIMELINE_PADDING_SECONDS = 60
-const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'show_popup', 'change_text', 'change_link', 'scroll_to', 'activate_checkout']
+const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout']
 const videoActionBeforeStates: VideoActionBeforeState[] = ['hidden', 'visible', 'unchanged']
-const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'show_popup']
+const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'show_popup', 'site_page', 'redirect', 'scroll_to']
+const videoActionTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
+const videoActionMultiTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form'])
 
 const videoActionLabels: Record<VideoActionKind, string> = {
-  show: 'Mostrar elemento',
-  hide: 'Ocultar elemento',
+  show: 'Mostrar elementos',
+  hide: 'Ocultar elementos',
+  open_form: 'Abrir formulario',
   show_popup: 'Mostrar popup',
+  site_page: 'Redirigir a página',
+  redirect: 'Redirigir a URL',
   change_text: 'Cambiar texto',
   change_link: 'Cambiar enlace',
   scroll_to: 'Ir a una sección',
@@ -1021,7 +1031,10 @@ const videoActionLabels: Record<VideoActionKind, string> = {
 const videoActionRuleLabels: Record<VideoActionKind, string> = {
   show: 'mostrar',
   hide: 'ocultar',
+  open_form: 'abrir formulario',
   show_popup: 'mostrar popup',
+  site_page: 'redirigir a',
+  redirect: 'redirigir a',
   change_text: 'cambiar texto de',
   change_link: 'cambiar enlace de',
   scroll_to: 'ir a',
@@ -3531,27 +3544,49 @@ const clampVideoActionTime = (value: unknown) => {
 }
 
 const getRecommendedVideoActionBefore = (action: VideoActionKind): VideoActionBeforeState => {
-  if (action === 'show' || action === 'show_popup') return 'hidden'
+  if (action === 'show' || action === 'show_popup' || action === 'open_form') return 'hidden'
   if (action === 'hide') return 'visible'
   return 'unchanged'
+}
+
+const getVideoActionTargetIdsFromSource = (source: Record<string, unknown>) => {
+  const rawIds = Array.isArray(source.targetBlockIds)
+    ? source.targetBlockIds
+    : Array.isArray(source.target_block_ids)
+      ? source.target_block_ids
+      : []
+  const ids = rawIds
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+  const singleId = getSettingString(source, 'targetBlockId') || getSettingString(source, 'target_block_id')
+  if (singleId) ids.unshift(singleId)
+  return [...new Set(ids)]
 }
 
 const normalizeVideoActionRule = (value: unknown, index = 0): VideoActionRule | null => {
   if (!value || typeof value !== 'object') return null
   const source = value as Record<string, unknown>
   const action = isVideoActionKind(source.action) ? source.action : 'show'
-  const targetBlockId = getSettingString(source, 'targetBlockId') || getSettingString(source, 'target_block_id')
-  if (!targetBlockId && action !== 'show_popup') return null
+  const sourceTargetBlockIds = getVideoActionTargetIdsFromSource(source)
+  const targetBlockIds = action === 'show_popup' ? [POPUP_SURFACE_ID] : sourceTargetBlockIds
+  const targetBlockId = targetBlockIds[0] || ''
+  if (videoActionTargetKinds.has(action) && !targetBlockId) return null
   const before = isVideoActionBeforeState(source.before) ? source.before : getRecommendedVideoActionBefore(action)
   const id = getSettingString(source, 'id') || `video-action-${index + 1}`
+  const targetPageId = getSettingString(source, 'targetPageId') || getSettingString(source, 'target_page_id')
+  const redirectUrl = getSettingString(source, 'redirectUrl') || getSettingString(source, 'redirect_url')
 
   return {
     id,
     timeSeconds: clampVideoActionTime(source.timeSeconds ?? source.time_seconds ?? source.time),
-    targetBlockId: action === 'show_popup' ? (targetBlockId || POPUP_SURFACE_ID) : targetBlockId,
+    targetBlockId,
+    targetBlockIds,
     action,
     before,
-    value: getSettingString(source, 'value')
+    value: getSettingString(source, 'value'),
+    targetPageId,
+    redirectUrl,
+    pauseUntilComplete: source.pauseUntilComplete === true || source.pause_until_complete === true
   }
 }
 
@@ -3635,17 +3670,59 @@ const buildVideoActionTargetOptions = (
 const getVideoActionTargetLabel = (targetId: string, targets: VideoActionTargetOption[]) =>
   targets.find(target => target.id === targetId)?.label || (targetId === POPUP_SURFACE_ID ? 'Popup del sitio' : 'Elemento')
 
-const getVideoActionRuleText = (rule: VideoActionRule, targets: VideoActionTargetOption[]) => {
-  const targetLabel = getVideoActionTargetLabel(rule.targetBlockId, targets)
+const getVideoActionTargetIds = (rule: VideoActionRule) => (
+  (Array.isArray(rule.targetBlockIds) && rule.targetBlockIds.length ? rule.targetBlockIds : (rule.targetBlockId ? [rule.targetBlockId] : []))
+    .map(id => String(id || '').trim())
+    .filter(Boolean)
+)
+
+const getVideoActionTargetsLabel = (rule: VideoActionRule, targets: VideoActionTargetOption[]) => {
+  const ids = getVideoActionTargetIds(rule).filter(id => id !== POPUP_SURFACE_ID)
+  if (rule.action === 'show_popup') return 'Popup del sitio'
+  if (!ids.length) return 'Elemento'
+  const labels = ids.map(id => getVideoActionTargetLabel(id, targets))
+  if (labels.length <= 2) return labels.join(' y ')
+  return `${labels.slice(0, 2).join(', ')} y ${labels.length - 2} más`
+}
+
+const getVideoActionPageLabel = (pageId: string | undefined, pages: SitePage[]) =>
+  pages.find(page => page.id === pageId)?.title || (pageId ? 'Página del sitio' : 'elige una página')
+
+const getVideoActionRuleText = (rule: VideoActionRule, targets: VideoActionTargetOption[], pages: SitePage[] = []) => {
+  const targetLabel = getVideoActionTargetsLabel(rule, targets)
+  if (rule.action === 'show_popup') {
+    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, mostrar popup.`
+  }
+  if (rule.action === 'site_page') {
+    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, redirigir a ${getVideoActionPageLabel(rule.targetPageId, pages)}.`
+  }
+  if (rule.action === 'redirect') {
+    return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, redirigir a ${rule.redirectUrl || 'URL destino'}.`
+  }
   const actionText = videoActionRuleLabels[rule.action]
   return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, ${actionText} ${targetLabel}.`
 }
 
-const getCurrentEditorVideoTime = (blockId: string) => {
+const getEditorVideoElement = (blockId: string) => {
   const host = Array.from(document.querySelectorAll<HTMLElement>('[data-rstk-block-id]'))
     .find(element => element.dataset.rstkBlockId === blockId)
-  const video = host?.querySelector<HTMLVideoElement>('video')
+  return host?.querySelector<HTMLVideoElement>('video') || null
+}
+
+const getCurrentEditorVideoTime = (blockId: string) => {
+  const video = getEditorVideoElement(blockId)
   return clampVideoActionTime(video?.currentTime || 0)
+}
+
+const seekEditorVideoToTime = (blockId: string, timeSeconds: unknown) => {
+  const video = getEditorVideoElement(blockId)
+  if (!video) return
+  const nextTime = clampVideoActionTime(timeSeconds)
+  try {
+    video.currentTime = nextTime
+  } catch {
+    return
+  }
 }
 
 const getVideoActionTimelineMax = (rules: VideoActionRule[]) => {
@@ -3665,10 +3742,12 @@ const buildVideoActionHiddenNotes = (blocks: SiteBlock[]) => {
         : `video ${getReadableBlockLabel(videoBlock).toLowerCase()}`
 
       getVideoActionRules(videoBlock.settings || {}).forEach(rule => {
-        if (rule.action !== 'show' || rule.before !== 'hidden') return
-        if (!rule.targetBlockId || rule.targetBlockId === POPUP_SURFACE_ID || !blockById.has(rule.targetBlockId)) return
-        if (notes.has(rule.targetBlockId)) return
-        notes.set(rule.targetBlockId, `Oculto hasta ${formatVideoActionTime(rule.timeSeconds)} del ${videoLabel}`)
+        if (!['show', 'open_form'].includes(rule.action) || rule.before !== 'hidden') return
+        getVideoActionTargetIds(rule).forEach(targetId => {
+          if (!targetId || targetId === POPUP_SURFACE_ID || !blockById.has(targetId)) return
+          if (notes.has(targetId)) return
+          notes.set(targetId, `Oculto hasta ${formatVideoActionTime(rule.timeSeconds)} del ${videoLabel}`)
+        })
       })
     })
 
@@ -26817,9 +26896,12 @@ const CustomFieldBindingControl: React.FC<{
 const VideoActionsTimeline: React.FC<{
   rules: VideoActionRule[]
   targets: VideoActionTargetOption[]
+  pages: SitePage[]
   maxSeconds: number
+  activeRuleId?: string
   onChangeTime: (ruleId: string, timeSeconds: number) => void
-}> = ({ rules, targets, maxSeconds, onChangeTime }) => {
+  onSelectRule?: (ruleId: string) => void
+}> = ({ rules, targets, pages, maxSeconds, activeRuleId, onChangeTime, onSelectRule }) => {
   const labelSteps = [0, 0.25, 0.5, 0.75, 1].map(step => Math.round(maxSeconds * step))
 
   return (
@@ -26842,11 +26924,14 @@ const VideoActionsTimeline: React.FC<{
                 max={maxSeconds}
                 step={1}
                 value={rule.timeSeconds}
-                aria-label={`Mover accion: ${getVideoActionRuleText(rule, targets)}`}
+                aria-label={`Mover accion: ${getVideoActionRuleText(rule, targets, pages)}`}
+                data-active={activeRuleId === rule.id ? 'true' : undefined}
+                onFocus={() => onSelectRule?.(rule.id)}
                 onChange={(event) => onChangeTime(rule.id, clampVideoActionTime(event.target.value))}
               />
               <span
                 className={styles.videoActionTimelineMarkerLabel}
+                data-active={activeRuleId === rule.id ? 'true' : undefined}
                 style={{ ['--video-action-marker-left' as string]: left } as React.CSSProperties}
               >
                 {formatVideoActionTime(rule.timeSeconds)}
@@ -26864,32 +26949,41 @@ const VideoActionsPanel: React.FC<{
   block: SiteBlock
   blocks: SiteBlock[]
   popupBlocks: SiteBlock[]
+  pages: SitePage[]
+  activePageId: string
   importedPopupDetected: boolean
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
   onTargetHover?: (blockId: string) => void
-}> = ({ site, block, blocks, popupBlocks, importedPopupDetected, onPatchSettings, onSave, onTargetHover }) => {
+}> = ({ site, block, blocks, popupBlocks, pages, activePageId, importedPopupDetected, onPatchSettings, onSave, onTargetHover }) => {
   const rules = useMemo(() => getVideoActionRules(block.settings || {}), [block.settings])
   const targets = useMemo(
     () => buildVideoActionTargetOptions(site, blocks, popupBlocks, block.id, importedPopupDetected),
     [site, blocks, popupBlocks, block.id, importedPopupDetected]
   )
+  const contentTargets = useMemo(() => targets.filter(target => target.id !== POPUP_SURFACE_ID), [targets])
+  const formTargets = useMemo(
+    () => contentTargets.filter(target => target.blockType === 'form_embed' || (target.blockType && fieldBlockTypes.has(target.blockType as SiteBlockType))),
+    [contentTargets]
+  )
+  const sectionTargets = useMemo(
+    () => contentTargets.filter(target => target.blockType === SECTION_BLOCK_TYPE),
+    [contentTargets]
+  )
+  const pageTargets = useMemo(() => getManualRedirectPages(pages, activePageId), [pages, activePageId])
   const timelineMaxSeconds = useMemo(() => getVideoActionTimelineMax(rules), [rules])
   const hasPopupTarget = targets.some(target => target.id === POPUP_SURFACE_ID)
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const [draft, setDraft] = useState<VideoActionRule | null>(null)
-  const [timeInput, setTimeInput] = useState('00:00')
+  const [expandedRuleId, setExpandedRuleId] = useState('')
+  const [timeInputs, setTimeInputs] = useState<Record<string, string>>({})
 
   const firstTargetId = useMemo(() => {
-    const firstContentTarget = targets.find(target => target.id !== POPUP_SURFACE_ID)
-    return firstContentTarget?.id || targets[0]?.id || ''
-  }, [targets])
+    return contentTargets[0]?.id || ''
+  }, [contentTargets])
 
-  const setDraftTime = useCallback((timeSeconds: unknown) => {
-    const nextTime = clampVideoActionTime(timeSeconds)
-    setDraft(current => current ? { ...current, timeSeconds: nextTime } : current)
-    setTimeInput(formatVideoActionTime(nextTime))
-  }, [])
+  useEffect(() => {
+    const visibleRuleIds = new Set(rules.map(rule => rule.id))
+    setTimeInputs(current => Object.fromEntries(Object.entries(current).filter(([ruleId]) => visibleRuleIds.has(ruleId))))
+  }, [rules])
 
   const patchRules = useCallback((nextRules: VideoActionRule[]) => {
     const normalizedRules = nextRules
@@ -26900,92 +26994,328 @@ const VideoActionsPanel: React.FC<{
     window.setTimeout(onSave, 0)
   }, [onPatchSettings, onSave])
 
-  const closeSheet = useCallback(() => {
-    setSheetOpen(false)
-    setDraft(null)
-    onTargetHover?.('')
-  }, [onTargetHover])
+  const patchRule = useCallback((ruleId: string, patch: Partial<VideoActionRule>, options?: { seek?: boolean }) => {
+    const nextRules = rules.map(rule => rule.id === ruleId ? { ...rule, ...patch } : rule)
+    patchRules(nextRules)
+    if (options?.seek && Object.prototype.hasOwnProperty.call(patch, 'timeSeconds')) {
+      seekEditorVideoToTime(block.id, patch.timeSeconds)
+    }
+  }, [block.id, patchRules, rules])
 
   const openNewRule = useCallback(() => {
     const timeSeconds = getCurrentEditorVideoTime(block.id)
-    const nextDraft: VideoActionRule = {
+    const defaultAction: VideoActionKind = firstTargetId ? 'show' : hasPopupTarget ? 'show_popup' : pageTargets.length ? 'site_page' : 'redirect'
+    const targetBlockIds = defaultAction === 'show_popup'
+      ? [POPUP_SURFACE_ID]
+      : firstTargetId
+        ? [firstTargetId]
+        : []
+    const nextRule = normalizeVideoActionRule({
       id: makeVideoActionId(),
       timeSeconds,
-      targetBlockId: firstTargetId,
-      action: 'show',
-      before: 'hidden'
-    }
-    setDraft(nextDraft)
-    setTimeInput(formatVideoActionTime(timeSeconds))
-    setSheetOpen(true)
-  }, [block.id, firstTargetId])
-
-  const openEditRule = useCallback((rule: VideoActionRule) => {
-    setDraft({ ...rule })
-    setTimeInput(formatVideoActionTime(rule.timeSeconds))
-    setSheetOpen(true)
-  }, [])
+      targetBlockId: targetBlockIds[0] || '',
+      targetBlockIds,
+      action: defaultAction,
+      before: getRecommendedVideoActionBefore(defaultAction),
+      targetPageId: defaultAction === 'site_page' ? pageTargets[0]?.id || '' : '',
+      pauseUntilComplete: false
+    })
+    if (!nextRule) return
+    patchRules([...rules, nextRule])
+    setExpandedRuleId(nextRule.id)
+    setTimeInputs(current => ({ ...current, [nextRule.id]: formatVideoActionTime(timeSeconds) }))
+    seekEditorVideoToTime(block.id, timeSeconds)
+  }, [block.id, firstTargetId, hasPopupTarget, pageTargets, patchRules, rules])
 
   const handleDuplicateRule = useCallback((rule: VideoActionRule) => {
+    const nextId = makeVideoActionId()
     patchRules([
       ...rules,
       {
         ...rule,
-        id: makeVideoActionId(),
+        id: nextId,
+        targetBlockIds: [...getVideoActionTargetIds(rule)],
         timeSeconds: clampVideoActionTime(rule.timeSeconds + 1)
       }
     ])
+    setExpandedRuleId(nextId)
   }, [patchRules, rules])
 
   const handleDeleteRule = useCallback((ruleId: string) => {
     patchRules(rules.filter(rule => rule.id !== ruleId))
+    setExpandedRuleId(current => current === ruleId ? '' : current)
   }, [patchRules, rules])
 
-  const handleChangeAction = useCallback((action: VideoActionKind) => {
-    setDraft(current => {
-      if (!current) return current
-      const previousRecommended = getRecommendedVideoActionBefore(current.action)
-      const nextBefore = current.before === previousRecommended ? getRecommendedVideoActionBefore(action) : current.before
-      return {
-        ...current,
-        action,
-        before: nextBefore,
-        targetBlockId: action === 'show_popup' ? POPUP_SURFACE_ID : current.targetBlockId || firstTargetId
-      }
-    })
-  }, [firstTargetId])
+  const getTargetOptionsForAction = useCallback((action: VideoActionKind) => {
+    if (action === 'open_form') return formTargets
+    if (action === 'scroll_to') return sectionTargets.length ? sectionTargets : contentTargets
+    return contentTargets
+  }, [contentTargets, formTargets, sectionTargets])
 
-  const handleSaveDraft = useCallback(() => {
-    if (!draft) return
-    const action = draft.action
-    const targetBlockId = action === 'show_popup' ? POPUP_SURFACE_ID : draft.targetBlockId
-    if (!targetBlockId) return
+  const handleChangeAction = useCallback((rule: VideoActionRule, action: VideoActionKind) => {
+    const previousRecommended = getRecommendedVideoActionBefore(rule.action)
+    const nextBefore = rule.before === previousRecommended ? getRecommendedVideoActionBefore(action) : rule.before
+    const candidateTargets = getTargetOptionsForAction(action)
+    const currentTargetIds = getVideoActionTargetIds(rule).filter(targetId => targetId !== POPUP_SURFACE_ID)
+    const nextTargetIds = action === 'show_popup'
+      ? [POPUP_SURFACE_ID]
+      : videoActionTargetKinds.has(action)
+        ? (currentTargetIds.length && candidateTargets.some(target => target.id === currentTargetIds[0]) ? currentTargetIds : (candidateTargets[0]?.id ? [candidateTargets[0].id] : []))
+        : []
 
-    const nextRule = normalizeVideoActionRule({
-      ...draft,
+    patchRule(rule.id, {
       action,
-      targetBlockId,
-      timeSeconds: parseVideoActionTimeInput(timeInput),
-      before: draft.before || getRecommendedVideoActionBefore(action)
+      before: nextBefore,
+      targetBlockId: nextTargetIds[0] || '',
+      targetBlockIds: nextTargetIds,
+      targetPageId: action === 'site_page' ? rule.targetPageId || pageTargets[0]?.id || '' : rule.targetPageId,
+      redirectUrl: action === 'redirect' ? rule.redirectUrl || '' : rule.redirectUrl,
+      pauseUntilComplete: action === 'open_form' ? rule.pauseUntilComplete !== false : rule.pauseUntilComplete
     })
-    if (!nextRule) return
-
-    patchRules([
-      ...rules.filter(rule => rule.id !== nextRule.id),
-      nextRule
-    ])
-    closeSheet()
-  }, [closeSheet, draft, patchRules, rules, timeInput])
+  }, [getTargetOptionsForAction, pageTargets, patchRule])
 
   const handleTimelineTimeChange = useCallback((ruleId: string, timeSeconds: number) => {
     patchRules(rules.map(rule => rule.id === ruleId ? { ...rule, timeSeconds: clampVideoActionTime(timeSeconds) } : rule))
-  }, [patchRules, rules])
+    setTimeInputs(current => ({ ...current, [ruleId]: formatVideoActionTime(timeSeconds) }))
+    setExpandedRuleId(ruleId)
+    seekEditorVideoToTime(block.id, timeSeconds)
+  }, [block.id, patchRules, rules])
+
+  const handleTimeInputChange = useCallback((rule: VideoActionRule, value: string) => {
+    setTimeInputs(current => ({ ...current, [rule.id]: value }))
+    const nextTime = parseVideoActionTimeInput(value)
+    patchRule(rule.id, { timeSeconds: nextTime }, { seek: true })
+  }, [patchRule])
+
+  const handleTimeInputBlur = useCallback((rule: VideoActionRule) => {
+    setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(rule.timeSeconds) }))
+  }, [])
+
+  const handleUseCurrentMoment = useCallback((rule: VideoActionRule) => {
+    const timeSeconds = getCurrentEditorVideoTime(block.id)
+    setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(timeSeconds) }))
+    patchRule(rule.id, { timeSeconds }, { seek: true })
+  }, [block.id, patchRule])
+
+  const handleQuickTime = useCallback((rule: VideoActionRule, delta: number) => {
+    const currentInput = timeInputs[rule.id] ?? formatVideoActionTime(rule.timeSeconds)
+    const nextTime = clampVideoActionTime(parseVideoActionTimeInput(currentInput) + delta)
+    setTimeInputs(current => ({ ...current, [rule.id]: formatVideoActionTime(nextTime) }))
+    patchRule(rule.id, { timeSeconds: nextTime }, { seek: true })
+  }, [patchRule, timeInputs])
+
+  const handleToggleTarget = useCallback((rule: VideoActionRule, targetId: string) => {
+    const currentIds = getVideoActionTargetIds(rule).filter(id => id !== POPUP_SURFACE_ID)
+    const allowsMultiple = videoActionMultiTargetKinds.has(rule.action)
+    let nextIds: string[]
+
+    if (allowsMultiple) {
+      nextIds = currentIds.includes(targetId)
+        ? (currentIds.length > 1 ? currentIds.filter(id => id !== targetId) : currentIds)
+        : [...currentIds, targetId]
+    } else {
+      nextIds = [targetId]
+    }
+
+    patchRule(rule.id, {
+      targetBlockId: nextIds[0] || '',
+      targetBlockIds: nextIds
+    })
+  }, [patchRule])
 
   const handleTargetHover = useCallback((targetId: string) => {
     onTargetHover?.(targetId === POPUP_SURFACE_ID ? '' : targetId)
   }, [onTargetHover])
 
-  const selectedTargetLabel = draft ? getVideoActionTargetLabel(draft.targetBlockId, targets) : ''
+  const getRuleTargetMeta = useCallback((rule: VideoActionRule) => {
+    if (rule.action === 'show_popup') return 'Popup del sitio'
+    if (rule.action === 'site_page') return getVideoActionPageLabel(rule.targetPageId, pages)
+    if (rule.action === 'redirect') return rule.redirectUrl || 'URL destino'
+    return getVideoActionTargetsLabel(rule, targets)
+  }, [pages, targets])
+
+  const renderTargetPicker = (rule: VideoActionRule) => {
+    const candidateTargets = getTargetOptionsForAction(rule.action)
+    const selectedIds = getVideoActionTargetIds(rule)
+
+    if (!videoActionTargetKinds.has(rule.action)) return null
+
+    if (!candidateTargets.length) {
+      return (
+        <p className={styles.videoActionHint}>
+          {rule.action === 'open_form'
+            ? 'Agrega un formulario en la página para poder abrirlo desde el video.'
+            : 'Agrega un botón, sección, texto, imagen o formulario para poder controlarlo desde el video.'}
+        </p>
+      )
+    }
+
+    return (
+      <div className={styles.videoActionTargetList}>
+        {candidateTargets.map(target => {
+          const selected = selectedIds.includes(target.id)
+          return (
+            <Button
+              key={target.id}
+              type="button"
+              variant={selected ? 'secondary' : 'ghost'}
+              size="sm"
+              fullWidth
+              aria-pressed={selected}
+              className={`${styles.videoActionTargetChoice} ${selected ? styles.videoActionTargetChoiceActive : ''}`}
+              onMouseEnter={() => handleTargetHover(target.id)}
+              onMouseLeave={() => handleTargetHover('')}
+              onFocus={() => handleTargetHover(target.id)}
+              onBlur={() => handleTargetHover('')}
+              onClick={() => handleToggleTarget(rule, target.id)}
+            >
+              <span className={styles.videoActionTargetText}>
+                <strong>{target.label}</strong>
+                <small>{target.kindLabel}</small>
+              </span>
+              {selected && <Check size={14} />}
+            </Button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  const renderRuleEditor = (rule: VideoActionRule) => {
+    const timeInput = timeInputs[rule.id] ?? formatVideoActionTime(rule.timeSeconds)
+    const selectedTargetLabel = getVideoActionTargetsLabel(rule, targets)
+    const requiresBeforeState = rule.action === 'show' || rule.action === 'hide' || rule.action === 'open_form' || rule.action === 'show_popup'
+
+    return (
+      <div className={styles.videoActionInlineEditor}>
+        <div className={styles.videoActionTimeRow}>
+          <span>Cuando llegue a</span>
+          <input
+            className={styles.videoActionTimeInput}
+            value={timeInput}
+            placeholder="03:45"
+            inputMode="numeric"
+            onChange={(event) => handleTimeInputChange(rule, event.target.value)}
+            onBlur={() => handleTimeInputBlur(rule)}
+          />
+          <Button type="button" variant="secondary" size="sm" leftIcon={<Play size={14} />} onClick={() => handleUseCurrentMoment(rule)}>
+            Usar momento actual
+          </Button>
+        </div>
+
+        <div className={styles.videoActionQuickTimes} aria-label="Ajustes rápidos de tiempo">
+          {[-5, -1, 1, 5].map(delta => (
+            <Button key={delta} type="button" variant="ghost" size="sm" onClick={() => handleQuickTime(rule, delta)}>
+              {delta > 0 ? `+${delta}s` : `${delta}s`}
+            </Button>
+          ))}
+        </div>
+
+        <input
+          className={styles.videoActionTimeSlider}
+          type="range"
+          min={0}
+          max={timelineMaxSeconds}
+          step={1}
+          value={rule.timeSeconds}
+          aria-label="Ajustar momento de la acción"
+          onChange={(event) => handleTimelineTimeChange(rule.id, clampVideoActionTime(event.target.value))}
+        />
+
+        <label className={styles.field}>
+          <span>Acción</span>
+          <CustomSelect
+            value={rule.action}
+            onChange={(event) => handleChangeAction(rule, event.target.value as VideoActionKind)}
+            onBlur={onSave}
+          >
+            {primaryVideoActionKinds.map(action => (
+              <option
+                key={action}
+                value={action}
+                disabled={(action === 'show_popup' && !hasPopupTarget) || (action === 'open_form' && !formTargets.length) || (action === 'site_page' && !pageTargets.length)}
+              >
+                {videoActionLabels[action]}
+              </option>
+            ))}
+          </CustomSelect>
+        </label>
+
+        {rule.action === 'site_page' && (
+          <label className={styles.field}>
+            <span>Página destino</span>
+            <CustomSelect
+              value={rule.targetPageId || ''}
+              onChange={(event) => patchRule(rule.id, { targetPageId: event.target.value })}
+              onBlur={onSave}
+            >
+              <option value="">Selecciona una página</option>
+              {pageTargets.map(page => (
+                <option key={page.id} value={page.id}>{page.title || 'Página'}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
+
+        {rule.action === 'redirect' && (
+          <label className={styles.field}>
+            <span>URL destino</span>
+            <input
+              value={rule.redirectUrl || ''}
+              placeholder="https://tusitio.com/oferta"
+              onChange={(event) => patchRule(rule.id, { redirectUrl: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+        )}
+
+        {videoActionTargetKinds.has(rule.action) && (
+          <div className={styles.videoActionStep}>
+            <div className={styles.videoActionStepHeader}>
+              <strong>{rule.action === 'open_form' ? 'Formulario o bloque a abrir' : 'Elementos a controlar'}</strong>
+              <span>{videoActionMultiTargetKinds.has(rule.action) ? 'Puedes seleccionar uno o varios.' : 'Selecciona uno.'}</span>
+            </div>
+            {renderTargetPicker(rule)}
+          </div>
+        )}
+
+        {rule.action === 'open_form' && (
+          <div className={styles.videoActionSwitchRow}>
+            <div>
+              <strong>Bloquear video hasta completar</strong>
+              <span>El visitante no sigue viendo hasta enviar el formulario.</span>
+            </div>
+            <Switch
+              checked={rule.pauseUntilComplete !== false}
+              onChange={(checked) => patchRule(rule.id, { pauseUntilComplete: checked })}
+              aria-label="Bloquear video hasta completar formulario"
+            />
+          </div>
+        )}
+
+        {requiresBeforeState && (
+          <label className={styles.field}>
+            <span>Antes de este momento</span>
+            <CustomSelect
+              value={rule.before}
+              onChange={(event) => patchRule(rule.id, { before: event.target.value as VideoActionBeforeState })}
+              onBlur={onSave}
+            >
+              {videoActionBeforeStates.map(before => (
+                <option key={before} value={before}>{videoActionBeforeLabels[before]}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
+
+        <p className={styles.videoActionHint}>
+          Regla final: {getVideoActionRuleText(rule, targets, pages)}
+          {rule.action === 'open_form' && rule.pauseUntilComplete !== false ? ' El video queda pausado hasta que lo completen.' : ''}
+          {rule.action === 'show' && rule.before === 'hidden' ? ` Antes de ${formatVideoActionTime(rule.timeSeconds)}, ${selectedTargetLabel} queda oculto.` : ''}
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className={styles.videoActionPanel}>
@@ -27011,26 +27341,40 @@ const VideoActionsPanel: React.FC<{
         <>
           <div className={styles.videoActionRuleList}>
             {rules.map(rule => (
-              <article key={rule.id} className={styles.videoActionRule}>
-                <div className={styles.videoActionRuleCopy}>
-                  <strong>{getVideoActionRuleText(rule, targets)}</strong>
-                  <div className={styles.videoActionRuleMeta}>
-                    <span><Clock3 size={13} />{formatVideoActionTime(rule.timeSeconds)}</span>
-                    <span><MousePointerClick size={13} />{getVideoActionTargetLabel(rule.targetBlockId, targets)}</span>
-                    <span>{videoActionLabels[rule.action]}</span>
+              <article key={rule.id} className={`${styles.videoActionRule} ${expandedRuleId === rule.id ? styles.videoActionRuleExpanded : ''}`}>
+                <div className={styles.videoActionRuleTop}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    fullWidth
+                    className={styles.videoActionRuleSummary}
+                    onClick={() => {
+                      setExpandedRuleId(current => current === rule.id ? '' : rule.id)
+                      seekEditorVideoToTime(block.id, rule.timeSeconds)
+                    }}
+                  >
+                    <span className={styles.videoActionRuleCopy}>
+                      <strong>{getVideoActionRuleText(rule, targets, pages)}</strong>
+                      <span className={styles.videoActionRuleMeta}>
+                        <span><Clock3 size={13} />{formatVideoActionTime(rule.timeSeconds)}</span>
+                        <span><MousePointerClick size={13} />{getRuleTargetMeta(rule)}</span>
+                        <span>{videoActionLabels[rule.action]}</span>
+                      </span>
+                    </span>
+                  </Button>
+                  <div className={styles.videoActionRuleControls}>
+                    <Button type="button" variant="ghost" size="sm" className={styles.videoActionIconControl} aria-label="Editar acción" title="Editar" onClick={() => setExpandedRuleId(current => current === rule.id ? '' : rule.id)}>
+                      <Pencil size={14} />
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" className={styles.videoActionIconControl} aria-label="Duplicar acción" title="Duplicar" onClick={() => handleDuplicateRule(rule)}>
+                      <Copy size={14} />
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" className={styles.videoActionIconControl} aria-label="Eliminar acción" title="Eliminar" onClick={() => handleDeleteRule(rule.id)}>
+                      <Trash2 size={14} />
+                    </Button>
                   </div>
                 </div>
-                <div className={styles.videoActionRuleControls}>
-                  <Button type="button" variant="ghost" size="sm" className={styles.videoActionIconControl} aria-label="Editar acción" title="Editar" onClick={() => openEditRule(rule)}>
-                    <Pencil size={14} />
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" className={styles.videoActionIconControl} aria-label="Duplicar acción" title="Duplicar" onClick={() => handleDuplicateRule(rule)}>
-                    <Copy size={14} />
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" className={styles.videoActionIconControl} aria-label="Eliminar acción" title="Eliminar" onClick={() => handleDeleteRule(rule.id)}>
-                    <Trash2 size={14} />
-                  </Button>
-                </div>
+                {expandedRuleId === rule.id && renderRuleEditor(rule)}
               </article>
             ))}
           </div>
@@ -27038,148 +27382,14 @@ const VideoActionsPanel: React.FC<{
           <VideoActionsTimeline
             rules={rules}
             targets={targets}
+            pages={pages}
             maxSeconds={timelineMaxSeconds}
+            activeRuleId={expandedRuleId}
             onChangeTime={handleTimelineTimeChange}
+            onSelectRule={setExpandedRuleId}
           />
         </>
       )}
-
-      <Modal
-        isOpen={sheetOpen}
-        onClose={closeSheet}
-        title={draft && rules.some(rule => rule.id === draft.id) ? 'Editar acción de video' : 'Agregar acción de video'}
-        size="lg"
-        contentClassName={styles.videoActionDialogContent}
-      >
-        {draft && (
-          <div className={styles.videoActionSheet}>
-            <section className={styles.videoActionStep}>
-              <div className={styles.videoActionStepHeader}>
-                <span>Paso 1</span>
-                <strong>Momento del video</strong>
-              </div>
-              <Button type="button" variant="secondary" fullWidth leftIcon={<Play size={15} />} onClick={() => setDraftTime(getCurrentEditorVideoTime(block.id))}>
-                Usar momento actual del video
-              </Button>
-              <label className={styles.field}>
-                <span>Tiempo exacto</span>
-                <input
-                  value={timeInput}
-                  placeholder="03:45"
-                  inputMode="numeric"
-                  onChange={(event) => setTimeInput(event.target.value)}
-                  onBlur={() => setDraftTime(parseVideoActionTimeInput(timeInput))}
-                />
-              </label>
-              <div className={styles.videoActionQuickTimes} aria-label="Ajustes rápidos de tiempo">
-                {[-5, -1, 1, 5].map(delta => (
-                  <Button key={delta} type="button" variant="ghost" size="sm" onClick={() => setDraftTime(parseVideoActionTimeInput(timeInput) + delta)}>
-                    {delta > 0 ? `+${delta}s` : `${delta}s`}
-                  </Button>
-                ))}
-              </div>
-            </section>
-
-            <section className={styles.videoActionStep}>
-              <div className={styles.videoActionStepHeader}>
-                <span>Paso 2</span>
-                <strong>Elemento a controlar</strong>
-              </div>
-              {targets.length === 0 ? (
-                <p className={styles.videoActionHint}>Agrega un botón, formulario, sección o popup para poder controlarlo desde el video.</p>
-              ) : (
-                <div className={styles.videoActionTargetList}>
-                  {targets.map(target => {
-                    const selected = draft.targetBlockId === target.id
-                    return (
-                      <Button
-                        key={target.id}
-                        type="button"
-                        variant={selected ? 'secondary' : 'ghost'}
-                        fullWidth
-                        className={`${styles.videoActionTargetChoice} ${selected ? styles.videoActionTargetChoiceActive : ''}`}
-                        onMouseEnter={() => handleTargetHover(target.id)}
-                        onMouseLeave={() => handleTargetHover('')}
-                        onFocus={() => handleTargetHover(target.id)}
-                        onBlur={() => handleTargetHover('')}
-                        onClick={() => setDraft(current => current ? { ...current, targetBlockId: target.id } : current)}
-                      >
-                        <span className={styles.videoActionTargetText}>
-                          <strong>{target.label}</strong>
-                          <small>{target.kindLabel}</small>
-                        </span>
-                        {selected && <Check size={14} />}
-                      </Button>
-                    )
-                  })}
-                </div>
-              )}
-            </section>
-
-            <section className={styles.videoActionStep}>
-              <div className={styles.videoActionStepHeader}>
-                <span>Paso 3</span>
-                <strong>Acción</strong>
-              </div>
-              <div className={styles.videoActionChoiceGrid}>
-                {primaryVideoActionKinds.map(action => {
-                  const selected = draft.action === action
-                  const disabled = action === 'show_popup' && !hasPopupTarget
-                  return (
-                    <Button
-                      key={action}
-                      type="button"
-                      variant={selected ? 'secondary' : 'ghost'}
-                      size="sm"
-                      disabled={disabled}
-                      className={`${styles.videoActionChoice} ${selected ? styles.videoActionChoiceActive : ''}`}
-                      onClick={() => handleChangeAction(action)}
-                    >
-                      {videoActionLabels[action]}
-                    </Button>
-                  )
-                })}
-              </div>
-            </section>
-
-            <section className={styles.videoActionStep}>
-              <div className={styles.videoActionStepHeader}>
-                <span>Paso 4</span>
-                <strong>Antes de este momento</strong>
-              </div>
-              <div className={styles.videoActionChoiceGrid}>
-                {videoActionBeforeStates.map(before => {
-                  const selected = draft.before === before
-                  return (
-                    <Button
-                      key={before}
-                      type="button"
-                      variant={selected ? 'secondary' : 'ghost'}
-                      size="sm"
-                      className={`${styles.videoActionChoice} ${selected ? styles.videoActionChoiceActive : ''}`}
-                      onClick={() => setDraft(current => current ? { ...current, before } : current)}
-                    >
-                      {videoActionBeforeLabels[before]}
-                    </Button>
-                  )
-                })}
-              </div>
-              <p className={styles.videoActionHint}>
-                Regla final: cuando el video llegue a {formatVideoActionTime(parseVideoActionTimeInput(timeInput))}, {videoActionRuleLabels[draft.action]} {draft.action === 'show_popup' ? 'Popup del sitio' : selectedTargetLabel}.
-              </p>
-            </section>
-
-            <div className={styles.videoActionSheetFooter}>
-              <Button type="button" variant="ghost" onClick={closeSheet}>
-                Cancelar
-              </Button>
-              <Button type="button" leftIcon={<Save size={15} />} disabled={!draft.targetBlockId && draft.action !== 'show_popup'} onClick={handleSaveDraft}>
-                Guardar acción
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   )
 }
@@ -27493,6 +27703,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       block={block}
       blocks={allBlocks || blocks}
       popupBlocks={popupBlocks}
+      pages={pages}
+      activePageId={activePageId}
       importedPopupDetected={importedPopupDetected}
       onPatchSettings={onPatchSettings}
       onSave={onSave}

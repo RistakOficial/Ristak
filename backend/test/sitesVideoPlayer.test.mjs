@@ -279,6 +279,7 @@ test('video actions render public target state and runtime', async () => {
         id: 'show-button-at-260',
         timeSeconds: 260,
         targetBlockId: 'button-target',
+        targetBlockIds: ['button-target', 'offer-target'],
         action: 'show',
         before: 'hidden'
       },
@@ -288,9 +289,26 @@ test('video actions render public target state and runtime', async () => {
         targetBlockId: 'button-target',
         action: 'hide',
         before: 'visible'
+      },
+      {
+        id: 'open-form-at-300',
+        timeSeconds: 300,
+        targetBlockId: 'form-target',
+        targetBlockIds: ['form-target'],
+        action: 'open_form',
+        before: 'hidden',
+        pauseUntilComplete: true
+      },
+      {
+        id: 'page-redirect-at-580',
+        timeSeconds: 580,
+        action: 'site_page',
+        targetPageId: 'page-2',
+        before: 'unchanged'
       }
     ]
   })
+  site.theme.pages.push({ id: 'page-2', title: 'Oferta', sortOrder: 1 })
   site.blocks.push({
     id: 'button-target',
     siteId: 'site_video_player',
@@ -308,6 +326,37 @@ test('video actions render public target state and runtime', async () => {
     },
     createdAt: '',
     updatedAt: ''
+  }, {
+    id: 'offer-target',
+    siteId: 'site_video_player',
+    blockType: 'text',
+    label: 'Oferta especial',
+    content: 'Oferta especial',
+    placeholder: '',
+    required: false,
+    options: [],
+    sortOrder: 2,
+    settings: {
+      pageId: 'page-1'
+    },
+    createdAt: '',
+    updatedAt: ''
+  }, {
+    id: 'form-target',
+    siteId: 'site_video_player',
+    blockType: 'form_embed',
+    label: 'Formulario de registro',
+    content: '',
+    placeholder: '',
+    required: false,
+    options: [],
+    sortOrder: 3,
+    settings: {
+      pageId: 'page-1',
+      embeddedBlocks: []
+    },
+    createdAt: '',
+    updatedAt: ''
   })
 
   const html = await renderPublicSiteHtml(site, {
@@ -321,13 +370,23 @@ test('video actions render public target state and runtime', async () => {
   assert.match(html, /&quot;id&quot;:&quot;show-button-at-260&quot;/)
   assert.match(html, /&quot;timeSeconds&quot;:260/)
   assert.match(html, /&quot;targetBlockId&quot;:&quot;button-target&quot;/)
+  assert.match(html, /&quot;targetBlockIds&quot;:\[&quot;button-target&quot;,&quot;offer-target&quot;\]/)
+  assert.match(html, /&quot;action&quot;:&quot;open_form&quot;/)
+  assert.match(html, /&quot;pauseUntilComplete&quot;:true/)
+  assert.match(html, /&quot;targetPageId&quot;:&quot;page-2&quot;/)
+  assert.match(html, /&quot;targetUrl&quot;:&quot;\?page=page-2&quot;/)
   assert.match(html, /data-rstk-video-action-target="button-target" data-rstk-video-action-hidden="true" aria-hidden="true"/)
+  assert.match(html, /data-rstk-video-action-target="offer-target" data-rstk-video-action-hidden="true" aria-hidden="true"/)
+  assert.match(html, /data-rstk-video-action-target="form-target" data-rstk-video-action-hidden="true" aria-hidden="true"/)
   assert.match(html, /\[data-rstk-video-action-hidden="true"\]\{display:none!important\}/)
   assert.match(html, /ristakVideoActionsRuntimeLoaded/)
   assert.match(html, /video\[data-rstk-video-actions\]/)
   assert.match(html, /timeupdate/)
   assert.match(html, /setTargetHidden\(target, false\)/)
   assert.match(html, /setTargetHidden\(target, true\)/)
+  assert.match(html, /blockedForms/)
+  assert.match(html, /ristak:submitted/)
+  assert.match(html, /redirectTo\(action\)/)
 })
 
 test('video player uses the same visual signature for direct and Bunny Stream renders', async () => {
