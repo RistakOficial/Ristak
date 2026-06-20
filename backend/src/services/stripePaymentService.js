@@ -1566,6 +1566,14 @@ function getInvoiceLinePeriod(invoice = {}) {
   }
 }
 
+function getSubscriptionPeriod(subscription = {}) {
+  const item = Array.isArray(subscription?.items?.data) ? subscription.items.data[0] : null
+  return {
+    start: timestampToIso(subscription.current_period_start) || timestampToIso(item?.current_period_start),
+    end: timestampToIso(subscription.current_period_end) || timestampToIso(item?.current_period_end)
+  }
+}
+
 async function insertSubscriptionPaymentFromInvoice(invoice, subscriptionRow, nextStatus) {
   if (!subscriptionRow || nextStatus !== 'paid') return null
 
@@ -1688,6 +1696,14 @@ async function updateSubscriptionFromInvoice(invoice, nextStatus) {
   return status
 }
 
+export async function syncStripeSubscriptionInvoicePayment(invoice, nextStatus = 'paid') {
+  if (!invoice || invoice.object !== 'invoice') return null
+
+  await updateSubscriptionFromInvoice(invoice, nextStatus)
+  await updatePaymentFromInvoice(invoice, nextStatus)
+  return { synced: true, invoiceId: cleanString(invoice.id), status: nextStatus }
+}
+
 async function updateSubscriptionFromStripeSubscription(subscription) {
   const ristakSubscriptionId = getRistakSubscriptionIdFromStripeSubscription(subscription)
   const stripeSubscriptionId = extractStripeObjectId(subscription?.id)
@@ -1716,6 +1732,7 @@ async function updateSubscriptionFromStripeSubscription(subscription) {
   if (!existing) return null
 
   const nextStatus = mapStripeSubscriptionStatus(subscription.status)
+  const period = getSubscriptionPeriod(subscription)
   await db.run(
     `UPDATE subscriptions
      SET status = ?,
@@ -1729,9 +1746,9 @@ async function updateSubscriptionFromStripeSubscription(subscription) {
     [
       nextStatus,
       stripeSubscriptionId || null,
-      timestampToIso(subscription.current_period_start),
-      timestampToIso(subscription.current_period_end),
-      timestampToIso(subscription.current_period_end),
+      period.start,
+      period.end,
+      period.end,
       nextStatus,
       existing.id
     ]
@@ -1825,7 +1842,8 @@ export async function createStripeRecurringSubscription(input = {}) {
     metadata,
     payment_settings: {
       save_default_payment_method: 'on_subscription'
-    }
+    },
+    expand: ['latest_invoice']
   }
 
   if (Number.isFinite(startTimestamp) && startTimestamp > nowTimestamp + 300) {
@@ -1833,6 +1851,7 @@ export async function createStripeRecurringSubscription(input = {}) {
   }
 
   const subscription = await stripe.subscriptions.create(subscriptionParams, requestOptions)
+  const period = getSubscriptionPeriod(subscription)
 
   return {
     stripeCustomerId,
@@ -1842,9 +1861,10 @@ export async function createStripeRecurringSubscription(input = {}) {
     stripePaymentMethodId: savedMethod.stripe_payment_method_id,
     paymentMode: config.mode,
     status: mapStripeSubscriptionStatus(subscription.status),
-    currentPeriodStart: timestampToIso(subscription.current_period_start),
-    currentPeriodEnd: timestampToIso(subscription.current_period_end),
-    nextRunAt: timestampToIso(subscription.current_period_end)
+    currentPeriodStart: period.start,
+    currentPeriodEnd: period.end,
+    nextRunAt: period.end,
+    initialInvoice: subscription.latest_invoice?.object === 'invoice' ? subscription.latest_invoice : null
   }
 }
 
@@ -1947,6 +1967,7 @@ export async function updateStripeRecurringSubscription(input = {}) {
     },
     requestOptions
   )
+  const period = getSubscriptionPeriod(updated)
 
   return {
     stripeSubscriptionId: updated.id,
@@ -1954,9 +1975,9 @@ export async function updateStripeRecurringSubscription(input = {}) {
     stripePriceId: price.id,
     paymentMode: config.mode,
     status: mapStripeSubscriptionStatus(updated.status),
-    currentPeriodStart: timestampToIso(updated.current_period_start),
-    currentPeriodEnd: timestampToIso(updated.current_period_end),
-    nextRunAt: timestampToIso(updated.current_period_end)
+    currentPeriodStart: period.start,
+    currentPeriodEnd: period.end,
+    nextRunAt: period.end
   }
 }
 

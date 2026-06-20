@@ -219,11 +219,40 @@ function createStripeMock({ failAmounts = new Set(), webhookEvent = null } = {})
       create: async (params, options) => {
         subscriptionCounter += 1
         calls.subscriptionsCreate.push({ params, options })
+        const subscriptionId = `sub_stress_${subscriptionCounter}`
+        const latestPrice = calls.pricesCreate.at(-1)?.params || {}
         return {
-          id: `sub_stress_${subscriptionCounter}`,
+          id: subscriptionId,
           status: 'active',
           current_period_start: 2524608000,
-          current_period_end: 2527286400
+          current_period_end: 2527286400,
+          latest_invoice: {
+            object: 'invoice',
+            id: `in_stress_${subscriptionCounter}`,
+            status: 'paid',
+            currency: latestPrice.currency || 'mxn',
+            amount_paid: latestPrice.unit_amount || 0,
+            subscription: subscriptionId,
+            customer: params.customer,
+            hosted_invoice_url: `https://pay.stripe.test/in_stress_${subscriptionCounter}`,
+            metadata: params.metadata,
+            subscription_details: {
+              metadata: params.metadata
+            },
+            status_transitions: {
+              paid_at: 2524608010
+            },
+            lines: {
+              data: [
+                {
+                  period: {
+                    start: 2524608000,
+                    end: 2527286400
+                  }
+                }
+              ]
+            }
+          }
         }
       },
       retrieve: async (subscriptionId, params, options) => {
@@ -522,6 +551,18 @@ test('suscripciones Stripe: crea, sube/baja precio, pausa, reanuda, cancela y el
     assert.deepEqual(calls.pricesCreate[0].params.recurring, { interval: 'month', interval_count: 1 })
     assert.equal(calls.subscriptionsCreate.length, 1)
 
+    const initialPayment = await db.get(
+      `SELECT amount, status, payment_method, reference
+       FROM payments
+       WHERE contact_id = ? AND payment_method = 'stripe_subscription'
+       LIMIT 1`,
+      [contactId]
+    )
+    assert.equal(initialPayment.amount, 1000)
+    assert.equal(initialPayment.status, 'paid')
+    assert.equal(initialPayment.payment_method, 'stripe_subscription')
+    assert.equal(initialPayment.reference, 'in_stress_1')
+
     const increased = await updateSubscription(created.id, {
       name: 'Membresia stress pro',
       description: 'Sube de precio y cambia frecuencia',
@@ -665,25 +706,25 @@ test('suscripciones Stripe: webhook invoice.payment_succeeded registra pago recu
       `SELECT amount, status, payment_method, reference, payment_url, metadata_json
        FROM payments
        WHERE contact_id = ? AND payment_method = 'stripe_subscription'
-       ORDER BY created_at ASC`,
+      ORDER BY created_at ASC`,
       [contactId]
     )
-    assert.equal(recurrentPayments.length, 1)
-    assert.equal(recurrentPayments[0].amount, 888.88)
-    assert.equal(recurrentPayments[0].status, 'paid')
-    assert.equal(recurrentPayments[0].reference, invoiceId)
-    assert.equal(recurrentPayments[0].payment_url, 'https://stripe.example.test/invoice')
-    assert.equal(JSON.parse(recurrentPayments[0].metadata_json).ristakSubscriptionId, created.id)
+    assert.equal(recurrentPayments.length, 2)
+    const webhookPayment = recurrentPayments.find((payment) => payment.reference === invoiceId)
+    assert.equal(webhookPayment.amount, 888.88)
+    assert.equal(webhookPayment.status, 'paid')
+    assert.equal(webhookPayment.payment_url, 'https://stripe.example.test/invoice')
+    assert.equal(JSON.parse(webhookPayment.metadata_json).ristakSubscriptionId, created.id)
 
     const duplicateWebhook = await handleStripeWebhookEvent(Buffer.from('{}'), 'sig_test')
     assert.equal(duplicateWebhook.received, true)
     const countAfterDuplicate = await db.get(
       `SELECT COUNT(*) AS count
        FROM payments
-       WHERE contact_id = ? AND payment_method = 'stripe_subscription'`,
+      WHERE contact_id = ? AND payment_method = 'stripe_subscription'`,
       [contactId]
     )
-    assert.equal(countAfterDuplicate.count, 1)
+    assert.equal(countAfterDuplicate.count, 2)
   } finally {
     setStripeFactoryForTest(null)
     await cleanupContact(contactId)

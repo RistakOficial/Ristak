@@ -5,6 +5,7 @@ import {
   createStripeRecurringSubscription,
   pauseStripeRecurringSubscription,
   resumeStripeRecurringSubscription,
+  syncStripeSubscriptionInvoicePayment,
   updateStripeRecurringSubscription
 } from './stripePaymentService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
@@ -317,7 +318,8 @@ async function attachStripeSubscriptionIfNeeded(row, payload = {}) {
     payment_mode: stripeSubscription.paymentMode || row.payment_mode,
     current_period_start: stripeSubscription.currentPeriodStart || row.current_period_start,
     current_period_end: stripeSubscription.currentPeriodEnd || row.current_period_end,
-    next_run_at: stripeSubscription.nextRunAt || row.next_run_at
+    next_run_at: stripeSubscription.nextRunAt || row.next_run_at,
+    stripe_initial_invoice: stripeSubscription.initialInvoice || null
   }
 }
 
@@ -442,6 +444,10 @@ export async function createSubscription(payload = {}) {
       row.raw_json
     ]
   )
+
+  if (row.stripe_initial_invoice?.status === 'paid') {
+    await syncStripeSubscriptionInvoicePayment(row.stripe_initial_invoice, 'paid')
+  }
 
   return getSubscription(row.id)
 }
