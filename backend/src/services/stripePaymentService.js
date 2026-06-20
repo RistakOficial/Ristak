@@ -368,9 +368,28 @@ function extractInvoicePaymentIntentId(invoice) {
 }
 
 function timestampToIso(timestamp) {
+  if (timestamp instanceof Date) {
+    return Number.isNaN(timestamp.getTime()) ? null : timestamp.toISOString()
+  }
+
+  if (typeof timestamp === 'string') {
+    const clean = timestamp.trim()
+    if (!clean) return null
+
+    const numeric = Number(clean)
+    if (Number.isFinite(numeric) && numeric > 0) {
+      const milliseconds = numeric > 9999999999 ? numeric : numeric * 1000
+      return new Date(milliseconds).toISOString()
+    }
+
+    const parsed = new Date(clean)
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+  }
+
   const seconds = Number(timestamp)
   if (!Number.isFinite(seconds) || seconds <= 0) return null
-  return new Date(seconds * 1000).toISOString()
+  const milliseconds = seconds > 9999999999 ? seconds : seconds * 1000
+  return new Date(milliseconds).toISOString()
 }
 
 function buildPaymentUrl(baseUrl, publicPaymentId) {

@@ -69,8 +69,26 @@ function nullableString(value) {
 }
 
 function nullableDate(value) {
+  if (value === undefined || value === null || value === '') return null
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString()
+  }
+
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null
+    const milliseconds = value > 9999999999 ? value : value * 1000
+    const date = new Date(milliseconds)
+    return Number.isNaN(date.getTime()) ? null : date.toISOString()
+  }
+
   const cleaned = cleanString(value)
-  return cleaned || null
+  if (!cleaned) return null
+
+  const date = new Date(cleaned)
+  if (!Number.isNaN(date.getTime())) return date.toISOString()
+
+  return cleaned
 }
 
 function parseJson(value, fallback = null) {
