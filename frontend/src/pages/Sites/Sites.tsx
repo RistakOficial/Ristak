@@ -27841,13 +27841,76 @@ const VideoPlayGlyph: React.FC<{ iconStyle: VideoPlayIconStyle; size: number }> 
   )
 }
 
+const VideoFormGateCanvasPreview: React.FC<{
+  site: PublicSite
+  settings: Record<string, unknown>
+  questions: SiteBlock[]
+}> = ({ site, settings, questions }) => {
+  const videoGateTheme = useMemo(() => buildVideoFormGateSourceTheme(site, settings), [site, settings])
+  const videoGateSite = useMemo(() => ({
+    ...site,
+    siteType: 'standard_form' as SiteType,
+    theme: videoGateTheme
+  }), [site, videoGateTheme])
+  const canvasTheme = useMemo(() => buildCanvasTheme(videoGateSite, 'desktop'), [videoGateSite])
+  const canvasVars = canvasTheme.vars as React.CSSProperties & Record<string, string | number>
+  const title = getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE
+  const description = getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION
+  const submitText = getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT
+
+  return (
+    <div
+      className={`rstk-video-form-gate-preview rstkCanvas ${canvasTheme.bodyClass}`}
+      style={{
+        ...canvasVars,
+        width: '100%',
+        ['--rstk-block-bg' as string]: canvasVars['--rstk-page-bg'] || canvasVars['--rstk-surface'] || 'transparent'
+      } as React.CSSProperties}
+      aria-hidden="true"
+    >
+      <div className="rstk-video-form-gate-panel">
+        <header className="rstk-video-form-gate-header">
+          <strong>{title}</strong>
+          {description ? <p>{description}</p> : null}
+        </header>
+        <div className="rstk-video-form-gate-progress" hidden />
+        <div className="rstk-video-form-fields">
+          <div className="rstk-video-form-field-stack">
+            {questions.map(question => (
+              <section
+                key={question.id}
+                className="rstk-video-form-field"
+                data-rstk-video-form-field="true"
+              >
+                <label>
+                  {question.label || 'Pregunta'}
+                  {question.required ? <span className="rstk-required">*</span> : null}
+                </label>
+                {question.content ? <p className="rstk-help">{question.content}</p> : null}
+                <FieldControlPreview block={question} />
+                <p className="rstk-error" hidden>Esta respuesta es requerida.</p>
+              </section>
+            ))}
+          </div>
+        </div>
+        <div className="rstk-video-form-actions">
+          <button type="button">{submitText}</button>
+        </div>
+        <p className="rstk-submit-message" role="status" />
+      </div>
+    </div>
+  )
+}
+
 const VideoPlayerPreview: React.FC<{
   src: string
   label?: string
+  site?: PublicSite
   settings: Record<string, unknown>
+  videoFormGateQuestions?: SiteBlock[]
   editable?: boolean
   selected?: boolean
-}> = ({ src, label, settings, editable = false, selected = false }) => {
+}> = ({ src, label, site, settings, videoFormGateQuestions = [], editable = false, selected = false }) => {
   const playerRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
@@ -27917,10 +27980,11 @@ const VideoPlayerPreview: React.FC<{
   const shouldHideControlBarAtStart = showCustomControlBar && !showControlBarInitially && !hasStartedPlayback
   const shouldDismissControlsOnOutsidePointer = showCustomControlBar && controlsVisible && !shouldHideControlBarAtStart
   const controlBarTabIndex = shouldHideControlBarAtStart ? -1 : undefined
-  const gatePreviewQuestions = Array.isArray(settings.videoFormGateEmbeddedBlocks)
+  const embeddedGatePreviewQuestions = Array.isArray(settings.videoFormGateEmbeddedBlocks)
     ? (settings.videoFormGateEmbeddedBlocks as SiteBlock[]).filter(item => fieldBlockTypes.has(item.blockType))
     : []
-  const showGatePreview = settings.videoFormGateEnabled === true
+  const gatePreviewQuestions = videoFormGateQuestions.length ? videoFormGateQuestions : embeddedGatePreviewQuestions
+  const showGatePreview = selected && settings.videoFormGateEnabled === true && Boolean(site) && gatePreviewQuestions.length > 0
   const isControlBarBlockedAtStart = useCallback(
     () => showCustomControlBar && !showControlBarInitially && !hasStartedPlaybackRef.current,
     [showControlBarInitially, showCustomControlBar]
@@ -28512,11 +28576,12 @@ const VideoPlayerPreview: React.FC<{
           {soundNoticeText && <span className="rstk-video-sound-text">{soundNoticeText}</span>}
         </span>
       )}
-      {showGatePreview && (
-        <div className="rstk-video-form-gate-preview" aria-hidden="true">
-          <strong>{getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE}</strong>
-          <span>{gatePreviewQuestions.length || 0} {gatePreviewQuestions.length === 1 ? 'pregunta' : 'preguntas'} dentro del video</span>
-        </div>
+      {showGatePreview && site && (
+        <VideoFormGateCanvasPreview
+          site={site}
+          settings={settings}
+          questions={gatePreviewQuestions}
+        />
       )}
       {showCustomControlBar && (
         <div
@@ -28579,10 +28644,12 @@ const VideoPlayerPreview: React.FC<{
 const BunnyStreamStoragePreview: React.FC<{
   embedUrl: string
   label?: string
+  site?: PublicSite
   settings: Record<string, unknown>
+  videoFormGateQuestions?: SiteBlock[]
   editable?: boolean
   selected?: boolean
-}> = ({ embedUrl, label, settings, editable = false, selected = false }) => {
+}> = ({ embedUrl, label, site, settings, videoFormGateQuestions = [], editable = false, selected = false }) => {
   const streamVideoId = useMemo(() => getBunnyStreamVideoIdFromUrl(embedUrl), [embedUrl])
   const [storageUrl, setStorageUrl] = useState('')
   const [resolved, setResolved] = useState(false)
@@ -28627,7 +28694,17 @@ const BunnyStreamStoragePreview: React.FC<{
   }, [streamVideoId])
 
   if (storageUrl) {
-    return <VideoPlayerPreview src={storageUrl} label={label} settings={settings} editable={editable} selected={selected} />
+    return (
+      <VideoPlayerPreview
+        src={storageUrl}
+        label={label}
+        site={site}
+        settings={settings}
+        videoFormGateQuestions={videoFormGateQuestions}
+        editable={editable}
+        selected={selected}
+      />
+    )
   }
 
   return (
@@ -28807,11 +28884,32 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const rawVideoUrl = getSettingString(settings, 'mediaUrl') || block.content || ''
     const directVideoUrl = isDirectVideoUrl(rawVideoUrl) ? safePublicMediaUrl(rawVideoUrl, 'video') : ''
     const videoUrl = directVideoUrl ? '' : normalizeImportedVideoPreviewUrl(rawVideoUrl)
+    const videoFormGateQuestions = getEditableVideoFormGateBlocks(block, forms)
     return directVideoUrl
-      ? <VideoPlayerPreview src={directVideoUrl} label={block.label || 'Video'} settings={settings} editable={editable} selected={selected} />
+      ? (
+        <VideoPlayerPreview
+          src={directVideoUrl}
+          label={block.label || 'Video'}
+          site={site}
+          settings={settings}
+          videoFormGateQuestions={videoFormGateQuestions}
+          editable={editable}
+          selected={selected}
+        />
+      )
       : videoUrl
         ? isBunnyStreamEmbedUrl(videoUrl)
-          ? <BunnyStreamStoragePreview embedUrl={videoUrl} label={block.label || 'Video'} settings={settings} editable={editable} selected={selected} />
+          ? (
+            <BunnyStreamStoragePreview
+              embedUrl={videoUrl}
+              label={block.label || 'Video'}
+              site={site}
+              settings={settings}
+              videoFormGateQuestions={videoFormGateQuestions}
+              editable={editable}
+              selected={selected}
+            />
+          )
           : <div className="rstk-video"><iframe src={appendEditorNoTrackParam(videoUrl)} title={block.label || 'Video'} loading="lazy" allow={DEFAULT_EMBED_ALLOW} allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" /></div>
       : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
@@ -32226,29 +32324,6 @@ const VideoFormGateSettingsPanel: React.FC<{
     settings.videoFormGateMetaEventParameters as SiteMetaEventParameters | undefined,
     videoFormGateMetaEventName
   )
-  const previewAccent = defaultAccentForSite(videoGateSite)
-  const previewRawVideoUrl = getSettingString(settings, 'mediaUrl') || block.content || ''
-  const previewVideoSrc = isDirectVideoUrl(previewRawVideoUrl)
-    ? appendEditorNoTrackParam(safePublicMediaUrl(previewRawVideoUrl, 'video'))
-    : ''
-  const previewFieldBg = getThemePaint(videoGateTheme, 'formFieldBg', '').trim()
-  const previewStyle = {
-    ['--vfg-preview-bg' as string]: getThemePaint(videoGateTheme, 'backgroundColor', userBgColor(videoGateSite) || resolvedPageBg(videoGateSite)),
-    ['--vfg-preview-text' as string]: getThemePaint(videoGateTheme, 'textColor', isSiteDark(videoGateSite) ? '#ffffff' : '#111827'),
-    ['--vfg-preview-help' as string]: getThemePaint(videoGateTheme, 'formHelpColor', '#64748b'),
-    ['--vfg-preview-field-bg' as string]: previewFieldBg && previewFieldBg !== 'transparent'
-      ? previewFieldBg
-      : 'color-mix(in srgb, var(--vfg-preview-text) 8%, transparent)',
-    ['--vfg-preview-field-text' as string]: getThemePaint(videoGateTheme, 'formFieldText', isSiteDark(videoGateSite) ? '#ffffff' : '#111827'),
-    ['--vfg-preview-field-border' as string]: getThemePaint(videoGateTheme, 'formFieldBorder', '#dbe3ef'),
-    ['--vfg-preview-submit-bg' as string]: getThemePaint(videoGateTheme, 'submitBg', previewAccent),
-    ['--vfg-preview-submit-text' as string]: getThemePaint(videoGateTheme, 'submitTextColor', onAccentFor(previewAccent)),
-    ['--vfg-preview-submit-border' as string]: getThemePaint(videoGateTheme, 'submitBorderColor', previewAccent),
-    ['--vfg-preview-field-radius' as string]: `${getThemeNumber(videoGateTheme, 'formFieldRadius', 12, 0, 36)}px`,
-    ['--vfg-preview-field-border-width' as string]: `${getThemeNumber(videoGateTheme, 'formFieldBorderWidth', 1, 0, 8)}px`,
-    ['--vfg-preview-submit-radius' as string]: `${getThemeNumber(videoGateTheme, 'submitRadius', 12, 0, 80)}px`,
-    ['--vfg-preview-submit-border-width' as string]: `${getThemeNumber(videoGateTheme, 'submitBorderWidth', 1, 0, 8)}px`
-  } as React.CSSProperties
 
   const patchCompletionTargetIds = (nextIds: string[]) => {
     onPatchSettings({
@@ -32304,91 +32379,6 @@ const VideoFormGateSettingsPanel: React.FC<{
       </div>
     )
   }
-
-  const renderPreviewInput = (question: SiteBlock) => {
-    const options = Array.isArray(question.options) ? question.options as SiteBlockOption[] : []
-    if (question.blockType === 'dropdown') {
-      return (
-        <div className={styles.videoFormGatePreviewInput}>
-          <span>{options[0]?.label || options[0]?.value || question.placeholder || 'Selecciona una opción'}</span>
-          <ChevronDown size={13} />
-        </div>
-      )
-    }
-    if (isChoiceBlock(question.blockType)) {
-      const visibleOptions = options.length ? options.slice(0, 3) : [{ label: 'Opción', value: 'opcion' }]
-      return (
-        <div className={styles.videoFormGatePreviewOptions}>
-          {visibleOptions.map((option, index) => (
-            <span key={`${question.id}-${option.value || option.label || index}`}>
-              <i aria-hidden="true" />
-              {option.label || option.value || `Opción ${index + 1}`}
-            </span>
-          ))}
-        </div>
-      )
-    }
-    return (
-      <div className={styles.videoFormGatePreviewInput}>
-        <span>{question.placeholder || blockLabels[question.blockType] || 'Respuesta'}</span>
-      </div>
-    )
-  }
-
-  const renderVideoGatePreview = () => (
-    <div className={styles.videoFormGateEditorPreview} style={previewStyle}>
-      <div className={styles.videoFormGateEditorFrame}>
-        {previewVideoSrc ? (
-          <video
-            className={styles.videoFormGateEditorVideo}
-            src={previewVideoSrc}
-            muted
-            playsInline
-            preload="metadata"
-            aria-hidden="true"
-          />
-        ) : (
-          <div className={styles.videoFormGateEditorVideoFallback} aria-hidden="true" />
-        )}
-        <div className={styles.videoFormGateEditorShade} aria-hidden="true" />
-        <div className={styles.videoFormGateEditorCard}>
-          <div className={styles.videoFormGateEditorHeader}>
-            <strong>{getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE}</strong>
-            {(getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION) && (
-              <p>{getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION}</p>
-            )}
-          </div>
-          <div className={styles.videoFormGatePreviewStack}>
-            {questions.length ? questions.slice(0, 4).map((question, index) => {
-              const selected = activeQuestion?.id === question.id
-              return (
-                <button
-                  key={question.id}
-                  type="button"
-                  className={`${styles.videoFormGatePreviewQuestion} ${selected ? styles.videoFormGatePreviewQuestionActive : ''}`}
-                  onClick={() => setActiveQuestionId(question.id)}
-                >
-                  <span>
-                    {question.label || `Pregunta ${index + 1}`}
-                    {question.required ? <em>*</em> : null}
-                  </span>
-                  {question.content ? <small>{question.content}</small> : null}
-                  {renderPreviewInput(question)}
-                </button>
-              )
-            }) : (
-              <p className={styles.videoFormGatePreviewEmpty}>Agrega una pregunta para verla dentro del reproductor.</p>
-            )}
-          </div>
-          <div className={styles.videoFormGatePreviewActions}>
-            <button type="button">{getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT}</button>
-            <button type="button">{getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT}</button>
-            <button type="button">{getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT}</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
 
   return (
     <div className={styles.videoFormGatePanel}>
@@ -32757,7 +32747,6 @@ const VideoFormGateSettingsPanel: React.FC<{
           {showDesignControls && (
             <div className={styles.settingsGroup}>
               <div className={styles.panelSubheader}>Diseño del formulario</div>
-              {renderVideoGatePreview()}
               <div className={styles.twoColumn}>
                 <ColorField
                   label="Fondo"

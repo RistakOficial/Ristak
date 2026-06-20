@@ -382,34 +382,193 @@
 }
 .rstkCanvas .rstk-video-form-gate-preview {
   position: absolute;
-  inset: auto 14px 14px 14px;
+  inset: 0;
   z-index: 5;
   display: grid;
-  gap: 3px;
-  max-width: min(360px, calc(100% - 28px));
-  border: 1px solid color-mix(in srgb, var(--rstk-video-play-color, currentColor) 22%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--rstk-video-player-color, CanvasText) 86%, transparent);
-  color: var(--rstk-video-play-color, Canvas);
-  padding: 10px 12px;
+  place-items: center;
+  min-width: 0;
+  padding: clamp(8px, 3cqw, 22px);
+  background: color-mix(in srgb, var(--rstk-video-bg, #000) 84%, transparent);
+  color: var(--rstk-ink);
+  font-family: var(--rstk-form-font, var(--rstk-font));
   pointer-events: none;
-  backdrop-filter: blur(14px);
+  backdrop-filter: blur(12px);
 }
-.rstkCanvas .rstk-video-form-gate-preview strong {
-  min-width: 0;
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-panel {
+  width: min(100%, 680px);
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  gap: clamp(8px, 1.8cqw, 14px);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: .9rem;
-  font-weight: 750;
+  border: var(--rstk-video-form-panel-border-width, 0) solid var(--rstk-form-field-border, var(--rstk-input-border));
+  border-radius: clamp(10px, 2.4cqw, 20px);
+  background: var(--rstk-block-bg, var(--rstk-surface));
+  color: var(--rstk-ink);
+  box-shadow: 0 24px 70px -42px rgba(0, 0, 0, .66);
+  padding: clamp(12px, 3cqw, 24px);
 }
-.rstkCanvas .rstk-video-form-gate-preview span {
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-header {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-header strong {
+  display: block;
+  color: var(--rstk-ink);
+  font-family: var(--rstk-form-font, var(--rstk-font));
+  font-size: clamp(1rem, 3.2cqw, 1.5rem);
+  font-weight: 800;
+  line-height: 1.1;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-header p {
+  margin: 0;
+  color: var(--rstk-form-help-color, var(--rstk-muted));
+  font-size: clamp(.78rem, 2.1cqw, .95rem);
+  line-height: 1.35;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-progress {
+  min-height: 18px;
+  color: var(--rstk-form-help-color, var(--rstk-muted));
+  font-size: clamp(.72rem, 1.8cqw, .86rem);
+  font-weight: 700;
+  text-align: left;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-fields {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field-stack {
+  display: grid;
+  gap: clamp(8px, 2cqw, 14px);
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: color-mix(in srgb, currentColor 72%, transparent);
-  font-size: .78rem;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field {
+  display: grid;
+  gap: clamp(5px, 1.3cqw, 8px);
+  min-width: 0;
+  text-align: left;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field > label {
+  color: var(--rstk-form-label-color, var(--rstk-ink));
+  font-family: var(--rstk-form-font, var(--rstk-font));
+  font-size: clamp(.84rem, 2.2cqw, .98rem);
+  font-style: var(--rstk-form-font-style, normal);
+  font-weight: 650;
+  text-decoration: var(--rstk-form-text-decoration, none);
+  line-height: 1.25;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-help {
+  color: var(--rstk-form-help-color, var(--rstk-muted));
+  font-family: var(--rstk-form-font, var(--rstk-font));
+  font-size: clamp(.74rem, 1.9cqw, .9rem);
+  line-height: 1.3;
+}
+.rstkCanvas .rstk-video-form-gate-preview input,
+.rstkCanvas .rstk-video-form-gate-preview textarea,
+.rstkCanvas .rstk-video-form-gate-preview select {
+  min-height: clamp(38px, 8cqw, var(--rstk-form-field-height, 50px));
+  border-width: var(--rstk-form-field-border-width, 1px);
+  border-color: var(--rstk-form-field-border, var(--rstk-input-border));
+  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)));
+  background: var(--rstk-form-field-bg, var(--rstk-input-bg));
+  color: var(--rstk-form-field-text, var(--rstk-input-ink));
+  font-family: var(--rstk-form-font, var(--rstk-font));
+  font-size: clamp(.86rem, 2.4cqw, var(--rstk-form-input-size, 1rem));
+  font-style: var(--rstk-form-font-style, normal);
+  font-weight: var(--rstk-form-weight, 500);
+  text-decoration: var(--rstk-form-text-decoration, none);
+  padding: clamp(9px, 2cqw, var(--rstk-form-field-pad-y, 13px)) clamp(10px, 2.4cqw, var(--rstk-form-field-pad-x, 14px));
+}
+.rstkCanvas .rstk-video-form-gate-preview textarea {
+  min-height: clamp(78px, 18cqw, 108px);
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input {
+  grid-template-columns: minmax(108px, 34%) minmax(0, 1fr);
+  gap: 8px;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-options {
+  display: grid;
+  gap: clamp(7px, 1.8cqw, 10px);
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-option {
+  min-height: clamp(38px, 8cqw, var(--rstk-form-field-height, 50px));
+  border-width: var(--rstk-form-field-border-width, 1px);
+  border-color: var(--rstk-form-field-border, var(--rstk-input-border));
+  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)));
+  background: var(--rstk-form-field-bg, var(--rstk-input-bg));
+  color: var(--rstk-form-field-text, var(--rstk-input-ink));
+  font-family: var(--rstk-form-font, var(--rstk-font));
+  font-size: clamp(.84rem, 2.2cqw, var(--rstk-form-input-size, 1rem));
+  font-style: var(--rstk-form-font-style, normal);
+  font-weight: var(--rstk-form-weight, 500);
+  text-decoration: var(--rstk-form-text-decoration, none);
+  padding: clamp(9px, 2cqw, var(--rstk-form-field-pad-y, 13px)) clamp(10px, 2.4cqw, var(--rstk-form-field-pad-x, 14px));
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-option:has(input:checked) {
+  border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent));
+  background: var(--rstk-form-choice-selected-bg, color-mix(in srgb, var(--rstk-accent) 8%, transparent));
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-error {
+  margin: 0;
+  color: #dc2626;
+  font-size: clamp(.72rem, 1.8cqw, .84rem);
+  font-weight: 700;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions button {
+  width: auto;
+  min-width: min(128px, 46%);
+  min-height: clamp(38px, 7.5cqw, var(--rstk-submit-height, 48px));
+  border: var(--rstk-submit-border-width, 1px) solid var(--rstk-submit-border, var(--rstk-accent));
+  border-radius: var(--rstk-submit-radius, var(--rstk-btn-radius));
+  background: var(--rstk-submit-bg, var(--rstk-accent));
+  color: var(--rstk-submit-text, var(--rstk-on-accent));
+  font-family: var(--rstk-form-font, var(--rstk-font));
+  font-size: clamp(.84rem, 2.1cqw, var(--rstk-submit-size, .98rem));
+  font-weight: var(--rstk-btn-weight, 800);
+  cursor: default;
+  padding: 9px 14px;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-submit-message {
+  min-height: 18px;
+  margin: 0;
+  color: var(--rstk-form-help-color, var(--rstk-muted));
+  font-size: clamp(.74rem, 1.8cqw, .88rem);
+  font-weight: 650;
+  text-align: left;
+}
+@container (max-width: 460px) {
+  .rstkCanvas .rstk-video-form-gate-preview {
+    padding: 8px;
+  }
+  .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-panel {
+    gap: 8px;
+    padding: 10px;
+    border-radius: 12px;
+  }
+  .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions {
+    justify-content: stretch;
+  }
+  .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 10px;
+  }
+  .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input {
+    grid-template-columns: 1fr;
+  }
 }
 .rstkCanvas .rstk-video-play-dot {
   width: var(--rstk-video-play-width, var(--rstk-video-play-size, 160px));
