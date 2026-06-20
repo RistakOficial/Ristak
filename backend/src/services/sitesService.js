@@ -681,7 +681,7 @@ function mergeSiteMetaCustomData(base = {}, configured = {}) {
 
 function normalizeFormCompletionAction(value, fallback = 'form_default') {
   const action = cleanString(value)
-  return ['form_default', 'next_page', 'next_page_if_qualified'].includes(action) ? action : fallback
+  return ['form_default', 'next_page', 'next_page_if_qualified', 'redirect_qualified'].includes(action) ? action : fallback
 }
 
 function parseJson(value, fallback) {
@@ -16600,6 +16600,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       : 'form_default'
   const nextPage = (isLandingType || isStandardFormType) ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? buildPageHref(nextPage.id, { site, linkStyle }) : ''
+  const qualifiedRedirectUrl = isStandardFormType
+    ? safeHref(theme.formQualifiedRedirectUrl || theme.form_qualified_redirect_url || '', '')
+    : ''
   const standardFormNextPageUrl = standardFormNextPage ? pageHref(standardFormNextPage.id) : ''
 	  const disqualifiedPage = isStandardFormType ? pages.find(page => page.id === FORM_DISQUALIFIED_PAGE_ID) : null
 	  const disqualifiedPageUrl = disqualifiedPage ? pageHref(disqualifiedPage.id) : ''
@@ -17178,6 +17181,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       const continueText = ${scriptJson(continueText)};
       const nextText = ${scriptJson(nextText)};
       const nextPageUrl = ${JSON.stringify(nextPageUrl)};
+      const qualifiedRedirectUrl = ${JSON.stringify(qualifiedRedirectUrl)};
       const standardFormNextPageUrl = ${JSON.stringify(standardFormNextPageUrl)};
       const disqualifiedPageUrl = ${JSON.stringify(disqualifiedPageUrl)};
       let index = Math.max(0, stepPages.indexOf(pageId));
@@ -17735,11 +17739,15 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             return;
           }
           const qualifies = submission.status !== 'disqualified';
-          if (!qualifies && disqualifiedPageUrl && completionAction === 'next_page_if_qualified') {
+          if (!qualifies && disqualifiedPageUrl && (completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified')) {
             window.location.href = preserveUrl(disqualifiedPageUrl);
             return;
           }
-          if (nextPageUrl && (completionAction === 'next_page' || (completionAction === 'next_page_if_qualified' && qualifies))) {
+          if (qualifies && completionAction === 'redirect_qualified' && qualifiedRedirectUrl) {
+            window.location.href = preserveUrl(qualifiedRedirectUrl);
+            return;
+          }
+          if (nextPageUrl && (completionAction === 'next_page' || ((completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified') && qualifies))) {
             window.location.href = preserveUrl(nextPageUrl);
             return;
           }
