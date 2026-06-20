@@ -1465,6 +1465,76 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 .rstkCanvas iframe.rstk-embed { overflow: hidden; }
 .rstkCanvas .rstk-embed-code { background: transparent; }
 .rstkCanvas .rstk-embed-empty { display: grid; place-items: center; min-height: 160px; color: var(--rstk-muted); }
+.rstkCanvas .rstk-inline-setup-surface {
+  min-height: clamp(176px, 22vw, 232px);
+  padding: clamp(18px, 3vw, 30px);
+  background: transparent;
+}
+.rstkCanvas .rstk-inline-setup {
+  width: min(100%, 460px);
+  display: grid;
+  gap: 12px;
+  justify-items: stretch;
+  color: var(--rstk-ink);
+  text-align: left;
+}
+.rstkCanvas .rstk-inline-setup-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  color: var(--rstk-muted);
+}
+.rstkCanvas .rstk-inline-setup-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.rstkCanvas .rstk-inline-setup-copy strong {
+  color: var(--rstk-ink);
+  font-size: clamp(.98rem, 1.5vw, 1.08rem);
+  line-height: 1.2;
+}
+.rstkCanvas .rstk-inline-setup-copy span {
+  color: var(--rstk-muted);
+  font-size: .9rem;
+  line-height: 1.35;
+}
+.rstkCanvas .rstk-inline-setup-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: stretch;
+}
+.rstkCanvas .rstk-inline-setup-select,
+.rstkCanvas .rstk-inline-setup-button {
+  min-width: min(100%, 180px);
+  min-height: 44px;
+  pointer-events: auto;
+}
+.rstkCanvas .rstk-inline-setup-select {
+  flex: 1 1 220px;
+}
+.rstkCanvas .rstk-inline-setup-button {
+  flex: 1 1 160px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--rstk-border);
+  border-radius: var(--rstk-form-field-radius, var(--rstk-radius));
+  background: var(--rstk-surface);
+  color: var(--rstk-ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.rstkCanvas .rstk-inline-setup-select:disabled,
+.rstkCanvas .rstk-inline-setup-button:disabled {
+  cursor: not-allowed;
+  opacity: .62;
+}
 
 .rstkCanvas .rstk-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
 .rstkCanvas .rstk-actions [data-submit], .rstkCanvas .rstk-actions [data-next] { flex: 1 1 auto; }

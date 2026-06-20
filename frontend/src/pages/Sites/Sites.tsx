@@ -5426,6 +5426,18 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] =>
     }
   })
 
+const createEmbeddedFormDraftSettings = (siteId: string) => ({
+  formSiteId: '',
+  embeddedPages: normalizePagesForSave(normalizeEmbeddedFormPages()),
+  embeddedBlocks: createEmbeddedBlocks(siteId)
+})
+
+const getCalendarEmbedSelectionPatch = (calendar?: CalendarType) => ({
+  calendarId: calendar?.id || '',
+  calendarSlug: calendar?.slug || calendar?.widgetSlug || '',
+  calendarName: calendar?.name || ''
+})
+
 const normalizeElementIdentityValue = (value?: string | null) =>
   String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
 
@@ -5661,8 +5673,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       content: '',
       settings: blockSettings({
         description: '',
-        embeddedPages: normalizePagesForSave(normalizeEmbeddedFormPages()),
-        embeddedBlocks: createEmbeddedBlocks(siteId)
+        formSiteId: ''
       })
     }
   }
@@ -30133,7 +30144,58 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const formSiteId = getSettingString(settings, 'formSiteId')
     const form = forms.find(item => item.id === formSiteId)
     const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
+    const hasDraftForm = Array.isArray(settings.embeddedBlocks) || Array.isArray(settings.embeddedPages)
     const hasLinkedForm = Boolean(formSiteId)
+    const hasConfiguredForm = hasLinkedForm || hasDraftForm
+    const ownerSiteId = site?.id || block.siteId
+    const availableForms = forms.filter(item => item.id !== ownerSiteId)
+
+    if (!hasConfiguredForm) {
+      return (
+        <div className="rstk-embed rstk-embed-empty rstk-inline-setup-surface">
+          <section className="rstk-inline-setup" aria-label="Configurar formulario embebido">
+            <span className="rstk-inline-setup-icon" aria-hidden="true"><FormInput size={20} /></span>
+            <div className="rstk-inline-setup-copy">
+              <strong>Configura este formulario</strong>
+              <span>Crea uno nuevo o usa uno guardado.</span>
+            </div>
+            <div className="rstk-inline-setup-row">
+              <button
+                type="button"
+                className="rstk-inline-setup-button"
+                disabled={!editable}
+                onClick={() => {
+                  patchSettings(createEmbeddedFormDraftSettings(ownerSiteId))
+                  window.setTimeout(save, 0)
+                }}
+              >
+                <Plus size={14} />
+                Crear nuevo
+              </button>
+              <select
+                className="rstk-inline-setup-select"
+                value=""
+                aria-label="Usar formulario existente"
+                disabled={!editable || availableForms.length === 0}
+                onChange={(event) => {
+                  const nextFormId = event.target.value
+                  if (!nextFormId) return
+                  patchSettings({ formSiteId: nextFormId, embeddedBlocks: undefined, embeddedPages: undefined })
+                  window.setTimeout(save, 0)
+                }}
+                onBlur={save}
+              >
+                <option value="">{availableForms.length ? 'Usar existente' : 'No hay formularios guardados'}</option>
+                {availableForms.map(item => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </select>
+            </div>
+          </section>
+        </div>
+      )
+    }
+
     const selectedFormPages = getEmbeddedFormContentPagesFromSite(form)
     const selectedFormPageIds = new Set(selectedFormPages.map(page => page.id))
     const selectedFormBlocks = Array.isArray(form?.blocks)
@@ -30227,8 +30289,10 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   }
 
   if (block.blockType === 'calendar_embed') {
+    const selectedCalendarId = getSettingString(settings, 'calendarId')
     const calendarName = getSettingString(settings, 'calendarName')
     const calendarSlug = getSettingString(settings, 'calendarSlug')
+    const hasSelectedCalendarOption = calendars.some(calendar => calendar.id === selectedCalendarId)
     if (calendarSlug) {
       return (
         <iframe
@@ -30242,9 +30306,34 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     }
 
     return (
-      <div className="rstk-embed rstk-embed-empty">
-        <CalendarDays size={20} />
-        <span style={{ marginTop: 6 }}>{calendarName || (calendarSlug ? `Calendario /${calendarSlug}` : 'Selecciona un calendario para embeber')}</span>
+      <div className="rstk-embed rstk-embed-empty rstk-inline-setup-surface">
+        <section className="rstk-inline-setup" aria-label="Seleccionar calendario embebido">
+          <span className="rstk-inline-setup-icon" aria-hidden="true"><CalendarDays size={20} /></span>
+          <div className="rstk-inline-setup-copy">
+            <strong>Selecciona tu calendario</strong>
+            <span>El bloque usará el fondo y estilo de esta página.</span>
+          </div>
+          <select
+            className="rstk-inline-setup-select"
+            value={selectedCalendarId}
+            aria-label="Calendario a embeber"
+            disabled={!editable || calendars.length === 0}
+            onChange={(event) => {
+              const calendar = calendars.find(item => item.id === event.target.value)
+              patchSettings(getCalendarEmbedSelectionPatch(calendar))
+              window.setTimeout(save, 0)
+            }}
+            onBlur={save}
+          >
+            <option value="">{calendars.length ? 'Selecciona un calendario' : 'No hay calendarios disponibles'}</option>
+            {selectedCalendarId && !hasSelectedCalendarOption && (
+              <option value={selectedCalendarId}>{calendarName || 'Calendario no disponible'}</option>
+            )}
+            {calendars.map(calendar => (
+              <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
+            ))}
+          </select>
+        </section>
       </div>
     )
   }
@@ -34471,11 +34560,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
             value={selectedCalendarId}
             onChange={(event) => {
               const calendar = calendars.find(item => item.id === event.target.value)
-              onPatchSettings({
-                calendarId: calendar?.id || '',
-                calendarSlug: calendar?.slug || calendar?.widgetSlug || '',
-                calendarName: calendar?.name || ''
-              })
+              onPatchSettings(getCalendarEmbedSelectionPatch(calendar))
             }}
             onBlur={onSave}
           >
@@ -34506,7 +34591,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
         <label className={styles.field}>
           <span>Origen del formulario</span>
           <CustomSelect value={getSettingString(settings, 'formSiteId')} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })} onBlur={onSave}>
-            <option value="">Crear nuevo formulario</option>
+            <option value="">Sin formulario seleccionado</option>
             {forms.filter(form => form.id !== site.id).map(form => (
               <option key={form.id} value={form.id}>Usar formulario guardado: {form.name}</option>
             ))}
@@ -34524,7 +34609,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           type="button"
           className={styles.inlineCreateButton}
           onClick={() => {
-            onPatchSettings({ formSiteId: '', embeddedPages: normalizePagesForSave(normalizeEmbeddedFormPages()), embeddedBlocks: createEmbeddedBlocks(site.id) })
+            onPatchSettings(createEmbeddedFormDraftSettings(site.id))
             window.setTimeout(onSave, 0)
           }}
         >
