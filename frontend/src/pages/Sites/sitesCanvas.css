@@ -459,7 +459,6 @@
   border-radius: inherit;
   background: currentColor;
   transform: translateY(-50%);
-  transition: width .16s linear;
 }
 .rstkCanvas .rstk-video-progress:focus-visible {
   outline: 2px solid currentColor;

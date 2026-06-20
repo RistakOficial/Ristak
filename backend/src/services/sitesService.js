@@ -14423,7 +14423,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-is-muted .rstk-video-control-muted{display:block}
 	  .rstk-video-progress{position:relative;height:18px;overflow:visible;border-radius:999px;background:transparent;cursor:pointer;touch-action:none}
 	  .rstk-video-progress::before{content:"";position:absolute;inset:50% 0 auto;height:5px;border-radius:inherit;background:rgba(255,255,255,.2);transform:translateY(-50%)}
-	  .rstk-video-progress span{position:absolute;left:0;top:50%;display:block;width:0;height:5px;border-radius:inherit;background:currentColor;transform:translateY(-50%);transition:width .16s linear}
+	  .rstk-video-progress span{position:absolute;left:0;top:50%;display:block;width:0;height:5px;border-radius:inherit;background:currentColor;transform:translateY(-50%)}
 	  .rstk-video-progress:focus-visible{outline:2px solid currentColor;outline-offset:3px}
 	  .rstk-video-speed-control{position:relative;min-width:66px;height:30px;display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;padding:0 20px 0 8px}
 	  .rstk-video-speed-control::after{content:"";position:absolute;top:50%;right:8px;width:0;height:0;border-top:4px solid currentColor;border-right:4px solid transparent;border-left:4px solid transparent;opacity:.72;pointer-events:none;transform:translateY(-35%)}
@@ -16053,6 +16053,33 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        let hasUserPlayed = Boolean(video.autoplay);
 	        let controlsAreVisible = !startsWithHiddenControls;
 	        let controlsHideTimer = 0;
+	        let progressFrame = 0;
+	        const formatProgressPercent = ratio => {
+	          const safeRatio = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
+	          return Number((safeRatio * 100).toFixed(3)) + '%';
+	        };
+	        const setProgressRatio = ratio => {
+	          const safeRatio = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
+	          if (progress) progress.style.width = formatProgressPercent(safeRatio);
+	          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(safeRatio * 100)));
+	        };
+	        const syncProgress = () => {
+	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
+	          setProgressRatio(duration > 0 ? video.currentTime / duration : 0);
+	        };
+	        const stopProgressFrame = () => {
+	          if (!progressFrame) return;
+	          window.cancelAnimationFrame(progressFrame);
+	          progressFrame = 0;
+	        };
+	        const startProgressFrame = () => {
+	          if (progressFrame) return;
+	          progressFrame = window.requestAnimationFrame(() => {
+	            progressFrame = 0;
+	            syncProgress();
+	            if (!video.paused) startProgressFrame();
+	          });
+	        };
 	        const shouldHideControlsAtStart = () => startsWithHiddenControls && !hasUserPlayed;
 	        const setControlsVisible = visible => {
 	          if (!hasControlBar) return;
@@ -16123,8 +16150,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          hideSoundNotice();
 	          const nextProgress = Math.max(0, Math.min(1, ratio));
 	          video.currentTime = nextProgress * duration;
-	          if (progress) progress.style.width = Math.round(nextProgress * 100) + '%';
-	          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(nextProgress * 100)));
+	          setProgressRatio(nextProgress);
 	          sync();
 	          return true;
 	        };
@@ -16148,10 +16174,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          host.classList.toggle('rstk-video-is-playing', !video.paused && !previewing);
 	          host.classList.toggle('rstk-video-is-previewing', !video.paused && previewing);
 	          host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
-	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
-	          const progressRatio = duration > 0 ? Math.max(0, Math.min(1, video.currentTime / duration)) : 0;
-	          if (progress) progress.style.width = Math.round(progressRatio * 100) + '%';
-	          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(progressRatio * 100)));
+	          syncProgress();
+	          if (!video.paused) startProgressFrame();
+	          else stopProgressFrame();
 	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused || previewing ? 'Reproducir video' : 'Pausar video'));
 	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
 	          if (hasControlBar) {

@@ -2323,6 +2323,11 @@ const formatVideoPreviewSecond = (value: number) => {
   return `${minutes}:${formattedSeconds}`
 }
 
+const formatVideoProgressPercent = (value: number) => {
+  const safe = Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0))
+  return `${Number((safe * 100).toFixed(3))}%`
+}
+
 const withDefaultVideoPlayerSettings = (settings: Record<string, unknown> = {}) => ({
   ...DEFAULT_VIDEO_PLAYER_SETTINGS,
   ...settings
@@ -23596,6 +23601,7 @@ const VideoPlayerPreview: React.FC<{
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
   const previewLoopRef = useRef(false)
+  const progressAnimationFrameRef = useRef<number | null>(null)
   const editorPlaybackDisabled = editable && settings.videoDisableEditorPlayback === true
   const autoplay = Boolean(settings.videoAutoplay) && !editorPlaybackDisabled
   const hasStartedPlaybackRef = useRef(autoplay)
@@ -23650,6 +23656,15 @@ const VideoPlayerPreview: React.FC<{
     window.clearTimeout(controlsHideTimerRef.current)
     controlsHideTimerRef.current = null
   }, [])
+  const getVideoProgressRatio = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return 0
+    const duration = Number.isFinite(video.duration) ? video.duration : 0
+    return duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0
+  }, [])
+  const syncProgressFromVideo = useCallback(() => {
+    setProgress(getVideoProgressRatio())
+  }, [getVideoProgressRatio])
   const hideControlsAfter = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
     clearControlsHideTimer()
     if (!showCustomControlBar || (!isPlaying && !shouldHideControlBarAtStart)) return
@@ -23687,7 +23702,42 @@ const VideoPlayerPreview: React.FC<{
     hasStartedPlaybackRef.current = hasStartedPlayback
   }, [hasStartedPlayback])
 
+  useEffect(() => {
+    if (progressAnimationFrameRef.current) {
+      window.cancelAnimationFrame(progressAnimationFrameRef.current)
+      progressAnimationFrameRef.current = null
+    }
+    if (!isPlaying && !isPreviewLooping) {
+      syncProgressFromVideo()
+      return undefined
+    }
+
+    let cancelled = false
+    const tick = () => {
+      syncProgressFromVideo()
+      if (!cancelled) {
+        progressAnimationFrameRef.current = window.requestAnimationFrame(tick)
+      }
+    }
+    progressAnimationFrameRef.current = window.requestAnimationFrame(tick)
+
+    return () => {
+      cancelled = true
+      if (progressAnimationFrameRef.current) {
+        window.cancelAnimationFrame(progressAnimationFrameRef.current)
+        progressAnimationFrameRef.current = null
+      }
+    }
+  }, [isPlaying, isPreviewLooping, syncProgressFromVideo])
+
   useEffect(() => () => clearControlsHideTimer(), [clearControlsHideTimer])
+
+  useEffect(() => () => {
+    if (progressAnimationFrameRef.current) {
+      window.cancelAnimationFrame(progressAnimationFrameRef.current)
+      progressAnimationFrameRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     if (!showCustomControlBar) {
@@ -23808,10 +23858,10 @@ const VideoPlayerPreview: React.FC<{
     setCurrentSpeed(speed)
     setIsMuted(video.muted || video.volume === 0)
     setIsPlaying(!editorPlaybackDisabled && !video.paused)
-    setProgress(0)
+    syncProgressFromVideo()
     hasStartedPlaybackRef.current = Boolean(autoplay)
     setHasStartedPlayback(Boolean(autoplay))
-  }, [speed, muted, noTrackSrc, autoplay, editorPlaybackDisabled, stopPreviewLoop])
+  }, [speed, muted, noTrackSrc, autoplay, editorPlaybackDisabled, stopPreviewLoop, syncProgressFromVideo])
 
   useEffect(() => {
     const video = videoRef.current
@@ -23841,7 +23891,7 @@ const VideoPlayerPreview: React.FC<{
       setIsPlaying(false)
       setIsPreviewLooping(false)
       setIsMuted(video.muted || video.volume === 0)
-      setProgress(duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0)
+      syncProgressFromVideo()
       return
     }
     if (previewLoopRef.current) {
@@ -23857,7 +23907,7 @@ const VideoPlayerPreview: React.FC<{
     setIsPlaying(!video.paused && !previewLoopRef.current)
     setIsPreviewLooping(!video.paused && previewLoopRef.current)
     setIsMuted(video.muted || video.volume === 0)
-    setProgress(duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0)
+    syncProgressFromVideo()
   }
 
   const playVideo = async (unmute = false) => {
@@ -24109,7 +24159,7 @@ const VideoPlayerPreview: React.FC<{
             onPointerCancel={handleProgressPointerEnd}
             onKeyDown={handleProgressKeyDown}
           >
-            <span style={{ width: `${Math.round(progress * 100)}%` }} />
+            <span style={{ width: formatVideoProgressPercent(progress) }} />
           </div>
           {showCustomVolume && (
             <button type="button" className="rstk-video-control-button" onClick={handleMuteToggle} aria-label={isMuted ? 'Activar sonido' : 'Silenciar video'}>
