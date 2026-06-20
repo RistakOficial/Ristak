@@ -42,6 +42,7 @@ import {
   updateSite
 } from '../services/sitesService.js'
 import {
+  getCalendarBookingFormDefinition,
   getPublicCalendarBySlug,
   renderPublicCalendarHtml
 } from '../services/localCalendarService.js'
@@ -572,11 +573,13 @@ export async function previewCalendarHandler(req, res) {
     if (!calendar) {
       return res.status(404).type('html').send('Calendario no encontrado o inactivo')
     }
+    const bookingForm = await getCalendarBookingFormDefinition(calendar)
 
     return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, {
       host: getRequestHost(req) || '',
       embedded: req.query?.embed === '1' || req.query?.test === '1',
-      style: req.query || {}
+      style: req.query || {},
+      bookingForm
     }))
   } catch (error) {
     logger.error(`Error previsualizando calendario de site: ${error.message}`)
@@ -852,11 +855,13 @@ export async function publicSiteHostMiddleware(req, res, next) {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         return sendDomainError(req, res, 404, 'Ruta no disponible en este calendario público')
       }
+      const bookingForm = await getCalendarBookingFormDefinition(calendar)
 
       return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, {
         host,
         embedded: req.query?.embed === '1' || req.query?.test === '1',
-        style: req.query || {}
+        style: req.query || {},
+        bookingForm
       }))
     }
 

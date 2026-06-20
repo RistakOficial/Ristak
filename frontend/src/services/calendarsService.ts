@@ -27,6 +27,24 @@ export interface OpenHours {
   }[];
 }
 
+export interface CalendarBookingFieldSetting {
+  enabled: boolean;
+  required: boolean;
+}
+
+export interface CalendarBookingDefaultFields {
+  name: CalendarBookingFieldSetting;
+  phone: CalendarBookingFieldSetting;
+  email: CalendarBookingFieldSetting;
+  notes: CalendarBookingFieldSetting;
+}
+
+export interface CalendarBookingFormConfig {
+  useCustomForm: boolean;
+  customFormId: string;
+  defaultFields: CalendarBookingDefaultFields;
+}
+
 export interface Calendar {
   id: string;
   ghlCalendarId?: string | null;
@@ -64,6 +82,7 @@ export interface Calendar {
   allowCancellation?: boolean;
   notes?: string;
   formId?: string;
+  bookingForm?: CalendarBookingFormConfig;
   stickyContact?: boolean;
   isLivePaymentMode?: boolean;
   alertEmail?: string;

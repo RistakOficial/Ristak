@@ -49,10 +49,13 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   calendarsService,
   type Calendar as CalendarType,
+  type CalendarBookingDefaultFields,
+  type CalendarBookingFormConfig,
   type GoogleCalendarOption,
   type GoogleCalendarIntegrationStatus,
   type GoogleCalendarMergePreview
 } from '@/services/calendarsService'
+import { sitesService, type PublicSite } from '@/services/sitesService'
 import {
   FlowVariablesContext,
   type FlowVariable
@@ -111,6 +114,7 @@ const CALENDAR_COLOR_PALETTE = [
 ]
 
 const CALENDAR_DEFAULT_COLOR = '#3b82f6'
+const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i
 const CALENDAR_TEMPLATE_EXTRA_CATEGORIES = [
   { id: 'calendar', label: 'Calendario' }
@@ -159,6 +163,53 @@ const normalizeGoogleCalendarIdInput = (value: string) => {
 }
 
 const normalizeCalendarMatchValue = (value?: string | null) => String(value || '').trim().toLowerCase()
+
+const createDefaultCalendarBookingFields = (): CalendarBookingDefaultFields => ({
+  name: { enabled: true, required: true },
+  phone: { enabled: true, required: true },
+  email: { enabled: true, required: true },
+  notes: { enabled: true, required: false }
+})
+
+const normalizeCalendarBookingDefaultFields = (value?: Partial<CalendarBookingDefaultFields> | null): CalendarBookingDefaultFields => {
+  const fields = value || {}
+  const phoneEnabled = fields.phone?.enabled !== false
+  const emailEnabled = fields.email?.enabled !== false
+  const hasContactChannel = phoneEnabled || emailEnabled
+
+  return {
+    name: { enabled: true, required: true },
+    phone: {
+      enabled: hasContactChannel ? phoneEnabled : true,
+      required: hasContactChannel ? phoneEnabled : true
+    },
+    email: {
+      enabled: emailEnabled,
+      required: emailEnabled
+    },
+    notes: {
+      enabled: fields.notes?.enabled !== false,
+      required: false
+    }
+  }
+}
+
+const createDefaultCalendarBookingForm = (): CalendarBookingFormConfig => ({
+  useCustomForm: false,
+  customFormId: '',
+  defaultFields: createDefaultCalendarBookingFields()
+})
+
+const normalizeCalendarBookingForm = (value?: Partial<CalendarBookingFormConfig> | null): CalendarBookingFormConfig => {
+  const defaultFields = normalizeCalendarBookingDefaultFields(value?.defaultFields)
+  const customFormId = String(value?.customFormId || '').trim()
+
+  return {
+    useCustomForm: Boolean(value?.useCustomForm && customFormId),
+    customFormId,
+    defaultFields
+  }
+}
 
 const canWriteGoogleCalendarOption = (calendar: GoogleCalendarOption) => (
   ['owner', 'writer'].includes(String(calendar.accessRole || '').toLowerCase())
@@ -281,7 +332,8 @@ export const CalendarsConfiguration: React.FC = () => {
     allowBookingAfter: 0,
     allowBookingAfterUnit: 'hours',
     allowBookingFor: 30,
-    allowBookingForUnit: 'days'
+    allowBookingForUnit: 'days',
+    bookingForm: createDefaultCalendarBookingForm()
   })
 
   // Estados de edición inline de calendario
@@ -289,11 +341,17 @@ export const CalendarsConfiguration: React.FC = () => {
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarType | null>(null)
   const [savingConfig, setSavingConfig] = useState(false)
   const [deletingCalendarId, setDeletingCalendarId] = useState<string | null>(null)
+  const [formSites, setFormSites] = useState<PublicSite[]>([])
+  const [loadingFormSites, setLoadingFormSites] = useState(false)
 
   // Cargar calendarios al montar
   useEffect(() => {
     loadCalendars()
   }, [locationId, accessToken, calendarSourcePreference])
+
+  useEffect(() => {
+    loadCalendarForms()
+  }, [])
 
   useEffect(() => {
     loadGoogleIntegration()
@@ -314,7 +372,7 @@ export const CalendarsConfiguration: React.FC = () => {
     if (routeState.calendarId && calendars.length) {
       const calendar = calendars.find(item => item.id === routeState.calendarId)
       if (calendar) {
-        setSelectedCalendar(calendar)
+        setSelectedCalendar({ ...calendar, bookingForm: normalizeCalendarBookingForm(calendar.bookingForm) })
         setExpandedCalendarId(calendar.id)
       }
     } else if (!routeState.calendarId && expandedCalendarId) {
@@ -347,13 +405,43 @@ export const CalendarsConfiguration: React.FC = () => {
     try {
       setLoadingCalendars(true)
       const data = await calendarsService.getCalendars(locationId, accessToken)
-      setCalendars(data)
-      return data
+      const normalizedCalendars = data.map(calendar => ({
+        ...calendar,
+        bookingForm: normalizeCalendarBookingForm(calendar.bookingForm)
+      }))
+      setCalendars(normalizedCalendars)
+      return normalizedCalendars
     } catch (error: any) {
       showToast('error', 'Error al cargar calendarios', error.message)
       return []
     } finally {
       setLoadingCalendars(false)
+    }
+  }
+
+  const loadCalendarForms = async () => {
+    try {
+      setLoadingFormSites(true)
+      const data = await sitesService.listSites()
+      const forms = data
+        .filter(site => (
+          (site.siteType === 'standard_form' || site.siteType === 'interactive_form') &&
+          site.status !== 'archived'
+        ))
+        .sort((left, right) => {
+          const leftSystem = left.id === CALENDAR_DEFAULT_FORM_SITE_ID ? 0 : 1
+          const rightSystem = right.id === CALENDAR_DEFAULT_FORM_SITE_ID ? 0 : 1
+          if (leftSystem !== rightSystem) return leftSystem - rightSystem
+          return String(left.name || '').localeCompare(String(right.name || ''), 'es')
+        })
+      setFormSites(forms)
+      return forms
+    } catch (error: any) {
+      setFormSites([])
+      showToast('warning', 'No se pudieron cargar formularios', error.message || 'El calendario usará el formulario predeterminado')
+      return []
+    } finally {
+      setLoadingFormSites(false)
     }
   }
 
@@ -828,7 +916,7 @@ export const CalendarsConfiguration: React.FC = () => {
       return
     }
 
-    setSelectedCalendar(calendar)
+    setSelectedCalendar({ ...calendar, bookingForm: normalizeCalendarBookingForm(calendar.bookingForm) })
     setExpandedCalendarId(calendar.id)
     if (googleIntegration?.connected && !loadingGoogleCalendarOptions && !googleCalendarOptions.length) {
       loadGoogleCalendarOptions()
@@ -853,6 +941,7 @@ export const CalendarsConfiguration: React.FC = () => {
       const googleSyncChanged = nextGoogleCalendarId !== previousGoogleCalendarId
 
       // Construir payload con todos los campos editables
+      const bookingForm = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
       const updateData: any = {
         name: selectedCalendar.name?.trim() || 'Calendario',
         eventTitle: selectedCalendar.eventTitle?.trim() || selectedCalendar.name?.trim() || 'Cita',
@@ -872,7 +961,8 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingFor: selectedCalendar.allowBookingFor || 30,
         allowBookingForUnit: selectedCalendar.allowBookingForUnit || 'days',
         appoinmentPerSlot: selectedCalendar.appoinmentPerSlot,
-        appoinmentPerDay: selectedCalendar.appoinmentPerDay
+        appoinmentPerDay: selectedCalendar.appoinmentPerDay,
+        bookingForm
       }
 
       // Agregar lookBusyConfig si está configurado
@@ -959,7 +1049,8 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingAfter: 0,
         allowBookingAfterUnit: 'hours',
         allowBookingFor: 30,
-        allowBookingForUnit: 'days'
+        allowBookingForUnit: 'days',
+        bookingForm: createDefaultCalendarBookingForm()
       })
       await loadCalendars()
     } catch (error: any) {
@@ -1401,6 +1492,69 @@ export const CalendarsConfiguration: React.FC = () => {
       setSelectedCalendar({ ...selectedCalendar, ...patch })
     }
 
+    const customFormSites = formSites.filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
+    const bookingFormConfig = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
+    const selectedCustomForm = customFormSites.find(site => site.id === bookingFormConfig.customFormId)
+    const calendarFormOptions = customFormSites.map(site => ({
+      value: site.id,
+      label: `${site.name || site.title || 'Formulario'}${site.siteType === 'interactive_form' ? ' · multistep' : ''}`
+    }))
+
+    if (bookingFormConfig.customFormId && !selectedCustomForm) {
+      calendarFormOptions.push({
+        value: bookingFormConfig.customFormId,
+        label: `Formulario guardado (${bookingFormConfig.customFormId})`
+      })
+    }
+
+    const updateBookingFormConfig = (nextConfig: CalendarBookingFormConfig) => {
+      updateSelectedCalendar({ bookingForm: normalizeCalendarBookingForm(nextConfig) })
+    }
+
+    const handleCustomBookingFormToggle = (enabled: boolean) => {
+      if (enabled && !customFormSites.length) {
+        showToast(
+          'warning',
+          'No hay formularios personalizados',
+          loadingFormSites
+            ? 'Ristak sigue cargando formularios; intenta otra vez en un momento.'
+            : 'Crea un formulario en Sitios/Formularios y luego selecciónalo aquí.'
+        )
+        return
+      }
+
+      updateBookingFormConfig({
+        ...bookingFormConfig,
+        useCustomForm: enabled,
+        customFormId: enabled ? bookingFormConfig.customFormId || customFormSites[0]?.id || '' : ''
+      })
+    }
+
+    const handleDefaultBookingFieldToggle = (field: 'phone' | 'email' | 'notes', enabled: boolean) => {
+      if ((field === 'phone' || field === 'email') && !enabled) {
+        const otherField = field === 'phone' ? 'email' : 'phone'
+        if (!bookingFormConfig.defaultFields[otherField].enabled) {
+          showToast(
+            'warning',
+            'Falta un dato de contacto',
+            'Deja teléfono o correo activo para que la cita se pueda confirmar.'
+          )
+          return
+        }
+      }
+
+      updateBookingFormConfig({
+        ...bookingFormConfig,
+        defaultFields: {
+          ...bookingFormConfig.defaultFields,
+          [field]: {
+            enabled,
+            required: field === 'notes' ? false : enabled
+          }
+        }
+      })
+    }
+
     const showGoogleSyncSettings = Boolean(googleIntegration?.connected && calendar.source !== 'google')
     const isCentralGoogleOAuth = googleIntegration?.connectionMode === 'oauth'
     const currentGoogleCalendarId = selectedCalendar.googleCalendarId || ''
@@ -1638,6 +1792,101 @@ export const CalendarsConfiguration: React.FC = () => {
                   min="0"
                 />
               </label>
+            </div>
+          </section>
+
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
+              <strong>Formulario para agendar</strong>
+              <span>Elige qué preguntas aparecen después de seleccionar fecha y hora.</span>
+            </div>
+            <div className={pageStyles.editorFields}>
+              <div className={pageStyles.editorField}>
+                <span>Formulario personalizado</span>
+                <div className={styles.toggleContainer}>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${bookingFormConfig.useCustomForm ? styles.toggleActive : ''}`}
+                    onClick={() => handleCustomBookingFormToggle(!bookingFormConfig.useCustomForm)}
+                    aria-pressed={bookingFormConfig.useCustomForm}
+                    aria-label={bookingFormConfig.useCustomForm ? 'Usar formulario predeterminado' : 'Usar formulario personalizado'}
+                  >
+                    <span className={styles.toggleThumb} />
+                  </button>
+                  <span className={`${styles.toggleLabel} ${bookingFormConfig.useCustomForm ? styles.toggleLabelActive : ''}`}>
+                    {bookingFormConfig.useCustomForm ? 'Sí, usar formulario' : 'No, usar predeterminado'}
+                  </span>
+                </div>
+                <small>
+                  Los formularios personalizados conservan preguntas y pasos, pero se ven con el diseño interno del calendario.
+                </small>
+              </div>
+
+              {bookingFormConfig.useCustomForm ? (
+                <>
+                  <div className={pageStyles.editorField}>
+                    <span>Formulario</span>
+                    <CustomSelect
+                      value={bookingFormConfig.customFormId}
+                      onValueChange={(value) => updateBookingFormConfig({
+                        ...bookingFormConfig,
+                        useCustomForm: Boolean(value),
+                        customFormId: value
+                      })}
+                      options={calendarFormOptions}
+                      placeholder={loadingFormSites ? 'Cargando formularios...' : 'Elige un formulario'}
+                      disabled={loadingFormSites || calendarFormOptions.length === 0}
+                    />
+                    <small>
+                      {selectedCustomForm?.siteType === 'interactive_form'
+                        ? 'Este formulario puede avanzar por pasos dentro del calendario.'
+                        : selectedCustomForm
+                          ? 'Este formulario se usará como preguntas de agenda.'
+                          : 'Si no eliges uno, Ristak usará el formulario predeterminado.'}
+                    </small>
+                  </div>
+
+                  <div className={pageStyles.googleSyncHint}>
+                    <ListChecks size={16} />
+                    <span>El estilo original del editor de formularios no se importa aquí; el calendario mantiene su propio diseño.</span>
+                  </div>
+                </>
+              ) : (
+                <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                  <span>Campos del formulario predeterminado</span>
+                  <div className={pageStyles.lookBusyRow}>
+                    <label>
+                      <input type="checkbox" checked disabled />
+                      Nombre completo obligatorio
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={bookingFormConfig.defaultFields.phone.enabled}
+                        onChange={(event) => handleDefaultBookingFieldToggle('phone', event.target.checked)}
+                      />
+                      Teléfono / WhatsApp
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={bookingFormConfig.defaultFields.email.enabled}
+                        onChange={(event) => handleDefaultBookingFieldToggle('email', event.target.checked)}
+                      />
+                      Correo electrónico
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={bookingFormConfig.defaultFields.notes.enabled}
+                        onChange={(event) => handleDefaultBookingFieldToggle('notes', event.target.checked)}
+                      />
+                      Notas
+                    </label>
+                  </div>
+                  <small>Nombre siempre es obligatorio. Teléfono o correo debe quedar activo para confirmar la cita.</small>
+                </div>
+              )}
             </div>
           </section>
 

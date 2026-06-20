@@ -105,6 +105,9 @@ const DEFAULT_THEME = {
   backgroundColor: '#ffffff',
   textColor: '#111827'
 }
+const CALENDAR_FORMS_FOLDER_ID = 'system-calendar-forms'
+const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
+const CALENDAR_DEFAULT_FORM_SLUG = 'system-calendar-booking-form'
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
 const SITES_AI_MAX_MESSAGES = 18
@@ -7101,7 +7104,110 @@ function buildImportedAIRegionMissingTargetResponse(debugOrMessage = '', message
   return response
 }
 
+async function ensureCalendarBookingSystemForm() {
+  const theme = withSiteLibraryMetadata({
+    ...DEFAULT_THEME,
+    template: 'compact',
+    submitText: 'Agendar cita',
+    pages: [
+      { id: DEFAULT_FUNNEL_PAGE_ID, title: 'Tus datos', sortOrder: 0 },
+      { id: FORM_THANK_YOU_PAGE_ID, title: 'Gracias', sortOrder: 1 },
+      { id: FORM_DISQUALIFIED_PAGE_ID, title: 'No disponible', sortOrder: 2 }
+    ],
+    calendarSystemForm: true
+  }, {
+    folderId: CALENDAR_FORMS_FOLDER_ID,
+    source: 'calendar'
+  })
+
+  await db.run(`
+    INSERT INTO public_sites (
+      id, name, slug, site_type, status, domain, title, description, theme_json,
+      meta_capi_enabled, meta_event_name, created_at, updated_at
+    ) VALUES (?, ?, ?, 'standard_form', 'draft', NULL, ?, ?, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      slug = excluded.slug,
+      site_type = excluded.site_type,
+      status = 'draft',
+      title = excluded.title,
+      description = excluded.description,
+      theme_json = excluded.theme_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    CALENDAR_DEFAULT_FORM_SITE_ID,
+    'Formulario de calendario',
+    CALENDAR_DEFAULT_FORM_SLUG,
+    'Formulario de calendario',
+    'Formulario base para agendar citas desde calendarios publicos.',
+    jsonString(theme),
+    SITE_META_NO_EVENT
+  ])
+
+  const fields = [
+    {
+      id: `${CALENDAR_DEFAULT_FORM_SITE_ID}-name`,
+      blockType: 'short_text',
+      label: 'Nombre completo',
+      placeholder: 'Tu nombre',
+      required: 1,
+      sortOrder: 0,
+      settings: { pageId: DEFAULT_FUNNEL_PAGE_ID, systemFieldKey: 'full_name' }
+    },
+    {
+      id: `${CALENDAR_DEFAULT_FORM_SITE_ID}-phone`,
+      blockType: 'phone',
+      label: 'Telefono / WhatsApp',
+      placeholder: '10 digitos',
+      required: 1,
+      sortOrder: 1,
+      settings: { pageId: DEFAULT_FUNNEL_PAGE_ID, systemFieldKey: 'phone', validation: 'phone' }
+    },
+    {
+      id: `${CALENDAR_DEFAULT_FORM_SITE_ID}-email`,
+      blockType: 'email',
+      label: 'Correo',
+      placeholder: 'tu@email.com',
+      required: 0,
+      sortOrder: 2,
+      settings: { pageId: DEFAULT_FUNNEL_PAGE_ID, systemFieldKey: 'email', validation: 'email' }
+    }
+  ]
+
+  for (const field of fields) {
+    await db.run(`
+      INSERT INTO public_site_blocks (
+        id, site_id, block_type, label, content, placeholder, required, options_json,
+        settings_json, sort_order, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        site_id = excluded.site_id,
+        block_type = excluded.block_type,
+        label = excluded.label,
+        placeholder = excluded.placeholder,
+        required = excluded.required,
+        settings_json = excluded.settings_json,
+        sort_order = excluded.sort_order,
+        updated_at = CURRENT_TIMESTAMP
+    `, [
+      field.id,
+      CALENDAR_DEFAULT_FORM_SITE_ID,
+      field.blockType,
+      field.label,
+      field.placeholder,
+      field.required,
+      jsonString([]),
+      jsonString(field.settings),
+      field.sortOrder
+    ])
+  }
+}
+
 export async function listSites() {
+  await ensureCalendarBookingSystemForm().catch(error => {
+    logger.warn(`No se pudo asegurar formulario de calendario: ${error.message}`)
+  })
+
   const rows = await db.all(`
     SELECT
       s.*,
@@ -9978,6 +10084,12 @@ export async function updateSite(siteId, input = {}) {
 }
 
 export async function deleteSite(siteId) {
+  if (cleanString(siteId) === CALENDAR_DEFAULT_FORM_SITE_ID) {
+    const error = new Error('El formulario base de calendario no se puede eliminar')
+    error.status = 400
+    throw error
+  }
+
   const existing = await db.get('SELECT id FROM public_sites WHERE id = ?', [siteId])
   if (!existing) return false
 

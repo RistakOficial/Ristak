@@ -19,6 +19,23 @@ const DEFAULT_RISTAK_CALENDAR_DESC = 'calendario principal creado en ristak'
 const DEFAULT_CALENDAR_CONFIG_KEY = 'default_calendar_id'
 const ATTRIBUTION_CALENDAR_IDS_CONFIG_KEY = 'attribution_calendar_ids'
 const SOURCE_PREFERENCE_CONFIG_KEY = 'calendar_source_preference'
+export const CALENDAR_FORMS_FOLDER_ID = 'system-calendar-forms'
+export const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
+const CALENDAR_DEFAULT_FORM_SLUG = 'system-calendar-booking-form'
+const CALENDAR_DEFAULT_PAGE_ID = 'page-1'
+const CALENDAR_FORM_FINAL_PAGE_IDS = new Set(['page-2', 'page-3'])
+const CALENDAR_FORM_FIELD_TYPES = new Set([
+  'short_text',
+  'paragraph',
+  'currency',
+  'number',
+  'dropdown',
+  'radio',
+  'checkboxes',
+  'phone',
+  'email',
+  'date'
+])
 
 function makeId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`
@@ -72,6 +89,114 @@ function parseJson(value, fallback) {
     return JSON.parse(value)
   } catch {
     return fallback
+  }
+}
+
+function normalizeCalendarBookingDefaultFields(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const phoneEnabled = source.phoneEnabled ?? source.phone?.enabled ?? source.phone !== false
+  const emailEnabled = source.emailEnabled ?? source.email?.enabled ?? source.email !== false
+  const hasContactChannel = Boolean(phoneEnabled || emailEnabled)
+
+  return {
+    name: { enabled: true, required: true },
+    phone: {
+      enabled: hasContactChannel ? Boolean(phoneEnabled) : true,
+      required: hasContactChannel ? Boolean(phoneEnabled) : true
+    },
+    email: {
+      enabled: Boolean(emailEnabled),
+      required: Boolean(emailEnabled)
+    },
+    notes: {
+      enabled: source.notesEnabled ?? source.notes?.enabled ?? true,
+      required: false
+    }
+  }
+}
+
+function normalizeCalendarBookingFormConfig(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const formSource = source.bookingForm && typeof source.bookingForm === 'object'
+    ? source.bookingForm
+    : source.booking_form && typeof source.booking_form === 'object'
+      ? source.booking_form
+      : source
+  const useCustomForm = Boolean(
+    formSource.useCustomForm ??
+    formSource.use_custom_form ??
+    formSource.customFormEnabled ??
+    formSource.custom_form_enabled
+  )
+  const customFormId = cleanString(
+    formSource.customFormId ||
+    formSource.custom_form_id ||
+    formSource.formSiteId ||
+    formSource.form_site_id ||
+    formSource.formId ||
+    formSource.form_id
+  )
+
+  return {
+    useCustomForm: Boolean(useCustomForm && customFormId),
+    customFormId,
+    defaultFields: normalizeCalendarBookingDefaultFields(
+      formSource.defaultFields ||
+      formSource.default_fields ||
+      formSource
+    )
+  }
+}
+
+function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
+  const rawSource = options.rawJson || calendar.raw_json || calendar.rawJson || {}
+  const parsedRaw = parseJson(rawSource, {})
+  const baseRaw = parsedRaw && typeof parsedRaw === 'object' && !Array.isArray(parsedRaw) ? parsedRaw : {}
+  const firstDefined = (...values) => values.find(value => value !== undefined)
+
+  return {
+    ...baseRaw,
+    googleCalendarId: cleanString(firstDefined(
+      calendar.googleCalendarId,
+      calendar.google_calendar_id,
+      baseRaw.googleCalendarId,
+      baseRaw.google_calendar_id
+    )),
+    googleAccessRole: cleanString(firstDefined(
+      calendar.googleAccessRole,
+      calendar.google_access_role,
+      calendar.accessRole,
+      calendar.access_role,
+      baseRaw.googleAccessRole,
+      baseRaw.google_access_role,
+      baseRaw.accessRole,
+      baseRaw.access_role
+    )),
+    googleCalendarSummary: cleanString(firstDefined(
+      calendar.googleCalendarSummary,
+      calendar.google_calendar_summary,
+      calendar.summary,
+      baseRaw.googleCalendarSummary,
+      baseRaw.google_calendar_summary,
+      baseRaw.summary
+    )),
+    googleCalendarTimeZone: cleanString(firstDefined(
+      calendar.googleCalendarTimeZone,
+      calendar.google_calendar_time_zone,
+      calendar.timeZone,
+      calendar.time_zone,
+      baseRaw.googleCalendarTimeZone,
+      baseRaw.google_calendar_time_zone,
+      baseRaw.timeZone,
+      baseRaw.time_zone
+    )),
+    bookingForm: normalizeCalendarBookingFormConfig(
+      calendar.bookingForm ||
+      calendar.booking_form ||
+      baseRaw.bookingForm ||
+      baseRaw.booking_form ||
+      calendar
+    )
   }
 }
 
@@ -516,6 +641,7 @@ function calendarRowToApi(row = {}) {
     allowReschedule: row.allow_reschedule !== 0,
     allowCancellation: row.allow_cancellation !== 0,
     notes: row.notes || '',
+    bookingForm: normalizeCalendarBookingFormConfig(rawJson.bookingForm || rawJson.booking_form || rawJson),
     availabilityType: toInt(row.availability_type, 0),
     source: row.source || 'ristak',
     syncStatus: row.sync_status || 'pending',
@@ -534,6 +660,8 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
     makeId(LOCAL_CALENDAR_PREFIX)
   const name = cleanString(calendar.name || calendar.title || calendar.calendarName || 'Calendario Ristak')
   const slotDuration = toInt(calendar.slotDuration ?? calendar.slot_duration, 60)
+
+  const rawJson = getCalendarRawJsonWithBookingForm(calendar, options)
 
   return {
     id,
@@ -573,7 +701,7 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
     source,
     syncStatus: options.syncStatus || calendar.syncStatus || calendar.sync_status || (source === 'ghl' ? 'synced' : 'pending'),
     syncError: options.syncError || calendar.syncError || calendar.sync_error || null,
-    rawJson: jsonOrNull(options.rawJson || calendar.raw_json || raw)
+    rawJson: jsonOrNull(rawJson)
   }
 }
 
@@ -725,7 +853,379 @@ export async function getPublicCalendarBySlug(slugOrId) {
   return row ? calendarRowToApi(row) : null
 }
 
-export function renderPublicCalendarHtml(calendar, { host = '', embedded = false, style = {} } = {}) {
+function normalizeCalendarFormPages(theme = {}) {
+  const rawPages = Array.isArray(theme.pages) ? theme.pages : []
+  const normalized = rawPages
+    .map((page, index) => ({
+      id: cleanString(page?.id) || (index === 0 ? CALENDAR_DEFAULT_PAGE_ID : `page-${index + 1}`),
+      title: cleanString(page?.title) || `Pantalla ${index + 1}`,
+      sortOrder: Number.isFinite(Number(page?.sortOrder ?? page?.sort_order)) ? Number(page.sortOrder ?? page.sort_order) : index
+    }))
+    .filter(page => page.id && !CALENDAR_FORM_FINAL_PAGE_IDS.has(page.id))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+
+  return normalized.length ? normalized : [{ id: CALENDAR_DEFAULT_PAGE_ID, title: 'Formulario', sortOrder: 0 }]
+}
+
+function normalizeCalendarFormBlock(row = {}, pages = []) {
+  const blockType = cleanString(row.block_type || row.blockType)
+  if (!CALENDAR_FORM_FIELD_TYPES.has(blockType)) return null
+
+  const settings = parseJson(row.settings_json || row.settings, {})
+  const options = parseJson(row.options_json || row.options, [])
+  const pageId = cleanString(settings.pageId || settings.page_id)
+  const resolvedPageId = pages.some(page => page.id === pageId) ? pageId : pages[0]?.id || CALENDAR_DEFAULT_PAGE_ID
+
+  return {
+    id: cleanString(row.id),
+    blockType,
+    label: cleanString(row.label) || 'Pregunta',
+    placeholder: cleanString(row.placeholder),
+    required: Boolean(Number(row.required || 0)),
+    content: cleanString(row.content),
+    options: Array.isArray(options)
+      ? options.map((option, index) => ({
+        label: cleanString(option?.label || option?.value || `Opcion ${index + 1}`),
+        value: cleanString(option?.value || option?.label || `opcion_${index + 1}`)
+      })).filter(option => option.label)
+      : [],
+    settings: settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {},
+    pageId: resolvedPageId,
+    sortOrder: Number.isFinite(Number(row.sort_order ?? row.sortOrder)) ? Number(row.sort_order ?? row.sortOrder) : 0
+  }
+}
+
+function getDefaultCalendarBookingFields(config = {}) {
+  const fields = []
+  const defaults = normalizeCalendarBookingDefaultFields(config)
+
+  fields.push({
+    id: 'calendar_name',
+    blockType: 'short_text',
+    label: 'Nombre completo',
+    placeholder: 'Tu nombre',
+    required: true,
+    content: '',
+    options: [],
+    settings: { systemFieldKey: 'full_name' },
+    pageId: CALENDAR_DEFAULT_PAGE_ID,
+    sortOrder: 0
+  })
+
+  if (defaults.phone.enabled) {
+    fields.push({
+      id: 'calendar_phone',
+      blockType: 'phone',
+      label: 'Telefono / WhatsApp',
+      placeholder: '10 digitos',
+      required: Boolean(defaults.phone.required),
+      content: '',
+      options: [],
+      settings: { systemFieldKey: 'phone', validation: 'phone' },
+      pageId: CALENDAR_DEFAULT_PAGE_ID,
+      sortOrder: 1
+    })
+  }
+
+  if (defaults.email.enabled) {
+    fields.push({
+      id: 'calendar_email',
+      blockType: 'email',
+      label: 'Correo',
+      placeholder: 'tu@email.com',
+      required: Boolean(defaults.email.required),
+      content: '',
+      options: [],
+      settings: { systemFieldKey: 'email', validation: 'email' },
+      pageId: CALENDAR_DEFAULT_PAGE_ID,
+      sortOrder: 2
+    })
+  }
+
+  if (defaults.notes.enabled) {
+    fields.push({
+      id: 'calendar_notes',
+      blockType: 'paragraph',
+      label: 'Notas',
+      placeholder: 'Algo que debamos saber',
+      required: false,
+      content: '',
+      options: [],
+      settings: { systemFieldKey: 'notes' },
+      pageId: CALENDAR_DEFAULT_PAGE_ID,
+      sortOrder: 3
+    })
+  }
+
+  return fields
+}
+
+export async function getCalendarBookingFormDefinition(calendar = {}) {
+  const config = normalizeCalendarBookingFormConfig(calendar.bookingForm || calendar.booking_form || {})
+
+  if (config.useCustomForm && config.customFormId) {
+    const site = await db.get(`
+      SELECT id, name, site_type, theme_json
+      FROM public_sites
+      WHERE id = ?
+        AND COALESCE(status, 'draft') != 'archived'
+        AND site_type IN ('standard_form', 'interactive_form')
+      LIMIT 1
+    `, [config.customFormId]).catch(() => null)
+
+    if (site?.id) {
+      const theme = parseJson(site.theme_json, {})
+      const pages = normalizeCalendarFormPages(theme)
+      const rows = await db.all(`
+        SELECT id, block_type, label, content, placeholder, required, options_json, settings_json, sort_order
+        FROM public_site_blocks
+        WHERE site_id = ?
+          AND block_type IN (${Array.from(CALENDAR_FORM_FIELD_TYPES).map(() => '?').join(',')})
+        ORDER BY sort_order ASC, created_at ASC
+      `, [site.id, ...Array.from(CALENDAR_FORM_FIELD_TYPES)]).catch(() => [])
+      const fields = rows
+        .map(row => normalizeCalendarFormBlock(row, pages))
+        .filter(Boolean)
+        .sort((a, b) => {
+          const pageA = pages.findIndex(page => page.id === a.pageId)
+          const pageB = pages.findIndex(page => page.id === b.pageId)
+          return pageA - pageB || a.sortOrder - b.sortOrder
+        })
+
+      if (fields.length) {
+        return {
+          mode: 'custom',
+          formId: site.id,
+          formName: site.name || 'Formulario',
+          siteType: site.site_type || 'standard_form',
+          pages,
+          fields,
+          defaultFields: config.defaultFields
+        }
+      }
+    }
+  }
+
+  return {
+    mode: 'default',
+    formId: CALENDAR_DEFAULT_FORM_SITE_ID,
+    formName: 'Formulario de calendario',
+    siteType: 'standard_form',
+    pages: [{ id: CALENDAR_DEFAULT_PAGE_ID, title: 'Tus datos', sortOrder: 0 }],
+    fields: getDefaultCalendarBookingFields(config.defaultFields),
+    defaultFields: config.defaultFields
+  }
+}
+
+function getCalendarFieldValidation(field = {}) {
+  const explicit = cleanString(field.settings?.validation || field.settings?.fieldValidation || field.settings?.field_validation).toLowerCase()
+  if (['email', 'phone', 'number', 'currency', 'date', 'url'].includes(explicit)) return explicit
+  if (field.blockType === 'email') return 'email'
+  if (field.blockType === 'phone') return 'phone'
+  if (field.blockType === 'number') return 'number'
+  if (field.blockType === 'currency') return 'currency'
+  if (field.blockType === 'date') return 'date'
+  return ''
+}
+
+function renderCalendarFieldInput(field = {}) {
+  const id = escapeHtml(field.id)
+  const placeholder = escapeHtml(field.placeholder || '')
+  const required = field.required ? 'required' : ''
+  const options = Array.isArray(field.options) ? field.options : []
+  const validation = getCalendarFieldValidation(field)
+
+  if (field.blockType === 'paragraph') {
+    return `<textarea id="${id}" name="${id}" rows="3" placeholder="${placeholder}" ${required}></textarea>`
+  }
+  if (field.blockType === 'currency') {
+    return `<input id="${id}" name="${id}" type="number" inputmode="decimal" min="0" step="0.01" placeholder="${placeholder || '0.00'}" ${required}>`
+  }
+  if (field.blockType === 'number') {
+    return `<input id="${id}" name="${id}" type="number" inputmode="decimal" placeholder="${placeholder}" ${required}>`
+  }
+  if (field.blockType === 'email') {
+    return `<input id="${id}" name="${id}" type="email" inputmode="email" autocomplete="email" placeholder="${placeholder}" ${required}>`
+  }
+  if (field.blockType === 'phone') {
+    return `<input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel" placeholder="${placeholder}" ${required}>`
+  }
+  if (field.blockType === 'date') {
+    return `<input id="${id}" name="${id}" type="date" placeholder="${placeholder}" ${required}>`
+  }
+  if (field.blockType === 'dropdown') {
+    return `
+      <select id="${id}" name="${id}" ${required}>
+        <option value="">Selecciona una opcion</option>
+        ${options.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join('')}
+      </select>
+    `
+  }
+  if (field.blockType === 'radio') {
+    return `
+      <div class="options">
+        ${options.map((option, index) => `
+          <label class="option">
+            <input type="radio" name="${id}" value="${escapeHtml(option.value)}" ${required && index === 0 ? 'required' : ''}>
+            <span>${escapeHtml(option.label)}</span>
+          </label>
+        `).join('')}
+      </div>
+    `
+  }
+  if (field.blockType === 'checkboxes') {
+    return `
+      <div class="options">
+        ${options.map(option => `
+          <label class="option">
+            <input type="checkbox" name="${id}" value="${escapeHtml(option.value)}" data-checkbox-group="${id}">
+            <span>${escapeHtml(option.label)}</span>
+          </label>
+        `).join('')}
+      </div>
+    `
+  }
+  if (validation === 'url') {
+    return `<input id="${id}" name="${id}" type="url" inputmode="url" placeholder="${placeholder}" ${required}>`
+  }
+  return `<input id="${id}" name="${id}" type="text" placeholder="${placeholder}" ${required}>`
+}
+
+function renderCalendarBookingForm(bookingForm = {}) {
+  const pages = Array.isArray(bookingForm.pages) && bookingForm.pages.length
+    ? bookingForm.pages
+    : [{ id: CALENDAR_DEFAULT_PAGE_ID, title: 'Tus datos', sortOrder: 0 }]
+  const fields = Array.isArray(bookingForm.fields) ? bookingForm.fields : []
+  const hasPages = pages.length > 1
+
+  return `
+    <form data-form data-form-mode="${escapeHtml(bookingForm.mode || 'default')}">
+      <div class="formHeader">
+        <h2>${bookingForm.mode === 'custom' ? escapeHtml(bookingForm.formName || 'Tus datos') : 'Tus datos'}</h2>
+        ${hasPages ? `<p data-form-progress>Pantalla 1 de ${pages.length}</p>` : ''}
+      </div>
+      ${pages.map((page, index) => {
+        const pageFields = fields.filter(field => field.pageId === page.id)
+        const pageQuestions = pageFields.length
+          ? pageFields.map(field => `
+            <section class="calendarQuestion" data-field-id="${escapeHtml(field.id)}" data-field-type="${escapeHtml(field.blockType)}" data-required="${field.required ? 'true' : 'false'}" data-validation="${escapeHtml(getCalendarFieldValidation(field))}">
+              <label for="${escapeHtml(field.id)}">${escapeHtml(field.label || 'Pregunta')}${field.required ? '<span class="requiredMark">*</span>' : ''}</label>
+              ${field.content ? `<p class="fieldHelp">${escapeHtml(field.content)}</p>` : ''}
+              ${renderCalendarFieldInput(field)}
+              <p class="fieldError" hidden>Esta respuesta es requerida.</p>
+            </section>
+          `).join('')
+          : '<p class="fieldHelp">Esta pantalla no tiene preguntas.</p>'
+
+        return `
+          <div class="formPage" data-form-page="${escapeHtml(page.id)}"${index === 0 ? '' : ' hidden'}>
+            ${hasPages ? `<h3>${escapeHtml(page.title || `Pantalla ${index + 1}`)}</h3>` : ''}
+            ${pageQuestions}
+          </div>
+        `
+      }).join('')}
+      <div class="formActions">
+        ${hasPages ? '<button class="secondary" type="button" data-form-back hidden>Anterior</button>' : ''}
+        ${hasPages ? '<button class="submit" type="button" data-form-next>Siguiente</button>' : ''}
+        <button class="submit" type="submit" ${hasPages ? 'hidden ' : ''}disabled data-submit>Selecciona un horario</button>
+      </div>
+      <p class="message" data-message role="status"></p>
+    </form>
+  `
+}
+
+export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) {
+  const fields = Array.isArray(bookingForm.fields) ? bookingForm.fields : []
+  const responses = body.responses && typeof body.responses === 'object' && !Array.isArray(body.responses)
+    ? body.responses
+    : {}
+  const normalizedResponses = {}
+  const errors = []
+
+  const getBodyValue = (field) => {
+    if (Object.prototype.hasOwnProperty.call(responses, field.id)) return responses[field.id]
+    if (Object.prototype.hasOwnProperty.call(body, field.id)) return body[field.id]
+    if (field.id === 'calendar_name') return body.name || body.fullName || body.full_name
+    if (field.id === 'calendar_phone') return body.phone
+    if (field.id === 'calendar_email') return body.email
+    if (field.id === 'calendar_notes') return body.notes
+    return ''
+  }
+
+  const valueAsText = (value) => Array.isArray(value)
+    ? value.map(item => cleanString(item)).filter(Boolean).join(', ')
+    : cleanString(value)
+
+  const matchesField = (field, patterns = []) => {
+    const haystack = [
+      field.id,
+      field.label,
+      field.blockType,
+      field.settings?.systemFieldKey,
+      field.settings?.system_field_key,
+      field.settings?.customFieldKey,
+      field.settings?.custom_field_key
+    ].map(value => cleanString(value).toLowerCase()).join(' ')
+    return patterns.some(pattern => pattern.test(haystack))
+  }
+
+  let fullName = cleanString(body.name || body.fullName || body.full_name)
+  let phone = cleanString(body.phone)
+  let email = cleanString(body.email)
+  let notes = cleanString(body.notes)
+
+  for (const field of fields) {
+    const rawValue = getBodyValue(field)
+    const value = Array.isArray(rawValue)
+      ? rawValue.map(item => cleanString(item)).filter(Boolean)
+      : cleanString(rawValue)
+    const empty = Array.isArray(value) ? value.length === 0 : !value
+    const validation = getCalendarFieldValidation(field)
+
+    if (field.required && empty) {
+      errors.push(`${field.label || 'Pregunta'} es requerido`)
+      continue
+    }
+    if (!empty && validation === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valueAsText(value))) {
+      errors.push(`${field.label || 'Correo'} no tiene un correo valido`)
+      continue
+    }
+    if (!empty && validation === 'phone' && valueAsText(value).replace(/[^\d]/g, '').length < 7) {
+      errors.push(`${field.label || 'Telefono'} no tiene un telefono valido`)
+      continue
+    }
+
+    normalizedResponses[field.id] = value
+
+    if (!fullName && matchesField(field, [/full.?name/, /nombre/, /name/])) fullName = valueAsText(value)
+    if (!phone && (validation === 'phone' || matchesField(field, [/phone/, /tel[eé]fono/, /whatsapp/]))) phone = valueAsText(value)
+    if (!email && (validation === 'email' || matchesField(field, [/email/, /correo/]))) email = valueAsText(value)
+    if (!notes && matchesField(field, [/notes?/, /nota/, /comentario/, /mensaje/])) notes = valueAsText(value)
+  }
+
+  if (!fullName) errors.push('El nombre es requerido')
+  if (!phone && !email) errors.push('Se requiere telefono o correo')
+
+  const responseLines = fields
+    .map(field => {
+      const value = normalizedResponses[field.id]
+      const text = valueAsText(value)
+      return text ? `${field.label || field.id}: ${text}` : ''
+    })
+    .filter(Boolean)
+
+  return {
+    contact: { name: fullName, phone, email },
+    notes,
+    responses: normalizedResponses,
+    responseSummary: responseLines.join('\n'),
+    formId: bookingForm.formId || '',
+    formName: bookingForm.formName || '',
+    errors
+  }
+}
+
+export function renderPublicCalendarHtml(calendar, { host = '', embedded = false, style = {}, bookingForm = null } = {}) {
   const slug = publicCalendarSlug(calendar)
   const duration = Math.max(1, toInt(calendar.slotDuration, 60))
   const title = calendar.eventTitle || calendar.name || 'Cita'
@@ -751,7 +1251,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     eventTitle: title,
     duration,
     color: accent,
-    host
+    host,
+    bookingForm: bookingForm || {
+      mode: 'default',
+      formId: CALENDAR_DEFAULT_FORM_SITE_ID,
+      formName: 'Formulario de calendario',
+      pages: [{ id: CALENDAR_DEFAULT_PAGE_ID, title: 'Tus datos', sortOrder: 0 }],
+      fields: getDefaultCalendarBookingFields()
+    }
   }
 
   return `<!doctype html>
@@ -771,6 +1278,10 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     body.rstk-calendar-embedded .page{width:100%;padding:0;place-items:stretch}
     .shell{width:100%;min-height:min(760px,calc(100vh - 80px));display:grid;grid-template-columns:340px minmax(390px,1fr) minmax(260px,300px);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 32px 90px -60px rgba(15,23,42,.45);overflow:hidden}
     body.rstk-calendar-embedded .shell{min-height:100vh;border:0;border-radius:0;box-shadow:none}
+    .shell.bookingActive{grid-template-columns:340px minmax(320px,520px);justify-content:center}
+    .shell.bookingActive .calendarPane{display:none}
+    .shell.bookingActive .timesPane{border-left:1px solid var(--line);max-width:520px;width:100%}
+    .shell.bookingActive .slotList{display:none}
     .intro{position:relative;padding:38px 34px;border-right:1px solid var(--line);display:grid;align-content:start;gap:20px}
     .back{width:42px;height:42px;border:1px solid var(--line);border-radius:999px;background:var(--control-bg);color:var(--accent);display:grid;place-items:center;cursor:pointer}
     .avatar{width:104px;height:104px;border-radius:4px;background:linear-gradient(135deg,var(--accent-soft),var(--control-bg));border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-size:3rem;font-weight:850}
@@ -800,25 +1311,43 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .day:disabled{opacity:.34}
     .timezone{display:flex;align-items:flex-start;gap:10px;color:var(--muted);font-size:.92rem;font-weight:650}
     .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:18px}
-    .selectedDate{display:grid;gap:4px;min-height:58px}
+    .selectedDate{display:grid;gap:6px;min-height:58px}
+    .changeSlot{display:none;justify-self:start;min-height:34px;border:1px solid var(--line);border-radius:var(--slot-radius);background:var(--control-bg);color:var(--accent);font-size:.86rem;font-weight:800;padding:0 12px;cursor:pointer}
+    .shell.bookingActive .changeSlot{display:inline-flex;align-items:center;justify-content:center}
     .slotList{display:grid;align-content:start;gap:10px;max-height:330px;overflow:auto;padding-right:2px}
     .slot{width:100%;min-height:46px;border:1px solid var(--accent);border-radius:var(--slot-radius);background:var(--slot-bg);color:var(--slot-text);font-weight:800;cursor:pointer}
     .slot:hover,.slot.selected{background:var(--accent);color:var(--selected-text)}
     .slotEmpty{display:grid;place-items:center;min-height:160px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);text-align:center;padding:18px}
-    form{display:none;gap:10px;border-top:1px solid var(--line);padding-top:16px}
+    form{display:none;gap:12px;border-top:1px solid var(--line);padding-top:16px}
     form.visible{display:grid}
+    .formHeader{display:grid;gap:4px}
+    .formHeader h2{margin:0}
+    .formHeader p{font-size:.88rem;font-weight:750}
+    .formPage{display:grid;gap:12px}
+    .formPage h3{font-size:.95rem}
+    .calendarQuestion{display:grid;gap:6px}
+    .fieldHelp,.fieldError{margin:0;font-size:.82rem;line-height:1.35}
+    .fieldHelp{color:var(--muted)}
+    .fieldError{color:var(--danger);font-weight:750}
+    .requiredMark{color:var(--accent);margin-left:4px}
     label{display:grid;gap:5px;font-size:.82rem;font-weight:750;color:var(--heading)}
-    input,textarea{width:100%;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);color:var(--field-text);padding:10px 11px;outline:none}
+    input,textarea,select{width:100%;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);color:var(--field-text);padding:10px 11px;outline:none}
     textarea{resize:vertical}
-    input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
-    button.submit{min-height:44px;border:1px solid var(--accent);border-radius:var(--slot-radius);background:var(--accent);color:var(--button-text);font-weight:850;cursor:pointer}
+    input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+    .options{display:grid;gap:8px}
+    .option{display:flex;align-items:center;gap:9px;min-height:38px;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);padding:8px 10px;cursor:pointer}
+    .option input{width:auto}
+    .formActions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    button.submit,button.secondary{min-height:44px;border-radius:var(--slot-radius);font-weight:850;cursor:pointer}
+    button.submit{border:1px solid var(--accent);background:var(--accent);color:var(--button-text);flex:1 1 180px}
+    button.secondary{border:1px solid var(--line);background:var(--control-bg);color:var(--accent);padding:0 14px}
     button:disabled{opacity:.58;cursor:not-allowed}
     .message{min-height:20px;font-size:.88rem;font-weight:750;color:var(--muted)}
     .message.error{color:var(--danger)}
     .message.ok{color:var(--ok)}
     .loading{opacity:.62;pointer-events:none}
-    @media (max-width:1020px){.shell{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}}
-    @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell{grid-template-columns:1fr;min-height:0;border-radius:14px}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
+    @media (max-width:1020px){.shell,.shell.bookingActive{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}.shell.bookingActive .timesPane{border-left:0;max-width:none}}
+    @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell,.shell.bookingActive{grid-template-columns:1fr;min-height:0;border-radius:14px}.shell.bookingActive .timesPane{grid-column:auto}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
   </style>
 </head>
 <body class="${embedded ? 'rstk-calendar-embedded' : ''}">
@@ -866,25 +1395,19 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         <div class="selectedDate">
           <h3 data-selected-title>Selecciona una fecha</h3>
           <p data-selected-subtitle>Los horarios aparecerán aquí.</p>
+          <button class="changeSlot" type="button" data-change-slot>Cambiar horario</button>
         </div>
         <div class="slotList" data-slots>
           <div class="slotEmpty">Elige un día con disponibilidad.</div>
         </div>
-        <form data-form>
-          <h2>Tus datos</h2>
-          <label>Nombre completo<input name="name" autocomplete="name" required placeholder="Tu nombre"></label>
-          <label>Teléfono / WhatsApp<input name="phone" autocomplete="tel" inputmode="tel" required placeholder="10 dígitos"></label>
-          <label>Correo<input name="email" autocomplete="email" type="email" placeholder="tu@email.com"></label>
-          <label>Notas<textarea name="notes" rows="3" placeholder="Algo que debamos saber"></textarea></label>
-          <button class="submit" type="submit" disabled data-submit>Selecciona un horario</button>
-          <p class="message" data-message role="status"></p>
-        </form>
+        ${renderCalendarBookingForm(payload.bookingForm)}
       </section>
     </div>
   </main>
   <script>
     (() => {
       const calendar = ${jsonForInlineScript(payload)};
+      const shell = document.querySelector('.shell');
       const calendarPane = document.querySelector('[data-calendar-pane]');
       const daysEl = document.querySelector('[data-days]');
       const slotsEl = document.querySelector('[data-slots]');
@@ -894,13 +1417,19 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const timezoneLabel = document.querySelector('[data-timezone]');
       const selectedTitle = document.querySelector('[data-selected-title]');
       const selectedSubtitle = document.querySelector('[data-selected-subtitle]');
+      const changeSlotButton = document.querySelector('[data-change-slot]');
       const form = document.querySelector('[data-form]');
       const submit = document.querySelector('[data-submit]');
       const message = document.querySelector('[data-message]');
+      const formPages = Array.from(form ? form.querySelectorAll('[data-form-page]') : []);
+      const formBackButton = form ? form.querySelector('[data-form-back]') : null;
+      const formNextButton = form ? form.querySelector('[data-form-next]') : null;
+      const formProgress = form ? form.querySelector('[data-form-progress]') : null;
       const monthNames = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
       let selectedSlot = '';
       let selectedDateKey = '';
       let visibleMonth = new Date();
+      let formPageIndex = 0;
       visibleMonth.setDate(1);
       let slotsByDate = new Map();
       let timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -914,6 +1443,88 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const setMessage = (text, type = '') => {
         message.textContent = text || '';
         message.className = 'message' + (type ? ' ' + type : '');
+      };
+
+      const getFieldValue = (field) => {
+        const type = field.getAttribute('data-field-type') || '';
+        if (type === 'checkboxes') {
+          return Array.from(field.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
+        }
+        const checked = field.querySelector('input[type="radio"]:checked');
+        if (checked) return checked.value;
+        const input = field.querySelector('input, textarea, select');
+        return input ? input.value : '';
+      };
+
+      const digits = (value) => String(value || '').replace(/\\D/g, '');
+      const isValidValue = (validation, value) => {
+        const text = Array.isArray(value) ? value.join(',') : String(value || '').trim();
+        if (!text) return true;
+        if (validation === 'email') return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text);
+        if (validation === 'phone') return digits(text).length >= 7;
+        if (validation === 'number') return Number.isFinite(Number(text));
+        if (validation === 'currency') return Number.isFinite(Number(text)) && Number(text) >= 0;
+        if (validation === 'date') return !Number.isNaN(Date.parse(text));
+        if (validation === 'url') {
+          try {
+            const parsed = new URL(/^https?:\\/\\//i.test(text) ? text : 'https://' + text);
+            return ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname);
+          } catch {
+            return false;
+          }
+        }
+        return true;
+      };
+
+      const validationMessage = (validation) => {
+        if (validation === 'email') return 'Ingresa un correo valido.';
+        if (validation === 'phone') return 'Ingresa un telefono valido.';
+        if (validation === 'number') return 'Ingresa un numero valido.';
+        if (validation === 'currency') return 'Ingresa un monto valido.';
+        if (validation === 'date') return 'Ingresa una fecha valida.';
+        if (validation === 'url') return 'Ingresa una URL valida.';
+        return 'Revisa esta respuesta.';
+      };
+
+      const validateField = (field) => {
+        const required = field.getAttribute('data-required') === 'true';
+        const validation = field.getAttribute('data-validation') || '';
+        const value = getFieldValue(field);
+        const empty = Array.isArray(value) ? value.length === 0 : String(value || '').trim() === '';
+        const valid = (!required || !empty) && (empty || isValidValue(validation, value));
+        const error = field.querySelector('.fieldError');
+        if (error) {
+          error.textContent = !required || !empty ? validationMessage(validation) : 'Esta respuesta es requerida.';
+          error.hidden = valid;
+        }
+        return valid;
+      };
+
+      const getPageFields = (pageIndex = formPageIndex) => {
+        const page = formPages[pageIndex];
+        return page ? Array.from(page.querySelectorAll('.calendarQuestion')) : Array.from(form.querySelectorAll('.calendarQuestion'));
+      };
+
+      const validateCurrentPage = () => getPageFields().every(validateField);
+
+      const renderFormPage = () => {
+        if (!formPages.length) return;
+        formPageIndex = Math.max(0, Math.min(formPageIndex, formPages.length - 1));
+        formPages.forEach((page, index) => {
+          page.hidden = index !== formPageIndex;
+        });
+        if (formBackButton) formBackButton.hidden = formPageIndex === 0;
+        if (formNextButton) formNextButton.hidden = formPageIndex >= formPages.length - 1;
+        if (submit) submit.hidden = formPages.length > 1 && formPageIndex < formPages.length - 1;
+        if (formProgress) formProgress.textContent = 'Pantalla ' + (formPageIndex + 1) + ' de ' + formPages.length;
+      };
+
+      const collectResponses = () => {
+        const responses = {};
+        Array.from(form.querySelectorAll('.calendarQuestion')).forEach((field) => {
+          responses[field.getAttribute('data-field-id')] = getFieldValue(field);
+        });
+        return responses;
       };
 
       const getZonedParts = (value) => {
@@ -958,8 +1569,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
 
       const resetForm = () => {
         selectedSlot = '';
+        shell && shell.classList.remove('bookingActive');
         form.classList.remove('visible');
         form.reset();
+        formPageIndex = 0;
+        renderFormPage();
         submit.disabled = true;
         submit.textContent = 'Selecciona un horario';
         setMessage('');
@@ -1036,10 +1650,37 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         selectedSlot = button.getAttribute('data-slot') || '';
         slotsEl.querySelectorAll('.slot').forEach(item => item.classList.remove('selected'));
         button.classList.add('selected');
+        shell && shell.classList.add('bookingActive');
         form.classList.add('visible');
+        formPageIndex = 0;
+        renderFormPage();
         submit.disabled = false;
         submit.textContent = 'Agendar cita';
-        setMessage('Horario seleccionado: ' + formatDay(selectedSlot) + ' a las ' + formatTime(selectedSlot));
+        selectedTitle.textContent = 'Confirma tu cita';
+        selectedSubtitle.textContent = formatDay(selectedSlot) + ' a las ' + formatTime(selectedSlot);
+        setMessage('');
+      });
+
+      changeSlotButton && changeSlotButton.addEventListener('click', () => {
+        shell && shell.classList.remove('bookingActive');
+        form.classList.remove('visible');
+        setMessage('');
+        if (selectedDateKey) {
+          renderSlotsForDate(selectedDateKey);
+        } else {
+          renderSlotsForDate('');
+        }
+      });
+
+      formNextButton && formNextButton.addEventListener('click', () => {
+        if (!validateCurrentPage()) return;
+        formPageIndex = Math.min(formPageIndex + 1, formPages.length - 1);
+        renderFormPage();
+      });
+
+      formBackButton && formBackButton.addEventListener('click', () => {
+        formPageIndex = Math.max(formPageIndex - 1, 0);
+        renderFormPage();
       });
 
       daysEl.addEventListener('click', (event) => {
@@ -1098,6 +1739,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           return;
         }
 
+        if (!getPageFields(formPages.length - 1).every(validateField)) return;
+        const responses = collectResponses();
         const formData = new FormData(form);
         submit.disabled = true;
         submit.textContent = 'Agendando...';
@@ -1114,7 +1757,10 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
               name: formData.get('name'),
               phone: formData.get('phone'),
               email: formData.get('email'),
-              notes: formData.get('notes')
+              notes: formData.get('notes'),
+              responses,
+              formId: calendar.bookingForm?.formId || '',
+              formName: calendar.bookingForm?.formName || ''
             })
           });
           const payload = await response.json();
@@ -1123,6 +1769,9 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           selectedSlot = '';
           form.reset();
           form.classList.remove('visible');
+          shell && shell.classList.remove('bookingActive');
+          formPageIndex = 0;
+          renderFormPage();
           await loadSlots();
           setMessage(successText, 'ok');
         } catch (error) {

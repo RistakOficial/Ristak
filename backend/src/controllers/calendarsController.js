@@ -708,7 +708,8 @@ export async function deleteGoogleCalendarIntegration(req, res) {
 async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl }) {
   const fullName = cleanString(contact.name || contact.fullName);
   const email = normalizeEmail(contact.email);
-  const phone = await normalizePhoneForAccount(contact.phone) || cleanString(contact.phone);
+  const rawPhone = cleanString(contact.phone);
+  const phone = rawPhone ? await normalizePhoneForAccount(rawPhone) || rawPhone : '';
 
   if (!fullName) {
     const error = new Error('El nombre es requerido');
@@ -716,19 +717,19 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
     throw error;
   }
 
-  if (!phone || phone.replace(/[^\d]/g, '').length < 7) {
-    const error = new Error('El teléfono es requerido');
+  if ((!phone || phone.replace(/[^\d]/g, '').length < 7) && !email) {
+    const error = new Error('El telefono o correo es requerido');
     error.status = 400;
     throw error;
   }
 
-  const byPhone = await findContactByPhoneCandidates(phone).catch(() => null);
+  const byPhone = phone ? await findContactByPhoneCandidates(phone).catch(() => null) : null;
   const byEmail = !byPhone && email
     ? await db.get('SELECT id FROM contacts WHERE LOWER(email) = LOWER(?) ORDER BY updated_at DESC LIMIT 1', [email]).catch(() => null)
     : null;
   const contactId = byPhone?.id || byEmail?.id || `rstk_contact_${crypto.randomUUID()}`;
   const names = splitName(fullName);
-  const phoneUpsert = await prepareContactPhoneUpsert({ contactId, phone });
+  const phoneUpsert = phone ? await prepareContactPhoneUpsert({ contactId, phone }) : { phone: null };
 
   await db.run(`
     INSERT INTO contacts (
@@ -757,7 +758,7 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl 
     'public_calendar'
   ]);
 
-  await finalizePreparedPhoneUpsert(phoneUpsert, contactId);
+  if (phone) await finalizePreparedPhoneUpsert(phoneUpsert, contactId);
   return contactId;
 }
 
@@ -1157,19 +1158,28 @@ export async function createPublicAppointment(req, res) {
       });
     }
 
+    const bookingForm = await localCalendarService.getCalendarBookingFormDefinition(calendar);
+    const bookingSubmission = localCalendarService.normalizeCalendarBookingSubmission(bookingForm, body);
+    if (bookingSubmission.errors.length) {
+      return res.status(400).json({
+        success: false,
+        error: bookingSubmission.errors.join(', ')
+      });
+    }
+
     const contactId = await upsertPublicCalendarContact({
       calendar,
       host,
       sourceUrl: body.sourceUrl || body.source_url,
-      contact: {
-        name: body.name || body.fullName || body.full_name,
-        phone: body.phone,
-        email: body.email
-      }
+      contact: bookingSubmission.contact
     });
 
     const durationMinutes = Math.max(1, Number(calendar.slotDuration || 60));
     const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+    const submittedNotes = [
+      bookingSubmission.notes,
+      bookingSubmission.responseSummary ? `Respuestas del formulario:\n${bookingSubmission.responseSummary}` : ''
+    ].filter(Boolean).join('\n\n');
     const publicAppointmentData = {
       contactId,
       calendarId: calendar.id,
@@ -1177,7 +1187,10 @@ export async function createPublicAppointment(req, res) {
       status: calendar.autoConfirm ? 'confirmed' : 'pending',
       startTime: start.toISOString(),
       endTime: end.toISOString(),
-      notes: cleanString(body.notes)
+      notes: submittedNotes,
+      formId: bookingSubmission.formId,
+      formName: bookingSubmission.formName,
+      formResponses: bookingSubmission.responses
     };
     const renderedTemplates = await renderCalendarAppointmentTemplates({
       calendar,
@@ -1631,14 +1644,19 @@ export async function updateCalendar(req, res) {
     const remoteCalendarId = existing?.ghlCalendarId || id;
     if (context.accessToken && remoteCalendarId && existing?.ghlCalendarId) {
       try {
-        const remote = await calendarService.updateCalendar(remoteCalendarId, updateData, context.accessToken);
+        const { bookingForm, ...remoteUpdateData } = updateData;
+        const preservedBookingForm = bookingForm || calendar?.bookingForm || existing?.bookingForm;
+        const remote = await calendarService.updateCalendar(remoteCalendarId, remoteUpdateData, context.accessToken);
         calendar = await localCalendarService.upsertLocalCalendar(remote.calendar || remote, {
           id: existing.id,
           source: existing.source,
           ghlCalendarId: remoteCalendarId,
           locationId: context.locationId || existing.locationId,
           syncStatus: 'synced',
-          rawJson: remote
+          rawJson: {
+            ...(remote && typeof remote === 'object' ? remote : {}),
+            bookingForm: preservedBookingForm
+          }
         });
       } catch (error) {
         logger.warn(`[Calendars Controller] Update calendario GHL falló, queda pendiente: ${error.message}`);

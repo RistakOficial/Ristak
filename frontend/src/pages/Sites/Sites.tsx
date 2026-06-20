@@ -198,7 +198,7 @@ type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
 type SitesAnalyticsSiteType = 'sites' | 'forms' | 'videos'
 type LibraryViewMode = 'gallery' | 'list' | 'table'
-type LibraryFolderSource = 'site_embed' | 'html' | 'video_gate' | 'manual'
+type LibraryFolderSource = 'site_embed' | 'html' | 'video_gate' | 'calendar' | 'manual'
 type LibraryFolderDefinition = SiteLibraryFolder & {
   system?: boolean
   source?: LibraryFolderSource
@@ -216,6 +216,7 @@ const SITE_LIBRARY_ROOT_ID = '__root__'
 const SITE_FORMS_FOLDER_ID = 'system-site-forms'
 const HTML_FORMS_FOLDER_ID = 'system-html-forms'
 const VIDEO_FORMS_FOLDER_ID = 'system-video-forms'
+const CALENDAR_FORMS_FOLDER_ID = 'system-calendar-forms'
 const SYSTEM_FORM_FOLDERS: LibraryFolderDefinition[] = [
   {
     id: SITE_FORMS_FOLDER_ID,
@@ -249,6 +250,17 @@ const SYSTEM_FORM_FOLDERS: LibraryFolderDefinition[] = [
     system: true,
     source: 'video_gate',
     description: 'Formularios que se abren dentro de videos.'
+  },
+  {
+    id: CALENDAR_FORMS_FOLDER_ID,
+    name: 'Formularios de calendarios',
+    section: 'forms',
+    sortOrder: -5,
+    createdAt: '',
+    updatedAt: '',
+    system: true,
+    source: 'calendar',
+    description: 'Formulario base y formularios usados para agendar citas.'
   }
 ]
 type CreateFlow =
@@ -2451,7 +2463,7 @@ const normalizeLibraryFolderId = (value: unknown) =>
 
 const getSiteLibrarySource = (site: PublicSite): LibraryFolderSource => {
   const source = normalizeLibraryFolderId(site.theme?.librarySource)
-  if (source === 'site_embed' || source === 'html' || source === 'video_gate' || source === 'manual') return source
+  if (source === 'site_embed' || source === 'html' || source === 'video_gate' || source === 'calendar' || source === 'manual') return source
   if (site.theme?.importedHtmlSource || site.theme?.importedHtml) return 'html'
   return 'manual'
 }
@@ -2460,6 +2472,7 @@ const getDefaultLibraryFolderId = (site: PublicSite) => {
   if (!isFormSite(site)) return ''
   const source = getSiteLibrarySource(site)
   if (source === 'video_gate') return VIDEO_FORMS_FOLDER_ID
+  if (source === 'calendar') return CALENDAR_FORMS_FOLDER_ID
   if (source === 'html') return HTML_FORMS_FOLDER_ID
   if (source === 'site_embed') return SITE_FORMS_FOLDER_ID
   return ''
@@ -28669,12 +28682,21 @@ const CalendarBlockDesignControls: React.FC<{
       <div className={styles.panelSubheader}>Dias y horarios</div>
       <div className={styles.twoColumn}>
         <ColorField
+          label="Fondo controles"
+          value={getSettingHex(settings, 'calendarControlBg', 'transparent')}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarControlBg: value })}
+          onCommit={onSave}
+        />
+        <ColorField
           label="Fondo horario"
           value={getSettingHex(settings, 'calendarSlotBg', 'transparent')}
           allowGradient={false}
           onChange={(value) => onPatchSettings({ calendarSlotBg: value })}
           onCommit={onSave}
         />
+      </div>
+      <div className={styles.twoColumn}>
         <ColorField
           label="Texto horario"
           value={getSettingHex(settings, 'calendarSlotText', defaultAccent)}
@@ -28682,8 +28704,6 @@ const CalendarBlockDesignControls: React.FC<{
           onChange={(value) => onPatchSettings({ calendarSlotText: value })}
           onCommit={onSave}
         />
-      </div>
-      <div className={styles.twoColumn}>
         <ColorField
           label="Texto activo"
           value={getSettingHex(settings, 'calendarSelectedText', onAccentFor(defaultAccent))}
@@ -28691,6 +28711,8 @@ const CalendarBlockDesignControls: React.FC<{
           onChange={(value) => onPatchSettings({ calendarSelectedText: value })}
           onCommit={onSave}
         />
+      </div>
+      <div className={styles.twoColumn}>
         <DimensionField
           label="Radio horarios"
           value={getSettingNumber(settings, 'calendarSlotRadius', 8, 0, 32)}
