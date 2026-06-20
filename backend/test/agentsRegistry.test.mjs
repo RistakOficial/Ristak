@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { AGENT_CATEGORIES, getAgentCategory, listAgentCategories } from '../src/agents/registry.js'
 import { invokeController, toToolResult } from '../src/agents/invokeController.js'
-import { buildInputItems, inferAgentCategoryFromMessage } from '../src/agents/runner.js'
+import { buildInputItems, inferAgentCategoryFromMessage, resolveAgentRouting } from '../src/agents/runner.js'
 
 const EXPECTED_CATEGORIES = ['citas', 'pagos', 'redes', 'anuncios', 'contactos', 'costos', 'general']
 
@@ -93,6 +93,10 @@ test('el ruteo inicial detecta la especialidad desde el primer mensaje', () => {
     'anuncios'
   )
   assert.equal(
+    inferAgentCategoryFromMessage({ latestUserMessage: 'Dame reporte de anuncios comparado contra pagos y ventas atribuidas' }),
+    'anuncios'
+  )
+  assert.equal(
     inferAgentCategoryFromMessage({ latestUserMessage: 'Cóbrale 500 a Juan con link de pago' }),
     'pagos'
   )
@@ -115,6 +119,35 @@ test('el ruteo inicial detecta la especialidad desde el primer mensaje', () => {
   assert.equal(
     inferAgentCategoryFromMessage({ latestUserMessage: 'Hola' }),
     null
+  )
+})
+
+test('la categoría explícita no se sobrescribe con inferencia del primer mensaje', () => {
+  assert.deepEqual(
+    resolveAgentRouting({ categoryId: 'anuncios', inferredCategoryId: 'pagos' }),
+    {
+      explicitAuto: false,
+      requestedCategoryId: 'anuncios',
+      inferredCategoryId: 'pagos',
+      entryCategory: 'anuncios',
+      entryAgentName: 'anuncios'
+    }
+  )
+
+  assert.deepEqual(
+    resolveAgentRouting({ categoryId: 'general', inferredCategoryId: 'anuncios' }),
+    {
+      explicitAuto: false,
+      requestedCategoryId: 'general',
+      inferredCategoryId: 'anuncios',
+      entryCategory: 'general',
+      entryAgentName: 'general'
+    }
+  )
+
+  assert.equal(
+    resolveAgentRouting({ categoryId: 'auto', inferredCategoryId: 'anuncios' }).entryAgentName,
+    'anuncios'
   )
 })
 

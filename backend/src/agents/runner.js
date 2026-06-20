@@ -235,13 +235,15 @@ async function recordToolSteps(agentRun, newItems = []) {
 
 const SPECIALIST_HANDOFF_RULES = `## Si el tema no es tuyo
 Tienes herramientas transfer_to_<agente> para pasar la conversación a otro especialista.
-Si el mensaje del usuario NO corresponde a tu especialidad (ej. te preguntan de pagos y tú eres el de citas), NO intentes resolverlo ni digas que no puedes: transfiere de inmediato al especialista correcto y no escribas nada más. Para temas que cruzan varias áreas, transfiere a "general".`
+Si el mensaje del usuario NO corresponde a tu especialidad (ej. te preguntan de pagos y tú eres el de citas), NO intentes resolverlo ni digas que no puedes: transfiere de inmediato al especialista correcto y no escribas nada más.
+Excepción importante: si eres el agente de anuncios, pagos, ventas, ingresos, ROAS, ROI, CAC y rentabilidad sí son tuyos cuando están ligados a campañas/anuncios o atribución publicitaria.
+Para temas que cruzan varias áreas sin una categoría dominante, transfiere a "general".`
 
 const TRIAGE_INSTRUCTIONS = `Eres el recepcionista de los agentes IA de Ristak. Tu ÚNICO trabajo es leer el último mensaje del usuario (con el contexto de la conversación) y transferirlo al especialista correcto con la herramienta transfer_to_<agente>:
 - citas: agendar, reprogramar, cancelar o consultar citas, calendarios y horarios disponibles.
 - pagos: registrar/editar pagos, links de cobro, parcialidades, ingresos y transacciones.
 - contactos: crear, editar, buscar, depurar o consultar contactos (CRM).
-- anuncios: métricas y análisis de campañas de Meta Ads.
+- anuncios: métricas y análisis de campañas de Meta Ads, incluyendo pagos/ventas/ingresos atribuidos, ROAS, ROI, CAC, retorno y rentabilidad publicitaria.
 - redes: perfiles sociales conectados, bandeja y conversaciones de Facebook/Instagram.
 - costos: comisiones y costos variables de los reportes.
 - general: preguntas que cruzan varias áreas, dudas del negocio en general o cualquier cosa que no encaje arriba.
@@ -249,6 +251,7 @@ const TRIAGE_INSTRUCTIONS = `Eres el recepcionista de los agentes IA de Ristak. 
 Reglas:
 - SIEMPRE transfiere; no respondas tú el fondo de la pregunta.
 - Solo contesta tú directamente saludos ("hola") o "¿qué puedes hacer?": ahí preséntate en 2-3 líneas con las áreas disponibles, en español.
+- Si el mensaje mezcla anuncios con pagos, ventas, ingresos, retorno, ROAS, ROI, CAC o rentabilidad, transfiere a anuncios.
 - En caso de duda entre dos especialistas, usa general.`
 
 function normalizeRoutingText(value) {
@@ -309,6 +312,10 @@ export function inferAgentCategoryFromMessage({ latestUserMessage = '', messages
     scores.anuncios += 1
   }
 
+  if (scores.anuncios > 0 && scores.pagos > 0 && /\b(pagos?|ventas?|ingresos?|roas|roi|retorno|rentabilidad|cac|atribucion|atribución|campan(?:a|as)|campañas?|anuncios?|ads|publicidad)\b/.test(text)) {
+    scores.anuncios += 1
+  }
+
   const ranked = Object.entries(scores)
     .filter(([, score]) => score > 0)
     .sort((a, b) => b[1] - a[1])
@@ -317,6 +324,25 @@ export function inferAgentCategoryFromMessage({ latestUserMessage = '', messages
   if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return 'general'
 
   return ranked[0][0]
+}
+
+export function resolveAgentRouting({ categoryId = 'auto', inferredCategoryId = null } = {}) {
+  const requestedCategory = getAgentCategory(categoryId)
+  const explicitAuto = AUTO_CATEGORY_IDS.has(String(categoryId || 'auto').trim().toLowerCase())
+  const requestedCategoryId = explicitAuto ? 'auto' : (requestedCategory?.id || 'auto')
+  const canUseInferred = explicitAuto || !requestedCategory
+  const inferredCategory = canUseInferred && inferredCategoryId && inferredCategoryId !== 'general'
+    ? getAgentCategory(inferredCategoryId)
+    : null
+  const entryCategory = inferredCategory?.id || requestedCategory?.id || 'auto'
+
+  return {
+    explicitAuto,
+    requestedCategoryId,
+    inferredCategoryId: inferredCategoryId || null,
+    entryCategory,
+    entryAgentName: entryCategory === 'auto' ? 'triage' : entryCategory
+  }
 }
 
 /**
@@ -408,26 +434,20 @@ export async function runSpecializedAgentReply({ apiKey, category: categoryId, m
       webSearchEnabled
     })
 
-    const explicitAuto = AUTO_CATEGORY_IDS.has(String(categoryId || 'auto').trim().toLowerCase())
-    const inferredCategory = inferredCategoryId && inferredCategoryId !== 'general'
-      ? getAgentCategory(inferredCategoryId)
-      : null
-    const entryAgent = inferredCategory ||
-      (requestedCategory && requestedCategory.id !== 'general' ? byCategory[requestedCategory.id] : null) ||
-      (requestedCategory ? byCategory[requestedCategory.id] : triage)
-    const entryCategory = inferredCategory?.id || requestedCategory?.id || 'auto'
-    const requestedCategoryId = explicitAuto ? 'auto' : (requestedCategory?.id || 'auto')
+    const route = resolveAgentRouting({ categoryId, inferredCategoryId })
+    const entryAgent = route.entryAgentName === 'triage' ? triage : byCategory[route.entryAgentName]
+    const entryCategory = route.entryCategory
 
     await updateAgentRun(agentRun, {
       domain: entryCategory,
       action: 'specialized_chat',
       model,
-      route: { engine: 'openai-agents-sdk', entry: entryAgent.name, requested: requestedCategoryId, inferred: inferredCategoryId || null, webSearchEnabled }
+      route: { engine: 'openai-agents-sdk', entry: entryAgent.name, requested: route.requestedCategoryId, inferred: inferredCategoryId || null, webSearchEnabled }
     })
     await recordAgentStep(agentRun, {
       stepType: 'route',
       status: 'completed',
-      output: { engine: 'openai-agents-sdk', entry: entryAgent.name, requested: requestedCategoryId, inferred: inferredCategoryId || null, model, webSearchEnabled }
+      output: { engine: 'openai-agents-sdk', entry: entryAgent.name, requested: route.requestedCategoryId, inferred: inferredCategoryId || null, model, webSearchEnabled }
     })
 
     const runner = new Runner({

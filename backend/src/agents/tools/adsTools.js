@@ -4,8 +4,12 @@ import { db } from '../../config/database.js'
 import { getMetaConfig } from '../../services/metaAdsService.js'
 import { getAccountTimezone } from '../../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../../utils/hiddenContactsFilter.js'
+import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../../utils/paymentMode.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
+const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
+  .map(status => `'${String(status).replace(/'/g, "''")}'`)
+  .join(', ')
 
 function roundMoney(value) {
   const number = Number(value || 0)
@@ -28,6 +32,15 @@ function validateDateOnly(value, label) {
 
 function escapeSqlLiteral(value) {
   return String(value || 'UTC').replace(/'/g, "''")
+}
+
+function validPaymentPredicate(alias = 'p') {
+  const prefix = alias ? `${alias}.` : ''
+  return `
+    COALESCE(${prefix}amount, 0) > 0
+    AND LOWER(COALESCE(${prefix}status, '')) IN (${SUCCESS_PAYMENT_STATUS_SQL})
+    AND ${nonTestPaymentCondition(alias)}
+  `
 }
 
 function sqlDateExpression(column, timezone = 'UTC') {
@@ -111,16 +124,28 @@ export async function getCampaignReturn({ startDate, endDate, groupBy = 'campaig
           AND ${metaDate} <= ?
         ${groupByClause}
       ),
+      valid_payments AS (
+        SELECT
+          p.contact_id,
+          COUNT(*) AS payment_count,
+          COALESCE(SUM(p.amount), 0) AS paid_revenue
+        FROM payments p
+        WHERE p.contact_id IS NOT NULL
+          AND p.contact_id != ''
+          AND ${validPaymentPredicate('p')}
+        GROUP BY p.contact_id
+      ),
       attributed_contacts AS (
         SELECT DISTINCT
           ${group.attributedKey} AS group_id,
           c.id AS contact_id,
-          COALESCE(c.purchases_count, 0) AS purchases_count,
-          COALESCE(c.total_paid, 0) AS total_paid
+          COALESCE(vp.payment_count, 0) AS payment_count,
+          COALESCE(vp.paid_revenue, 0) AS paid_revenue
         FROM contacts c
         JOIN meta_ads ma
           ON ma.ad_id = c.attribution_ad_id
          AND ${joinedMetaDate} = ${contactCreatedDate}
+        LEFT JOIN valid_payments vp ON vp.contact_id = c.id
         WHERE ${contactWhere.join(' AND ')}
       ),
       attributed_results AS (
@@ -142,11 +167,11 @@ export async function getCampaignReturn({ startDate, endDate, groupBy = 'campaig
               WHERE a2.contact_id = ac.contact_id
                 AND LOWER(COALESCE(a2.appointment_status, a2.status, '')) IN ('showed', 'show', 'attended', 'completed', 'complete')
             )
-            OR ac.purchases_count > 0
-            OR ac.total_paid > 0
+            OR ac.payment_count > 0
           THEN ac.contact_id END) AS attendances,
-          COUNT(DISTINCT CASE WHEN ac.purchases_count > 0 OR ac.total_paid > 0 THEN ac.contact_id END) AS sales,
-          COALESCE(SUM(ac.total_paid), 0) AS attributed_revenue
+          COUNT(DISTINCT CASE WHEN ac.payment_count > 0 THEN ac.contact_id END) AS sales,
+          COALESCE(SUM(ac.payment_count), 0) AS paid_payments,
+          COALESCE(SUM(ac.paid_revenue), 0) AS attributed_revenue
         FROM attributed_contacts ac
         GROUP BY ac.group_id
       )
@@ -166,6 +191,7 @@ export async function getCampaignReturn({ startDate, endDate, groupBy = 'campaig
         COALESCE(attributed_results.appointments, 0) AS appointments,
         COALESCE(attributed_results.attendances, 0) AS attendances,
         COALESCE(attributed_results.sales, 0) AS sales,
+        COALESCE(attributed_results.paid_payments, 0) AS paid_payments,
         COALESCE(attributed_results.attributed_revenue, 0) AS attributed_revenue,
         COALESCE(attributed_results.attributed_revenue, 0) - spend.spend AS profit,
         CASE WHEN spend.spend > 0 THEN COALESCE(attributed_results.attributed_revenue, 0) / spend.spend ELSE NULL END AS roas,
@@ -195,6 +221,7 @@ export async function getCampaignReturn({ startDate, endDate, groupBy = 'campaig
     appointments: Number(row.appointments || 0),
     attendances: Number(row.attendances || 0),
     sales: Number(row.sales || 0),
+    paidPayments: Number(row.paid_payments || 0),
     attributedRevenue: roundMoney(row.attributed_revenue),
     profit: roundMoney(row.profit),
     roas: roundRatio(row.roas),
@@ -207,7 +234,7 @@ export async function getCampaignReturn({ startDate, endDate, groupBy = 'campaig
     startDate: safeStartDate,
     endDate: safeEndDate,
     groupBy: safeGroupBy,
-    attributionModel: 'contacts.attribution_ad_id = meta_ads.ad_id, validando que el anuncio existiera el mismo día local en que se creó el contacto; ingresos = contacts.total_paid del contacto atribuido.',
+    attributionModel: 'contacts.attribution_ad_id = meta_ads.ad_id, validando que el anuncio existiera el mismo día local en que se creó el contacto; ventas/ingresos = payments exitosos en vivo del contacto atribuido, sumados como LTV y atribuidos al día de creación del contacto.',
     total: results.length,
     results
   }
