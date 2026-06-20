@@ -205,7 +205,7 @@ const getGoogleFailureHelp = (message = '') => {
       steps: [
         'Genera una llave JSON nueva desde Keys del Service Account.',
         'Pega el JSON completo, incluyendo private_key y client_email.',
-        'No pegues un OAuth Client ni una API key; Ristak necesita Service Account JSON.'
+        'No pegues un cliente de autorización ni una API key; Ristak necesita Service Account JSON.'
       ]
     }
   }
@@ -1761,7 +1761,7 @@ export const CalendarsConfiguration: React.FC = () => {
                       <Calendar size={15} />
                     </span>
                     <div>
-                      <strong>{isCentralGoogleOAuth ? 'OAuth de Google' : 'Service Account'}</strong>
+                      <strong>{isCentralGoogleOAuth ? 'Conexión segura de Google' : 'Service Account'}</strong>
                       <span>{googleAccountLabel}</span>
                     </div>
                   </div>
@@ -2173,7 +2173,7 @@ export const CalendarsConfiguration: React.FC = () => {
               <div className={pageStyles.connectedMain}>
                 <div className={pageStyles.connectedTitle}>
                   <h3>{isConnected ? accountName : 'Conectar con Google'}</h3>
-                  {isConnected && <span>OAuth</span>}
+                  {isConnected && <span>Conexión segura</span>}
                 </div>
                 <p>{isConnected ? accountEmail : 'Te vamos a llevar al portal seguro para autorizar Google Calendar con los permisos correctos.'}</p>
               </div>
@@ -2258,7 +2258,7 @@ export const CalendarsConfiguration: React.FC = () => {
                   <span>
                     {canConnect
                       ? 'Al continuar, Google te pedirá permiso para leer calendarios y crear eventos. La autorización se guarda cifrada en el portal.'
-                      : 'Primero configura Google OAuth en el portal de Ristak para poder conectar calendarios desde las instalaciones.'}
+                      : 'Primero configura Google Calendar en el portal de Ristak para poder conectar calendarios desde las instalaciones.'}
                   </span>
                 </div>
 
@@ -2472,7 +2472,7 @@ export const CalendarsConfiguration: React.FC = () => {
               <div className={pageStyles.connectionHeader}>
                 <div>
                   <h2>{isConnected ? 'Editar Google Calendar' : 'Conectar Google Calendar'}</h2>
-                  <p>Service Account sin OAuth.</p>
+                  <p>Conexión con Service Account.</p>
                 </div>
                 <span className={`${pageStyles.statusPill} ${isConnected ? pageStyles.statusWarn : pageStyles.statusOff}`}>
                   {isConnected ? <Info size={15} /> : <XCircle size={15} />}

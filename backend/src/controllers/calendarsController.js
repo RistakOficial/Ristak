@@ -380,7 +380,7 @@ export async function revealGoogleCalendarServiceAccount(req, res) {
     if (isLicenseEnforced()) {
       return res.status(404).json({
         success: false,
-        error: 'Esta instalación usa OAuth central de Google Calendar.'
+        error: 'Esta instalación usa la conexión segura de Google Calendar desde el portal.'
       });
     }
 
@@ -408,7 +408,7 @@ export async function saveGoogleCalendarIntegration(req, res) {
     if (isLicenseEnforced()) {
       return res.status(400).json({
         success: false,
-        error: 'Esta instalación usa OAuth central. Conecta Google Calendar desde el botón de Google.'
+        error: 'Esta instalación usa la conexión segura del portal. Conecta Google Calendar desde el botón de Google.'
       });
     }
 

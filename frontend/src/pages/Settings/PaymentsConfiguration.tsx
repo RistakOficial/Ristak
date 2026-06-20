@@ -164,7 +164,7 @@ function writeLocalJson(key: string, value: unknown) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value))
   } catch {
-    // Si storage falla, el flujo OAuth sigue por query params.
+    // Si storage falla, el flujo de conexión sigue por query params.
   }
 }
 
@@ -514,7 +514,7 @@ export const PaymentsConfiguration: React.FC = () => {
     name: 'Stripe',
     description: stripeConfig?.configured
       ? `Cobra con tarjeta por Stripe Connect (${stripeConfig.mode === 'live' ? 'en vivo' : 'prueba'}).`
-      : 'Conecta Stripe con OAuth para crear links de pago sin copiar llaves manualmente.',
+      : 'Conecta Stripe para crear links de pago sin copiar llaves manualmente.',
     status: stripeConfig?.configured ? 'connected' : 'available'
   }), [stripeConfig?.configured, stripeConfig?.mode])
 
@@ -869,7 +869,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const handleConnectStripe = async () => {
     if (!stripeDualOauthReady) {
-      showToast('warning', 'Falta preparar Stripe Connect', 'Configura OAuth de Stripe para modo prueba y modo en vivo en el Installer.')
+      showToast('warning', 'Falta preparar Stripe Connect', 'Configura Stripe Connect para modo prueba y modo en vivo en el Installer.')
       return
     }
 
@@ -1944,7 +1944,7 @@ export const PaymentsConfiguration: React.FC = () => {
             ) : (
               <Badge variant="info">
                 <KeyRound size={14} />
-                Listo para OAuth
+                Listo para conectar
               </Badge>
             )}
           </div>
@@ -1995,7 +1995,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     : stripeOAuthConnected
                       ? `Ristak tiene conectado el modo ${stripeConfig?.mode === 'live' ? 'en vivo' : 'prueba'}. Completa ambos modos para evitar confusión al probar.`
                     : stripeConnected
-                      ? 'Esta instalación usa llaves guardadas manualmente. Puedes reconectar con OAuth para automatizar cuenta y webhook.'
+                      ? 'Esta instalación usa llaves guardadas manualmente. Puedes reconectar Stripe para automatizar cuenta y webhook.'
                       : 'Al hacer clic se abrirá Stripe primero en modo prueba; al terminar se abrirá de nuevo para modo en vivo.'}
                 </p>
               </div>
@@ -2047,15 +2047,6 @@ export const PaymentsConfiguration: React.FC = () => {
                   {!stripeTestOauthReady && !stripeLiveOauthReady ? ' y ' : ''}
                   {!stripeLiveOauthReady ? 'modo en vivo' : ''}
                   .
-                </span>
-              </div>
-            )}
-
-            {stripeMode === 'test' && stripeModeOauthReady && !stripeOAuthConnected && (
-              <div className={styles.inlineWarning}>
-                <AlertTriangle size={16} />
-                <span>
-                  Modo prueba usa el Test Client ID de Stripe. Ese callback también debe estar autorizado en Stripe Dashboard con test mode activo.
                 </span>
               </div>
             )}

@@ -813,7 +813,7 @@ async function callStripeOAuthEndpoint(url, secretKey, params) {
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
-    const error = new Error(data?.error_description || data?.error || 'Stripe no pudo completar OAuth.')
+    const error = new Error(data?.error_description || data?.error || 'Stripe no pudo completar la conexión.')
     error.status = response.status || 400
     throw error
   }

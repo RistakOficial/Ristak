@@ -93,7 +93,7 @@ function renderAuthorizeForm(req, res, error = '') {
   <body>
     <main>
       <h1>Autorizar acceso a Ristak</h1>
-      <p>Autoriza este conector usando tu API token de Ristak. El token se valida y se cambia por credenciales OAuth para este cliente.</p>
+      <p>Autoriza este conector usando tu API token de Ristak. El token se valida y se cambia por credenciales seguras para este cliente.</p>
       ${error ? `<div class="error">${error}</div>` : ''}
       <form method="post" action="/api/oauth/authorize">
         ${hiddenInputs}
@@ -159,7 +159,7 @@ router.post('/api/oauth/authorize', async (req, res) => {
 
     const client = await getOAuthClient(clientId)
     if (!client || !client.redirectUris.includes(redirectUri)) {
-      return renderAuthorizeForm(req, res, 'Cliente OAuth inválido o redirect_uri no registrado.')
+      return renderAuthorizeForm(req, res, 'Cliente inválido o dirección de regreso no registrada.')
     }
 
     if (!codeChallenge || codeChallengeMethod !== 'S256') {
@@ -186,7 +186,7 @@ router.post('/api/oauth/authorize', async (req, res) => {
     res.redirect(target.toString())
   } catch (error) {
     logger.error('Error en OAuth authorize:', error)
-    res.status(500).send('Error interno autorizando OAuth')
+    res.status(500).send('Error interno autorizando el conector')
   }
 })
 
