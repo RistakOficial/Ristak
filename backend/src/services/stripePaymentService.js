@@ -55,7 +55,9 @@ const STRIPE_WEBHOOK_EVENTS = [
   'charge.refunded',
   'refund.created',
   'invoice.payment_succeeded',
-  'invoice.payment_failed'
+  'invoice.payment_failed',
+  'customer.subscription.updated',
+  'customer.subscription.deleted'
 ]
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
@@ -1493,6 +1495,477 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
   }
 
   return nextStatus
+}
+
+function getRistakSubscriptionIdFromStripeSubscription(subscription = {}) {
+  return cleanString(subscription?.metadata?.ristak_subscription_id)
+}
+
+function getRistakSubscriptionIdFromInvoice(invoice = {}) {
+  return cleanString(invoice?.metadata?.ristak_subscription_id)
+    || cleanString(invoice?.subscription_details?.metadata?.ristak_subscription_id)
+    || cleanString(invoice?.parent?.subscription_details?.metadata?.ristak_subscription_id)
+}
+
+function extractInvoiceSubscriptionId(invoice = {}) {
+  return extractStripeObjectId(invoice?.subscription)
+    || extractStripeObjectId(invoice?.parent?.subscription_details?.subscription)
+}
+
+function mapStripeSubscriptionStatus(status, fallback = 'active') {
+  const normalized = cleanString(status).toLowerCase()
+  if (normalized === 'active') return 'active'
+  if (normalized === 'trialing') return 'trialing'
+  if (normalized === 'past_due' || normalized === 'unpaid') return 'past_due'
+  if (normalized === 'paused') return 'paused'
+  if (normalized === 'canceled' || normalized === 'cancelled') return 'cancelled'
+  if (normalized === 'incomplete' || normalized === 'incomplete_expired') return 'incomplete'
+  return fallback
+}
+
+function getInvoiceLinePeriod(invoice = {}) {
+  const line = Array.isArray(invoice?.lines?.data) ? invoice.lines.data[0] : null
+  return {
+    start: timestampToIso(line?.period?.start),
+    end: timestampToIso(line?.period?.end)
+  }
+}
+
+async function insertSubscriptionPaymentFromInvoice(invoice, subscriptionRow, nextStatus) {
+  if (!subscriptionRow || nextStatus !== 'paid') return null
+
+  const paymentIntentId = extractInvoicePaymentIntentId(invoice)
+  const invoiceId = cleanString(invoice?.id)
+  if (!paymentIntentId && !invoiceId) return null
+
+  const existing = await db.get(
+    `SELECT id
+     FROM payments
+     WHERE (stripe_payment_intent_id IS NOT NULL AND stripe_payment_intent_id = ?)
+        OR (reference IS NOT NULL AND reference = ?)
+     LIMIT 1`,
+    [paymentIntentId || '', invoiceId || '']
+  )
+  if (existing) return existing.id
+
+  const currency = normalizeCurrency(invoice.currency || subscriptionRow.currency)
+  const amount = fromStripeAmount(invoice.amount_paid || invoice.amount_due || invoice.total || 0, currency)
+  const paidAt = timestampToIso(invoice.status_transitions?.paid_at) || new Date().toISOString()
+  const paymentId = createId('stripe_subscription_payment')
+  const metadata = {
+    source: 'stripe_subscription_invoice',
+    ristakSubscriptionId: subscriptionRow.id,
+    stripeSubscriptionId: subscriptionRow.stripe_subscription_id || extractInvoiceSubscriptionId(invoice),
+    stripeInvoiceId: invoiceId,
+    stripeCustomerId: subscriptionRow.stripe_customer_id || extractStripeObjectId(invoice.customer)
+  }
+
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, public_payment_id, payment_url,
+      stripe_payment_intent_id, paid_at, metadata_json, date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      paymentId,
+      subscriptionRow.contact_id || null,
+      amount,
+      currency,
+      'paid',
+      'stripe_subscription',
+      subscriptionRow.payment_mode || 'test',
+      'stripe',
+      invoiceId || paymentIntentId,
+      subscriptionRow.name || 'Suscripción',
+      `Cobro recurrente de ${subscriptionRow.name || 'suscripción'}`,
+      null,
+      invoice.hosted_invoice_url || null,
+      paymentIntentId || null,
+      paidAt,
+      JSON.stringify(metadata),
+      paidAt
+    ]
+  )
+
+  if (subscriptionRow.contact_id) {
+    updateSingleContactStats(subscriptionRow.contact_id).catch((error) => {
+      logger.warn(`No se pudieron actualizar stats del contacto por suscripción Stripe ${subscriptionRow.id}: ${error.message}`)
+    })
+  }
+
+  return paymentId
+}
+
+async function updateSubscriptionFromInvoice(invoice, nextStatus) {
+  const ristakSubscriptionId = getRistakSubscriptionIdFromInvoice(invoice)
+  const stripeSubscriptionId = extractInvoiceSubscriptionId(invoice)
+  if (!ristakSubscriptionId && !stripeSubscriptionId) return null
+
+  const period = getInvoiceLinePeriod(invoice)
+  const status = nextStatus === 'paid' ? 'active' : 'past_due'
+  const filters = []
+  const params = []
+
+  if (ristakSubscriptionId) {
+    filters.push('id = ?')
+    params.push(ristakSubscriptionId)
+  }
+
+  if (stripeSubscriptionId) {
+    filters.push('stripe_subscription_id = ?')
+    params.push(stripeSubscriptionId)
+  }
+
+  const existing = await db.get(
+    `SELECT *
+     FROM subscriptions
+     WHERE ${filters.join(' OR ')}
+     LIMIT 1`,
+    params
+  )
+  if (!existing) return null
+
+  await db.run(
+    `UPDATE subscriptions
+     SET status = ?,
+         stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+         current_period_start = COALESCE(?, current_period_start),
+         current_period_end = COALESCE(?, current_period_end),
+         next_run_at = COALESCE(?, next_run_at),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      status,
+      stripeSubscriptionId || null,
+      period.start,
+      period.end,
+      period.end,
+      existing.id
+    ]
+  )
+
+  await insertSubscriptionPaymentFromInvoice(invoice, {
+    ...existing,
+    status,
+    stripe_subscription_id: stripeSubscriptionId || existing.stripe_subscription_id
+  }, nextStatus)
+
+  return status
+}
+
+async function updateSubscriptionFromStripeSubscription(subscription) {
+  const ristakSubscriptionId = getRistakSubscriptionIdFromStripeSubscription(subscription)
+  const stripeSubscriptionId = extractStripeObjectId(subscription?.id)
+  if (!ristakSubscriptionId && !stripeSubscriptionId) return null
+
+  const filters = []
+  const params = []
+
+  if (ristakSubscriptionId) {
+    filters.push('id = ?')
+    params.push(ristakSubscriptionId)
+  }
+
+  if (stripeSubscriptionId) {
+    filters.push('stripe_subscription_id = ?')
+    params.push(stripeSubscriptionId)
+  }
+
+  const existing = await db.get(
+    `SELECT id
+     FROM subscriptions
+     WHERE ${filters.join(' OR ')}
+     LIMIT 1`,
+    params
+  )
+  if (!existing) return null
+
+  const nextStatus = mapStripeSubscriptionStatus(subscription.status)
+  await db.run(
+    `UPDATE subscriptions
+     SET status = ?,
+         stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+         current_period_start = COALESCE(?, current_period_start),
+         current_period_end = COALESCE(?, current_period_end),
+         next_run_at = COALESCE(?, next_run_at),
+         cancelled_at = CASE WHEN ? = 'cancelled' THEN COALESCE(cancelled_at, CURRENT_TIMESTAMP) ELSE cancelled_at END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      nextStatus,
+      stripeSubscriptionId || null,
+      timestampToIso(subscription.current_period_start),
+      timestampToIso(subscription.current_period_end),
+      timestampToIso(subscription.current_period_end),
+      nextStatus,
+      existing.id
+    ]
+  )
+
+  return nextStatus
+}
+
+export async function createStripeRecurringSubscription(input = {}) {
+  const { stripe, config, requestOptions } = await getStripeClient()
+  const contactId = cleanString(input.contactId)
+  const name = cleanString(input.name) || 'Suscripción'
+  const amount = Number(input.amount)
+  const currency = normalizeCurrency(input.currency || config.defaultCurrency)
+  const interval = cleanString(input.intervalType || 'monthly').toLowerCase()
+  const intervalCount = Number.parseInt(input.intervalCount, 10) || 1
+  const ristakSubscriptionId = cleanString(input.ristakSubscriptionId)
+
+  if (!contactId) {
+    const error = new Error('Selecciona un contacto para crear una suscripción automática en Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  if (!['daily', 'weekly', 'monthly', 'yearly'].includes(interval)) {
+    const error = new Error('Frecuencia de suscripción no soportada por Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  const savedMethod = await resolveStripeSavedMethod(contactId, input.paymentMethodId, config)
+  if (!savedMethod) {
+    const error = new Error('Este contacto no tiene una tarjeta guardada para activar la suscripción automática.')
+    error.status = 422
+    throw error
+  }
+
+  const stripeCustomerId = await ensureStripeCustomerForContact(stripe, contactId, input, requestOptions)
+  const metadata = {
+    ristak_subscription_id: ristakSubscriptionId,
+    ristak_contact_id: contactId,
+    source: 'ristak_subscription'
+  }
+
+  await stripe.customers.update(
+    stripeCustomerId,
+    {
+      invoice_settings: {
+        default_payment_method: savedMethod.stripe_payment_method_id
+      }
+    },
+    requestOptions
+  )
+
+  const product = await stripe.products.create(
+    {
+      name,
+      description: cleanString(input.description) || undefined,
+      metadata
+    },
+    requestOptions
+  )
+
+  const price = await stripe.prices.create(
+    {
+      currency: currency.toLowerCase(),
+      unit_amount: toStripeAmount(amount, currency),
+      recurring: {
+        interval: {
+          daily: 'day',
+          weekly: 'week',
+          monthly: 'month',
+          yearly: 'year'
+        }[interval],
+        interval_count: Math.max(1, intervalCount)
+      },
+      product: product.id,
+      metadata
+    },
+    requestOptions
+  )
+
+  const startDate = cleanString(input.startDate)
+  const startTimestamp = startDate ? Math.floor(new Date(startDate).getTime() / 1000) : 0
+  const nowTimestamp = Math.floor(Date.now() / 1000)
+  const subscriptionParams = {
+    customer: stripeCustomerId,
+    items: [{ price: price.id }],
+    default_payment_method: savedMethod.stripe_payment_method_id,
+    collection_method: 'charge_automatically',
+    metadata,
+    payment_settings: {
+      save_default_payment_method: 'on_subscription'
+    }
+  }
+
+  if (Number.isFinite(startTimestamp) && startTimestamp > nowTimestamp + 300) {
+    subscriptionParams.trial_end = startTimestamp
+  }
+
+  const subscription = await stripe.subscriptions.create(subscriptionParams, requestOptions)
+
+  return {
+    stripeCustomerId,
+    stripeSubscriptionId: subscription.id,
+    stripeProductId: product.id,
+    stripePriceId: price.id,
+    stripePaymentMethodId: savedMethod.stripe_payment_method_id,
+    paymentMode: config.mode,
+    status: mapStripeSubscriptionStatus(subscription.status),
+    currentPeriodStart: timestampToIso(subscription.current_period_start),
+    currentPeriodEnd: timestampToIso(subscription.current_period_end),
+    nextRunAt: timestampToIso(subscription.current_period_end)
+  }
+}
+
+export async function updateStripeRecurringSubscription(input = {}) {
+  const { stripe, config, requestOptions } = await getStripeClient()
+  const stripeSubscriptionId = extractStripeObjectId(input.stripeSubscriptionId)
+  const name = cleanString(input.name) || 'Suscripción'
+  const amount = Number(input.amount)
+  const currency = normalizeCurrency(input.currency || config.defaultCurrency)
+  const interval = cleanString(input.intervalType || 'monthly').toLowerCase()
+  const intervalCount = Number.parseInt(input.intervalCount, 10) || 1
+  const ristakSubscriptionId = cleanString(input.ristakSubscriptionId)
+
+  if (!stripeSubscriptionId) {
+    const error = new Error('No se encontró la suscripción de Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  if (!['daily', 'weekly', 'monthly', 'yearly'].includes(interval)) {
+    const error = new Error('Frecuencia de suscripción no soportada por Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  const subscription = await stripe.subscriptions.retrieve(
+    stripeSubscriptionId,
+    {
+      expand: ['items.data.price.product']
+    },
+    requestOptions
+  )
+  const item = subscription.items?.data?.[0]
+  if (!item?.id) {
+    const error = new Error('La suscripción de Stripe no tiene un precio editable.')
+    error.status = 422
+    throw error
+  }
+
+  const metadata = {
+    ristak_subscription_id: ristakSubscriptionId,
+    ristak_contact_id: cleanString(input.contactId),
+    source: 'ristak_subscription'
+  }
+  const currentProductId = extractStripeObjectId(item.price?.product)
+  let productId = currentProductId
+
+  if (productId) {
+    await stripe.products.update(
+      productId,
+      {
+        name,
+        description: cleanString(input.description) || undefined,
+        metadata
+      },
+      requestOptions
+    )
+  } else {
+    const product = await stripe.products.create(
+      {
+        name,
+        description: cleanString(input.description) || undefined,
+        metadata
+      },
+      requestOptions
+    )
+    productId = product.id
+  }
+
+  const price = await stripe.prices.create(
+    {
+      currency: currency.toLowerCase(),
+      unit_amount: toStripeAmount(amount, currency),
+      recurring: {
+        interval: {
+          daily: 'day',
+          weekly: 'week',
+          monthly: 'month',
+          yearly: 'year'
+        }[interval],
+        interval_count: Math.max(1, intervalCount)
+      },
+      product: productId,
+      metadata
+    },
+    requestOptions
+  )
+
+  const updated = await stripe.subscriptions.update(
+    stripeSubscriptionId,
+    {
+      items: [
+        {
+          id: item.id,
+          price: price.id
+        }
+      ],
+      proration_behavior: 'none',
+      metadata
+    },
+    requestOptions
+  )
+
+  return {
+    stripeSubscriptionId: updated.id,
+    stripeProductId: productId,
+    stripePriceId: price.id,
+    paymentMode: config.mode,
+    status: mapStripeSubscriptionStatus(updated.status),
+    currentPeriodStart: timestampToIso(updated.current_period_start),
+    currentPeriodEnd: timestampToIso(updated.current_period_end),
+    nextRunAt: timestampToIso(updated.current_period_end)
+  }
+}
+
+export async function pauseStripeRecurringSubscription(stripeSubscriptionId) {
+  const { stripe, requestOptions } = await getStripeClient()
+  const cleanSubscriptionId = extractStripeObjectId(stripeSubscriptionId)
+  if (!cleanSubscriptionId) return null
+
+  await stripe.subscriptions.update(
+    cleanSubscriptionId,
+    {
+      pause_collection: {
+        behavior: 'void'
+      }
+    },
+    requestOptions
+  )
+
+  return 'paused'
+}
+
+export async function resumeStripeRecurringSubscription(stripeSubscriptionId) {
+  const { stripe, requestOptions } = await getStripeClient()
+  const cleanSubscriptionId = extractStripeObjectId(stripeSubscriptionId)
+  if (!cleanSubscriptionId) return null
+
+  const subscription = await stripe.subscriptions.update(
+    cleanSubscriptionId,
+    {
+      pause_collection: null
+    },
+    requestOptions
+  )
+
+  return mapStripeSubscriptionStatus(subscription.status)
+}
+
+export async function cancelStripeRecurringSubscription(stripeSubscriptionId) {
+  const { stripe, requestOptions } = await getStripeClient()
+  const cleanSubscriptionId = extractStripeObjectId(stripeSubscriptionId)
+  if (!cleanSubscriptionId) return null
+
+  const subscription = await stripe.subscriptions.cancel(cleanSubscriptionId, {}, requestOptions)
+  return mapStripeSubscriptionStatus(subscription.status, 'cancelled')
 }
 
 async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLabel }) {
@@ -3552,9 +4025,16 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
   if (object?.object === 'payment_intent') {
     await updatePaymentFromIntent(object, { stripe, config, requestOptions })
   } else if (event.type === 'invoice.payment_succeeded' && object?.object === 'invoice') {
+    await updateSubscriptionFromInvoice(object, 'paid')
     await updatePaymentFromInvoice(object, 'paid')
   } else if (event.type === 'invoice.payment_failed' && object?.object === 'invoice') {
+    await updateSubscriptionFromInvoice(object, 'failed')
     await updatePaymentFromInvoice(object, 'failed')
+  } else if (
+    (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') &&
+    object?.object === 'subscription'
+  ) {
+    await updateSubscriptionFromStripeSubscription(object)
   } else if (event.type === 'charge.refunded' && object?.object === 'charge') {
     await updatePaymentFromRefundedCharge(object)
   } else if (event.type === 'refund.created' && object?.object === 'refund') {

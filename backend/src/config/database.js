@@ -2098,6 +2098,51 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payment_plans_next_run ON payment_plans(next_run_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payment_plans_updated ON payment_plans(updated_at)')
 
+    // Suscripciones recurrentes administradas desde Ristak.
+    // Esta tabla no depende de HighLevel: guarda el estado local y los IDs de Stripe
+    // necesarios para enlazar cobros recurrentes/saved cards cuando la pasarela esté activa.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT,
+        contact_name TEXT,
+        contact_email TEXT,
+        contact_phone TEXT,
+        name TEXT NOT NULL,
+        description TEXT,
+        status TEXT DEFAULT 'active',
+        amount REAL DEFAULT 0,
+        currency TEXT DEFAULT 'MXN',
+        interval_type TEXT DEFAULT 'monthly',
+        interval_count INTEGER DEFAULT 1,
+        start_date DATETIME,
+        next_run_at DATETIME,
+        current_period_start DATETIME,
+        current_period_end DATETIME,
+        cancel_at DATETIME,
+        cancelled_at DATETIME,
+        payment_method TEXT DEFAULT 'stripe_saved_card',
+        payment_provider TEXT DEFAULT 'stripe',
+        payment_mode TEXT DEFAULT 'test',
+        source TEXT DEFAULT 'ristak',
+        stripe_customer_id TEXT,
+        stripe_subscription_id TEXT UNIQUE,
+        stripe_product_id TEXT,
+        stripe_price_id TEXT,
+        stripe_payment_method_id TEXT,
+        metadata_json TEXT,
+        raw_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_contact ON subscriptions(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_next_run ON subscriptions(next_run_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions(stripe_customer_id)')
+
     // Tabla de citas
     await db.run(`
       CREATE TABLE IF NOT EXISTS appointments (

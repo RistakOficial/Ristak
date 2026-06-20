@@ -86,6 +86,7 @@ interface SidebarNavChild {
 const PAYMENTS_NAV_ITEMS: SidebarNavChild[] = [
   { to: '/transactions', label: 'Transacciones', exact: true },
   { to: '/transactions/payment-plans', label: 'Planes de pago' },
+  { to: '/transactions/subscriptions', label: 'Suscripciones' },
   { to: '/transactions/products', label: 'Productos' }
 ]
 

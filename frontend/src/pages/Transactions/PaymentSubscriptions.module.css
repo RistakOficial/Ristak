@@ -1,0 +1,188 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 4rem;
+}
+
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.nameButton {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+}
+
+.nameButton:hover span {
+  text-decoration: underline;
+}
+
+.nameButton small {
+  display: block;
+  max-width: min(38rem, 100%);
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identityCell,
+.statusStack,
+.methodStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.identityCell strong,
+.methodStack strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secondaryLine,
+.mutedCell {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-mute);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amountCell {
+  color: var(--text);
+  font-family: var(--num-font);
+  font-weight: 600;
+}
+
+.rowActions {
+  display: flex;
+  justify-content: center;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.iconButton:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.iconButton:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.destructive {
+  color: var(--neg) !important;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.formGroup label {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.formGroup textarea {
+  resize: vertical;
+}
+
+.fullWidth {
+  grid-column: 1 / -1;
+}
+
+.formHint {
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.footerActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.spin {
+  animation: subscriptionSpin 0.8s linear infinite;
+}
+
+@keyframes subscriptionSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1100px) {
+  .metricsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .metricsGrid,
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .footerActions {
+    flex-direction: column-reverse;
+  }
+}
