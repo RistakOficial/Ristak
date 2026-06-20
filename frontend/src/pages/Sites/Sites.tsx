@@ -7593,7 +7593,8 @@ export const Sites: React.FC = () => {
           response.configured &&
           response.config?.adAccountId &&
           response.config?.accessToken &&
-          response.config?.pixelId
+          response.config?.pixelId &&
+          response.config?.pixelApiToken
         ))
       })
       .catch(() => {
@@ -24667,29 +24668,31 @@ const SiteSettingsPanelContent: React.FC<{
         </section>
       )}
 
-      <section className={styles.editorSettingsSection}>
-        {metaPixelConnected && hasEditablePages(site) && activePage ? (
-          <MetaPageConversionSettingsPanel
-            site={site}
-            pages={pages}
-            activePage={activePage}
-            disabled={disabled}
-            onPatchSite={onPatchSite}
-            onPatchTheme={onPatchTheme}
-            onSaveSite={onSaveSite}
-          />
-        ) : (
-          <div className={styles.editorSettingsMetaRow}>
-            <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
-              <MetaBrandMark size={18} />
-            </span>
-            <div>
-              <strong>Meta Pixel + CAPI</strong>
-              <small>{metaPixelConnected ? 'No disponible para esta vista' : 'Conecta Meta en Configuración'}</small>
+      {metaPixelConnected && (
+        <section className={styles.editorSettingsSection}>
+          {hasEditablePages(site) && activePage ? (
+            <MetaPageConversionSettingsPanel
+              site={site}
+              pages={pages}
+              activePage={activePage}
+              disabled={disabled}
+              onPatchSite={onPatchSite}
+              onPatchTheme={onPatchTheme}
+              onSaveSite={onSaveSite}
+            />
+          ) : (
+            <div className={styles.editorSettingsMetaRow}>
+              <span className={styles.editorSettingsMetaLogo} aria-hidden="true">
+                <MetaBrandMark size={18} />
+              </span>
+              <div>
+                <strong>Meta Pixel + CAPI</strong>
+                <small>No disponible para esta vista</small>
+              </div>
             </div>
-          </div>
-        )}
-      </section>
+          )}
+        </section>
+      )}
 
       <section className={styles.editorSettingsSection}>
         <div className={styles.editorSettingsSectionHeader}>
@@ -30829,8 +30832,11 @@ const VideoActionsPanel: React.FC<{
   const settings = block.settings || {}
   const allRules = useMemo(() => getVideoActionRules(settings), [settings])
   const rules = useMemo(
-    () => enableVideoFormGateAction ? allRules : allRules.filter(rule => rule.action !== 'open_video_form'),
-    [allRules, enableVideoFormGateAction]
+    () => allRules.filter(rule => (
+      (enableVideoFormGateAction || rule.action !== 'open_video_form') &&
+      (metaPixelConnected || rule.action !== 'meta_event')
+    )),
+    [allRules, enableVideoFormGateAction, metaPixelConnected]
   )
   const targets = useMemo(
     () => buildVideoActionTargetOptions(site, blocks, popupBlocks, block.id, importedPopupDetected),
@@ -30848,8 +30854,11 @@ const VideoActionsPanel: React.FC<{
   const pageTargets = useMemo(() => getManualRedirectPages(pages, activePageId), [pages, activePageId])
   const hasPopupTarget = targets.some(target => target.id === POPUP_SURFACE_ID)
   const availablePrimaryVideoActionKinds = useMemo(
-    () => primaryVideoActionKinds.filter(action => enableVideoFormGateAction || action !== 'open_video_form'),
-    [enableVideoFormGateAction]
+    () => primaryVideoActionKinds.filter(action => (
+      (enableVideoFormGateAction || action !== 'open_video_form') &&
+      (metaPixelConnected || action !== 'meta_event')
+    )),
+    [enableVideoFormGateAction, metaPixelConnected]
   )
   const [expandedRuleId, setExpandedRuleId] = useState('')
   const [timeInputs, setTimeInputs] = useState<Record<string, string>>({})
@@ -30935,16 +30944,26 @@ const VideoActionsPanel: React.FC<{
   }, [block.id])
 
   const patchRules = useCallback((nextRules: VideoActionRule[]) => {
-    const normalizedRules = nextRules
+    const normalizedVisibleRules = nextRules
       .map((rule, index) => normalizeVideoActionRule(rule, index))
       .filter((rule): rule is VideoActionRule => Boolean(rule))
+    const nextVisibleRuleIds = new Set(normalizedVisibleRules.map(rule => rule.id))
+    const hiddenRules = allRules.filter(rule => (
+      !nextVisibleRuleIds.has(rule.id) &&
+      (
+        (!enableVideoFormGateAction && rule.action === 'open_video_form') ||
+        (!metaPixelConnected && rule.action === 'meta_event')
+      )
+    ))
+    const normalizedRules = [...hiddenRules, ...normalizedVisibleRules]
+      .sort((a, b) => a.timeSeconds - b.timeSeconds)
 
     onPatchSettings({
       [VIDEO_ACTIONS_SETTING_KEY]: normalizedRules,
       ...buildVideoFormGateSettingsPatch(normalizedRules)
     })
     window.setTimeout(onSave, 0)
-  }, [buildVideoFormGateSettingsPatch, onPatchSettings, onSave])
+  }, [allRules, buildVideoFormGateSettingsPatch, enableVideoFormGateAction, metaPixelConnected, onPatchSettings, onSave])
 
   const patchRule = useCallback((ruleId: string, patch: Partial<VideoActionRule>, options?: { seek?: boolean }) => {
     const nextRules = rules.map(rule => rule.id === ruleId ? { ...rule, ...patch } : rule)
@@ -31001,6 +31020,7 @@ const VideoActionsPanel: React.FC<{
   }, [contentTargets, formTargets, sectionTargets])
 
   const handleChangeAction = useCallback((rule: VideoActionRule, action: VideoActionKind) => {
+    if (action === 'meta_event' && !metaPixelConnected) return
     if (action === 'meta_event') enableSiteMetaIfNeeded()
     const previousRecommended = getRecommendedVideoActionBefore(rule.action)
     const nextBefore = action === 'open_video_form'
@@ -31036,7 +31056,7 @@ const VideoActionsPanel: React.FC<{
         metaEventParameters: undefined
       })
     })
-  }, [enableSiteMetaIfNeeded, getTargetOptionsForAction, pageTargets, patchRule])
+  }, [enableSiteMetaIfNeeded, getTargetOptionsForAction, metaPixelConnected, pageTargets, patchRule])
 
   const handleTimelineTimeChange = useCallback((ruleId: string, timeSeconds: number) => {
     const nextTime = Math.min(timelineMaxSeconds, clampVideoActionTime(timeSeconds))
@@ -32584,7 +32604,7 @@ const VideoFormGateSettingsPanel: React.FC<{
             </div>
           )}
 
-          {showCompletionControls && (
+          {showCompletionControls && metaPixelConnected && (
             <div className={styles.settingsGroup}>
               <div className={styles.panelSubheader}>Evento Meta al completar</div>
               <MetaVideoEventSettings
