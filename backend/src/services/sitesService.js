@@ -12446,6 +12446,8 @@ const VIDEO_PLAY_SIZE_MIN = 56
 const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
 const VIDEO_PLAY_ICON_SIZE_MAX = 95
+const DEFAULT_VIDEO_CONTROL_PANEL_RADIUS = 24
+const VIDEO_CONTROL_PANEL_RADIUS_MAX = 48
 const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
@@ -12528,6 +12530,13 @@ function normalizeVideoPlayRadius(settings = {}, shape = DEFAULT_VIDEO_PLAY_SHAP
   const fallback = shape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
   const radius = Number(settings.videoPlayRadius ?? fallback)
   return Number.isFinite(radius) ? Math.min(LEGACY_VIDEO_PLAY_RADIUS, Math.max(0, radius)) : fallback
+}
+
+function normalizeVideoControlPanelRadius(settings = {}) {
+  const radius = Number(settings.videoControlPanelRadius ?? DEFAULT_VIDEO_CONTROL_PANEL_RADIUS)
+  return Number.isFinite(radius)
+    ? Math.min(VIDEO_CONTROL_PANEL_RADIUS_MAX, Math.max(0, radius))
+    : DEFAULT_VIDEO_CONTROL_PANEL_RADIUS
 }
 
 function getVideoSoundNoticeText(settings = {}) {
@@ -13105,8 +13114,10 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const showOverlay = controlsMode === 'clean'
   const showCustomControlBar = showOverlay && settings.videoControlBar === true
   const showControlBarInitially = settings.videoControlBarInitiallyVisible === true
+  const showCustomPlayControl = settings.videoControlPlay !== false
   const showCustomVolume = settings.videoControlVolume !== false
   const showCustomSpeed = settings.videoControlSpeed !== false
+  const showCustomSettings = settings.videoControlSettings !== false
   const soundHint = settings.videoSoundHint !== false
   const soundNoticeText = getVideoSoundNoticeText(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
@@ -13123,6 +13134,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const fit = ['cover', 'contain', 'fill'].includes(cleanString(settings.videoFit)) ? cleanString(settings.videoFit) : 'cover'
   const playerColor = normalizeCssPaint(settings.videoPlayerColor, DEFAULT_VIDEO_PLAYER_COLOR) || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = normalizeCssPaint(settings.videoPlayColor, '#ffffff') || '#ffffff'
+  const controlPanelRadius = normalizeVideoControlPanelRadius(settings)
   const playShape = normalizeVideoPlayShape(settings)
   const playSize = normalizeVideoPlaySize(settings)
   const playWidth = playShape === 'rectangle' ? Math.round(playSize * 1.45) : playSize
@@ -13146,6 +13158,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     ...getVideoFrameStyleVars(settings),
     `--rstk-video-player-color:${escapeHtml(playerColor)}`,
     `--rstk-video-play-color:${escapeHtml(playColor)}`,
+    `--rstk-video-control-radius:${escapeHtml(String(controlPanelRadius))}px`,
     `--rstk-video-play-width:${escapeHtml(String(playWidth))}px`,
     `--rstk-video-play-size:${escapeHtml(String(playSize))}px`,
     `--rstk-video-play-radius:${escapeHtml(String(playRadius))}px`,
@@ -13185,10 +13198,10 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
       ${showSoundNotice ? `<span class="rstk-video-sound ${soundNoticePersistent ? 'rstk-video-sound-persistent' : 'rstk-video-sound-auto'}"><span class="rstk-video-sound-icon" aria-hidden="true">${RSTK_ICONS.volume}</span>${soundNoticeText ? `<span class="rstk-video-sound-text">${escapeHtml(soundNoticeText)}</span>` : ''}</span>` : ''}
       ${showCustomControlBar ? `
         <div class="rstk-video-control-bar" data-rstk-video-control-bar>
-          <button type="button" class="rstk-video-control-button" data-rstk-video-toggle aria-label="Reproducir video"><span class="rstk-video-control-play">${RSTK_ICONS.play}</span><span class="rstk-video-control-pause">${RSTK_ICONS.pause}</span></button>
+          ${showCustomPlayControl ? `<button type="button" class="rstk-video-control-button" data-rstk-video-toggle aria-label="Reproducir video"><span class="rstk-video-control-play">${RSTK_ICONS.play}</span><span class="rstk-video-control-pause">${RSTK_ICONS.pause}</span></button>` : ''}
           <div class="rstk-video-progress" data-rstk-video-progress-track role="slider" tabindex="0" aria-label="Progreso del video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-rstk-video-progress></span></div>
           ${showCustomVolume ? `<button type="button" class="rstk-video-control-button" data-rstk-video-mute aria-label="Silenciar video"><span class="rstk-video-control-volume">${RSTK_ICONS.volume}</span><span class="rstk-video-control-muted">${RSTK_ICONS.volumeMuted}</span></button>` : ''}
-          ${showCustomSpeed ? `<label class="rstk-video-speed-control" aria-label="Velocidad de reproducción">${RSTK_ICONS.settings}<select data-rstk-video-speed-select>${renderVideoSpeedOptions(String(speed))}</select></label>` : ''}
+          ${showCustomSpeed ? `<label class="rstk-video-speed-control ${showCustomSettings ? 'rstk-video-speed-has-settings' : 'rstk-video-speed-no-settings'}" aria-label="Velocidad de reproducción">${showCustomSettings ? `<span class="rstk-video-settings-icon" data-rstk-video-settings-icon aria-hidden="true">${RSTK_ICONS.settings}</span>` : ''}<select data-rstk-video-speed-select>${renderVideoSpeedOptions(String(speed))}</select></label>` : ''}
         </div>
       ` : ''}
     </div>
@@ -14408,11 +14421,11 @@ const RSTK_BASE_CSS = `
 		  .rstk-video-sound-text{display:inline-block;max-width:min(260px,calc(100vw - 150px));min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:currentColor;font-size:1rem;font-weight:500;letter-spacing:0;opacity:0;transform:translateX(10px)}
 	  .rstk-video-sound-auto .rstk-video-sound-text{animation:rstkVideoSoundText var(--rstk-video-sound-cycle,6.6s) ease .45s both}
 	  .rstk-video-sound-persistent .rstk-video-sound-text{animation:rstkVideoSoundTextOpen .8s ease .55s both}
-	  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:grid;grid-template-columns:auto minmax(44px,1fr) auto auto;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:var(--rstk-video-player-color,#000000);color:var(--rstk-video-play-color,#fff);box-shadow:none;opacity:1;padding:7px;pointer-events:auto;transform:translateY(0);transition:opacity .2s ease,transform .2s ease;backdrop-filter:blur(14px)}
+	  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.14);border-radius:var(--rstk-video-control-radius,24px);background:var(--rstk-video-player-color,#000000);color:var(--rstk-video-play-color,#fff);box-shadow:none;opacity:1;padding:7px;pointer-events:auto;transform:translateY(0);transition:opacity .2s ease,transform .2s ease;backdrop-filter:blur(14px)}
 	  .rstk-video-controls-hidden .rstk-video-control-bar{opacity:0;pointer-events:none;transform:translateY(8px)}
 	  .rstk-video-controls-hidden .rstk-video-control-bar:focus-within{opacity:1;pointer-events:auto;transform:translateY(0)}
 	  .rstk-video-custom-controls.rstk-video-is-playing.rstk-video-controls-hidden video{cursor:none}
-	  .rstk-video-control-button{width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;cursor:pointer}
+	  .rstk-video-control-button{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;cursor:pointer}
 	  .rstk-video-control-button:hover{background:rgba(255,255,255,.2)}
 	  .rstk-video-control-button svg{display:block;flex:0 0 auto;width:15px;height:15px}
 	  .rstk-video-control-play svg{transform:translateX(1px)}
@@ -14421,11 +14434,14 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-is-playing .rstk-video-control-pause{display:block}
 	  .rstk-video-is-muted .rstk-video-control-volume{display:none}
 	  .rstk-video-is-muted .rstk-video-control-muted{display:block}
-	  .rstk-video-progress{position:relative;height:18px;overflow:visible;border-radius:999px;background:transparent;cursor:pointer;touch-action:none}
+	  .rstk-video-progress{flex:1 1 44px;min-width:44px;position:relative;height:18px;overflow:visible;border-radius:999px;background:transparent;cursor:pointer;touch-action:none}
 	  .rstk-video-progress::before{content:"";position:absolute;inset:50% 0 auto;height:5px;border-radius:inherit;background:rgba(255,255,255,.2);transform:translateY(-50%)}
 	  .rstk-video-progress span{position:absolute;left:0;top:50%;display:block;width:0;height:5px;border-radius:inherit;background:currentColor;transform:translateY(-50%)}
 	  .rstk-video-progress:focus-visible{outline:2px solid currentColor;outline-offset:3px}
-	  .rstk-video-speed-control{position:relative;min-width:66px;height:30px;display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;padding:0 20px 0 8px}
+	  .rstk-video-speed-control{flex:0 0 auto;position:relative;min-width:66px;height:30px;display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;padding:0 20px 0 8px}
+	  .rstk-video-speed-no-settings{min-width:48px;padding-left:10px}
+	  .rstk-video-settings-icon{display:grid;place-items:center;flex:0 0 auto}
+	  .rstk-video-settings-icon svg{display:block}
 	  .rstk-video-speed-control::after{content:"";position:absolute;top:50%;right:8px;width:0;height:0;border-top:4px solid currentColor;border-right:4px solid transparent;border-left:4px solid transparent;opacity:.72;pointer-events:none;transform:translateY(-35%)}
 	  .rstk-video-speed-control select{-webkit-appearance:none;appearance:none;width:34px;min-width:0;height:100%;margin:0;border:0!important;border-radius:0;background:transparent!important;background-image:none!important;box-shadow:none!important;color:inherit;cursor:pointer;font:inherit;font-size:.76rem;font-weight:750;line-height:1;outline:0;padding:0}
 	  .rstk-video-speed-control option{color:#111827}

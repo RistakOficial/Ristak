@@ -676,12 +676,14 @@ const LEGACY_VIDEO_PLAY_RADIUS = 999
 const DEFAULT_VIDEO_PLAY_SIZE = 160
 const DEFAULT_VIDEO_PLAY_ICON_SIZE = 95
 const DEFAULT_VIDEO_PLAY_RADIUS = 0
+const DEFAULT_VIDEO_CONTROL_PANEL_RADIUS = 24
 const VIDEO_CONTROLS_IDLE_MS = 2600
 const VIDEO_CONTROLS_LEAVE_IDLE_MS = 650
 const VIDEO_PLAY_SIZE_MIN = 56
 const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
 const VIDEO_PLAY_ICON_SIZE_MAX = 95
+const VIDEO_CONTROL_PANEL_RADIUS_MAX = 48
 const VIDEO_PREVIEW_MAX_SPAN_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
@@ -690,8 +692,11 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControls: false,
   videoControlBar: false,
   videoControlBarInitiallyVisible: false,
+  videoControlPlay: true,
   videoControlVolume: true,
   videoControlSpeed: true,
+  videoControlSettings: true,
+  videoControlPanelRadius: DEFAULT_VIDEO_CONTROL_PANEL_RADIUS,
   videoPreviewEnabled: true,
   videoPreviewStart: 0,
   videoPreviewEnd: VIDEO_PREVIEW_DEFAULT_SECONDS,
@@ -2259,6 +2264,15 @@ const getVideoPlayRadiusValue = (settings: Record<string, unknown>, shape: Video
   const defaultRadius = shape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
   return getSettingNumber(settings, 'videoPlayRadius', defaultRadius, 0, LEGACY_VIDEO_PLAY_RADIUS)
 }
+
+const getVideoControlPanelRadiusValue = (settings: Record<string, unknown>) =>
+  getSettingNumber(settings, 'videoControlPanelRadius', DEFAULT_VIDEO_CONTROL_PANEL_RADIUS, 0, VIDEO_CONTROL_PANEL_RADIUS_MAX)
+
+const shouldShowVideoControlPlay = (settings: Record<string, unknown>) =>
+  settings.videoControlPlay !== false
+
+const shouldShowVideoControlSettings = (settings: Record<string, unknown>) =>
+  settings.videoControlSettings !== false
 
 const getVideoSoundNoticeText = (settings: Record<string, unknown>) => {
   if (Object.prototype.hasOwnProperty.call(settings, 'videoSoundNoticeText')) {
@@ -19577,8 +19591,17 @@ const VideoSettingsElementPreview: React.FC<{
   const playIconStyle = getVideoPlayIconStyle(settings)
   const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
+  const playSizeValue = getVideoPlaySizeValue(settings)
+  const playWidthValue = playShape === 'rectangle' ? Math.round(playSizeValue * 1.45) : playSizeValue
+  const playIconSizeValue = getVideoPlayIconSizeValue(settings)
+  const playPreviewScale = Math.min(1, 150 / Math.max(1, playWidthValue), 86 / Math.max(1, playSizeValue))
   const playRadius = `${getVideoPlayRadiusValue(settings, playShape)}px`
   const soundColor = getSettingString(settings, 'videoSoundColor') || playColor
+  const showControlPlay = shouldShowVideoControlPlay(settings)
+  const showControlVolume = settings.videoControlVolume !== false
+  const showControlSpeed = settings.videoControlSpeed !== false
+  const showControlSettings = shouldShowVideoControlSettings(settings)
+  const controlPanelRadius = `${getVideoControlPanelRadiusValue(settings)}px`
 
   return (
     <div
@@ -19586,20 +19609,30 @@ const VideoSettingsElementPreview: React.FC<{
       style={{
         ['--video-settings-play-bg' as string]: playerColor,
         ['--video-settings-play-color' as string]: playColor,
+        ['--video-settings-play-preview-width' as string]: `${Math.max(1, Math.round(playWidthValue * playPreviewScale))}px`,
+        ['--video-settings-play-preview-size' as string]: `${Math.max(1, Math.round(playSizeValue * playPreviewScale))}px`,
         ['--video-settings-play-radius' as string]: playRadius,
+        ['--video-settings-play-icon-size' as string]: `${Math.max(1, Math.round(playIconSizeValue * playPreviewScale))}px`,
+        ['--video-settings-control-radius' as string]: controlPanelRadius,
         ['--video-settings-sound-color' as string]: soundColor
       } as React.CSSProperties}
     >
       {type === 'bar' && (
         <span className={styles.videoElementBarSample}>
-          <span className={styles.videoElementBarPlay}><Play size={11} fill="currentColor" /></span>
+          {showControlPlay && <span className={styles.videoElementBarPlay}><Play size={11} fill="currentColor" /></span>}
           <i />
-          <span className={styles.videoElementBarSpeed}>1x</span>
+          {showControlVolume && <span className={styles.videoElementBarVolume}><Volume2 size={12} /></span>}
+          {showControlSpeed && (
+            <span className={styles.videoElementBarSpeed}>
+              {showControlSettings && <Settings2 size={11} />}
+              <small>1x</small>
+            </span>
+          )}
         </span>
       )}
       {type === 'play' && (
         <span className={`${styles.videoElementPlaySample} ${playShape === 'round' ? styles.videoElementPlayRound : ''}`}>
-          <VideoPlayGlyph iconStyle={playIconStyle} size={22} />
+          <VideoPlayGlyph iconStyle={playIconStyle} size={playIconSizeValue} />
         </span>
       )}
       {type === 'sound' && (
@@ -19623,6 +19656,7 @@ const VideoPlayerSettingsControls: React.FC<{
   const controlsMode = getVideoControlsMode(settings)
   const showCustomControls = controlsMode === 'clean'
   const showCustomControlBar = settings.videoControlBar === true
+  const playShape = getVideoPlayShape(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
   const [metadataDuration, setMetadataDuration] = useState(0)
   const metadataSource = mediaUrl || getSettingString(settings, 'mediaUrl')
@@ -19847,6 +19881,18 @@ const VideoPlayerSettingsControls: React.FC<{
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
+                  checked={shouldShowVideoControlPlay(settings)}
+                  disabled={!showCustomControlBar}
+                  onChange={(event) => {
+                    onPatchSettings({ videoControlPlay: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Botón play</span>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
                   checked={settings.videoControlVolume !== false}
                   disabled={!showCustomControlBar}
                   onChange={(event) => {
@@ -19856,6 +19902,8 @@ const VideoPlayerSettingsControls: React.FC<{
                 />
                 <span>Volumen</span>
               </label>
+            </div>
+            <div className={styles.twoColumn}>
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
@@ -19868,7 +19916,27 @@ const VideoPlayerSettingsControls: React.FC<{
                 />
                 <span>Velocidad</span>
               </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={shouldShowVideoControlSettings(settings)}
+                  disabled={!showCustomControlBar || settings.videoControlSpeed === false}
+                  onChange={(event) => {
+                    onPatchSettings({ videoControlSettings: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Configuración</span>
+              </label>
             </div>
+            <VideoDimensionSliderField
+              label="Radio del panel"
+              value={getVideoControlPanelRadiusValue(settings)}
+              min={0}
+              max={VIDEO_CONTROL_PANEL_RADIUS_MAX}
+              onChange={(value) => onPatchSettings({ videoControlPanelRadius: value })}
+              onCommit={onSave}
+            />
           </section>
 
           <section className={styles.videoSettingsSection}>
@@ -19892,11 +19960,40 @@ const VideoPlayerSettingsControls: React.FC<{
                 ))}
               </CustomSelect>
             </label>
-            <div className={styles.twoColumn}>
+            {playShape === 'rectangle' ? (
+              <div className={styles.twoColumn}>
+                <label className={styles.field}>
+                  <span>Forma del play</span>
+                  <CustomSelect
+                    value={playShape}
+                    onChange={(event) => {
+                      const nextShape = isVideoPlayShape(event.target.value) ? event.target.value : DEFAULT_VIDEO_PLAY_SHAPE
+                      onPatchSettings({
+                        videoPlayShape: nextShape,
+                        videoPlayRadius: nextShape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
+                      })
+                    }}
+                    onBlur={onSave}
+                  >
+                    {videoPlayShapeOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </CustomSelect>
+                </label>
+                <VideoDimensionSliderField
+                  label="Radio del player"
+                  value={getVideoPlayRadiusValue(settings, playShape)}
+                  min={0}
+                  max={LEGACY_VIDEO_PLAY_RADIUS}
+                  onChange={(value) => onPatchSettings({ videoPlayRadius: value, videoPlayShape: playShape })}
+                  onCommit={onSave}
+                />
+              </div>
+            ) : (
               <label className={styles.field}>
                 <span>Forma del play</span>
                 <CustomSelect
-                  value={getVideoPlayShape(settings)}
+                  value={playShape}
                   onChange={(event) => {
                     const nextShape = isVideoPlayShape(event.target.value) ? event.target.value : DEFAULT_VIDEO_PLAY_SHAPE
                     onPatchSettings({
@@ -19911,15 +20008,7 @@ const VideoPlayerSettingsControls: React.FC<{
                   ))}
                 </CustomSelect>
               </label>
-              <VideoDimensionSliderField
-                label="Radio del player"
-                value={getVideoPlayRadiusValue(settings, getVideoPlayShape(settings))}
-                min={0}
-                max={LEGACY_VIDEO_PLAY_RADIUS}
-                onChange={(value) => onPatchSettings({ videoPlayRadius: value, videoPlayShape: getVideoPlayShape(settings) })}
-                onCommit={onSave}
-              />
-            </div>
+            )}
             <div className={styles.twoColumn}>
               <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
               <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
@@ -23617,8 +23706,10 @@ const VideoPlayerPreview: React.FC<{
   const showNativeControls = controlsMode === 'native' && !editorPlaybackDisabled
   const showOverlay = controlsMode === 'clean'
   const showCustomControlBar = showOverlay && settings.videoControlBar === true
+  const showCustomPlayControl = shouldShowVideoControlPlay(settings)
   const showCustomVolume = settings.videoControlVolume !== false
   const showCustomSpeed = settings.videoControlSpeed !== false
+  const showCustomSettings = shouldShowVideoControlSettings(settings)
   const soundHint = settings.videoSoundHint !== false
   const soundNoticeText = getVideoSoundNoticeText(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
@@ -23637,6 +23728,7 @@ const VideoPlayerPreview: React.FC<{
   const playerBorderWidth = `${getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}px`
   const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
   const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
+  const controlPanelRadius = `${getVideoControlPanelRadiusValue(settings)}px`
   const playShape = getVideoPlayShape(settings)
   const playSizeValue = getVideoPlaySizeValue(settings)
   const playSize = `${playSizeValue}px`
@@ -24091,6 +24183,7 @@ const VideoPlayerPreview: React.FC<{
         ['--rstk-video-border-width' as string]: playerBorderWidth,
         ['--rstk-video-player-color' as string]: playerColor,
         ['--rstk-video-play-color' as string]: playColor,
+        ['--rstk-video-control-radius' as string]: controlPanelRadius,
         ['--rstk-video-play-width' as string]: playWidth,
         ['--rstk-video-play-size' as string]: playSize,
         ['--rstk-video-play-radius' as string]: playRadius,
@@ -24142,9 +24235,11 @@ const VideoPlayerPreview: React.FC<{
         <div className="rstk-video-control-bar" onClick={(event) => {
           if (!shouldLetEditorSelect) event.stopPropagation()
         }}>
-          <button type="button" className="rstk-video-control-button" onClick={handleControlPlayClick} aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}>
-            {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play className="rstk-video-control-play-icon" size={15} fill="currentColor" />}
-          </button>
+          {showCustomPlayControl && (
+            <button type="button" className="rstk-video-control-button" onClick={handleControlPlayClick} aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}>
+              {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play className="rstk-video-control-play-icon" size={15} fill="currentColor" />}
+            </button>
+          )}
           <div
             className="rstk-video-progress"
             role="slider"
@@ -24167,8 +24262,12 @@ const VideoPlayerPreview: React.FC<{
             </button>
           )}
           {showCustomSpeed && (
-            <label className="rstk-video-speed-control" aria-label="Velocidad de reproducción">
-              <Settings2 size={14} aria-hidden="true" />
+            <label className={`rstk-video-speed-control ${showCustomSettings ? 'rstk-video-speed-has-settings' : 'rstk-video-speed-no-settings'}`} aria-label="Velocidad de reproducción">
+              {showCustomSettings && (
+                <span className="rstk-video-settings-icon" data-rstk-video-settings-icon aria-hidden="true">
+                  <Settings2 size={14} />
+                </span>
+              )}
               <select value={String(currentSpeed)} onChange={handleSpeedChange}>
                 {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>

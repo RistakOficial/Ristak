@@ -64,8 +64,10 @@ const getVideoPlayerVisualSignature = (html) => {
     hasSoundNotice: /class="rstk-video-sound\b/.test(source),
     soundText: source.match(/<span class="rstk-video-sound-text">([^<]*)<\/span>/)?.[1] || '',
     hasControlBar: /class="rstk-video-control-bar"/.test(source),
-    hasVolumeControl: /data-rstk-video-mute/.test(source),
-    hasSpeedControl: /data-rstk-video-speed-select/.test(source),
+    hasPlayControl: /class="rstk-video-control-button" data-rstk-video-toggle/.test(source),
+    hasVolumeControl: /class="rstk-video-control-button" data-rstk-video-mute/.test(source),
+    hasSpeedControl: /<select data-rstk-video-speed-select/.test(source),
+    hasSettingsControl: /<span class="rstk-video-settings-icon" data-rstk-video-settings-icon/.test(source),
     selectedSpeed: source.match(/<option value="([^"]+)" selected>/)?.[1] || '',
     nativeControls: hasHtmlBooleanAttribute(videoAttrs, 'controls'),
     muted: hasHtmlBooleanAttribute(videoAttrs, 'muted'),
@@ -82,6 +84,7 @@ test('video player clean mode renders custom overlay controls', async () => {
   const html = await renderPublicSiteHtml(baseSite({
     videoControlsMode: 'clean',
     videoControlBar: true,
+    videoControlPanelRadius: 18,
     videoSoundHint: true,
     videoPlayerBackground: '#111827',
     videoPlayerRadius: 28,
@@ -111,6 +114,7 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /--rstk-video-border-width:3px/)
   assert.match(html, /--rstk-video-player-color:rgba\(15, 23, 42, 0\.72\)/)
   assert.match(html, /--rstk-video-play-color:#f8fafc/)
+  assert.match(html, /--rstk-video-control-radius:18px/)
   assert.match(html, /--rstk-video-play-size:82px/)
   assert.match(html, /--rstk-video-play-radius:24px/)
   assert.match(html, /--rstk-video-play-icon-size:30px/)
@@ -119,12 +123,14 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /\.rstk-video-overlay\{[^}]*background:transparent/)
   assert.match(html, /\.rstk-video-play-dot\{[^}]*box-shadow:none/)
   assert.match(html, /\.rstk-video-play-dot\{[^}]*border:0/)
-  assert.match(html, /\.rstk-video-control-bar\{[^}]*background:var\(--rstk-video-player-color/)
+  assert.match(html, /\.rstk-video-control-bar\{[^}]*display:flex[^}]*border-radius:var\(--rstk-video-control-radius,24px\)[^}]*background:var\(--rstk-video-player-color/)
   assert.match(html, /\.rstk-video-control-bar\{[^}]*box-shadow:none/)
+  assert.match(html, /data-rstk-video-toggle/)
+  assert.match(html, /data-rstk-video-settings-icon/)
   assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="0"/)
   assert.match(html, /aria-label="Progreso del video"/)
   assert.match(html, /\.rstk-video-control-button svg\{[^}]*width:15px[^}]*height:15px/)
-  assert.match(html, /\.rstk-video-progress\{[^}]*cursor:pointer[^}]*touch-action:none/)
+  assert.match(html, /\.rstk-video-progress\{[^}]*flex:1 1 44px[^}]*cursor:pointer[^}]*touch-action:none/)
   assert.match(html, /\.rstk-video-progress::before\{[^}]*height:5px/)
   assert.match(html, /requestAnimationFrame/)
   assert.match(html, /formatProgressPercent/)
@@ -161,6 +167,34 @@ test('video player default preset uses large rectangular solid play button', asy
   assert.equal(signature.hasSoundNotice, true)
   assert.equal(signature.soundText, 'Haz clic para activar el sonido')
   assert.match(html, /<\/button>\s*<span class="rstk-video-sound\b/)
+})
+
+test('video player custom bar can hide individual controls and keep editable panel radius', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'clean',
+    videoControlBar: true,
+    videoControlPlay: false,
+    videoControlVolume: false,
+    videoControlSpeed: true,
+    videoControlSettings: false,
+    videoControlPanelRadius: 6,
+    videoDefaultSpeed: 1.5
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.equal(signature.hasControlBar, true)
+  assert.equal(signature.hasPlayControl, false)
+  assert.equal(signature.hasVolumeControl, false)
+  assert.equal(signature.hasSpeedControl, true)
+  assert.equal(signature.hasSettingsControl, false)
+  assert.equal(signature.selectedSpeed, '1.5')
+  assert.match(signature.style, /--rstk-video-control-radius:6px/)
+  assert.match(html, /class="rstk-video-speed-control rstk-video-speed-no-settings"/)
+  assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="0"/)
 })
 
 test('video player defaults hide the custom control bar at initial render', async () => {
