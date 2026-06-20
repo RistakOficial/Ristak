@@ -404,6 +404,9 @@
   pointer-events: none;
   backdrop-filter: blur(12px);
 }
+.rstkCanvas .rstk-video-form-gate-preview.rstk-video-form-gate-editing {
+  pointer-events: auto;
+}
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-panel {
   width: min(100%, 680px);
   height: 100%;
@@ -470,6 +473,17 @@
   min-width: 0;
   max-width: 100%;
   text-align: var(--rstk-form-content-align, left);
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-content {
+  min-width: 0;
+  max-width: 100%;
+  text-align: var(--rstk-form-content-align, left);
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-content > .rstk-block-style {
+  width: 100%;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-content .rstk-media {
+  margin: 0;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field > label {
   color: var(--rstk-form-label-color, var(--rstk-ink));

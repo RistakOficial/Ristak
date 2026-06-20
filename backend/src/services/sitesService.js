@@ -80,6 +80,8 @@ export const FIELD_BLOCK_TYPES = new Set([
 ])
 const EMBEDDED_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video', 'embed'])
 const EMBEDDED_FORM_BLOCK_TYPES = new Set([...FIELD_BLOCK_TYPES, ...EMBEDDED_FORM_CONTENT_BLOCK_TYPES])
+const VIDEO_FORM_GATE_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image'])
+const VIDEO_FORM_GATE_BLOCK_TYPES = new Set([...FIELD_BLOCK_TYPES, ...VIDEO_FORM_GATE_CONTENT_BLOCK_TYPES])
 export const BLOCK_TYPES = new Set([...CONTENT_BLOCK_TYPES, ...FIELD_BLOCK_TYPES])
 export const OPTION_ACTIONS = new Set([
   'continue',
@@ -10647,7 +10649,7 @@ async function hydrateEmbeddedForms(blocks = []) {
           videoFormGateEmbeddedSiteName: embeddedSite?.name || '',
           videoFormGateEmbeddedSiteType: embeddedSite?.siteType || embeddedSite?.site_type || 'standard_form',
           videoFormGateEmbeddedTheme: embeddedTheme,
-          videoFormGateEmbeddedBlocks: collectFieldBlocks(draftBlocks.length ? draftBlocks : embeddedBlocks)
+          videoFormGateEmbeddedBlocks: collectVideoFormGateBlocks(draftBlocks.length ? draftBlocks : embeddedBlocks)
         }
       })
       continue
@@ -11737,9 +11739,18 @@ function getVideoFormGateEmbeddedBlocks(settings = {}) {
   return []
 }
 
-function getVideoFormGateFields(settings = {}) {
+function collectVideoFormGateBlocks(blocks = []) {
+  return (Array.isArray(blocks) ? blocks : [])
+    .filter(block => VIDEO_FORM_GATE_BLOCK_TYPES.has(block?.blockType))
+}
+
+function getVideoFormGateItems(settings = {}) {
   if (!isVideoFormGateEnabled(settings)) return []
-  return collectFieldBlocks(getVideoFormGateEmbeddedBlocks(settings))
+  return collectVideoFormGateBlocks(getVideoFormGateEmbeddedBlocks(settings))
+}
+
+function getVideoFormGateFields(settings = {}) {
+  return collectFieldBlocks(getVideoFormGateItems(settings))
 }
 
 function getVideoFormGateTriggerSeconds(settings = {}) {
@@ -11812,7 +11823,7 @@ function renderVideoFormGateFieldBlock(block, context = {}) {
   const required = block.required ? '<span class="rstk-required">*</span>' : ''
 
   return `
-    <section class="rstk-video-form-field" data-rstk-video-form-field data-block-id="${escapeHtml(block.id)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
+    <section class="rstk-video-form-field" data-rstk-video-form-item data-rstk-video-form-field data-block-id="${escapeHtml(block.id)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
@@ -11821,8 +11832,20 @@ function renderVideoFormGateFieldBlock(block, context = {}) {
   `
 }
 
+function renderVideoFormGateItemBlock(block, context = {}) {
+  if (FIELD_BLOCK_TYPES.has(block?.blockType)) return renderVideoFormGateFieldBlock(block, context)
+  if (!VIDEO_FORM_GATE_CONTENT_BLOCK_TYPES.has(block?.blockType)) return ''
+
+  return `
+    <section class="rstk-video-form-content" data-rstk-video-form-item data-block-id="${escapeHtml(block.id || '')}">
+      ${wrapRenderedBlock(block, renderContentBlock(block, context), context)}
+    </section>
+  `
+}
+
 function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
-  const fields = getVideoFormGateFields(settings)
+  const items = getVideoFormGateItems(settings)
+  const fields = collectFieldBlocks(items)
   if (!fields.length) return ''
 
   const embeddedTheme = {
@@ -11876,7 +11899,7 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
         <div class="rstk-video-form-gate-progress" data-rstk-video-gate-progress hidden></div>
         <div class="rstk-video-form-fields" data-rstk-video-gate-fields>
           <div class="rstk-video-form-field-stack" data-rstk-video-gate-stack>
-            ${fields.map(field => renderVideoFormGateFieldBlock(field, context)).join('\n')}
+            ${items.map(item => renderVideoFormGateItemBlock(item, context)).join('\n')}
           </div>
         </div>
         <div class="rstk-video-form-actions">
@@ -12224,6 +12247,8 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         const iframe = host.querySelector('iframe');
         const fields = Array.from(gate.querySelectorAll('[data-rstk-video-form-field]'));
         if (!fields.length) return;
+        const items = Array.from(gate.querySelectorAll('[data-rstk-video-form-item]'));
+        const gateItems = items.length ? items : fields;
         const fieldsViewport = gate.querySelector('[data-rstk-video-gate-fields]');
         const stack = gate.querySelector('[data-rstk-video-gate-stack]');
         const backButton = gate.querySelector('[data-rstk-video-gate-back]');
@@ -12241,7 +12266,8 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             iframe,
             gate,
             fields,
-            groups: [fields],
+            items: gateItems,
+            groups: [gateItems],
             index: 0,
             shown: false,
             completed: false,
@@ -12313,9 +12339,9 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         const renderGroup = () => {
           const total = state.groups.length || 1;
           const current = state.groups[Math.max(0, Math.min(state.index, total - 1))] || [];
-          const visibleIds = new Set(current.map(field => field.getAttribute('data-block-id')));
-          fields.forEach(field => {
-            field.hidden = !visibleIds.has(field.getAttribute('data-block-id'));
+          const visibleIds = new Set(current.map(item => item.getAttribute('data-block-id')));
+          state.items.forEach(item => {
+            item.hidden = !visibleIds.has(item.getAttribute('data-block-id'));
           });
           if (backButton) {
             backButton.textContent = gate.getAttribute('data-back-text') || 'Anterior';
@@ -12340,27 +12366,27 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             renderGroup();
             return;
           }
-          fields.forEach(field => { field.hidden = false; });
+          state.items.forEach(item => { item.hidden = false; });
           const available = Math.max(80, fieldsViewport.clientHeight || fieldsViewport.getBoundingClientRect().height || 0);
           const style = window.getComputedStyle(stack);
           const gap = Number.parseFloat(style.rowGap || style.gap || '0') || 0;
           const groups = [];
           let group = [];
           let used = 0;
-          fields.forEach(field => {
-            const height = Math.ceil(field.getBoundingClientRect().height || field.scrollHeight || 0);
+          state.items.forEach(item => {
+            const height = Math.ceil(item.getBoundingClientRect().height || item.scrollHeight || 0);
             const nextHeight = group.length ? used + gap + height : height;
             if (group.length && nextHeight > available) {
               groups.push(group);
-              group = [field];
+              group = [item];
               used = height;
             } else {
-              group.push(field);
+              group.push(item);
               used = nextHeight;
             }
           });
           if (group.length) groups.push(group);
-          state.groups = groups.length ? groups : [fields];
+          state.groups = groups.length ? groups : [state.items];
           state.index = Math.max(0, Math.min(state.index, state.groups.length - 1));
           renderGroup();
         };
@@ -12411,7 +12437,7 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
             gate.hidden = true;
             host.classList.remove('rstk-video-gate-active');
             resetGateFit();
-            fields.forEach(field => { field.hidden = false; });
+            state.items.forEach(item => { item.hidden = false; });
             resumePlayer();
           };
         const showCompletionMessage = text => {
@@ -12419,7 +12445,7 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
           state.shown = true;
           gate.hidden = false;
           host.classList.add('rstk-video-gate-active');
-            fields.forEach(field => { field.hidden = true; });
+            state.items.forEach(item => { item.hidden = true; });
             if (backButton) backButton.hidden = true;
             if (nextButton) nextButton.hidden = true;
             if (submitButton) submitButton.hidden = true;
@@ -12554,9 +12580,10 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
               setDisabled(false);
             }
           };
-          const validateCurrentGroup = () => (state.groups[state.index] || []).every(validateField);
+          const getGroupFields = group => (group || []).filter(item => item.matches && item.matches('[data-rstk-video-form-field]'));
+          const validateCurrentGroup = () => getGroupFields(state.groups[state.index]).every(validateField);
           const continueFromGroup = async () => {
-            const currentFields = state.groups[state.index] || [];
+            const currentFields = getGroupFields(state.groups[state.index]);
             if (!currentFields.every(validateField)) {
               syncGateFit();
               return;
@@ -17131,6 +17158,9 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-fields{min-height:0;display:grid;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:2px 4px 4px}
 	  .rstk-video-form-field-stack{display:grid;width:min(100%,var(--rstk-form-field-width,560px));max-width:100%;justify-self:var(--rstk-form-field-justify,center);gap:clamp(8px,2cqw,14px);min-width:0}
 	  .rstk-video-form-field{display:grid;gap:clamp(5px,1.3cqw,8px);min-width:0;max-width:100%;text-align:var(--rstk-form-content-align,left)}
+	  .rstk-video-form-content{min-width:0;max-width:100%;text-align:var(--rstk-form-content-align,left)}
+	  .rstk-video-form-content > .rstk-block-style{width:100%}
+	  .rstk-video-form-content .rstk-media{margin:0}
 	  .rstk-video-form-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,.98rem);font-style:var(--rstk-form-font-style,normal);font-weight:650;text-decoration:var(--rstk-form-text-decoration,none);line-height:1.25}
 	  .rstk-video-form-field .rstk-help{color:var(--rstk-form-help-color,var(--rstk-muted));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.74rem,1.9cqw,.9rem);line-height:1.3}
 	  .rstk-video-form-gate input,.rstk-video-form-gate textarea,.rstk-video-form-gate select{box-sizing:border-box;width:100%;max-width:100%;min-width:0;min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border:var(--rstk-form-field-border-width,1px) solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.86rem,2.4cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}

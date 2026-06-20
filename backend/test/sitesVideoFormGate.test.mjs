@@ -87,6 +87,17 @@ test('video form gate renders inside the video player and posts as the source fo
     })
 
     await createBlock(formSite.id, {
+      blockType: 'title',
+      label: 'Intro del formulario',
+      content: 'Antes de desbloquear el video'
+    })
+    await createBlock(formSite.id, {
+      blockType: 'image',
+      label: 'Imagen de confianza',
+      content: 'https://cdn.example.com/video-gate-trust.jpg',
+      settings: { mediaUrl: 'https://cdn.example.com/video-gate-trust.jpg' }
+    })
+    await createBlock(formSite.id, {
       blockType: 'email',
       label: 'Correo',
       placeholder: 'correo@example.test',
@@ -212,10 +223,14 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, new RegExp(`data-video-block-id="${videoBlock.id}"`))
     assert.match(html, new RegExp(`data-form-site-id="${formSite.id}"`))
     assert.match(html, /Formulario de video/)
+    assert.match(html, /Antes de desbloquear el video/)
+    assert.match(html, /video-gate-trust\.jpg/)
     assert.match(html, /Correo/)
     assert.match(html, /Empresa/)
     assert.match(html, /Calificaci/)
     assert.match(html, /rstk-video-form-field/)
+    assert.match(html, /rstk-video-form-content/)
+    assert.match(html, /data-rstk-video-form-item/)
     assert.match(html, /ristakVideoFormGateRuntimeLoaded/)
     assert.match(html, /data-trigger-seconds="3"/)
     assert.match(html, /--rstk-video-form-gate-video-bg:rgba\(255, 255, 255, 0\.2\)/)
