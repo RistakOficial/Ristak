@@ -972,7 +972,6 @@ const Analytics: React.FC = () => {
   const [yearRange, setYearRange] = useState(routeYearRange)
   const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>(routeState.mainChart)
   const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>(routeState.conversionChart)
-  const [conversionChartTouched, setConversionChartTouched] = useState(false)
 
   const navigateAnalyticsView = useCallback((next?: {
     viewType?: ViewType
@@ -2002,60 +2001,64 @@ const Analytics: React.FC = () => {
 
   const whatsAppMetrics = whatsAppAnalytics?.metrics
 
-  // Preparar métricas para KPICards
-  const mainMetrics = webTrackingConfigured
-    ? [
-        {
-          title: 'Visualizaciones',
-          value: formatChartNumber(metrics.pageViews || 0),
-          delta: metrics.trends?.pageViews || 0,
-          icon: Eye
-        },
-        {
-          title: 'Visitantes Únicos',
-          value: String(metrics.uniqueVisitors || 0),
-          delta: metrics.trends?.uniqueVisitors || 0,
-          icon: Users
-        },
-        {
-          title: 'Registros',
-          value: String(metrics.registros || 0),
-          delta: metrics.trends?.registros || 0,
-          icon: UserCheck
-        },
-        {
-          title: 'Conversión',
-          value: `${(metrics.conversionRate || 0).toFixed(1)}%`,
-          delta: metrics.trends?.conversionRate || 0,
-          icon: Target
-        }
-      ]
-    : [
-        {
-          title: 'Mensajes Entrantes',
-          value: formatChartNumber(whatsAppMetrics?.inboundMessages || 0),
-          delta: 0,
-          icon: MessageCircle
-        },
-        {
-          title: 'Conversaciones',
-          value: formatChartNumber(whatsAppMetrics?.conversations || 0),
-          delta: 0,
-          icon: Users
-        },
-        {
-          title: 'Contactos WhatsApp',
-          value: formatChartNumber(whatsAppMetrics?.contacts || 0),
-          delta: 0,
-          icon: UserCheck
-        },
-        {
-          title: 'Con Atribución',
-          value: `${(whatsAppMetrics?.attributionRate || 0).toFixed(1)}%`,
-          delta: 0,
-          icon: Target
-        }
-      ]
+  const webMetrics = [
+    {
+      title: 'Visualizaciones',
+      value: formatChartNumber(metrics.pageViews || 0),
+      delta: metrics.trends?.pageViews || 0,
+      icon: Eye
+    },
+    {
+      title: 'Visitantes Únicos',
+      value: String(metrics.uniqueVisitors || 0),
+      delta: metrics.trends?.uniqueVisitors || 0,
+      icon: Users
+    },
+    {
+      title: 'Registros',
+      value: String(metrics.registros || 0),
+      delta: metrics.trends?.registros || 0,
+      icon: UserCheck
+    },
+    {
+      title: 'Conversión',
+      value: `${(metrics.conversionRate || 0).toFixed(1)}%`,
+      delta: metrics.trends?.conversionRate || 0,
+      icon: Target
+    }
+  ]
+
+  const whatsAppMetricCards = [
+    {
+      title: 'Mensajes Entrantes',
+      value: formatChartNumber(whatsAppMetrics?.inboundMessages || 0),
+      delta: 0,
+      icon: MessageCircle
+    },
+    {
+      title: 'Conversaciones',
+      value: formatChartNumber(whatsAppMetrics?.conversations || 0),
+      delta: 0,
+      icon: Users
+    },
+    {
+      title: 'Contactos WhatsApp',
+      value: formatChartNumber(whatsAppMetrics?.contacts || 0),
+      delta: 0,
+      icon: UserCheck
+    },
+    {
+      title: 'Con Atribución',
+      value: `${(whatsAppMetrics?.attributionRate || 0).toFixed(1)}%`,
+      delta: 0,
+      icon: Target
+    }
+  ]
+
+  const metricSections = [
+    { title: 'Tráfico del sitio', metrics: webMetrics },
+    { title: 'WhatsApp', metrics: whatsAppMetricCards }
+  ]
 
   const handleMonthPresetChange = (value: string) => {
     if (!isAnalyticsMonthPreset(value)) return
@@ -2095,25 +2098,14 @@ const Analytics: React.FC = () => {
     }))
   ), [viewType, whatsAppAnalytics])
 
-  const mainChartOptions = React.useMemo<Array<{ value: AnalyticsMainChartView; label: string }>>(() => {
-    if (!webTrackingConfigured) {
-      return [{ value: 'traffic', label: 'Mensajes' }]
-    }
-
-    return [
+  const mainChartOptions = React.useMemo<Array<{ value: AnalyticsMainChartView; label: string }>>(() => (
+    [
       { value: 'traffic', label: 'Tráfico del sitio' },
       { value: 'visitors-registrations', label: 'Visitantes vs Registros' },
       { value: 'sessions-visitors', label: 'Sesiones vs Visitantes' },
       { value: 'identity-returning', label: 'Identificados vs Recurrentes' }
     ]
-  }, [webTrackingConfigured])
-
-  useEffect(() => {
-    if (!webTrackingConfigured && selectedMainChartView !== 'traffic') {
-      setSelectedMainChartView('traffic')
-      navigateAnalyticsView({ mainChart: 'traffic', replace: true })
-    }
-  }, [navigateAnalyticsView, selectedMainChartView, webTrackingConfigured])
+  ), [])
 
   useEffect(() => {
     if (!webTrackingConfigured && Object.keys(selectedFilters).length > 0) {
@@ -2122,48 +2114,22 @@ const Analytics: React.FC = () => {
   }, [selectedFilters, webTrackingConfigured])
 
   const conversionChartOptions = React.useMemo<Array<{ value: AnalyticsConversionChartView; label: string }>>(() => {
-    const hasWhatsApp = Boolean(whatsAppAnalytics?.status?.connected || whatsAppAnalytics?.status?.hasData)
-
-    if (!webTrackingConfigured) {
-      return [
-        { value: 'messages-appointments' as AnalyticsConversionChartView, label: 'Mensajes vs Citas' },
-        { value: 'appointments-patients' as AnalyticsConversionChartView, label: `Citas vs ${customersLabel}` }
-      ]
-    }
-
-    const opts: Array<{ value: AnalyticsConversionChartView; label: string }> = [
+    return [
       { value: 'registrations-customers', label: `Registros vs ${customersLabel}` },
-      { value: 'prospects-customers', label: `${leadsLabel} vs ${customersLabel}` }
+      { value: 'prospects-customers', label: `${leadsLabel} vs ${customersLabel}` },
+      { value: 'messages-appointments', label: 'Mensajes vs Citas' },
+      { value: 'appointments-patients', label: `Citas vs ${customersLabel}` }
     ]
-
-    if (hasWhatsApp) {
-      opts.push(
-        { value: 'messages-appointments', label: 'Mensajes vs Citas' },
-        { value: 'appointments-patients', label: `Citas vs ${customersLabel}` }
-      )
-    }
-
-    return opts
-  }, [customersLabel, leadsLabel, webTrackingConfigured, whatsAppAnalytics])
+  }, [customersLabel, leadsLabel])
 
   useEffect(() => {
-    if (
-      !conversionChartTouched &&
-      webTrackingConfigured &&
-      selectedConversionChartView !== 'registrations-customers'
-    ) {
-      setSelectedConversionChartView('registrations-customers')
-      navigateAnalyticsView({ conversionChart: 'registrations-customers', replace: true })
-      return
-    }
-
     const validValues = conversionChartOptions.map(opt => opt.value)
     if (!validValues.includes(selectedConversionChartView)) {
       const nextChart = conversionChartOptions[0]?.value as AnalyticsConversionChartView
       setSelectedConversionChartView(nextChart)
       navigateAnalyticsView({ conversionChart: nextChart, replace: true })
     }
-  }, [conversionChartOptions, conversionChartTouched, navigateAnalyticsView, selectedConversionChartView, webTrackingConfigured])
+  }, [conversionChartOptions, navigateAnalyticsView, selectedConversionChartView])
 
   const sessionTrendData = React.useMemo(
     () => buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
@@ -2184,19 +2150,7 @@ const Analytics: React.FC = () => {
     ? filteredConversionTrendData
     : contactCreatedConversionTrendData
 
-  const mainChartConfig = React.useMemo<ChartMetricConfig>(() => {
-    if (!webTrackingConfigured) {
-      return {
-        title: 'Mensajes de WhatsApp',
-        description: `Mensajes recibidos por ${periodLabel}`,
-        label1: 'Mensajes',
-        color: ANALYTICS_CHART_COLORS.messages,
-        color2: ANALYTICS_CHART_COLORS.appointments,
-        data: whatsAppTrendData,
-        emptyMessage: 'Sin mensajes de WhatsApp disponibles en este rango'
-      }
-    }
-
+  const webChartConfig = React.useMemo<ChartMetricConfig>(() => {
     switch (selectedMainChartView) {
       case 'visitors-registrations':
         return {
@@ -2244,7 +2198,17 @@ const Analytics: React.FC = () => {
           emptyMessage: 'Sin datos de tráfico disponibles'
         }
     }
-  }, [dailyConversions, dailyTraffic, periodLabel, selectedMainChartView, sessionTrendData, webTrackingConfigured, whatsAppTrendData])
+  }, [dailyConversions, dailyTraffic, periodLabel, selectedMainChartView, sessionTrendData])
+
+  const whatsAppChartConfig = React.useMemo<ChartMetricConfig>(() => ({
+    title: 'Mensajes de WhatsApp',
+    description: `Mensajes recibidos por ${periodLabel}`,
+    label1: 'Mensajes',
+    color: ANALYTICS_CHART_COLORS.messages,
+    color2: ANALYTICS_CHART_COLORS.appointments,
+    data: whatsAppTrendData,
+    emptyMessage: 'Sin mensajes de WhatsApp disponibles en este rango'
+  }), [periodLabel, whatsAppTrendData])
 
   const conversionChartConfig = React.useMemo<ChartMetricConfig>(() => {
     switch (selectedConversionChartView) {
@@ -2308,7 +2272,8 @@ const Analytics: React.FC = () => {
   }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, periodLabel, selectedConversionChartView, whatsAppTrendData])
 
   const showWebAnalyticsBlocks = webTrackingConfigured
-  const mainChartHasData = mainChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
+  const webChartHasData = webChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
+  const whatsAppChartHasData = whatsAppChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   const conversionChartHasData = conversionChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
 
   const getConversionClickConfig = useCallback((seriesKey: ChartSeriesKey): {
@@ -2403,7 +2368,7 @@ const Analytics: React.FC = () => {
         <div className="flex flex-col gap-4">
           <PageHeader
             title="Analíticas"
-            subtitle="Tráfico, visitantes y comportamiento de tu sitio en tiempo real."
+            subtitle="Tráfico del sitio, mensajes de WhatsApp y conversiones por rango."
           />
 
           {/* Filtro en árbol, selector de fechas y vista */}
@@ -2509,85 +2474,145 @@ const Analytics: React.FC = () => {
           </div>
         </div>
 
-        {/* Métricas principales */}
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          {mainMetrics.map((metric) => (
-            <KpiCard
-              key={metric.title}
-              title={metric.title}
-              value={metric.value}
-              delta={metric.delta}
-              icon={metric.icon}
-              loading={analyticsRefreshing}
-            />
-          ))}
-        </div>
-
-        {/* Gráfico principal */}
-        <Card variant="glass" className="p-6">
-          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0 flex-1">
-              <ViewSelector
-                variant="title"
-                options={mainChartOptions}
-                value={selectedMainChartView}
-                onChange={(value) => {
-                  if (isAnalyticsMainChartView(value)) {
-                    setSelectedMainChartView(value)
-                    navigateAnalyticsView({ mainChart: value })
-                  }
-                }}
-              />
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                {mainChartConfig.description}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-3 lg:justify-end">
-              <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: mainChartConfig.color }} />
-                  <span className="font-medium">{mainChartConfig.label1}</span>
-                </span>
-                {mainChartConfig.label2 && (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: mainChartConfig.color2 }} />
-                    <span className="font-medium">{mainChartConfig.label2}</span>
-                  </span>
-                )}
+        {/* Métricas por canal */}
+        <div className="grid gap-4 xl:grid-cols-2">
+          {metricSections.map((section) => (
+            <section key={section.title} className="flex min-w-0 flex-col gap-3" aria-label={section.title}>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="font-display text-sm font-semibold text-[var(--text)]">{section.title}</h2>
               </div>
-            </div>
-          </div>
-
-          <div className="relative w-full" style={{ minHeight: 360, height: 360 }}>
-            {loading && !hasLoadedAnalytics ? (
-              <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando datos">
-                {[62, 44, 76, 54, 82, 66].map((height, index) => (
-                  <span
-                    key={`analytics-main-chart-skeleton-${index}`}
-                    className="min-w-0 flex-1 animate-pulse rounded-t-lg bg-[var(--app-skeleton-base)]"
-                    style={{ height: `${height}%` }}
-                    aria-hidden="true"
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                {section.metrics.map((metric) => (
+                  <KpiCard
+                    key={metric.title}
+                    title={metric.title}
+                    value={metric.value}
+                    delta={metric.delta}
+                    icon={metric.icon}
+                    loading={analyticsRefreshing}
                   />
                 ))}
               </div>
-            ) : mainChartHasData ? (
-              <AreaChart
-                data={mainChartConfig.data}
-                height={360}
-                showGrid
-                color={mainChartConfig.color}
-                color2={mainChartConfig.color2}
-                legendLabels={{ label1: mainChartConfig.label1, label2: mainChartConfig.label2 }}
-                formatValue={formatTrafficAxis}
-                formatTooltipValue={formatTrafficTooltip}
-              />
-            ) : (
-              <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
-                {mainChartConfig.emptyMessage}
+            </section>
+          ))}
+        </div>
+
+        {/* Gráficas por canal */}
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Card variant="glass" className="p-6">
+            <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0 flex-1">
+                <ViewSelector
+                  variant="title"
+                  options={mainChartOptions}
+                  value={selectedMainChartView}
+                  onChange={(value) => {
+                    if (isAnalyticsMainChartView(value)) {
+                      setSelectedMainChartView(value)
+                      navigateAnalyticsView({ mainChart: value })
+                    }
+                  }}
+                />
+                <p className="mt-1 text-sm text-[var(--text-mute)]">
+                  {webChartConfig.description}
+                </p>
               </div>
-            )}
-          </div>
-        </Card>
+              <div className="flex shrink-0 flex-wrap items-center gap-3 lg:justify-end">
+                <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--text-dim)]">
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: webChartConfig.color }} />
+                    <span className="font-medium">{webChartConfig.label1}</span>
+                  </span>
+                  {webChartConfig.label2 && (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: webChartConfig.color2 }} />
+                      <span className="font-medium">{webChartConfig.label2}</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
+              {loading && !hasLoadedAnalytics ? (
+                <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando tráfico del sitio">
+                  {[62, 44, 76, 54, 82, 66].map((height, index) => (
+                    <span
+                      key={`analytics-web-chart-skeleton-${index}`}
+                      className="min-w-0 flex-1 animate-pulse rounded-t-lg bg-[var(--app-skeleton-base)]"
+                      style={{ height: `${height}%` }}
+                      aria-hidden="true"
+                    />
+                  ))}
+                </div>
+              ) : webChartHasData ? (
+                <AreaChart
+                  data={webChartConfig.data}
+                  height={340}
+                  showGrid
+                  color={webChartConfig.color}
+                  color2={webChartConfig.color2}
+                  legendLabels={{ label1: webChartConfig.label1, label2: webChartConfig.label2 }}
+                  formatValue={formatTrafficAxis}
+                  formatTooltipValue={formatTrafficTooltip}
+                />
+              ) : (
+                <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] px-4 text-center text-sm text-[var(--text-mute)]">
+                  {webChartConfig.emptyMessage}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card variant="glass" className="p-6">
+            <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0 flex-1">
+                <h2 className="font-display text-lg font-semibold text-[var(--text)]">{whatsAppChartConfig.title}</h2>
+                <p className="mt-1 text-sm text-[var(--text-mute)]">
+                  {whatsAppChartConfig.description}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-3 lg:justify-end">
+                <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--text-dim)]">
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: whatsAppChartConfig.color }} />
+                    <span className="font-medium">{whatsAppChartConfig.label1}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
+              {loading && !hasLoadedAnalytics ? (
+                <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando mensajes de WhatsApp">
+                  {[48, 70, 58, 84, 62, 74].map((height, index) => (
+                    <span
+                      key={`analytics-whatsapp-chart-skeleton-${index}`}
+                      className="min-w-0 flex-1 animate-pulse rounded-t-lg bg-[var(--app-skeleton-base)]"
+                      style={{ height: `${height}%` }}
+                      aria-hidden="true"
+                    />
+                  ))}
+                </div>
+              ) : whatsAppChartHasData ? (
+                <AreaChart
+                  data={whatsAppChartConfig.data}
+                  height={340}
+                  showGrid
+                  color={whatsAppChartConfig.color}
+                  color2={whatsAppChartConfig.color2}
+                  legendLabels={{ label1: whatsAppChartConfig.label1 }}
+                  formatValue={formatTrafficAxis}
+                  formatTooltipValue={formatTrafficTooltip}
+                />
+              ) : (
+                <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] px-4 text-center text-sm text-[var(--text-mute)]">
+                  {whatsAppChartConfig.emptyMessage}
+                </div>
+              )}
+            </div>
+          </Card>
+        </div>
 
         {/* Grid de Gráficas: Conversión y Distribución */}
         <div className="grid gap-4 lg:grid-cols-2">
@@ -2602,7 +2627,6 @@ const Analytics: React.FC = () => {
                   options={conversionChartOptions}
                   value={selectedConversionChartView}
                   onChange={(value) => {
-                    setConversionChartTouched(true)
                     if (isAnalyticsConversionChartView(value)) {
                       setSelectedConversionChartView(value)
                       navigateAnalyticsView({ conversionChart: value })
