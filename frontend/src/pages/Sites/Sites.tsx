@@ -6000,7 +6000,7 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     setSeoModalOpen(false)
     setHeaderModalOpen(false)
-  }, [editorSite?.id, formEditMode, formEditSourceSite?.id])
+  }, [editorSite?.id])
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent(SITES_EDITOR_ACTIVE_EVENT, {
@@ -7339,19 +7339,6 @@ export const Sites: React.FC = () => {
     const next = { ...current, theme: { ...(current.theme || {}), ...patch } }
     selectedSiteRef.current = next
     setSelectedSite(next)
-  }
-
-  const patchEmbeddedFormSourceSite = (patch: Partial<PublicSite>) => {
-    if (!formEditSourceSite) {
-      updateSelectedSite(patch)
-      return
-    }
-    const sourceForm = pendingEmbeddedFormSourceDraftsRef.current.get(formEditSourceSite.id) || formEditSourceSite
-    if (!editorPatchHasChanges(sourceForm as unknown as Record<string, unknown>, patch as Record<string, unknown>)) return
-    syncEmbeddedFormSourceDraft({
-      ...sourceForm,
-      ...patch
-    })
   }
 
   const patchEmbeddedFormSourceTheme = (patch: Partial<SiteTheme>) => {
@@ -9658,17 +9645,13 @@ export const Sites: React.FC = () => {
       onSaveSite={() => handleSaveSite(undefined, { silent: true })}
     />
   ) : null
-  const editorToolbarSettingsSite = formEditMode ? formEditSourceSite : editorSite
-  const editorToolbarSettingsPages = formEditMode && formEditSourceSite ? formEditPages : pages
-  const editorToolbarSettingsActivePage = formEditMode && formEditSourceSite ? activeEmbeddedFormPage : activePage
+  const editorToolbarSettingsSite = editorSite
+  const editorToolbarSettingsPages = pages
+  const editorToolbarSettingsActivePage = activePage
   const editorToolbarSettingsSeoIssues = editorToolbarSettingsSite ? getSeoValidationState(editorToolbarSettingsSite).totalIssues : 0
-  const patchEditorToolbarSettingsSite = formEditMode && formEditSourceSite ? patchEmbeddedFormSourceSite : updateSelectedSite
-  const patchEditorToolbarSettingsTheme = formEditMode && formEditSourceSite ? patchEmbeddedFormSourceTheme : patchSiteTheme
-  const saveEditorToolbarSettingsSite = () => (
-    formEditMode && formEditSourceSite && formEditBlock
-      ? handleSaveBlock(formEditBlock.id)
-      : handleSaveSite(undefined, { silent: true })
-  )
+  const patchEditorToolbarSettingsSite = updateSelectedSite
+  const patchEditorToolbarSettingsTheme = patchSiteTheme
+  const saveEditorToolbarSettingsSite = () => handleSaveSite(undefined, { silent: true })
 
   if (loading) {
     return <Loading page="sites" />
@@ -9714,14 +9697,27 @@ export const Sites: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  {editorToolbarSettingsSite && (
+                  {!formEditMode && editorToolbarSettingsSite && (
                     <div className={styles.editorToolbarTools} aria-label="Herramientas de edición">
-                      {!formEditMode && editorPageSelector && (
+                      {editorPageSelector && (
                         <div className={styles.editorPageSelectorSlot}>
                           {editorPageSelector}
                         </div>
                       )}
-                      {!formEditMode && canConfigurePopup && (
+                      {hasEditablePages(editorToolbarSettingsSite) && (
+                        <button
+                          type="button"
+                          className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${headerModalOpen ? styles.headerToolbarButtonActive : ''}`}
+                          onClick={() => setHeaderModalOpen(true)}
+                          disabled={editorAIGenerating}
+                          title="Configurar Headers"
+                          aria-label="Configurar Headers"
+                        >
+                          <PanelTop size={15} />
+                          <span>Headers</span>
+                        </button>
+                      )}
+                      {canConfigurePopup && (
                         <button
                           type="button"
                           className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
@@ -9847,7 +9843,7 @@ export const Sites: React.FC = () => {
           )}
         </header>
 
-        {editorToolbarSettingsSite && seoModalOpen && (
+        {!formEditMode && editorToolbarSettingsSite && seoModalOpen && (
           <SeoOptimizationModal
             site={editorToolbarSettingsSite}
             onClose={() => setSeoModalOpen(false)}
@@ -9857,7 +9853,7 @@ export const Sites: React.FC = () => {
           />
         )}
 
-        {editorToolbarSettingsSite && hasEditablePages(editorToolbarSettingsSite) && headerModalOpen && (
+        {!formEditMode && editorToolbarSettingsSite && hasEditablePages(editorToolbarSettingsSite) && headerModalOpen && (
           <HeaderToolbarModal
             site={editorToolbarSettingsSite}
             pages={editorToolbarSettingsPages}
