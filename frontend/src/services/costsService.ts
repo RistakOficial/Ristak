@@ -1,9 +1,11 @@
 import apiClient from './apiClient'
 
+export type CostType = string
+
 export interface Cost {
   id: string
   name: string
-  type: 'tax' | 'commission' | 'rent' | 'service' | 'other'
+  type: CostType
   calculation_type: 'percentage' | 'fixed'
   value: number
   applies_to?: 'revenue' | 'profit' | null
@@ -28,7 +30,7 @@ interface CostCalculation {
 
 export interface CreateCostDto {
   name: string
-  type: 'tax' | 'commission' | 'rent' | 'service' | 'other'
+  type: CostType
   calculation_type: 'percentage' | 'fixed'
   value: number
   applies_to?: 'revenue' | 'profit' | null
@@ -108,11 +110,43 @@ export const costsService = {
    * Traduce el tipo de costo a español
    */
   translateType(type: Cost['type']): string {
-    const translations: Record<Cost['type'], string> = {
-      tax: 'Impuesto',
-      commission: 'Comisión',
+    const translations: Record<string, string> = {
+      payroll: 'Sueldos',
+      payroll_taxes: 'Cargas sociales y nómina',
+      bonuses: 'Bonos y comisiones internas',
+      contractors: 'Honorarios y contratistas',
       rent: 'Renta',
+      utilities: 'Servicios básicos',
+      internet_phone: 'Internet y telefonía',
+      software: 'Software y suscripciones',
+      equipment: 'Equipo y herramientas',
+      maintenance: 'Mantenimiento',
+      office_supplies: 'Papelería e insumos de oficina',
+      cleaning: 'Limpieza',
+      security: 'Seguridad',
+      insurance: 'Seguros',
+      marketing: 'Publicidad y marketing',
+      sales_commission: 'Comisiones de venta',
+      payment_processing: 'Comisiones de pasarela',
+      product_cost: 'Costo de producto',
+      inventory: 'Inventario',
+      raw_materials: 'Materia prima',
+      packaging: 'Empaque',
+      shipping: 'Envíos y logística',
+      storage: 'Almacenamiento',
+      transport: 'Transporte y gasolina',
+      tax: 'Impuesto',
+      accounting: 'Contabilidad',
+      legal: 'Legal',
+      bank_fees: 'Comisiones bancarias',
+      loan_interest: 'Intereses y financiamiento',
+      licenses: 'Permisos y licencias',
+      training: 'Capacitación',
+      travel: 'Viajes y viáticos',
+      customer_support: 'Atención al cliente',
+      refunds: 'Reembolsos y garantías',
       service: 'Servicio',
+      commission: 'Comisión',
       other: 'Otro'
     }
     return translations[type] || type

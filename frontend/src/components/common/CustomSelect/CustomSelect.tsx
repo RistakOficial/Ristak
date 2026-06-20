@@ -116,7 +116,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   disabled = false,
   className = '',
   style,
-  portal = false,
+  portal = true,
   dropdownPlacement = 'auto',
   dropdownMinWidth,
   iconOnly = false,
@@ -133,6 +133,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   const [portalPlacement, setPortalPlacement] = useState<'top' | 'bottom'>('bottom')
   const containerRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const shouldPortal = portal && typeof document !== 'undefined'
 
   const optionEntries = useMemo<OptionEntry[]>(() => {
     if (options) return options.map(option => ({ ...option, value: String(option.value) }))
@@ -151,7 +152,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   }, [defaultValue, firstEnabledOption, internalValue, isControlled])
 
   const updatePortalPosition = useCallback(() => {
-    if (!portal || !containerRef.current) return
+    if (!shouldPortal || !containerRef.current) return
 
     const rect = containerRef.current.getBoundingClientRect()
     const viewportPadding = 12
@@ -178,7 +179,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       width: dropdownWidth,
       '--custom-select-options-max-height': `${dropdownHeight}px`
     } as React.CSSProperties)
-  }, [dropdownMinWidth, dropdownPlacement, flatOptions.length, portal, size])
+  }, [dropdownMinWidth, dropdownPlacement, flatOptions.length, shouldPortal, size])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -201,7 +202,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   }, [isOpen])
 
   useEffect(() => {
-    if (!isOpen || !portal) return
+    if (!isOpen || !shouldPortal) return
 
     updatePortalPosition()
     window.addEventListener('resize', updatePortalPosition)
@@ -211,7 +212,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       window.removeEventListener('resize', updatePortalPosition)
       window.removeEventListener('scroll', updatePortalPosition, true)
     }
-  }, [isOpen, portal, updatePortalPosition])
+  }, [isOpen, shouldPortal, updatePortalPosition])
 
   const handleSelect = (option: Option) => {
     if (option.disabled) return
@@ -237,9 +238,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   const dropdown = isOpen && !disabled ? (
     <div
       ref={dropdownRef}
-      className={`${styles.dropdown} ${portal ? styles.portalDropdown : ''} ${size === 'large' ? styles.dropdownLarge : ''}`}
-      style={portal ? portalStyle : undefined}
-      data-placement={portal ? portalPlacement : undefined}
+      className={`${styles.dropdown} ${shouldPortal ? styles.portalDropdown : ''} ${size === 'large' ? styles.dropdownLarge : ''}`}
+      style={shouldPortal ? portalStyle : undefined}
+      data-placement={shouldPortal ? portalPlacement : undefined}
       data-ristak-dropdown-panel
     >
       <div className={styles.options}>
@@ -333,7 +334,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         />
       )}
 
-      {portal ? createPortal(dropdown, document.body) : dropdown}
+      {shouldPortal ? createPortal(dropdown, document.body) : dropdown}
     </div>
   )
 }
