@@ -1053,6 +1053,14 @@ function playbackAggregateSelect() {
 export async function getVideoPlaybackAggregate(input = {}) {
   const assetIds = normalizePlaybackIdList(input.assetIds || input.mediaAssetIds)
   const dateFilters = await resolvePlaybackDateFilters(input)
+  const hourly = boolValue(input.hourly)
+  const emptyPeriodCharts = () => buildPlaybackPeriodCharts([], {
+    hourly,
+    rawDateFrom: input.dateFrom || input.date_from,
+    rawDateTo: input.dateTo || input.date_to,
+    dateFrom: dateFilters.dateFrom,
+    dateTo: dateFilters.dateTo
+  })
   const byAssetId = Object.fromEntries(assetIds.map(assetId => [
     assetId,
     emptyPlaybackSummary({ assetId })
@@ -1064,7 +1072,8 @@ export async function getVideoPlaybackAggregate(input = {}) {
       dateTo: dateFilters.dateTo || '',
       summary: emptyPlaybackSummary(),
       byAssetId,
-      bySiteId: {}
+      bySiteId: {},
+      ...emptyPeriodCharts()
     }
   }
 
@@ -1093,6 +1102,18 @@ export async function getVideoPlaybackAggregate(input = {}) {
     GROUP BY COALESCE(NULLIF(vps.site_id, ''), 'unknown')
   `, params)
 
+  const periodExpression = buildPlaybackPeriodExpression(hourly, dateFilters.appliedTimezone)
+  const chartRows = await db.all(`
+    SELECT
+      ${periodExpression} as period_key,
+      COALESCE(SUM(play_count), 0) as plays,
+      COALESCE(SUM(watched_seconds), 0) as watched_seconds
+    FROM video_playback_sessions vps
+    ${where}
+    GROUP BY ${periodExpression}
+    ORDER BY period_key ASC
+  `, params)
+
   for (const row of assetRows) {
     const assetId = cleanString(row.asset_id, 160)
     if (!assetId) continue
@@ -1110,7 +1131,14 @@ export async function getVideoPlaybackAggregate(input = {}) {
     dateTo: dateFilters.dateTo || '',
     summary: playbackSummaryFromRow(summary),
     byAssetId,
-    bySiteId
+    bySiteId,
+    ...buildPlaybackPeriodCharts(chartRows, {
+      hourly,
+      rawDateFrom: input.dateFrom || input.date_from,
+      rawDateTo: input.dateTo || input.date_to,
+      dateFrom: dateFilters.dateFrom,
+      dateTo: dateFilters.dateTo
+    })
   }
 }
 

@@ -6842,9 +6842,13 @@ export const Sites: React.FC = () => {
     () => new Map(sites.map(site => [site.id, site])),
     [sites]
   )
+  const liveAnalyticsSites = useMemo(
+    () => sites.filter(site => site.status === 'published'),
+    [sites]
+  )
   const analyticsSites = useMemo(
-    () => sites.filter(site => getSiteTypeFilterMatch(site, sitesAnalyticsSiteType)),
-    [sites, sitesAnalyticsSiteType]
+    () => liveAnalyticsSites.filter(site => getSiteTypeFilterMatch(site, sitesAnalyticsSiteType)),
+    [liveAnalyticsSites, sitesAnalyticsSiteType]
   )
   const analyticsSiteIds = useMemo(
     () => new Set(analyticsSites.map(site => site.id)),
@@ -6853,12 +6857,11 @@ export const Sites: React.FC = () => {
   const filteredAnalyticsVideos = useMemo(() => (
     siteVideoAssets.filter((asset) => {
       const sourceSiteId = getMediaSourceSiteId(asset)
+      if (!sourceSiteId || !analyticsSiteIds.has(sourceSiteId)) return false
       if (sitesAnalyticsSiteId) return sourceSiteId === sitesAnalyticsSiteId
-      if (sitesAnalyticsSiteType === 'videos') return true
-      if (!sourceSiteId) return false
-      return analyticsSiteIds.has(sourceSiteId)
+      return true
     })
-  ), [analyticsSiteIds, siteVideoAssets, sitesAnalyticsSiteId, sitesAnalyticsSiteType])
+  ), [analyticsSiteIds, siteVideoAssets, sitesAnalyticsSiteId])
   const analyticsSummarySiteIds = useMemo(
     () => analyticsSites.map(site => site.id),
     [analyticsSites]
@@ -11642,7 +11645,7 @@ export const Sites: React.FC = () => {
             ) : section === 'analytics' ? (
               <SitesAnalyticsPanel
                 sites={analyticsSites}
-                allSites={sites}
+                allSites={liveAnalyticsSites}
                 sitesById={sitesById}
                 videos={filteredAnalyticsVideos}
                 selectedSiteType={sitesAnalyticsSiteType}
@@ -34347,8 +34350,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const conversionRate = totalVisitors > 0 ? Number(((totalConversions / totalVisitors) * 100).toFixed(1)) : 0
   const averageConversions = sites.length > 0 ? totalConversions / sites.length : 0
   const publishedCount = sites.filter(site => site.status === 'published').length
-  const draftCount = sites.filter(site => site.status === 'draft').length
-  const archivedCount = sites.filter(site => site.status === 'archived').length
   const latestUpdatedSite = [...siteRows]
     .sort((a, b) => new Date(b.site.updatedAt).getTime() - new Date(a.site.updatedAt).getTime())[0]?.site || null
   const rowsByViews = [...siteRows].sort((a, b) => b.stats.views - a.stats.views)
@@ -34394,6 +34395,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       value: row.views,
       value2: Math.round((row.watchTime / 60) * 10) / 10
     }))
+  const aggregateViewsChart = buildSitesChartPoints(aggregateVideoStats?.viewsChart || [], 'count')
+  const aggregateWatchTimeChart = buildSitesChartPoints(aggregateVideoStats?.watchTimeChart || [], 'seconds')
   const videoViews = selectedVideo ? (firstPartySummary?.plays ?? analytics?.summary.views ?? readSitesNumber(selectedVideoStats.views)) : totalVideoViews
   const videoLoads = selectedVideo ? (firstPartySummary?.playbackSessions ?? 0) : (aggregateVideoSummary?.playbackSessions ?? videoRows.reduce((total, row) => total + row.playbackSessions, 0))
   const uniqueVideoViewers = selectedVideo ? (firstPartySummary?.totalViewers ?? 0) : (aggregateVideoSummary?.totalViewers ?? videoRows.reduce((total, row) => total + row.totalViewers, 0))
@@ -34562,20 +34565,18 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 
         <div className={styles.sitesAnalyticsChartBlock}>
           <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Estado</span>
+            <span>Elementos en vivo</span>
             <strong>{formatSitesCompactNumber(sites.length)} {entityPluralLabel}</strong>
           </div>
           {renderDetailRows([
-            { key: 'published', icon: <CheckCircle2 size={15} />, label: 'Publicados', value: formatSitesCompactNumber(publishedCount) },
-            { key: 'draft', icon: <Pencil size={15} />, label: 'Borradores', value: formatSitesCompactNumber(draftCount) },
-            { key: 'archived', icon: <Trash2 size={15} />, label: 'Archivados', value: formatSitesCompactNumber(archivedCount) },
+            { key: 'published', icon: <CheckCircle2 size={15} />, label: 'En vivo', value: formatSitesCompactNumber(publishedCount) },
             ...(latestUpdatedSite ? [{
               key: 'latest',
               icon: <CalendarDays size={15} />,
               label: `Último cambio: ${latestUpdatedSite.name}`,
-              value: getSiteStatusLabel(latestUpdatedSite.status)
+              value: 'En vivo'
             }] : [])
-          ], `Sin estado para estos ${entityPluralLabel}.`)}
+          ], `Sin elementos en vivo para estos ${entityPluralLabel}.`)}
         </div>
       </div>
     )
@@ -34604,6 +34605,42 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 
     return (
       <div className={styles.videoAggregateDashboard}>
+        {(aggregateViewsChart.length || aggregateWatchTimeChart.length) ? (
+          <div className={`${styles.videoStreamCharts} ${styles.videoAggregatePeriodCharts}`}>
+            {aggregateViewsChart.length ? (
+              <div className={styles.sitesAnalyticsChartBlock}>
+                <div className={styles.sitesAnalyticsChartTitle}>
+                  <span>Reproducciones por periodo</span>
+                  <strong>{formatSitesCompactNumber(totalVideoViews)}</strong>
+                </div>
+                <AreaChart
+                  data={aggregateViewsChart}
+                  height={190}
+                  showLegend={false}
+                  formatValue={(value) => formatSitesCompactNumber(value)}
+                  formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} reproducciones`}
+                />
+              </div>
+            ) : null}
+            {aggregateWatchTimeChart.length ? (
+              <div className={styles.sitesAnalyticsChartBlock}>
+                <div className={styles.sitesAnalyticsChartTitle}>
+                  <span>Tiempo visto por periodo</span>
+                  <strong>{formatSitesSeconds(totalVideoWatchTime)}</strong>
+                </div>
+                <AreaChart
+                  data={aggregateWatchTimeChart}
+                  height={190}
+                  color="var(--pos)"
+                  showLegend={false}
+                  formatValue={(value) => `${formatSitesCompactNumber(value)}m`}
+                  formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} min vistos`}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className={`${styles.sitesAnalyticsChartBlock} ${styles.videoAggregateChartWide}`}>
           <div className={styles.sitesAnalyticsChartTitle}>
             <span>Rendimiento por video</span>

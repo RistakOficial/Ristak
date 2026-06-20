@@ -1,6 +1,6 @@
 import apiClient from './apiClient'
 import { apiUrl, getApiBaseUrl } from './apiBaseUrl'
-import type { FirstPartyVideoTracking, MediaAsset, MediaStreamAnalytics, MediaStreamAnalyticsInput } from './mediaService'
+import type { FirstPartyVideoTracking, MediaAsset, MediaStreamAnalytics, MediaStreamAnalyticsInput, StreamChartPoint } from './mediaService'
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('auth_token')
@@ -269,6 +269,8 @@ export interface SitesVideoAnalyticsAggregate {
   dateFrom?: string
   dateTo?: string
   summary: SitesVideoAnalyticsSummary
+  viewsChart: StreamChartPoint[]
+  watchTimeChart: StreamChartPoint[]
   byAssetId: Record<string, SitesVideoAnalyticsAggregateItem>
   bySiteId: Record<string, SitesVideoAnalyticsAggregateItem>
 }
@@ -285,6 +287,7 @@ export interface SitesAnalyticsSummaryInput {
   videoAssetIds?: string[]
   dateFrom?: string
   dateTo?: string
+  hourly?: boolean
 }
 
 export interface SiteTemplateMeta {

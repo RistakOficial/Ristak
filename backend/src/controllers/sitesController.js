@@ -260,7 +260,8 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
       getVideoPlaybackAggregate({
         assetIds: body.videoAssetIds || body.video_asset_ids || [],
         dateFrom,
-        dateTo
+        dateTo,
+        hourly: body.hourly
       })
     ])
 

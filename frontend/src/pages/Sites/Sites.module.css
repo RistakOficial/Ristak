@@ -7605,6 +7605,10 @@
   grid-column: 1 / -1;
 }
 
+.videoAggregatePeriodCharts {
+  grid-column: 1 / -1;
+}
+
 .videoEngagementHero {
   display: grid;
   grid-template-columns: minmax(260px, 0.44fr) minmax(0, 1fr);
@@ -7835,11 +7839,11 @@
 }
 
 .videoRetentionChart {
-  --video-retention-axis: color-mix(in srgb, var(--on-accent, var(--text)) 82%, var(--video-retention-line) 18%);
+  --video-retention-axis: color-mix(in srgb, var(--on-accent, var(--text)) 92%, var(--video-retention-line) 8%);
   --video-retention-border: var(--border-strong);
   --video-retention-line: var(--design-chart-primary, var(--accent));
-  --video-retention-fill: color-mix(in srgb, var(--video-retention-line) 32%, transparent);
-  --video-retention-grid: color-mix(in srgb, var(--on-accent, var(--text)) 46%, transparent);
+  --video-retention-fill: color-mix(in srgb, var(--video-retention-line) 42%, transparent);
+  --video-retention-grid: color-mix(in srgb, var(--on-accent, var(--text)) 66%, transparent);
   --video-retention-control-clearance: 86px;
   --video-retention-plot-top: 28px;
   --video-retention-plot-right: 0px;
@@ -7865,7 +7869,7 @@
 
 .videoRetentionMedia {
   background: black;
-  filter: brightness(0.38) saturate(0.82) contrast(1.14);
+  filter: brightness(0.24) saturate(0.78) contrast(1.18);
   object-fit: contain;
   object-position: center center;
 }
@@ -7886,8 +7890,8 @@
   inset: 0;
   z-index: 1;
   background:
-    linear-gradient(180deg, color-mix(in srgb, black 54%, transparent), color-mix(in srgb, black 36%, transparent) 36%, color-mix(in srgb, black 52%, transparent)),
-    linear-gradient(90deg, color-mix(in srgb, black 64%, transparent), transparent 22%, transparent 78%, color-mix(in srgb, black 60%, transparent));
+    linear-gradient(180deg, color-mix(in srgb, black 74%, transparent), color-mix(in srgb, black 62%, transparent) 36%, color-mix(in srgb, black 76%, transparent)),
+    linear-gradient(90deg, color-mix(in srgb, black 76%, transparent), color-mix(in srgb, black 56%, transparent) 22%, color-mix(in srgb, black 56%, transparent) 78%, color-mix(in srgb, black 76%, transparent));
   pointer-events: none;
 }
 

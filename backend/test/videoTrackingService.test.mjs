@@ -174,6 +174,9 @@ test('video playback aggregate sums selected assets from first-party tracking', 
     assert.equal(aggregate.byAssetId[assetB].plays, 1)
     assert.equal(aggregate.byAssetId[assetB].watchedSeconds, 20)
     assert.equal(aggregate.bySiteId[siteId].plays, 2)
+    assert.deepEqual(aggregate.viewsChart.map(point => point.periodKey), ['2026-01-15'])
+    assert.equal(aggregate.viewsChart[0].value, 2)
+    assert.equal(aggregate.watchTimeChart[0].value, 30)
 
     const viewers = await getVideoPlaybackViewers({
       assetId: assetA,
