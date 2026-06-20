@@ -351,6 +351,37 @@
   color: var(--rstk-video-play-color, #fff);
   cursor: pointer;
 }
+.rstkCanvas .rstk-video-form-gate-preview {
+  position: absolute;
+  inset: auto 14px 14px 14px;
+  z-index: 5;
+  display: grid;
+  gap: 3px;
+  max-width: min(360px, calc(100% - 28px));
+  border: 1px solid color-mix(in srgb, var(--rstk-video-play-color, currentColor) 22%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--rstk-video-player-color, CanvasText) 86%, transparent);
+  color: var(--rstk-video-play-color, Canvas);
+  padding: 10px 12px;
+  pointer-events: none;
+  backdrop-filter: blur(14px);
+}
+.rstkCanvas .rstk-video-form-gate-preview strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .9rem;
+  font-weight: 750;
+}
+.rstkCanvas .rstk-video-form-gate-preview span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  font-size: .78rem;
+}
 .rstkCanvas .rstk-video-play-dot {
   width: var(--rstk-video-play-width, var(--rstk-video-play-size, 160px));
   height: var(--rstk-video-play-size, 160px);

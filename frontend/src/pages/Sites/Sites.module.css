@@ -17802,6 +17802,80 @@
   padding-top: 12px;
 }
 
+.videoFormGatePanel {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.videoFormGateSwitchRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.videoFormGateSwitchRow > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.videoFormGateSwitchRow strong {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.videoFormGateSwitchRow span {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.videoFormGateQuestionTools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.videoFormGatePresetGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.videoFormGatePresetGrid button {
+  min-width: 0;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 9px;
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.videoFormGatePresetGrid button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.videoFormGatePresetGrid button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .videoSettingsSection {
   display: grid;
   gap: 10px;

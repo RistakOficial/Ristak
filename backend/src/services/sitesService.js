@@ -10453,13 +10453,16 @@ async function hydrateEmbeddedForms(blocks = []) {
   const hydrated = []
 
   for (const block of blocks) {
-    if (block.blockType !== 'form_embed') {
+    if (block.blockType !== 'form_embed' && block.blockType !== 'video') {
       hydrated.push(block)
       continue
     }
 
     const settings = block.settings || {}
-    const formSiteId = cleanString(settings.formSiteId || settings.form_site_id)
+    const isVideoGate = block.blockType === 'video'
+    const formSiteId = isVideoGate
+      ? cleanString(settings.videoFormGateFormSiteId || settings.video_form_gate_form_site_id)
+      : cleanString(settings.formSiteId || settings.form_site_id)
 
     if (!formSiteId) {
       hydrated.push(block)
@@ -10473,6 +10476,21 @@ async function hydrateEmbeddedForms(blocks = []) {
     }
     const embeddedBlocks = embeddedSite?.blocks || []
     const embeddedPages = normalizeEmbeddedFormPages(normalizeSitePages(embeddedSite))
+    if (isVideoGate) {
+      hydrated.push({
+        ...block,
+        settings: {
+          ...settings,
+          videoFormGateEmbeddedSiteId: embeddedSite?.id || formSiteId,
+          videoFormGateEmbeddedSiteName: embeddedSite?.name || '',
+          videoFormGateEmbeddedSiteType: embeddedSite?.siteType || embeddedSite?.site_type || 'standard_form',
+          videoFormGateEmbeddedTheme: embeddedSite?.theme || {},
+          videoFormGateEmbeddedBlocks: collectFieldBlocks(embeddedBlocks)
+        }
+      })
+      continue
+    }
+
     hydrated.push({
       ...block,
       settings: {
@@ -11392,13 +11410,604 @@ function buildCountdownRuntimeScript(blocks = []) {
   </script>`
 }
 
-function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}) {
+function isVideoFormGateEnabled(settings = {}) {
+  return normalizeBoolean(settings.videoFormGateEnabled || settings.video_form_gate_enabled) === 1
+}
+
+function getVideoFormGateSourceFormId(settings = {}) {
+  return cleanString(
+    settings.videoFormGateEmbeddedSiteId ||
+    settings.videoFormGateFormSiteId ||
+    settings.video_form_gate_form_site_id ||
+    settings.video_form_gate_embedded_site_id
+  )
+}
+
+function getVideoFormGateFields(settings = {}) {
+  if (!isVideoFormGateEnabled(settings)) return []
+  const blocks = Array.isArray(settings.videoFormGateEmbeddedBlocks)
+    ? settings.videoFormGateEmbeddedBlocks
+    : Array.isArray(settings.video_form_gate_embedded_blocks)
+      ? settings.video_form_gate_embedded_blocks
+      : []
+  return collectFieldBlocks(blocks)
+}
+
+function getVideoFormGateTriggerSeconds(settings = {}) {
+  const value = Number(settings.videoFormGateTriggerSeconds ?? settings.video_form_gate_trigger_seconds ?? 0)
+  return Number.isFinite(value) ? Math.min(86400, Math.max(0, value)) : 0
+}
+
+function hasVideoFormGates(blocks = []) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'video' && getVideoFormGateFields(settings).length > 0) return true
+    if (Array.isArray(settings.embeddedBlocks) && hasVideoFormGates(settings.embeddedBlocks)) return true
+  }
+  return false
+}
+
+function renderVideoFormGateFieldBlock(block, context = {}) {
+  const label = escapeHtml(block.label || 'Pregunta')
+  const required = block.required ? '<span class="rstk-required">*</span>' : ''
+
+  return `
+    <section class="rstk-video-form-field" data-rstk-video-form-field data-block-id="${escapeHtml(block.id)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}" data-validation="${escapeHtml(getNativeFieldValidation(block))}">
+      <label for="${escapeHtml(block.id)}">${label}${required}</label>
+      ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
+      ${renderFieldInput(block, context)}
+      <p class="rstk-error" hidden>Esta respuesta es requerida.</p>
+    </section>
+  `
+}
+
+function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
+  const fields = getVideoFormGateFields(settings)
+  if (!fields.length) return ''
+
+  const embeddedTheme = isPlainObject(settings.videoFormGateEmbeddedTheme)
+    ? { ...DEFAULT_THEME, ...settings.videoFormGateEmbeddedTheme }
+    : {}
+  const style = buildEmbeddedFormProxyStyle(embeddedTheme, context.formStyleContext).replace(/\s+/g, ' ').trim()
+  const formSiteId = getVideoFormGateSourceFormId(settings)
+  const formSiteName = cleanString(settings.videoFormGateEmbeddedSiteName || settings.videoFormGateFormSiteName || settings.video_form_gate_form_site_name)
+  const title = cleanString(settings.videoFormGateTitle || settings.video_form_gate_title) || 'Antes de continuar'
+  const description = cleanString(settings.videoFormGateDescription || settings.video_form_gate_description)
+  const nextText = cleanString(settings.videoFormGateNextText || settings.video_form_gate_next_text || embeddedTheme.nextText) || 'Siguiente'
+  const backText = cleanString(settings.videoFormGateBackText || settings.video_form_gate_back_text || embeddedTheme.backText) || 'Anterior'
+  const submitText = cleanString(settings.videoFormGateSubmitText || settings.video_form_gate_submit_text || embeddedTheme.submitText) || 'Continuar'
+  const classes = [
+    'rstk-video-form-gate',
+    `rstk-choice-${normalizeFormChoiceStyle(embeddedTheme.formChoiceStyle)}`,
+    `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`
+  ].join(' ')
+
+  return `
+    <div class="${classes}" data-rstk-video-form-gate data-site-id="${escapeHtml(context.site?.id || '')}" data-page-id="${escapeHtml(context.pageId || '')}" data-video-block-id="${escapeHtml(block.id || '')}" data-form-site-id="${escapeHtml(formSiteId)}" data-form-site-name="${escapeHtml(formSiteName)}" data-trigger-seconds="${escapeHtml(String(getVideoFormGateTriggerSeconds(settings)))}" data-next-text="${escapeHtml(nextText)}" data-back-text="${escapeHtml(backText)}" data-submit-text="${escapeHtml(submitText)}" style="${style}" hidden>
+      <div class="rstk-video-form-gate-panel">
+        <header class="rstk-video-form-gate-header">
+          <strong>${escapeHtml(title)}</strong>
+          ${description ? `<p>${escapeHtml(description)}</p>` : ''}
+        </header>
+        <div class="rstk-video-form-gate-progress" data-rstk-video-gate-progress hidden></div>
+        <div class="rstk-video-form-fields" data-rstk-video-gate-fields>
+          <div class="rstk-video-form-field-stack" data-rstk-video-gate-stack>
+            ${fields.map(field => renderVideoFormGateFieldBlock(field, context)).join('\n')}
+          </div>
+        </div>
+        <div class="rstk-video-form-actions">
+          <button type="button" class="rstk-secondary" data-rstk-video-gate-back hidden>${escapeHtml(backText)}</button>
+          <button type="button" data-rstk-video-gate-next hidden>${escapeHtml(nextText)}</button>
+          <button type="button" data-rstk-video-gate-submit>${escapeHtml(submitText)}</button>
+        </div>
+        <p class="rstk-submit-message" data-rstk-video-gate-message role="status"></p>
+      </div>
+    </div>
+  `
+}
+
+function buildVideoFormGateRuntimeScript(blocks = []) {
+  if (!hasVideoFormGates(blocks)) return ''
+
+  return `<script>
+    (() => {
+      if (window.ristakVideoFormGateRuntimeLoaded) return;
+      window.ristakVideoFormGateRuntimeLoaded = true;
+
+      const PLAYERJS_URL = 'https://assets.mediadelivery.net/playerjs/playerjs-latest.min.js';
+      const attached = new WeakSet();
+      let playerJsLoader = null;
+
+      const clean = value => String(value || '').trim();
+      const parseRule = value => {
+        if (!value) return null;
+        try { return JSON.parse(value); } catch (_) { return null; }
+      };
+      const preserveUrl = value => (
+        value && window.ristakPreserveParams ? window.ristakPreserveParams(value) : value
+      );
+      const loadPlayerJs = () => {
+        if (window.playerjs && window.playerjs.Player) return Promise.resolve(window.playerjs);
+        if (playerJsLoader) return playerJsLoader;
+        playerJsLoader = new Promise(resolve => {
+          const existing = document.querySelector('script[data-rstk-playerjs="true"]');
+          if (existing) {
+            existing.addEventListener('load', () => resolve(window.playerjs || null), { once: true });
+            existing.addEventListener('error', () => resolve(null), { once: true });
+            return;
+          }
+          const script = document.createElement('script');
+          script.src = PLAYERJS_URL;
+          script.async = true;
+          script.dataset.rstkPlayerjs = 'true';
+          script.onload = () => resolve(window.playerjs || null);
+          script.onerror = () => resolve(null);
+          document.head.appendChild(script);
+        });
+        return playerJsLoader;
+      };
+      const phoneDigits = value => String(value || '').replace(/\\D/g, '');
+      const stripInternationalPrefix = digits => digits.startsWith('00') ? digits.slice(2) : digits;
+      const normalizeMexicoPhoneDigits = digits => {
+        const national = digits.slice(-10);
+        if (national.length !== 10) return '';
+        if (digits.startsWith('521') && digits.length >= 13) return '52' + national;
+        if (digits.startsWith('52') && digits.length >= 12) return '52' + national;
+        return '';
+      };
+      const composePhoneValue = (value, dialCode) => {
+        const raw = clean(value);
+        const digits = stripInternationalPrefix(phoneDigits(raw));
+        const countryCode = phoneDigits(dialCode).slice(0, 4);
+        if (digits.length < 7) return '';
+        const mexicoPhone = countryCode === '52' ? normalizeMexicoPhoneDigits(digits) : '';
+        if (mexicoPhone) return '+' + mexicoPhone;
+        if (!countryCode || raw.startsWith('+') || raw.startsWith('00')) return '+' + digits;
+        if (digits.startsWith(countryCode) && digits.length > countryCode.length + 6) return '+' + digits;
+        return '+' + countryCode + digits;
+      };
+      const readFieldValue = field => {
+        const type = field.getAttribute('data-field-type');
+        if (type === 'checkboxes') {
+          return Array.from(field.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
+        }
+        if (type === 'phone') {
+          const input = field.querySelector('[data-phone-number-input]') || field.querySelector('input[type="tel"], input');
+          const select = field.querySelector('[data-phone-country-select]');
+          const dialCode = select && select.selectedOptions && select.selectedOptions[0]
+            ? select.selectedOptions[0].dataset.dialCode || ''
+            : '';
+          return composePhoneValue(input ? input.value : '', dialCode);
+        }
+        const checked = field.querySelector('input[type="radio"]:checked');
+        if (checked) return checked.value;
+        const input = field.querySelector('input, textarea, select');
+        return input ? input.value : '';
+      };
+      const readResponses = fields => {
+        const responses = {};
+        fields.forEach(field => {
+          responses[field.getAttribute('data-block-id')] = readFieldValue(field);
+        });
+        return responses;
+      };
+      const isValidUrlValue = raw => {
+        const value = clean(raw);
+        if (!value) return true;
+        try {
+          const parsed = new URL(value.match(/^https?:\\/\\//i) ? value : 'https://' + value);
+          return ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname);
+        } catch (_) {
+          return false;
+        }
+      };
+      const isValidFieldValue = (validation, value) => {
+        const text = Array.isArray(value) ? value.join(',') : clean(value);
+        if (!text) return true;
+        if (validation === 'email') return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text);
+        if (validation === 'phone') return phoneDigits(text).length >= 7;
+        if (validation === 'number') return Number.isFinite(Number(text));
+        if (validation === 'currency') return Number.isFinite(Number(text)) && Number(text) >= 0;
+        if (validation === 'date') return !Number.isNaN(Date.parse(text));
+        if (validation === 'url') return isValidUrlValue(text);
+        return true;
+      };
+      const validationMessage = validation => {
+        if (validation === 'email') return 'Ingresa un correo válido.';
+        if (validation === 'phone') return 'Ingresa un teléfono válido.';
+        if (validation === 'number') return 'Ingresa un número válido.';
+        if (validation === 'currency') return 'Ingresa un monto válido.';
+        if (validation === 'date') return 'Ingresa una fecha válida.';
+        if (validation === 'url') return 'Ingresa una URL válida.';
+        return 'Revisa esta respuesta.';
+      };
+      const validateField = field => {
+        const required = field.getAttribute('data-required') === 'true';
+        const validation = field.getAttribute('data-validation') || '';
+        const value = readFieldValue(field);
+        const empty = Array.isArray(value) ? value.length === 0 : !clean(value);
+        const hasRequiredValue = !required || !empty;
+        const hasValidFormat = empty || isValidFieldValue(validation, value);
+        const valid = hasRequiredValue && hasValidFormat;
+        const error = field.querySelector('.rstk-error');
+        if (error) {
+          error.textContent = !hasRequiredValue ? 'Esta respuesta es requerida.' : validationMessage(validation);
+          error.hidden = valid;
+        }
+        return valid;
+      };
+      const readSelectedRules = field => {
+        const type = field.getAttribute('data-field-type');
+        if (type === 'checkboxes') {
+          return Array.from(field.querySelectorAll('input[type="checkbox"]:checked'))
+            .map(input => parseRule(input.dataset.rule))
+            .filter(Boolean);
+        }
+        const checked = field.querySelector('input[type="radio"]:checked');
+        if (checked) return [parseRule(checked.dataset.rule)].filter(Boolean);
+        const select = field.querySelector('select');
+        if (select && select.selectedOptions && select.selectedOptions[0]) {
+          return [parseRule(select.selectedOptions[0].dataset.rule)].filter(Boolean);
+        }
+        return [];
+      };
+      const selectedRules = fields => fields.flatMap(field => readSelectedRules(field)).filter(rule => rule && rule.action && rule.action !== 'continue');
+      const blockingRule = rules => rules.find(rule => ['show_message', 'disqualify', 'end_form', 'redirect', 'site_page'].includes(rule.action));
+      const jumpRule = rules => rules.find(rule => rule.action === 'jump' && rule.targetBlockId);
+      const getRuleRedirectUrl = rule => {
+        if (!rule) return '';
+        if (rule.action === 'redirect') return preserveUrl(rule.redirectUrl || '');
+        if (rule.action === 'site_page' && rule.targetPageId) {
+          const url = new URL(window.location.href);
+          url.searchParams.set('page', rule.targetPageId);
+          return preserveUrl(url.toString());
+        }
+        return '';
+      };
+      const shouldSubmitRule = rule => !rule || !['redirect', 'site_page'].includes(rule.action) || rule.submitBeforeAction !== false;
+      const formatProgress = (index, total) => total > 1 ? 'Pregunta ' + (index + 1) + ' de ' + total : '';
+
+      const attachGate = gate => {
+        if (!gate || attached.has(gate)) return;
+        const host = gate.closest('.rstk-video-player');
+        if (!host) return;
+        const video = host.querySelector('video');
+        const iframe = host.querySelector('iframe');
+        const fields = Array.from(gate.querySelectorAll('[data-rstk-video-form-field]'));
+        if (!fields.length) return;
+        const fieldsViewport = gate.querySelector('[data-rstk-video-gate-fields]');
+        const stack = gate.querySelector('[data-rstk-video-gate-stack]');
+        const backButton = gate.querySelector('[data-rstk-video-gate-back]');
+        const nextButton = gate.querySelector('[data-rstk-video-gate-next]');
+        const submitButton = gate.querySelector('[data-rstk-video-gate-submit]');
+        const message = gate.querySelector('[data-rstk-video-gate-message]');
+        const progress = gate.querySelector('[data-rstk-video-gate-progress]');
+        const triggerSeconds = Math.max(0, Number(gate.getAttribute('data-trigger-seconds') || 0) || 0);
+        const state = {
+          host,
+          video,
+          iframe,
+          gate,
+          fields,
+          groups: [fields],
+          index: 0,
+          shown: false,
+          completed: false,
+          submitting: false,
+          shouldResume: false,
+          player: null
+        };
+        const setMessage = text => {
+          if (message) message.textContent = text || '';
+        };
+        const setDisabled = disabled => {
+          [backButton, nextButton, submitButton].forEach(button => {
+            if (button) button.disabled = Boolean(disabled);
+          });
+        };
+        const renderGroup = () => {
+          const total = state.groups.length || 1;
+          const current = state.groups[Math.max(0, Math.min(state.index, total - 1))] || [];
+          const visibleIds = new Set(current.map(field => field.getAttribute('data-block-id')));
+          fields.forEach(field => {
+            field.hidden = !visibleIds.has(field.getAttribute('data-block-id'));
+          });
+          if (backButton) {
+            backButton.textContent = gate.getAttribute('data-back-text') || 'Anterior';
+            backButton.hidden = total <= 1 || state.index <= 0;
+          }
+          if (nextButton) {
+            nextButton.textContent = gate.getAttribute('data-next-text') || 'Siguiente';
+            nextButton.hidden = total <= 1 || state.index >= total - 1;
+          }
+          if (submitButton) {
+            submitButton.textContent = gate.getAttribute('data-submit-text') || 'Continuar';
+            submitButton.hidden = total > 1 && state.index < total - 1;
+          }
+          if (progress) {
+            const text = formatProgress(state.index, total);
+            progress.textContent = text;
+            progress.hidden = !text;
+          }
+        };
+        const packGroups = () => {
+          if (!state.shown || !fieldsViewport || !stack) {
+            renderGroup();
+            return;
+          }
+          fields.forEach(field => { field.hidden = false; });
+          const available = Math.max(80, fieldsViewport.clientHeight || fieldsViewport.getBoundingClientRect().height || 0);
+          const style = window.getComputedStyle(stack);
+          const gap = Number.parseFloat(style.rowGap || style.gap || '0') || 0;
+          const groups = [];
+          let group = [];
+          let used = 0;
+          fields.forEach(field => {
+            const height = Math.ceil(field.getBoundingClientRect().height || field.scrollHeight || 0);
+            const nextHeight = group.length ? used + gap + height : height;
+            if (group.length && nextHeight > available) {
+              groups.push(group);
+              group = [field];
+              used = height;
+            } else {
+              group.push(field);
+              used = nextHeight;
+            }
+          });
+          if (group.length) groups.push(group);
+          state.groups = groups.length ? groups : [fields];
+          state.index = Math.max(0, Math.min(state.index, state.groups.length - 1));
+          renderGroup();
+        };
+        const pausePlayer = () => {
+          if (video && !video.paused) {
+            state.shouldResume = true;
+            video.pause();
+            return;
+          }
+          state.shouldResume = false;
+          if (state.player && typeof state.player.pause === 'function') {
+            try { state.player.pause(); } catch (_) {}
+          }
+        };
+        const resumePlayer = () => {
+          if (video && state.shouldResume) {
+            video.play().catch(() => {});
+          } else if (state.player && state.shouldResume && typeof state.player.play === 'function') {
+            try { state.player.play(); } catch (_) {}
+          }
+          state.shouldResume = false;
+        };
+        const showGate = () => {
+          if (state.completed || state.shown) return;
+          state.shown = true;
+          pausePlayer();
+          gate.hidden = false;
+          host.classList.add('rstk-video-gate-active');
+          setMessage('');
+          packGroups();
+          window.setTimeout(() => {
+            const input = state.groups[state.index] && state.groups[state.index][0]
+              ? state.groups[state.index][0].querySelector('input, textarea, select, button')
+              : null;
+            if (input && typeof input.focus === 'function') input.focus({ preventScroll: true });
+          }, 40);
+        };
+        const completeGate = () => {
+          state.completed = true;
+          state.shown = false;
+          gate.hidden = true;
+          host.classList.remove('rstk-video-gate-active');
+          fields.forEach(field => { field.hidden = false; });
+          resumePlayer();
+        };
+        const redirectToRule = rule => {
+          const targetUrl = getRuleRedirectUrl(rule);
+          if (targetUrl) window.location.href = targetUrl;
+        };
+        const submitGate = async (rule = null, options = {}) => {
+          if (state.submitting) return true;
+          state.submitting = true;
+          setDisabled(true);
+          setMessage('Enviando...');
+          const url = new URL(window.location.href);
+          const storedParams = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+          const params = Object.assign({}, storedParams, Object.fromEntries(url.searchParams.entries()));
+          const nativeIdentity = window.ristakNativeIdentity ? window.ristakNativeIdentity() : {};
+          const nativeTracking = window.ristakNativeBuildData ? window.ristakNativeBuildData({ conversion_type: 'video_form_gate_submit' }) : null;
+          try {
+            const response = await fetch('/api/sites/public/submit', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                siteId: gate.getAttribute('data-site-id') || '',
+                pageId: gate.getAttribute('data-page-id') || '',
+                videoFormGateBlockId: gate.getAttribute('data-video-block-id') || '',
+                responses: readResponses(fields),
+                meta: {
+                  videoFormGate: true,
+                  videoFormGateBlockId: gate.getAttribute('data-video-block-id') || '',
+                  formSiteId: gate.getAttribute('data-form-site-id') || '',
+                  formSiteName: gate.getAttribute('data-form-site-name') || '',
+                  pageId: gate.getAttribute('data-page-id') || '',
+                  pageUrl: window.location.href,
+                  referrer: document.referrer,
+                  params,
+                  visitorId: nativeIdentity.visitorId || null,
+                  sessionId: nativeIdentity.sessionId || null,
+                  ruleSubmit: Boolean(rule),
+                  ruleAction: rule ? rule.action || '' : '',
+                  ruleFieldId: options.fieldId || '',
+                  immediateDisqualify: options.immediateDisqualify === true,
+                  tracking: nativeTracking,
+                  fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
+                  fbc: (document.cookie.match(/(?:^|; )_fbc=([^;]+)/) || [])[1] || null
+                }
+              })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.success === false) {
+              throw new Error(data.error || 'No se pudo enviar el formulario');
+            }
+            const submission = data && data.data ? data.data : {};
+            const metaEventId = submission.capi && submission.capi.eventId
+              ? submission.capi.eventId
+              : (submission.submissionId ? 'site_' + (gate.getAttribute('data-site-id') || '') + '_' + submission.submissionId : '');
+            const metaEventName = submission.capi && submission.capi.eventName ? submission.capi.eventName : '';
+            if (window.ristakMetaTrackSiteSubmit) {
+              window.ristakMetaTrackSiteSubmit(metaEventId, {
+                status: submission.status || 'submitted',
+                conversion_type: 'video_form_gate_submit'
+              }, metaEventName);
+            }
+            if (window.ristakNativeRememberContact && submission.contactId) {
+              window.ristakNativeRememberContact({
+                contactId: submission.contactId,
+                fullName: submission.contactName || '',
+                email: submission.contactEmail || ''
+              });
+            }
+            window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
+            if (submission.redirectUrl) {
+              window.location.href = preserveUrl(submission.redirectUrl);
+              return true;
+            }
+            if (rule && ['redirect', 'site_page'].includes(rule.action)) {
+              redirectToRule(rule);
+              return true;
+            }
+            if (submission.status === 'disqualified' || (rule && ['show_message', 'disqualify', 'end_form'].includes(rule.action))) {
+              fields.forEach(field => { field.hidden = true; });
+              if (backButton) backButton.hidden = true;
+              if (nextButton) nextButton.hidden = true;
+              if (submitButton) submitButton.hidden = true;
+              if (progress) progress.hidden = true;
+              setMessage(submission.message || (rule && rule.message) || 'Gracias. Tu información fue recibida.');
+              return true;
+            }
+            completeGate();
+            return true;
+          } catch (error) {
+            setMessage(error.message || 'No se pudo enviar el formulario');
+            return false;
+          } finally {
+            state.submitting = false;
+            setDisabled(false);
+          }
+        };
+        const validateCurrentGroup = () => (state.groups[state.index] || []).every(validateField);
+        const continueFromGroup = async () => {
+          const currentFields = state.groups[state.index] || [];
+          if (!currentFields.every(validateField)) return;
+          const rules = selectedRules(currentFields);
+          const stopRule = blockingRule(rules);
+          if (stopRule) {
+            if (!shouldSubmitRule(stopRule)) {
+              redirectToRule(stopRule);
+              return;
+            }
+            await submitGate(stopRule);
+            return;
+          }
+          const jump = jumpRule(rules);
+          if (jump && jump.targetBlockId) {
+            const targetIndex = state.groups.findIndex(group => group.some(field => field.getAttribute('data-block-id') === jump.targetBlockId));
+            state.index = targetIndex >= 0 ? targetIndex : Math.min(state.index + 1, state.groups.length - 1);
+          } else {
+            state.index = Math.min(state.index + 1, state.groups.length - 1);
+          }
+          renderGroup();
+        };
+        const finalSubmit = async () => {
+          if (!validateCurrentGroup()) return;
+          const rules = selectedRules(fields);
+          const stopRule = blockingRule(rules);
+          if (stopRule && !shouldSubmitRule(stopRule)) {
+            redirectToRule(stopRule);
+            return;
+          }
+          await submitGate(stopRule || null);
+        };
+        backButton && backButton.addEventListener('click', () => {
+          state.index = Math.max(0, state.index - 1);
+          renderGroup();
+        });
+        nextButton && nextButton.addEventListener('click', continueFromGroup);
+        submitButton && submitButton.addEventListener('click', finalSubmit);
+        gate.addEventListener('change', event => {
+          const target = event.target;
+          if (!target || !target.closest || state.submitting) return;
+          if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
+          if (target.matches('input[type="checkbox"]') && !target.checked) return;
+          const field = target.closest('[data-rstk-video-form-field]');
+          if (!field) return;
+          const rule = readSelectedRules(field).find(item => item.action === 'disqualify') || null;
+          if (!rule) return;
+          if (!validateField(field)) return;
+          submitGate(rule, {
+            fieldId: field.getAttribute('data-block-id') || '',
+            immediateDisqualify: true
+          });
+        });
+        const syncVideoTrigger = () => {
+          if (state.completed || state.shown || !video) return;
+          if (video.dataset.rstkVideoPreviewing === 'true') return;
+          if (triggerSeconds <= 0 || Number(video.currentTime || 0) >= triggerSeconds) showGate();
+        };
+        if (video) {
+          ['loadedmetadata', 'timeupdate', 'play', 'seeked'].forEach(eventName => video.addEventListener(eventName, syncVideoTrigger, { passive: true }));
+          syncVideoTrigger();
+        } else if (iframe) {
+          if (triggerSeconds <= 0) {
+            showGate();
+          } else {
+            loadPlayerJs().then(playerjs => {
+              if (!playerjs || !playerjs.Player || state.completed) return;
+              state.player = new playerjs.Player(iframe);
+              state.player.on('timeupdate', timing => {
+                const seconds = Number(timing && (timing.seconds || timing.currentTime || timing.time) || 0);
+                if (Number.isFinite(seconds) && seconds >= triggerSeconds) showGate();
+              });
+              state.player.on('play', () => {
+                if (triggerSeconds <= 0) showGate();
+              });
+            }).catch(() => {});
+          }
+        }
+        if (window.ResizeObserver) {
+          const resizeObserver = new ResizeObserver(() => {
+            if (state.shown) packGroups();
+          });
+          resizeObserver.observe(host);
+          resizeObserver.observe(gate);
+        }
+        window.addEventListener('resize', () => {
+          if (state.shown) packGroups();
+        });
+        attached.add(gate);
+      };
+      const attachAll = () => document.querySelectorAll('[data-rstk-video-form-gate]').forEach(attachGate);
+      attachAll();
+      const observer = new MutationObserver(attachAll);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    })();
+  </script>`
+}
+
+function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}, context = {}) {
   const playbackId = tracking.enabled ? (tracking.playbackId || crypto.randomUUID()) : ''
   const stream = tracking.stream || getBunnyStreamMetadataFromUrl(embedUrl)
   const trackedEmbedUrl = playbackId ? appendBunnyStreamPlaybackId(embedUrl, playbackId) : embedUrl
   const orientation = normalizeVideoOrientation(settings, getVideoOrientationFromAsset(tracking.asset))
   const frameStyle = renderVideoFrameStyle(settings, orientation)
-  const classes = `rstk-video rstk-video-stream-frame rstk-video-${orientation}`
+  const gateMarkup = renderVideoFormGateMarkup(block, settings, context)
+  const classes = [
+    'rstk-video',
+    gateMarkup ? 'rstk-video-player' : '',
+    'rstk-video-stream-frame',
+    gateMarkup ? 'rstk-video-has-form-gate' : '',
+    `rstk-video-${orientation}`
+  ].filter(Boolean).join(' ')
   const trackingAttrs = buildVideoTrackingAttributes({
     enabled: tracking.enabled,
     block,
@@ -11407,7 +12016,7 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}) 
     provider: 'bunny_stream',
     playbackId
   })
-  return `<div class="${classes}" style="${frameStyle}"><iframe src="${escapeHtml(trackedEmbedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"${trackingAttrs ? ` ${trackingAttrs}` : ''}></iframe></div>`
+  return `<div class="${classes}" style="${frameStyle}"><iframe src="${escapeHtml(trackedEmbedUrl)}" title="${escapeHtml(block.label || 'Video')}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"${trackingAttrs ? ` ${trackingAttrs}` : ''}></iframe>${gateMarkup}</div>`
 }
 
 function collectVideoStorageUrlsFromBlocks(blocks = [], urls = new Set()) {
@@ -12609,6 +13218,48 @@ function getNativeFormContext(site, blocks = []) {
   return {
     formSiteId: cleanString(settings.embeddedSiteId || settings.formSiteId || settings.form_site_id) || `${site.id}:form_embed:${formBlock.id}`,
     formSiteName: cleanString(settings.embeddedSiteName || settings.formSiteName || settings.form_site_name) || cleanString(formBlock.label) || `Formulario de ${site.name}`
+  }
+}
+
+function findVideoFormGateBlock(blocks = [], videoBlockId = '') {
+  const targetId = cleanString(videoBlockId)
+  if (!targetId) return null
+
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'video' && block.id === targetId) return block
+    if (Array.isArray(settings.embeddedBlocks)) {
+      const nested = findVideoFormGateBlock(settings.embeddedBlocks, targetId)
+      if (nested) return nested
+    }
+  }
+
+  return null
+}
+
+function getVideoFormGateSubmissionContext(site, blocks = [], videoBlockId = '') {
+  if (!site || site.siteType !== 'landing_page') return null
+  const block = findVideoFormGateBlock(blocks, videoBlockId)
+  if (!block) return null
+
+  const settings = block.settings || {}
+  const fields = getVideoFormGateFields(settings)
+  if (!fields.length) return null
+
+  const formSiteId = getVideoFormGateSourceFormId(settings) || `${site.id}:video_form_gate:${block.id}`
+  const formSiteName = cleanString(
+    settings.videoFormGateEmbeddedSiteName ||
+    settings.videoFormGateFormSiteName ||
+    settings.video_form_gate_form_site_name
+  ) || cleanString(block.label) || `Formulario de video de ${site.name || 'site'}`
+  const formTheme = isPlainObject(settings.videoFormGateEmbeddedTheme) ? settings.videoFormGateEmbeddedTheme : null
+
+  return {
+    blocks: fields,
+    formSiteId,
+    formSiteName,
+    formTheme,
+    videoBlockId: block.id
   }
 }
 
@@ -14249,11 +14900,13 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const playIconSize = normalizeVideoPlayIconSize(settings)
   const soundColor = normalizeCssPaint(settings.videoSoundColor, playColor) || playColor
   const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
+  const gateMarkup = renderVideoFormGateMarkup(block, settings, options.context || {})
   const classes = [
     'rstk-video',
     'rstk-video-player',
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
+    gateMarkup ? 'rstk-video-has-form-gate' : '',
     showCustomControlBar ? (showControlBarInitially ? 'rstk-video-controls-visible' : 'rstk-video-controls-hidden') : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
     muted ? 'rstk-video-is-muted' : '',
@@ -14313,6 +14966,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
           ${showCustomSpeed ? `<label class="rstk-video-speed-control ${showCustomSettings ? 'rstk-video-speed-has-settings' : 'rstk-video-speed-no-settings'}" aria-label="Velocidad de reproducción">${showCustomSettings ? `<span class="rstk-video-settings-icon" data-rstk-video-settings-icon aria-hidden="true">${RSTK_ICONS.settings}</span>` : ''}<select data-rstk-video-speed-select>${renderVideoSpeedOptions(String(speed))}</select></label>` : ''}
         </div>
       ` : ''}
+      ${gateMarkup}
     </div>
   `
 }
@@ -14498,7 +15152,7 @@ function renderContentBlock(block, context = {}) {
           enabled: !context.noTrack,
           asset: storageAssetForStreamVideo,
           stream: getStreamMetadataForVideoUrl(embedVideoUrl, context)
-        }, settings)
+        }, settings, context)
       }
 
       const iframeOrientation = normalizeVideoOrientation(settings)
@@ -15698,6 +16352,33 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-speed-control::after{content:"";position:absolute;top:50%;right:8px;width:0;height:0;border-top:4px solid currentColor;border-right:4px solid transparent;border-left:4px solid transparent;opacity:.72;pointer-events:none;transform:translateY(-35%)}
 	  .rstk-video-speed-control select{-webkit-appearance:none;appearance:none;width:34px;min-width:0;height:100%;margin:0;border:0!important;border-radius:0;background:transparent!important;background-image:none!important;box-shadow:none!important;color:inherit;cursor:pointer;font:inherit;font-size:.76rem;font-weight:750;line-height:1;outline:0;padding:0}
 	  .rstk-video-speed-control option{color:#111827}
+	  .rstk-video-has-form-gate{overflow:hidden}
+	  .rstk-video-gate-active > video,.rstk-video-gate-active > iframe{pointer-events:none}
+	  .rstk-video-form-gate{position:absolute;inset:0;z-index:9;display:grid;place-items:center;min-width:0;padding:clamp(8px,3cqw,22px);background:color-mix(in srgb,var(--rstk-video-bg,#000) 84%,transparent);color:var(--rstk-ink);font-family:var(--rstk-form-font,var(--rstk-font));backdrop-filter:blur(12px)}
+	  .rstk-video-form-gate[hidden]{display:none!important}
+	  .rstk-video-form-gate-panel{width:min(100%,680px);height:100%;max-width:100%;max-height:100%;min-height:0;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;gap:clamp(8px,1.8cqw,14px);overflow:hidden;border:1px solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:clamp(10px,2.4cqw,20px);background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-ink);box-shadow:0 24px 70px -42px rgba(0,0,0,.66);padding:clamp(12px,3cqw,24px)}
+	  .rstk-video-form-gate-header{display:grid;gap:4px;text-align:left}
+	  .rstk-video-form-gate-header strong{display:block;color:var(--rstk-ink);font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(1rem,3.2cqw,1.5rem);font-weight:800;line-height:1.1}
+	  .rstk-video-form-gate-header p{margin:0;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.78rem,2.1cqw,.95rem);line-height:1.35}
+	  .rstk-video-form-gate-progress{min-height:18px;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.72rem,1.8cqw,.86rem);font-weight:700;text-align:left}
+	  .rstk-video-form-fields{min-height:0;overflow:auto;overscroll-behavior:contain;padding-right:2px}
+	  .rstk-video-form-field-stack{display:grid;gap:clamp(8px,2cqw,14px);min-width:0}
+	  .rstk-video-form-field{display:grid;gap:clamp(5px,1.3cqw,8px);min-width:0;text-align:left}
+	  .rstk-video-form-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,.98rem);font-style:var(--rstk-form-font-style,normal);font-weight:650;text-decoration:var(--rstk-form-text-decoration,none);line-height:1.25}
+	  .rstk-video-form-field .rstk-help{color:var(--rstk-form-help-color,var(--rstk-muted));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.74rem,1.9cqw,.9rem);line-height:1.3}
+	  .rstk-video-form-gate input,.rstk-video-form-gate textarea,.rstk-video-form-gate select{min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.86rem,2.4cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
+	  .rstk-video-form-gate textarea{min-height:clamp(78px,18cqw,108px)}
+	  .rstk-video-form-gate .rstk-phone-input{grid-template-columns:minmax(108px,34%) minmax(0,1fr);gap:8px}
+	  .rstk-video-form-gate .rstk-options{display:grid;gap:clamp(7px,1.8cqw,10px)}
+	  .rstk-video-form-gate .rstk-option{min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
+	  .rstk-video-form-gate .rstk-option:has(input:checked){border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-bg,color-mix(in srgb,var(--rstk-accent) 8%,transparent))}
+	  .rstk-video-form-gate .rstk-error{margin:0;color:#dc2626;font-size:clamp(.72rem,1.8cqw,.84rem);font-weight:700}
+	  .rstk-video-form-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
+	  .rstk-video-form-actions button{width:auto;min-width:min(128px,46%);min-height:clamp(38px,7.5cqw,48px);border:0;border-radius:var(--rstk-btn-radius);background:var(--rstk-accent);color:var(--rstk-on-accent);font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.1cqw,.98rem);font-weight:var(--rstk-btn-weight,800);cursor:pointer;padding:9px 14px}
+	  .rstk-video-form-actions .rstk-secondary{background:transparent;color:var(--rstk-ink);border:1px solid var(--rstk-form-field-border,var(--rstk-input-border))}
+	  .rstk-video-form-actions button:disabled{opacity:.62;cursor:not-allowed}
+	  .rstk-video-form-gate .rstk-submit-message{min-height:18px;margin:0;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.74rem,1.8cqw,.88rem);font-weight:650;text-align:left}
+	  @container (max-width:460px){.rstk-video-form-gate{padding:8px}.rstk-video-form-gate-panel{gap:8px;padding:10px;border-radius:12px}.rstk-video-form-actions{justify-content:stretch}.rstk-video-form-actions button{flex:1 1 0;min-width:0;padding-inline:10px}.rstk-video-form-gate .rstk-phone-input{grid-template-columns:1fr}}
 	  @supports (width:1cqw){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(104px,min(22cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))))}.rstk-video-control-bar{left:max(6px,min(12px,2cqw));right:max(6px,min(12px,2cqw));bottom:max(6px,min(12px,2cqw));gap:max(4px,min(8px,1.4cqw));padding:max(5px,min(7px,1.2cqw))}.rstk-video-control-button{width:max(24px,min(30px,5cqw));height:max(24px,min(30px,5cqw))}.rstk-video-speed-control{min-width:max(54px,min(66px,11cqw));height:max(24px,min(30px,5cqw));padding-inline:max(6px,min(8px,1.5cqw)) max(18px,min(20px,3cqw))}@media (max-width:760px){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(88px,min(18cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))))}}}
 	  @media (max-width:760px){.rstk-block-style .rstk-video-portrait{width:100%;margin-left:auto;margin-right:auto}}
 		  @keyframes rstkVideoSoundNotice{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}10%,18%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}28%,70%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0) scale(1)}86%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}100%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}}
@@ -17508,6 +18189,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     : ''
   const videoTrackingScript = !noTrack ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
   const videoActionsScript = buildVideoActionsRuntimeScript(videoLookupBlocks)
+  const videoFormGateScript = buildVideoFormGateRuntimeScript(videoLookupBlocks)
   const countdownRuntimeScript = buildCountdownRuntimeScript(videoLookupBlocks)
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
@@ -17553,6 +18235,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   </div>
   ${popupHtml}
   ${videoActionsScript}
+  ${videoFormGateScript}
   ${countdownRuntimeScript}
   ${paramPreservationScript}
   ${siteNavHtml ? `<script>${SITE_NAV_SCRIPT}</script>` : ''}
@@ -20199,6 +20882,12 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     ? site.blocks
     : await hydrateEmbeddedForms(await listSiteBlocks(site.id))
   const submittedPageId = cleanString(body.pageId || body.page_id || body.meta?.pageId || body.meta?.page_id)
+  const videoFormGateBlockId = cleanString(
+    body.videoFormGateBlockId ||
+    body.video_form_gate_block_id ||
+    body.meta?.videoFormGateBlockId ||
+    body.meta?.video_form_gate_block_id
+  )
   const isFinalStandardFormSubmit = site.siteType === 'standard_form' && normalizeBoolean(
     body.finalSubmit ||
     body.final_submit ||
@@ -20206,10 +20895,11 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     body.meta?.form_final_submit
   )
   const siteWithBlocks = { ...site, blocks }
+  const videoFormGateContext = getVideoFormGateSubmissionContext(siteWithBlocks, blocks, videoFormGateBlockId)
   const orderedSubmissionBlocks = site.siteType === 'interactive_form'
     ? getInteractiveFormBlocks(siteWithBlocks)
     : blocks
-  const submissionBlocks = site.siteType === 'standard_form'
+  const defaultSubmissionBlocks = site.siteType === 'standard_form'
     ? isFinalStandardFormSubmit
       ? getStandardFormContentBlocks(siteWithBlocks, blocks)
       : submittedPageId
@@ -20218,6 +20908,8 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     : site.siteType === 'landing_page' && submittedPageId
       ? getPageBlocks(siteWithBlocks, submittedPageId)
       : orderedSubmissionBlocks
+  const submissionBlocks = videoFormGateContext ? videoFormGateContext.blocks : defaultSubmissionBlocks
+  const effectiveSubmittedPageId = submittedPageId || (videoFormGateContext ? DEFAULT_FUNNEL_PAGE_ID : '')
   const immediateDisqualifySubmit = normalizeBoolean(
     body.meta?.immediateDisqualify ||
     body.meta?.immediate_disqualify ||
@@ -20239,6 +20931,12 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
 
   const meta = {
     ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
+    ...(videoFormGateContext ? {
+      videoFormGate: true,
+      videoFormGateBlockId: videoFormGateContext.videoBlockId,
+      formSiteId: videoFormGateContext.formSiteId,
+      formSiteName: videoFormGateContext.formSiteName
+    } : {}),
     host,
     previewSession: Boolean(previewContext),
     previewPageId: previewContext?.pageId || '',
@@ -20248,6 +20946,9 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   }
   const nativeLayers = buildNativeSubmissionLayers({ site, blocks: submissionBlocks, responses })
   const inferredContact = inferContactFromResponses(collectFieldBlocks(submissionBlocks), responses)
+  const finalMessageSite = videoFormGateContext?.formTheme
+    ? { ...site, theme: { ...(site.theme || {}), ...videoFormGateContext.formTheme } }
+    : site
   if (shouldSkipTracking({ req, body, meta, previewContext })) {
     return {
       submissionId: `preview_${crypto.randomUUID()}`,
@@ -20257,7 +20958,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       contactEmail: inferredContact.email || '',
       contactPhone: inferredContact.phone || '',
       status: ruleEvaluation.status,
-      message: getSiteFinalMessage(site, ruleEvaluation),
+      message: getSiteFinalMessage(finalMessageSite, ruleEvaluation),
       redirectUrl: ruleRedirectUrl,
       rules: ruleEvaluation,
       rawFields: nativeLayers.rawFields,
@@ -20288,7 +20989,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       : {})
   }
   const submissionId = crypto.randomUUID()
-  const nativeFormContext = getNativeFormContext(site, submissionBlocks)
+  const nativeFormContext = videoFormGateContext || getNativeFormContext(site, submissionBlocks)
 
   await db.run(`
     INSERT INTO public_site_submissions (
@@ -20336,7 +21037,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   const capi = await sendSiteLeadMetaEvent({
     site,
     submissionId,
-    submittedPageId,
+    submittedPageId: effectiveSubmittedPageId,
     contactId,
     contact: inferredContact,
     requestMeta: {
@@ -20349,7 +21050,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   await recordNativeSiteConversionEvent({
     site,
     blocks: submissionBlocks,
-    submittedPageId,
+    submittedPageId: effectiveSubmittedPageId,
     submissionId,
     contactId,
     contact: inferredContact,
@@ -20367,7 +21068,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     contactEmail: inferredContact.email || '',
     contactPhone: inferredContact.phone || '',
     status: ruleEvaluation.status,
-    message: getSiteFinalMessage(site, ruleEvaluation),
+    message: getSiteFinalMessage(finalMessageSite, ruleEvaluation),
     redirectUrl: ruleRedirectUrl,
     rules: ruleEvaluation,
     rawFields: nativeLayers.rawFields,

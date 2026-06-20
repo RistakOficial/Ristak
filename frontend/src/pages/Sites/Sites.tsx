@@ -426,6 +426,14 @@ const embeddedFormFreeFieldTypes = embeddedFormFieldTypes.filter(type => type !=
 const embeddedFormContentTypes: SiteBlockType[] = ['title', 'subtitle', 'text', 'image', 'video', 'embed']
 const embeddedFormBlockTypes: SiteBlockType[] = [...embeddedFormFieldTypes, ...embeddedFormContentTypes]
 const embeddedFormBlockTypeSet = new Set<SiteBlockType>(embeddedFormBlockTypes)
+const videoFormGateFieldTypes = embeddedFormFieldTypes
+const videoFormGateBlockTypeSet = new Set<SiteBlockType>(videoFormGateFieldTypes)
+const VIDEO_FORM_GATE_PAGE_ID = 'video_form_gate'
+const VIDEO_FORM_GATE_DEFAULT_TITLE = 'Antes de continuar'
+const VIDEO_FORM_GATE_DEFAULT_DESCRIPTION = 'Contesta estas preguntas para seguir viendo el video.'
+const VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT = 'Siguiente'
+const VIDEO_FORM_GATE_DEFAULT_BACK_TEXT = 'Anterior'
+const VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT = 'Continuar'
 
 type SystemFormFieldKey =
   | 'full_name'
@@ -4960,6 +4968,72 @@ const getEditableEmbeddedFormBlocks = (block: SiteBlock, forms: PublicSite[]): S
   return embeddedBlocks
 }
 
+const getVideoFormGateSourceId = (block?: SiteBlock | null) => (
+  getSettingString(block?.settings || {}, 'videoFormGateFormSiteId') ||
+  getSettingString(block?.settings || {}, 'video_form_gate_form_site_id')
+)
+
+const getVideoFormGateSinglePage = (): SitePage[] => [
+  makeTemplateFunnelPage(VIDEO_FORM_GATE_PAGE_ID, 'Formulario de video', 0)
+]
+
+const withVideoFormGateQuestionSettings = (field: SiteBlock, index: number, formSiteId: string) => ({
+  ...cloneJson(field),
+  siteId: formSiteId,
+  sortOrder: index,
+  settings: {
+    ...(cloneJson(field.settings || {})),
+    pageId: VIDEO_FORM_GATE_PAGE_ID
+  },
+  updatedAt: new Date().toISOString()
+})
+
+const normalizeVideoFormGateBlocks = (blocks: SiteBlock[] = [], formSiteId: string) => (
+  blocks
+    .filter(item => videoFormGateBlockTypeSet.has(item.blockType))
+    .map((item, index) => withVideoFormGateQuestionSettings(item, index, formSiteId))
+)
+
+const createVideoFormGateBlocks = (siteId: string): SiteBlock[] =>
+  createEmbeddedBlocks(siteId).map((field, index) => withVideoFormGateQuestionSettings(field, index, siteId))
+
+const getVideoFormGateDraftBlocks = (block: SiteBlock): SiteBlock[] => {
+  const settings = block.settings || {}
+  const sourceBlocks = Array.isArray(settings.videoFormGateEmbeddedBlocks)
+    ? settings.videoFormGateEmbeddedBlocks as SiteBlock[]
+    : Array.isArray(settings.video_form_gate_embedded_blocks)
+      ? settings.video_form_gate_embedded_blocks as SiteBlock[]
+      : []
+  return normalizeVideoFormGateBlocks(sourceBlocks, block.siteId || '')
+}
+
+const getVideoFormGateBlocksFromForm = (form?: PublicSite | null): SiteBlock[] => (
+  Array.isArray(form?.blocks)
+    ? normalizeVideoFormGateBlocks(form.blocks, form?.id || '')
+    : []
+)
+
+const getEditableVideoFormGateBlocks = (block: SiteBlock, forms: PublicSite[]): SiteBlock[] => {
+  const draftBlocks = getVideoFormGateDraftBlocks(block)
+  if (draftBlocks.length) return draftBlocks
+
+  const linkedFormId = getVideoFormGateSourceId(block)
+  const linkedForm = forms.find(form => form.id === linkedFormId)
+  return getVideoFormGateBlocksFromForm(linkedForm)
+}
+
+const stripVideoFormGateDraftSettings = (settings: Record<string, unknown>, formSiteId: string) => {
+  const next = { ...settings }
+  delete next.videoFormGateEmbeddedBlocks
+  delete next.video_form_gate_embedded_blocks
+  delete next.videoFormGateEmbeddedSiteId
+  delete next.videoFormGateEmbeddedSiteName
+  delete next.videoFormGateEmbeddedTheme
+  delete next.videoFormGateEmbeddedSiteType
+  next.videoFormGateFormSiteId = formSiteId
+  return next
+}
+
 const EMBEDDED_FORM_PROXY_THEME_KEYS: Array<keyof SiteTheme> = [
   'accentColor',
   'backgroundColor',
@@ -5037,6 +5111,18 @@ const buildEmbeddedFormSourceTheme = (
 
   return theme as SiteTheme
 }
+
+const buildVideoFormGateSourceTheme = (
+  sourceSite: PublicSite,
+  settings: Record<string, unknown>
+): SiteTheme => ({
+  ...buildEmbeddedFormSourceTheme(sourceSite, settings, getVideoFormGateSinglePage()),
+  pages: normalizePagesForSave(getVideoFormGateSinglePage()),
+  submitText: getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT,
+  continueText: getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT,
+  nextText: getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT,
+  backText: getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT
+})
 
 const stripEmbeddedFormDraftSettings = (settings: Record<string, unknown>, formSiteId: string) => {
   const next = { ...settings }
@@ -6512,6 +6598,93 @@ export const Sites: React.FC = () => {
     return nextSite
   }
 
+  async function materializeDraftVideoFormGates(siteToSave: PublicSite) {
+    const siteBlocks = siteToSave.blocks || []
+    if (!siteBlocks.length) return siteToSave
+
+    let changed = false
+    const nextBlocks: SiteBlock[] = []
+
+    for (const [index, block] of siteBlocks.entries()) {
+      const settings = block.settings || {}
+      const enabled = settings.videoFormGateEnabled === true
+      const hasDraftBlocks = Array.isArray(settings.videoFormGateEmbeddedBlocks)
+
+      if (block.blockType !== 'video' || !enabled || !hasDraftBlocks) {
+        nextBlocks.push(block)
+        continue
+      }
+
+      const draftBlocks = getVideoFormGateDraftBlocks(block)
+      if (!draftBlocks.length) {
+        nextBlocks.push(block)
+        continue
+      }
+
+      const sourceId = getVideoFormGateSourceId(block)
+      const existingSource = sourceId ? forms.find(form => form.id === sourceId) || null : null
+      const formLabel = block.label || `Video ${index + 1}`
+      const formName = existingSource?.name || `${siteToSave.name || 'Sitio web'} - Formulario de video ${formLabel}`
+      let sourceForm = existingSource
+        ? normalizeSiteForEditor(await sitesService.updateSite(existingSource.id, {
+          name: formName,
+          slug: normalizeRouteInput(existingSource.slug) || normalizeRouteInput(formName) || 'formulario-video',
+          siteType: 'standard_form',
+          status: existingSource.status,
+          title: getPublicTitleForSave(existingSource),
+          description: existingSource.description,
+          theme: {
+            ...(existingSource.theme || {}),
+            ...buildVideoFormGateSourceTheme(siteToSave, settings)
+          },
+          metaCapiEnabled: existingSource.metaCapiEnabled,
+          metaEventName: existingSource.metaEventName
+        }))
+        : normalizeSiteForEditor(await sitesService.createSite({
+          name: formName,
+          siteType: 'standard_form',
+          slug: normalizeRouteInput(`${siteToSave.slug || siteToSave.name || 'sitio'}-formulario-video-${formLabel}`),
+          title: '',
+          theme: {
+            ...buildVideoFormGateSourceTheme(siteToSave, settings),
+            blankCanvas: true
+          },
+          metaCapiEnabled: siteToSave.metaCapiEnabled,
+          metaEventName: siteToSave.metaEventName
+        }))
+
+      const sourceBlocks = normalizeVideoFormGateBlocks(draftBlocks, sourceForm.id)
+      const sourceBlockIds = new Set(sourceBlocks.map(field => field.id))
+      const removedFieldIds = (sourceForm.blocks || [])
+        .filter(field => videoFormGateBlockTypeSet.has(field.blockType) && !sourceBlockIds.has(field.id))
+        .map(field => field.id)
+      for (const fieldId of removedFieldIds) {
+        sourceForm = normalizeSiteForEditor(await sitesService.deleteBlock(sourceForm.id, fieldId))
+      }
+      if (sourceBlocks.length) {
+        sourceForm = normalizeSiteForEditor(await sitesService.restoreBlocks(sourceForm.id, sourceBlocks))
+        sourceForm = normalizeSiteForEditor(await sitesService.reorderBlocks(sourceForm.id, sourceBlocks.map(field => field.id)))
+      }
+      upsertSiteInEditorList(sourceForm)
+
+      const nextBlock = {
+        ...block,
+        settings: stripVideoFormGateDraftSettings(settings, sourceForm.id),
+        updatedAt: new Date().toISOString()
+      }
+      pendingBlockSaveIdsRef.current.add(nextBlock.id)
+      nextBlocks.push(nextBlock)
+      changed = true
+    }
+
+    if (!changed) return siteToSave
+
+    const nextSite = { ...siteToSave, blocks: nextBlocks }
+    selectedSiteRef.current = nextSite
+    setSelectedSite(nextSite)
+    return nextSite
+  }
+
   function addBlocksLocal(nextBlocks: SiteBlock[], selectBlockId?: string, orderPageId?: string) {
     const current = selectedSiteRef.current || selectedSite
     if (!current) return
@@ -6538,6 +6711,7 @@ export const Sites: React.FC = () => {
 
     try {
       siteToSave = await materializeDraftEmbeddedForms(siteToSave)
+      siteToSave = await materializeDraftVideoFormGates(siteToSave)
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo preparar el formulario')
       return false
@@ -25844,6 +26018,10 @@ const VideoPlayerPreview: React.FC<{
   const shouldHideControlBarAtStart = showCustomControlBar && !showControlBarInitially && !hasStartedPlayback
   const shouldDismissControlsOnOutsidePointer = showCustomControlBar && controlsVisible && !shouldHideControlBarAtStart
   const controlBarTabIndex = shouldHideControlBarAtStart ? -1 : undefined
+  const gatePreviewQuestions = Array.isArray(settings.videoFormGateEmbeddedBlocks)
+    ? (settings.videoFormGateEmbeddedBlocks as SiteBlock[]).filter(item => fieldBlockTypes.has(item.blockType))
+    : []
+  const showGatePreview = settings.videoFormGateEnabled === true
   const isControlBarBlockedAtStart = useCallback(
     () => showCustomControlBar && !showControlBarInitially && !hasStartedPlaybackRef.current,
     [showControlBarInitially, showCustomControlBar]
@@ -26406,6 +26584,12 @@ const VideoPlayerPreview: React.FC<{
           </span>
           {soundNoticeText && <span className="rstk-video-sound-text">{soundNoticeText}</span>}
         </span>
+      )}
+      {showGatePreview && (
+        <div className="rstk-video-form-gate-preview" aria-hidden="true">
+          <strong>{getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE}</strong>
+          <span>{gatePreviewQuestions.length || 0} {gatePreviewQuestions.length === 1 ? 'pregunta' : 'preguntas'} dentro del video</span>
+        </div>
       )}
       {showCustomControlBar && (
         <div
@@ -29169,10 +29353,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           blocks={allBlocks || blocks}
           forms={forms}
           calendars={calendars}
+          customFields={customFields}
+          customFieldFolders={customFieldFolders}
           pages={pages}
           activePageId={activePageId}
           connectedSocialProfiles={connectedSocialProfiles}
           loadingSocialProfiles={loadingSocialProfiles}
+          onCustomFieldCreated={onCustomFieldCreated}
           onPatchSettings={onPatchSettings}
           onSave={onSave}
         />
@@ -29462,10 +29649,13 @@ interface LandingBlockSettingsProps {
   blocks: SiteBlock[]
   forms: PublicSite[]
   calendars: CalendarType[]
+  customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
   pages: SitePage[]
   activePageId: string
   connectedSocialProfiles: ConnectedSocialProfile[]
   loadingSocialProfiles: boolean
+  onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }
@@ -29640,7 +29830,366 @@ const SocialProfileSettings: React.FC<{
   )
 }
 
-const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
+const VideoFormGateSettingsPanel: React.FC<{
+  site: PublicSite
+  block: SiteBlock
+  forms: PublicSite[]
+  customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
+  pages: SitePage[]
+  activePageId: string
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onCustomFieldCreated: (field: CustomFieldDefinition) => void
+  onSave: () => void
+}> = ({ site, block, forms, customFields, customFieldFolders, pages, activePageId, onPatchSettings, onCustomFieldCreated, onSave }) => {
+  const settings = block.settings || {}
+  const enabled = settings.videoFormGateEnabled === true
+  const selectedFormId = getVideoFormGateSourceId(block)
+  const selectedForm = forms.find(form => form.id === selectedFormId) || null
+  const questions = getEditableVideoFormGateBlocks(block, forms)
+  const questionPages = getVideoFormGateSinglePage()
+  const [activeQuestionId, setActiveQuestionId] = useState('')
+  const [newQuestionType, setNewQuestionType] = useState<SiteBlockType>('short_text')
+  const activeQuestion = questions.find(question => question.id === activeQuestionId) || questions[0] || null
+  const activeQuestionSettings = activeQuestion?.settings || {}
+  const activeQuestionPreset = activeQuestion ? getSystemFormFieldPresetForBlock(activeQuestion) : null
+
+  useEffect(() => {
+    if (!enabled) return
+    if (activeQuestionId && questions.some(question => question.id === activeQuestionId)) return
+    setActiveQuestionId(questions[0]?.id || '')
+  }, [activeQuestionId, enabled, questions])
+
+  const patchAndSaveSoon = (patch: Record<string, unknown>) => {
+    onPatchSettings(patch)
+    window.setTimeout(onSave, 0)
+  }
+
+  const patchQuestions = (nextQuestions: SiteBlock[], nextActiveQuestionId?: string) => {
+    onPatchSettings({
+      videoFormGateFormSiteId: selectedFormId,
+      videoFormGateEmbeddedBlocks: normalizeVideoFormGateBlocks(nextQuestions, selectedFormId || site.id)
+    })
+    if (nextActiveQuestionId !== undefined) setActiveQuestionId(nextActiveQuestionId)
+  }
+
+  const enableGate = (nextEnabled: boolean) => {
+    if (!nextEnabled) {
+      patchAndSaveSoon({ videoFormGateEnabled: false })
+      return
+    }
+
+    const initialQuestions = questions.length ? questions : createVideoFormGateBlocks(site.id)
+    patchAndSaveSoon({
+      videoFormGateEnabled: true,
+      videoFormGateTitle: getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE,
+      videoFormGateDescription: getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION,
+      videoFormGateTriggerSeconds: getSettingNumber(settings, 'videoFormGateTriggerSeconds', 0, 0, 86399),
+      videoFormGateNextText: getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT,
+      videoFormGateBackText: getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT,
+      videoFormGateSubmitText: getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT,
+      videoFormGateEmbeddedBlocks: normalizeVideoFormGateBlocks(initialQuestions, selectedFormId || site.id)
+    })
+    setActiveQuestionId(initialQuestions[0]?.id || '')
+  }
+
+  const selectSourceForm = (formId: string) => {
+    const source = forms.find(form => form.id === formId) || null
+    const sourceQuestions = source ? getVideoFormGateBlocksFromForm(source) : createVideoFormGateBlocks(site.id)
+    patchAndSaveSoon({
+      videoFormGateFormSiteId: formId,
+      videoFormGateEmbeddedBlocks: normalizeVideoFormGateBlocks(sourceQuestions, formId || site.id)
+    })
+    setActiveQuestionId(sourceQuestions[0]?.id || '')
+  }
+
+  const addQuestion = (blockType: SiteBlockType, initialSettings: Record<string, unknown> = {}) => {
+    if (!videoFormGateBlockTypeSet.has(blockType)) return
+    const nextQuestion = createEmbeddedFieldBlock(
+      selectedForm || site,
+      blockType,
+      questions.length,
+      VIDEO_FORM_GATE_PAGE_ID,
+      initialSettings,
+      questions
+    )
+    patchQuestions([...questions, nextQuestion], nextQuestion.id)
+    window.setTimeout(onSave, 0)
+  }
+
+  const patchQuestion = (fieldId: string, patch: Partial<SiteBlock>) => {
+    patchQuestions(questions.map(question => question.id === fieldId ? { ...question, ...patch } : question), fieldId)
+  }
+
+  const patchQuestionSettings = (field: SiteBlock, patch: Record<string, unknown>) => {
+    patchQuestion(field.id, {
+      settings: {
+        ...(field.settings || {}),
+        ...patch,
+        pageId: VIDEO_FORM_GATE_PAGE_ID
+      }
+    })
+  }
+
+  const removeQuestion = (fieldId: string) => {
+    const currentIndex = questions.findIndex(question => question.id === fieldId)
+    const nextQuestions = questions.filter(question => question.id !== fieldId)
+    const nextActive = nextQuestions[Math.min(Math.max(currentIndex, 0), Math.max(nextQuestions.length - 1, 0))]?.id || ''
+    patchQuestions(nextQuestions, nextActive)
+    window.setTimeout(onSave, 0)
+  }
+
+  const moveQuestion = (fieldId: string, direction: BlockMoveDirection) => {
+    const index = questions.findIndex(question => question.id === fieldId)
+    const nextIndex = direction === 'up' ? index - 1 : index + 1
+    if (index < 0 || nextIndex < 0 || nextIndex >= questions.length) return
+    patchQuestions(arrayMove(questions, index, nextIndex), fieldId)
+    window.setTimeout(onSave, 0)
+  }
+
+  const changeQuestionType = (nextType: SiteBlockType) => {
+    if (!activeQuestion || activeQuestionPreset) return
+    patchQuestion(activeQuestion.id, {
+      blockType: nextType,
+      settings: {
+        ...activeQuestionSettings,
+        pageId: VIDEO_FORM_GATE_PAGE_ID,
+        validation: nextType === 'email' ? 'email' : nextType === 'phone' ? 'phone' : '',
+        ...(nextType === 'phone' ? { phoneCountrySelectorEnabled: true } : {}),
+        customFieldDefinitionId: '',
+        customFieldKey: '',
+        customFieldLabel: '',
+        customFieldDataType: ''
+      }
+    })
+  }
+
+  return (
+    <div className={styles.videoFormGatePanel}>
+      <div className={styles.videoFormGateSwitchRow}>
+        <div>
+          <strong>Formulario de video</strong>
+          <span>Bloquea el video y captura respuestas dentro del mismo reproductor.</span>
+        </div>
+        <Switch checked={enabled} onChange={enableGate} aria-label="Activar formulario de video" />
+      </div>
+
+      {enabled && (
+        <>
+          <label className={styles.field}>
+            <span>Origen del formulario</span>
+            <CustomSelect value={selectedFormId} onChange={(event) => selectSourceForm(event.target.value)} onBlur={onSave}>
+              <option value="">Crear nuevo formulario</option>
+              {forms.filter(form => form.id !== site.id).map(form => (
+                <option key={form.id} value={form.id}>Usar formulario guardado: {form.name}</option>
+              ))}
+            </CustomSelect>
+          </label>
+
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Mostrar en segundo</span>
+              <NumberInput
+                value={getSettingNumber(settings, 'videoFormGateTriggerSeconds', 0, 0, 86399)}
+                min={0}
+                max={86399}
+                step={1}
+                onValueChange={(value) => onPatchSettings({ videoFormGateTriggerSeconds: Math.round(value) })}
+                onBlur={onSave}
+              />
+            </label>
+            <label className={styles.field}>
+              <span>Botón final</span>
+              <input
+                value={getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT}
+                onChange={(event) => onPatchSettings({ videoFormGateSubmitText: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          </div>
+
+          <label className={styles.field}>
+            <span>Título</span>
+            <input
+              value={getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE}
+              onChange={(event) => onPatchSettings({ videoFormGateTitle: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+
+          <label className={styles.field}>
+            <span>Descripción</span>
+            <textarea
+              rows={2}
+              value={getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION}
+              onChange={(event) => onPatchSettings({ videoFormGateDescription: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Botón siguiente</span>
+              <input
+                value={getSettingString(settings, 'videoFormGateNextText') || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT}
+                onChange={(event) => onPatchSettings({ videoFormGateNextText: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+            <label className={styles.field}>
+              <span>Botón anterior</span>
+              <input
+                value={getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT}
+                onChange={(event) => onPatchSettings({ videoFormGateBackText: event.target.value })}
+                onBlur={onSave}
+              />
+            </label>
+          </div>
+
+          <div className={styles.videoFormGateQuestionTools}>
+            <CustomSelect value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as SiteBlockType)}>
+              {videoFormGateFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+            </CustomSelect>
+            <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={() => addQuestion(newQuestionType)}>
+              Pregunta
+            </Button>
+          </div>
+
+          <div className={styles.videoFormGatePresetGrid}>
+            {systemFormFieldPaletteItems.map(item => (
+              <button key={item.id} type="button" onClick={() => addQuestion(item.blockType, item.initialSettings || {})}>
+                {blockIcons[item.blockType]}
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className={styles.formFieldList}>
+            {questions.map((question, index) => {
+              const selected = activeQuestion?.id === question.id
+              return (
+                <button
+                  key={question.id}
+                  type="button"
+                  className={`${styles.formFieldItem} ${selected ? styles.formFieldItemActive : ''}`}
+                  onClick={() => setActiveQuestionId(question.id)}
+                >
+                  <span>{blockIcons[question.blockType]}</span>
+                  <span>
+                    <strong>{question.label || 'Pregunta'}</strong>
+                    <small>{blockLabels[question.blockType]}{question.required ? ' - requerida' : ''}</small>
+                  </span>
+                  <em>{index + 1}</em>
+                </button>
+              )
+            })}
+          </div>
+
+          {activeQuestion ? (
+            <div className={styles.settingsGroup}>
+              <div className={styles.formFieldEditorHeader}>
+                <div>
+                  <strong>Pregunta seleccionada</strong>
+                  <small>{blockLabels[activeQuestion.blockType] || 'Campo'}</small>
+                </div>
+                <div className={styles.formFieldActions}>
+                  <button type="button" disabled={questions[0]?.id === activeQuestion.id} onClick={() => moveQuestion(activeQuestion.id, 'up')} aria-label="Subir pregunta"><ArrowUp size={14} /></button>
+                  <button type="button" disabled={questions[questions.length - 1]?.id === activeQuestion.id} onClick={() => moveQuestion(activeQuestion.id, 'down')} aria-label="Bajar pregunta"><ArrowDown size={14} /></button>
+                  <button type="button" onClick={() => removeQuestion(activeQuestion.id)} aria-label="Eliminar pregunta"><Trash2 size={14} /></button>
+                </div>
+              </div>
+
+              <label className={styles.field}>
+                <span>Pregunta visible</span>
+                <input value={activeQuestion.label} onChange={(event) => patchQuestion(activeQuestion.id, { label: event.target.value })} onBlur={onSave} />
+              </label>
+
+              <label className={styles.field}>
+                <span>Texto de ayuda</span>
+                <textarea rows={2} value={activeQuestion.content} onChange={(event) => patchQuestion(activeQuestion.id, { content: event.target.value })} onBlur={onSave} />
+              </label>
+
+              {!activeQuestionPreset && (
+                <div className={styles.twoColumn}>
+                  <label className={styles.field}>
+                    <span>Tipo de campo</span>
+                    <CustomSelect value={activeQuestion.blockType} onChange={(event) => changeQuestionType(event.target.value as SiteBlockType)} onBlur={onSave}>
+                      {videoFormGateFieldTypes.map(type => <option key={type} value={type}>{blockLabels[type]}</option>)}
+                    </CustomSelect>
+                  </label>
+                  <label className={styles.field}>
+                    <span>Validación</span>
+                    <CustomSelect value={getSettingString(activeQuestionSettings, 'validation')} onChange={(event) => patchQuestionSettings(activeQuestion, { validation: event.target.value })} onBlur={onSave}>
+                      {fieldValidationOptions.map(option => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}
+                    </CustomSelect>
+                  </label>
+                </div>
+              )}
+
+              {!isChoiceBlock(activeQuestion.blockType) && (
+                <label className={styles.field}>
+                  <span>Texto dentro del campo</span>
+                  <input value={activeQuestion.placeholder} onChange={(event) => patchQuestion(activeQuestion.id, { placeholder: event.target.value })} onBlur={onSave} />
+                </label>
+              )}
+
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(activeQuestion.required)}
+                  onChange={(event) => {
+                    patchQuestion(activeQuestion.id, { required: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Campo requerido</span>
+              </label>
+
+              {activeQuestion.blockType === 'phone' && !activeQuestionPreset && (
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={isPhoneCountrySelectorEnabled(activeQuestion)}
+                    onChange={(event) => {
+                      patchQuestionSettings(activeQuestion, { phoneCountrySelectorEnabled: event.target.checked })
+                      window.setTimeout(onSave, 0)
+                    }}
+                  />
+                  <span>Mostrar país y lada</span>
+                </label>
+              )}
+
+              <CustomFieldBindingControl
+                block={activeQuestion}
+                customFields={customFields}
+                customFieldFolders={customFieldFolders}
+                onPatchSettings={(patch) => patchQuestionSettings(activeQuestion, patch)}
+                onCustomFieldCreated={onCustomFieldCreated}
+                onSave={onSave}
+              />
+
+              {isChoiceBlock(activeQuestion.blockType) && (
+                <OptionsRulesEditor
+                  block={activeQuestion}
+                  blocks={questions}
+                  pages={questionPages}
+                  sitePages={pages}
+                  activeSitePageId={activePageId}
+                  onPatchBlock={(patch) => patchQuestion(activeQuestion.id, patch)}
+                  onSave={onSave}
+                />
+              )}
+            </div>
+          ) : (
+            <p className={styles.muted}>Agrega una pregunta para configurar el formulario de video.</p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, blocks, forms, calendars, customFields, customFieldFolders, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onCustomFieldCreated, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
 
   if (isPanelBlock(block)) {
@@ -29906,12 +30455,26 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           <input value={getSettingString(settings, 'mediaUrl')} onChange={(event) => onPatchSettings({ mediaUrl: event.target.value })} onBlur={onSave} />
         </label>
         {block.blockType === 'video' && (
-          <VideoPlayerSettingsControls
-            settings={settings}
-            mediaUrl={getSettingString(settings, 'mediaUrl')}
-            onPatchSettings={onPatchSettings}
-            onSave={onSave}
-          />
+          <>
+            <VideoPlayerSettingsControls
+              settings={settings}
+              mediaUrl={getSettingString(settings, 'mediaUrl')}
+              onPatchSettings={onPatchSettings}
+              onSave={onSave}
+            />
+            <VideoFormGateSettingsPanel
+              site={site}
+              block={block}
+              forms={forms}
+              customFields={customFields}
+              customFieldFolders={customFieldFolders}
+              pages={pages}
+              activePageId={activePageId}
+              onPatchSettings={onPatchSettings}
+              onCustomFieldCreated={onCustomFieldCreated}
+              onSave={onSave}
+            />
+          </>
         )}
       </div>
     )
