@@ -14202,6 +14202,28 @@ const RSTK_ICONS = {
   lock: '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="10" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>'
 }
 
+const RSTK_BUTTON_ICONS = {
+  arrowRight: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m9 18 6-6-6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  sparkles: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3.4 13.85 8l4.75 1.85L13.85 11.7 12 16.3 10.15 11.7 5.4 9.85 10.15 8z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="m19 14 .8 2.1 2.2.9-2.2.9L19 20l-.8-2.1L16 17l2.2-.9zM5.2 15l.58 1.45 1.42.55-1.42.55L5.2 19l-.58-1.45L3.2 17l1.42-.55z" fill="currentColor"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 2.8v3M16 2.8v3M4.5 9.2h15M6.6 5h10.8a2.6 2.6 0 0 1 2.6 2.6v10.1a2.6 2.6 0 0 1-2.6 2.6H6.6A2.6 2.6 0 0 1 4 17.7V7.6A2.6 2.6 0 0 1 6.6 5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  send: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m21 3-6.9 18-3.7-8.1L3 9.2zM10.4 12.9 21 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  check: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  external: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 5H6.5A2.5 2.5 0 0 0 4 7.5v10A2.5 2.5 0 0 0 6.5 20h10a2.5 2.5 0 0 0 2.5-2.5V13" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+}
+
+const RSTK_BUTTON_ICON_NAMES = new Set(['arrowRight', 'sparkles', 'calendar', 'send', 'check', 'external'])
+const RSTK_BUTTON_ICON_SIDES = new Set(['left', 'right'])
+
+function normalizeButtonIconName(value) {
+  const icon = cleanString(value)
+  return RSTK_BUTTON_ICON_NAMES.has(icon) ? icon : ''
+}
+
+function normalizeButtonIconSide(value) {
+  const side = cleanString(value)
+  return RSTK_BUTTON_ICON_SIDES.has(side) ? side : 'right'
+}
+
 const VIDEO_PLAY_ICON_STYLES = new Set(['solid', 'outline', 'soft', 'spark'])
 const DEFAULT_VIDEO_PLAY_ICON_STYLE = 'solid'
 const VIDEO_PLAY_SHAPES = new Set(['round', 'rectangle'])
@@ -14930,10 +14952,14 @@ function renderLandingBlocks(blocks = [], context = {}) {
   return html.join('\n')
 }
 
-function renderSubmitButtonContent(label, subtitle = '') {
+function renderSubmitButtonContent(label, subtitle = '', settings = {}) {
   const safeLabel = escapeHtml(cleanString(label) || 'Enviar')
   const safeSubtitle = escapeHtml(cleanString(subtitle))
-  return `<span class="rstk-button-label">${safeLabel}</span>${safeSubtitle ? `<span class="rstk-button-subtitle">${safeSubtitle}</span>` : ''}`
+  const iconName = normalizeButtonIconName(settings.buttonIcon)
+  if (!iconName) return `<span class="rstk-button-label">${safeLabel}</span>${safeSubtitle ? `<span class="rstk-button-subtitle">${safeSubtitle}</span>` : ''}`
+  const iconSide = normalizeButtonIconSide(settings.buttonIconSide)
+  const icon = iconName ? `<span class="rstk-button-icon" aria-hidden="true">${RSTK_BUTTON_ICONS[iconName]}</span>` : ''
+  return `<span class="rstk-button-content rstk-button-icon-${iconSide}">${iconSide === 'left' ? icon : ''}<span class="rstk-button-text-stack"><span class="rstk-button-label">${safeLabel}</span>${safeSubtitle ? `<span class="rstk-button-subtitle">${safeSubtitle}</span>` : ''}</span>${iconSide === 'right' ? icon : ''}</span>`
 }
 
 function renderVideoPlayer(src, block, settings = {}, options = {}) {
@@ -15173,7 +15199,7 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'hero') {
     const buttonUrl = resolveButtonHref(settings, context)
     const buttonActionAttrs = renderButtonActionAttributes(settings)
-    const buttonContent = renderSubmitButtonContent(settings.buttonText, settings.buttonSubtitle)
+    const buttonContent = renderSubmitButtonContent(settings.buttonText, settings.buttonSubtitle, settings)
     return `
       <section class="rstk-hero">
         ${settings.kicker ? `<p class="rstk-kicker">${escapeHtml(settings.kicker)}</p>` : ''}
@@ -15246,7 +15272,7 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'button') {
     const buttonUrl = resolveButtonHref(settings, context)
     const buttonActionAttrs = renderButtonActionAttributes(settings)
-    return `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}>${renderSubmitButtonContent(settings.buttonText || block.content || block.label || 'Continuar', settings.buttonSubtitle)}</a>`
+    return `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}>${renderSubmitButtonContent(settings.buttonText || block.content || block.label || 'Continuar', settings.buttonSubtitle, settings)}</a>`
   }
 
   if (block.blockType === 'benefits') {
@@ -15332,7 +15358,10 @@ function renderContentBlock(block, context = {}) {
       continueText: embeddedContinueText,
       nextText: embeddedNextText
     })
-    const submitButtonContent = renderSubmitButtonContent(finalButtonCopy.label, finalButtonCopy.subtitle)
+    const submitButtonContent = renderSubmitButtonContent(finalButtonCopy.label, finalButtonCopy.subtitle, settings)
+    const nextButtonContent = normalizeButtonIconName(settings.buttonIcon)
+      ? renderSubmitButtonContent(firstButtonCopy.label, '', settings)
+      : escapeHtml(firstButtonCopy.label)
     const renderEmbeddedItem = (item, pageId) => {
       if (FIELD_BLOCK_TYPES.has(item.blockType)) {
         return wrapRenderedBlock(item, renderFieldBlock(item, false, pageId || getBlockPageId(item, embeddedPages), context), context)
@@ -15381,7 +15410,7 @@ function renderContentBlock(block, context = {}) {
         ${fields.length ? `
           <div class="rstk-actions rstk-embed-actions">
             ${hasEmbeddedPages ? `<button type="button" class="rstk-secondary" data-embedded-back hidden>${escapeHtml(context.backText || 'Anterior')}</button>` : ''}
-            ${hasEmbeddedPages ? `<button type="button" data-embedded-next>${escapeHtml(firstButtonCopy.label)}</button>` : ''}
+            ${hasEmbeddedPages ? `<button type="button" data-embedded-next>${nextButtonContent}</button>` : ''}
             <button type="submit" data-submit${hasEmbeddedPages ? ' hidden' : ''}>${submitButtonContent}</button>
           </div>
           <p class="rstk-submit-message" data-message role="status"></p>
@@ -15396,7 +15425,7 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'cta') {
     const buttonUrl = resolveButtonHref(settings, context)
     const buttonActionAttrs = renderButtonActionAttributes(settings)
-    const buttonContent = renderSubmitButtonContent(settings.buttonText, settings.buttonSubtitle)
+    const buttonContent = renderSubmitButtonContent(settings.buttonText, settings.buttonSubtitle, settings)
     return `
       <section class="rstk-cta">
         <h2>${content || escapeHtml(block.label)}</h2>
@@ -16359,6 +16388,10 @@ const RSTK_BASE_CSS = `
     transition:background .15s ease,border-color .15s ease,transform .04s ease,box-shadow .15s ease;
   }
 	  .rstk-button-link{justify-self:var(--rstk-button-justify,center);width:var(--rstk-button-width,fit-content);margin-left:var(--rstk-button-margin-left,auto);margin-right:var(--rstk-button-margin-right,auto)}
+	  .rstk-button-content{min-width:0;max-width:100%;display:inline-flex;align-items:center;justify-content:center;gap:.55em}
+	  .rstk-button-text-stack{min-width:0;display:inline-grid;gap:2px;justify-items:center}
+	  .rstk-button-icon{flex:0 0 auto;width:1.05em;height:1.05em;display:inline-flex;align-items:center;justify-content:center;color:currentColor}
+	  .rstk-button-icon svg{width:1em;height:1em;display:block}
 	  .rstk-button-label{display:inline-block}
 	  .rstk-button-subtitle{display:block;font-size:var(--rstk-button-subtitle-size,.78em);font-weight:650;line-height:1.25;opacity:.82}
 	  .rstk-centered .rstk-button-link{margin-inline:auto}
@@ -18763,6 +18796,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         const safeSubtitle = String(subtitle || '');
         const labelNode = button.querySelector('.rstk-button-label');
         const subtitleNode = button.querySelector('.rstk-button-subtitle');
+        const textStack = button.querySelector('.rstk-button-text-stack') || (labelNode ? labelNode.parentElement : null);
         if (labelNode) {
           labelNode.textContent = safeLabel;
         } else {
@@ -18775,7 +18809,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           const nextSubtitle = document.createElement('span');
           nextSubtitle.className = 'rstk-button-subtitle';
           nextSubtitle.textContent = safeSubtitle;
-          button.appendChild(nextSubtitle);
+          (textStack || button).appendChild(nextSubtitle);
         }
       };
 

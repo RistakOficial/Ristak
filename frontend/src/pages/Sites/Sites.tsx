@@ -2710,6 +2710,9 @@ const spacingSides = [
 type SpacingBase = 'blockPadding' | 'blockMargin'
 type HorizontalAlign = 'left' | 'center' | 'right' | 'justify'
 type ButtonAlign = HorizontalAlign | 'full'
+type ButtonIconName = '' | 'arrowRight' | 'sparkles' | 'calendar' | 'send' | 'check' | 'external'
+type ButtonIconSide = 'left' | 'right'
+type ButtonStylePresetId = 'solid' | 'gradient' | 'outline' | 'minimal'
 type SocialPlatform = 'facebook' | 'instagram' | 'tiktok' | 'threads'
 type FormChoiceStyle = NonNullable<SiteTheme['formChoiceStyle']>
 type FormSelectStyle = NonNullable<SiteTheme['formSelectStyle']>
@@ -2725,6 +2728,135 @@ const buttonAlignOptions: Array<{ value: ButtonAlign; label: string; icon: React
   ...horizontalAlignOptions.filter(option => option.value !== 'justify'),
   { value: 'full', label: 'Completo', icon: <Maximize2 size={14} /> }
 ]
+
+const buttonIconOptions: Array<{ value: ButtonIconName; label: string }> = [
+  { value: '', label: 'Sin icono' },
+  { value: 'arrowRight', label: 'Flecha' },
+  { value: 'sparkles', label: 'Destello' },
+  { value: 'calendar', label: 'Calendario' },
+  { value: 'send', label: 'Enviar' },
+  { value: 'check', label: 'Check' },
+  { value: 'external', label: 'Externo' }
+]
+
+const buttonIconSideOptions: Array<{ value: ButtonIconSide; label: string }> = [
+  { value: 'left', label: 'Izquierda' },
+  { value: 'right', label: 'Derecha' }
+]
+
+const buttonIconValues = new Set<ButtonIconName>(buttonIconOptions.map(option => option.value))
+const buttonIconSideValues = new Set<ButtonIconSide>(buttonIconSideOptions.map(option => option.value))
+
+const buttonStylePresets: Array<{
+  id: ButtonStylePresetId
+  label: string
+  description: string
+  previewClassName: 'buttonPresetPreviewSolid' | 'buttonPresetPreviewGradient' | 'buttonPresetPreviewOutline' | 'buttonPresetPreviewMinimal'
+  defaultIcon: ButtonIconName
+  defaultIconSide: ButtonIconSide
+}> = [
+  { id: 'solid', label: 'Sólido moderno', description: 'Limpio, fuerte y listo para CTA principal.', previewClassName: 'buttonPresetPreviewSolid', defaultIcon: '', defaultIconSide: 'right' },
+  { id: 'gradient', label: 'Gradiente pill', description: 'Redondeado con energía para ofertas y lanzamientos.', previewClassName: 'buttonPresetPreviewGradient', defaultIcon: 'sparkles', defaultIconSide: 'left' },
+  { id: 'outline', label: 'Borde premium', description: 'Sin relleno, claro y elegante.', previewClassName: 'buttonPresetPreviewOutline', defaultIcon: 'arrowRight', defaultIconSide: 'right' },
+  { id: 'minimal', label: 'Texto con flecha', description: 'Sencillo, ligero y muy usable.', previewClassName: 'buttonPresetPreviewMinimal', defaultIcon: 'arrowRight', defaultIconSide: 'right' }
+]
+
+const normalizeButtonIconName = (value: unknown): ButtonIconName => {
+  const raw = String(value || '').trim() as ButtonIconName
+  return buttonIconValues.has(raw) ? raw : ''
+}
+
+const normalizeButtonIconSide = (value: unknown): ButtonIconSide => {
+  const raw = String(value || '').trim() as ButtonIconSide
+  return buttonIconSideValues.has(raw) ? raw : 'right'
+}
+
+const ButtonIconGlyph: React.FC<{ name: ButtonIconName; size?: number }> = ({ name, size = 16 }) => {
+  if (name === 'sparkles') return <Sparkles size={size} strokeWidth={2.2} />
+  if (name === 'calendar') return <CalendarDays size={size} strokeWidth={2.2} />
+  if (name === 'send') return <Send size={size} strokeWidth={2.2} />
+  if (name === 'check') return <Check size={size} strokeWidth={2.4} />
+  if (name === 'external') return <ExternalLink size={size} strokeWidth={2.2} />
+  if (name === 'arrowRight') return <ChevronRight size={size} strokeWidth={2.4} />
+  return null
+}
+
+const getButtonStylePresetPatch = (presetId: ButtonStylePresetId, defaultAccent: string): Record<string, unknown> => {
+  const readableAccentText = onAccentFor(defaultAccent)
+  const gradientAccent = isHex6(defaultAccent)
+    ? `linear-gradient(135deg, ${defaultAccent} 0%, #7c3aed 100%)`
+    : 'linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)'
+
+  if (presetId === 'gradient') {
+    return {
+      buttonBg: gradientAccent,
+      buttonTextColor: '#ffffff',
+      buttonBorderColor: 'transparent',
+      buttonBorderWidth: 0,
+      buttonRadius: 80,
+      buttonHeight: 58,
+      buttonPaddingX: 34,
+      buttonFontSize: 17,
+      buttonSubtitleFontSize: 13,
+      buttonFontWeight: 'bold',
+      buttonTextTransform: 'none',
+      buttonIcon: 'sparkles',
+      buttonIconSide: 'left'
+    }
+  }
+
+  if (presetId === 'outline') {
+    return {
+      buttonBg: 'transparent',
+      buttonTextColor: defaultAccent,
+      buttonBorderColor: defaultAccent,
+      buttonBorderWidth: 2,
+      buttonRadius: 16,
+      buttonHeight: 54,
+      buttonPaddingX: 30,
+      buttonFontSize: 16,
+      buttonSubtitleFontSize: 13,
+      buttonFontWeight: 'bold',
+      buttonTextTransform: 'none',
+      buttonIcon: 'arrowRight',
+      buttonIconSide: 'right'
+    }
+  }
+
+  if (presetId === 'minimal') {
+    return {
+      buttonBg: 'transparent',
+      buttonTextColor: defaultAccent,
+      buttonBorderColor: 'transparent',
+      buttonBorderWidth: 0,
+      buttonRadius: 8,
+      buttonHeight: 44,
+      buttonPaddingX: 12,
+      buttonFontSize: 16,
+      buttonSubtitleFontSize: 12,
+      buttonFontWeight: 'bold',
+      buttonTextTransform: 'none',
+      buttonIcon: 'arrowRight',
+      buttonIconSide: 'right'
+    }
+  }
+
+  return {
+    buttonBg: defaultAccent,
+    buttonTextColor: readableAccentText,
+    buttonBorderColor: defaultAccent,
+    buttonBorderWidth: 1,
+    buttonRadius: 18,
+    buttonHeight: 54,
+    buttonPaddingX: 30,
+    buttonFontSize: 16,
+    buttonSubtitleFontSize: 13,
+    buttonFontWeight: 'bold',
+    buttonTextTransform: 'none',
+    buttonIcon: '',
+    buttonIconSide: 'right'
+  }
+}
 
 const backgroundMediaTypeOptions = [
   { value: 'image', label: 'Imagen' },
@@ -22204,15 +22336,31 @@ const CanvasChrome: React.FC<{
   )
 }
 
-const SubmitButtonContent: React.FC<{ theme?: SiteTheme; label?: string; subtitle?: string }> = ({ theme, label: labelOverride, subtitle: subtitleOverride }) => {
+const SubmitButtonContent: React.FC<{ theme?: SiteTheme; label?: string; subtitle?: string; settings?: Record<string, unknown> }> = ({ theme, label: labelOverride, subtitle: subtitleOverride, settings }) => {
   const label = labelOverride || getThemeString(theme, 'submitText') || 'Enviar'
   const subtitle = subtitleOverride !== undefined ? subtitleOverride : getThemeString(theme, 'submitSubtitle')
+  const iconName = normalizeButtonIconName(settings?.buttonIcon)
+  const iconSide = normalizeButtonIconSide(settings?.buttonIconSide)
+  const icon = iconName ? <span className="rstk-button-icon" aria-hidden="true"><ButtonIconGlyph name={iconName} /></span> : null
+
+  if (!iconName) {
+    return (
+      <>
+        <span className="rstk-button-label">{label}</span>
+        {subtitle ? <span className="rstk-button-subtitle">{subtitle}</span> : null}
+      </>
+    )
+  }
 
   return (
-    <>
-      <span className="rstk-button-label">{label}</span>
-      {subtitle ? <span className="rstk-button-subtitle">{subtitle}</span> : null}
-    </>
+    <span className={`rstk-button-content rstk-button-icon-${iconSide}`}>
+      {iconSide === 'left' ? icon : null}
+      <span className="rstk-button-text-stack">
+        <span className="rstk-button-label">{label}</span>
+        {subtitle ? <span className="rstk-button-subtitle">{subtitle}</span> : null}
+      </span>
+      {iconSide === 'right' ? icon : null}
+    </span>
   )
 }
 
@@ -24497,22 +24645,54 @@ const InlineEditable: React.FC<InlineEditableProps> = ({
 const InlineButtonEditable: React.FC<Omit<InlineEditableProps, 'as' | 'className'> & {
   subtitle?: string
   onSubtitleChange?: (value: string) => void
-}> = ({ subtitle = '', onSubtitleChange, disabled, onCommit, ...props }) => (
-  <a className="rstk-button-link" href="#" onClick={(event) => event.preventDefault()}>
-    <InlineEditable {...props} disabled={disabled} onCommit={onCommit} as="span" className="rstk-button-label" />
-    {subtitle || onSubtitleChange ? (
-      <InlineEditable
-        as="span"
-        className="rstk-button-subtitle"
-        value={subtitle}
-        placeholder="Subtexto"
-        disabled={disabled}
-        onChange={(value) => onSubtitleChange?.(value)}
-        onCommit={onCommit}
-      />
-    ) : null}
-  </a>
-)
+  settings?: Record<string, unknown>
+}> = ({ subtitle = '', onSubtitleChange, disabled, onCommit, settings, ...props }) => {
+  const iconName = normalizeButtonIconName(settings?.buttonIcon)
+  const iconSide = normalizeButtonIconSide(settings?.buttonIconSide)
+  const icon = iconName ? <span className="rstk-button-icon" aria-hidden="true"><ButtonIconGlyph name={iconName} /></span> : null
+
+  if (!iconName) {
+    return (
+      <a className="rstk-button-link" href="#" onClick={(event) => event.preventDefault()}>
+        <InlineEditable {...props} disabled={disabled} onCommit={onCommit} as="span" className="rstk-button-label" />
+        {subtitle || onSubtitleChange ? (
+          <InlineEditable
+            as="span"
+            className="rstk-button-subtitle"
+            value={subtitle}
+            placeholder="Subtexto"
+            disabled={disabled}
+            onChange={(value) => onSubtitleChange?.(value)}
+            onCommit={onCommit}
+          />
+        ) : null}
+      </a>
+    )
+  }
+
+  return (
+    <a className="rstk-button-link" href="#" onClick={(event) => event.preventDefault()}>
+      <span className={`rstk-button-content rstk-button-icon-${iconSide}`}>
+        {iconSide === 'left' ? icon : null}
+        <span className="rstk-button-text-stack">
+          <InlineEditable {...props} disabled={disabled} onCommit={onCommit} as="span" className="rstk-button-label" />
+          {subtitle || onSubtitleChange ? (
+            <InlineEditable
+              as="span"
+              className="rstk-button-subtitle"
+              value={subtitle}
+              placeholder="Subtexto"
+              disabled={disabled}
+              onChange={(value) => onSubtitleChange?.(value)}
+              onCommit={onCommit}
+            />
+          ) : null}
+        </span>
+        {iconSide === 'right' ? icon : null}
+      </span>
+    </a>
+  )
+}
 
 // Renders the canvas page at its true desktop width and transform-scales it to
 // fit the column — a faithful "monitor comprimido" of the published page.
@@ -25664,6 +25844,12 @@ const InlineBlockStyleControls: React.FC<{
   const currentButtonFontFamily = getSettingString(settings, 'buttonFontFamily')
   const fontOptions = getFontOptionsWithCurrent(currentFontFamily)
   const buttonFontOptions = getFontOptionsWithCurrent(currentButtonFontFamily)
+  const currentButtonIcon = normalizeButtonIconName(settings.buttonIcon)
+  const currentButtonIconSide = normalizeButtonIconSide(settings.buttonIconSide)
+  const applyButtonStylePreset = (presetId: ButtonStylePresetId) => {
+    onPatchSettings(getButtonStylePresetPatch(presetId, defaultAccent))
+    window.setTimeout(onSave, 0)
+  }
 
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
@@ -25728,6 +25914,67 @@ const InlineBlockStyleControls: React.FC<{
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
+          <div className={styles.buttonPresetSection}>
+            <div className={styles.buttonPresetHeader}>
+              <span>Presets de botón</span>
+              <small>Elige una base y ajusta después</small>
+            </div>
+            <div className={styles.buttonPresetGrid}>
+              {buttonStylePresets.map(preset => {
+                const previewIcon = preset.defaultIcon ? <ButtonIconGlyph name={preset.defaultIcon} size={13} /> : null
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={styles.buttonPresetOption}
+                    onClick={() => applyButtonStylePreset(preset.id)}
+                    aria-label={`Aplicar preset ${preset.label}`}
+                  >
+                    <span className={`${styles.buttonPresetPreview} ${styles[preset.previewClassName]}`}>
+                      {preset.defaultIconSide === 'left' ? previewIcon : null}
+                      <span>{preset.id === 'minimal' ? 'Read more' : 'Botón'}</span>
+                      {preset.defaultIconSide === 'right' ? previewIcon : null}
+                    </span>
+                    <strong>{preset.label}</strong>
+                    <small>{preset.description}</small>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Ícono</span>
+              <CustomSelect
+                value={currentButtonIcon}
+                onChange={(event) => {
+                  const icon = normalizeButtonIconName(event.target.value)
+                  onPatchSettings({ buttonIcon: icon })
+                  window.setTimeout(onSave, 0)
+                }}
+                onBlur={onSave}
+              >
+                {buttonIconOptions.map(option => (
+                  <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+            <label className={styles.field}>
+              <span>Lado del icono</span>
+              <CustomSelect
+                value={currentButtonIconSide}
+                onChange={(event) => {
+                  onPatchSettings({ buttonIconSide: normalizeButtonIconSide(event.target.value) })
+                  window.setTimeout(onSave, 0)
+                }}
+                onBlur={onSave}
+              >
+                {buttonIconSideOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          </div>
           <ColorField
             label="Fondo del botón"
             value={getSettingPaint(settings, 'buttonBg', defaultAccent)}
@@ -27000,6 +27247,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Titular principal'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <InlineEditable as="p" className="rstk-subheading" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtítulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
         <InlineButtonEditable
+          settings={settings}
           value={getSettingString(settings, 'buttonText')}
           subtitle={getSettingString(settings, 'buttonSubtitle')}
           placeholder="Texto del botón"
@@ -27104,6 +27352,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   if (block.blockType === 'button') {
     return (
       <InlineButtonEditable
+        settings={settings}
         value={getSettingString(settings, 'buttonText') || block.content || ''}
         subtitle={getSettingString(settings, 'buttonSubtitle')}
         placeholder="Botón"
@@ -27223,7 +27472,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               embeddedFormEditor.onSelectSubmit()
             } : undefined}
           >
-            <SubmitButtonContent theme={buttonCopySite?.theme} label={embeddedButtonLabel} subtitle={embeddedButtonSubtitle} />
+            <SubmitButtonContent theme={buttonCopySite?.theme} label={embeddedButtonLabel} subtitle={embeddedButtonSubtitle} settings={settings} />
           </button>
         </div>
       </section>
@@ -27242,6 +27491,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         <InlineEditable as="h2" value={block.content} placeholder={block.label || 'CTA final'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtítulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
         <InlineButtonEditable
+          settings={settings}
           value={getSettingString(settings, 'buttonText')}
           subtitle={getSettingString(settings, 'buttonSubtitle')}
           placeholder="Texto del botón"

@@ -309,6 +309,34 @@
   margin-left: var(--rstk-button-margin-left, auto);
   margin-right: var(--rstk-button-margin-right, auto);
 }
+.rstkCanvas .rstk-button-content {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .55em;
+}
+.rstkCanvas .rstk-button-text-stack {
+  min-width: 0;
+  display: inline-grid;
+  gap: 2px;
+  justify-items: center;
+}
+.rstkCanvas .rstk-button-icon {
+  flex: 0 0 auto;
+  width: 1.05em;
+  height: 1.05em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+.rstkCanvas .rstk-button-icon svg {
+  width: 1em;
+  height: 1em;
+  display: block;
+}
 .rstkCanvas .rstk-button-label { display: inline-block; }
 .rstkCanvas .rstk-button-subtitle { display: block; font-size: var(--rstk-button-subtitle-size, .78em); font-weight: 650; line-height: 1.25; opacity: .82; }
 .rstkCanvas.rstk-centered .rstk-button-link { margin-inline: auto; }

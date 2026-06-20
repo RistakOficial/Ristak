@@ -9634,6 +9634,133 @@
   padding: 11px;
 }
 
+.buttonPresetSection {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.buttonPresetHeader {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.buttonPresetHeader span {
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.buttonPresetHeader small {
+  min-width: 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 760;
+  text-align: right;
+}
+
+.buttonPresetGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.buttonPresetOption {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--design-control-border);
+  border-radius: 10px;
+  background: var(--design-control-bg);
+  color: var(--color-text-primary);
+  padding: 8px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.buttonPresetOption:hover {
+  border-color: var(--design-control-border-focus);
+  background: var(--design-control-bg-hover);
+  transform: translateY(-1px);
+}
+
+.buttonPresetOption strong,
+.buttonPresetOption small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.buttonPresetOption strong {
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.buttonPresetOption small {
+  color: var(--color-text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.buttonPresetPreview {
+  min-width: 0;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  padding: 0 12px;
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.buttonPresetPreview svg {
+  flex: 0 0 auto;
+}
+
+.buttonPresetPreviewSolid {
+  border-color: var(--color-primary);
+  border-radius: 12px;
+  background: var(--color-primary);
+  color: var(--color-text-onAccent);
+}
+
+.buttonPresetPreviewGradient {
+  border-color: transparent;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-accent-purple, var(--color-primary)) 78%, var(--color-primary) 22%));
+  color: var(--color-text-onAccent);
+}
+
+.buttonPresetPreviewOutline {
+  border-color: var(--color-primary);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-primary);
+}
+
+.buttonPresetPreviewMinimal {
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-primary);
+  justify-content: flex-start;
+  padding-inline: 0;
+}
+
 .textToolbar {
   min-width: 0;
   display: grid;
