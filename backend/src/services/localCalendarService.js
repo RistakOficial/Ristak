@@ -28,6 +28,31 @@ function cleanString(value) {
   return String(value ?? '').trim()
 }
 
+function isSafeCssColor(value) {
+  const raw = cleanString(value).toLowerCase()
+  if (!raw) return false
+  if (raw === 'transparent') return true
+  if (/^#[0-9a-f]{6}$/i.test(raw)) return true
+  const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
+  if (!match) return false
+  const channels = match.slice(1, 4).map(Number)
+  const alpha = match[4] === undefined ? 1 : Number(match[4])
+  return channels.every(channel => channel >= 0 && channel <= 255) && alpha >= 0 && alpha <= 1
+}
+
+function safeCssColor(value, fallback) {
+  const raw = cleanString(value).toLowerCase()
+  if (!raw) return fallback
+  if (raw === 'transparent') return 'rgba(255, 255, 255, 0)'
+  return isSafeCssColor(raw) ? raw : fallback
+}
+
+function safeCssNumber(value, fallback, min, max) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, parsed))
+}
+
 function toInt(value, fallback = 0) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -700,17 +725,32 @@ export async function getPublicCalendarBySlug(slugOrId) {
   return row ? calendarRowToApi(row) : null
 }
 
-export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
+export function renderPublicCalendarHtml(calendar, { host = '', embedded = false, style = {} } = {}) {
   const slug = publicCalendarSlug(calendar)
   const duration = Math.max(1, toInt(calendar.slotDuration, 60))
   const title = calendar.eventTitle || calendar.name || 'Cita'
+  const accent = safeCssColor(style.accent, safeCssColor(calendar.eventColor, DEFAULT_EVENT_COLOR))
+  const textColor = safeCssColor(style.text, '#111827')
+  const mutedColor = safeCssColor(style.muted, '#6b7280')
+  const lineColor = safeCssColor(style.line, '#e5e7eb')
+  const embeddedControlBg = 'rgba(255, 255, 255, 0)'
+  const controlBg = safeCssColor(style.controlBg, embedded ? embeddedControlBg : '#ffffff')
+  const slotBg = safeCssColor(style.slotBg, embedded ? embeddedControlBg : '#ffffff')
+  const slotText = safeCssColor(style.slotText, accent)
+  const selectedText = safeCssColor(style.selectedText, '#ffffff')
+  const fieldBg = safeCssColor(style.fieldBg, embedded ? embeddedControlBg : '#ffffff')
+  const fieldText = safeCssColor(style.fieldText, '#1f2937')
+  const fieldBorder = safeCssColor(style.fieldBorder, lineColor)
+  const buttonText = safeCssColor(style.buttonText, selectedText)
+  const slotRadius = safeCssNumber(style.slotRadius, 8, 0, 32)
+  const fieldRadius = safeCssNumber(style.fieldRadius, 8, 0, 32)
   const payload = {
     slug,
     name: calendar.name || 'Calendario',
     description: calendar.description || '',
     eventTitle: title,
     duration,
-    color: calendar.eventColor || DEFAULT_EVENT_COLOR,
+    color: accent,
     host
   }
 
@@ -722,15 +762,18 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
   <title>${escapeHtml(calendar.name || 'Calendario')}</title>
   <meta name="description" content="${escapeHtml(calendar.description || `Agenda ${title}`)}">
   <style>
-    :root{--accent:${escapeHtml(calendar.eventColor || DEFAULT_EVENT_COLOR)};--accent-soft:color-mix(in srgb,var(--accent) 10%,#fff);--ink:#1f2937;--heading:#111827;--muted:#6b7280;--line:#e5e7eb;--bg:#f8fafc;--surface:#fff;--danger:#b42318;--ok:#047857}
+    :root{--accent:${escapeHtml(accent)};--accent-soft:color-mix(in srgb,var(--accent) 10%,transparent);--ink:${escapeHtml(fieldText)};--heading:${escapeHtml(textColor)};--muted:${escapeHtml(mutedColor)};--line:${escapeHtml(lineColor)};--bg:${embedded ? 'transparent' : '#f8fafc'};--surface:${embedded ? 'transparent' : '#fff'};--control-bg:${escapeHtml(controlBg)};--slot-bg:${escapeHtml(slotBg)};--slot-text:${escapeHtml(slotText)};--selected-text:${escapeHtml(selectedText)};--field-bg:${escapeHtml(fieldBg)};--field-text:${escapeHtml(fieldText)};--field-border:${escapeHtml(fieldBorder)};--button-text:${escapeHtml(buttonText)};--slot-radius:${slotRadius}px;--field-radius:${fieldRadius}px;--danger:#b42318;--ok:#047857}
     *{box-sizing:border-box}
     body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;letter-spacing:0;line-height:1.5}
+    body.rstk-calendar-embedded{min-height:0;background:transparent}
     button,input,textarea{font:inherit}
     .page{min-height:100vh;width:min(1180px,calc(100% - 32px));margin:0 auto;padding:clamp(24px,4vw,54px) 0;display:grid;place-items:center}
+    body.rstk-calendar-embedded .page{width:100%;padding:0;place-items:stretch}
     .shell{width:100%;min-height:min(760px,calc(100vh - 80px));display:grid;grid-template-columns:340px minmax(390px,1fr) minmax(260px,300px);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 32px 90px -60px rgba(15,23,42,.45);overflow:hidden}
+    body.rstk-calendar-embedded .shell{min-height:100vh;border:0;border-radius:0;box-shadow:none}
     .intro{position:relative;padding:38px 34px;border-right:1px solid var(--line);display:grid;align-content:start;gap:20px}
-    .back{width:42px;height:42px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--accent);display:grid;place-items:center;cursor:pointer}
-    .avatar{width:104px;height:104px;border-radius:4px;background:linear-gradient(135deg,var(--accent-soft),#fff);border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-size:3rem;font-weight:850}
+    .back{width:42px;height:42px;border:1px solid var(--line);border-radius:999px;background:var(--control-bg);color:var(--accent);display:grid;place-items:center;cursor:pointer}
+    .avatar{width:104px;height:104px;border-radius:4px;background:linear-gradient(135deg,var(--accent-soft),var(--control-bg));border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-size:3rem;font-weight:850}
     .host{margin:8px 0 0;color:var(--muted);font-size:.95rem;font-weight:750}
     h1{margin:0;color:var(--heading);font-size:clamp(1.75rem,3vw,2.35rem);line-height:1.08;letter-spacing:0;font-weight:850}
     h2{margin:0;color:var(--heading);font-size:1.45rem;line-height:1.2;font-weight:800}
@@ -742,16 +785,16 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
     .calendarPane{padding:38px 36px;display:grid;grid-template-rows:auto auto 1fr auto;gap:24px}
     .paneTitle{display:grid;gap:6px}
     .monthBar{display:grid;grid-template-columns:42px 1fr 42px;align-items:center;gap:12px}
-    .monthBar strong{text-align:center;font-size:1.08rem;font-weight:750;color:#374151}
-    .navBtn{width:42px;height:42px;border:0;border-radius:999px;background:#fff;color:#4b5563;display:grid;place-items:center;cursor:pointer}
+    .monthBar strong{text-align:center;font-size:1.08rem;font-weight:750;color:var(--heading)}
+    .navBtn{width:42px;height:42px;border:0;border-radius:999px;background:var(--control-bg);color:var(--muted);display:grid;place-items:center;cursor:pointer}
     .navBtn:hover,.navBtn:focus-visible{background:var(--accent-soft);color:var(--accent);outline:0}
     .weekdays,.days{display:grid;grid-template-columns:repeat(7,1fr);justify-items:center}
-    .weekdays{gap:8px;color:#374151;font-size:.78rem;font-weight:750;text-transform:uppercase}
+    .weekdays{gap:8px;color:var(--heading);font-size:.78rem;font-weight:750;text-transform:uppercase}
     .days{gap:10px 8px}
-    .day{width:44px;height:44px;border:0;border-radius:999px;background:transparent;color:#6b7280;cursor:default;font-weight:650}
+    .day{width:44px;height:44px;border:0;border-radius:999px;background:transparent;color:var(--muted);cursor:default;font-weight:650}
     .day.available{color:var(--accent);cursor:pointer;font-weight:800}
     .day.available:hover,.day.available:focus-visible{background:var(--accent-soft);outline:0}
-    .day.selected{background:var(--accent);color:#fff}
+    .day.selected{background:var(--accent);color:var(--selected-text)}
     .day.today:not(.selected){box-shadow:inset 0 0 0 1px var(--accent)}
     .day.outside{visibility:hidden}
     .day:disabled{opacity:.34}
@@ -759,16 +802,16 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
     .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:18px}
     .selectedDate{display:grid;gap:4px;min-height:58px}
     .slotList{display:grid;align-content:start;gap:10px;max-height:330px;overflow:auto;padding-right:2px}
-    .slot{width:100%;min-height:46px;border:1px solid var(--accent);border-radius:8px;background:#fff;color:var(--accent);font-weight:800;cursor:pointer}
-    .slot:hover,.slot.selected{background:var(--accent);color:#fff}
+    .slot{width:100%;min-height:46px;border:1px solid var(--accent);border-radius:var(--slot-radius);background:var(--slot-bg);color:var(--slot-text);font-weight:800;cursor:pointer}
+    .slot:hover,.slot.selected{background:var(--accent);color:var(--selected-text)}
     .slotEmpty{display:grid;place-items:center;min-height:160px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);text-align:center;padding:18px}
     form{display:none;gap:10px;border-top:1px solid var(--line);padding-top:16px}
     form.visible{display:grid}
-    label{display:grid;gap:5px;font-size:.82rem;font-weight:750;color:#374151}
-    input,textarea{width:100%;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);padding:10px 11px;outline:none}
+    label{display:grid;gap:5px;font-size:.82rem;font-weight:750;color:var(--heading)}
+    input,textarea{width:100%;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);color:var(--field-text);padding:10px 11px;outline:none}
     textarea{resize:vertical}
     input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
-    button.submit{min-height:44px;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;font-weight:850;cursor:pointer}
+    button.submit{min-height:44px;border:1px solid var(--accent);border-radius:var(--slot-radius);background:var(--accent);color:var(--button-text);font-weight:850;cursor:pointer}
     button:disabled{opacity:.58;cursor:not-allowed}
     .message{min-height:20px;font-size:.88rem;font-weight:750;color:var(--muted)}
     .message.error{color:var(--danger)}
@@ -778,7 +821,7 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
     @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell{grid-template-columns:1fr;min-height:0;border-radius:14px}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
   </style>
 </head>
-<body>
+<body class="${embedded ? 'rstk-calendar-embedded' : ''}">
   <main class="page">
     <div class="shell">
       <section class="intro">

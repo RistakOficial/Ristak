@@ -574,7 +574,9 @@ export async function previewCalendarHandler(req, res) {
     }
 
     return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, {
-      host: getRequestHost(req) || ''
+      host: getRequestHost(req) || '',
+      embedded: req.query?.embed === '1' || req.query?.test === '1',
+      style: req.query || {}
     }))
   } catch (error) {
     logger.error(`Error previsualizando calendario de site: ${error.message}`)
@@ -851,7 +853,11 @@ export async function publicSiteHostMiddleware(req, res, next) {
         return sendDomainError(req, res, 404, 'Ruta no disponible en este calendario público')
       }
 
-      return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, { host }))
+      return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, {
+        host,
+        embedded: req.query?.embed === '1' || req.query?.test === '1',
+        style: req.query || {}
+      }))
     }
 
     const resolution = await resolvePublicSiteForHost(host, { path: req.path })

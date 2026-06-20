@@ -3733,14 +3733,15 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const blockBackgroundImage = getSettingString(settings, 'blockBackgroundImage')
   const blockHasNativeBorder = nativeBorderBlockTypes.has(block.blockType)
   const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed'
+  const isCalendarEmbed = block.blockType === 'calendar_embed'
 
-  if (isCssPaint(bg)) {
+  if (!isCalendarEmbed && isCssPaint(bg)) {
     const normalized = normalizeCssPaint(bg, '#ffffff')
     style['--rstk-block-bg'] = normalized
     style['--rstk-block-bg-layer'] = paintToBackgroundLayer(normalized)
     style['--rstk-block-bg-color'] = isCssGradient(normalized) ? 'transparent' : normalized
   }
-  if (blockBackgroundImage && getSettingString(settings, 'blockBackgroundMediaType') !== 'video') {
+  if (!isCalendarEmbed && blockBackgroundImage && getSettingString(settings, 'blockBackgroundMediaType') !== 'video') {
     const imageLayer = cssPublicImageUrl(blockBackgroundImage)
     if (imageLayer) {
       style['--rstk-block-bg-image'] = imageLayer
@@ -3782,7 +3783,7 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (isCssPaint(textStrokeColor)) style['--rstk-text-stroke-color'] = paintFallbackColor(normalizeCssPaint(textStrokeColor, '#111827'), '#111827')
   if (isCssPaint(fieldBg)) style['--rstk-field-bg'] = normalizeCssPaint(fieldBg, '#ffffff')
   if (isCssPaint(fieldBorder)) style['--rstk-field-border'] = paintFallbackColor(normalizeCssPaint(fieldBorder, '#dbe3ef'), '#dbe3ef')
-  if (isCssPaint(blockBorder)) style['--rstk-block-border'] = paintFallbackColor(normalizeCssPaint(blockBorder, '#dbe3ef'), '#dbe3ef')
+  if (!isCalendarEmbed && isCssPaint(blockBorder)) style['--rstk-block-border'] = paintFallbackColor(normalizeCssPaint(blockBorder, '#dbe3ef'), '#dbe3ef')
   if (settings.fontWeight === 'bold') style['--rstk-block-weight'] = '850'
   if (settings.fontWeight === 'normal') style['--rstk-block-weight'] = '400'
 
@@ -3805,17 +3806,17 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
     ? getSpacingValues(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, 200)
     : null
 
-  if (paddingValues) {
+  if (!isCalendarEmbed && paddingValues) {
     style['--rstk-block-pad'] = getSpacingShorthand(getPositiveSpacing(paddingValues))
   }
 
-  if (marginValues || paddingValues && hasNegativeSpacing(paddingValues)) {
+  if (marginValues || !isCalendarEmbed && paddingValues && hasNegativeSpacing(paddingValues)) {
     const safeMargin = marginValues || { Top: 0, Right: 0, Bottom: 0, Left: 0 }
-    const paddingOverlap = paddingValues ? getNegativeSpacing(paddingValues) : { Top: 0, Right: 0, Bottom: 0, Left: 0 }
+    const paddingOverlap = !isCalendarEmbed && paddingValues ? getNegativeSpacing(paddingValues) : { Top: 0, Right: 0, Bottom: 0, Left: 0 }
     style['--rstk-block-margin'] = getSpacingShorthand(combineSpacingValues(safeMargin, paddingOverlap))
   }
-  if (settings.blockRadius !== undefined) style['--rstk-block-radius'] = `${getSettingNumber(settings, 'blockRadius', 8, 0, 48)}px`
-  if (settings.blockBorderWidth !== undefined) {
+  if (!isCalendarEmbed && settings.blockRadius !== undefined) style['--rstk-block-radius'] = `${getSettingNumber(settings, 'blockRadius', 8, 0, 48)}px`
+  if (!isCalendarEmbed && settings.blockBorderWidth !== undefined) {
     const width = `${getSettingNumber(settings, 'blockBorderWidth', 0, 0, 12)}px`
     style['--rstk-block-border-width'] = width
     if (!blockHasNativeBorder) style['--rstk-block-shell-border-width'] = width
@@ -3854,6 +3855,15 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   }
   if (settings.mediaRadius !== undefined) style['--rstk-media-radius'] = `${getSettingNumber(settings, 'mediaRadius', 18, 0, 48)}px`
   if (settings.embedHeight !== undefined) style['--rstk-embed-height'] = `${getSettingNumber(settings, 'embedHeight', EMBED_DEFAULT_HEIGHT, EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)}px`
+  if (isCalendarEmbed && settings.calendarFrameBorderWidth !== undefined) {
+    style['--rstk-calendar-frame-border-width'] = `${getSettingNumber(settings, 'calendarFrameBorderWidth', 0, 0, 8)}px`
+  }
+  if (isCalendarEmbed) {
+    const calendarFrameBorder = getSettingString(settings, 'calendarFrameBorderColor')
+    if (isCssPaint(calendarFrameBorder)) {
+      style['--rstk-calendar-frame-border'] = paintFallbackColor(normalizeCssPaint(calendarFrameBorder, '#dbe3ef'), '#dbe3ef')
+    }
+  }
   if (settings.cardRadius !== undefined) style['--rstk-card-radius'] = `${getSettingNumber(settings, 'cardRadius', 18, 0, 48)}px`
   if (settings.cardBorderWidth !== undefined) style['--rstk-card-border-width'] = `${getSettingNumber(settings, 'cardBorderWidth', 1, 0, 8)}px`
   if (settings.listColumns !== undefined) style['--rstk-list-columns'] = `repeat(${getSettingNumber(settings, 'listColumns', 3, 1, 4)}, minmax(0, 1fr))`
@@ -3877,6 +3887,7 @@ const getBlockStyleClassName = (block: SiteBlock, extra = '') => {
     'rstk-block-style',
     block.blockType === HEADER_PANEL_BLOCK_TYPE ? 'rstkHeaderPanelBlock' : '',
     block.blockType === FOOTER_PANEL_BLOCK_TYPE ? 'rstkFooterPanelBlock' : '',
+    block.blockType === 'calendar_embed' ? 'rstkCalendarBlock' : '',
     getSettingString(settings, 'blockText') ? 'rstkBlockTextOverride' : '',
     isCssGradient(getSettingString(settings, 'blockText')) ? 'rstkTextGradient' : '',
     isCssGradient(getSettingString(settings, 'buttonTextColor')) ? 'rstkButtonTextGradient' : '',
@@ -4905,6 +4916,44 @@ const EMBED_SANDBOX_HTML = 'allow-scripts allow-forms allow-popups allow-popups-
 const EMBED_DEFAULT_HEIGHT = 360
 const EMBED_MIN_HEIGHT = 180
 const EMBED_MAX_HEIGHT = 5000
+const CALENDAR_EMBED_DEFAULT_HEIGHT = 760
+
+const calendarEmbedColorQuerySettings = [
+  { key: 'calendarAccentColor', param: 'accent' },
+  { key: 'calendarTextColor', param: 'text' },
+  { key: 'calendarMutedColor', param: 'muted' },
+  { key: 'calendarLineColor', param: 'line' },
+  { key: 'calendarControlBg', param: 'controlBg' },
+  { key: 'calendarSlotBg', param: 'slotBg' },
+  { key: 'calendarSlotText', param: 'slotText' },
+  { key: 'calendarSelectedText', param: 'selectedText' },
+  { key: 'calendarFieldBg', param: 'fieldBg' },
+  { key: 'calendarFieldText', param: 'fieldText' },
+  { key: 'calendarFieldBorder', param: 'fieldBorder' },
+  { key: 'calendarButtonText', param: 'buttonText' }
+] as const
+
+const calendarEmbedNumberQuerySettings = [
+  { key: 'calendarSlotRadius', param: 'slotRadius', fallback: 8, min: 0, max: 32 },
+  { key: 'calendarFieldRadius', param: 'fieldRadius', fallback: 8, min: 0, max: 32 }
+] as const
+
+const getCalendarEmbedStyleParams = (settings: Record<string, unknown>) => {
+  const params: Record<string, string> = {}
+
+  calendarEmbedColorQuerySettings.forEach(({ key, param }) => {
+    if (settings[key] === undefined) return
+    const color = getSettingHex(settings, key, '')
+    if (color) params[param] = color
+  })
+
+  calendarEmbedNumberQuerySettings.forEach(({ key, param, fallback, min, max }) => {
+    if (settings[key] === undefined) return
+    params[param] = String(getSettingNumber(settings, key, fallback, min, max))
+  })
+
+  return params
+}
 
 const decodeHtmlEntities = (value: string) => value
   .replace(/&amp;/g, '&')
@@ -5398,6 +5447,12 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     ...landingSettings,
     ...settings
   })
+  const siteIsDark = site ? isSiteDark(site) : false
+  const pageTextDefault = site
+    ? paintFallbackColor(getPageTextPaint(site), siteIsDark ? '#ffffff' : '#111827')
+    : '#111827'
+  const calendarMutedDefault = siteIsDark ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
+  const calendarLineDefault = siteIsDark ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
 
   if (blockType === 'hero') {
     return {
@@ -5590,7 +5645,30 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       blockType,
       label,
       content: '',
-      settings: blockSettings({ calendarId: '', calendarSlug: '', calendarName: '' })
+      settings: blockSettings({
+        calendarId: '',
+        calendarSlug: '',
+        calendarName: '',
+        blockBg: 'transparent',
+        blockPaddingTop: 0,
+        blockPaddingRight: 0,
+        blockPaddingBottom: 0,
+        blockPaddingLeft: 0,
+        blockBorderWidth: 0,
+        blockRadius: 0,
+        mediaRadius: 0,
+        calendarFrameBorderWidth: 0,
+        calendarTextColor: pageTextDefault,
+        calendarMutedColor: calendarMutedDefault,
+        calendarLineColor: calendarLineDefault,
+        calendarControlBg: 'transparent',
+        calendarSlotBg: 'transparent',
+        calendarFieldBg: 'transparent',
+        calendarFieldText: pageTextDefault,
+        calendarFieldBorder: calendarLineDefault,
+        calendarButtonText: '#ffffff',
+        embedHeight: CALENDAR_EMBED_DEFAULT_HEIGHT
+      })
     }
   }
 
@@ -27830,6 +27908,7 @@ const InlineBlockStyleControls: React.FC<{
   const supportsButton = showDesignControls && !surfaceOnly && (block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta' || block.blockType === 'form_embed')
   const supportsField = showDesignControls && !surfaceOnly && fieldBlockTypes.has(block.blockType)
   const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
+  const isCalendarEmbed = block.blockType === 'calendar_embed'
   const supportsTextStyle = showTypographyControls && !surfaceOnly && (fieldBlockTypes.has(block.blockType) || isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'countdown', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType))
   const supportsMedia = showDesignControls && !surfaceOnly && (block.blockType === 'image' || block.blockType === 'video')
   const supportsCards = showDesignControls && !surfaceOnly && ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
@@ -28171,18 +28250,20 @@ const InlineBlockStyleControls: React.FC<{
       {showDesignControls && (
         <>
           <div className={styles.panelSubheader}>{isSection ? 'Estilo de franja' : isLandingContent ? 'Estilo del contenedor' : 'Estilo del bloque'}</div>
+          {!isCalendarEmbed && (
+            <LinkedSpacingField
+              label={isSection ? 'Relleno de franja' : 'Relleno'}
+              base="blockPadding"
+              settings={settings}
+              min={SPACING_OVERLAP_MIN}
+              max={160}
+              fallback={getSettingNumber(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, 160)}
+              onChange={onPatchSettings}
+              onCommit={onSave}
+            />
+          )}
           <LinkedSpacingField
-            label={isSection ? 'Relleno de franja' : 'Relleno'}
-            base="blockPadding"
-            settings={settings}
-            min={SPACING_OVERLAP_MIN}
-            max={160}
-            fallback={getSettingNumber(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, 160)}
-            onChange={onPatchSettings}
-            onCommit={onSave}
-          />
-          <LinkedSpacingField
-            label={isSection ? 'Margen de franja' : 'Margen'}
+            label={isSection ? 'Margen de franja' : isCalendarEmbed ? 'Margen exterior' : 'Margen'}
             base="blockMargin"
             settings={settings}
             min={SPACING_OVERLAP_MIN}
@@ -28279,6 +28360,189 @@ const InlineBlockStyleControls: React.FC<{
           )}
         </>
       )}
+    </div>
+  )
+}
+
+const CalendarBlockDesignControls: React.FC<{
+  site: PublicSite
+  block: SiteBlock
+  blocks: SiteBlock[]
+  calendar?: CalendarType
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ site, block, blocks, calendar, onPatchSettings, onSave }) => {
+  const settings = getPanelStyleSettings(site, block, blocks)
+  const defaultAccent = getSettingHex({ value: calendar?.eventColor || defaultAccentForSite(site) }, 'value', defaultAccentForSite(site))
+  const defaultText = paintFallbackColor(getPageTextPaint(site), isSiteDark(site) ? '#ffffff' : '#111827')
+  const defaultMuted = isSiteDark(site) ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
+  const defaultLine = isSiteDark(site) ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
+
+  return (
+    <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
+      <div className={styles.panelSubheader}>Diseño del calendario</div>
+      <AlignmentControl
+        label="Alineación"
+        value={getHorizontalAlign(settings, 'mediaAlign', 'center')}
+        options={horizontalAlignOptions}
+        onChange={(value) => onPatchSettings({ mediaAlign: value })}
+        onCommit={onSave}
+      />
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Ancho"
+          value={getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}
+          min={30}
+          max={100}
+          unit="%"
+          onChange={(value) => onPatchSettings({ mediaWidth: value })}
+          onCommit={onSave}
+        />
+        <DimensionField
+          label="Alto"
+          value={getSettingNumber(settings, 'embedHeight', CALENDAR_EMBED_DEFAULT_HEIGHT, EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)}
+          min={EMBED_MIN_HEIGHT}
+          max={EMBED_MAX_HEIGHT}
+          onChange={(value) => onPatchSettings({ embedHeight: value })}
+          onCommit={onSave}
+        />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Radio"
+          value={getSettingNumber(settings, 'mediaRadius', 0, 0, 48)}
+          min={0}
+          max={48}
+          onChange={(value) => onPatchSettings({ mediaRadius: value })}
+          onCommit={onSave}
+        />
+        <DimensionField
+          label="Borde"
+          value={getSettingNumber(settings, 'calendarFrameBorderWidth', 0, 0, 8)}
+          min={0}
+          max={8}
+          onChange={(value) => onPatchSettings({ calendarFrameBorderWidth: value })}
+          onCommit={onSave}
+        />
+      </div>
+      <ColorField
+        label="Color borde"
+        value={getSettingHex(settings, 'calendarFrameBorderColor', defaultLine)}
+        allowGradient={false}
+        onChange={(value) => onPatchSettings({ calendarFrameBorderColor: value })}
+        onCommit={onSave}
+      />
+
+      <div className={styles.panelSubheader}>Colores internos</div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Acento"
+          value={getSettingHex(settings, 'calendarAccentColor', defaultAccent)}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarAccentColor: value })}
+          onCommit={onSave}
+        />
+        <ColorField
+          label="Texto"
+          value={getSettingHex(settings, 'calendarTextColor', defaultText)}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarTextColor: value })}
+          onCommit={onSave}
+        />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Texto secundario"
+          value={getSettingHex(settings, 'calendarMutedColor', defaultMuted)}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarMutedColor: value })}
+          onCommit={onSave}
+        />
+        <ColorField
+          label="Lineas"
+          value={getSettingHex(settings, 'calendarLineColor', defaultLine)}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarLineColor: value })}
+          onCommit={onSave}
+        />
+      </div>
+
+      <div className={styles.panelSubheader}>Dias y horarios</div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Fondo horario"
+          value={getSettingHex(settings, 'calendarSlotBg', 'transparent')}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarSlotBg: value })}
+          onCommit={onSave}
+        />
+        <ColorField
+          label="Texto horario"
+          value={getSettingHex(settings, 'calendarSlotText', defaultAccent)}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarSlotText: value })}
+          onCommit={onSave}
+        />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Texto activo"
+          value={getSettingHex(settings, 'calendarSelectedText', onAccentFor(defaultAccent))}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarSelectedText: value })}
+          onCommit={onSave}
+        />
+        <DimensionField
+          label="Radio horarios"
+          value={getSettingNumber(settings, 'calendarSlotRadius', 8, 0, 32)}
+          min={0}
+          max={32}
+          onChange={(value) => onPatchSettings({ calendarSlotRadius: value })}
+          onCommit={onSave}
+        />
+      </div>
+
+      <div className={styles.panelSubheader}>Campos de datos</div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Fondo campo"
+          value={getSettingHex(settings, 'calendarFieldBg', 'transparent')}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarFieldBg: value })}
+          onCommit={onSave}
+        />
+        <ColorField
+          label="Texto campo"
+          value={getSettingHex(settings, 'calendarFieldText', defaultText)}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarFieldText: value })}
+          onCommit={onSave}
+        />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Borde campo"
+          value={getSettingHex(settings, 'calendarFieldBorder', defaultLine)}
+          allowGradient={false}
+          onChange={(value) => onPatchSettings({ calendarFieldBorder: value })}
+          onCommit={onSave}
+        />
+        <DimensionField
+          label="Radio campos"
+          value={getSettingNumber(settings, 'calendarFieldRadius', 8, 0, 32)}
+          min={0}
+          max={32}
+          onChange={(value) => onPatchSettings({ calendarFieldRadius: value })}
+          onCommit={onSave}
+        />
+      </div>
+      <ColorField
+        label="Texto boton"
+        value={getSettingHex(settings, 'calendarButtonText', onAccentFor(defaultAccent))}
+        allowGradient={false}
+        onChange={(value) => onPatchSettings({ calendarButtonText: value })}
+        onCommit={onSave}
+      />
     </div>
   )
 }
@@ -29748,7 +30012,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       return (
         <iframe
           className="rstk-embed rstk-calendar-embed"
-          src={sitesService.getCalendarPreviewUrl(calendarSlug)}
+          src={sitesService.getCalendarPreviewUrl(calendarSlug, getCalendarEmbedStyleParams(settings))}
           title={calendarName || `Calendario /${calendarSlug}`}
           loading="lazy"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
@@ -32447,6 +32711,17 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
       {isFormSite(site) && isField && (
         <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      )}
+
+      {block.blockType === 'calendar_embed' && (
+        <CalendarBlockDesignControls
+          site={site}
+          block={block}
+          blocks={blocks}
+          calendar={calendars.find(calendar => calendar.id === getSettingString(settings, 'calendarId'))}
+          onPatchSettings={onPatchSettings}
+          onSave={onSave}
+        />
       )}
 
       {block.blockType === 'video' && (

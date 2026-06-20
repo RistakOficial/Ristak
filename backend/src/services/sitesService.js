@@ -4074,15 +4074,28 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
         [
           makeBlock('calendar_embed', 'Calendario', 'Selecciona un horario', {
             settings: withLandingSpacing('calendar_embed', {
-              blockBg: options.calendarBg || '#ffffff',
-              blockText: options.calendarText || '#111827',
-              blockRadius: 18,
-              blockBorderWidth: 1,
-              blockBorderColor: options.calendarBorder || '#dbeafe',
-              blockPaddingTop: 22,
-              blockPaddingRight: 22,
-              blockPaddingBottom: 22,
-              blockPaddingLeft: 22,
+              blockBg: 'transparent',
+              blockText: options.calendarText || options.blockText || '#111827',
+              blockRadius: 0,
+              blockBorderWidth: 0,
+              blockPaddingTop: 0,
+              blockPaddingRight: 0,
+              blockPaddingBottom: 0,
+              blockPaddingLeft: 0,
+              mediaRadius: 0,
+              calendarFrameBorderWidth: 0,
+              calendarAccentColor: options.calendarAccent || options.buttonBg || '#0f172a',
+              calendarTextColor: options.calendarText || options.blockText || '#111827',
+              calendarMutedColor: options.calendarMuted || (options.calendarText ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'),
+              calendarLineColor: options.calendarBorder || (options.calendarText ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'),
+              calendarControlBg: 'transparent',
+              calendarSlotBg: 'transparent',
+              calendarSlotText: options.calendarAccent || options.buttonBg || '#0f172a',
+              calendarSelectedText: options.calendarSelectedText || options.buttonTextColor || '#ffffff',
+              calendarFieldBg: 'transparent',
+              calendarFieldText: options.calendarText || options.blockText || '#111827',
+              calendarFieldBorder: options.calendarBorder || (options.calendarText ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'),
+              calendarButtonText: options.calendarSelectedText || options.buttonTextColor || '#ffffff',
               embedHeight: 680
             })
           })
@@ -15140,6 +15153,54 @@ function blockSettingNumber(settings, key, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
+const calendarEmbedColorQuerySettings = [
+  ['calendarAccentColor', 'accent'],
+  ['calendarTextColor', 'text'],
+  ['calendarMutedColor', 'muted'],
+  ['calendarLineColor', 'line'],
+  ['calendarControlBg', 'controlBg'],
+  ['calendarSlotBg', 'slotBg'],
+  ['calendarSlotText', 'slotText'],
+  ['calendarSelectedText', 'selectedText'],
+  ['calendarFieldBg', 'fieldBg'],
+  ['calendarFieldText', 'fieldText'],
+  ['calendarFieldBorder', 'fieldBorder'],
+  ['calendarButtonText', 'buttonText']
+]
+
+const calendarEmbedNumberQuerySettings = [
+  ['calendarSlotRadius', 'slotRadius', 0, 32],
+  ['calendarFieldRadius', 'fieldRadius', 0, 32]
+]
+
+function appendCalendarEmbedParams(value, settings = {}) {
+  const raw = cleanString(value)
+  if (!raw) return raw
+
+  try {
+    const absolute = /^https?:\/\//i.test(raw)
+    const parsed = new URL(raw, 'https://rstk.local')
+    parsed.searchParams.set('test', '1')
+    parsed.searchParams.set('embed', '1')
+
+    calendarEmbedColorQuerySettings.forEach(([settingKey, paramKey]) => {
+      if (settings[settingKey] === undefined) return
+      const color = blockSettingColor(settings, settingKey)
+      if (color) parsed.searchParams.set(paramKey, color)
+    })
+
+    calendarEmbedNumberQuerySettings.forEach(([settingKey, paramKey, min, max]) => {
+      if (settings[settingKey] === undefined) return
+      const valueNumber = blockSettingNumber(settings, settingKey, min, max)
+      if (valueNumber !== null) parsed.searchParams.set(paramKey, String(valueNumber))
+    })
+
+    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    return raw
+  }
+}
+
 const SPACING_SIDES = ['Top', 'Right', 'Bottom', 'Left']
 
 function makeRenderLandingSpacing(top, bottom, right = 0, left = 0) {
@@ -15365,13 +15426,14 @@ function renderBlockStyleVars(block) {
   const sectionGap = blockSettingNumber(settings, 'sectionGap', 0, 80)
   const blockHasNativeBorder = ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed'].includes(block.blockType)
   const supportsButton = ['hero', 'button', 'cta', 'form_embed'].includes(block.blockType)
+  const isCalendarEmbed = block.blockType === 'calendar_embed'
 
-  if (blockBg) {
+  if (!isCalendarEmbed && blockBg) {
     vars.push(`--rstk-block-bg:${blockBg}`)
     vars.push(`--rstk-block-bg-layer:${paintLayer(blockBg)}`)
     vars.push(`--rstk-block-bg-color:${isCssGradient(blockBg) ? 'transparent' : blockBg}`)
   }
-  if (blockBackgroundImage && cleanString(settings.blockBackgroundMediaType) !== 'video') {
+  if (!isCalendarEmbed && blockBackgroundImage && cleanString(settings.blockBackgroundMediaType) !== 'video') {
     const imageLayer = cssImageUrl(blockBackgroundImage)
     if (imageLayer) {
       vars.push(`--rstk-block-bg-image:${imageLayer}`)
@@ -15383,7 +15445,7 @@ function renderBlockStyleVars(block) {
     vars.push(`--rstk-block-text:${paintFallbackColor(blockText, '#111827')}`)
     if (isCssGradient(blockText)) vars.push(`--rstk-block-text-paint:${blockText}`)
   }
-  if (blockBorder) vars.push(`--rstk-block-border:${paintFallbackColor(blockBorder, '#dbe3ef')}`)
+  if (!isCalendarEmbed && blockBorder) vars.push(`--rstk-block-border:${paintFallbackColor(blockBorder, '#dbe3ef')}`)
   if (buttonBg) {
     vars.push(`--rstk-button-bg:${buttonBg}`)
     vars.push(`--rstk-button-hover-bg:${buttonBg}`)
@@ -15421,10 +15483,10 @@ function renderBlockStyleVars(block) {
   }
   if (fontSize !== null) vars.push(`--rstk-block-size:${fontSize}px`)
   if (contentMaxWidth !== null) vars.push(`--rstk-content-max:${contentMaxWidth}ch`)
-  if (blockPadding) vars.push(`--rstk-block-pad:${blockPadding}`)
+  if (!isCalendarEmbed && blockPadding) vars.push(`--rstk-block-pad:${blockPadding}`)
   if (blockMargin) vars.push(`--rstk-block-margin:${blockMargin}`)
-  if (blockRadius !== null) vars.push(`--rstk-block-radius:${blockRadius}px`)
-  if (blockBorderWidth !== null) {
+  if (!isCalendarEmbed && blockRadius !== null) vars.push(`--rstk-block-radius:${blockRadius}px`)
+  if (!isCalendarEmbed && blockBorderWidth !== null) {
     vars.push(`--rstk-block-border-width:${blockBorderWidth}px`)
     if (!blockHasNativeBorder) vars.push(`--rstk-block-shell-border-width:${blockBorderWidth}px`)
   }
@@ -15463,6 +15525,12 @@ function renderBlockStyleVars(block) {
   }
   if (mediaRadius !== null) vars.push(`--rstk-media-radius:${mediaRadius}px`)
   if (embedHeight !== null) vars.push(`--rstk-embed-height:${embedHeight}px`)
+  if (isCalendarEmbed) {
+    const calendarFrameBorderWidth = blockSettingNumber(settings, 'calendarFrameBorderWidth', 0, 8)
+    const calendarFrameBorder = blockSettingColor(settings, 'calendarFrameBorderColor')
+    if (calendarFrameBorderWidth !== null) vars.push(`--rstk-calendar-frame-border-width:${calendarFrameBorderWidth}px`)
+    if (calendarFrameBorder) vars.push(`--rstk-calendar-frame-border:${calendarFrameBorder}`)
+  }
   if (cardRadius !== null) vars.push(`--rstk-card-radius:${cardRadius}px`)
   if (cardBorderWidth !== null) vars.push(`--rstk-card-border-width:${cardBorderWidth}px`)
   if (listColumns !== null) vars.push(`--rstk-list-columns:repeat(${listColumns},minmax(0,1fr))`)
@@ -15486,6 +15554,7 @@ function renderBlockStyleClassName(block) {
     'rstk-block-style',
     block.blockType === 'header_panel' ? 'rstkHeaderPanelBlock' : '',
     block.blockType === 'footer_panel' ? 'rstkFooterPanelBlock' : '',
+    block.blockType === 'calendar_embed' ? 'rstkCalendarBlock' : '',
     cleanString(settings.blockText) ? 'rstkBlockTextOverride' : '',
     isCssGradient(settings.blockText) ? 'rstkTextGradient' : '',
     isCssGradient(settings.buttonTextColor) ? 'rstkButtonTextGradient' : '',
@@ -16119,7 +16188,7 @@ function renderContentBlock(block, context = {}) {
     }
 
     const calendarName = cleanString(settings.calendarName || settings.calendar_name || block.label || 'Calendario')
-    const baseCalendarSrc = `/calendar/${encodeURIComponent(calendarSlug)}?test=1`
+    const baseCalendarSrc = appendCalendarEmbedParams(`/calendar/${encodeURIComponent(calendarSlug)}?test=1`, settings)
     const calendarSrc = context.noTrack ? appendNoTrackParam(baseCalendarSrc) : baseCalendarSrc
     return `<iframe class="rstk-embed rstk-calendar-embed" src="${escapeHtml(calendarSrc)}" title="${escapeHtml(calendarName)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
   }
@@ -16985,6 +17054,7 @@ const RSTK_BASE_CSS = `
     border-radius:var(--rstk-block-radius,0);
     padding:var(--rstk-block-pad,0);
   }
+  .rstkCalendarBlock.rstk-block-style{background:transparent;border:0;padding:0}
   .rstkHasBgVideo{isolation:isolate;overflow:hidden}
   .rstk-block-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-block-bg-size,cover);pointer-events:none}
   .rstkHasBgVideo > :not(.rstk-block-bg-video){position:relative;z-index:1}
@@ -17246,7 +17316,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-kind-form.rstk-choice-minimal .rstk-option,.rstk-choice-minimal .rstk-embedded-form .rstk-option{min-height:38px;border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background:transparent;padding-inline:0}
 
   .rstk-embed{width:100%;min-height:var(--rstk-embed-height,360px);display:block;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius));background:var(--rstk-block-bg,var(--rstk-surface2))}
-  .rstk-calendar-embed{min-height:760px}
+  .rstk-calendar-embed{width:var(--rstk-media-width,100%);min-height:var(--rstk-embed-height,760px);margin-left:var(--rstk-media-margin-left,0);margin-right:var(--rstk-media-margin-right,0);border:var(--rstk-calendar-frame-border-width,0) solid var(--rstk-calendar-frame-border,transparent);border-radius:var(--rstk-media-radius,0);background:transparent;box-shadow:none}
   iframe.rstk-embed{overflow:hidden}
   .rstk-embed-code{background:transparent}
   .rstk-embed-empty{display:grid;place-items:center;min-height:160px;color:var(--rstk-muted)}
@@ -17349,6 +17419,7 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-button-link:hover{transform:none;box-shadow:none}
 
   .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-video,.rstk-kind-landing .rstk-embed{border-radius:var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px)));box-shadow:none}
+  .rstk-kind-landing .rstk-calendar-embed{border-radius:var(--rstk-media-radius,0)}
   .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);background:var(--rstk-block-bg,transparent);width:100%;margin-inline:auto}
   @media (max-width:760px){.rstk-section-columns{grid-template-columns:1fr}}
   .rstkFontOverride .rstk-headline,.rstkFontOverride .rstk-subheading,.rstkFontOverride .rstk-text,.rstkFontOverride h2,.rstkFontOverride label,.rstkFontOverride .rstk-help,.rstkFontOverride .rstk-list-grid strong,.rstkFontOverride .rstk-list-grid p,.rstkFontOverride .rstk-check-body strong,.rstkFontOverride .rstk-check-body span{font-family:var(--rstk-block-font,inherit)}

@@ -1119,8 +1119,17 @@ export const sitesService = {
     })
   },
 
-  getCalendarPreviewUrl(calendarSlug: string) {
-    return `${getApiBaseUrl()}/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?test=1&no_track=1`
+  getCalendarPreviewUrl(calendarSlug: string, params: Record<string, string | number | undefined> = {}) {
+    const searchParams = new URLSearchParams({
+      test: '1',
+      no_track: '1',
+      embed: '1'
+    })
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === '') return
+      searchParams.set(key, String(value))
+    })
+    return `${getApiBaseUrl()}/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?${searchParams.toString()}`
   },
 
   updateSite(siteId: string, payload: Partial<PublicSite>) {

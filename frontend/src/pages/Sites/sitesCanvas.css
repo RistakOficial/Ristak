@@ -160,6 +160,11 @@
   border-radius: var(--rstk-block-radius, 0);
   padding: var(--rstk-block-pad, 0);
 }
+.rstkCanvas .rstkCalendarBlock.rstk-block-style {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
 .rstkCanvas .rstkHasBgVideo {
   isolation: isolate;
   overflow: hidden;
@@ -1447,7 +1452,16 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 }
 
 .rstkCanvas .rstk-embed { width: 100%; min-height: var(--rstk-embed-height, 360px); display: block; border: var(--rstk-block-border-width, 1px) solid var(--rstk-block-border, var(--rstk-border)); border-radius: var(--rstk-block-radius, var(--rstk-radius)); background: var(--rstk-block-bg, var(--rstk-surface2)); }
-.rstkCanvas .rstk-calendar-embed { min-height: 760px; }
+.rstkCanvas .rstk-calendar-embed {
+  width: var(--rstk-media-width, 100%);
+  min-height: var(--rstk-embed-height, 760px);
+  margin-left: var(--rstk-media-margin-left, 0);
+  margin-right: var(--rstk-media-margin-right, 0);
+  border: var(--rstk-calendar-frame-border-width, 0) solid var(--rstk-calendar-frame-border, transparent);
+  border-radius: var(--rstk-media-radius, 0);
+  background: transparent;
+  box-shadow: none;
+}
 .rstkCanvas iframe.rstk-embed { overflow: hidden; }
 .rstkCanvas .rstk-embed-code { background: transparent; }
 .rstkCanvas .rstk-embed-empty { display: grid; place-items: center; min-height: 160px; color: var(--rstk-muted); }
@@ -1534,6 +1548,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 .rstkCanvas .rstkButtonPaddingOverride .rstk-button-link,
 .rstkCanvas .rstkButtonPaddingOverride .rstk-actions button { min-height: auto; }
 .rstkCanvas.rstk-kind-landing .rstk-media, .rstkCanvas.rstk-kind-landing .rstk-video, .rstkCanvas.rstk-kind-landing .rstk-embed { border-radius: var(--rstk-media-radius, var(--rstk-block-radius, clamp(16px, 2vw, 22px))); box-shadow: none; }
+.rstkCanvas.rstk-kind-landing .rstk-calendar-embed { border-radius: var(--rstk-media-radius, 0); }
 .rstkCanvas.rstk-kind-landing .rstk-embedded-form { padding: clamp(24px, 3vw, 40px); border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent); border-radius: var(--rstk-block-radius, 0); background: var(--rstk-block-bg, transparent); width: 100%; margin-inline: auto; }
 
 @media (max-width: 760px) {
