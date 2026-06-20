@@ -388,7 +388,7 @@
   place-items: center;
   min-width: 0;
   padding: clamp(8px, 3cqw, 22px);
-  background: color-mix(in srgb, var(--rstk-video-bg, #000) 84%, transparent);
+  background: var(--rstk-video-form-gate-video-bg, color-mix(in srgb, var(--rstk-video-bg, #000) 84%, transparent));
   color: var(--rstk-ink);
   font-family: var(--rstk-form-font, var(--rstk-font));
   pointer-events: none;

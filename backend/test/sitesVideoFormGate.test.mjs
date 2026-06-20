@@ -149,6 +149,7 @@ test('video form gate renders inside the video player and posts as the source fo
         videoFormGateFormSiteId: formSite.id,
         videoFormGateTitle: 'Formulario de video',
         videoFormGateTriggerSeconds: 3,
+        videoFormGateVideoBackground: 'rgba(255, 255, 255, 0.2)',
         videoFormGateCompletionAction: 'show_targets',
         videoFormGateCompletionTargetId: targetBlock.id,
         videoFormGateCompletionTargetIds: [targetBlock.id],
@@ -186,6 +187,7 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, /rstk-video-form-field/)
     assert.match(html, /ristakVideoFormGateRuntimeLoaded/)
     assert.match(html, /data-trigger-seconds="3"/)
+    assert.match(html, /--rstk-video-form-gate-video-bg:rgba\(255, 255, 255, 0\.2\)/)
     assert.match(html, /data-completion-action="show_targets"/)
     assert.match(html, /data-repeat-mode="remember_visitor"/)
     assert.match(html, /data-storage-ttl-seconds="3888000"/)

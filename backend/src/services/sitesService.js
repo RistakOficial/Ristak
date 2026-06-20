@@ -11823,7 +11823,11 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
   const embeddedTheme = isPlainObject(settings.videoFormGateEmbeddedTheme)
     ? { ...DEFAULT_THEME, ...settings.videoFormGateEmbeddedTheme }
     : {}
-  const style = buildEmbeddedFormProxyStyle(embeddedTheme, context.formStyleContext).replace(/\s+/g, ' ').trim()
+  const videoBackground = normalizeVideoFormGateVideoBackground(settings)
+  const style = `
+    ${buildEmbeddedFormProxyStyle(embeddedTheme, context.formStyleContext)}
+    --rstk-video-form-gate-video-bg:${videoBackground};
+  `.replace(/\s+/g, ' ').trim()
   const formSiteId = getVideoFormGateSourceFormId(settings)
   const formSiteName = cleanString(settings.videoFormGateEmbeddedSiteName || settings.videoFormGateFormSiteName || settings.video_form_gate_form_site_name)
   const title = cleanString(settings.videoFormGateTitle || settings.video_form_gate_title) || 'Antes de continuar'
@@ -14728,6 +14732,7 @@ const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
+const DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(0, 0, 0, 0.84)'
 const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
@@ -14753,6 +14758,13 @@ function isTransparentCssColorValue(value = '') {
 
 function getVisibleVideoBorderColor(value = '') {
   return isTransparentCssColorValue(value) ? DEFAULT_VIDEO_BORDER_FALLBACK : value
+}
+
+function normalizeVideoFormGateVideoBackground(settings = {}) {
+  return normalizeCssPaint(
+    settings.videoFormGateVideoBackground || settings.video_form_gate_video_background,
+    DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
+  ) || DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
 }
 
 function normalizeVideoPlayIconStyle(value) {
@@ -16960,7 +16972,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-speed-control option{color:#111827}
 	  .rstk-video-has-form-gate{overflow:hidden}
 	  .rstk-video-gate-active > video,.rstk-video-gate-active > iframe{pointer-events:none}
-	  .rstk-video-form-gate{position:absolute;inset:0;z-index:9;display:grid;place-items:center;min-width:0;padding:clamp(8px,3cqw,22px);background:color-mix(in srgb,var(--rstk-video-bg,#000) 84%,transparent);color:var(--rstk-ink);font-family:var(--rstk-form-font,var(--rstk-font));backdrop-filter:blur(12px)}
+	  .rstk-video-form-gate{position:absolute;inset:0;z-index:9;display:grid;place-items:center;min-width:0;padding:clamp(8px,3cqw,22px);background:var(--rstk-video-form-gate-video-bg,color-mix(in srgb,var(--rstk-video-bg,#000) 84%,transparent));color:var(--rstk-ink);font-family:var(--rstk-form-font,var(--rstk-font));backdrop-filter:blur(12px)}
 	  .rstk-video-form-gate[hidden]{display:none!important}
 	  .rstk-video-form-gate-anim-fade:not([hidden]){animation:rstkVideoFormGateFade .22s ease-out both}
 	  .rstk-video-form-gate-anim-slide_up:not([hidden]){animation:rstkVideoFormGateSlide .24s ease-out both}

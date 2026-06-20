@@ -745,6 +745,7 @@ const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
+const DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(0, 0, 0, 0.84)'
 const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
 const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
@@ -804,6 +805,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoOrientation: DEFAULT_VIDEO_ORIENTATION,
   videoFit: 'cover',
   videoPlayerBackground: DEFAULT_VIDEO_PLAYER_BACKGROUND,
+  videoFormGateVideoBackground: DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND,
   videoPlayerRadius: 18,
   videoPlayerBorderColor: DEFAULT_VIDEO_TRANSPARENT,
   videoPlayerBorderWidth: 0,
@@ -4195,6 +4197,13 @@ const getVideoFormGateStorageUnit = (settings: Record<string, unknown> = {}): Vi
 
 const getVideoFormGateStorageValue = (settings: Record<string, unknown> = {}) => (
   getSettingNumber(settings, 'videoFormGateStorageValue', 30, 1, 730)
+)
+
+const getVideoFormGateVideoBackground = (settings: Record<string, unknown> = {}) => (
+  normalizeCssPaint(
+    getSettingString(settings, 'videoFormGateVideoBackground') || getSettingString(settings, 'video_form_gate_video_background'),
+    DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
+  )
 )
 
 const getVideoFormGateCompletionTargetIds = (settings: Record<string, unknown> = {}) => {
@@ -27883,6 +27892,7 @@ const VideoFormGateCanvasPreview: React.FC<{
   const title = getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE
   const description = getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION
   const submitText = getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT
+  const videoBackground = getVideoFormGateVideoBackground(settings)
 
   return (
     <div
@@ -27890,7 +27900,8 @@ const VideoFormGateCanvasPreview: React.FC<{
       style={{
         ...canvasVars,
         width: '100%',
-        ['--rstk-block-bg' as string]: canvasVars['--rstk-page-bg'] || canvasVars['--rstk-surface'] || 'transparent'
+        ['--rstk-block-bg' as string]: canvasVars['--rstk-page-bg'] || canvasVars['--rstk-surface'] || 'transparent',
+        ['--rstk-video-form-gate-video-bg' as string]: videoBackground
       } as React.CSSProperties}
       aria-hidden="true"
     >
@@ -30922,6 +30933,7 @@ const VideoActionsPanel: React.FC<{
       videoFormGateBackText: getSettingString(currentSettings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT,
       videoFormGateSubmitText: getSettingString(currentSettings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT,
       videoFormGateAnimation: getVideoFormGateAnimation(currentSettings),
+      videoFormGateVideoBackground: getVideoFormGateVideoBackground(currentSettings),
       videoFormGateCompletionAction: getVideoFormGateFinalAction(currentSettings),
       videoFormGateRepeatMode: getVideoFormGateRepeatMode(currentSettings),
       videoFormGateStorageValue: getVideoFormGateStorageValue(currentSettings),
@@ -32303,6 +32315,7 @@ const VideoFormGateSettingsPanel: React.FC<{
       videoFormGateBackText: getSettingString(settings, 'videoFormGateBackText') || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT,
       videoFormGateSubmitText: getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT,
       videoFormGateAnimation: getVideoFormGateAnimation(settings),
+      videoFormGateVideoBackground: getVideoFormGateVideoBackground(settings),
       videoFormGateCompletionAction: getVideoFormGateFinalAction(settings),
       videoFormGateRepeatMode: getVideoFormGateRepeatMode(settings),
       videoFormGateStorageValue: getVideoFormGateStorageValue(settings),
@@ -32826,12 +32839,21 @@ const VideoFormGateSettingsPanel: React.FC<{
               <div className={styles.panelSubheader}>Diseño del formulario</div>
               <div className={styles.twoColumn}>
                 <ColorField
-                  label="Fondo"
+                  label="Fondo del formulario"
                   value={getThemePaint(videoGateTheme, 'backgroundColor', userBgColor(videoGateSite) || resolvedPageBg(videoGateSite))}
                   allowGradient
                   onChange={(value) => patchVideoGateTheme({ backgroundColor: value })}
                   onCommit={onSave}
                 />
+                <ColorField
+                  label="Fondo del video"
+                  value={getVideoFormGateVideoBackground(settings)}
+                  allowGradient
+                  onChange={(value) => onPatchSettings({ videoFormGateVideoBackground: value })}
+                  onCommit={onSave}
+                />
+              </div>
+              <div className={styles.twoColumn}>
                 <ColorField
                   label="Texto"
                   value={getThemePaint(videoGateTheme, 'textColor', isSiteDark(videoGateSite) ? '#ffffff' : '#111827')}
