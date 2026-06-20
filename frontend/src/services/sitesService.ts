@@ -13,6 +13,7 @@ export type SiteType = 'standard_form' | 'interactive_form' | 'landing_page'
 export type SiteStatus = 'draft' | 'published' | 'archived'
 export type SiteMetaTrigger = 'page_view' | 'form_submit'
 export type SiteFormCompletionAction = 'form_default' | 'next_page' | 'next_page_if_qualified' | 'redirect_qualified'
+export type SiteFormDisqualifiedCompletionAction = 'disqualified_page' | 'redirect_url'
 export type SiteBlockType =
   | 'headline'
   | 'subheading'
@@ -158,6 +159,8 @@ export interface SiteTheme {
   metaEventParameters?: SiteMetaEventParameters
   formCompletionAction?: SiteFormCompletionAction
   formQualifiedRedirectUrl?: string
+  formDisqualifiedCompletionAction?: SiteFormDisqualifiedCompletionAction
+  formDisqualifiedRedirectUrl?: string
   brandName?: string
   brandSubtitle?: string
   brandAvatar?: string

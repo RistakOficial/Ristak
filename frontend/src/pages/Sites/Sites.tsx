@@ -1425,6 +1425,7 @@ type LandingBlockOrderGroup = {
 
 type ButtonAction = 'url' | 'next_page' | 'specific_page' | 'open_popup' | 'close_popup'
 type FormCompletionAction = 'form_default' | 'next_page' | 'next_page_if_qualified' | 'redirect_qualified'
+type FormResultDestination = 'result_page' | 'redirect_url'
 type PopupTrigger = NonNullable<SiteTheme['popupTrigger']>
 type PopupCloseDisplay = NonNullable<SiteTheme['popupCloseDisplay']>
 type PopupCloseIcon = NonNullable<SiteTheme['popupCloseIcon']>
@@ -3925,6 +3926,10 @@ const getThemeFormCompletionAction = (theme?: SiteTheme): FormCompletionAction =
   return action === 'form_default' || action === 'next_page' || action === 'next_page_if_qualified' || action === 'redirect_qualified' ? action : 'next_page_if_qualified'
 }
 
+const getThemeDisqualifiedDestination = (theme?: SiteTheme): FormResultDestination => (
+  theme?.formDisqualifiedCompletionAction === 'redirect_url' ? 'redirect_url' : 'result_page'
+)
+
 const normalizeOption = (option: string | SiteBlockOption, index: number): SiteBlockOption => {
   if (typeof option === 'string') {
     return {
@@ -4801,6 +4806,8 @@ const EMBEDDED_FORM_PROXY_THEME_KEYS: Array<keyof SiteTheme> = [
   'formChoiceSelectedBorder',
   'formSelectStyle',
   'formQualifiedRedirectUrl',
+  'formDisqualifiedCompletionAction',
+  'formDisqualifiedRedirectUrl',
   'finalMessages'
 ]
 
@@ -9617,6 +9624,8 @@ export const Sites: React.FC = () => {
       isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
       formCompletionAction={isStandardForm(editorSite) ? getThemeFormCompletionAction(editorSite.theme) : undefined}
       formQualifiedRedirectUrl={editorSite.theme?.formQualifiedRedirectUrl || ''}
+      formDisqualifiedDestination={getThemeDisqualifiedDestination(editorSite.theme)}
+      formDisqualifiedRedirectUrl={editorSite.theme?.formDisqualifiedRedirectUrl || ''}
       pageMode={getSitePageMode(editorSite)}
       onChangeMode={isLanding(editorSite) && !isImportedHtmlSite(editorSite) ? handleChangePageMode : undefined}
       onAddSubpage={handleAddSubpage}
@@ -22244,6 +22253,8 @@ interface FunnelPagesPanelProps {
   canDuplicatePage?: (page: SitePage) => boolean
   formCompletionAction?: FormCompletionAction
   formQualifiedRedirectUrl?: string
+  formDisqualifiedDestination?: FormResultDestination
+  formDisqualifiedRedirectUrl?: string
   onSelectPage: (pageId: string) => void
   onAddPage: () => void
   onDuplicatePage: (pageId: string) => void
@@ -22270,6 +22281,8 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   canDuplicatePage = () => true,
   formCompletionAction = 'next_page_if_qualified',
   formQualifiedRedirectUrl = '',
+  formDisqualifiedDestination = 'result_page',
+  formDisqualifiedRedirectUrl = '',
   onSelectPage,
   onAddPage,
   onDuplicatePage,
@@ -22570,6 +22583,11 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                     : page.id === FORM_DISQUALIFIED_PAGE_ID
                       ? styles.pagesDropdownItemDisqualified
                       : ''
+                  const resultType = page.id === FORM_THANK_YOU_PAGE_ID
+                    ? 'qualified'
+                    : page.id === FORM_DISQUALIFIED_PAGE_ID
+                      ? 'disqualified'
+                      : undefined
 
                   return (
                     <FunnelFixedPageDropdownItem
@@ -22579,9 +22597,11 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       active={activePageId === page.id}
                       locked={locked}
                       pageToneClass={pageToneClass}
-                      showQualifiedRedirectControls={page.id === FORM_THANK_YOU_PAGE_ID && Boolean(onPatchTheme)}
+                      resultType={resultType}
                       formCompletionAction={formCompletionAction}
                       formQualifiedRedirectUrl={formQualifiedRedirectUrl}
+                      formDisqualifiedDestination={formDisqualifiedDestination}
+                      formDisqualifiedRedirectUrl={formDisqualifiedRedirectUrl}
                       onSelect={() => handleSelectPage(page.id)}
                       onPatchTheme={onPatchTheme}
                       onSaveSite={onSaveSite}
@@ -22819,9 +22839,11 @@ interface FunnelFixedPageDropdownItemProps {
   active: boolean
   locked: boolean
   pageToneClass: string
-  showQualifiedRedirectControls?: boolean
+  resultType?: 'qualified' | 'disqualified'
   formCompletionAction?: FormCompletionAction
   formQualifiedRedirectUrl?: string
+  formDisqualifiedDestination?: FormResultDestination
+  formDisqualifiedRedirectUrl?: string
   onSelect: () => void
   onPatchTheme?: (patch: Partial<SiteTheme>) => void
   onSaveSite?: () => void
@@ -22833,22 +22855,41 @@ const FunnelFixedPageDropdownItem: React.FC<FunnelFixedPageDropdownItemProps> = 
   active,
   locked,
   pageToneClass,
-  showQualifiedRedirectControls = false,
+  resultType,
   formCompletionAction = 'next_page_if_qualified',
   formQualifiedRedirectUrl = '',
+  formDisqualifiedDestination = 'result_page',
+  formDisqualifiedRedirectUrl = '',
   onSelect,
   onPatchTheme,
   onSaveSite
 }) => {
-  const title = page.title || `Página ${index + 1}`
-  const qualifiedDestination = formCompletionAction === 'redirect_qualified' ? 'redirect_url' : 'thank_you_page'
-  const handleQualifiedDestinationChange = (event: { target: { value: string } }) => {
+  const title = resultType === 'qualified'
+    ? 'Cuando califica'
+    : resultType === 'disqualified'
+      ? 'Cuando descalifica'
+      : page.title || `Página ${index + 1}`
+  const resultDestination: FormResultDestination = resultType === 'qualified'
+    ? (formCompletionAction === 'redirect_qualified' ? 'redirect_url' : 'result_page')
+    : formDisqualifiedDestination
+  const resultRedirectUrl = resultType === 'qualified'
+    ? formQualifiedRedirectUrl
+    : formDisqualifiedRedirectUrl
+  const handleResultDestinationChange = (event: { target: { value: string } }) => {
     if (!onPatchTheme) return
-    onPatchTheme({
-      formCompletionAction: event.target.value === 'redirect_url'
-        ? 'redirect_qualified'
-        : 'next_page_if_qualified'
-    })
+    const destination = event.target.value === 'redirect_url' ? 'redirect_url' : 'result_page'
+    if (resultType === 'qualified') {
+      onPatchTheme({
+        formCompletionAction: destination === 'redirect_url'
+          ? 'redirect_qualified'
+          : 'next_page_if_qualified'
+      })
+    } else if (resultType === 'disqualified') {
+      onPatchTheme({
+        formCompletionAction: formCompletionAction === 'redirect_qualified' ? 'redirect_qualified' : 'next_page_if_qualified',
+        formDisqualifiedCompletionAction: destination === 'redirect_url' ? 'redirect_url' : 'disqualified_page'
+      })
+    }
     window.setTimeout(() => { onSaveSite?.() }, 0)
   }
 
@@ -22860,33 +22901,37 @@ const FunnelFixedPageDropdownItem: React.FC<FunnelFixedPageDropdownItemProps> = 
         <button type="button" className={styles.pagesDropdownSelectButton} onClick={onSelect}>
           <span className={styles.pagesDropdownTitleText}>{title}</span>
         </button>
-        {showQualifiedRedirectControls && (
+        {resultType && onPatchTheme && (
           <div className={styles.pagesDropdownResultControls}>
-            <label className={styles.pagesDropdownResultField}>
-              <span>Cuando califica</span>
+            <div className={styles.pagesDropdownResultField}>
               <CustomSelect
-                value={qualifiedDestination}
+                value={resultDestination}
                 disabled={locked}
                 className={styles.pagesDropdownResultSelect}
-                onChange={handleQualifiedDestinationChange}
+                aria-label={title}
+                onChange={handleResultDestinationChange}
                 onBlur={onSaveSite}
               >
-                <option value="thank_you_page">Mostrar esta página</option>
+                <option value="result_page">Mostrar esta página</option>
                 <option value="redirect_url">Redirigir a una URL</option>
               </CustomSelect>
-            </label>
-            {qualifiedDestination === 'redirect_url' && (
-              <label className={styles.pagesDropdownResultField}>
-                <span>URL destino</span>
+            </div>
+            {resultDestination === 'redirect_url' && (
+              <div className={styles.pagesDropdownResultField}>
                 <input
                   type="url"
-                  value={formQualifiedRedirectUrl}
+                  value={resultRedirectUrl}
                   disabled={locked}
-                  placeholder="https://tudominio.com/gracias"
-                  onChange={(event) => onPatchTheme?.({ formQualifiedRedirectUrl: event.target.value })}
+                  placeholder={resultType === 'qualified' ? 'https://tudominio.com/gracias' : 'https://tudominio.com/no-califica'}
+                  aria-label={`URL ${title.toLowerCase()}`}
+                  onChange={(event) => onPatchTheme?.(
+                    resultType === 'qualified'
+                      ? { formQualifiedRedirectUrl: event.target.value }
+                      : { formDisqualifiedRedirectUrl: event.target.value }
+                  )}
                   onBlur={onSaveSite}
                 />
-              </label>
+              </div>
             )}
           </div>
         )}

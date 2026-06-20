@@ -15124,12 +15124,6 @@
   gap: 6px;
 }
 
-.pagesDropdownResultField span {
-  color: var(--color-text-secondary);
-  font-size: 0.76rem;
-  font-weight: var(--font-weight-semibold, 600);
-}
-
 .pagesDropdownResultField input,
 .pagesDropdownResultField :global([data-ristak-dropdown-trigger]) {
   width: 100%;

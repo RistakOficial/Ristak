@@ -16603,6 +16603,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const qualifiedRedirectUrl = isStandardFormType
     ? safeHref(theme.formQualifiedRedirectUrl || theme.form_qualified_redirect_url || '', '')
     : ''
+  const disqualifiedCompletionAction = cleanString(theme.formDisqualifiedCompletionAction || theme.form_disqualified_completion_action) === 'redirect_url'
+    ? 'redirect_url'
+    : 'disqualified_page'
+  const disqualifiedRedirectUrl = isStandardFormType
+    ? safeHref(theme.formDisqualifiedRedirectUrl || theme.form_disqualified_redirect_url || '', '')
+    : ''
   const standardFormNextPageUrl = standardFormNextPage ? pageHref(standardFormNextPage.id) : ''
 	  const disqualifiedPage = isStandardFormType ? pages.find(page => page.id === FORM_DISQUALIFIED_PAGE_ID) : null
 	  const disqualifiedPageUrl = disqualifiedPage ? pageHref(disqualifiedPage.id) : ''
@@ -17182,6 +17188,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       const nextText = ${scriptJson(nextText)};
       const nextPageUrl = ${JSON.stringify(nextPageUrl)};
       const qualifiedRedirectUrl = ${JSON.stringify(qualifiedRedirectUrl)};
+      const disqualifiedCompletionAction = ${JSON.stringify(disqualifiedCompletionAction)};
+      const disqualifiedRedirectUrl = ${JSON.stringify(disqualifiedRedirectUrl)};
       const standardFormNextPageUrl = ${JSON.stringify(standardFormNextPageUrl)};
       const disqualifiedPageUrl = ${JSON.stringify(disqualifiedPageUrl)};
       let index = Math.max(0, stepPages.indexOf(pageId));
@@ -17739,6 +17747,10 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             return;
           }
           const qualifies = submission.status !== 'disqualified';
+          if (!qualifies && disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) {
+            window.location.href = preserveUrl(disqualifiedRedirectUrl);
+            return;
+          }
           if (!qualifies && disqualifiedPageUrl && (completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified')) {
             window.location.href = preserveUrl(disqualifiedPageUrl);
             return;
