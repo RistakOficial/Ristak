@@ -11,7 +11,7 @@
 
 .inlineEditableText[data-layout='block'] {
   display: grid;
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
 }
 
@@ -29,7 +29,8 @@
   line-height: inherit;
   text-align: inherit;
   cursor: pointer;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .inlineEditableText[data-layout='block'] .displayButton {

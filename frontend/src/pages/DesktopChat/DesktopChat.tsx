@@ -5720,8 +5720,8 @@ export const DesktopChat: React.FC = () => {
           {activeContact ? (
             <>
               <div className={styles.infoHeader}>
-                  {renderAvatar(contactInfoData || activeContact)}
-                <div>
+                {renderAvatar(contactInfoData || activeContact)}
+                <div className={styles.infoHeaderBody}>
                   <InlineEditableText
                     className={styles.infoHeaderName}
                     value={(contactInfoData || activeContact).name || ''}

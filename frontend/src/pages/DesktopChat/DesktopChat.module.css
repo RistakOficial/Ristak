@@ -2439,6 +2439,25 @@
   justify-content: flex-start;
 }
 
+.infoHeaderBody {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  justify-items: start;
+}
+
+.infoHeaderName {
+  width: 100%;
+  max-width: 100%;
+}
+
+.infoHeaderName button {
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
 .infoSection {
   padding: 16px;
   border-bottom: 1px solid var(--chat-border);
@@ -2491,9 +2510,21 @@
   display: grid;
   width: 100%;
   min-width: 0;
+  max-width: 100%;
   margin: 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+}
+
+.detailList dd > [data-layout='block'] {
+  width: 100%;
+  max-width: 100%;
+}
+
+.detailList dd > [data-layout='block'] button {
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .contactTools {
