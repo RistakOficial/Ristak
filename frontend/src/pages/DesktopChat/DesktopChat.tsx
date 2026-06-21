@@ -4988,7 +4988,7 @@ export const DesktopChat: React.FC = () => {
     >
       <section className={styles.chatShell} data-desktop-chat-page>
         <aside
-          className={`${styles.inboxPanel} ${agentAssignedViewOpen ? styles.inboxPanelAgent : ''}`}
+          className={`${styles.inboxPanel} ${agentAssignedViewOpen ? styles.inboxPanelAgent : ''} ${advancedFiltersOpen ? styles.inboxPanelFiltersOpen : ''}`}
           aria-label={agentAssignedViewOpen ? 'Lista de chats del bot' : 'Lista de chats'}
         >
           <div className={`${styles.inboxHeader} ${agentAssignedViewOpen ? styles.inboxHeaderAgent : ''}`}>
@@ -5036,62 +5036,64 @@ export const DesktopChat: React.FC = () => {
             </Button>
           </div>
 
-          <div className={styles.filterRow} role="tablist" aria-label="Filtros de chat">
-            <button
-              type="button"
-              className={`${styles.filterToolButton} ${advancedFiltersOpen || activeAdvancedFilterCount > 0 ? styles.filterActive : ''}`}
-              onClick={() => setAdvancedFiltersOpen((current) => !current)}
-              aria-expanded={advancedFiltersOpen}
-              aria-label="Modificar filtros"
-            >
-              <ListFilter size={14} />
-              <span>Filtros</span>
-              {activeAdvancedFilterCount > 0 ? <strong>{activeAdvancedFilterCount}</strong> : null}
-            </button>
-            {CHAT_FILTERS.map((filter) => (
+          <div className={`${styles.chatFilterStack} ${advancedFiltersOpen ? styles.chatFilterStackOpen : ''}`}>
+            <div className={styles.filterRow} role="tablist" aria-label="Filtros de chat">
               <button
-                key={filter.id}
                 type="button"
-                className={filter.id === chatFilter ? styles.filterActive : ''}
-                onClick={() => {
-                  setArchivedViewOpen(false)
-                  setChatFilter(filter.id)
-                }}
+                className={`${styles.filterToolButton} ${advancedFiltersOpen || activeAdvancedFilterCount > 0 ? styles.filterActive : ''}`}
+                onClick={() => setAdvancedFiltersOpen((current) => !current)}
+                aria-expanded={advancedFiltersOpen}
+                aria-label="Modificar filtros"
               >
-                {filter.label}
+                <ListFilter size={14} />
+                <span>Filtros</span>
+                {activeAdvancedFilterCount > 0 ? <strong>{activeAdvancedFilterCount}</strong> : null}
               </button>
-            ))}
-          </div>
-
-          {advancedFiltersOpen ? (
-            <div className={styles.filterPanel}>
-              <div className={styles.filterPanelHeader}>
-                <strong>Filtrar conversaciones</strong>
-                <button type="button" onClick={resetAdvancedFilters} disabled={activeAdvancedFilterCount === 0}>
-                  Limpiar
+              {CHAT_FILTERS.map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className={filter.id === chatFilter ? styles.filterActive : ''}
+                  onClick={() => {
+                    setArchivedViewOpen(false)
+                    setChatFilter(filter.id)
+                  }}
+                >
+                  {filter.label}
                 </button>
-              </div>
-              <div className={styles.filterGrid}>
-                {advancedFilterGroups.map((group) => (
-                  <div key={group.id} className={styles.filterGroup}>
-                    <span>{group.label}</span>
-                    <div className={styles.filterChipWrap}>
-                      {group.options.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          className={option.value === group.value ? styles.filterActive : ''}
-                          onClick={() => group.onSelect(option.value)}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              ))}
             </div>
-          ) : null}
+
+            {advancedFiltersOpen ? (
+              <div className={styles.filterPanel}>
+                <div className={styles.filterPanelHeader}>
+                  <strong>Filtrar conversaciones</strong>
+                  <button type="button" onClick={resetAdvancedFilters} disabled={activeAdvancedFilterCount === 0}>
+                    Limpiar
+                  </button>
+                </div>
+                <div className={styles.filterGrid}>
+                  {advancedFilterGroups.map((group) => (
+                    <div key={group.id} className={styles.filterGroup}>
+                      <span>{group.label}</span>
+                      <div className={styles.filterChipWrap}>
+                        {group.options.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={option.value === group.value ? styles.filterActive : ''}
+                            onClick={() => group.onSelect(option.value)}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <div className={styles.chatList} data-chat-list>
             {chatsLoading ? (
