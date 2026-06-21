@@ -641,10 +641,45 @@ async function createPreferenceForPayment(row, { baseUrl = '' } = {}) {
     [paymentUrl || null, cleanString(payload.id) || null, row.id]
   )
 
+  await syncMercadoPagoInstallmentPreference({
+    paymentId: row.id,
+    preferenceId: cleanString(payload.id),
+    notes: 'Link de Mercado Pago generado para la parcialidad.'
+  })
+
   return {
     preferenceId: cleanString(payload.id),
     paymentUrl,
     raw: payload
+  }
+}
+
+async function syncMercadoPagoInstallmentPreference({ paymentId, preferenceId = '', notes = '' } = {}) {
+  const cleanPaymentId = cleanString(paymentId)
+  if (!cleanPaymentId) return
+
+  const installments = await db.all(
+    'SELECT id, flow_id FROM installment_payments WHERE payment_id = ?',
+    [cleanPaymentId]
+  )
+  if (!installments.length) return
+
+  await db.run(
+    `UPDATE installment_payments
+     SET status = CASE
+           WHEN LOWER(COALESCE(status, '')) IN ('scheduled', 'pending') THEN 'sent'
+           ELSE status
+         END,
+         mercadopago_preference_id = COALESCE(NULLIF(?, ''), mercadopago_preference_id),
+         notes = COALESCE(NULLIF(?, ''), notes),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE payment_id = ?`,
+    [cleanString(preferenceId), cleanString(notes), cleanPaymentId]
+  )
+
+  const touchedFlowIds = new Set(installments.map(row => row.flow_id).filter(Boolean))
+  for (const flowId of touchedFlowIds) {
+    await persistMercadoPagoPaymentPlanMirror(flowId)
   }
 }
 
@@ -790,6 +825,12 @@ export async function ensurePublicMercadoPagoPreference(publicPaymentId, { baseU
   }
 
   if (row.payment_url && row.mercadopago_preference_id) {
+    await syncMercadoPagoInstallmentPreference({
+      paymentId: row.id,
+      preferenceId: row.mercadopago_preference_id,
+      notes: 'Link de Mercado Pago disponible para la parcialidad.'
+    })
+
     return {
       paymentUrl: row.payment_url,
       preferenceId: row.mercadopago_preference_id
