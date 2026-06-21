@@ -7849,10 +7849,13 @@
   --video-retention-line: var(--design-chart-primary, var(--accent));
   --video-retention-fill: color-mix(in srgb, var(--video-retention-line) 42%, transparent);
   --video-retention-grid: color-mix(in srgb, var(--on-accent, var(--text)) 66%, transparent);
+  --video-retention-axis-label-space: 58px;
+  --video-retention-track-left: 64px;
+  --video-retention-track-right: 134px;
   --video-retention-plot-top: 28px;
-  --video-retention-plot-right: 0px;
+  --video-retention-plot-right: var(--video-retention-track-right);
   --video-retention-plot-bottom: 0px;
-  --video-retention-plot-left: 0px;
+  --video-retention-plot-left: var(--video-retention-track-left);
   position: relative;
   aspect-ratio: 16 / 9;
   min-height: 420px;
@@ -7873,7 +7876,7 @@
 
 .videoRetentionMedia {
   background: black;
-  filter: brightness(0.24) saturate(0.78) contrast(1.18);
+  filter: brightness(0.58) saturate(0.94) contrast(1.04);
   display: block;
   object-fit: cover;
   object-position: center center;
@@ -7939,9 +7942,11 @@
 
 .videoRetentionCurve {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--video-retention-plot-left));
   z-index: 2;
-  width: 100%;
+  width: calc(100% + var(--video-retention-plot-left) + var(--video-retention-plot-right));
   height: 100%;
   overflow: visible;
   pointer-events: none;
@@ -7963,8 +7968,11 @@
 
 .videoRetentionGrid {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--video-retention-plot-left));
   z-index: 3;
+  width: calc(100% + var(--video-retention-plot-left) + var(--video-retention-plot-right));
   display: grid;
   grid-template-rows: repeat(4, 1fr);
   pointer-events: none;
@@ -7989,7 +7997,24 @@
   top: 0.38em;
   right: 0;
   left: 0;
-  border-top: 1px dashed var(--video-retention-grid);
+  height: 1px;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--video-retention-grid) 0 3px,
+    transparent 3px 6px
+  );
+  mask-image: linear-gradient(
+    90deg,
+    black 0,
+    black calc(100% - var(--video-retention-axis-label-space)),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    black 0,
+    black calc(100% - var(--video-retention-axis-label-space)),
+    transparent 100%
+  );
   filter: drop-shadow(0 1px 2px black);
 }
 
@@ -20134,10 +20159,12 @@
   }
 
   .videoRetentionChart {
+    --video-retention-track-left: 56px;
+    --video-retention-track-right: 56px;
     --video-retention-plot-top: 22px;
-    --video-retention-plot-right: 0px;
+    --video-retention-plot-right: var(--video-retention-track-right);
     --video-retention-plot-bottom: 0px;
-    --video-retention-plot-left: 0px;
+    --video-retention-plot-left: var(--video-retention-track-left);
     min-height: 300px;
   }
 
