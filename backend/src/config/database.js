@@ -966,6 +966,34 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
   return { contacts: repairedContacts, apiContacts: repairedApiContacts }
 }
 
+const SUBSCRIPTION_MERCADOPAGO_COLUMNS = [
+  ['mercadopago_preapproval_id', 'TEXT'],
+  ['mercadopago_preapproval_plan_id', 'TEXT'],
+  ['mercadopago_init_point', 'TEXT'],
+  ['mercadopago_sandbox_init_point', 'TEXT'],
+  ['mercadopago_payer_id', 'TEXT'],
+  ['mercadopago_card_id', 'TEXT'],
+  ['mercadopago_payment_method_id', 'TEXT'],
+  ['mercadopago_next_payment_date', 'DATETIME']
+]
+
+function isExistingColumnError(err) {
+  const message = String(err?.message || '')
+  return message.includes('duplicate column') || message.includes('already exists')
+}
+
+async function ensureTableColumns(tableName, columns) {
+  for (const [column, type] of columns) {
+    try {
+      await db.run(`ALTER TABLE ${tableName} ADD COLUMN ${column} ${type}`)
+    } catch (err) {
+      if (!isExistingColumnError(err)) {
+        throw err
+      }
+    }
+  }
+}
+
 // Inicializar tablas
 async function initTables() {
   try {
@@ -2227,6 +2255,7 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_next_run ON subscriptions(next_run_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions(stripe_customer_id)')
+    await ensureTableColumns('subscriptions', SUBSCRIPTION_MERCADOPAGO_COLUMNS)
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_mercadopago_preapproval ON subscriptions(mercadopago_preapproval_id)')
 
     // Tabla de citas
@@ -3610,26 +3639,7 @@ async function initTables() {
         }
       }
 
-      const subscriptionProviderColumns = [
-        ['mercadopago_preapproval_id', 'TEXT'],
-        ['mercadopago_preapproval_plan_id', 'TEXT'],
-        ['mercadopago_init_point', 'TEXT'],
-        ['mercadopago_sandbox_init_point', 'TEXT'],
-        ['mercadopago_payer_id', 'TEXT'],
-        ['mercadopago_card_id', 'TEXT'],
-        ['mercadopago_payment_method_id', 'TEXT'],
-        ['mercadopago_next_payment_date', 'DATETIME']
-      ]
-
-      for (const [column, type] of subscriptionProviderColumns) {
-        try {
-          await db.run(`ALTER TABLE subscriptions ADD COLUMN ${column} ${type}`)
-        } catch (err) {
-          if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
-            throw err
-          }
-        }
-      }
+      await ensureTableColumns('subscriptions', SUBSCRIPTION_MERCADOPAGO_COLUMNS)
 
       try {
         await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_mercadopago_preapproval ON subscriptions(mercadopago_preapproval_id)')
