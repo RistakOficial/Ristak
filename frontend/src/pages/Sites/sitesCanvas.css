@@ -1936,8 +1936,8 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 .canvasViewportFlush .canvasScaler,
 .canvasViewportFlush .canvasStage { border-radius: 0; }
 
-/* The scaler reserves the post-scale footprint; the inner page is rendered at
-   its true design width and transform-scaled to fit (a real "compressed monitor"). */
+/* The scaler reserves the natural footprint. The page itself renders at the
+   editor width so text and controls stay crisp instead of being transform-scaled. */
 .canvasScaler {
   position: relative;
   flex: 0 0 auto;

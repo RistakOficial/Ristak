@@ -27187,8 +27187,8 @@ const InlineButtonEditable: React.FC<Omit<InlineEditableProps, 'as' | 'className
   )
 }
 
-// Renders the canvas page at its true desktop width and transform-scales it to
-// fit the column — a faithful "monitor comprimido" of the published page.
+// Renders the canvas at the available editor width. Avoid transform-scaling the
+// whole page: browser compositing makes text/buttons look like a raster image.
 interface CanvasStageProps {
   designWidth: number
   canvasClassName: string
@@ -27219,11 +27219,10 @@ const CanvasStage: React.FC<CanvasStageProps> = ({
     if (!viewport || !stage) return
     const recompute = () => {
       const avail = Math.max(1, viewport.clientWidth - (fluidAboveDesign ? 0 : 8))
-      const nextRenderWidth = fluidAboveDesign && avail > designWidth ? avail : designWidth
-      const next = Math.max(0.2, Math.min(1, avail / nextRenderWidth))
+      const nextRenderWidth = fluidAboveDesign && avail > designWidth ? avail : Math.min(designWidth, avail)
       setRenderWidth(nextRenderWidth)
-      setScale(next)
-      setStageHeight(stage.offsetHeight * next)
+      setScale(1)
+      setStageHeight(stage.offsetHeight)
     }
     recompute()
     const observer = new ResizeObserver(recompute)
@@ -27244,12 +27243,12 @@ const CanvasStage: React.FC<CanvasStageProps> = ({
     >
       <div
         className="canvasScaler"
-        style={{ ...canvasStyle, width: Math.round(renderWidth * scale), height: Math.round(stageHeight) } as React.CSSProperties}
+        style={{ ...canvasStyle, width: Math.round(renderWidth), height: Math.round(stageHeight) } as React.CSSProperties}
       >
         <div
           ref={stageRef}
           className={`canvasStage ${canvasClassName} ${pageSelected ? 'canvasPageSelected' : ''}`}
-          style={{ ...canvasStyle, width: renderWidth, transform: `scale(${scale})`, ['--rstk-scale' as string]: scale } as React.CSSProperties}
+          style={{ ...canvasStyle, width: renderWidth, ['--rstk-scale' as string]: scale } as React.CSSProperties}
         >
           {children}
         </div>
