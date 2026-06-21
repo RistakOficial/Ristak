@@ -24024,16 +24024,6 @@ const VideoPlayerSettingsControls: React.FC<{
               </label>
             </div>
 
-            {settings.videoPreviewEnabled !== false && (
-              <VideoPreviewRangeControl
-                settings={settings}
-                mediaUrl={mediaUrl}
-                durationSeconds={metadataDuration}
-                onPatchSettings={onPatchSettings}
-                onSave={onSave}
-              />
-            )}
-
             <div className={styles.twoColumn}>
               <label className={styles.checkboxLabel}>
                 <input
@@ -24058,6 +24048,16 @@ const VideoPlayerSettingsControls: React.FC<{
                 <span>No reproducir mientras se edita</span>
               </label>
             </div>
+
+            {settings.videoPreviewEnabled !== false && (
+              <VideoPreviewRangeControl
+                settings={settings}
+                mediaUrl={mediaUrl}
+                durationSeconds={metadataDuration}
+                onPatchSettings={onPatchSettings}
+                onSave={onSave}
+              />
+            )}
           </section>
 
         </>
