@@ -537,7 +537,7 @@ export const PublicPayment: React.FC = () => {
     try {
       if (payment.provider === 'mercadopago') {
         const nextPreference = await mercadoPagoPaymentsService.ensurePublicPreference(payment.publicPaymentId)
-        const paymentUrl = nextPreference.paymentUrl || payment.paymentUrl
+        const paymentUrl = nextPreference.checkoutUrl || nextPreference.paymentUrl || payment.paymentUrl
         if (!paymentUrl) {
           throw new Error('Mercado Pago no devolvió un link de pago.')
         }

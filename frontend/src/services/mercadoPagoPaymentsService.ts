@@ -222,7 +222,7 @@ export const mercadoPagoPaymentsService = {
     return parseResponse<PublicMercadoPagoPayment>(response)
   },
 
-  async ensurePublicPreference(publicPaymentId: string): Promise<{ paymentUrl: string; preferenceId: string }> {
+  async ensurePublicPreference(publicPaymentId: string): Promise<{ paymentUrl: string; checkoutUrl?: string; preferenceId: string }> {
     const response = await fetch(apiUrl(`/api/mercadopago/public/payments/${encodeURIComponent(publicPaymentId)}/preference`), {
       method: 'POST'
     })

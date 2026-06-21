@@ -3415,7 +3415,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </div>
                 <div>
                   <p>Crear enlace con Mercado Pago</p>
-                  <span>Genera un link de Checkout Pro y confirma el pago por webhook</span>
+                  <span>Genera tu página pública de pago con Mercado Pago integrado</span>
                 </div>
               </div>
               {paymentOption === 'mercadopago' && <Check size={18} className={styles.optionCheck} />}

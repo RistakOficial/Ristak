@@ -99,10 +99,17 @@ const getRequestBaseUrl = (req) => {
   return host ? `${protocol}://${host}`.replace(/\/+$/, '') : ''
 }
 
-const buildLocalPaymentUrl = (req, publicPaymentId) => {
+const buildPaymentUrlFromBase = (baseUrl, publicPaymentId) => {
   const cleanPublicId = cleanString(publicPaymentId)
-  const baseUrl = getRequestBaseUrl(req)
-  return cleanPublicId && baseUrl ? `${baseUrl}/pay/${encodeURIComponent(cleanPublicId)}` : ''
+  const cleanBase = cleanString(baseUrl).replace(/\/+$/, '')
+  return cleanPublicId && cleanBase ? `${cleanBase}/pay/${encodeURIComponent(cleanPublicId)}` : ''
+}
+
+const resolveTransactionPaymentUrl = (transaction = {}, baseUrl = '') => {
+  const localUrl = buildPaymentUrlFromBase(baseUrl, transaction.public_payment_id)
+  const provider = cleanString(transaction.payment_provider).toLowerCase()
+  if (provider === 'mercadopago' && localUrl) return localUrl
+  return cleanString(transaction.payment_url) || localUrl
 }
 
 const isStripeBackedTransaction = (transaction = {}) => {
@@ -303,7 +310,7 @@ const toDateOnly = (dateValue) => {
   return String(dateValue).split('T')[0]
 }
 
-const mapTransactionRow = (t) => ({
+const mapTransactionRow = (t, baseUrl = '') => ({
   id: t.id,
   date: t.date,
   contactId: t.contact_id,
@@ -326,7 +333,7 @@ const mapTransactionRow = (t) => ({
   dueDate: t.due_date,
   sentAt: t.sent_at,
   publicPaymentId: t.public_payment_id,
-  paymentUrl: t.payment_url,
+  paymentUrl: resolveTransactionPaymentUrl(t, baseUrl),
   stripePaymentIntentId: t.stripe_payment_intent_id,
   paidAt: t.paid_at
 })
@@ -427,7 +434,7 @@ const buildInvoiceUpdatePayload = ({ invoice, transaction, updates }) => {
   return payload
 }
 
-const getTransactionByIdForResponse = async (id) => {
+const getTransactionByIdForResponse = async (id, baseUrl = '') => {
   const row = await db.get(
     `SELECT
       p.id,
@@ -461,7 +468,7 @@ const getTransactionByIdForResponse = async (id) => {
     [id]
   )
 
-  return row ? mapTransactionRow(row) : null
+  return row ? mapTransactionRow(row, baseUrl) : null
 }
 
 /**
@@ -571,7 +578,7 @@ export const createTransaction = async (req, res) => {
       logger.warn(`Pago ${transactionId} guardado localmente; no se pudo exportar a HighLevel: ${syncError.message}`)
     }
 
-    const createdTransaction = await getTransactionByIdForResponse(transactionId)
+    const createdTransaction = await getTransactionByIdForResponse(transactionId, getRequestBaseUrl(req))
 
     if (createdTransaction && SUCCESS_PAYMENT_STATUSES.has(finalStatus)) {
       registerGigstackPaymentForTransactionInBackground(transactionId)
@@ -740,7 +747,8 @@ export const getTransactions = async (req, res) => {
     }
 
     // Mapear campos de base de datos a nombres esperados por frontend
-    const mappedTransactions = transactions.map(mapTransactionRow)
+    const responseBaseUrl = getRequestBaseUrl(req)
+    const mappedTransactions = transactions.map(transaction => mapTransactionRow(transaction, responseBaseUrl))
 
     // Calcular información de paginación
     const totalPages = Math.ceil(totalTransactions / limitNumber)
@@ -851,7 +859,7 @@ export const getTransactionById = async (req, res) => {
       dueDate: transaction.due_date,
       sentAt: transaction.sent_at,
       publicPaymentId: transaction.public_payment_id,
-      paymentUrl: transaction.payment_url,
+      paymentUrl: resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req)),
       stripePaymentIntentId: transaction.stripe_payment_intent_id,
       paidAt: transaction.paid_at,
       contactSource: transaction.contact_source,
@@ -1126,7 +1134,7 @@ export const updateTransaction = async (req, res) => {
       })
     }
 
-    const updatedTransaction = await getTransactionByIdForResponse(id)
+    const updatedTransaction = await getTransactionByIdForResponse(id, getRequestBaseUrl(req))
 
     logger.success(`Transacción actualizada: ${id}`)
 
@@ -1274,7 +1282,7 @@ export const refundTransaction = async (req, res) => {
           invoiceId: transaction.ghl_invoice_id || '',
           invoiceNumber: transaction.invoice_number || '',
           publicPaymentId: transaction.public_payment_id || '',
-          paymentUrl: transaction.payment_url || buildLocalPaymentUrl(req, transaction.public_payment_id),
+          paymentUrl: resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req)),
           receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
           paymentDate: transaction.date || transaction.created_at || ''
         }))
@@ -1358,7 +1366,7 @@ export const voidTransaction = async (req, res) => {
           invoiceId: transaction.ghl_invoice_id || '',
           invoiceNumber: transaction.invoice_number || '',
           publicPaymentId: transaction.public_payment_id || '',
-          paymentUrl: transaction.payment_url || buildLocalPaymentUrl(req, transaction.public_payment_id),
+          paymentUrl: resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req)),
           receipt: transaction.reference || transaction.invoice_number || transaction.ghl_invoice_id || '',
           paymentDate: transaction.date || transaction.created_at || ''
         }))
@@ -1449,7 +1457,7 @@ export const recordPayment = async (req, res) => {
       }
     }
 
-    const paidTransaction = await getTransactionByIdForResponse(id)
+    const paidTransaction = await getTransactionByIdForResponse(id, getRequestBaseUrl(req))
     if (paidTransaction) {
       registerGigstackPaymentForTransactionInBackground(id)
       queuePaymentAutomationMessage('receipt', id)
@@ -1536,8 +1544,7 @@ export const getPaymentLink = async (req, res) => {
       })
     }
 
-    const localLink = cleanString(transaction.payment_url)
-      || buildLocalPaymentUrl(req, transaction.public_payment_id)
+    const localLink = resolveTransactionPaymentUrl(transaction, getRequestBaseUrl(req))
 
     if (localLink) {
       return res.json({

@@ -5,6 +5,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import {
   createMercadoPagoPaymentLink,
   createMercadoPagoPaymentPlan,
+  ensurePublicMercadoPagoPreference,
   createPublicMercadoPagoCardPayment,
   handleMercadoPagoWebhookEvent,
   setMercadoPagoFetchForTest
@@ -166,6 +167,15 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
         applyTax: false
       }, { baseUrl: 'https://app.example.test' })
       ids.paymentId = created.payment.id
+      assert.equal(created.paymentUrl, `https://app.example.test/pay/${created.publicPaymentId}`)
+      assert.equal(created.payment.paymentUrl, `https://app.example.test/pay/${created.publicPaymentId}`)
+
+      const checkoutFallback = await ensurePublicMercadoPagoPreference(created.publicPaymentId, {
+        baseUrl: 'https://app.example.test'
+      })
+      assert.equal(checkoutFallback.paymentUrl, 'https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=card_1')
+      assert.equal(checkoutFallback.checkoutUrl, 'https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=card_1')
+      assert.equal(preferenceCalls.length, 1)
 
       const charged = await createPublicMercadoPagoCardPayment(created.publicPaymentId, {
         token: 'tok_card_test',

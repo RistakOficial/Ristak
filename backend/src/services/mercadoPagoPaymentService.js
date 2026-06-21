@@ -156,6 +156,54 @@ function buildPaymentUrl(baseUrl, publicPaymentId) {
   return cleanBase ? `${cleanBase}/pay/${encodeURIComponent(publicPaymentId)}` : ''
 }
 
+function isMercadoPagoCheckoutUrl(value) {
+  try {
+    const hostname = new URL(cleanString(value)).hostname.toLowerCase()
+    return hostname.includes('mercadopago.')
+  } catch {
+    return false
+  }
+}
+
+function getStoredMercadoPagoCheckout(row = {}, config = {}) {
+  const metadata = parseJson(row.metadata_json, {})
+  const checkout = metadata.mercadoPagoCheckout && typeof metadata.mercadoPagoCheckout === 'object'
+    ? metadata.mercadoPagoCheckout
+    : {}
+  const mode = normalizeMode(row.payment_mode || config.mode)
+  const modeUrl = mode === 'test'
+    ? cleanString(checkout.sandboxInitPoint || checkout.paymentUrl)
+    : cleanString(checkout.initPoint || checkout.paymentUrl)
+  const fallbackUrl = cleanString(checkout.paymentUrl || checkout.checkoutUrl || checkout.initPoint || checkout.sandboxInitPoint)
+  const legacyUrl = isMercadoPagoCheckoutUrl(row.payment_url) ? cleanString(row.payment_url) : ''
+
+  return {
+    preferenceId: cleanString(checkout.preferenceId || row.mercadopago_preference_id),
+    checkoutUrl: modeUrl || fallbackUrl || legacyUrl,
+    initPoint: cleanString(checkout.initPoint),
+    sandboxInitPoint: cleanString(checkout.sandboxInitPoint),
+    mode
+  }
+}
+
+function withMercadoPagoCheckoutMetadata(row = {}, payload = {}, config = {}, checkoutUrl = '') {
+  const metadata = parseJson(row.metadata_json, {})
+  return JSON.stringify({
+    ...metadata,
+    mercadoPagoCheckout: {
+      ...(metadata.mercadoPagoCheckout && typeof metadata.mercadoPagoCheckout === 'object'
+        ? metadata.mercadoPagoCheckout
+        : {}),
+      preferenceId: cleanString(payload.id),
+      initPoint: cleanString(payload.init_point),
+      sandboxInitPoint: cleanString(payload.sandbox_init_point),
+      paymentUrl: cleanString(checkoutUrl),
+      mode: normalizeMode(config.mode),
+      updatedAt: new Date().toISOString()
+    }
+  })
+}
+
 function getConfiguredBaseUrl() {
   return cleanString(
     process.env.PUBLIC_APP_URL ||
@@ -575,7 +623,7 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
   return {
     id: row.id,
     publicPaymentId,
-    paymentUrl: row.payment_url || (publicPaymentId && baseUrl ? buildPaymentUrl(baseUrl, publicPaymentId) : ''),
+    paymentUrl: publicPaymentId && baseUrl ? buildPaymentUrl(baseUrl, publicPaymentId) : row.payment_url || '',
     status: row.status || 'pending',
     amount: Number(row.amount || 0),
     currency: row.currency || config?.defaultCurrency || DEFAULT_CURRENCY,
@@ -762,19 +810,26 @@ async function createPreferenceForPayment(row, { baseUrl = '' } = {}) {
     body: buildPreferencePayload(row, { baseUrl })
   })
 
-  const paymentUrl = config.mode === 'test'
+  const checkoutUrl = config.mode === 'test'
     ? cleanString(payload.sandbox_init_point || payload.init_point)
     : cleanString(payload.init_point || payload.sandbox_init_point)
+  const publicPaymentUrl = buildPaymentUrl(baseUrl, row.public_payment_id) || (isMercadoPagoCheckoutUrl(row.payment_url) ? '' : row.payment_url)
 
   await db.run(
     `UPDATE payments
      SET payment_url = COALESCE(?, payment_url),
          mercadopago_preference_id = COALESCE(?, mercadopago_preference_id),
+         metadata_json = ?,
          status = CASE WHEN status = 'scheduled' THEN 'sent' ELSE status END,
          sent_at = COALESCE(sent_at, CURRENT_TIMESTAMP),
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [paymentUrl || null, cleanString(payload.id) || null, row.id]
+    [
+      publicPaymentUrl || null,
+      cleanString(payload.id) || null,
+      withMercadoPagoCheckoutMetadata(row, payload, config, checkoutUrl),
+      row.id
+    ]
   )
 
   await syncMercadoPagoInstallmentPreference({
@@ -785,7 +840,8 @@ async function createPreferenceForPayment(row, { baseUrl = '' } = {}) {
 
   return {
     preferenceId: cleanString(payload.id),
-    paymentUrl,
+    paymentUrl: publicPaymentUrl || row.payment_url || checkoutUrl,
+    checkoutUrl,
     raw: payload
   }
 }
@@ -876,7 +932,7 @@ async function insertPaymentRow({
     payment: row,
     preference,
     publicPaymentId,
-    paymentUrl: preference?.paymentUrl || row.payment_url || paymentUrl
+    paymentUrl: paymentUrl || row.payment_url || preference?.paymentUrl || ''
   }
 }
 
@@ -961,6 +1017,16 @@ export async function ensurePublicMercadoPagoPreference(publicPaymentId, { baseU
   }
 
   if (row.payment_url && row.mercadopago_preference_id) {
+    const storedCheckout = getStoredMercadoPagoCheckout(row)
+    if (!storedCheckout.checkoutUrl && !isMercadoPagoCheckoutUrl(row.payment_url)) {
+      const preference = await createPreferenceForPayment(row, { baseUrl })
+      return {
+        paymentUrl: preference.checkoutUrl || preference.paymentUrl,
+        checkoutUrl: preference.checkoutUrl || '',
+        preferenceId: preference.preferenceId
+      }
+    }
+
     await syncMercadoPagoInstallmentPreference({
       paymentId: row.id,
       preferenceId: row.mercadopago_preference_id,
@@ -968,12 +1034,18 @@ export async function ensurePublicMercadoPagoPreference(publicPaymentId, { baseU
     })
 
     return {
-      paymentUrl: row.payment_url,
+      paymentUrl: storedCheckout.checkoutUrl || row.payment_url,
+      checkoutUrl: storedCheckout.checkoutUrl || '',
       preferenceId: row.mercadopago_preference_id
     }
   }
 
-  return createPreferenceForPayment(row, { baseUrl })
+  const preference = await createPreferenceForPayment(row, { baseUrl })
+  return {
+    paymentUrl: preference.checkoutUrl || preference.paymentUrl,
+    checkoutUrl: preference.checkoutUrl || '',
+    preferenceId: preference.preferenceId
+  }
 }
 
 export async function createPublicMercadoPagoCardPayment(publicPaymentId, input = {}, { baseUrl } = {}) {
