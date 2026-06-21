@@ -20,6 +20,12 @@ const DOMAIN_KEYS = {
   error: 'sites_public_domain_error'
 }
 
+function getSourceQuestionBlocks(site) {
+  return (site.blocks || [])
+    .filter(block => block.settings?.pageId === 'page-1')
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
+}
+
 test('imported HTML forms materialize Forms-page source forms and route submissions to them', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const email = `html-proxy-${suffix}@example.test`
@@ -81,7 +87,7 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
     assert.equal(sourceForm.theme.importedHtmlSourceSiteId, siteId)
     assert.equal(sourceForm.theme.pages[0].buttonText, 'Quiero info')
     assert.deepEqual(
-      sourceForm.blocks.map(block => [block.blockType, block.label, block.placeholder, block.required]),
+      getSourceQuestionBlocks(sourceForm).map(block => [block.blockType, block.label, block.placeholder, block.required]),
       [
         ['short_text', 'Nombre completo', 'Tu nombre', true],
         ['email', 'Correo', 'tu@email.com', true],
@@ -99,8 +105,8 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
     assert.equal(updated.import.formMappings[0].formSiteId, sourceFormId)
     sourceForm = await getSite(sourceFormId, { includeBlocks: true, includeSubmissions: true })
     assert.equal(sourceForm.theme.pages[0].buttonText, 'Enviar lead')
-    assert.equal(sourceForm.blocks.length, 4)
-    assert.ok(sourceForm.blocks.some(block => block.blockType === 'paragraph' && block.label === 'Cuéntanos'))
+    assert.equal(getSourceQuestionBlocks(sourceForm).length, 4)
+    assert.ok(getSourceQuestionBlocks(sourceForm).some(block => block.blockType === 'paragraph' && block.label === 'Cuéntanos'))
 
     await updateSite(siteId, {
       status: 'published',

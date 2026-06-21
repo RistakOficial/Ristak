@@ -124,6 +124,76 @@ const POPUP_SURFACE_ID = 'site-popup'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
 const FORM_FINAL_PAGE_IDS = new Set([FORM_THANK_YOU_PAGE_ID, FORM_DISQUALIFIED_PAGE_ID])
+const FORM_THANK_YOU_IMAGE_URL = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http://www.w3.org/2000/svg%22%20width%3D%22320%22%20height%3D%22220%22%20viewBox%3D%220%200%20320%20220%22%3E%3Crect%20width%3D%22320%22%20height%3D%22220%22%20rx%3D%2244%22%20fill%3D%22%23f0fdf4%22/%3E%3Ccircle%20cx%3D%22160%22%20cy%3D%22104%22%20r%3D%2256%22%20fill%3D%22%2322c55e%22/%3E%3Cpath%20d%3D%22M132%20102l19%2019%2039-43%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%2212%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Cpath%20d%3D%22M104%20169c29%2020%2083%2020%20112%200%22%20fill%3D%22none%22%20stroke%3D%22%23166534%22%20stroke-width%3D%228%22%20stroke-linecap%3D%22round%22%20opacity%3D%22.45%22/%3E%3C/svg%3E'
+const FORM_DISQUALIFIED_IMAGE_URL = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http://www.w3.org/2000/svg%22%20width%3D%22320%22%20height%3D%22220%22%20viewBox%3D%220%200%20320%20220%22%3E%3Crect%20width%3D%22320%22%20height%3D%22220%22%20rx%3D%2244%22%20fill%3D%22%23fef2f2%22/%3E%3Ccircle%20cx%3D%22160%22%20cy%3D%22110%22%20r%3D%2258%22%20fill%3D%22%23fca5a5%22/%3E%3Ccircle%20cx%3D%22138%22%20cy%3D%2298%22%20r%3D%226%22%20fill%3D%22%237f1d1d%22/%3E%3Ccircle%20cx%3D%22182%22%20cy%3D%2298%22%20r%3D%226%22%20fill%3D%22%237f1d1d%22/%3E%3Cpath%20d%3D%22M129%20145c16-18%2046-18%2062%200%22%20fill%3D%22none%22%20stroke%3D%22%237f1d1d%22%20stroke-width%3D%228%22%20stroke-linecap%3D%22round%22/%3E%3Cpath%20d%3D%22M104%20172c31%2018%2081%2018%20112%200%22%20fill%3D%22none%22%20stroke%3D%22%23991b1b%22%20stroke-width%3D%228%22%20stroke-linecap%3D%22round%22%20opacity%3D%22.35%22/%3E%3C/svg%3E'
+const DEFAULT_FORM_RESULT_MEDIA_SETTINGS = {
+  mediaRadius: 999,
+  mediaWidth: 34,
+  blockBorderWidth: 0,
+  blockBg: 'transparent'
+}
+const FORM_THANK_YOU_PRESET_BLOCKS = [
+  {
+    id: 'default-thank-you-image',
+    blockType: 'image',
+    label: 'Confirmación recibida',
+    content: '',
+    settings: { ...DEFAULT_FORM_RESULT_MEDIA_SETTINGS, mediaUrl: FORM_THANK_YOU_IMAGE_URL },
+    sortOrder: 0
+  },
+  {
+    id: 'default-thank-you-title',
+    blockType: 'title',
+    label: 'Título',
+    content: 'Gracias por terminar el formulario',
+    sortOrder: 1
+  },
+  {
+    id: 'default-thank-you-subtitle',
+    blockType: 'subtitle',
+    label: 'Subtítulo',
+    content: 'Recibimos tu información correctamente.',
+    sortOrder: 2
+  },
+  {
+    id: 'default-thank-you-text',
+    blockType: 'text',
+    label: 'Texto',
+    content: 'Nos pondremos en contacto contigo pronto para darte el siguiente paso.',
+    sortOrder: 3
+  }
+]
+const FORM_DISQUALIFIED_PRESET_BLOCKS = [
+  {
+    id: 'default-disqualified-image',
+    blockType: 'image',
+    label: 'Carita triste',
+    content: '',
+    settings: { ...DEFAULT_FORM_RESULT_MEDIA_SETTINGS, mediaUrl: FORM_DISQUALIFIED_IMAGE_URL },
+    sortOrder: 0
+  },
+  {
+    id: 'default-disqualified-title',
+    blockType: 'title',
+    label: 'Título',
+    content: 'Lo sentimos',
+    sortOrder: 1
+  },
+  {
+    id: 'default-disqualified-subtitle',
+    blockType: 'subtitle',
+    label: 'Subtítulo',
+    content: 'Por el momento no te podemos ayudar.',
+    sortOrder: 2
+  },
+  {
+    id: 'default-disqualified-text',
+    blockType: 'text',
+    label: 'Texto',
+    content: 'Gracias por tomarte el tiempo de responder. Si algo cambia o tienes más información, puedes volver a intentarlo más adelante.',
+    sortOrder: 3
+  }
+]
 const SITE_META_NO_EVENT = 'none'
 const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'])
@@ -3823,6 +3893,28 @@ function getDefaultFormPages() {
   ]
 }
 
+function buildDefaultFormResultBlockRows(siteId, pageId, presetBlocks = []) {
+  return presetBlocks.map(block => ({
+    id: crypto.randomUUID(),
+    site_id: siteId,
+    block_type: block.blockType,
+    label: block.label,
+    content: block.content,
+    placeholder: '',
+    required: 0,
+    options_json: jsonString([]),
+    settings_json: jsonString({ ...(block.settings || {}), pageId }),
+    sort_order: block.sortOrder
+  }))
+}
+
+function buildDefaultStandardFormResultBlockRows(siteId) {
+  return [
+    ...buildDefaultFormResultBlockRows(siteId, FORM_THANK_YOU_PAGE_ID, FORM_THANK_YOU_PRESET_BLOCKS),
+    ...buildDefaultFormResultBlockRows(siteId, FORM_DISQUALIFIED_PAGE_ID, FORM_DISQUALIFIED_PRESET_BLOCKS)
+  ]
+}
+
 async function ensureUniqueSlug(baseSlug, ignoreSiteId = null) {
   let slug = baseSlug
   let suffix = 2
@@ -4123,14 +4215,12 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
       })
     }
   })
-  const makeFormThankYouBlocks = () => [
-    makeBlock('title', 'Título', 'Listo, recibimos tu información', { sortOrder: 0 }),
-    makeBlock('subtitle', 'Subtítulo', 'Tu equipo ya tiene lo necesario para responder con el siguiente paso.', { sortOrder: 1 })
-  ]
-  const makeFormDisqualifiedBlocks = () => [
-    makeBlock('title', 'Título', 'Gracias por responder', { sortOrder: 0 }),
-    makeBlock('subtitle', 'Subtítulo', 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo despues.', { sortOrder: 1 })
-  ]
+  const makeFormResultBlocks = (presetBlocks) => presetBlocks.map(block => makeBlock(block.blockType, block.label, block.content, {
+    sortOrder: block.sortOrder,
+    settings: { ...(block.settings || {}) }
+  }))
+  const makeFormThankYouBlocks = () => makeFormResultBlocks(FORM_THANK_YOU_PRESET_BLOCKS)
+  const makeFormDisqualifiedBlocks = () => makeFormResultBlocks(FORM_DISQUALIFIED_PRESET_BLOCKS)
   const withStandardFormPages = (blocks) => [
     ...assignBlocksToPage(blocks, DEFAULT_FUNNEL_PAGE_ID),
     ...assignBlocksToPage(makeFormThankYouBlocks(), FORM_THANK_YOU_PAGE_ID),
@@ -7870,8 +7960,14 @@ export async function createSite(input = {}) {
     initialMetaEventName
   ])
 
-  if (!blankCanvas) {
-    for (const block of buildDefaultBlocks(id, siteType, theme.template, { name, title, theme })) {
+  const initialBlocks = !blankCanvas
+    ? buildDefaultBlocks(id, siteType, theme.template, { name, title, theme })
+    : siteType === 'standard_form'
+      ? buildDefaultStandardFormResultBlockRows(id)
+      : []
+
+  if (initialBlocks.length) {
+    for (const block of initialBlocks) {
       await db.run(`
         INSERT INTO public_site_blocks (
           id, site_id, block_type, label, content, placeholder, required,
@@ -13934,70 +14030,29 @@ function getFieldTargetPageId(site, blocks = [], targetBlockId = '') {
   return cleanString(entry?.[1])
 }
 
+function buildDefaultFormResultBlocks(siteId, pageId, presetBlocks = []) {
+  return presetBlocks.map(block => ({
+    id: block.id,
+    siteId,
+    blockType: block.blockType,
+    label: block.label,
+    content: block.content,
+    placeholder: '',
+    required: false,
+    options: [],
+    settings: { ...(block.settings || {}), pageId },
+    sortOrder: block.sortOrder,
+    createdAt: '',
+    updatedAt: ''
+  }))
+}
+
 function getDefaultFormThankYouBlocks(siteId) {
-  return [
-    {
-      id: 'default-thank-you-title',
-      siteId,
-      blockType: 'title',
-      label: 'Título',
-      content: 'Gracias, recibimos tu información',
-      placeholder: '',
-      required: false,
-      options: [],
-      settings: { pageId: FORM_THANK_YOU_PAGE_ID },
-      sortOrder: 0,
-      createdAt: '',
-      updatedAt: ''
-    },
-    {
-      id: 'default-thank-you-subtitle',
-      siteId,
-      blockType: 'subtitle',
-      label: 'Subtítulo',
-      content: 'Te contactaremos pronto con el siguiente paso.',
-      placeholder: '',
-      required: false,
-      options: [],
-      settings: { pageId: FORM_THANK_YOU_PAGE_ID },
-      sortOrder: 1,
-      createdAt: '',
-      updatedAt: ''
-    }
-  ]
+  return buildDefaultFormResultBlocks(siteId, FORM_THANK_YOU_PAGE_ID, FORM_THANK_YOU_PRESET_BLOCKS)
 }
 
 function getDefaultFormDisqualifiedBlocks(siteId) {
-  return [
-    {
-      id: 'default-disqualified-title',
-      siteId,
-      blockType: 'title',
-      label: 'Título',
-      content: 'Gracias por responder',
-      placeholder: '',
-      required: false,
-      options: [],
-      settings: { pageId: FORM_DISQUALIFIED_PAGE_ID },
-      sortOrder: 0,
-      createdAt: '',
-      updatedAt: ''
-    },
-    {
-      id: 'default-disqualified-subtitle',
-      siteId,
-      blockType: 'subtitle',
-      label: 'Subtítulo',
-      content: 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo después.',
-      placeholder: '',
-      required: false,
-      options: [],
-      settings: { pageId: FORM_DISQUALIFIED_PAGE_ID },
-      sortOrder: 1,
-      createdAt: '',
-      updatedAt: ''
-    }
-  ]
+  return buildDefaultFormResultBlocks(siteId, FORM_DISQUALIFIED_PAGE_ID, FORM_DISQUALIFIED_PRESET_BLOCKS)
 }
 
 function getInteractiveFormBlocks(site) {

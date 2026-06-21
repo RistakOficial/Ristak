@@ -53,6 +53,29 @@ async function createTemplateSite(siteType, template, prefix) {
   })
 }
 
+function getSortedPageBlocks(site, pageId) {
+  return (site.blocks || [])
+    .filter(block => block.settings?.pageId === pageId)
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
+}
+
+function assertStandardFormResultPagePresets(site) {
+  const thankYouBlocks = getSortedPageBlocks(site, 'page-2')
+  const disqualifiedBlocks = getSortedPageBlocks(site, 'page-3')
+
+  assert.deepEqual(thankYouBlocks.map(block => block.blockType), ['image', 'title', 'subtitle', 'text'])
+  assert.equal(thankYouBlocks[1].content, 'Gracias por terminar el formulario')
+  assert.equal(thankYouBlocks[2].content, 'Recibimos tu información correctamente.')
+  assert.equal(thankYouBlocks[3].content, 'Nos pondremos en contacto contigo pronto para darte el siguiente paso.')
+  assert.match(thankYouBlocks[0].settings?.mediaUrl || '', /^data:image\/svg\+xml,/)
+
+  assert.deepEqual(disqualifiedBlocks.map(block => block.blockType), ['image', 'title', 'subtitle', 'text'])
+  assert.equal(disqualifiedBlocks[1].content, 'Lo sentimos')
+  assert.equal(disqualifiedBlocks[2].content, 'Por el momento no te podemos ayudar.')
+  assert.equal(disqualifiedBlocks[3].content, 'Gracias por tomarte el tiempo de responder. Si algo cambia o tienes más información, puedes volver a intentarlo más adelante.')
+  assert.match(disqualifiedBlocks[0].settings?.mediaUrl || '', /^data:image\/svg\+xml,/)
+}
+
 async function assertTemplateCreatesRenderableSite(siteType, template, expected, prefix) {
   let site
   try {
@@ -83,6 +106,36 @@ test('template library creates polished landing defaults for every landing templ
 test('template library creates polished standard form defaults for every form template', async () => {
   for (const { template, expected } of STANDARD_FORM_TEMPLATES) {
     await assertTemplateCreatesRenderableSite('standard_form', template, expected, 'form-template')
+  }
+})
+
+test('standard form templates include editable result page presets', async () => {
+  for (const { template } of STANDARD_FORM_TEMPLATES) {
+    let site
+    try {
+      site = await createTemplateSite('standard_form', template, 'form-results-template')
+      assertStandardFormResultPagePresets(site)
+    } finally {
+      if (site?.id) await deleteSite(site.id).catch(() => undefined)
+    }
+  }
+})
+
+test('blank standard forms include editable result page presets', async () => {
+  let site
+  try {
+    site = await createSite({
+      name: 'Formulario en blanco con resultados',
+      slug: uniqueSlug('form-blank-results', 'compact'),
+      siteType: 'standard_form',
+      status: 'draft',
+      blankCanvas: true
+    })
+
+    assertStandardFormResultPagePresets(site)
+    assert.equal(getSortedPageBlocks(site, 'page-1').length, 0)
+  } finally {
+    if (site?.id) await deleteSite(site.id).catch(() => undefined)
   }
 })
 
