@@ -747,21 +747,22 @@
   gap: 14px;
 }
 
-.conversionControl {
+.conversionControl,
+.activeControl {
   display: inline-flex;
   align-items: center;
   gap: 9px;
   height: 34px;
   padding: 0 12px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.05);
+  background: var(--surface);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.conversionControlActive {
-  border-color: rgba(148, 163, 184, 0.2);
-  background: rgba(148, 163, 184, 0.045);
+.conversionControlActive,
+.activeControlActive {
+  border-color: var(--border-strong);
 }
 
 .rowActionColumn {
@@ -880,6 +881,13 @@
 }
 
 .editorSectionHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sectionHeaderText {
   display: grid;
   gap: 5px;
   min-width: 0;
@@ -897,6 +905,24 @@
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.45;
+}
+
+/* Número de paso: guía al usuario a seguir el orden de configuración. */
+.editorSectionHeader .stepIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 .editorFields {
@@ -1173,11 +1199,116 @@
 }
 
 .lookBusyPercent {
-  gap: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  color: var(--text-mute);
+  font-size: 13px;
 }
 
 .lookBusyPercent input {
-  width: 86px;
+  width: 72px;
+}
+
+/* ===== Switch dentro de la configuración (conversión, ocultar horarios) ===== */
+.switchField {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.switchFieldText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.switchFieldText strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.switchFieldText span {
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ===== Campo de texto con variables alineado al input estándar =====
+   Mismos tokens que el skin global de controles nativos (--design-control-*),
+   para que "Título de la cita" y "Notas" se vean idénticos a los demás campos y
+   sigan siendo visibles en Onyx (nunca fondo --bg/transparent). */
+.templateField :global([data-automation-interactive='true']) {
+  border: 1px solid var(--design-control-border);
+  border-radius: var(--design-control-radius);
+  background: var(--design-control-bg);
+}
+
+.templateField :global([data-automation-interactive='true']:focus-within) {
+  border-color: var(--color-primary);
+}
+
+.templateField :global([role='textbox']) {
+  font-size: var(--font-size-base);
+}
+
+.templateField:not(.templateFieldMultiline) :global([role='textbox']) {
+  min-height: 40px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+/* ===== Ajustes avanzados (colapsable) ===== */
+.advancedSection {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.advancedSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.advancedSummary::-webkit-details-marker {
+  display: none;
+}
+
+.advancedChevron {
+  flex: 0 0 auto;
+  color: var(--text-mute);
+  transition: transform 0.16s ease;
+}
+
+.advancedSection[open] .advancedChevron {
+  transform: rotate(180deg);
+}
+
+.advancedSection[open] .advancedSummary {
+  border-bottom: 1px solid var(--border);
+}
+
+.advancedSection .editorFields {
+  padding: 16px;
 }
 
 .editorFooter {
@@ -1194,7 +1325,7 @@
 
 .createTimingGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -2082,6 +2213,10 @@
   }
 
   .editorFields {
+    grid-template-columns: 1fr;
+  }
+
+  .createTimingGrid {
     grid-template-columns: 1fr;
   }
 

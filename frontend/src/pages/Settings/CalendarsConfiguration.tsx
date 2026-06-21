@@ -896,6 +896,30 @@ export const CalendarsConfiguration: React.FC = () => {
     }
   }
 
+  // Activar/pausar un calendario directamente desde la franja (guardado al
+  // instante). Mantiene en sync el editor abierto si es el mismo calendario.
+  const [togglingActiveId, setTogglingActiveId] = useState<string | null>(null)
+  const handleToggleCalendarActive = async (calendar: CalendarType) => {
+    const nextActive = !calendar.isActive
+    setTogglingActiveId(calendar.id)
+    try {
+      await calendarsService.updateCalendar(calendar.id, { isActive: nextActive }, accessToken || undefined)
+      setCalendars(prev => prev.map(item => item.id === calendar.id ? { ...item, isActive: nextActive } : item))
+      setSelectedCalendar(prev => prev && prev.id === calendar.id ? { ...prev, isActive: nextActive } : prev)
+      showToast(
+        'success',
+        nextActive ? 'Calendario disponible' : 'Calendario pausado',
+        nextActive
+          ? `${calendar.name} ya puede recibir citas.`
+          : `${calendar.name} dejó de aceptar nuevas citas.`
+      )
+    } catch (error: any) {
+      showToast('error', 'No se pudo actualizar', error.message || 'Intenta nuevamente')
+    } finally {
+      setTogglingActiveId(null)
+    }
+  }
+
   const handleCalendarPushEnabledToggle = async () => {
     try {
       await setCalendarPushEnabled(!calendarPushEnabled)
@@ -1225,7 +1249,7 @@ export const CalendarsConfiguration: React.FC = () => {
     help: string
     multiline?: boolean
   }) => (
-    <div className={pageStyles.editorField}>
+    <div className={`${pageStyles.editorField} ${pageStyles.templateField} ${multiline ? pageStyles.templateFieldMultiline : ''}`}>
       <span id={`${id}-label`}>{label}</span>
       <FlowVariablesContext.Provider value={calendarTemplateVariableCatalog}>
         {multiline ? (
@@ -1260,14 +1284,43 @@ export const CalendarsConfiguration: React.FC = () => {
       flushContent
     >
       <div className={pageStyles.createCalendarForm} data-modal-panel="">
-        <div className={styles.formField}>
-          <label className={styles.label}>Nombre del calendario</label>
+        <label className={pageStyles.editorField}>
+          <span>Nombre del calendario</span>
           <input
             className={styles.input}
             value={newCalendar.name || ''}
             onChange={(e) => setNewCalendar({ ...newCalendar, name: e.target.value, eventTitle: newCalendar.eventTitle || e.target.value })}
-            placeholder="Ej. Consultas de ventas"
+            placeholder="Ej. Mi calendario"
           />
+        </label>
+
+        <div className={pageStyles.createTimingGrid}>
+          <label className={pageStyles.editorField}>
+            <span>Duración de la cita</span>
+            <NumberInput
+              className={styles.input}
+              value={newCalendar.slotDuration || 60}
+              min="1"
+              onValueChange={(value) => setNewCalendar({ ...newCalendar, slotDuration: Math.trunc(value) || 60 })}
+            />
+          </label>
+          <label className={pageStyles.editorField}>
+            <span>Cada cuánto empieza una cita</span>
+            <NumberInput
+              className={styles.input}
+              value={newCalendar.slotInterval || 60}
+              min="1"
+              onValueChange={(value) => setNewCalendar({ ...newCalendar, slotInterval: Math.trunc(value) || 60 })}
+            />
+          </label>
+        </div>
+
+        <div className={pageStyles.editorField}>
+          <span>Color del calendario</span>
+          {renderCalendarColorPicker(
+            newCalendar.eventColor,
+            (nextColor) => setNewCalendar({ ...newCalendar, eventColor: nextColor })
+          )}
         </div>
 
         {renderCalendarTemplateField({
@@ -1278,35 +1331,6 @@ export const CalendarsConfiguration: React.FC = () => {
           placeholder: 'Ej. Cita con {{contact.full_name}}',
           help: 'Este texto será el título de cada cita nueva.'
         })}
-
-        <div className={pageStyles.createTimingGrid}>
-          <div className={styles.formField}>
-            <label className={styles.label}>Cuánto dura la cita</label>
-            <NumberInput
-              className={styles.input}
-              value={newCalendar.slotDuration || 60}
-              min="1"
-              onValueChange={(value) => setNewCalendar({ ...newCalendar, slotDuration: Math.trunc(value) || 60 })}
-            />
-          </div>
-          <div className={styles.formField}>
-            <label className={styles.label}>Cada cuánto mostrar horarios</label>
-            <NumberInput
-              className={styles.input}
-              value={newCalendar.slotInterval || 60}
-              min="1"
-              onValueChange={(value) => setNewCalendar({ ...newCalendar, slotInterval: Math.trunc(value) || 60 })}
-            />
-          </div>
-        </div>
-
-        <div className={styles.formField}>
-          <label className={styles.label}>Color del calendario</label>
-          {renderCalendarColorPicker(
-            newCalendar.eventColor,
-            (nextColor) => setNewCalendar({ ...newCalendar, eventColor: nextColor })
-          )}
-        </div>
 
         {renderCalendarTemplateField({
           id: 'new-calendar-notes',
@@ -1415,7 +1439,7 @@ export const CalendarsConfiguration: React.FC = () => {
           <div className={pageStyles.mergeCalendarStack}>
             <div className={pageStyles.defaultPromptCalendar}>
               <strong>
-                {googleMergePrompt.sourceCalendars.map((calendar) => calendar.name).join(', ') || 'Calendario Ristak'}
+                {googleMergePrompt.sourceCalendars.map((calendar) => calendar.name).join(', ') || 'Mi calendario'}
               </strong>
               <span>{googleMergePrompt.totalAppointments} cita{googleMergePrompt.totalAppointments === 1 ? '' : 's'} existente{googleMergePrompt.totalAppointments === 1 ? '' : 's'}</span>
             </div>
@@ -1426,11 +1450,11 @@ export const CalendarsConfiguration: React.FC = () => {
             </div>
           </div>
           <p>
-            Ejemplo: las citas de Calendario Ristak se moverán al calendario de Google conectado.
+            Ejemplo: las citas de tu calendario se moverán al calendario de Google conectado.
             Desde ese momento todo queda en un mismo calendario y las nuevas citas se crearán en Google Calendar.
           </p>
           <p>
-            Si eliges que no, Calendario Ristak y Google Calendar se quedan separados.
+            Si eliges que no, tu calendario y Google Calendar se quedan separados.
           </p>
         </div>
         <div className={pageStyles.defaultPromptActions}>
@@ -1586,6 +1610,7 @@ export const CalendarsConfiguration: React.FC = () => {
       })
     }
 
+    const isAttributed = attributionCalendarIds.includes(calendar.id)
     const showGoogleSyncSettings = Boolean(googleIntegration?.connected && calendar.source !== 'google')
     const isCentralGoogleOAuth = googleIntegration?.connectionMode === 'oauth'
     const currentGoogleCalendarId = selectedCalendar.googleCalendarId || ''
@@ -1641,8 +1666,11 @@ export const CalendarsConfiguration: React.FC = () => {
         <div className={pageStyles.editorSections}>
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Lo básico</strong>
-              <span>Cómo se llama el calendario y cómo se van a ver sus citas.</span>
+              <span className={pageStyles.stepIndex}>1</span>
+              <div className={pageStyles.sectionHeaderText}>
+                <strong>Nombre y color</strong>
+                <span>Cómo se llama el calendario y de qué color se verán sus citas.</span>
+              </div>
             </div>
             <div className={pageStyles.editorFields}>
               <label className={pageStyles.editorField}>
@@ -1651,17 +1679,9 @@ export const CalendarsConfiguration: React.FC = () => {
                   className={styles.input}
                   value={selectedCalendar.name || ''}
                   onChange={(event) => updateSelectedCalendar({ name: event.target.value })}
+                  placeholder="Ej. Mi calendario"
                 />
               </label>
-
-              {renderCalendarTemplateField({
-                id: `calendar-event-title-${calendar.id}`,
-                label: 'Título de la cita',
-                value: selectedCalendar.eventTitle || '',
-                onChange: (nextValue) => updateSelectedCalendar({ eventTitle: nextValue }),
-                placeholder: 'Ej. Cita con {{contact.full_name}}',
-                help: 'Este texto será el título de cada cita nueva. Puedes meter parámetros.'
-              })}
 
               <div className={pageStyles.editorField}>
                 <span>Color del calendario</span>
@@ -1671,35 +1691,20 @@ export const CalendarsConfiguration: React.FC = () => {
                   true
                 )}
               </div>
-
-              <div className={pageStyles.editorField}>
-                <span>Disponible para agendar</span>
-                <div className={styles.toggleContainer}>
-                  <button
-                    type="button"
-                    className={`${styles.toggle} ${selectedCalendar.isActive ? styles.toggleActive : ''}`}
-                    onClick={() => updateSelectedCalendar({ isActive: !selectedCalendar.isActive })}
-                    aria-pressed={selectedCalendar.isActive}
-                    aria-label={selectedCalendar.isActive ? 'Desactivar calendario' : 'Activar calendario'}
-                  >
-                    <span className={styles.toggleThumb} />
-                  </button>
-                  <span className={`${styles.toggleLabel} ${selectedCalendar.isActive ? styles.toggleLabelActive : ''}`}>
-                    {selectedCalendar.isActive ? 'Sí, activo' : 'No, pausado'}
-                  </span>
-                </div>
-              </div>
             </div>
           </section>
 
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Tiempos de cita</strong>
-              <span>Cuánto dura cada cita y cada cuánto se muestran horarios.</span>
+              <span className={pageStyles.stepIndex}>2</span>
+              <div className={pageStyles.sectionHeaderText}>
+                <strong>¿Cuánto dura una cita?</strong>
+                <span>El tiempo que ocupa cada cita y cada cuánto empieza una nueva.</span>
+              </div>
             </div>
             <div className={pageStyles.editorFields}>
               <label className={pageStyles.editorField}>
-                <span>Cuánto dura la cita</span>
+                <span>Duración de la cita</span>
                 <div className={pageStyles.inlineFieldGroup}>
                   <NumberInput
                     className={styles.input}
@@ -1716,10 +1721,11 @@ export const CalendarsConfiguration: React.FC = () => {
                     ]}
                   />
                 </div>
+                <small>Ejemplo: 60 minutos por cada cita.</small>
               </label>
 
               <label className={pageStyles.editorField}>
-                <span>Cada cuánto mostrar horarios</span>
+                <span>Cada cuánto empieza una cita</span>
                 <div className={pageStyles.inlineFieldGroup}>
                   <NumberInput
                     className={styles.input}
@@ -1736,33 +1742,22 @@ export const CalendarsConfiguration: React.FC = () => {
                     ]}
                   />
                 </div>
-              </label>
-
-              <label className={pageStyles.editorField}>
-                <span>Qué horarios usar</span>
-                <CustomSelect
-                  value={selectedCalendar.availabilityType !== undefined ? String(selectedCalendar.availabilityType) : ''}
-                  onValueChange={(value) => updateSelectedCalendar({
-                    availabilityType: value === '' ? undefined : parseInt(value, 10)
-                  })}
-                  options={[
-                    { value: '', label: 'Horarios abiertos y horarios especiales' },
-                    { value: '0', label: 'Solo horarios abiertos' },
-                    { value: '1', label: 'Solo horarios especiales' }
-                  ]}
-                />
+                <small>Define cada cuánto aparece un horario para reservar.</small>
               </label>
             </div>
           </section>
 
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Reglas para agendar</strong>
-              <span>Cuánto antes pueden agendar y cuántas citas permites.</span>
+              <span className={pageStyles.stepIndex}>3</span>
+              <div className={pageStyles.sectionHeaderText}>
+                <strong>¿Cuándo pueden agendar?</strong>
+                <span>Con cuánta anticipación y hasta qué tan lejos se puede reservar.</span>
+              </div>
             </div>
             <div className={pageStyles.editorFields}>
               <label className={pageStyles.editorField}>
-                <span>Tiempo mínimo antes de la cita</span>
+                <span>Anticipación mínima</span>
                 <div className={pageStyles.inlineFieldGroup}>
                   <NumberInput
                     className={styles.input}
@@ -1781,6 +1776,7 @@ export const CalendarsConfiguration: React.FC = () => {
                     ]}
                   />
                 </div>
+                <small>Tiempo mínimo que debe pasar antes de poder agendar una cita.</small>
               </label>
 
               <label className={pageStyles.editorField}>
@@ -1802,16 +1798,29 @@ export const CalendarsConfiguration: React.FC = () => {
                     ]}
                   />
                 </div>
+                <small>Qué tan lejos en el futuro se pueden reservar citas.</small>
               </label>
+            </div>
+          </section>
 
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
+              <span className={pageStyles.stepIndex}>4</span>
+              <div className={pageStyles.sectionHeaderText}>
+                <strong>¿Cuántas citas aceptas?</strong>
+                <span>Cuántas personas caben en un mismo horario y cuántas citas por día.</span>
+              </div>
+            </div>
+            <div className={pageStyles.editorFields}>
               <label className={pageStyles.editorField}>
-                <span>Citas por horario</span>
+                <span>Citas al mismo tiempo</span>
                 <NumberInput
                   className={styles.input}
                   value={selectedCalendar.appoinmentPerSlot}
                   onValueChange={(value) => updateSelectedCalendar({ appoinmentPerSlot: Math.trunc(value) || 1 })}
                   min="1"
                 />
+                <small>Cuántas reservas se permiten en el mismo horario.</small>
               </label>
 
               <label className={pageStyles.editorField}>
@@ -1822,14 +1831,18 @@ export const CalendarsConfiguration: React.FC = () => {
                   onValueChange={(value) => updateSelectedCalendar({ appoinmentPerDay: Math.trunc(value) || 0 })}
                   min="0"
                 />
+                <small>Usa 0 para no poner límite por día.</small>
               </label>
             </div>
           </section>
 
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Formulario para agendar</strong>
-              <span>Elige qué preguntas aparecen después de seleccionar fecha y hora.</span>
+              <span className={pageStyles.stepIndex}>5</span>
+              <div className={pageStyles.sectionHeaderText}>
+                <strong>Formulario para agendar</strong>
+                <span>Elige qué preguntas aparecen después de seleccionar fecha y hora.</span>
+              </div>
             </div>
             <div className={pageStyles.editorFields}>
               <div className={pageStyles.editorField}>
@@ -1923,9 +1936,76 @@ export const CalendarsConfiguration: React.FC = () => {
 
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Espacios entre citas</strong>
-              <span>Tiempo libre antes/después y opción para ocultar algunos horarios.</span>
+              <span className={pageStyles.stepIndex}>6</span>
+              <div className={pageStyles.sectionHeaderText}>
+                <strong>Texto de la cita</strong>
+                <span>El título y las notas que llevará cada cita. Puedes insertar datos como el nombre del contacto.</span>
+              </div>
             </div>
+            <div className={pageStyles.editorFields}>
+              <div className={pageStyles.editorFieldWide}>
+                {renderCalendarTemplateField({
+                  id: `calendar-event-title-${calendar.id}`,
+                  label: 'Título de la cita',
+                  value: selectedCalendar.eventTitle || '',
+                  onChange: (nextValue) => updateSelectedCalendar({ eventTitle: nextValue }),
+                  placeholder: 'Ej. Cita con {{contact.full_name}}',
+                  help: 'Este texto será el título de cada cita nueva.'
+                })}
+              </div>
+              <div className={pageStyles.editorFieldWide}>
+                {renderCalendarTemplateField({
+                  id: `calendar-notes-${calendar.id}`,
+                  label: 'Notas',
+                  value: selectedCalendar.notes || '',
+                  onChange: (nextValue) => updateSelectedCalendar({ notes: nextValue }),
+                  placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
+                  help: 'Estas notas se guardan como descripción de la cita cuando el calendario esté conectado.',
+                  multiline: true
+                })}
+              </div>
+            </div>
+          </section>
+
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
+              <span className={pageStyles.stepIndex}>7</span>
+              <div className={pageStyles.sectionHeaderText}>
+                <strong>Conversión</strong>
+                <span>Marca este calendario si sus citas deben contar como conversión en reportes, campañas y eventos de Meta/WhatsApp.</span>
+              </div>
+            </div>
+            <div className={pageStyles.editorFields}>
+              <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                <div className={pageStyles.switchField}>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${isAttributed ? styles.toggleActive : ''}`}
+                    onClick={() => handleAttributionToggle(calendar.id)}
+                    aria-pressed={isAttributed}
+                    aria-label={`Conversión para ${calendar.name}`}
+                  >
+                    <span className={styles.toggleThumb} />
+                  </button>
+                  <div className={pageStyles.switchFieldText}>
+                    <strong>Cuenta como conversión</strong>
+                    <span>{isAttributed
+                      ? 'Las citas de este calendario sí cuentan como conversión.'
+                      : 'Las citas de este calendario no cuentan como conversión.'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <details className={pageStyles.advancedSection}>
+            <summary className={pageStyles.advancedSummary}>
+              <div className={pageStyles.sectionHeaderText}>
+                <strong>Ajustes avanzados</strong>
+                <span>Tiempo de descanso entre citas, qué horarios usar y ocultar disponibilidad. Opcional.</span>
+              </div>
+              <ChevronDown size={16} className={pageStyles.advancedChevron} />
+            </summary>
             <div className={pageStyles.editorFields}>
               <label className={pageStyles.editorField}>
                 <span>Tiempo libre antes</span>
@@ -1945,6 +2025,7 @@ export const CalendarsConfiguration: React.FC = () => {
                     ]}
                   />
                 </div>
+                <small>Descanso reservado antes de cada cita.</small>
               </label>
 
               <label className={pageStyles.editorField}>
@@ -1965,28 +2046,46 @@ export const CalendarsConfiguration: React.FC = () => {
                     ]}
                   />
                 </div>
+                <small>Descanso reservado después de cada cita.</small>
               </label>
 
-              <div className={pageStyles.editorField}>
-                <span>Ocultar horarios al azar</span>
-                <div className={pageStyles.lookBusyRow}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={selectedCalendar.lookBusyConfig?.enabled || false}
-                      onChange={(event) => updateSelectedCalendar({
-                        lookBusyConfig: {
-                          enabled: event.target.checked,
-                          LookBusyPercentage: selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0
-                        }
-                      })}
-                    />
-                    Sí, ocultar algunos horarios
-                  </label>
+              <label className={pageStyles.editorField}>
+                <span>Qué horarios usar</span>
+                <CustomSelect
+                  value={selectedCalendar.availabilityType !== undefined ? String(selectedCalendar.availabilityType) : ''}
+                  onValueChange={(value) => updateSelectedCalendar({
+                    availabilityType: value === '' ? undefined : parseInt(value, 10)
+                  })}
+                  options={[
+                    { value: '', label: 'Horarios abiertos y horarios especiales' },
+                    { value: '0', label: 'Solo horarios abiertos' },
+                    { value: '1', label: 'Solo horarios especiales' }
+                  ]}
+                />
+              </label>
 
+              <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                <div className={pageStyles.switchField}>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${selectedCalendar.lookBusyConfig?.enabled ? styles.toggleActive : ''}`}
+                    onClick={() => updateSelectedCalendar({
+                      lookBusyConfig: {
+                        enabled: !selectedCalendar.lookBusyConfig?.enabled,
+                        LookBusyPercentage: selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0
+                      }
+                    })}
+                    aria-pressed={Boolean(selectedCalendar.lookBusyConfig?.enabled)}
+                    aria-label="Ocultar horarios al azar"
+                  >
+                    <span className={styles.toggleThumb} />
+                  </button>
+                  <div className={pageStyles.switchFieldText}>
+                    <strong>Mostrar el calendario más ocupado</strong>
+                    <span>Oculta algunos horarios libres al azar para que se vea con más demanda.</span>
+                  </div>
                   {selectedCalendar.lookBusyConfig?.enabled && (
                     <label className={pageStyles.lookBusyPercent}>
-                      <span>Ocultar</span>
                       <NumberInput
                         className={styles.input}
                         value={selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0}
@@ -2005,33 +2104,15 @@ export const CalendarsConfiguration: React.FC = () => {
                 </div>
               </div>
             </div>
-          </section>
-
-          <section className={pageStyles.editorSection}>
-            <div className={pageStyles.editorSectionHeader}>
-              <strong>Notas</strong>
-              <span>Texto interno que acompaña cada cita y puede usar parámetros.</span>
-            </div>
-            <div className={pageStyles.editorFields}>
-              <div className={pageStyles.editorFieldWide}>
-                {renderCalendarTemplateField({
-                  id: `calendar-notes-${calendar.id}`,
-                  label: 'Notas',
-                  value: selectedCalendar.notes || '',
-                  onChange: (nextValue) => updateSelectedCalendar({ notes: nextValue }),
-                  placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
-                  help: 'Estas notas se guardan como descripción de la cita cuando el calendario esté conectado.',
-                  multiline: true
-                })}
-              </div>
-            </div>
-          </section>
+          </details>
 
           {showGoogleSyncSettings && (
             <section className={pageStyles.editorSection}>
               <div className={pageStyles.editorSectionHeader}>
-                <strong>Conexión bidireccional</strong>
-                <span>Elige dónde se guardan y actualizan las citas de este calendario.</span>
+                <div className={pageStyles.sectionHeaderText}>
+                  <strong>Sincronización con Google</strong>
+                  <span>Elige dónde se guardan y actualizan las citas de este calendario.</span>
+                </div>
               </div>
               <div className={pageStyles.editorFields}>
                 <div className={pageStyles.editorField}>
@@ -2247,7 +2328,6 @@ export const CalendarsConfiguration: React.FC = () => {
   ) : null
 
   const renderCalendarRow = (calendar: CalendarType) => {
-    const isAttributed = attributionCalendarIds.includes(calendar.id)
     const isDefault = defaultCalendarId === calendar.id
     const isExpanded = expandedCalendarId === calendar.id
     const handleRowClick = (event: React.MouseEvent<HTMLElement>) => {
@@ -2282,7 +2362,6 @@ export const CalendarsConfiguration: React.FC = () => {
               <div className={pageStyles.calendarMeta}>
                 <span>{calendar.slotDuration} {calendar.slotDurationUnit}</span>
                 <span>Cada {calendar.slotInterval} {calendar.slotIntervalUnit}</span>
-                <span>{calendar.isActive ? 'Activo' : 'Inactivo'}</span>
                 {calendar.googleCalendarId && (
                   <span>Google: {calendar.googleCalendarSummary || calendar.googleCalendarId}</span>
                 )}
@@ -2291,17 +2370,18 @@ export const CalendarsConfiguration: React.FC = () => {
           </div>
 
           <div className={pageStyles.calendarActions} onClick={(event) => event.stopPropagation()}>
-            <div className={`${pageStyles.conversionControl} ${isAttributed ? pageStyles.conversionControlActive : ''}`}>
-              <span className={`${styles.toggleLabel} ${isAttributed ? styles.toggleLabelActive : ''}`}>
-                Conversión
+            <div className={`${pageStyles.activeControl} ${calendar.isActive ? pageStyles.activeControlActive : ''}`}>
+              <span className={`${styles.toggleLabel} ${calendar.isActive ? styles.toggleLabelActive : ''}`}>
+                {calendar.isActive ? 'Activo' : 'Pausado'}
               </span>
               <button
                 type="button"
-                className={`${styles.toggle} ${isAttributed ? styles.toggleActive : ''}`}
-                onClick={() => handleAttributionToggle(calendar.id)}
-                aria-pressed={isAttributed}
-                aria-label={`Conversión para ${calendar.name}`}
-                title="Cuenta como conversión"
+                className={`${styles.toggle} ${calendar.isActive ? styles.toggleActive : ''}`}
+                onClick={() => handleToggleCalendarActive(calendar)}
+                disabled={togglingActiveId === calendar.id}
+                aria-pressed={calendar.isActive}
+                aria-label={calendar.isActive ? `Pausar ${calendar.name}` : `Activar ${calendar.name}`}
+                title="Disponible para agendar"
               >
                 <span className={styles.toggleThumb} />
               </button>

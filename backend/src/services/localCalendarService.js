@@ -658,7 +658,7 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
   const ghlCalendarId = cleanString(options.ghlCalendarId || calendar.ghlCalendarId || calendar.ghl_calendar_id || (source === 'ghl' ? calendar.id : '')) || null
   const id = cleanString(options.id || calendar.localId || calendar.local_id || calendar.ristakCalendarId || calendar.id) ||
     makeId(LOCAL_CALENDAR_PREFIX)
-  const name = cleanString(calendar.name || calendar.title || calendar.calendarName || 'Calendario Ristak')
+  const name = cleanString(calendar.name || calendar.title || calendar.calendarName || 'Mi calendario')
   const slotDuration = toInt(calendar.slotDuration ?? calendar.slot_duration, 60)
 
   const rawJson = getCalendarRawJsonWithBookingForm(calendar, options)
@@ -1864,11 +1864,20 @@ export async function deleteLocalCalendar(calendarId) {
 }
 
 export async function ensureDefaultLocalCalendar() {
+  // El calendario semilla histórico se llamaba "Calendario Ristak". El usuario
+  // lo conoce como "Mi calendario", así que lo renombramos una sola vez (es
+  // idempotente: tras el rename ya no coincide). El slug se conserva, por lo que
+  // la detección de calendario semilla por slug/descripción sigue funcionando.
+  await db.run(
+    "UPDATE calendars SET name = ? WHERE LOWER(TRIM(name)) = ? AND id LIKE ?",
+    ['Mi calendario', DEFAULT_RISTAK_CALENDAR_NAME, `${LOCAL_CALENDAR_PREFIX}%`]
+  )
+
   const existing = await db.get('SELECT * FROM calendars LIMIT 1')
   if (existing) return calendarRowToApi(existing)
 
   return createLocalCalendar({
-    name: 'Calendario Ristak',
+    name: 'Mi calendario',
     description: 'Calendario principal creado en Ristak',
     eventTitle: 'Cita',
     calendarType: 'event',

@@ -1146,7 +1146,9 @@ async function getRistakCalendarsWithActiveAppointments() {
       CASE WHEN c.id = ? THEN 0 ELSE 1 END,
       CASE
         WHEN LOWER(COALESCE(c.name, '')) LIKE '%calendario ristak%' THEN 0
+        WHEN LOWER(COALESCE(c.name, '')) = 'mi calendario' THEN 0
         WHEN LOWER(COALESCE(c.slug, '')) = 'calendario-ristak' THEN 0
+        WHEN LOWER(COALESCE(c.slug, '')) = 'mi-calendario' THEN 0
         ELSE 1
       END,
       LOWER(COALESCE(c.name, '')) ASC
