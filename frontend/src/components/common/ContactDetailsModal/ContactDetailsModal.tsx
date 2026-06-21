@@ -1,5 +1,5 @@
 import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
-import { Bot, CheckCheck, CircleAlert, Clock, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
+import { CheckCheck, CircleAlert, Clock, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
 import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
 import {
   Modal,
@@ -1796,11 +1796,16 @@ export function ContactDetailsModal({
       </span>
       <span className={styles.contactChatAgentSummaryBody}>
         <span className={styles.contactChatAgentSummaryHeader}>
-          <strong>{completion.title}</strong>
+          <span className={styles.contactChatAgentSummaryTitle}>
+            <span className={styles.contactChatAgentSummarySignal} aria-hidden="true">{completion.icon}</span>
+            <strong>{completion.title}</strong>
+          </span>
           <small>{getChatTimeLabel(completion.createdAt, timezone)}</small>
         </span>
-        <p>{completion.summary}</p>
-        {completion.reason && completion.reason !== completion.summary ? <em>{completion.reason}</em> : null}
+        <p className={styles.contactChatAgentSummaryAction}>{completion.actionSummary}</p>
+        {completion.summary && completion.summary !== completion.actionSummary ? (
+          <p className={styles.contactChatAgentSummaryText}><strong>Resumen:</strong> {completion.summary}</p>
+        ) : null}
       </span>
     </article>
   )
@@ -2776,11 +2781,11 @@ export function ContactDetailsModal({
                         {agentCompletionEvents.map((completion) => (
                           <li key={completion.id} className={styles.agentHistoryItem}>
                             <span className={styles.agentHistoryIcon}>
-                              <Bot size={15} />
+                              {completion.icon}
                             </span>
                             <div>
                               <strong>{completion.title}</strong>
-                              <p>{completion.summary}</p>
+                              <p>{completion.actionSummary}</p>
                               <small>{formatLocalDateTime(completion.createdAt)}</small>
                             </div>
                           </li>

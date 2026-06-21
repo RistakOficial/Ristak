@@ -1112,6 +1112,26 @@
   min-width: 0;
 }
 
+.agentCompletionTitle {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.agentCompletionSignalIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  font-size: 13px;
+  line-height: 1;
+}
+
 .agentCompletionHeader strong {
   overflow: hidden;
   color: var(--text);
@@ -1134,7 +1154,23 @@
   font-size: var(--font-size-sm);
   line-height: 1.45;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+}
+
+.agentCompletionAction {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.agentCompletionSummary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.agentCompletionSummary strong {
+  color: var(--text);
+  font-weight: 650;
 }
 
 .messageMeta {
@@ -2683,12 +2719,20 @@
   color: var(--text-mute);
 }
 
-.agentHistoryItem svg {
+.agentHistoryItem > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-top: 2px;
-  color: var(--accent);
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  font-size: 12px;
+  line-height: 1;
 }
 
-.agentHistoryItem span {
+.agentHistoryItem > span:last-child {
   display: grid;
   gap: 3px;
   min-width: 0;

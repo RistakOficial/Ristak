@@ -4959,12 +4959,15 @@ export const DesktopChat: React.FC = () => {
       </span>
       <div className={styles.agentCompletionBody}>
         <span className={styles.agentCompletionHeader}>
-          <strong>{completion.title}</strong>
+          <span className={styles.agentCompletionTitle}>
+            <span className={styles.agentCompletionSignalIcon} aria-hidden="true">{completion.icon}</span>
+            <strong>{completion.title}</strong>
+          </span>
           <small>{formatLocalDateTime(completion.createdAt)}</small>
         </span>
-        <p>{completion.summary}</p>
-        {completion.reason && completion.reason !== completion.summary ? (
-          <small className={styles.agentCompletionReason}>{completion.reason}</small>
+        <p className={styles.agentCompletionAction}>{completion.actionSummary}</p>
+        {completion.summary && completion.summary !== completion.actionSummary ? (
+          <p className={styles.agentCompletionSummary}><strong>Resumen:</strong> {completion.summary}</p>
         ) : null}
       </div>
     </article>
@@ -5861,10 +5864,10 @@ export const DesktopChat: React.FC = () => {
                             key={completion.id}
                             className={styles.agentHistoryItem}
                           >
-                            <Bot size={15} />
+                            <span aria-hidden="true">{completion.icon}</span>
                             <span>
                               <strong>{completion.title}</strong>
-                              <small>{completion.summary}</small>
+                              <small>{completion.actionSummary}</small>
                               <em>{formatLocalDateTime(completion.createdAt)}</em>
                             </span>
                           </div>

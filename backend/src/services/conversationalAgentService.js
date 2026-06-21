@@ -316,50 +316,143 @@ function hasAdvancedClosingContext(context = {}) {
   return ADVANCED_CLOSING_CONTEXT_FIELDS.some((field) => Boolean(context?.[field.key]))
 }
 
-function addCompletionSummaryPart(parts, seen, label, value, maxLength = 320) {
-  const clean = cleanAdvancedClosingContextValue(value, maxLength)
-  if (!clean) return
-  const key = clean.toLowerCase()
-  if (seen.has(key)) return
-  seen.add(key)
-  parts.push(`${label}: ${clean}`)
+function compactText(value, maxLength = 280) {
+  const clean = cleanAdvancedClosingContextValue(value, Math.max(maxLength + 40, maxLength))
+  if (!clean || clean.length <= maxLength) return clean
+  const truncated = clean.slice(0, Math.max(0, maxLength - 1)).trim()
+  return `${truncated.replace(/[.,;:!?-]+$/g, '')}…`
 }
 
-function buildCompletionSummaryFromClosingContext({ signal, summary = '', reason = '', closingContext = {} } = {}) {
+function formatHumanDateTimeFromSummary(summary, timezone = 'America/Mexico_City') {
+  const match = String(summary || '').match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/)
+  if (!match) return ''
+  const date = new Date(match[0])
+  if (Number.isNaN(date.getTime())) return ''
+
+  try {
+    const parts = new Intl.DateTimeFormat('es-MX', {
+      timeZone: timezone,
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    }).formatToParts(date)
+    const get = (type) => parts.find((part) => part.type === type)?.value || ''
+    const weekday = get('weekday')
+    const day = get('day')
+    const month = get('month')
+    const hour = get('hour')
+    const minute = get('minute')
+    const dayPeriod = get('dayPeriod').replace(/\s+/g, '').toLowerCase()
+    if (!day || !month || !hour || !minute) return ''
+    const clock = minute === '00' ? `${hour} ${dayPeriod}` : `${hour}:${minute} ${dayPeriod}`
+    return `el ${weekday ? `${weekday} ` : ''}${day} de ${month} a las ${clock}`
+  } catch {
+    return ''
+  }
+}
+
+function formatCompactMoney(amount, currency = '') {
+  const numeric = Number(amount)
+  const cleanCurrency = String(currency || '').trim().toUpperCase()
+  if (!Number.isFinite(numeric) || numeric <= 0) return ''
+  const rounded = numeric % 1 === 0 ? numeric.toFixed(0) : numeric.toFixed(2)
+  const formatted = Number(rounded).toLocaleString('es-MX')
+  return cleanCurrency ? `$${formatted} ${cleanCurrency}` : `$${formatted}`
+}
+
+function parsePaymentSummary(summary = '') {
+  const text = String(summary || '')
+  const amountMatch = text.match(/(?:^|[·\s])([0-9]+(?:[.,][0-9]+)?)\s*([A-Z]{3})?\s*$/)
+  const amount = amountMatch ? Number(amountMatch[1].replace(',', '.')) : null
+  const currency = amountMatch?.[2] || ''
+  return { amount, currency }
+}
+
+function buildCompletionActionSummary({ signal, summary = '', reason = '', closingContext = {}, timezone = 'America/Mexico_City' } = {}) {
+  const cleanSignal = String(signal || '').trim()
+  const baseSummary = cleanAdvancedClosingContextValue(summary, 500)
+  const baseReason = cleanAdvancedClosingContextValue(reason, 280)
+
+  if (cleanSignal === 'appointment_booked') {
+    const humanDate = formatHumanDateTimeFromSummary(baseSummary, timezone)
+    if (humanDate) return `Agendó cita para ${humanDate}`
+    if (closingContext.timingPreference) return `Agendó cita para ${compactText(closingContext.timingPreference, 120)}`
+    return 'Agendó una cita'
+  }
+
+  if (cleanSignal === 'purchase_completed') {
+    const { amount, currency } = parsePaymentSummary(baseSummary)
+    const money = formatCompactMoney(amount, currency)
+    return money ? `Pagó ${money}` : 'Pago completado'
+  }
+
+  if (cleanSignal === 'ready_to_buy') return 'Quedó listo para pagar'
+  if (cleanSignal === 'ready_to_schedule') return 'Quedó listo para agendar'
+  if (cleanSignal === 'ready_for_human') return baseReason || 'Objetivo concretado'
+  return baseSummary || baseReason || 'Objetivo concretado'
+}
+
+function buildCompactContextSummary({ reason = '', closingContext = {} } = {}) {
+  const normalizedContext = normalizeStoredAdvancedClosingContext(closingContext)
+  const parts = []
+  const main = normalizedContext.contactReason || normalizedContext.surfaceProblem || normalizedContext.realProblem || reason
+  if (main) parts.push(compactText(main, 180))
+  if (normalizedContext.attemptedBefore) parts.push(`Ya había intentado ${compactText(normalizedContext.attemptedBefore, 130)}`)
+  if (normalizedContext.objection) parts.push(`El freno era ${compactText(normalizedContext.objection, 130)}`)
+  if (!normalizedContext.objection && normalizedContext.impact) parts.push(`Le afectaba ${compactText(normalizedContext.impact, 130)}`)
+  if (normalizedContext.desiredOutcome) parts.push(`Buscaba ${compactText(normalizedContext.desiredOutcome, 130)}`)
+
+  const unique = []
+  const seen = new Set()
+  for (const part of parts) {
+    const clean = cleanAdvancedClosingContextValue(part, 220)
+    const key = clean.toLowerCase()
+    if (!clean || seen.has(key)) continue
+    seen.add(key)
+    unique.push(clean)
+  }
+
+  return compactText(unique.join('. '), 360)
+}
+
+function buildCompletionSummaryFromClosingContext({ signal, summary = '', reason = '', closingContext = {}, timezone = 'America/Mexico_City' } = {}) {
   const baseSummary = cleanAdvancedClosingContextValue(summary, 500)
   const baseReason = cleanAdvancedClosingContextValue(reason, 420)
   const normalizedContext = normalizeStoredAdvancedClosingContext(closingContext)
+  const actionSummary = buildCompletionActionSummary({ signal, summary: baseSummary, reason: baseReason, closingContext: normalizedContext, timezone })
 
   if (!CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(String(signal || '').trim()) || !hasAdvancedClosingContext(normalizedContext)) {
-    return baseSummary || baseReason
+    const cleanSignal = String(signal || '').trim()
+    const hidesTechnicalSummary = ['appointment_booked', 'purchase_completed'].includes(cleanSignal)
+    const fallbackSummary = hidesTechnicalSummary
+      ? actionSummary || baseReason || baseSummary
+      : baseSummary || baseReason || actionSummary
+    const stateSummary = [
+      actionSummary || fallbackSummary,
+      fallbackSummary && fallbackSummary !== actionSummary ? `Resumen: ${fallbackSummary}` : ''
+    ].filter(Boolean).join('\n')
+    return {
+      actionSummary: actionSummary || fallbackSummary,
+      summary: fallbackSummary,
+      stateSummary: stateSummary || fallbackSummary
+    }
   }
 
-  const parts = []
-  const seen = new Set()
-  addCompletionSummaryPart(parts, seen, 'Resultado', baseSummary || baseReason, 500)
-  addCompletionSummaryPart(parts, seen, 'Motivo', normalizedContext.contactReason)
-  addCompletionSummaryPart(parts, seen, 'Situacion', normalizedContext.surfaceProblem)
-  addCompletionSummaryPart(parts, seen, 'Por que ahora', normalizedContext.whyNow)
-  addCompletionSummaryPart(parts, seen, 'Fondo detectado', normalizedContext.realProblem)
-  addCompletionSummaryPart(parts, seen, 'Ya intento', normalizedContext.attemptedBefore)
-  addCompletionSummaryPart(parts, seen, 'Impacto', normalizedContext.impact)
-  addCompletionSummaryPart(parts, seen, 'Freno', normalizedContext.objection)
-  addCompletionSummaryPart(parts, seen, 'Quiere lograr', normalizedContext.desiredOutcome)
-  addCompletionSummaryPart(parts, seen, 'Quiere evitar', normalizedContext.scenarioToAvoid)
-  addCompletionSummaryPart(parts, seen, 'Urgencia', normalizedContext.urgencyLevel, 80)
-  addCompletionSummaryPart(parts, seen, 'Decision', normalizedContext.decisionSignal)
-  addCompletionSummaryPart(parts, seen, 'Interes', normalizedContext.productInterest)
-  addCompletionSummaryPart(parts, seen, 'Disponibilidad', normalizedContext.timingPreference)
-  addCompletionSummaryPart(parts, seen, 'Notas', normalizedContext.notes)
+  const contextSummary = buildCompactContextSummary({ reason: baseReason, closingContext: normalizedContext })
+  const summaryText = contextSummary || baseReason || actionSummary || baseSummary
+  const stateSummary = [
+    actionSummary,
+    summaryText && summaryText !== actionSummary ? `Resumen: ${summaryText}` : ''
+  ].filter(Boolean).join('\n')
 
-  let output = ''
-  for (const part of parts) {
-    const next = output ? `${output}. ${part}` : part
-    if (next.length > 1200) break
-    output = next
+  return {
+    actionSummary,
+    summary: summaryText,
+    stateSummary
   }
-
-  return output || baseSummary || baseReason
 }
 
 export function mergeAdvancedClosingContext(current = {}, patch = {}, { updatedBy = 'agent', nowIso = new Date().toISOString() } = {}) {
@@ -2835,19 +2928,22 @@ export async function setConversationSignal(contactId, signal, { reason = '', su
   await ensureConversationState(contactId)
   const currentState = await db.get('SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null)
   const closingContext = normalizeStoredAdvancedClosingContext(currentState?.closing_context_json || '{}')
-  const signalSummary = buildCompletionSummaryFromClosingContext({ signal, summary, reason, closingContext })
+  const timezone = await getAccountTimezone().catch(() => 'America/Mexico_City')
+  const completionSummary = buildCompletionSummaryFromClosingContext({ signal, summary, reason, closingContext, timezone })
   const cleanReason = String(reason || '').slice(0, 600)
-  const cleanSummary = String(signalSummary || '').slice(0, 1200)
+  const cleanActionSummary = String(completionSummary.actionSummary || '').slice(0, 360)
+  const cleanSummary = String(completionSummary.summary || '').slice(0, 700)
+  const cleanStateSummary = String(completionSummary.stateSummary || cleanSummary || cleanActionSummary).slice(0, 1200)
   await db.run(`
     UPDATE conversational_agent_state
     SET signal = ?, signal_reason = ?, signal_summary = ?, signal_at = CURRENT_TIMESTAMP,
         status = ?, updated_by = 'agent', updated_at = CURRENT_TIMESTAMP
     WHERE contact_id = ?
-  `, [signal, cleanReason, cleanSummary, status, contactId])
+  `, [signal, cleanReason, cleanStateSummary, status, contactId])
 
   const originalSummary = cleanAdvancedClosingContextValue(summary, 1200)
-  const detail = { signal, reason: cleanReason, summary: cleanSummary, status }
-  if (originalSummary && originalSummary !== cleanSummary) {
+  const detail = { signal, reason: cleanReason, summary: cleanSummary, actionSummary: cleanActionSummary, status }
+  if (originalSummary && ![cleanSummary, cleanActionSummary, cleanStateSummary].includes(originalSummary)) {
     detail.originalSummary = originalSummary
   }
   if (hasAdvancedClosingContext(closingContext)) {

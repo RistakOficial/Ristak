@@ -2954,6 +2954,8 @@
   border-radius: 999px;
   color: var(--phone-chat-text-on-primary);
   background: var(--phone-chat-primary);
+  font-size: 17px;
+  line-height: 1;
 }
 
 .contactInfoAgentHistoryItem div {
@@ -3780,6 +3782,26 @@
   min-width: 0;
 }
 
+.agentCompletionMessageTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agentCompletionMessageSignal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-chat-primary) 15%, var(--phone-chat-surface) 85%);
+  font-size: 13px;
+  line-height: 1;
+}
+
 .agentCompletionMessageHeader strong {
   overflow: hidden;
   color: var(--phone-chat-text);
@@ -3803,7 +3825,23 @@
   font-size: 14px;
   line-height: 1.32;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+}
+
+.agentCompletionMessageAction {
+  font-weight: 850;
+}
+
+.agentCompletionMessageSummary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--phone-chat-muted);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.agentCompletionMessageSummary strong {
+  color: var(--phone-chat-text);
+  font-weight: 850;
 }
 
 .messageBubble p {

@@ -643,10 +643,10 @@ test('resumen de meta concretada usa el contexto de cierre aprendido', async () 
     })
 
     const state = await getConversationState(contactId)
-    assert.match(state.signalSummary, /Motivo: Dolor en rodilla derecha/)
-    assert.match(state.signalSummary, /Por que ahora: Lleva tres semanas/)
-    assert.match(state.signalSummary, /Freno: Pensaba que se iba a quitar solo/)
-    assert.match(state.signalSummary, /Quiere lograr: Volver a entrenar sin miedo/)
+    assert.match(state.signalSummary, /Agendó cita para el jueves 25 de junio a las 11 a\.m\./)
+    assert.match(state.signalSummary, /Resumen: Dolor en rodilla derecha/)
+    assert.match(state.signalSummary, /El freno era Pensaba que se iba a quitar solo/)
+    assert.ok(state.signalSummary.length < 520)
 
     const event = await db.get(
       "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'signal_set' ORDER BY created_at DESC LIMIT 1",
@@ -655,8 +655,9 @@ test('resumen de meta concretada usa el contexto de cierre aprendido', async () 
     const detail = JSON.parse(event.detail_json)
     assert.equal(detail.signal, 'appointment_booked')
     assert.equal(detail.closingContextUsed, true)
-    assert.match(detail.summary, /Trabaja de pie/)
+    assert.match(detail.actionSummary, /Agendó cita para el jueves 25 de junio a las 11 a\.m\./)
     assert.match(detail.summary, /preocupaba el gasto/)
+    assert.ok(detail.summary.length < 380)
     assert.equal(detail.originalSummary, 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z')
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
@@ -796,7 +797,16 @@ test('confirmacion automatica de enlace de calendario confirma cita con ID real'
     const state = await db.get('SELECT status, signal, signal_summary FROM conversational_agent_state WHERE contact_id = ?', [contactId])
     assert.equal(state.status, 'completed')
     assert.equal(state.signal, 'appointment_booked')
-    assert.match(state.signal_summary, /appt_123/)
+    assert.match(state.signal_summary, /Agendó una cita/)
+    assert.doesNotMatch(state.signal_summary, /appt_123/)
+
+    const completionEvent = await db.get(
+      "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'signal_set' ORDER BY created_at DESC LIMIT 1",
+      [contactId]
+    )
+    const completionDetail = JSON.parse(completionEvent.detail_json)
+    assert.equal(completionDetail.actionSummary, 'Agendó una cita')
+    assert.equal(completionDetail.originalSummary, 'ID de cita: appt_123')
   } finally {
     await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
@@ -871,7 +881,16 @@ test('confirmacion automatica de pedido valida producto antes de cerrar venta', 
     const state = await db.get('SELECT status, signal, signal_summary FROM conversational_agent_state WHERE contact_id = ?', [contactId])
     assert.equal(state.status, 'completed')
     assert.equal(state.signal, 'purchase_completed')
-    assert.match(state.signal_summary, /purchase_123/)
+    assert.match(state.signal_summary, /Pago completado/)
+    assert.doesNotMatch(state.signal_summary, /purchase_123/)
+
+    const completionEvent = await db.get(
+      "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'signal_set' ORDER BY created_at DESC LIMIT 1",
+      [contactId]
+    )
+    const completionDetail = JSON.parse(completionEvent.detail_json)
+    assert.equal(completionDetail.actionSummary, 'Pago completado')
+    assert.equal(completionDetail.originalSummary, 'ID de compra: purchase_123')
   } finally {
     await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
@@ -944,7 +963,16 @@ test('pago exitoso de link creado por agente completa la venta conversacional', 
     const state = await getConversationState(contactId)
     assert.equal(state.status, 'completed')
     assert.equal(state.signal, 'purchase_completed')
-    assert.match(state.signalSummary, /invoice_agent_123/)
+    assert.match(state.signalSummary, /Pagó \$1,200 USD/)
+    assert.doesNotMatch(state.signalSummary, /invoice_agent_123/)
+
+    const completionEvent = await db.get(
+      "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'signal_set' ORDER BY created_at DESC LIMIT 1",
+      [contactId]
+    )
+    const completionDetail = JSON.parse(completionEvent.detail_json)
+    assert.equal(completionDetail.actionSummary, 'Pagó $1,200 USD')
+    assert.equal(completionDetail.originalSummary, 'Invoice invoice_agent_123 · 1200 USD')
 
     const event = await db.get(
       "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'payment_link_goal_completed' ORDER BY created_at DESC LIMIT 1",

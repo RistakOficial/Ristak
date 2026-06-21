@@ -9227,11 +9227,16 @@ export const PhoneChat: React.FC = () => {
         </span>
         <span className={styles.agentCompletionMessageBody}>
           <span className={styles.agentCompletionMessageHeader}>
-            <strong>{completion.title}</strong>
+            <span className={styles.agentCompletionMessageTitle}>
+              <span className={styles.agentCompletionMessageSignal} aria-hidden="true">{completion.icon}</span>
+              <strong>{completion.title}</strong>
+            </span>
             <small>{formatMessageTime(completion.createdAt)}</small>
           </span>
-          <p>{completion.summary}</p>
-          {completion.reason && completion.reason !== completion.summary ? <em>{completion.reason}</em> : null}
+          <p className={styles.agentCompletionMessageAction}>{completion.actionSummary}</p>
+          {completion.summary && completion.summary !== completion.actionSummary ? (
+            <p className={styles.agentCompletionMessageSummary}><strong>Resumen:</strong> {completion.summary}</p>
+          ) : null}
         </span>
       </article>
     </div>
@@ -10083,12 +10088,12 @@ export const PhoneChat: React.FC = () => {
                     {agentCompletionEvents.map((completion) => (
                       <article key={completion.id} className={styles.contactInfoAgentHistoryItem}>
                         <span className={styles.contactInfoAgentHistoryIcon}>
-                          <Bot size={17} />
+                          {completion.icon}
                         </span>
                         <div>
                           <strong>{completion.title}</strong>
-                          <p>{completion.summary}</p>
-                          {completion.reason && completion.reason !== completion.summary ? <small>{completion.reason}</small> : null}
+                          <p>{completion.actionSummary}</p>
+                          {completion.summary && completion.summary !== completion.actionSummary ? <small>{completion.summary}</small> : null}
                           <em>{formatLocalDateTime(completion.createdAt)}</em>
                         </div>
                       </article>
@@ -10436,8 +10441,8 @@ export const PhoneChat: React.FC = () => {
                   <strong>{agentCompletionEvents[0]?.title || 'Objetivo concretado'}</strong>
                   <small>
                     {agentCompletionEvents.length === 1
-                      ? agentCompletionEvents[0]?.summary
-                      : `${agentCompletionEvents.length} resúmenes guardados · Último: ${agentCompletionEvents[0]?.summary || 'sin detalle'}`}
+                      ? agentCompletionEvents[0]?.actionSummary
+                      : `${agentCompletionEvents.length} resúmenes guardados · Último: ${agentCompletionEvents[0]?.actionSummary || 'sin detalle'}`}
                   </small>
                 </span>
                 <span className={styles.contactInfoArchiveSummaryAction}>

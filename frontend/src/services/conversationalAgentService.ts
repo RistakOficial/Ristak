@@ -331,7 +331,9 @@ export interface ConversationalAgentCompletionEvent {
   id: string
   contactId: string | null
   signal: Exclude<ConversationSignal, 'discarded'>
+  icon: string
   title: string
+  actionSummary: string
   summary: string
   reason: string
   status: string
@@ -395,14 +397,14 @@ const VALID_CONVERSATIONAL_SUCCESS_ACTIONS = new Set<ConversationalSuccessAction
   'none'
 ])
 const VALID_CONVERSATIONAL_AI_PROVIDERS = new Set<ConversationalAIProviderId>(['openai', 'gemini', 'claude', 'deepseek'])
-const COMPLETION_SIGNAL_LABELS: Record<Exclude<ConversationSignal, 'discarded'>, string> = {
-  ready_for_human: 'Objetivo concretado',
-  ready_to_schedule: 'Listo para agendar',
-  ready_to_buy: 'Listo para cobrar',
-  appointment_booked: 'Cita agendada',
-  purchase_completed: 'Pago completado'
+const COMPLETION_SIGNAL_META: Record<Exclude<ConversationSignal, 'discarded'>, { label: string; icon: string }> = {
+  ready_for_human: { label: 'Objetivo concretado', icon: '✅' },
+  ready_to_schedule: { label: 'Listo para agendar', icon: '📅' },
+  ready_to_buy: { label: 'Listo para cobrar', icon: '💳' },
+  appointment_booked: { label: 'Cita agendada', icon: '📅' },
+  purchase_completed: { label: 'Pago completado', icon: '💰' }
 }
-const COMPLETION_SIGNAL_SET = new Set<Exclude<ConversationSignal, 'discarded'>>(Object.keys(COMPLETION_SIGNAL_LABELS) as Array<Exclude<ConversationSignal, 'discarded'>>)
+const COMPLETION_SIGNAL_SET = new Set<Exclude<ConversationSignal, 'discarded'>>(Object.keys(COMPLETION_SIGNAL_META) as Array<Exclude<ConversationSignal, 'discarded'>>)
 
 const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
@@ -570,19 +572,142 @@ function getRecordString(record: Record<string, unknown>, key: string) {
   return value === null || value === undefined ? '' : String(value).trim()
 }
 
+const LEGACY_COMPLETION_LABELS = [
+  'Resultado',
+  'Motivo',
+  'Situacion',
+  'Situación',
+  'Por que ahora',
+  'Por qué ahora',
+  'Fondo detectado',
+  'Ya intento',
+  'Ya intentó',
+  'Impacto',
+  'Freno',
+  'Quiere lograr',
+  'Quiere evitar',
+  'Urgencia',
+  'Decision',
+  'Decisión',
+  'Interes',
+  'Interés',
+  'Disponibilidad',
+  'Notas',
+  'Resumen'
+]
+
+function compactCompletionText(value = '', maxLength = 260) {
+  const clean = String(value || '').replace(/\s+/g, ' ').trim()
+  if (!clean || clean.length <= maxLength) return clean
+  return `${clean.slice(0, Math.max(0, maxLength - 1)).trim().replace(/[.,;:!?-]+$/g, '')}…`
+}
+
+function getLegacyCompletionValue(text: string, label: string) {
+  const marker = `${label}:`
+  const start = text.indexOf(marker)
+  if (start < 0) return ''
+  const valueStart = start + marker.length
+  let end = text.length
+  for (const candidate of LEGACY_COMPLETION_LABELS) {
+    if (candidate === label) continue
+    const next = text.indexOf(`. ${candidate}:`, valueStart)
+    if (next >= 0 && next < end) end = next
+  }
+  return text.slice(valueStart, end).replace(/^\s+|\s+$/g, '')
+}
+
+function formatHumanDateFromSummary(summary = '') {
+  const match = summary.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/)
+  if (!match) return ''
+  const date = new Date(match[0])
+  if (Number.isNaN(date.getTime())) return ''
+  try {
+    const parts = new Intl.DateTimeFormat('es-MX', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    }).formatToParts(date)
+    const get = (type: string) => parts.find((part) => part.type === type)?.value || ''
+    const weekday = get('weekday')
+    const day = get('day')
+    const month = get('month')
+    const hour = get('hour')
+    const minute = get('minute')
+    const period = get('dayPeriod').replace(/\s+/g, '').toLowerCase()
+    if (!day || !month || !hour || !minute) return ''
+    const clock = minute === '00' ? `${hour} ${period}` : `${hour}:${minute} ${period}`
+    return `el ${weekday ? `${weekday} ` : ''}${day} de ${month} a las ${clock}`
+  } catch {
+    return ''
+  }
+}
+
+function parseCompactPayment(summary = '') {
+  const match = summary.match(/(?:^|[·\s])([0-9]+(?:[.,][0-9]+)?)\s*([A-Z]{3})?\s*$/)
+  if (!match) return ''
+  const amount = Number(match[1].replace(',', '.'))
+  if (!Number.isFinite(amount) || amount <= 0) return ''
+  const formatted = amount.toLocaleString('es-MX', {
+    minimumFractionDigits: amount % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: amount % 1 === 0 ? 0 : 2
+  })
+  return `$${formatted}${match[2] ? ` ${match[2]}` : ''}`
+}
+
+function buildLegacyActionSummary(signal: Exclude<ConversationSignal, 'discarded'>, summary: string, reason: string) {
+  const result = getLegacyCompletionValue(summary, 'Resultado') || summary
+  if (signal === 'appointment_booked') {
+    const date = formatHumanDateFromSummary(result)
+    return date ? `Agendó cita para ${date}` : 'Agendó una cita'
+  }
+  if (signal === 'purchase_completed') {
+    const money = parseCompactPayment(result)
+    return money ? `Pagó ${money}` : 'Pago completado'
+  }
+  if (signal === 'ready_to_buy') return 'Quedó listo para pagar'
+  if (signal === 'ready_to_schedule') return 'Quedó listo para agendar'
+  return compactCompletionText(reason || result || 'Objetivo concretado', 160)
+}
+
+function buildLegacyContextSummary(summary: string, reason: string) {
+  const motivo = getLegacyCompletionValue(summary, 'Motivo')
+  const situacion = getLegacyCompletionValue(summary, 'Situacion') || getLegacyCompletionValue(summary, 'Situación')
+  const intento = getLegacyCompletionValue(summary, 'Ya intento') || getLegacyCompletionValue(summary, 'Ya intentó')
+  const freno = getLegacyCompletionValue(summary, 'Freno')
+  const logro = getLegacyCompletionValue(summary, 'Quiere lograr')
+  const resumen = getLegacyCompletionValue(summary, 'Resumen')
+  const parts = [
+    resumen || motivo || situacion || reason,
+    intento ? `Ya había intentado ${intento}` : '',
+    freno ? `El freno era ${freno}` : '',
+    logro ? `Buscaba ${logro}` : ''
+  ].filter(Boolean)
+  return compactCompletionText(parts.join('. '), 320)
+}
+
 function normalizeCompletionEvent(event: ConversationalAgentEvent): ConversationalAgentCompletionEvent | null {
   if (event.eventType !== 'signal_set' || !event.detail || typeof event.detail !== 'object') return null
   const detail = event.detail as Record<string, unknown>
   const signal = getRecordString(detail, 'signal') as Exclude<ConversationSignal, 'discarded'>
   if (!COMPLETION_SIGNAL_SET.has(signal)) return null
 
-  const summary = getRecordString(detail, 'summary')
+  const meta = COMPLETION_SIGNAL_META[signal]
+  const rawSummary = getRecordString(detail, 'summary')
   const reason = getRecordString(detail, 'reason')
+  const actionSummary = getRecordString(detail, 'actionSummary') || buildLegacyActionSummary(signal, rawSummary, reason)
+  const summary = getRecordString(detail, 'actionSummary')
+    ? compactCompletionText(rawSummary || reason || actionSummary, 320)
+    : buildLegacyContextSummary(rawSummary, reason)
   return {
     id: event.id,
     contactId: event.contactId,
     signal,
-    title: COMPLETION_SIGNAL_LABELS[signal],
+    icon: meta.icon,
+    title: meta.label,
+    actionSummary: actionSummary || meta.label,
     summary: summary || reason || 'El agente concretó una meta en esta conversación.',
     reason,
     status: getRecordString(detail, 'status') || 'completed',
