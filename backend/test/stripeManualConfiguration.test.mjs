@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { db } from '../src/config/database.js'
+import { getStripeConfigView } from '../src/controllers/stripePaymentsController.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 import {
   completeStripeConnectOAuth,
@@ -23,7 +24,12 @@ const STRIPE_ENV_KEYS = [
   'STRIPE_CONNECT_TEST_PUBLISHABLE_KEY',
   'STRIPE_CONNECT_LIVE_CLIENT_ID',
   'STRIPE_CONNECT_LIVE_SECRET_KEY',
-  'STRIPE_CONNECT_LIVE_PUBLISHABLE_KEY'
+  'STRIPE_CONNECT_LIVE_PUBLISHABLE_KEY',
+  'RENDER_EXTERNAL_URL',
+  'PUBLIC_APP_URL',
+  'APP_PUBLIC_URL',
+  'FRONTEND_URL',
+  'APP_URL'
 ]
 
 async function snapshotStripeConfig(callback) {
@@ -56,6 +62,21 @@ async function snapshotStripeConfig(callback) {
       }
     }
     setStripeFactoryForTest(null)
+  }
+}
+
+function createJsonResponse() {
+  return {
+    statusCode: 200,
+    payload: null,
+    status(code) {
+      this.statusCode = code
+      return this
+    },
+    json(payload) {
+      this.payload = payload
+      return this
+    }
   }
 }
 
@@ -350,4 +371,81 @@ test('Stripe manual: la UI oficial no expone rutas ni copy de OAuth', async () =
   assert.doesNotMatch(officialUiSource, /stripe_connect/)
   assert.doesNotMatch(officialUiSource, /\/api\/stripe\/connect/)
   assert.doesNotMatch(officialUiSource, /Conectar con Stripe/)
+})
+
+test('Stripe manual: muestra endpoints de Render, dominio conectado y request actual', async () => {
+  await initializeMasterKey()
+
+  const previousDomain = await db.get(
+    "SELECT config_key, config_value FROM app_config WHERE config_key = 'sites_app_domain'"
+  )
+  const previousVerified = await db.get(
+    "SELECT config_key, config_value FROM app_config WHERE config_key = 'sites_app_domain_verified'"
+  )
+
+  await snapshotStripeConfig(async () => {
+    try {
+      process.env.RENDER_EXTERNAL_URL = 'https://raulgomez.onrender.com'
+      delete process.env.PUBLIC_APP_URL
+      delete process.env.APP_PUBLIC_URL
+      delete process.env.FRONTEND_URL
+      delete process.env.APP_URL
+
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value, updated_at)
+        VALUES ('sites_app_domain', 'app.raulgomez.com.mx', CURRENT_TIMESTAMP)
+        ON CONFLICT(config_key) DO UPDATE SET
+          config_value = excluded.config_value,
+          updated_at = CURRENT_TIMESTAMP
+      `)
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value, updated_at)
+        VALUES ('sites_app_domain_verified', '1', CURRENT_TIMESTAMP)
+        ON CONFLICT(config_key) DO UPDATE SET
+          config_value = excluded.config_value,
+          updated_at = CURRENT_TIMESTAMP
+      `)
+
+      await saveStripePaymentConfig({
+        enabled: true,
+        mode: 'test',
+        publishableKey: 'pk_test_manual_public',
+        secretKey: 'sk_test_manual_secret',
+        webhookSecret: 'whsec_manual_test'
+      })
+
+      const req = {
+        protocol: 'https',
+        headers: {
+          host: 'raulgomez.onrender.com',
+          'x-forwarded-host': 'test.raulgomez.com.mx',
+          'x-forwarded-proto': 'https'
+        }
+      }
+      const res = createJsonResponse()
+      await getStripeConfigView(req, res)
+
+      assert.equal(res.statusCode, 200)
+      const endpoints = res.payload.data.webhookEndpoints.map((endpoint) => endpoint.url)
+      assert.deepEqual(endpoints, [
+        'https://raulgomez.onrender.com/api/stripe/webhook',
+        'https://app.raulgomez.com.mx/api/stripe/webhook',
+        'https://test.raulgomez.com.mx/api/stripe/webhook'
+      ])
+    } finally {
+      await db.run("DELETE FROM app_config WHERE config_key IN ('sites_app_domain', 'sites_app_domain_verified')")
+      if (previousDomain) {
+        await db.run(
+          'INSERT INTO app_config (config_key, config_value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+          [previousDomain.config_key, previousDomain.config_value]
+        )
+      }
+      if (previousVerified) {
+        await db.run(
+          'INSERT INTO app_config (config_key, config_value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+          [previousVerified.config_key, previousVerified.config_value]
+        )
+      }
+    }
+  })
 })
