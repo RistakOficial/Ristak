@@ -1333,9 +1333,11 @@
 }
 
 .composer {
+  --composer-inline-menu-offset: 0px;
+
   position: relative;
   display: grid;
-  grid-template-columns: 40px 40px minmax(0, 1fr) 40px 36px 40px;
+  grid-template-columns: 40px 40px minmax(0, 1fr) 36px 40px;
   gap: 8px;
   align-items: center;
   padding: 10px 12px;
@@ -1397,6 +1399,7 @@
 }
 
 .composerTextField textarea {
+  padding-left: 46px;
   padding-right: 48px;
 }
 
@@ -1603,10 +1606,15 @@
 }
 
 .composerActionWrap {
-  position: relative;
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 30px;
+  height: 30px;
   min-width: 0;
 }
 
@@ -1657,11 +1665,18 @@
   opacity: 0.5;
 }
 
-.composerPlusButton,
 .sendButton {
   width: 40px;
   height: 40px;
   border-radius: 999px;
+}
+
+.composerPlusButton {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--color-text-tertiary);
 }
 
 .micButton {
@@ -1682,15 +1697,8 @@
   opacity: 0.5;
 }
 
-.composerPlusButton {
-  border: 1px solid var(--chat-border);
-  background: var(--chat-soft);
-}
-
 .composerPlusButton:hover,
 .composerPlusButton[aria-expanded='true'] {
-  border-color: var(--chat-border-strong);
-  background: var(--chat-soft-strong);
   color: var(--color-text-primary);
 }
 
@@ -1712,7 +1720,8 @@
 .composerMenu {
   position: absolute;
   bottom: calc(100% + 10px);
-  right: 0;
+  left: var(--composer-inline-menu-offset);
+  right: auto;
   z-index: var(--z-index-popover);
   display: grid;
   width: 190px;
@@ -1742,7 +1751,8 @@
 .templatePanel {
   position: absolute;
   bottom: calc(100% + 10px);
-  right: 0;
+  left: var(--composer-inline-menu-offset);
+  right: auto;
   z-index: var(--z-index-popover);
   display: grid;
   gap: 10px;
@@ -2886,7 +2896,9 @@
   }
 
   .composer {
-    grid-template-columns: 34px 38px minmax(0, 1fr) 36px 28px 40px;
+    --composer-inline-menu-offset: -88px;
+
+    grid-template-columns: 34px 38px minmax(0, 1fr) 36px 40px;
   }
 
   .composer[data-email-mode='true'] {

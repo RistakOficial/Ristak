@@ -5421,6 +5421,46 @@ export const DesktopChat: React.FC = () => {
 	                      />
 	                    </div>
 	                    <div className={styles.composerTextField}>
+	                      <div ref={composerMenuRef} className={styles.composerActionWrap}>
+	                        <button
+	                          type="button"
+	                          className={styles.composerPlusButton}
+	                          onClick={() => {
+	                            closeComposerAgentMenu()
+	                            closeTemplatePanel()
+	                            setComposerMenuOpen((current) => !current)
+	                          }}
+	                          aria-label="Abrir opciones de adjuntos"
+	                          aria-expanded={composerMenuOpen || templatePanelOpen}
+	                        >
+	                          <Plus size={20} />
+	                        </button>
+	                        {composerMenuOpen ? (
+	                          <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
+	                            <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
+	                              <FileText size={16} />
+	                              <span>Plantillas</span>
+	                            </button>
+	                            <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
+	                              <ImageIcon size={16} />
+	                              <span>Fotos</span>
+	                            </button>
+	                            <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
+	                              <FileText size={16} />
+	                              <span>Documentos</span>
+	                            </button>
+	                            <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
+	                              <MapPin size={16} />
+	                              <span>Ubicación</span>
+	                            </button>
+	                            <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
+	                              <Banknote size={16} />
+	                              <span>CLABE</span>
+	                            </button>
+	                          </div>
+	                        ) : null}
+	                        {renderTemplatePanel()}
+	                      </div>
 	                      <textarea
 	                        data-ristak-unstyled
 	                        value={composerText}
@@ -5451,46 +5491,6 @@ export const DesktopChat: React.FC = () => {
 	                      >
 	                        <Clock size={16} />
 	                      </button>
-	                    </div>
-	                    <div ref={composerMenuRef} className={styles.composerActionWrap}>
-	                      <button
-	                        type="button"
-	                        className={styles.composerPlusButton}
-	                        onClick={() => {
-	                          closeComposerAgentMenu()
-	                          closeTemplatePanel()
-	                          setComposerMenuOpen((current) => !current)
-	                        }}
-	                        aria-label="Abrir opciones de adjuntos"
-	                        aria-expanded={composerMenuOpen || templatePanelOpen}
-	                      >
-	                        <Plus size={20} />
-	                      </button>
-	                      {composerMenuOpen ? (
-	                        <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
-	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
-	                            <FileText size={16} />
-	                            <span>Plantillas</span>
-	                          </button>
-	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('photos')}>
-	                            <ImageIcon size={16} />
-	                            <span>Fotos</span>
-	                          </button>
-	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('documents')}>
-	                            <FileText size={16} />
-	                            <span>Documentos</span>
-	                          </button>
-	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('location')}>
-	                            <MapPin size={16} />
-	                            <span>Ubicación</span>
-	                          </button>
-	                          <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('clabe')}>
-	                            <Banknote size={16} />
-	                            <span>CLABE</span>
-	                          </button>
-	                        </div>
-	                      ) : null}
-	                      {renderTemplatePanel()}
 	                    </div>
 	                    <button
 	                      type="button"
