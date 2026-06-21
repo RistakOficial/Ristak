@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   CalendarClock,
   CreditCard,
@@ -9,6 +10,7 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
+  Settings,
   Trash2,
   XCircle
 } from 'lucide-react'
@@ -214,6 +216,7 @@ function buildContactFromSubscription(subscription: PaymentSubscription): Contac
 }
 
 export const PaymentSubscriptions: React.FC = () => {
+  const navigate = useNavigate()
   const { showToast, showConfirm } = useNotification()
   const [accountCurrency] = useAccountCurrency()
   const [subscriptions, setSubscriptions] = useState<PaymentSubscription[]>([])
@@ -546,6 +549,14 @@ export const PaymentSubscriptions: React.FC = () => {
           subtitle="Administra cobros recurrentes, tarjetas guardadas y próximos ciclos de pago."
           actions={
             <>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => navigate('/settings/payments/gateways')}
+                leftIcon={<Settings size={16} />}
+              >
+                Configurar pasarelas
+              </Button>
               <Button
                 variant="secondary"
                 onClick={() => void loadSubscriptions({ refresh: true })}

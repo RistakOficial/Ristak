@@ -2401,9 +2401,9 @@ export const Transactions: React.FC = () => {
               type="button"
               variant="secondary"
               leftIcon={<Settings size={16} />}
-              onClick={() => navigate('/settings/payments')}
+              onClick={() => navigate('/settings/payments/gateways')}
             >
-              Configuración
+              Configurar pasarelas
             </Button>
           )}
         />
