@@ -969,6 +969,24 @@ const VIDEO_FORM_GATE_THEME_PRESETS: Record<VideoFormGateThemeMode, Partial<Site
   }
 }
 
+const VIDEO_FORM_GATE_THEME_PALETTE_KEYS: Array<keyof SiteTheme> = [
+  'accentColor',
+  'backgroundColor',
+  'textColor',
+  'textColorCustom',
+  'formLabelColor',
+  'formHelpColor',
+  'formFieldBg',
+  'formFieldText',
+  'formFieldBorder',
+  'formPlaceholderColor',
+  'formChoiceSelectedBg',
+  'formChoiceSelectedBorder',
+  'submitBg',
+  'submitTextColor',
+  'submitBorderColor'
+]
+
 interface VideoFormGateFitState {
   expanded: boolean
   wide: boolean
@@ -4477,6 +4495,41 @@ const getVideoFormGateThemeMode = (settings: Record<string, unknown> = {}): Vide
 const getVideoFormGateThemePreset = (mode: VideoFormGateThemeMode): Partial<SiteTheme> => ({
   ...VIDEO_FORM_GATE_THEME_PRESETS[mode]
 })
+
+const getVideoFormGateThemePalette = (mode: VideoFormGateThemeMode): Partial<SiteTheme> => {
+  const preset = getVideoFormGateThemePreset(mode)
+  const palette: Record<string, unknown> = {}
+
+  VIDEO_FORM_GATE_THEME_PALETTE_KEYS.forEach((key) => {
+    const value = preset[key]
+    if (value !== undefined) palette[key] = value
+  })
+
+  return palette as Partial<SiteTheme>
+}
+
+const getVideoFormGateThemeModePatch = (
+  currentTheme: Partial<SiteTheme>,
+  currentMode: VideoFormGateThemeMode,
+  nextMode: VideoFormGateThemeMode
+): Partial<SiteTheme> => {
+  const currentPresetPalette = getVideoFormGateThemePalette(currentMode)
+  const nextPresetPalette = getVideoFormGateThemePalette(nextMode)
+  const patch: Record<string, unknown> = {}
+
+  VIDEO_FORM_GATE_THEME_PALETTE_KEYS.forEach((key) => {
+    const currentValue = currentTheme[key]
+    const nextValue = nextPresetPalette[key]
+    const isPresetValue = videoFormGateThemeModeOptions.some((option) => (
+      getVideoFormGateThemePalette(option.value)[key] === currentValue
+    ))
+    const shouldUsePreset = currentValue === undefined || currentValue === currentPresetPalette[key] || isPresetValue
+
+    if (shouldUsePreset && nextValue !== undefined) patch[key] = nextValue
+  })
+
+  return patch as Partial<SiteTheme>
+}
 
 const getVideoFormGateThemeVideoBackground = (mode: VideoFormGateThemeMode) => (
   mode === 'light' ? LIGHT_VIDEO_FORM_GATE_VIDEO_BACKGROUND : DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
@@ -33872,13 +33925,25 @@ const VideoFormGateSettingsPanel: React.FC<{
   }))
   const applyVideoGateThemeMode = (mode: VideoFormGateThemeMode) => {
     const nextMode = mode === 'light' ? 'light' : DEFAULT_VIDEO_FORM_GATE_THEME_MODE
-    onPatchSettings({
+    const themeModePatch = getVideoFormGateThemeModePatch(videoGateTheme, videoGateThemeMode, nextMode)
+    const currentVideoBackground = getVideoFormGateVideoBackground(settings)
+    const shouldUsePresetVideoBackground = videoFormGateThemeModeOptions.some((option) => (
+      getVideoFormGateThemeVideoBackground(option.value) === currentVideoBackground
+    ))
+    const settingsPatch: Record<string, unknown> = {
       videoFormGateThemeMode: nextMode,
-      videoFormGateVideoBackground: getVideoFormGateThemeVideoBackground(nextMode),
       videoFormGateEmbeddedTheme: {
         ...videoGateTheme,
-        ...getVideoFormGateThemePreset(nextMode)
+        ...themeModePatch
       }
+    }
+
+    if (shouldUsePresetVideoBackground) {
+      settingsPatch.videoFormGateVideoBackground = getVideoFormGateThemeVideoBackground(nextMode)
+    }
+
+    onPatchSettings({
+      ...settingsPatch
     })
     window.setTimeout(onSave, 0)
   }

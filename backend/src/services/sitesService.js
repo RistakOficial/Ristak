@@ -17613,7 +17613,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-fields{min-height:0;display:grid;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:2px 4px 4px}
 	  .rstk-video-form-field-stack{display:grid;width:min(100%,var(--rstk-form-field-width,560px));max-width:100%;justify-self:var(--rstk-form-field-justify,center);gap:clamp(8px,2cqw,14px);min-width:0}
 	  .rstk-video-form-field{display:grid;gap:clamp(5px,1.3cqw,8px);min-width:0;max-width:100%;text-align:var(--rstk-form-content-align,left)}
-	  .rstk-video-form-content{min-width:0;max-width:100%;text-align:var(--rstk-form-content-align,left)}
+	  .rstk-video-form-content{min-width:0;max-width:100%;--rstk-block-text:var(--rstk-ink);text-align:var(--rstk-form-content-align,left)}
 	  .rstk-video-form-content > .rstk-block-style{width:100%}
 	  .rstk-video-form-content .rstk-media{margin:0}
 	  .rstk-video-form-field > label{color:var(--rstk-form-label-color,var(--rstk-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,.98rem);font-style:var(--rstk-form-font-style,normal);font-weight:650;text-decoration:var(--rstk-form-text-decoration,none);line-height:1.25}

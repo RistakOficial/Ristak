@@ -482,6 +482,7 @@
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-content {
   min-width: 0;
   max-width: 100%;
+  --rstk-block-text: var(--rstk-ink);
   text-align: var(--rstk-form-content-align, left);
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-content > .rstk-block-style {

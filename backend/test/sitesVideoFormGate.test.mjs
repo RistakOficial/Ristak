@@ -101,6 +101,7 @@ test('video form gate defaults to a dark readable theme and compact phone prefix
   assert.match(html, /--rstk-form-field-text:#ffffff/)
   assert.match(html, /--rstk-form-placeholder:rgba\(255, 255, 255, 0\.66\)/)
   assert.match(html, /--rstk-submit-bg:#0f2348/)
+  assert.match(html, /\.rstk-video-form-content\{[^}]*--rstk-block-text:var\(--rstk-ink\)/)
   assert.match(html, /\.rstk-video-form-gate \.rstk-phone-input\{[^}]*grid-template-columns:minmax\(96px,max-content\) minmax\(0,1fr\)[^}]*align-items:stretch/)
 })
 
