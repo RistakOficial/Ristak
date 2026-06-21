@@ -113,14 +113,12 @@
   min-width: 0;
 }
 
-.summaryAmountBlock span,
-.summaryAmountBlock small {
+.summaryAmountBlock span {
   color: var(--text-mute);
   font-size: 12px;
   line-height: 1.35;
 }
 
-.providerSummary,
 .providerValue {
   display: inline-flex;
   align-items: center;
@@ -128,11 +126,6 @@
   min-width: 0;
 }
 
-.providerSummary {
-  justify-content: flex-start;
-}
-
-.providerSummary span,
 .providerValue span {
   min-width: 0;
   overflow-wrap: anywhere;

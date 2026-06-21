@@ -930,10 +930,6 @@ export const PublicPayment: React.FC = () => {
                   ? 'Sin cargo inmediato'
                   : formatCurrency(totalAmount, payment.currency)}
               </strong>
-              <small className={styles.providerSummary}>
-                <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
-                <span>{providerLabel} · {paymentModeLabel}</span>
-              </small>
             </div>
 
             <div className={styles.summarySection}>
