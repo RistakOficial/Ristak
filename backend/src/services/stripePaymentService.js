@@ -23,6 +23,7 @@ const CONFIG_KEYS = {
   publishableKey: 'stripe_publishable_key',
   secretKey: 'stripe_secret_key_encrypted',
   webhookSecret: 'stripe_webhook_secret_encrypted',
+  manualModeConnections: 'stripe_manual_mode_connections',
   defaultCurrency: 'stripe_default_currency',
   accountLabel: 'stripe_account_label',
   disconnectedAt: 'stripe_disconnected_at',
@@ -50,6 +51,7 @@ const CONFIG_KEYS = {
 
 const MASKED_PREFIX = '***'
 const DEFAULT_CURRENCY = 'MXN'
+const STRIPE_MODES = ['test', 'live']
 const STRIPE_CONNECT_SCOPE = 'read_write'
 const STRIPE_CONNECT_AUTHORIZE_URL = 'https://connect.stripe.com/oauth/authorize'
 const STRIPE_CONNECT_TOKEN_URL = 'https://connect.stripe.com/oauth/token'
@@ -236,7 +238,7 @@ export function isStripeConnectOAuthEnabled() {
 
 function assertStripeConnectOAuthEnabled() {
   if (isStripeConnectOAuthEnabled()) return
-  const error = new Error('Stripe OAuth no está disponible. Configura Stripe manualmente con una Restricted API Key.')
+  const error = new Error('Stripe OAuth no está disponible. Configura Stripe manualmente con tu Secret key.')
   error.status = 404
   throw error
 }
@@ -312,8 +314,8 @@ function encryptOptionalSecret(value) {
 function assertStripeSecret(secretKey) {
   const clean = cleanString(secretKey)
   if (!clean) return ''
-  if (!/^(sk|rk)_(test|live)_/.test(clean)) {
-    const error = new Error('La API key de Stripe debe empezar con rk_test_, rk_live_, sk_test_ o sk_live_. Usa una Restricted API Key siempre que sea posible.')
+  if (!/^sk_(test|live)_/.test(clean)) {
+    const error = new Error('La Secret key de Stripe debe empezar con sk_test_ o sk_live_.')
     error.status = 400
     throw error
   }
@@ -426,6 +428,135 @@ async function readRawConfig() {
     values[row.config_key] = row.config_value
   }
   return values
+}
+
+function normalizeStoredManualConnection(value = {}, mode = 'test') {
+  if (!value || typeof value !== 'object') {
+    return {
+      mode: normalizeMode(mode),
+      publishableKey: '',
+      secretKey: '',
+      webhookSecret: ''
+    }
+  }
+
+  return {
+    mode: normalizeMode(value.mode || mode),
+    publishableKey: cleanString(value.publishableKey || value.publishable_key),
+    secretKey: value.secretKey || value.secret_key ? decryptSecret(value.secretKey || value.secret_key) : '',
+    webhookSecret: value.webhookSecret || value.webhook_secret ? decryptSecret(value.webhookSecret || value.webhook_secret) : '',
+    updatedAt: cleanString(value.updatedAt || value.updated_at)
+  }
+}
+
+function legacyManualConnectionFromRaw(raw = {}, mode = 'test') {
+  const normalizedMode = normalizeMode(raw[CONFIG_KEYS.mode] || mode)
+  return normalizeStoredManualConnection({
+    mode: normalizedMode,
+    publishableKey: cleanString(raw[CONFIG_KEYS.publishableKey]),
+    secretKey: raw[CONFIG_KEYS.secretKey] ? decryptSecret(raw[CONFIG_KEYS.secretKey]) : '',
+    webhookSecret: raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : ''
+  }, normalizedMode)
+}
+
+function readManualModeConnections(raw = {}) {
+  const parsed = parseJson(raw[CONFIG_KEYS.manualModeConnections], {})
+  const connections = {
+    test: normalizeStoredManualConnection(parsed.test, 'test'),
+    live: normalizeStoredManualConnection(parsed.live, 'live')
+  }
+
+  const legacy = legacyManualConnectionFromRaw(raw, raw[CONFIG_KEYS.mode])
+  if ((legacy.publishableKey || legacy.secretKey || legacy.webhookSecret) && !connections[legacy.mode].publishableKey && !connections[legacy.mode].secretKey) {
+    connections[legacy.mode] = legacy
+  }
+
+  return connections
+}
+
+function summarizeManualModeConnection(connection = {}, includeSecrets = false) {
+  const publishableKey = cleanString(connection.publishableKey)
+  const secretKey = cleanString(connection.secretKey)
+  const webhookSecret = cleanString(connection.webhookSecret)
+
+  return {
+    mode: normalizeMode(connection.mode),
+    configured: Boolean(publishableKey && secretKey),
+    publishableKey,
+    hasSecretKey: Boolean(secretKey),
+    secretKeyPreview: maskSecret(secretKey),
+    hasWebhookSecret: Boolean(webhookSecret),
+    webhookSecretPreview: maskSecret(webhookSecret),
+    updatedAt: cleanString(connection.updatedAt),
+    ...(includeSecrets ? { secretKey, webhookSecret } : {})
+  }
+}
+
+function getManualModeInputValue(raw = {}, key, currentValue = '') {
+  if (Object.prototype.hasOwnProperty.call(raw, key)) return cleanString(raw[key])
+  return cleanString(currentValue)
+}
+
+function buildManualModeConnectionFromInput(mode, rawInput = {}, currentConnection = {}) {
+  const normalizedMode = normalizeMode(mode)
+  const publishableKey = assertStripePublishableKey(
+    getManualModeInputValue(rawInput, 'publishableKey', currentConnection.publishableKey)
+  )
+  const secretInput = getManualModeInputValue(rawInput, 'secretKey', currentConnection.secretKey)
+  const secretKey = isMaskedSecret(secretInput)
+    ? cleanString(currentConnection.secretKey)
+    : assertStripeSecret(secretInput)
+  const webhookInput = getManualModeInputValue(rawInput, 'webhookSecret', currentConnection.webhookSecret)
+  const webhookSecret = isMaskedSecret(webhookInput)
+    ? cleanString(currentConnection.webhookSecret)
+    : cleanString(webhookInput)
+  const hasAny = Boolean(publishableKey || secretKey || webhookSecret)
+
+  if (publishableKey && !publishableKey.startsWith(`pk_${normalizedMode}_`)) {
+    const error = new Error(`La Publishable key de modo ${normalizedMode === 'live' ? 'en vivo' : 'prueba'} debe empezar con pk_${normalizedMode}_.`)
+    error.status = 400
+    throw error
+  }
+
+  if (secretKey && !secretKey.startsWith(`sk_${normalizedMode}_`)) {
+    const error = new Error(`La Secret key de modo ${normalizedMode === 'live' ? 'en vivo' : 'prueba'} debe empezar con sk_${normalizedMode}_.`)
+    error.status = 400
+    throw error
+  }
+
+  if (hasAny && (!publishableKey || !secretKey)) {
+    const error = new Error(`Completa Publishable key y Secret key en modo ${normalizedMode === 'live' ? 'en vivo' : 'prueba'}.`)
+    error.status = 400
+    throw error
+  }
+
+  return {
+    mode: normalizedMode,
+    publishableKey,
+    secretKey,
+    webhookSecret,
+    updatedAt: hasAny ? new Date().toISOString() : ''
+  }
+}
+
+function serializeManualModeConnection(connection = {}) {
+  return {
+    mode: normalizeMode(connection.mode),
+    publishableKey: cleanString(connection.publishableKey),
+    secretKey: encryptOptionalSecret(connection.secretKey),
+    webhookSecret: encryptOptionalSecret(connection.webhookSecret),
+    updatedAt: cleanString(connection.updatedAt)
+  }
+}
+
+function chooseManualMode(connections = {}, preferredMode = '') {
+  const normalizedPreferred = normalizeMode(preferredMode)
+  if (connections[normalizedPreferred]?.publishableKey && connections[normalizedPreferred]?.secretKey) {
+    return normalizedPreferred
+  }
+  if (connections.live?.publishableKey && connections.live?.secretKey) return 'live'
+  if (connections.test?.publishableKey && connections.test?.secretKey) return 'test'
+  return normalizedPreferred
 }
 
 function normalizeStoredConnectConnection(value = {}, mode = 'test') {
@@ -601,11 +732,15 @@ async function writeActiveConnectConnection(mode, connection) {
 export async function getStripePaymentConfig({ includeSecrets = false, mode: modeOverride = '' } = {}) {
   const raw = await readRawConfig()
   const accountCurrency = await getConfiguredCurrency()
-  const mode = normalizeMode(modeOverride || raw[CONFIG_KEYS.mode])
+  const manualModeConnections = readManualModeConnections(raw)
+  const mode = modeOverride
+    ? normalizeMode(modeOverride)
+    : chooseManualMode(manualModeConnections, raw[CONFIG_KEYS.mode] || 'live')
   const stripeConnectOAuthEnabled = isStripeConnectOAuthEnabled()
   const storedConnectionType = normalizeConnectionType(raw[CONFIG_KEYS.connectionType])
   const legacyConnectDisabled = storedConnectionType === 'connect' && !stripeConnectOAuthEnabled
   const connectionType = stripeConnectOAuthEnabled ? storedConnectionType : 'manual'
+  const selectedManualConnection = manualModeConnections[mode] || normalizeStoredManualConnection({}, mode)
   const selectedStoredConnection = stripeConnectOAuthEnabled && connectionType === 'connect'
     ? decryptStoredConnection(getConnectModeConnection(raw, mode))
     : null
@@ -622,10 +757,14 @@ export async function getStripePaymentConfig({ includeSecrets = false, mode: mod
     || (raw[CONFIG_KEYS.connectRefreshToken] ? decryptSecret(raw[CONFIG_KEYS.connectRefreshToken]) : '')
   const publishableKey = connectionType === 'connect'
     ? cleanString(selectedStoredConnection?.publishableKey || raw[CONFIG_KEYS.connectPublishableKey] || platform.publishableKey || raw[CONFIG_KEYS.publishableKey])
-    : cleanString(raw[CONFIG_KEYS.publishableKey])
-  const secretKey = raw[CONFIG_KEYS.secretKey] ? decryptSecret(raw[CONFIG_KEYS.secretKey]) : ''
+    : cleanString(selectedManualConnection.publishableKey)
+  const secretKey = connectionType === 'manual'
+    ? cleanString(selectedManualConnection.secretKey)
+    : (raw[CONFIG_KEYS.secretKey] ? decryptSecret(raw[CONFIG_KEYS.secretKey]) : '')
   const webhookSecret = cleanString(selectedStoredConnection?.webhookSecret)
-    || (raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : '')
+    || (connectionType === 'manual'
+      ? cleanString(selectedManualConnection.webhookSecret)
+      : (raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : ''))
   const enabled = normalizeBoolean(raw[CONFIG_KEYS.enabled], true)
   const connectReady = Boolean(
     stripeConnectOAuthEnabled &&
@@ -657,12 +796,16 @@ export async function getStripePaymentConfig({ includeSecrets = false, mode: mod
     defaultCurrency: accountCurrency,
     accountLabel: connectionType === 'connect'
       ? cleanString(selectedStoredConnection?.accountLabel || raw[CONFIG_KEYS.accountLabel])
-      : cleanString(raw[CONFIG_KEYS.accountLabel]),
+      : cleanString(raw[CONFIG_KEYS.accountLabel] || 'Stripe'),
     publishableKey,
     hasSecretKey: connectionType === 'manual' ? Boolean(secretKey) : Boolean(connectAccessToken || platform.secretKey),
     secretKeyPreview: connectionType === 'manual' ? maskSecret(secretKey) : '',
     hasWebhookSecret: Boolean(webhookSecret),
     webhookSecretPreview: maskSecret(webhookSecret),
+    manualModes: {
+      test: summarizeManualModeConnection(manualModeConnections.test, includeSecrets),
+      live: summarizeManualModeConnection(manualModeConnections.live, includeSecrets)
+    },
     connectedAccountId: stripeConnectOAuthEnabled ? connectedAccountId : '',
     connectedAccountPreview: stripeConnectOAuthEnabled && connectedAccountId ? `${connectedAccountId.slice(0, 8)}...${connectedAccountId.slice(-4)}` : '',
     connectScope: stripeConnectOAuthEnabled ? cleanString(selectedStoredConnection?.scope || raw[CONFIG_KEYS.connectScope]) : '',
@@ -705,30 +848,53 @@ export async function getStripePaymentConfig({ includeSecrets = false, mode: mod
 export async function saveStripePaymentConfig(input = {}) {
   const current = await getStripePaymentConfig({ includeSecrets: true })
   const accountCurrency = await getConfiguredCurrency()
-  const currentSecretKey = current.connectionType === 'manual' ? current.secretKey : ''
-  const currentWebhookSecret = current.connectionType === 'manual' ? current.webhookSecret : ''
-  const publishableKey = assertStripePublishableKey(input.publishableKey ?? '')
-  const nextSecretKey = isMaskedSecret(input.secretKey)
-    ? currentSecretKey
-    : assertStripeSecret(input.secretKey ?? currentSecretKey)
-  const nextWebhookSecret = isMaskedSecret(input.webhookSecret)
-    ? currentWebhookSecret
-    : cleanString(input.webhookSecret ?? currentWebhookSecret)
+  const manualInput = input.manualModes && typeof input.manualModes === 'object'
+    ? input.manualModes
+    : {
+        [normalizeMode(input.mode)]: {
+          publishableKey: input.publishableKey,
+          secretKey: input.secretKey,
+          webhookSecret: input.webhookSecret
+        }
+      }
+  const currentManualModes = current.manualModes || {
+    test: normalizeStoredManualConnection({}, 'test'),
+    live: normalizeStoredManualConnection({}, 'live')
+  }
+  const nextManualModes = {
+    test: buildManualModeConnectionFromInput('test', manualInput.test, currentManualModes.test),
+    live: buildManualModeConnectionFromInput('live', manualInput.live, currentManualModes.live)
+  }
+  const activeMode = chooseManualMode(nextManualModes, input.mode || 'live')
+  const activeConnection = nextManualModes[activeMode]
+
+  if (!activeConnection.publishableKey || !activeConnection.secretKey) {
+    const error = new Error('Agrega al menos las llaves de prueba o las llaves en vivo de Stripe.')
+    error.status = 400
+    throw error
+  }
 
   await setAppConfig(CONFIG_KEYS.enabled, normalizeBoolean(input.enabled, true) ? '1' : '0')
   await setAppConfig(CONFIG_KEYS.connectionType, 'manual')
-  await setAppConfig(CONFIG_KEYS.mode, normalizeMode(input.mode))
-  await setAppConfig(CONFIG_KEYS.publishableKey, publishableKey)
+  await setAppConfig(CONFIG_KEYS.mode, activeMode)
+  await setAppConfig(CONFIG_KEYS.publishableKey, activeConnection.publishableKey)
   await setAppConfig(CONFIG_KEYS.defaultCurrency, accountCurrency)
-  await setAppConfig(CONFIG_KEYS.accountLabel, cleanString(input.accountLabel || current.accountLabel))
+  await setAppConfig(CONFIG_KEYS.accountLabel, cleanString(input.accountLabel || current.accountLabel || 'Stripe'))
+  await setAppConfig(CONFIG_KEYS.manualModeConnections, JSON.stringify({
+    test: serializeManualModeConnection(nextManualModes.test),
+    live: serializeManualModeConnection(nextManualModes.live)
+  }))
+  await db.run('DELETE FROM app_config WHERE config_key IN (?, ?)', [CONFIG_KEYS.disconnectedAt, CONFIG_KEYS.connectDisconnectedAt])
 
-  if (nextSecretKey) {
-    await setAppConfig(CONFIG_KEYS.secretKey, encrypt(nextSecretKey))
+  if (activeConnection.secretKey) {
+    await setAppConfig(CONFIG_KEYS.secretKey, encrypt(activeConnection.secretKey))
+  } else {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.secretKey])
   }
 
-  if (nextWebhookSecret) {
-    await setAppConfig(CONFIG_KEYS.webhookSecret, encrypt(nextWebhookSecret))
-  } else if (input.webhookSecret === '') {
+  if (activeConnection.webhookSecret) {
+    await setAppConfig(CONFIG_KEYS.webhookSecret, encrypt(activeConnection.webhookSecret))
+  } else {
     await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.webhookSecret])
   }
 
@@ -790,6 +956,48 @@ export async function testStripePaymentConfig(input = null) {
       connectedAccountId: config.connectedAccountId,
       livemode: Boolean(balance.livemode),
       available: Array.isArray(balance.available) ? balance.available.length : 0
+    }
+  }
+
+  if (input?.manualModes && typeof input.manualModes === 'object') {
+    const currentManualModes = current.manualModes || {
+      test: normalizeStoredManualConnection({}, 'test'),
+      live: normalizeStoredManualConnection({}, 'live')
+    }
+    const nextManualModes = {
+      test: buildManualModeConnectionFromInput('test', input.manualModes.test, currentManualModes.test),
+      live: buildManualModeConnectionFromInput('live', input.manualModes.live, currentManualModes.live)
+    }
+    const results = {}
+
+    for (const mode of STRIPE_MODES) {
+      const connection = nextManualModes[mode]
+      if (!connection.publishableKey && !connection.secretKey && !connection.webhookSecret) continue
+      if (!connection.publishableKey || !connection.secretKey) continue
+
+      const stripe = getStripeInstance(assertStripeSecret(connection.secretKey))
+      const balance = await stripe.balance.retrieve()
+      results[mode] = {
+        ok: true,
+        livemode: Boolean(balance.livemode),
+        available: Array.isArray(balance.available) ? balance.available.length : 0
+      }
+    }
+
+    const activeMode = chooseManualMode(nextManualModes, input.mode || 'live')
+    if (!Object.keys(results).length) {
+      const error = new Error('Agrega al menos una Secret key de Stripe para probar la conexión.')
+      error.status = 400
+      throw error
+    }
+
+    return {
+      ok: true,
+      mode: activeMode,
+      connectionType: 'manual',
+      livemode: Boolean(results[activeMode]?.livemode),
+      available: results[activeMode]?.available || 0,
+      modes: results
     }
   }
 
@@ -1625,12 +1833,12 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
 }
 
 export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = false } = {}) {
-  const config = await getStripePaymentConfig()
   let row = await findPaymentByPublicId(publicPaymentId)
   if (!row || row.payment_provider !== 'stripe') return null
+  const config = await getStripePaymentConfig({ mode: row.payment_mode || '' })
 
   if (sync && row.stripe_payment_intent_id && !['paid', 'refunded', 'void', 'deleted'].includes(row.status)) {
-    await refreshStripePaymentFromIntent(row.stripe_payment_intent_id)
+    await refreshStripePaymentFromIntent(row.stripe_payment_intent_id, row.payment_mode || '')
     row = await findPaymentByPublicId(publicPaymentId)
   }
 
@@ -1639,13 +1847,13 @@ export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = 
 }
 
 export async function createStripePaymentIntent(publicPaymentId, options = {}) {
-  const { stripe, config, requestOptions } = await getStripeClient()
   const row = await findPaymentByPublicId(publicPaymentId)
   if (!row || row.payment_provider !== 'stripe') {
     const error = new Error('Pago no encontrado.')
     error.status = 404
     throw error
   }
+  const { stripe, config, requestOptions } = await getStripeClient(row.payment_mode || '')
 
   if (['paid', 'refunded', 'void', 'deleted'].includes(row.status)) {
     const error = new Error('Este pago ya no acepta nuevos cobros.')
@@ -4487,8 +4695,8 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
   return results
 }
 
-export async function refreshStripePaymentFromIntent(paymentIntentId) {
-  const context = await getStripeClient()
+export async function refreshStripePaymentFromIntent(paymentIntentId, mode = '') {
+  const context = await getStripeClient(mode)
   const { stripe, requestOptions } = context
   const intent = await stripe.paymentIntents.retrieve(paymentIntentId, requestOptions)
   return updatePaymentFromIntent(intent, context)
@@ -4497,11 +4705,27 @@ export async function refreshStripePaymentFromIntent(paymentIntentId) {
 async function getStripeWebhookContexts() {
   const activeContext = await getStripeClient()
   const contexts = [activeContext]
-
-  if (activeContext.config.connectionType !== 'connect') return contexts
-
   const activeMode = normalizeMode(activeContext.config.mode)
   const otherMode = activeMode === 'live' ? 'test' : 'live'
+
+  if (activeContext.config.connectionType === 'manual') {
+    if (!activeContext.config.manualModes?.[otherMode]?.configured) return contexts
+
+    try {
+      const otherContext = await getStripeClient(otherMode)
+      if (
+        otherContext.config.webhookSecret &&
+        otherContext.config.webhookSecret !== activeContext.config.webhookSecret
+      ) {
+        contexts.push(otherContext)
+      }
+    } catch (error) {
+      logger.warn(`No se pudo preparar webhook manual de Stripe en modo ${otherMode}: ${error.message}`)
+    }
+
+    return contexts
+  }
+
   if (!activeContext.config.connectModes?.[otherMode]?.connected) return contexts
 
   try {

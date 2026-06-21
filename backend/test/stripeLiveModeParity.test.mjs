@@ -337,7 +337,7 @@ async function configureManualStripeLive() {
     enabled: true,
     mode: 'live',
     publishableKey: 'pk_live_manual_public',
-    secretKey: 'rk_live_manual_restricted',
+    secretKey: 'sk_live_manual_secret',
     webhookSecret: 'whsec_manual_live',
     accountLabel: 'Stripe manual live'
   })

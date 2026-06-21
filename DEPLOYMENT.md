@@ -89,7 +89,7 @@ TRACKING_DOMAIN=<dominio personalizado, sin https://>
 META_API_VERSION=<version fija opcional, ej. v25.0>
 ```
 
-Normalmente no necesitas declarar credenciales de HighLevel, Meta Ads o Stripe en Render. Stripe se configura manualmente desde Settings con la cuenta propia del usuario, usando una Restricted API Key guardada cifrada en el backend.
+Normalmente no necesitas declarar credenciales de HighLevel, Meta Ads o Stripe en Render. Stripe se configura manualmente desde Settings con la cuenta propia del usuario, usando Secret keys guardadas cifradas en el backend.
 
 Si defines `META_API_VERSION`, la app queda fijada en esa versión y no hace auto-update de versión Meta. Déjala vacía para que use la DB y las revisiones automáticas.
 
@@ -119,7 +119,7 @@ En **Configuración -> Meta Ads** puedes:
 - Sincronizar ads manualmente.
 - Dejar que el cron actualice datos recientes cada hora.
 
-Meta Ads no usa OAuth centralizado. Stripe tampoco usa un flujo centralizado en Ristak: cada usuario configura su propia cuenta desde Settings con credenciales limitadas de su Stripe Dashboard.
+Meta Ads no usa OAuth centralizado. Stripe tampoco usa un flujo centralizado en Ristak: cada usuario configura su propia cuenta desde Settings con las llaves de su Stripe Dashboard.
 
 ## Tracking Web
 

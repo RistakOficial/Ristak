@@ -41,7 +41,7 @@ credenciales de su propia cuenta de Stripe.
 La configuración oficial usa:
 
 - Publishable key de Stripe.
-- Restricted API Key creada por el usuario en su Stripe Dashboard.
+- Secret key creada por el usuario en su Stripe Dashboard.
 - Webhook signing secret del endpoint de esa instalación.
 
 Ristak sólo usa esas credenciales para crear y consultar cobros dentro de la
