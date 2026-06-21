@@ -2187,6 +2187,8 @@ export const DesktopChat: React.FC = () => {
   const selectedVisibleChatCount = selectedChatContacts.length
   const allVisibleChatsSelected = selectableChatRows.length > 0 && selectedVisibleChatCount === selectableChatRows.length
   const someVisibleChatsSelected = selectedVisibleChatCount > 0 && !allVisibleChatsSelected
+  const chatSelectionToggleLabel = allVisibleChatsSelected ? 'Deseleccionar todos' : 'Seleccionar todos'
+  const chatSelectionToggleAriaLabel = allVisibleChatsSelected ? 'Deseleccionar todos los chats visibles' : 'Seleccionar todos los chats visibles'
   useEffect(() => {
     chatsRef.current = chats
   }, [chats])
@@ -5013,170 +5015,6 @@ export const DesktopChat: React.FC = () => {
             </div>
           ) : null}
 
-          <div className={styles.chatSelectionBar} data-chat-selection-active={selectedVisibleChatCount > 0 ? 'true' : undefined}>
-            <div className={styles.chatSelectionSummary}>
-              <label className={styles.chatSelectAll}>
-                <input
-                  ref={selectAllChatCheckboxRef}
-                  type="checkbox"
-                  checked={allVisibleChatsSelected}
-                  disabled={selectableChatRows.length === 0}
-                  onChange={handleToggleVisibleChatSelection}
-                  aria-label="Seleccionar todos los chats visibles"
-                />
-                <span>Seleccionar todos</span>
-              </label>
-              <span className={styles.chatSelectionCount}>
-                {selectedVisibleChatCount > 0
-                  ? `${selectedVisibleChatCount} seleccionado${selectedVisibleChatCount === 1 ? '' : 's'}`
-                  : `${selectableChatRows.length} visible${selectableChatRows.length === 1 ? '' : 's'}`}
-              </span>
-            </div>
-            {selectedVisibleChatCount > 0 ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className={styles.chatSelectionMenuButton}
-                    aria-label="Abrir acciones para chats seleccionados"
-                  >
-                    {bulkAgentActionBusy ? <Loader2 size={14} className={styles.spin} /> : <ListFilter size={14} />}
-                    Acciones
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" sideOffset={8} className={styles.chatSelectionMenu}>
-                  <div className={styles.chatSelectionMenuHeader}>
-                    <strong>{selectedVisibleChatCount} seleccionado{selectedVisibleChatCount === 1 ? '' : 's'}</strong>
-                    <span>{bulkSelectionMenuDescription}</span>
-                  </div>
-                  <DropdownMenuItem className={styles.chatSelectionMenuItem} onSelect={() => handleMarkSelectedChatsAsRead()}>
-                    <CheckCheck size={15} />
-                    <span>
-                      <span className={styles.chatSelectionMenuItemTitle}>Marcar como leídos</span>
-                      <small>Quita pendientes de los seleccionados.</small>
-                    </span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem className={styles.chatSelectionMenuItem} onSelect={() => handleOpenBulkArchiveConfirm()}>
-                    <Archive size={15} />
-                    <span>
-                      <span className={styles.chatSelectionMenuItemTitle}>{bulkArchiveActionLabel}</span>
-                      <small>{archivedViewOpen ? 'Devuelve estos chats a conversaciones.' : 'Mueve estos chats fuera de la bandeja principal.'}</small>
-                    </span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className={`${styles.chatSelectionMenuItem} ${styles.chatActionMenuItemDanger}`}
-                    onSelect={() => handleOpenBulkRemoveConfirm()}
-                  >
-                    <Trash2 size={15} />
-                    <span>
-                      <span className={styles.chatSelectionMenuItemTitle}>Eliminar de la vista</span>
-                      <small>Oculta los chats sin borrar historial.</small>
-                    </span>
-                  </DropdownMenuItem>
-                  {showBulkAgentAssignmentActions ? (
-                    <>
-                      <DropdownMenuSeparator />
-                      <div className={styles.chatSelectionMenuHeader}>
-                        <strong>Mandar a inteligencia artificial</strong>
-                        <span>Elige el agente que atenderá todos los chats seleccionados.</span>
-                      </div>
-                      {!conversationAgentEnabled ? (
-                        <DropdownMenuItem className={styles.chatSelectionMenuItem} disabled>
-                          <Bot size={15} />
-                          <span>
-                            <span className={styles.chatSelectionMenuItemTitle}>Agente conversacional apagado</span>
-                            <small>Actívalo en Agente AI para usarlo aquí.</small>
-                          </span>
-                        </DropdownMenuItem>
-                      ) : availableAgentDefs.length > 0 ? (
-                        availableAgentDefs.map((agent) => (
-                          <DropdownMenuItem
-                            key={agent.id}
-                            className={styles.chatSelectionMenuItem}
-                            disabled={Boolean(bulkAgentActionBusy)}
-                            onSelect={() => handleAssignSelectedChatsToConversationAgent(agent.id)}
-                          >
-                            <Bot size={15} />
-                            <span>
-                              <span className={styles.chatSelectionMenuItemTitle}>{agent.name || 'Agente sin nombre'}</span>
-                              <small>{getConversationAgentObjectiveLabel(agent.objective)}</small>
-                            </span>
-                          </DropdownMenuItem>
-                        ))
-                      ) : (
-                        <DropdownMenuItem className={styles.chatSelectionMenuItem} disabled>
-                          <Bot size={15} />
-                          <span>
-                            <span className={styles.chatSelectionMenuItemTitle}>Sin agentes activos</span>
-                            <small>Crea o activa un agente en Agente AI.</small>
-                          </span>
-                        </DropdownMenuItem>
-                      )}
-                    </>
-                  ) : null}
-                  {agentAssignedViewOpen ? (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        className={styles.chatSelectionMenuItem}
-                        disabled={Boolean(bulkAgentActionBusy)}
-                        onSelect={() => {
-                          void handleRunBulkConversationAgentAction(
-                            'pause',
-                            'Chatbots pausados',
-                            (count) => `${count} chat${count === 1 ? '' : 's'} quedó${count === 1 ? '' : 'aron'} pausado${count === 1 ? '' : 's'} para que el bot no responda ahí.`
-                          )
-                        }}
-                      >
-                        <Pause size={15} />
-                        <span>
-                          <span className={styles.chatSelectionMenuItemTitle}>Pausar bot</span>
-                          <small>Detiene respuestas automáticas en esos chats.</small>
-                        </span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className={styles.chatSelectionMenuItem}
-                        disabled={Boolean(bulkAgentActionBusy)}
-                        onSelect={() => {
-                          void handleRunBulkConversationAgentAction(
-                            'take_over',
-                            'Chats fuera del bot',
-                            (count) => `Tomaste ${count} conversación${count === 1 ? '' : 'es'} y el bot deja de responder ahí.`
-                          )
-                        }}
-                      >
-                        <User size={15} />
-                        <span>
-                          <span className={styles.chatSelectionMenuItemTitle}>Sacar del bot</span>
-                          <small>Pasa estos chats a atención humana.</small>
-                        </span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className={styles.chatSelectionMenuItem}
-                        disabled={Boolean(bulkAgentActionBusy)}
-                        onSelect={() => {
-                          void handleRunBulkConversationAgentAction(
-                            'skip',
-                            'Chatbots omitidos',
-                            (count) => `El bot ya no volverá a tomar ${count} chat${count === 1 ? '' : 's'} seleccionado${count === 1 ? '' : 's'}.`
-                          )
-                        }}
-                      >
-                        <X size={15} />
-                        <span>
-                          <span className={styles.chatSelectionMenuItemTitle}>Omitir bot</span>
-                          <small>Bloquea que el bot los retome después.</small>
-                        </span>
-                      </DropdownMenuItem>
-                    </>
-                  ) : null}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : null}
-          </div>
-
           <div className={styles.chatList} data-chat-list>
             {chatsLoading ? (
               <div className={styles.stateBlock} role="status" aria-live="polite" aria-label="Cargando chats">
@@ -5267,6 +5105,169 @@ export const DesktopChat: React.FC = () => {
                     </button>
                   ) : null
                 )}
+                <div className={styles.chatSelectionBar} data-chat-selection-active={selectedVisibleChatCount > 0 ? 'true' : undefined}>
+                  <div className={styles.chatSelectionSummary}>
+                    <label className={styles.chatSelectAll}>
+                      <input
+                        ref={selectAllChatCheckboxRef}
+                        type="checkbox"
+                        checked={allVisibleChatsSelected}
+                        disabled={selectableChatRows.length === 0}
+                        onChange={handleToggleVisibleChatSelection}
+                        aria-label={chatSelectionToggleAriaLabel}
+                      />
+                      <span>{chatSelectionToggleLabel}</span>
+                    </label>
+                    <span className={styles.chatSelectionCount}>
+                      {selectedVisibleChatCount > 0
+                        ? `${selectedVisibleChatCount} seleccionado${selectedVisibleChatCount === 1 ? '' : 's'}`
+                        : `${selectableChatRows.length} visible${selectableChatRows.length === 1 ? '' : 's'}`}
+                    </span>
+                  </div>
+                  {selectedVisibleChatCount > 0 ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className={styles.chatSelectionMenuButton}
+                          aria-label="Abrir acciones para chats seleccionados"
+                        >
+                          {bulkAgentActionBusy ? <Loader2 size={14} className={styles.spin} /> : <ListFilter size={14} />}
+                          Acciones
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" sideOffset={8} className={styles.chatSelectionMenu}>
+                        <div className={styles.chatSelectionMenuHeader}>
+                          <strong>{selectedVisibleChatCount} seleccionado{selectedVisibleChatCount === 1 ? '' : 's'}</strong>
+                          <span>{bulkSelectionMenuDescription}</span>
+                        </div>
+                        <DropdownMenuItem className={styles.chatSelectionMenuItem} onSelect={() => handleMarkSelectedChatsAsRead()}>
+                          <CheckCheck size={15} />
+                          <span>
+                            <span className={styles.chatSelectionMenuItemTitle}>Marcar como leídos</span>
+                            <small>Quita pendientes de los seleccionados.</small>
+                          </span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem className={styles.chatSelectionMenuItem} onSelect={() => handleOpenBulkArchiveConfirm()}>
+                          <Archive size={15} />
+                          <span>
+                            <span className={styles.chatSelectionMenuItemTitle}>{bulkArchiveActionLabel}</span>
+                            <small>{archivedViewOpen ? 'Devuelve estos chats a conversaciones.' : 'Mueve estos chats fuera de la bandeja principal.'}</small>
+                          </span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className={`${styles.chatSelectionMenuItem} ${styles.chatActionMenuItemDanger}`}
+                          onSelect={() => handleOpenBulkRemoveConfirm()}
+                        >
+                          <Trash2 size={15} />
+                          <span>
+                            <span className={styles.chatSelectionMenuItemTitle}>Eliminar de la vista</span>
+                            <small>Oculta los chats sin borrar historial.</small>
+                          </span>
+                        </DropdownMenuItem>
+                        {showBulkAgentAssignmentActions ? (
+                          <>
+                            <DropdownMenuSeparator />
+                            <div className={styles.chatSelectionMenuHeader}>
+                              <strong>Mandar a inteligencia artificial</strong>
+                              <span>Elige el agente que atenderá todos los chats seleccionados.</span>
+                            </div>
+                            {!conversationAgentEnabled ? (
+                              <DropdownMenuItem className={styles.chatSelectionMenuItem} disabled>
+                                <Bot size={15} />
+                                <span>
+                                  <span className={styles.chatSelectionMenuItemTitle}>Agente conversacional apagado</span>
+                                  <small>Actívalo en Agente AI para usarlo aquí.</small>
+                                </span>
+                              </DropdownMenuItem>
+                            ) : availableAgentDefs.length > 0 ? (
+                              availableAgentDefs.map((agent) => (
+                                <DropdownMenuItem
+                                  key={agent.id}
+                                  className={styles.chatSelectionMenuItem}
+                                  disabled={Boolean(bulkAgentActionBusy)}
+                                  onSelect={() => handleAssignSelectedChatsToConversationAgent(agent.id)}
+                                >
+                                  <Bot size={15} />
+                                  <span>
+                                    <span className={styles.chatSelectionMenuItemTitle}>{agent.name || 'Agente sin nombre'}</span>
+                                    <small>{getConversationAgentObjectiveLabel(agent.objective)}</small>
+                                  </span>
+                                </DropdownMenuItem>
+                              ))
+                            ) : (
+                              <DropdownMenuItem className={styles.chatSelectionMenuItem} disabled>
+                                <Bot size={15} />
+                                <span>
+                                  <span className={styles.chatSelectionMenuItemTitle}>Sin agentes activos</span>
+                                  <small>Crea o activa un agente en Agente AI.</small>
+                                </span>
+                              </DropdownMenuItem>
+                            )}
+                          </>
+                        ) : null}
+                        {agentAssignedViewOpen ? (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className={styles.chatSelectionMenuItem}
+                              disabled={Boolean(bulkAgentActionBusy)}
+                              onSelect={() => {
+                                void handleRunBulkConversationAgentAction(
+                                  'pause',
+                                  'Chatbots pausados',
+                                  (count) => `${count} chat${count === 1 ? '' : 's'} quedó${count === 1 ? '' : 'aron'} pausado${count === 1 ? '' : 's'} para que el bot no responda ahí.`
+                                )
+                              }}
+                            >
+                              <Pause size={15} />
+                              <span>
+                                <span className={styles.chatSelectionMenuItemTitle}>Pausar bot</span>
+                                <small>Detiene respuestas automáticas en esos chats.</small>
+                              </span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className={styles.chatSelectionMenuItem}
+                              disabled={Boolean(bulkAgentActionBusy)}
+                              onSelect={() => {
+                                void handleRunBulkConversationAgentAction(
+                                  'take_over',
+                                  'Chats fuera del bot',
+                                  (count) => `Tomaste ${count} conversación${count === 1 ? '' : 'es'} y el bot deja de responder ahí.`
+                                )
+                              }}
+                            >
+                              <User size={15} />
+                              <span>
+                                <span className={styles.chatSelectionMenuItemTitle}>Sacar del bot</span>
+                                <small>Pasa estos chats a atención humana.</small>
+                              </span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className={styles.chatSelectionMenuItem}
+                              disabled={Boolean(bulkAgentActionBusy)}
+                              onSelect={() => {
+                                void handleRunBulkConversationAgentAction(
+                                  'skip',
+                                  'Chatbots omitidos',
+                                  (count) => `El bot ya no volverá a tomar ${count} chat${count === 1 ? '' : 's'} seleccionado${count === 1 ? '' : 's'}.`
+                                )
+                              }}
+                            >
+                              <X size={15} />
+                              <span>
+                                <span className={styles.chatSelectionMenuItemTitle}>Omitir bot</span>
+                                <small>Bloquea que el bot los retome después.</small>
+                              </span>
+                            </DropdownMenuItem>
+                          </>
+                        ) : null}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : null}
+                </div>
                 {filteredChats.map((contact) => {
                   const active = contact.id === activeContactId
                   const unread = Number(contact.unreadCount || 0)
