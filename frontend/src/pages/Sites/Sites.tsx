@@ -6242,6 +6242,7 @@ const EMBEDDED_FORM_PROXY_THEME_KEYS: Array<keyof SiteTheme> = [
   'formQualifiedRedirectUrl',
   'formDisqualifiedCompletionAction',
   'formDisqualifiedRedirectUrl',
+  'submitIncompleteOnExit',
   'finalMessages'
 ]
 
@@ -31128,6 +31129,28 @@ const PageInspector: React.FC<{
   const pageConfigContent = (
     <>
       <ActivePageSettings site={site} pages={pages} activePageId={activePageId} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      {isStandardForm(site) && (
+        <div className={styles.settingsGroup}>
+          <div className={styles.panelSubheader}>Comportamiento del formulario</div>
+          <div className={styles.videoFormGateSwitchRow}>
+            <div>
+              <strong>Enviar si sale antes de terminar</strong>
+              <span>Guarda el formulario cuando una respuesta lo manda a otra página o URL.</span>
+            </div>
+            <Switch
+              checked={theme.submitIncompleteOnExit !== false}
+              onChange={(checked) => {
+                onPatchTheme({ submitIncompleteOnExit: checked })
+                window.setTimeout(() => { onSaveSite() }, 0)
+              }}
+              aria-label="Enviar formulario si sale antes de terminar"
+            />
+          </div>
+          <p className={styles.customFieldHint}>
+            Apagado: la persona puede ser enviada al destino, pero no se crea submission ni se guardan respuestas hasta que termine el formulario.
+          </p>
+        </div>
+      )}
       {metaPixelConnected && isFormSite(site) && (
         <div className={styles.settingsGroup}>
           <div className={styles.panelSubheader}>Conversión del formulario</div>

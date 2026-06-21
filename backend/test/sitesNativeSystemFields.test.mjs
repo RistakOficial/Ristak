@@ -735,6 +735,139 @@ test('standard form rule redirects save reached multipage answers before leaving
   }
 })
 
+test('standard form can skip incomplete rule submissions when the exit switch is disabled', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const suffix = crypto.randomUUID()
+  const email = `multipage-skip-${suffix}@example.test`
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    site = await createSite({
+      name: 'Formulario multipagina sin guardado temprano',
+      slug: `form-multipage-skip-${Date.now()}`,
+      siteType: 'standard_form',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        submitIncompleteOnExit: false,
+        pages: [
+          { id: 'page-1', title: 'Datos', sortOrder: 0 },
+          { id: 'page-4', title: 'Filtro', sortOrder: 1 },
+          { id: 'page-2', title: 'Agradecimiento', sortOrder: 2 },
+          { id: 'page-3', title: 'Descalificacion', sortOrder: 3 }
+        ]
+      }
+    })
+
+    let siteWithBlocks = await createBlock(site.id, {
+      blockType: 'email',
+      label: 'Correo electronico',
+      required: true,
+      settings: { pageId: 'page-1', systemFieldKey: 'email', internalName: 'email', validation: 'email' }
+    })
+    siteWithBlocks = await createBlock(site.id, {
+      blockType: 'radio',
+      label: 'Ruta',
+      required: true,
+      settings: { pageId: 'page-4', internalName: 'ruta' },
+      options: [
+        {
+          id: 'external',
+          label: 'Ir a oferta',
+          value: 'Ir a oferta',
+          action: 'redirect',
+          redirectUrl: 'https://example.com/oferta-sin-guardar'
+        },
+        {
+          id: 'disqualified',
+          label: 'No califica',
+          value: 'No califica',
+          action: 'disqualify',
+          message: 'No califica por ahora.'
+        }
+      ]
+    })
+
+    const emailBlock = siteWithBlocks.blocks.find(block => block.blockType === 'email')
+    const routeBlock = siteWithBlocks.blocks.find(block => block.blockType === 'radio')
+    assert.ok(emailBlock)
+    assert.ok(routeBlock)
+
+    const result = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: site.id,
+        pageId: 'page-4',
+        meta: { ruleSubmit: true, ruleAction: 'redirect' },
+        responses: {
+          [emailBlock.id]: email,
+          [routeBlock.id]: 'Ir a oferta'
+        }
+      }
+    )
+
+    assert.equal(result.skipped, true)
+    assert.equal(result.submissionId, '')
+    assert.equal(result.contactId, null)
+    assert.equal(result.redirectUrl, 'https://example.com/oferta-sin-guardar')
+
+    const disqualifiedResult = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: site.id,
+        pageId: 'page-4',
+        meta: { ruleSubmit: true, ruleAction: 'disqualify', immediateDisqualify: true },
+        responses: {
+          [emailBlock.id]: email,
+          [routeBlock.id]: 'No califica'
+        }
+      }
+    )
+
+    assert.equal(disqualifiedResult.skipped, true)
+    assert.equal(disqualifiedResult.status, 'disqualified')
+    assert.equal(disqualifiedResult.submissionId, '')
+    assert.equal(disqualifiedResult.contactId, null)
+    assert.equal(disqualifiedResult.redirectUrl, '?page=page-3')
+
+    const submissionCount = await db.get('SELECT COUNT(*) as total FROM public_site_submissions WHERE site_id = ?', [site.id])
+    assert.equal(submissionCount.total, 0)
+    const contactCount = await db.get('SELECT COUNT(*) as total FROM contacts WHERE email = ?', [email])
+    assert.equal(contactCount.total, 0)
+  } finally {
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
 test('native form submission triggers contact and form automations with mappable answers', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),

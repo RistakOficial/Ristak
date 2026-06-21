@@ -163,6 +163,7 @@ export interface SiteTheme {
   formQualifiedRedirectUrl?: string
   formDisqualifiedCompletionAction?: SiteFormDisqualifiedCompletionAction
   formDisqualifiedRedirectUrl?: string
+  submitIncompleteOnExit?: boolean
   brandName?: string
   brandSubtitle?: string
   brandAvatar?: string
