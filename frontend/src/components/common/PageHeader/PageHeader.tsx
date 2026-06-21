@@ -6,7 +6,6 @@ interface PageHeaderProps extends Omit<React.HTMLAttributes<HTMLElement>, 'title
   /** Small uppercase label rendered above the title (e.g. "Sistema"). */
   eyebrow?: React.ReactNode
   title: React.ReactNode
-  titleActions?: React.ReactNode
   subtitle?: React.ReactNode
   /** Right-aligned actions, typically <Button> elements. */
   actions?: React.ReactNode
@@ -24,7 +23,6 @@ interface PageHeaderProps extends Omit<React.HTMLAttributes<HTMLElement>, 'title
 export const PageHeader: React.FC<PageHeaderProps> = ({
   eyebrow,
   title,
-  titleActions,
   subtitle,
   actions,
   as = 'h1',
@@ -36,10 +34,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
     <header className={cn(styles.header, className)} data-ristak-page-header {...rest}>
       <div className={styles.heading}>
         {eyebrow ? <p className={styles.eyebrow}>{eyebrow}</p> : null}
-        <div className={styles.titleRow}>
-          <Title className={styles.title}>{title}</Title>
-          {titleActions ? <div className={styles.titleActions}>{titleActions}</div> : null}
-        </div>
+        <Title className={styles.title}>{title}</Title>
         {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
       </div>
       {actions ? <div className={styles.actions}>{actions}</div> : null}

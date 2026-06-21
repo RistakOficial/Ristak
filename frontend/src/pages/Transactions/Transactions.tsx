@@ -2541,18 +2541,6 @@ export const Transactions: React.FC = () => {
       <div className={styles.container}>
         <PageHeader
           title={pageTitle}
-          titleActions={(
-            <Button
-              type="button"
-              variant="secondary"
-              iconOnly
-              aria-label={paymentsRefreshLabel}
-              title={paymentsRefreshLabel}
-              onClick={handleSync}
-              disabled={paymentsRefreshBusy}
-              leftIcon={<RefreshCw size={16} className={paymentsRefreshBusy ? styles.spinning : ''} />}
-            />
-          )}
           subtitle={pageSubtitle}
           actions={(
             <Button
@@ -2634,6 +2622,16 @@ export const Transactions: React.FC = () => {
                 Programar plan
               </Button>
             )}
+            <Button
+              type="button"
+              variant="secondary"
+              iconOnly
+              aria-label={paymentsRefreshLabel}
+              title={paymentsRefreshLabel}
+              onClick={handleSync}
+              disabled={paymentsRefreshBusy}
+              leftIcon={<RefreshCw size={16} className={paymentsRefreshBusy ? styles.spinning : ''} />}
+            />
           </div>
         </div>
 

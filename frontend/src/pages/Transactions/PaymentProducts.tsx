@@ -388,24 +388,22 @@ export const PaymentProducts: React.FC = () => {
       <div className={styles.page}>
         <PageHeader
           title="Productos"
-          titleActions={(
-            <Button
-              type="button"
-              variant="secondary"
-              iconOnly
-              aria-label="Actualizar productos"
-              title="Actualizar productos"
-              onClick={() => void loadProducts({ refresh: true, sync: highLevelConnected })}
-              disabled={refreshing}
-              leftIcon={<RefreshCw size={16} className={refreshing ? styles.spin : undefined} />}
-            />
-          )}
           subtitle="Administra los productos y precios guardados en la base de datos."
           actions={
             <>
               <Button onClick={openCreateProduct} leftIcon={<Plus size={16} />}>
                 Nuevo producto
               </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                iconOnly
+                aria-label="Actualizar productos"
+                title="Actualizar productos"
+                onClick={() => void loadProducts({ refresh: true, sync: highLevelConnected })}
+                disabled={refreshing}
+                leftIcon={<RefreshCw size={16} className={refreshing ? styles.spin : undefined} />}
+              />
             </>
           }
         />
