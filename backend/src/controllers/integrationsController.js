@@ -6,6 +6,7 @@ import { getAIAgentStatus } from '../services/aiAgentService.js';
 import { getGoogleCalendarConfig } from '../services/googleCalendarService.js';
 import { getStripePaymentConfig } from '../services/stripePaymentService.js';
 import { getMercadoPagoPaymentConfig } from '../services/mercadoPagoPaymentService.js';
+import { getConektaPaymentConfig } from '../services/conektaPaymentService.js';
 
 // La verificación del token contra la API de HighLevel es costosa y este
 // endpoint se consulta varias veces por carga de página. Se cachea el
@@ -184,6 +185,21 @@ export const getStatus = async (req, res) => {
       logger.warn(`Error obteniendo estado de Mercado Pago: ${error.message}`);
     }
 
+    // Conekta
+    let conektaStatus = { configured: false, connected: false };
+    try {
+      const conektaConfig = await getConektaPaymentConfig();
+      conektaStatus = {
+        configured: Boolean(conektaConfig?.configured),
+        connected: Boolean(conektaConfig?.configured),
+        mode: conektaConfig?.mode || 'test',
+        publicKey: conektaConfig?.publicKey || null,
+        accountLabel: conektaConfig?.accountLabel || null
+      };
+    } catch (error) {
+      logger.warn(`Error obteniendo estado de Conekta: ${error.message}`);
+    }
+
     // Respuesta con estructura mejorada
     res.json({
       highlevel: highlevelStatus,
@@ -192,7 +208,8 @@ export const getStatus = async (req, res) => {
       openai: openaiStatus,
       googleCalendar: googleCalendarStatus,
       stripe: stripeStatus,
-      mercadopago: mercadoPagoStatus
+      mercadopago: mercadoPagoStatus,
+      conekta: conektaStatus
     });
 
   } catch (error) {
@@ -213,6 +230,7 @@ export const getStatus = async (req, res) => {
       openai: { configured: false, connected: false },
       googleCalendar: { configured: false, connected: false },
       mercadopago: { configured: false, connected: false },
+      conekta: { configured: false, connected: false },
       error: 'Error al obtener estado de integraciones'
     });
   }

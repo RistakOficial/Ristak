@@ -47,6 +47,7 @@ import {
   type PaymentSettings,
   type PaymentTaxSettings
 } from '@/services/paymentSettingsService'
+import { conektaPaymentsService, type ConektaPaymentConfig } from '@/services/conektaPaymentsService'
 import { mercadoPagoPaymentsService, type MercadoPagoPaymentConfig } from '@/services/mercadoPagoPaymentsService'
 import { stripePaymentsService, type StripePaymentConfig } from '@/services/stripePaymentsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
@@ -76,7 +77,7 @@ import {
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'automations' | 'gateways' | 'taxes'
-type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercadopago' | 'clip'
+type PaymentGatewayId = 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip'
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 type PaymentAutomationTemplateKind = 'reminder' | 'receipt' | 'failed'
 type StripeModeId = 'test' | 'live'
@@ -86,6 +87,11 @@ interface StripeModeCredentials {
   publishableKey: string
   secretKey: string
   webhookSecret: string
+}
+
+interface ConektaModeCredentials {
+  publicKey: string
+  privateKey: string
 }
 
 interface PaymentGatewayOption {
@@ -110,13 +116,17 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
 ]
 
 const sectionIds = sectionItems.map((item) => item.id)
-const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercadopago', 'clip']
+const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip']
 const GIGSTACK_API_URL = 'https://gigstack.pro/api-facturacion'
 const stripeModeIds: StripeModeId[] = ['test', 'live']
 const mercadoPagoModeIds: MercadoPagoModeId[] = ['test', 'live']
 const emptyStripeModeCredentials: Record<StripeModeId, StripeModeCredentials> = {
   test: { publishableKey: '', secretKey: '', webhookSecret: '' },
   live: { publishableKey: '', secretKey: '', webhookSecret: '' }
+}
+const emptyConektaModeCredentials: Record<StripeModeId, ConektaModeCredentials> = {
+  test: { publicKey: '', privateKey: '' },
+  live: { publicKey: '', privateKey: '' }
 }
 const stripeModeLabels: Record<StripeModeId, { title: string; description: string; publishablePlaceholder: string; secretPlaceholder: string }> = {
   test: {
@@ -140,6 +150,20 @@ const mercadoPagoModeLabels: Record<MercadoPagoModeId, { title: string; descript
   live: {
     title: 'Modo en vivo',
     description: 'Para usarlo, abre Mercado Pago en tu navegador normal con tu cuenta real.'
+  }
+}
+const conektaModeLabels: Record<StripeModeId, { title: string; description: string; publicPlaceholder: string; privatePlaceholder: string }> = {
+  test: {
+    title: 'Modo prueba',
+    description: 'Para validar tokenización, tarjetas de prueba y cargos sin dinero real.',
+    publicPlaceholder: 'key_...',
+    privatePlaceholder: 'key_...'
+  },
+  live: {
+    title: 'Modo en vivo',
+    description: 'Para aceptar pagos reales con tu cuenta de Conekta.',
+    publicPlaceholder: 'key_...',
+    privatePlaceholder: 'key_...'
   }
 }
 
@@ -347,6 +371,25 @@ const getStripeModeCredentialsFromConfig = (config?: StripePaymentConfig | null)
   return nextCredentials
 }
 
+const getConektaModeCredentialsFromConfig = (config?: ConektaPaymentConfig | null): Record<StripeModeId, ConektaModeCredentials> => {
+  if (!config) return emptyConektaModeCredentials
+
+  const nextCredentials: Record<StripeModeId, ConektaModeCredentials> = {
+    test: { ...emptyConektaModeCredentials.test },
+    live: { ...emptyConektaModeCredentials.live }
+  }
+
+  stripeModeIds.forEach((mode) => {
+    const modeConfig = config.manualModes?.[mode]
+    nextCredentials[mode] = {
+      publicKey: modeConfig?.publicKey || (config.mode === mode ? config.publicKey : ''),
+      privateKey: modeConfig?.privateKeyPreview || (config.mode === mode ? config.privateKeyPreview || '' : '')
+    }
+  })
+
+  return nextCredentials
+}
+
 export const PaymentsConfiguration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
@@ -373,6 +416,12 @@ export const PaymentsConfiguration: React.FC = () => {
   const [savingStripeMode, setSavingStripeMode] = useState<StripeModeId | null>(null)
   const [stripeConnectionFailed, setStripeConnectionFailed] = useState(false)
   const [disconnectingStripeMode, setDisconnectingStripeMode] = useState<StripeModeId | null>(null)
+  const [conektaConfig, setConektaConfig] = useState<ConektaPaymentConfig | null>(null)
+  const [conektaManualCredentials, setConektaManualCredentials] = useState<Record<StripeModeId, ConektaModeCredentials>>(emptyConektaModeCredentials)
+  const [loadingConektaConfig, setLoadingConektaConfig] = useState(false)
+  const [savingConektaMode, setSavingConektaMode] = useState<StripeModeId | null>(null)
+  const [conektaConnectionFailed, setConektaConnectionFailed] = useState(false)
+  const [disconnectingConektaMode, setDisconnectingConektaMode] = useState<StripeModeId | null>(null)
   const [mercadoPagoConfig, setMercadoPagoConfig] = useState<MercadoPagoPaymentConfig | null>(null)
   const [mercadoPagoMode, setMercadoPagoMode] = useState<MercadoPagoModeId>('live')
   const [loadingMercadoPagoConfig, setLoadingMercadoPagoConfig] = useState(false)
@@ -411,6 +460,7 @@ export const PaymentsConfiguration: React.FC = () => {
   useEffect(() => {
     loadPaymentSettings()
     loadStripeConfig()
+    loadConektaConfig()
     loadMercadoPagoConfig()
     loadWhatsAppAvailability()
     loadPaymentWhatsappTemplates()
@@ -469,6 +519,15 @@ export const PaymentsConfiguration: React.FC = () => {
     status: stripeConfig?.configured ? 'connected' : 'available'
   }), [stripeConfig?.configured, stripeConfig?.mode])
 
+  const conektaGatewayOption: PaymentGatewayOption = useMemo(() => ({
+    id: 'conekta',
+    name: 'Conekta',
+    description: conektaConfig?.configured
+      ? `Configurado con tu cuenta de Conekta en modo ${conektaConfig.mode === 'live' ? 'en vivo' : 'prueba'}.`
+      : 'Configura Conekta para links de pago y cobros con tarjetas guardadas.',
+    status: conektaConfig?.configured ? 'connected' : 'available'
+  }), [conektaConfig?.configured, conektaConfig?.mode])
+
   const gatewayOptions: PaymentGatewayOption[] = [
     ...(highLevelConnected
       ? [{
@@ -479,6 +538,7 @@ export const PaymentsConfiguration: React.FC = () => {
       }]
       : []),
     stripeGatewayOption,
+    conektaGatewayOption,
     {
       id: 'mercadopago',
       name: 'Mercado Pago',
@@ -498,6 +558,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === (activeGatewayRoute || selectedGateway))
   const stripeWebhookEndpoints = stripeConfig?.webhookEndpoints || []
   const stripeConnected = Boolean(stripeConfig?.configured)
+  const conektaConnected = Boolean(conektaConfig?.configured)
   const mercadoPagoConnected = Boolean(mercadoPagoConfig?.configured)
   const mercadoPagoActiveMode = mercadoPagoConfig?.mode || mercadoPagoMode
   const stripeConfigurationStatus = stripeConnectionFailed
@@ -516,11 +577,26 @@ export const PaymentsConfiguration: React.FC = () => {
   }
   const stripeModeIsSaved = (mode: StripeModeId) => Boolean(stripeConfig?.manualModes?.[mode]?.configured)
   const stripeModeCanSave = (mode: StripeModeId) => stripeModeIsComplete(mode)
+  const conektaConfigurationStatus = conektaConnectionFailed
+    ? 'connection_failed'
+    : conektaConnected ? 'configured_manually' : 'not_configured'
+  const conektaStatusBadge = (() => {
+    if (loadingConektaConfig) return { label: 'Cargando', variant: 'warning' as const, icon: <Loader2 size={14} className={styles.spinIcon} /> }
+    if (conektaConfigurationStatus === 'configured_manually') return { label: 'Configurado manualmente', variant: 'success' as const, icon: <ShieldCheck size={14} /> }
+    if (conektaConfigurationStatus === 'connection_failed') return { label: 'Conexión fallida', variant: 'warning' as const, icon: <AlertTriangle size={14} /> }
+    return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
+  })()
+  const conektaModeIsComplete = (mode: StripeModeId) => {
+    const values = conektaManualCredentials[mode]
+    return Boolean(values.publicKey.trim() && values.privateKey.trim())
+  }
+  const conektaModeIsSaved = (mode: StripeModeId) => Boolean(conektaConfig?.manualModes?.[mode]?.configured)
+  const conektaModeCanSave = (mode: StripeModeId) => conektaModeIsComplete(mode)
   const mercadoPagoModeIsConnected = (mode: MercadoPagoModeId) => Boolean(
     mercadoPagoConfig?.modeConnections?.[mode]?.connected ||
     (mercadoPagoConnected && mercadoPagoConfig?.mode === mode)
   )
-  const isLoadingPage = loadingSettings || loadingHighLevelConnection || loadingStripeConfig || loadingMercadoPagoConfig
+  const isLoadingPage = loadingSettings || loadingHighLevelConnection || loadingStripeConfig || loadingConektaConfig || loadingMercadoPagoConfig
   const paymentWhatsappTemplateOptions = useMemo(() => {
     const options = Object.values(paymentAutomationTemplateDefaults).map((template) => ({
       value: template.defaultName,
@@ -852,6 +928,25 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
+  const applyConektaConfig = (config: ConektaPaymentConfig) => {
+    setConektaConfig(config)
+    setConektaManualCredentials(getConektaModeCredentialsFromConfig(config))
+    setConektaConnectionFailed(false)
+  }
+
+  const loadConektaConfig = async () => {
+    setLoadingConektaConfig(true)
+    try {
+      const config = await conektaPaymentsService.getConfig()
+      applyConektaConfig(config)
+    } catch {
+      setConektaConfig(null)
+      setConektaManualCredentials(emptyConektaModeCredentials)
+    } finally {
+      setLoadingConektaConfig(false)
+    }
+  }
+
   const applyMercadoPagoConfig = (config: MercadoPagoPaymentConfig) => {
     setMercadoPagoConfig(config)
     setMercadoPagoMode(config.mode || 'live')
@@ -894,6 +989,37 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const updateStripeModeCredential = (mode: StripeModeId, key: keyof StripeModeCredentials, value: string) => {
     setStripeManualCredentials((current) => ({
+      ...current,
+      [mode]: {
+        ...current[mode],
+        [key]: value
+      }
+    }))
+  }
+
+  const buildConektaModeConfigPayload = (mode: StripeModeId, modeValues: ConektaModeCredentials = conektaManualCredentials[mode]) => {
+    const nextModeCredentials = {
+      ...conektaManualCredentials,
+      [mode]: modeValues
+    }
+    const nextLiveIsComplete = Boolean(nextModeCredentials.live.publicKey.trim() && nextModeCredentials.live.privateKey.trim())
+    const nextTestIsComplete = Boolean(nextModeCredentials.test.publicKey.trim() && nextModeCredentials.test.privateKey.trim())
+
+    return {
+      enabled: true,
+      mode: (nextLiveIsComplete ? 'live' : nextTestIsComplete ? 'test' : mode) as StripeModeId,
+      defaultCurrency: accountCurrency,
+      manualModes: {
+        [mode]: {
+          publicKey: modeValues.publicKey.trim(),
+          privateKey: modeValues.privateKey.trim()
+        }
+      }
+    }
+  }
+
+  const updateConektaModeCredential = (mode: StripeModeId, key: keyof ConektaModeCredentials, value: string) => {
+    setConektaManualCredentials((current) => ({
       ...current,
       [mode]: {
         ...current[mode],
@@ -953,6 +1079,58 @@ export const PaymentsConfiguration: React.FC = () => {
       showToast('error', 'No se pudo desconectar Stripe', error.message || 'Intenta de nuevo.')
     } finally {
       setDisconnectingStripeMode(null)
+    }
+  }
+
+  const handleSaveConektaModeConfig = async (mode: StripeModeId) => {
+    setSavingConektaMode(mode)
+    try {
+      const config = await conektaPaymentsService.saveConfig(buildConektaModeConfigPayload(mode))
+      applyConektaConfig(config)
+      invalidateIntegrationsStatus()
+      showToast('success', 'Conekta guardado', `${conektaModeLabels[mode].title} quedó listo para cobrar.`)
+    } catch (error: any) {
+      setConektaConnectionFailed(true)
+      showToast('error', 'No se pudo guardar Conekta', error.message || 'Revisa las credenciales de Conekta.')
+    } finally {
+      setSavingConektaMode(null)
+    }
+  }
+
+  const handleDisconnectConektaMode = async (mode: StripeModeId) => {
+    const otherMode = mode === 'live' ? 'test' : 'live'
+    const otherModeHasConfig = conektaModeIsSaved(otherMode) || conektaModeIsComplete(otherMode)
+
+    setDisconnectingConektaMode(mode)
+    try {
+      const emptyMode = { publicKey: '', privateKey: '' }
+      const disconnectPayload = {
+        ...buildConektaModeConfigPayload(mode, emptyMode),
+        manualModes: {
+          [mode]: {
+            publicKey: '',
+            privateKey: ''
+          },
+          ...(conektaModeIsComplete(otherMode)
+            ? {
+                [otherMode]: {
+                  publicKey: conektaManualCredentials[otherMode].publicKey.trim(),
+                  privateKey: conektaManualCredentials[otherMode].privateKey.trim()
+                }
+              }
+            : {})
+        }
+      }
+      const config = otherModeHasConfig
+        ? await conektaPaymentsService.saveConfig(disconnectPayload)
+        : await conektaPaymentsService.deleteConfig()
+      applyConektaConfig(config)
+      invalidateIntegrationsStatus()
+      showToast('success', 'Conekta desconectado', `${conektaModeLabels[mode].title} dejó de usarse para nuevos cobros.`)
+    } catch (error: any) {
+      showToast('error', 'No se pudo desconectar Conekta', error.message || 'Intenta de nuevo.')
+    } finally {
+      setDisconnectingConektaMode(null)
     }
   }
 
@@ -1986,9 +2164,9 @@ export const PaymentsConfiguration: React.FC = () => {
               <h2>Pasarela de pagos</h2>
               <p>Elige con qué proveedor se cobran links, tarjetas, parcialidades y suscripciones.</p>
             </div>
-            <Badge variant={stripeConnected || mercadoPagoConnected || highLevelConnected ? 'success' : 'warning'}>
-              {stripeConnected || mercadoPagoConnected || highLevelConnected ? <CheckCircle size={14} /> : <KeyRound size={14} />}
-              {stripeConnected || mercadoPagoConnected || highLevelConnected ? 'Conectada' : 'Pendiente'}
+            <Badge variant={stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? 'success' : 'warning'}>
+              {stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? <CheckCircle size={14} /> : <KeyRound size={14} />}
+              {stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? 'Conectada' : 'Pendiente'}
             </Badge>
           </div>
 
@@ -2253,6 +2431,115 @@ export const PaymentsConfiguration: React.FC = () => {
                 ))}
               </div>
             )}
+          </div>
+        </Card>
+      )}
+
+      {activeGatewayRoute === 'conekta' && (
+        <Card className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
+            <div>
+              <h2>Configuración manual de Conekta</h2>
+              <p>Pega las llaves pública y privada de Conekta. Ristak usa la pública para tokenizar tarjetas y la privada para crear órdenes y cargos con tarjetas guardadas.</p>
+            </div>
+            <Badge variant={conektaStatusBadge.variant}>
+              {conektaStatusBadge.icon}
+              {conektaStatusBadge.label}
+            </Badge>
+          </div>
+
+          <div className={styles.stripePanel}>
+            <div className={styles.stripeModeGrid}>
+              {stripeModeIds.map((mode) => {
+                const modeCopy = conektaModeLabels[mode]
+                const values = conektaManualCredentials[mode]
+                const savedMode = conektaConfig?.manualModes?.[mode]
+                const modeSaved = conektaModeIsSaved(mode)
+                const modeIsSaving = savingConektaMode === mode
+                const modeIsDisconnecting = disconnectingConektaMode === mode
+
+                return (
+                  <div key={mode} className={styles.stripeModePanel}>
+                    <div className={styles.stripeModeHeader}>
+                      <div>
+                        <h3>{modeCopy.title}</h3>
+                        <p>{modeCopy.description}</p>
+                      </div>
+                      <Badge variant={conektaModeIsComplete(mode) || savedMode?.configured ? 'success' : 'neutral'}>
+                        {conektaModeIsComplete(mode) || savedMode?.configured ? 'Listo' : 'Pendiente'}
+                      </Badge>
+                    </div>
+
+                    <div className={styles.formGrid}>
+                      {renderField(
+                        'Llave pública',
+                        <input
+                          type="text"
+                          value={values.publicKey}
+                          onChange={(event) => updateConektaModeCredential(mode, 'publicKey', event.target.value)}
+                          placeholder={modeCopy.publicPlaceholder}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                      )}
+                      {renderField(
+                        'Llave privada',
+                        <input
+                          type="password"
+                          value={values.privateKey}
+                          onChange={(event) => updateConektaModeCredential(mode, 'privateKey', event.target.value)}
+                          onFocus={(event) => {
+                            if (savedMode?.privateKeyPreview && values.privateKey === savedMode.privateKeyPreview) event.currentTarget.select()
+                          }}
+                          placeholder={savedMode?.hasPrivateKey ? savedMode.privateKeyPreview : modeCopy.privatePlaceholder}
+                          autoComplete="new-password"
+                          spellCheck={false}
+                        />
+                      )}
+                    </div>
+
+                    <div className={styles.stripeModeActions}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveConektaModeConfig(mode)}
+                        disabled={modeIsSaving || Boolean(disconnectingConektaMode) || !conektaModeCanSave(mode)}
+                      >
+                        {modeIsSaving ? (
+                          <>
+                            <Loader2 size={15} className={styles.spinIcon} />
+                            Guardando...
+                          </>
+                        ) : (
+                          modeSaved ? 'Guardar cambios' : 'Guardar configuración'
+                        )}
+                      </Button>
+                      {modeSaved && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleDisconnectConektaMode(mode)}
+                          disabled={modeIsDisconnecting || Boolean(savingConektaMode)}
+                        >
+                          {modeIsDisconnecting ? (
+                            <>
+                              <Loader2 size={15} className={styles.spinIcon} />
+                              Desconectando...
+                            </>
+                          ) : (
+                            <>
+                              <Unplug size={15} />
+                              Desconectar
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </Card>
       )}
@@ -2602,9 +2889,9 @@ export const PaymentsConfiguration: React.FC = () => {
         title="Pagos"
         subtitle="Configura el cobro, comprobante, automatizaciones, pasarelas e impuestos desde un solo setup."
         actions={(
-          <Badge variant={stripeConnected || mercadoPagoConnected || highLevelConnected ? 'success' : 'warning'}>
-            {isLoadingPage ? <Loader2 size={14} className={styles.spinIcon} /> : stripeConnected || mercadoPagoConnected || highLevelConnected ? <CheckCircle size={14} /> : <Clock size={14} />}
-            {isLoadingPage ? 'Cargando' : stripeConnected ? 'Stripe conectado' : mercadoPagoConnected ? 'Mercado Pago conectado' : highLevelConnected ? 'GoHighLevel conectado' : 'Pasarela pendiente'}
+          <Badge variant={stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? 'success' : 'warning'}>
+            {isLoadingPage ? <Loader2 size={14} className={styles.spinIcon} /> : stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? <CheckCircle size={14} /> : <Clock size={14} />}
+            {isLoadingPage ? 'Cargando' : stripeConnected ? 'Stripe conectado' : conektaConnected ? 'Conekta conectado' : mercadoPagoConnected ? 'Mercado Pago conectado' : highLevelConnected ? 'GoHighLevel conectado' : 'Pasarela pendiente'}
           </Badge>
         )}
       />

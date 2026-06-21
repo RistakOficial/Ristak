@@ -306,6 +306,15 @@
   color: var(--text);
 }
 
+.conektaTokenizerShell {
+  min-height: 620px;
+}
+
+.conektaTokenizerFrame {
+  min-height: 580px;
+  color: var(--text);
+}
+
 .brickLoading {
   position: absolute;
   inset: 14px;

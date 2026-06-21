@@ -10,6 +10,10 @@ import {
   type PublicMercadoPagoPayment
 } from '@/services/mercadoPagoPaymentsService'
 import {
+  conektaPaymentsService,
+  type PublicConektaPayment
+} from '@/services/conektaPaymentsService'
+import {
   stripePaymentsService,
   type PublicStripePayment,
   type StripePaymentIntentResponse
@@ -23,7 +27,7 @@ import {
 import styles from './PublicPayment.module.css'
 
 type StripePromise = ReturnType<typeof loadStripe>
-type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment
+type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment | PublicConektaPayment
 type MercadoPagoBrickController = { unmount?: () => void }
 type MercadoPagoBrickBuilder = {
   create: (
@@ -36,6 +40,17 @@ type MercadoPagoInstance = {
   bricks: () => MercadoPagoBrickBuilder
 }
 type MercadoPagoConstructor = new (publicKey: string, options?: { locale?: string }) => MercadoPagoInstance
+type ConektaCheckoutComponents = {
+  Card: (settings: {
+    config: {
+      targetIFrame: string
+      publicKey: string
+      locale?: string
+    }
+    callbacks: Record<string, (...args: any[]) => void>
+    options?: Record<string, unknown>
+  }) => void
+}
 type MercadoPagoCardSubmitData = {
   token?: string
   payment_method_id?: string
@@ -59,11 +74,14 @@ type MercadoPagoCardSubmitData = {
 declare global {
   interface Window {
     MercadoPago?: MercadoPagoConstructor
+    ConektaCheckoutComponents?: ConektaCheckoutComponents
   }
 }
 
 const MERCADOPAGO_SDK_SRC = 'https://sdk.mercadopago.com/js/v2'
+const CONEKTA_CHECKOUT_SDK_SRC = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js'
 let mercadoPagoSdkPromise: Promise<void> | null = null
+let conektaCheckoutSdkPromise: Promise<void> | null = null
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -148,11 +166,59 @@ function loadMercadoPagoSdk() {
   return mercadoPagoSdkPromise
 }
 
+function loadConektaCheckoutSdk() {
+  if (typeof window === 'undefined') return Promise.reject(new Error('Conekta solo se puede cargar en el navegador.'))
+  if (window.ConektaCheckoutComponents) return Promise.resolve()
+  if (conektaCheckoutSdkPromise) return conektaCheckoutSdkPromise
+
+  conektaCheckoutSdkPromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${CONEKTA_CHECKOUT_SDK_SRC}"]`)
+    const handleReady = () => {
+      if (window.ConektaCheckoutComponents) {
+        resolve()
+      } else {
+        reject(new Error('No se pudo cargar el tokenizador de Conekta.'))
+      }
+    }
+
+    if (existingScript) {
+      existingScript.addEventListener('load', handleReady, { once: true })
+      existingScript.addEventListener('error', () => reject(new Error('No se pudo cargar el tokenizador de Conekta.')), { once: true })
+      window.setTimeout(handleReady, 0)
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = CONEKTA_CHECKOUT_SDK_SRC
+    script.async = true
+    script.crossOrigin = 'anonymous'
+    script.addEventListener('load', handleReady, { once: true })
+    script.addEventListener('error', () => reject(new Error('No se pudo cargar el tokenizador de Conekta.')), { once: true })
+    document.head.appendChild(script)
+  })
+
+  return conektaCheckoutSdkPromise
+}
+
 function createPaymentAttemptKey(publicPaymentId: string) {
   const randomId = typeof window !== 'undefined' && window.crypto?.randomUUID
     ? window.crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   return `ristak-${publicPaymentId}-${randomId}`
+}
+
+function normalizeConektaStatusMessage(status?: string) {
+  const normalized = String(status || '').toLowerCase()
+  if (['paid', 'succeeded', 'completed'].includes(normalized)) {
+    return { kind: 'success' as const, text: 'Pago recibido. Gracias.' }
+  }
+  if (['pending', 'pending_payment', 'processing', 'in_process'].includes(normalized)) {
+    return { kind: 'info' as const, text: 'Conekta está procesando el pago. Esta página se actualizará cuando se confirme.' }
+  }
+  return {
+    kind: 'error' as const,
+    text: 'Conekta rechazó el pago. Revisa los datos o intenta con otra tarjeta.'
+  }
 }
 
 function normalizeMercadoPagoStatusMessage(status?: string, statusDetail?: string) {
@@ -438,6 +504,151 @@ const MercadoPagoCardPaymentForm: React.FC<{
   )
 }
 
+const ConektaCardTokenizerForm: React.FC<{
+  payment: PublicConektaPayment
+  onPaid: () => Promise<void>
+}> = ({ payment, onPaid }) => {
+  const containerId = useMemo(
+    () => `conekta-card-${payment.publicPaymentId.replace(/[^a-zA-Z0-9_-]/g, '')}`,
+    [payment.publicPaymentId]
+  )
+  const onPaidRef = useRef(onPaid)
+  const [loadingTokenizer, setLoadingTokenizer] = useState(Boolean(payment.publicKey))
+  const [submitting, setSubmitting] = useState(false)
+  const [message, setMessage] = useState('')
+  const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
+
+  useEffect(() => {
+    onPaidRef.current = onPaid
+  }, [onPaid])
+
+  useEffect(() => {
+    if (!payment.publicKey) {
+      setLoadingTokenizer(false)
+      setMessage('Conekta no devolvió una llave pública para montar el tokenizador.')
+      setMessageKind('error')
+      return
+    }
+
+    let cancelled = false
+    const mountTokenizer = async () => {
+      setLoadingTokenizer(true)
+      setMessage('')
+
+      try {
+        await loadConektaCheckoutSdk()
+        if (cancelled || !window.ConektaCheckoutComponents) return
+
+        const container = document.getElementById(containerId)
+        if (container) container.innerHTML = ''
+
+        window.ConektaCheckoutComponents.Card({
+          config: {
+            targetIFrame: `#${containerId}`,
+            publicKey: payment.publicKey,
+            locale: 'es'
+          },
+          callbacks: {
+            onCreateTokenSucceeded: async (token: string | { id?: string }) => {
+              const tokenId = typeof token === 'string' ? token : String(token?.id || '').trim()
+              if (!tokenId) {
+                setMessageKind('error')
+                setMessage('Conekta no devolvió un token válido. Intenta nuevamente.')
+                return
+              }
+
+              setSubmitting(true)
+              setMessage('')
+              try {
+                const result = await conektaPaymentsService.createPublicCardPayment(payment.publicPaymentId, {
+                  tokenId,
+                  savePaymentSource: Boolean(payment.contact?.id)
+                })
+                const statusMessage = normalizeConektaStatusMessage(result.payment?.status || result.status)
+                setMessageKind(statusMessage.kind)
+                setMessage(statusMessage.text)
+                await onPaidRef.current()
+              } catch (submitError: any) {
+                setMessageKind('error')
+                setMessage(submitError?.message || 'No se pudo completar el pago con Conekta.')
+              } finally {
+                setSubmitting(false)
+              }
+            },
+            onCreateTokenError: (tokenError: any) => {
+              if (cancelled) return
+              const details = Array.isArray(tokenError?.details)
+                ? tokenError.details.map((detail: any) => detail?.message || detail?.debug_message).filter(Boolean).join(' ')
+                : ''
+              setMessageKind('error')
+              setMessage(tokenError?.message || details || 'Conekta no pudo tokenizar la tarjeta.')
+              setSubmitting(false)
+            },
+            onGetInfoSuccess: () => {
+              if (!cancelled) setLoadingTokenizer(false)
+            }
+          },
+          options: {
+            backgroundMode: 'lightMode',
+            inputType: 'minimalMode',
+            hideLogo: true,
+            colorPrimary: readToken('--accent'),
+            colorText: readToken('--text'),
+            colorLabel: readToken('--text-dim')
+          }
+        })
+      } catch (tokenizerError: any) {
+        if (cancelled) return
+        setLoadingTokenizer(false)
+        setMessageKind('error')
+        setMessage(tokenizerError?.message || 'No se pudo cargar el tokenizador de Conekta.')
+      }
+    }
+
+    mountTokenizer()
+
+    return () => {
+      cancelled = true
+      const container = document.getElementById(containerId)
+      if (container) container.innerHTML = ''
+    }
+  }, [containerId, payment.contact?.id, payment.publicKey, payment.publicPaymentId])
+
+  const messageClassName = [
+    styles.message,
+    messageKind === 'success' ? styles.messageSuccess : '',
+    messageKind === 'error' ? styles.messageError : ''
+  ].filter(Boolean).join(' ')
+
+  return (
+    <div className={styles.stripeBox}>
+      <p className={styles.cardAuthorizationNotice}>
+        <ShieldCheck size={16} />
+        <span>
+          La tarjeta se captura en el tokenizador seguro de Conekta. Si este pago pertenece a tu contacto, quedará guardada para futuros cargos acordados.
+        </span>
+      </p>
+
+      <div className={`${styles.mercadoPagoBrickShell} ${styles.conektaTokenizerShell}`}>
+        {(loadingTokenizer || submitting) && (
+          <div className={styles.brickLoading}>
+            <Loader2 size={18} className={styles.spin} />
+            <span>{submitting ? 'Procesando pago' : 'Cargando tokenizador seguro'}</span>
+          </div>
+        )}
+        <div id={containerId} className={styles.conektaTokenizerFrame} />
+      </div>
+
+      {message && (
+        <p className={messageClassName}>
+          {messageKind === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          <span>{message}</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
 export const PublicPayment: React.FC = () => {
   const { publicPaymentId = '' } = useParams()
   const [searchParams] = useSearchParams()
@@ -454,8 +665,9 @@ export const PublicPayment: React.FC = () => {
   const receiptDownloadRequested = searchParams.get('receipt') === '1'
   const isStripePayment = payment?.provider === 'stripe'
   const isMercadoPagoPayment = payment?.provider === 'mercadopago'
+  const isConektaPayment = payment?.provider === 'conekta'
   const shouldSavePaymentMethod = Boolean(isStripePayment && payment?.contact?.id)
-  const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : 'Stripe'
+  const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : 'Stripe'
 
   const stripePromise = useMemo<StripePromise | null>(() => {
     if (!payment || payment.provider !== 'stripe') return null
@@ -485,7 +697,11 @@ export const PublicPayment: React.FC = () => {
       try {
         return await mercadoPagoPaymentsService.getPublicPayment(id)
       } catch {
-        throw stripeError
+        try {
+          return await conektaPaymentsService.getPublicPayment(id)
+        } catch {
+          throw stripeError
+        }
       }
     }
   }
@@ -670,6 +886,8 @@ export const PublicPayment: React.FC = () => {
                   ? 'Este pago ya aparece como pagado en Ristak.'
                   : isMercadoPagoPayment
                     ? 'Captura la tarjeta en el formulario seguro de Mercado Pago sin salir de esta página.'
+                    : isConektaPayment
+                      ? 'Captura la tarjeta en el tokenizador seguro de Conekta sin salir de esta página.'
                     : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
@@ -757,6 +975,11 @@ export const PublicPayment: React.FC = () => {
                 onPaid={() => loadPayment(true)}
                 onFallback={startPayment}
                 fallbackLoading={startingPayment}
+              />
+            ) : isConektaPayment ? (
+              <ConektaCardTokenizerForm
+                payment={payment}
+                onPaid={() => loadPayment(true)}
               />
             ) : isStripePayment && stripePromise && elementsOptions ? (
               <Elements stripe={stripePromise} options={elementsOptions}>

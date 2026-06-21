@@ -20,6 +20,12 @@ import {
   getMercadoPagoPaymentConfig
 } from '../../services/mercadoPagoPaymentService.js'
 import {
+  createConektaPaymentLink,
+  createConektaSavedCardPayment,
+  getConektaPaymentConfig,
+  getConektaSavedPaymentSources
+} from '../../services/conektaPaymentService.js'
+import {
   createSubscription,
   listSubscriptions
 } from '../../services/subscriptionsService.js'
@@ -39,12 +45,13 @@ const PAYMENT_GATEWAY_CAPABILITIES = {
 const PAYMENT_GATEWAY_LABELS = {
   highlevel: 'GoHighLevel',
   stripe: 'Stripe',
+  conekta: 'Conekta',
   mercadopago: 'Mercado Pago'
 }
 
-const GATEWAY_PARAM = z.enum(['auto', 'highlevel', 'stripe', 'mercadopago'])
+const GATEWAY_PARAM = z.enum(['auto', 'highlevel', 'stripe', 'conekta', 'mercadopago'])
   .nullable()
-  .describe('Pasarela a usar: auto, highlevel, stripe o mercadopago. Si hay varias conectadas, pregunta al usuario cuál prefiere antes de crear el cobro.')
+  .describe('Pasarela a usar: auto, highlevel, stripe, conekta o mercadopago. Si hay varias conectadas, pregunta al usuario cuál prefiere antes de crear el cobro.')
 
 const CHANNEL_PARAM = z.enum(['email', 'whatsapp', 'sms', 'all'])
   .describe('Canal por el que se envía el link de HighLevel.')
@@ -95,6 +102,7 @@ function normalizeGatewayId(value) {
   if (!normalized || normalized === 'auto') return 'auto'
   if (['ghl', 'gohighlevel', 'highlevel'].includes(normalized)) return 'highlevel'
   if (normalized === 'stripe') return 'stripe'
+  if (normalized === 'conekta') return 'conekta'
   if (['mercadopago', 'mp', 'checkoutpro'].includes(normalized)) return 'mercadopago'
   return ''
 }
@@ -129,10 +137,10 @@ async function getPaymentBaseUrl() {
 
 function mapGatewayStatus({ id, connected, mode = null, accountLabel = '', issue = '' }) {
   const capabilities = {
-    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'mercadopago',
+    paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'conekta' || id === 'mercadopago',
     installmentPlans: id === 'highlevel' || id === 'stripe',
     subscriptions: id === 'stripe' || id === 'mercadopago',
-    savedCardCharges: id === 'stripe'
+    savedCardCharges: id === 'stripe' || id === 'conekta'
   }
 
   return {
@@ -147,14 +155,16 @@ function mapGatewayStatus({ id, connected, mode = null, accountLabel = '', issue
 }
 
 async function getPaymentGatewaySnapshot() {
-  const [highLevelResult, stripeResult, mercadoPagoResult] = await Promise.allSettled([
+  const [highLevelResult, stripeResult, conektaResult, mercadoPagoResult] = await Promise.allSettled([
     getHighLevelConfig(),
     getStripePaymentConfig(),
+    getConektaPaymentConfig(),
     getMercadoPagoPaymentConfig()
   ])
 
   const highLevelConfig = highLevelResult.status === 'fulfilled' ? highLevelResult.value : null
   const stripeConfig = stripeResult.status === 'fulfilled' ? stripeResult.value : null
+  const conektaConfig = conektaResult.status === 'fulfilled' ? conektaResult.value : null
   const mercadoPagoConfig = mercadoPagoResult.status === 'fulfilled' ? mercadoPagoResult.value : null
 
   const gateways = [
@@ -171,6 +181,13 @@ async function getPaymentGatewaySnapshot() {
       mode: stripeConfig?.mode || null,
       accountLabel: stripeConfig?.accountLabel || stripeConfig?.connectAccountEmail || stripeConfig?.connectedAccountPreview || '',
       issue: stripeResult.status === 'rejected' ? stripeResult.reason?.message : ''
+    }),
+    mapGatewayStatus({
+      id: 'conekta',
+      connected: Boolean(conektaConfig?.configured),
+      mode: conektaConfig?.mode || null,
+      accountLabel: conektaConfig?.accountLabel || '',
+      issue: conektaResult.status === 'rejected' ? conektaResult.reason?.message : ''
     }),
     mapGatewayStatus({
       id: 'mercadopago',
@@ -197,7 +214,7 @@ async function selectPaymentGateway(requestedGateway, capability) {
   if (requested && requested !== 'auto') {
     const gateway = snapshot.byId[requested]
     if (!gateway) {
-      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Mercado Pago o GoHighLevel.', snapshot }
+      return { ok: false, error: 'Pasarela no reconocida. Usa Stripe, Conekta, Mercado Pago o GoHighLevel.', snapshot }
     }
     if (!gateway.capabilities[capability]) {
       return { ok: false, error: `${gateway.label} no soporta ${capabilityLabel} en Ristak todavía.`, snapshot }
@@ -221,7 +238,9 @@ async function selectPaymentGateway(requestedGateway, capability) {
           ? 'Stripe o GoHighLevel'
           : capability === 'subscriptions'
             ? 'Stripe o Mercado Pago'
-            : 'Stripe, Mercado Pago o GoHighLevel'
+            : capability === 'savedCardCharges'
+              ? 'Stripe o Conekta'
+              : 'Stripe, Conekta, Mercado Pago o GoHighLevel'
       } en Configuración > Pagos.`,
       snapshot
     }
@@ -363,7 +382,7 @@ export const listProductsTool = tool({
 
 export const getPaymentGatewaysTool = tool({
   name: 'get_payment_gateways',
-  description: 'Detecta qué pasarelas de pago están conectadas (GoHighLevel, Stripe, Mercado Pago) y qué puede hacer cada una: links, planes, suscripciones o cobros con tarjeta guardada. Úsala antes de crear cobros si el usuario no dijo pasarela.',
+  description: 'Detecta qué pasarelas de pago están conectadas (GoHighLevel, Stripe, Conekta, Mercado Pago) y qué puede hacer cada una: links, planes, suscripciones o cobros con tarjeta guardada. Úsala antes de crear cobros si el usuario no dijo pasarela.',
   parameters: z.object({}),
   execute: async () => {
     const snapshot = await getPaymentGatewaySnapshot()
@@ -383,7 +402,7 @@ export const getPaymentGatewaysTool = tool({
 
 export const createPaymentLinkTool = tool({
   name: 'create_payment_link',
-  description: 'Crea un link de pago único con la pasarela conectada correcta (Stripe, Mercado Pago o GoHighLevel). Antes de llamarla: 1) identifica el contacto real, 2) si hay varias pasarelas conectadas pregunta cuál usar, 3) confirma monto, concepto y canal si aplica, 4) pasa confirm=true solo cuando el usuario ya aprobó el cobro.',
+  description: 'Crea un link de pago único con la pasarela conectada correcta (Stripe, Conekta, Mercado Pago o GoHighLevel). Antes de llamarla: 1) identifica el contacto real, 2) si hay varias pasarelas conectadas pregunta cuál usar, 3) confirma monto, concepto y canal si aplica, 4) pasa confirm=true solo cuando el usuario ya aprobó el cobro.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto a cobrar (usa search_contacts)'),
     amount: z.number().positive().describe('Monto del cobro'),
@@ -431,6 +450,21 @@ export const createPaymentLinkTool = tool({
           paymentId: result.payment?.id || null,
           publicPaymentId: result.publicPaymentId || null,
           preferenceId: result.preferenceId || null,
+          paymentLink: result.paymentUrl || result.payment?.paymentUrl || '',
+          amount: result.payment?.amount || amount,
+          currency: result.payment?.currency || currency || null,
+          status: result.payment?.status || 'sent'
+        }
+      }
+
+      if (selected.gateway.id === 'conekta') {
+        const result = await createConektaPaymentLink(paymentPayload, { baseUrl: await getPaymentBaseUrl() })
+        return {
+          ok: true,
+          gateway: selected.gateway.id,
+          gatewayLabel: selected.gateway.label,
+          paymentId: result.payment?.id || null,
+          publicPaymentId: result.publicPaymentId || null,
           paymentLink: result.paymentUrl || result.payment?.paymentUrl || '',
           amount: result.payment?.amount || amount,
           currency: result.payment?.currency || currency || null,
@@ -543,15 +577,35 @@ export const createInstallmentPlanTool = tool({
 
 export const listSavedPaymentMethodsTool = tool({
   name: 'list_saved_payment_methods',
-  description: 'Lista tarjetas guardadas de Stripe para un contacto. Úsala antes de cobrar una tarjeta guardada o activar una suscripción automática si el usuario no especificó paymentMethodId.',
+  description: 'Lista tarjetas guardadas de Stripe o Conekta para un contacto. Úsala antes de cobrar una tarjeta guardada o activar una suscripción automática si el usuario no especificó paymentMethodId.',
   parameters: z.object({
-    contactId: z.string().describe('ID del contacto')
+    contactId: z.string().describe('ID del contacto'),
+    gateway: GATEWAY_PARAM
   }),
-  execute: async ({ contactId }) => {
-    const selected = await selectPaymentGateway('stripe', 'savedCardCharges')
+  execute: async ({ contactId, gateway }) => {
+    const selected = await selectPaymentGateway(gateway, 'savedCardCharges')
     if (!selected.ok) return selected
 
     try {
+      if (selected.gateway.id === 'conekta') {
+        const sources = await getConektaSavedPaymentSources(contactId)
+        return {
+          ok: true,
+          gateway: selected.gateway.id,
+          gatewayLabel: selected.gateway.label,
+          total: sources.length,
+          methods: sources.map((source) => ({
+            id: source.id,
+            paymentMethodId: source.conektaPaymentSourceId,
+            brand: source.brand,
+            last4: source.last4,
+            expMonth: source.expMonth,
+            expYear: source.expYear,
+            isDefault: source.isDefault
+          }))
+        }
+      }
+
       const methods = await getStripeSavedPaymentMethods(contactId)
       return {
         ok: true,
@@ -576,23 +630,42 @@ export const listSavedPaymentMethodsTool = tool({
 
 export const chargeSavedCardTool = tool({
   name: 'charge_saved_card',
-  description: 'Cobra inmediatamente una tarjeta guardada de Stripe. Antes de llamarla: identifica contacto, lista tarjetas si falta paymentMethodId, resume monto/concepto/tarjeta y pide aprobación. Pasa confirm=true solo cuando el usuario confirme.',
+  description: 'Cobra inmediatamente una tarjeta guardada de Stripe o Conekta. Antes de llamarla: identifica contacto, lista tarjetas si falta paymentMethodId, resume monto/concepto/tarjeta y pide aprobación. Pasa confirm=true solo cuando el usuario confirme.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto'),
-    paymentMethodId: z.string().describe('ID de la tarjeta guardada (usa list_saved_payment_methods)'),
+    paymentMethodId: z.string().describe('ID de la tarjeta guardada (usa list_saved_payment_methods). Para Conekta puede ser payment_source_id.'),
     amount: z.number().positive().describe('Monto a cobrar'),
     concept: z.string().describe('Concepto del cobro'),
     dueDate: z.string().nullable().describe('Fecha relacionada YYYY-MM-DD (opcional)'),
+    gateway: GATEWAY_PARAM,
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente el cargo')
   }),
-  execute: async ({ contactId, paymentMethodId, amount, concept, dueDate, confirm }) => {
+  execute: async ({ contactId, paymentMethodId, amount, concept, dueDate, gateway, confirm }) => {
     if (!confirm) {
       return { ok: false, error: 'Falta confirmación del usuario. Resume contacto, monto, concepto y tarjeta antes de cobrar.' }
     }
-    const selected = await selectPaymentGateway('stripe', 'savedCardCharges')
+    const selected = await selectPaymentGateway(gateway, 'savedCardCharges')
     if (!selected.ok) return selected
 
     try {
+      if (selected.gateway.id === 'conekta') {
+        const result = await createConektaSavedCardPayment({
+          contactId,
+          paymentSourceId: paymentMethodId,
+          amount,
+          title: concept,
+          description: concept,
+          dueDate: dueDate || undefined,
+          source: 'ai_agent_conekta_saved_card'
+        })
+        return {
+          ok: true,
+          gateway: selected.gateway.id,
+          gatewayLabel: selected.gateway.label,
+          payment: result.payment
+        }
+      }
+
       const result = await createStripeSavedCardPayment({
         contactId,
         paymentMethodId,

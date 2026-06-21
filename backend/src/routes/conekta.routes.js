@@ -1,0 +1,31 @@
+import express from 'express'
+import {
+  createConektaPaymentLinkView,
+  createConektaSavedCardPaymentView,
+  createPublicConektaCardPaymentView,
+  deleteConektaConfigView,
+  getConektaConfigView,
+  getConektaSavedPaymentSourcesView,
+  getPublicConektaPaymentView,
+  saveConektaConfigView,
+  testConektaConfigView
+} from '../controllers/conektaPaymentsController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+
+const router = express.Router()
+
+router.get('/public/payments/:publicPaymentId', getPublicConektaPaymentView)
+router.post('/public/payments/:publicPaymentId/card', createPublicConektaCardPaymentView)
+
+router.use(requireAuth)
+
+router.get('/config', requireModuleAccess('settings_payments'), getConektaConfigView)
+router.post('/config', requireModuleAccess('settings_payments'), saveConektaConfigView)
+router.delete('/config', requireModuleAccess('settings_payments'), deleteConektaConfigView)
+router.post('/config/test', requireModuleAccess('settings_payments'), testConektaConfigView)
+router.post('/payment-links', requireModuleAccess('payments'), createConektaPaymentLinkView)
+router.get('/contacts/:contactId/payment-sources', requireModuleAccess('payments'), getConektaSavedPaymentSourcesView)
+router.post('/saved-card-payments', requireModuleAccess('payments'), createConektaSavedCardPaymentView)
+
+export default router

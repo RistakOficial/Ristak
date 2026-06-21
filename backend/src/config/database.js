@@ -1872,6 +1872,7 @@ async function initTables() {
         preferred_whatsapp_phone_number_id TEXT,
         ghl_contact_id TEXT,
         stripe_customer_id TEXT,
+        conekta_customer_id TEXT,
         custom_fields ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -1898,11 +1899,20 @@ async function initTables() {
       }
     }
 
+    try {
+      await db.run('ALTER TABLE contacts ADD COLUMN conekta_customer_id TEXT')
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        throw err
+      }
+    }
+
     // Índices para contacts
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ghl_contact_id ON contacts(ghl_contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_stripe_customer ON contacts(stripe_customer_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_conekta_customer ON contacts(conekta_customer_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ad_id ON contacts(attribution_ad_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_preferred_whatsapp_phone ON contacts(preferred_whatsapp_phone_number_id)')
@@ -2109,6 +2119,9 @@ async function initTables() {
         stripe_charge_id TEXT,
         mercadopago_payment_id TEXT,
         mercadopago_preference_id TEXT,
+        conekta_order_id TEXT,
+        conekta_charge_id TEXT,
+        conekta_payment_source_id TEXT,
         paid_at DATETIME,
         metadata_json TEXT,
         date DATETIME,
@@ -2164,6 +2177,27 @@ async function initTables() {
     `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_stripe_payment_methods_contact ON stripe_payment_methods(contact_id, mode)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_stripe_payment_methods_customer ON stripe_payment_methods(stripe_customer_id)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conekta_payment_sources (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT,
+        conekta_customer_id TEXT NOT NULL,
+        conekta_payment_source_id TEXT NOT NULL UNIQUE,
+        brand TEXT,
+        last4 TEXT,
+        exp_month INTEGER,
+        exp_year INTEGER,
+        name TEXT,
+        mode TEXT DEFAULT 'test',
+        is_default INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conekta_payment_sources_contact ON conekta_payment_sources(contact_id, mode)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conekta_payment_sources_customer ON conekta_payment_sources(conekta_customer_id)')
 
     // Tabla local de planes de pago / invoice schedules de HighLevel.
     // GoHighLevel sigue siendo la integración activa, pero guardamos un espejo local
@@ -3302,6 +3336,9 @@ async function initTables() {
         ['stripe_charge_id', 'TEXT'],
         ['mercadopago_payment_id', 'TEXT'],
         ['mercadopago_preference_id', 'TEXT'],
+        ['conekta_order_id', 'TEXT'],
+        ['conekta_charge_id', 'TEXT'],
+        ['conekta_payment_source_id', 'TEXT'],
         ['paid_at', 'DATETIME'],
         ['metadata_json', 'TEXT']
       ]
@@ -3330,6 +3367,8 @@ async function initTables() {
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_stripe_intent ON payments(stripe_payment_intent_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_mercadopago_payment ON payments(mercadopago_payment_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_mercadopago_preference ON payments(mercadopago_preference_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payments_conekta_order ON payments(conekta_order_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payments_conekta_charge ON payments(conekta_charge_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column')) {
           throw err
@@ -3365,6 +3404,7 @@ async function initTables() {
       }
 
       const contactMetaEventColumns = [
+        ['conekta_customer_id', 'TEXT'],
         ['meta_schedule_event_sent', 'INTEGER DEFAULT 0'],
         ['meta_schedule_event_sent_at', 'DATETIME'],
         ['meta_schedule_event_id', 'TEXT'],
@@ -3395,6 +3435,7 @@ async function initTables() {
         await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_meta_schedule_sent ON contacts(meta_schedule_event_sent)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_meta_purchase_sent ON contacts(meta_purchase_event_sent)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_stripe_customer ON contacts(stripe_customer_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_conekta_customer ON contacts(conekta_customer_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err

@@ -38,6 +38,7 @@ import { getIntegrationsStatus } from '@/services/integrationsService'
 import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { highLevelService } from '@/services/highLevelService'
 import { transactionsService } from '@/services/transactionsService'
+import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
 import { mercadoPagoPaymentsService } from '@/services/mercadoPagoPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
 import {
@@ -109,7 +110,7 @@ const calculateConfiguredTax = (
   }
 }
 
-type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago'
+type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago' | 'conekta' | 'conekta_saved_card'
 type PaymentMode = 'single' | 'partial'
 type SinglePaymentAction = 'payment_link' | 'saved_card' | 'manual'
 type SinglePaymentOptionsStage = 'method' | 'gateway'
@@ -236,6 +237,17 @@ const getSavedCardLabel = (method?: StripeSavedPaymentMethod | null) => {
 const getSavedCardDescription = (method?: StripeSavedPaymentMethod | null) => {
   const label = getSavedCardLabel(method)
   return method?.expiresLabel ? `${label} · vence ${method.expiresLabel}` : label
+}
+
+const getSavedConektaCardLabel = (source?: ConektaSavedPaymentSource | null) => {
+  if (!source) return 'Tarjeta guardada'
+  const brand = source.brand ? source.brand.toUpperCase() : 'Tarjeta'
+  return `${brand} •••• ${source.last4 || '----'}`
+}
+
+const getSavedConektaCardDescription = (source?: ConektaSavedPaymentSource | null) => {
+  const label = getSavedConektaCardLabel(source)
+  return source?.expiresLabel ? `${label} · vence ${source.expiresLabel}` : label
 }
 
 const EMAIL_SEND_METHODS = new Set<SendMethod>(['email', 'email_whatsapp', 'email_sms', 'all'])
@@ -588,6 +600,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
   const [savedPaymentMethods, setSavedPaymentMethods] = useState<StripeSavedPaymentMethod[]>([])
   const [selectedSavedPaymentMethodId, setSelectedSavedPaymentMethodId] = useState('')
+  const [savedConektaPaymentSources, setSavedConektaPaymentSources] = useState<ConektaSavedPaymentSource[]>([])
+  const [selectedConektaPaymentSourceId, setSelectedConektaPaymentSourceId] = useState('')
   const [stripePlanCardSource, setStripePlanCardSource] = useState<StripePlanCardSource>('new_card')
   const [createdPaymentLink, setCreatedPaymentLink] = useState<CreatedPaymentLink | null>(null)
   const [paymentLinkDeliveryOptions, setPaymentLinkDeliveryOptions] = useState<PaymentLinkDeliveryOptions | null>(null)
@@ -599,6 +613,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   // parcialidades remotas quedan desactivados.
   const [highLevelConnected, setHighLevelConnected] = useState(false)
   const [stripeConnected, setStripeConnected] = useState(false)
+  const [conektaConnected, setConektaConnected] = useState(false)
   const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
 
   const { showToast } = useNotification()
@@ -696,6 +711,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const selectedSavedPaymentMethod = savedPaymentMethods.find((method) => (
     method.stripePaymentMethodId === selectedSavedPaymentMethodId || method.id === selectedSavedPaymentMethodId
   )) || null
+  const savedConektaPaymentSourceOptions = useMemo(() => (
+    savedConektaPaymentSources.map((source) => ({
+      value: source.conektaPaymentSourceId,
+      label: getSavedConektaCardDescription(source)
+    }))
+  ), [savedConektaPaymentSources])
+  const selectedConektaPaymentSource = savedConektaPaymentSources.find((source) => (
+    source.conektaPaymentSourceId === selectedConektaPaymentSourceId || source.id === selectedConektaPaymentSourceId
+  )) || null
   const stripePlanSavedPaymentMethod = stripePlanCardSource === 'saved_card'
     ? selectedSavedPaymentMethod || savedPaymentMethods[0] || null
     : null
@@ -744,6 +768,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const paymentLinkGatewayLabels = [
     stripeConnected ? 'Stripe' : null,
+    conektaConnected ? 'Conekta' : null,
     mercadoPagoConnected ? 'Mercado Pago' : null,
     highLevelConnected ? 'HighLevel' : null
   ].filter(Boolean) as string[]
@@ -752,14 +777,17 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const hasMultiplePaymentLinkGateways = paymentLinkGatewayCount > 1
   const defaultPaymentLinkOption: PaymentOption | null = stripeConnected
     ? 'stripe'
-    : mercadoPagoConnected
-      ? 'mercadopago'
-      : highLevelConnected
-        ? 'send'
-        : null
+    : conektaConnected
+      ? 'conekta'
+      : mercadoPagoConnected
+        ? 'mercadopago'
+        : highLevelConnected
+          ? 'send'
+          : null
 
   const getDefaultPaymentOption = (): PaymentOption => {
     if (stripeConnected) return 'stripe'
+    if (conektaConnected) return 'conekta'
     if (mercadoPagoConnected) return 'mercadopago'
     return highLevelConnected ? 'send' : 'manual'
   }
@@ -845,6 +873,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setManualPaymentData(defaultManualPaymentData())
     setSavedPaymentMethods([])
     setSelectedSavedPaymentMethodId('')
+    setSavedConektaPaymentSources([])
+    setSelectedConektaPaymentSourceId('')
     setStripePlanCardSource('new_card')
     setCreatedPaymentLink(null)
     setPaymentLinkDeliveryOptions(null)
@@ -901,10 +931,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const data = await getIntegrationsStatus()
       setHighLevelConnected(Boolean(data?.highlevel?.connected))
       setStripeConnected(Boolean(data?.stripe?.connected))
+      setConektaConnected(Boolean(data?.conekta?.connected))
       setMercadoPagoConnected(Boolean(data?.mercadopago?.connected))
     } catch (error) {
       setHighLevelConnected(false)
       setStripeConnected(false)
+      setConektaConnected(false)
       setMercadoPagoConnected(false)
     }
   }
@@ -913,13 +945,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   // HighLevel y Stripe pueden manejar links/planes desde Ristak.
   // Mercado Pago maneja links y suscripciones, no parcialidades.
   useEffect(() => {
-    if (!highLevelConnected && !stripeConnected && !mercadoPagoConnected) {
+    if (!highLevelConnected && !stripeConnected && !conektaConnected && !mercadoPagoConnected) {
       setPaymentMode('single')
       setSinglePaymentAction('manual')
       setSinglePaymentOptionsStage('method')
       setPaymentOption('manual')
     }
-  }, [highLevelConnected, mercadoPagoConnected, stripeConnected])
+  }, [conektaConnected, highLevelConnected, mercadoPagoConnected, stripeConnected])
 
   useEffect(() => {
     if (isOpen && stripeConnected && activePaymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod) {
@@ -979,6 +1011,53 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       cancelled = true
     }
   }, [isOpen, stripeConnected, selectedContact?.id, paymentOption])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!isOpen || !conektaConnected || !selectedContact?.id) {
+      setSavedConektaPaymentSources([])
+      setSelectedConektaPaymentSourceId('')
+      if (paymentOption === 'conekta_saved_card') {
+        setSinglePaymentAction(getDefaultSinglePaymentAction())
+        setPaymentOption(getDefaultPaymentOption())
+      }
+      return () => {
+        cancelled = true
+      }
+    }
+
+    conektaPaymentsService.getSavedPaymentSources(selectedContact.id)
+      .then((sources) => {
+        if (cancelled) return
+        setSavedConektaPaymentSources(sources)
+        setSelectedConektaPaymentSourceId((current) => {
+          const stillExists = sources.some((source) => (
+            source.conektaPaymentSourceId === current || source.id === current
+          ))
+          if (stillExists) return current
+          const preferred = sources.find((source) => source.isDefault) || sources[0]
+          return preferred?.conektaPaymentSourceId || ''
+        })
+        if (!sources.length && paymentOption === 'conekta_saved_card') {
+          setSinglePaymentAction(getDefaultSinglePaymentAction())
+          setPaymentOption(getDefaultPaymentOption())
+        }
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSavedConektaPaymentSources([])
+        setSelectedConektaPaymentSourceId('')
+        if (paymentOption === 'conekta_saved_card') {
+          setSinglePaymentAction(getDefaultSinglePaymentAction())
+          setPaymentOption(getDefaultPaymentOption())
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, conektaConnected, selectedContact?.id, paymentOption])
 
   useEffect(() => {
     if (!isOpen) {
@@ -1948,6 +2027,58 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       return
     }
 
+    if (paymentOption === 'conekta_saved_card') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      if (!selectedConektaPaymentSource) {
+        showToast('error', 'Selecciona una tarjeta guardada')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await conektaPaymentsService.createSavedCardPayment({
+          contactId: selectedContact.id,
+          paymentSourceId: selectedConektaPaymentSource.conektaPaymentSourceId,
+          contactName: invoiceSummary.contactName || selectedContact.name,
+          email: selectedContact.email || invoiceSummary.contactEmail || '',
+          phone: selectedContact.phone || '',
+          amount: invoiceSummary.taxBaseAmount,
+          currency: invoiceSummary.currency,
+          applyTax: invoiceSummary.includesTax,
+          taxCalculationMode: invoiceSummary.taxCalculationMode,
+          title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
+          description: invoiceSummary.description,
+          dueDate: invoicePayload.dueDate,
+          source: 'record_payment_modal_conekta_saved_card',
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+        })
+
+        const paid = result.payment?.status === 'paid'
+        showToast(
+          'success',
+          paid ? 'Cobro realizado' : 'Cobro enviado a Conekta',
+          paid
+            ? `${getSavedConektaCardLabel(selectedConektaPaymentSource)} quedó cobrada correctamente.`
+            : 'Conekta está terminando de procesar este cobro.'
+        )
+        onSuccess?.()
+        onClose()
+      } catch (conektaError: any) {
+        showToast('error', 'No se pudo cobrar la tarjeta', conektaError.message || 'Revisa la tarjeta guardada o envía un link de Conekta.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
     if (paymentOption === 'stripe' && activePaymentMode === 'partial') {
       if (!selectedContact) {
         showToast('error', 'Selecciona un contacto')
@@ -2062,6 +2193,57 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
       } catch (stripeError: any) {
         showToast('error', 'No se pudo crear el link de Stripe', stripeError.message || 'Revisa la configuración de Stripe.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
+    if (paymentOption === 'conekta') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await conektaPaymentsService.createPaymentLink({
+          contactId: selectedContact.id,
+          contactName: invoiceSummary.contactName || selectedContact.name,
+          email: selectedContact.email || invoiceSummary.contactEmail || '',
+          phone: selectedContact.phone || '',
+          amount: invoiceSummary.taxBaseAmount,
+          currency: invoiceSummary.currency,
+          applyTax: invoiceSummary.includesTax,
+          taxCalculationMode: invoiceSummary.taxCalculationMode,
+          title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
+          description: invoiceSummary.description,
+          dueDate: invoicePayload.dueDate,
+          source: 'record_payment_modal_conekta',
+          lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : []
+        })
+
+        showPaymentLinkReady({
+          kind: 'single',
+          title: 'Enlace Conekta listo',
+          description: 'Comparte este enlace para que el cliente pague con tarjeta en el tokenizador seguro de Conekta.',
+          paymentUrl: result.paymentUrl,
+          amount: invoiceSummary.amount,
+          currency: invoiceSummary.currency,
+          contact: selectedContact,
+          paymentId: result.payment?.id,
+          publicPaymentId: result.publicPaymentId
+        })
+        showToast(
+          'success',
+          'Link de Conekta creado',
+          'El enlace público está listo para copiar o enviar.'
+        )
+        onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+      } catch (conektaError: any) {
+        showToast('error', 'No se pudo crear el link de Conekta', conektaError.message || 'Revisa la configuración de Conekta.')
         setStep('options')
       } finally {
         setLoading(false)
@@ -3363,11 +3545,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       ? `Después eliges ${paymentLinkGatewayLabels.join(', ')}.`
       : defaultPaymentLinkOption === 'stripe'
         ? 'Usa Stripe para generar el enlace de pago.'
-        : defaultPaymentLinkOption === 'mercadopago'
-          ? 'Usa Mercado Pago Checkout Pro para generar el link.'
-          : defaultPaymentLinkOption === 'send'
-            ? 'Usa HighLevel para enviar el enlace al cliente.'
-            : 'Conecta una pasarela para enviar enlaces de pago.'
+        : defaultPaymentLinkOption === 'conekta'
+          ? 'Usa Conekta para generar el enlace de pago.'
+          : defaultPaymentLinkOption === 'mercadopago'
+            ? 'Usa Mercado Pago Checkout Pro para generar el link.'
+            : defaultPaymentLinkOption === 'send'
+              ? 'Usa HighLevel para enviar el enlace al cliente.'
+              : 'Conecta una pasarela para enviar enlaces de pago.'
 
     return (
       <div className={styles.optionsContent}>
@@ -3426,6 +3610,25 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     </div>
                   </div>
                   {paymentOption === 'stripe' && <Check size={18} className={styles.optionCheck} />}
+                </button>
+              )}
+
+              {conektaConnected && (
+                <button
+                  type="button"
+                  className={`${styles.optionButton} ${paymentOption === 'conekta' ? styles.optionButtonActive : ''}`}
+                  onClick={() => setPaymentOption('conekta')}
+                >
+                  <div className={styles.optionInfo}>
+                    <div className={styles.optionIcon}>
+                      <CreditCard size={18} />
+                    </div>
+                    <div>
+                      <p>Conekta</p>
+                      <span>Genera tu página pública con tokenizador seguro y tarjeta reutilizable.</span>
+                    </div>
+                  </div>
+                  {paymentOption === 'conekta' && <Check size={18} className={styles.optionCheck} />}
                 </button>
               )}
 
@@ -3520,6 +3723,42 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                             value={selectedSavedPaymentMethodId}
                             onValueChange={setSelectedSavedPaymentMethodId}
                             options={savedPaymentMethodOptions}
+                            portal
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </button>
+              )}
+
+              {conektaConnected && savedConektaPaymentSources.length > 0 && (
+                <button
+                  type="button"
+                  className={`${styles.optionButton} ${singlePaymentAction === 'saved_card' && paymentOption === 'conekta_saved_card' ? styles.optionButtonActive : ''}`}
+                  onClick={() => {
+                    setSinglePaymentAction('saved_card')
+                    setPaymentOption('conekta_saved_card')
+                  }}
+                >
+                  <div className={styles.optionInfo}>
+                    <div className={styles.optionIcon}>
+                      <ShieldCheck size={18} />
+                    </div>
+                    <div>
+                      <p>Cobrar tarjeta guardada Conekta</p>
+                      <span>{getSavedConektaCardDescription(selectedConektaPaymentSource || savedConektaPaymentSources[0])}</span>
+                    </div>
+                  </div>
+                  {singlePaymentAction === 'saved_card' && paymentOption === 'conekta_saved_card' && (
+                    <div className={styles.optionAction}>
+                      <Check size={18} className={styles.optionCheck} />
+                      {savedConektaPaymentSources.length > 1 && (
+                        <div className={styles.savedCardSelector} onClick={(e) => e.stopPropagation()}>
+                          <CustomSelect
+                            value={selectedConektaPaymentSourceId}
+                            onValueChange={setSelectedConektaPaymentSourceId}
+                            options={savedConektaPaymentSourceOptions}
                             portal
                           />
                         </div>
@@ -3782,7 +4021,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         hasMultiplePaymentLinkGateways
       const requiresDeliveryChannel = paymentOption === 'send' && !needsGatewayChoice
       const lacksDeliveryChannel = requiresDeliveryChannel && !selectedContact?.email && !selectedContact?.phone
-      const lacksSavedCard = paymentOption === 'stripe_saved_card' && !selectedSavedPaymentMethodId
+      const lacksSavedCard = (
+        (paymentOption === 'stripe_saved_card' && !selectedSavedPaymentMethodId) ||
+        (paymentOption === 'conekta_saved_card' && !selectedConektaPaymentSourceId)
+      )
       const lacksStripePlanSavedCard = paymentOption === 'stripe' &&
         activePaymentMode === 'partial' &&
         stripePlanCardSource === 'saved_card' &&
@@ -3793,7 +4035,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const stripePlanWillRegisterOfflineFirstPayment = firstPaymentEnabled && isOfflineFirstPaymentMethod(firstPaymentMethod)
       const confirmLabel = needsGatewayChoice
         ? 'Elegir pasarela'
-        : paymentOption === 'stripe_saved_card'
+        : paymentOption === 'stripe_saved_card' || paymentOption === 'conekta_saved_card'
         ? 'Cobrar tarjeta'
         : paymentOption === 'stripe' && activePaymentMode === 'partial'
           ? stripePlanCardSource === 'saved_card'
@@ -3803,6 +4045,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               : 'Crear link de domiciliación'
         : paymentOption === 'stripe'
         ? 'Crear link Stripe'
+        : paymentOption === 'conekta'
+          ? 'Crear link Conekta'
         : paymentOption === 'mercadopago'
           ? 'Crear link Mercado Pago'
         : paymentOption === 'send'

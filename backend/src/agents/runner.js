@@ -292,7 +292,7 @@ export function inferAgentCategoryFromMessage({ latestUserMessage = '', messages
       /\b(campan(?:a|as)|campañas?|anuncios?|ads|meta|facebook|instagram)\b.*\b(resultados?|rendimiento|performance|conversion(?:es)?|leads?|ventas?|ingresos?|utilidad|roas|roi|retorno|atribucion|atribución|rentabilidad)\b/
     ]),
     pagos: scorePattern(text, [
-      /\b(pagos?|cobros?|cobrar|cobrale|cóbrale|registrar pago|registra(?:me)? (?:un )?pago|link de pago|links? de pago|enlace de pago|enlaces de pago|plan(?:es)? de pago|parcialidades|suscripcion(?:es)?|suscripción(?:es)?|subscription|stripe|mercado pago|mercadopago|pasarelas?|domiciliacion|domiciliación|tarjeta guardada|tarjeta|invoice|factura|ingresos?|transacciones?|deposito|depósito|transferencia|efectivo)\b/
+      /\b(pagos?|cobros?|cobrar|cobrale|cóbrale|registrar pago|registra(?:me)? (?:un )?pago|link de pago|links? de pago|enlace de pago|enlaces de pago|plan(?:es)? de pago|parcialidades|suscripcion(?:es)?|suscripción(?:es)?|subscription|stripe|conekta|mercado pago|mercadopago|pasarelas?|domiciliacion|domiciliación|tarjeta guardada|tarjeta|invoice|factura|ingresos?|transacciones?|deposito|depósito|transferencia|efectivo)\b/
     ]),
     citas: scorePattern(text, [
       /\b(citas?|agenda|agendar|reprograma|reprogramar|cancela(?:r)? (?:una )?cita|confirma(?:r)? (?:una )?cita|confirmaron|cancelaron|calendarios?|horarios?|disponibilidad|appointment|booking|no show|showed|asistencia)\b/
