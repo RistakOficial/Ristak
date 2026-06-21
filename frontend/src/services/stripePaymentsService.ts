@@ -287,10 +287,16 @@ export const stripePaymentsService = {
     return parseApiResponse<StripeConnectUrlResponse>(response)
   },
 
-  async syncConnect(): Promise<StripePaymentConfig> {
+  async syncConnect(payload: { handoffToken?: string } = {}): Promise<StripePaymentConfig> {
     const response = await fetch(apiUrl('/api/stripe/connect/sync'), {
       method: 'POST',
-      headers: getAuthHeaders()
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify({
+        ...(payload.handoffToken ? { handoffToken: payload.handoffToken } : {})
+      })
     })
     return parseApiResponse<StripePaymentConfig>(response)
   },

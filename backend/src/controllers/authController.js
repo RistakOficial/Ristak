@@ -306,7 +306,7 @@ export async function localDevSession(req, res) {
 
 /**
  * POST /api/auth/google/start
- * Abre el OAuth central del portal para que Google termine regresando a esta
+ * Abre el OAuth del portal para que Google termine regresando a esta
  * instalación vía SSO (/sso?token=...), sin guardar secretos de Google aquí.
  */
 export async function startGoogleLogin(req, res) {

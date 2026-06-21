@@ -485,7 +485,6 @@ export const PaymentsConfiguration: React.FC = () => {
   const [mercadoPagoMode, setMercadoPagoMode] = useState<'test' | 'live'>('live')
   const [loadingMercadoPagoConfig, setLoadingMercadoPagoConfig] = useState(false)
   const [connectingMercadoPago, setConnectingMercadoPago] = useState(false)
-  const [syncingMercadoPago, setSyncingMercadoPago] = useState(false)
   const [switchingMercadoPagoMode, setSwitchingMercadoPagoMode] = useState(false)
   const [testingMercadoPagoConfig, setTestingMercadoPagoConfig] = useState(false)
   const [disconnectingMercadoPago, setDisconnectingMercadoPago] = useState(false)
@@ -545,6 +544,7 @@ export const PaymentsConfiguration: React.FC = () => {
     if (!status) return
 
     const message = params.get('stripe_message') || ''
+    const handoffToken = params.get('stripe_handoff_token') || ''
     const returnedMode = isStripeConnectMode(params.get('stripe_mode')) ? params.get('stripe_mode') as StripeConnectMode : null
     const returnedWizardStep = isStripeConnectMode(params.get('stripe_step')) ? params.get('stripe_step') as StripeConnectMode : null
     const storedWizard = readStripeConnectWizardState()
@@ -559,7 +559,7 @@ export const PaymentsConfiguration: React.FC = () => {
       if (status === 'success' || status === 'warning') {
         setSyncingStripeConnect(true)
         try {
-          const config = await stripePaymentsService.syncConnect()
+          const config = await stripePaymentsService.syncConnect({ handoffToken })
           syncedConfig = config
           applyStripeConfig(config)
           invalidateIntegrationsStatus()
@@ -633,14 +633,15 @@ export const PaymentsConfiguration: React.FC = () => {
     if (!status) return
 
     const message = params.get('mercadopago_message') || ''
+    const handoffToken = params.get('mercadopago_handoff_token') || ''
     const finishMercadoPagoReturn = async () => {
       setActiveSection('gateways')
       setSelectedGateway('mercadopago')
 
       if (status === 'success' || status === 'warning') {
-        setSyncingMercadoPago(true)
+        setLoadingMercadoPagoConfig(true)
         try {
-          const config = await mercadoPagoPaymentsService.syncConnect()
+          const config = await mercadoPagoPaymentsService.syncConnect({ handoffToken })
           applyMercadoPagoConfig(config)
           invalidateIntegrationsStatus()
           if (status === 'success') {
@@ -649,10 +650,10 @@ export const PaymentsConfiguration: React.FC = () => {
             showToast('warning', 'Mercado Pago conectado con pendiente', message || 'La cuenta conectó, pero el webhook necesita revisión.')
           }
         } catch (error: any) {
-          showToast('warning', 'Mercado Pago autorizó, falta sincronizar', error.message || 'Vuelve a abrir esta pantalla para sincronizar la conexión.')
+          showToast('warning', 'Mercado Pago autorizó, falta guardar conexión', error.message || 'Vuelve a conectar Mercado Pago desde esta pantalla.')
           await loadMercadoPagoConfig()
         } finally {
-          setSyncingMercadoPago(false)
+          setLoadingMercadoPagoConfig(false)
         }
       } else {
         showToast('error', 'No se pudo conectar Mercado Pago', message || 'Intenta conectar la cuenta de nuevo.')
@@ -1193,20 +1194,6 @@ export const PaymentsConfiguration: React.FC = () => {
       showToast('error', 'No se pudo cambiar el modo', error.message || 'Intenta de nuevo.')
     } finally {
       setSwitchingMercadoPagoMode(false)
-    }
-  }
-
-  const handleSyncMercadoPago = async () => {
-    setSyncingMercadoPago(true)
-    try {
-      const config = await mercadoPagoPaymentsService.syncConnect()
-      applyMercadoPagoConfig(config)
-      invalidateIntegrationsStatus()
-      showToast('success', 'Mercado Pago sincronizado', 'Ristak actualizó tokens, webhook y cuenta conectada.')
-    } catch (error: any) {
-      showToast('error', 'No se pudo sincronizar Mercado Pago', error.message || 'Revisa la conexión en el Installer.')
-    } finally {
-      setSyncingMercadoPago(false)
     }
   }
 
@@ -2674,12 +2661,12 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.sectionHeader}>
             <div>
               <h2>Mercado Pago</h2>
-              <p>Conecta OAuth central para crear links de Checkout Pro y controlar parcialidades desde Ristak.</p>
+              <p>Conecta Mercado Pago para crear links de Checkout Pro y controlar parcialidades desde Ristak.</p>
             </div>
-            {loadingMercadoPagoConfig || syncingMercadoPago ? (
+            {loadingMercadoPagoConfig ? (
               <Badge variant="warning">
                 <Loader2 size={14} className={styles.spinIcon} />
-                {syncingMercadoPago ? 'Sincronizando' : 'Cargando'}
+                Cargando
               </Badge>
             ) : mercadoPagoConnected ? (
               <Badge variant="success">
@@ -2700,7 +2687,7 @@ export const PaymentsConfiguration: React.FC = () => {
               <Switch
                 checked={mercadoPagoMode === 'live'}
                 onChange={handleMercadoPagoModeChange}
-                disabled={connectingMercadoPago || syncingMercadoPago || switchingMercadoPagoMode || testingMercadoPagoConfig}
+                disabled={connectingMercadoPago || switchingMercadoPagoMode || testingMercadoPagoConfig}
                 aria-label="Cambiar modo de Mercado Pago"
               />
               <span className={mercadoPagoMode === 'live' ? styles.modeActive : ''}>En vivo</span>
@@ -2713,14 +2700,14 @@ export const PaymentsConfiguration: React.FC = () => {
                 <p>
                   {mercadoPagoConnected
                     ? `Ristak crea links de Mercado Pago en modo ${mercadoPagoConfig?.mode === 'live' ? 'en vivo' : 'prueba'} y escucha cambios por webhook.`
-                    : 'Al hacer clic se abrirá Mercado Pago para autorizar la cuenta. Los tokens se guardan cifrados desde el Installer central.'}
+                    : 'Al hacer clic se abrirá Mercado Pago para autorizar la cuenta. Los tokens quedan cifrados en esta instalación.'}
                 </p>
               </div>
               <div className={styles.actionsRow}>
                 <Button
                   type="button"
                   onClick={handleConnectMercadoPago}
-                  disabled={connectingMercadoPago || syncingMercadoPago || disconnectingMercadoPago}
+                  disabled={connectingMercadoPago || disconnectingMercadoPago}
                 >
                   {connectingMercadoPago ? (
                     <>
@@ -2757,7 +2744,7 @@ export const PaymentsConfiguration: React.FC = () => {
             {mercadoPagoConnected && !mercadoPagoWebhookReady && (
               <div className={styles.inlineWarning}>
                 <AlertTriangle size={16} />
-                <span>Mercado Pago está conectado, pero falta configurar el Webhook Secret en el Installer para verificar firmas.</span>
+                <span>Mercado Pago está conectado, pero falta que esta instalación reciba el Webhook Secret para verificar firmas.</span>
               </div>
             )}
 
@@ -2791,23 +2778,8 @@ export const PaymentsConfiguration: React.FC = () => {
                   <Button
                     type="button"
                     variant="secondary"
-                    onClick={handleSyncMercadoPago}
-                    disabled={syncingMercadoPago || connectingMercadoPago}
-                  >
-                    {syncingMercadoPago ? (
-                      <>
-                        <Loader2 size={18} className={styles.spinIcon} />
-                        Sincronizando...
-                      </>
-                    ) : (
-                      'Sincronizar'
-                    )}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
                     onClick={handleTestMercadoPagoConfig}
-                    disabled={testingMercadoPagoConfig || syncingMercadoPago}
+                    disabled={testingMercadoPagoConfig}
                   >
                     {testingMercadoPagoConfig ? (
                       <>
@@ -2822,7 +2794,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     type="button"
                     variant="secondary"
                     onClick={handleDisconnectMercadoPago}
-                    disabled={disconnectingMercadoPago || syncingMercadoPago || connectingMercadoPago}
+                    disabled={disconnectingMercadoPago || connectingMercadoPago}
                   >
                     {disconnectingMercadoPago ? (
                       <>

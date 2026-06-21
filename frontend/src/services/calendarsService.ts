@@ -271,6 +271,12 @@ export const calendarsService = {
     });
   },
 
+  async claimGoogleOAuth(handoffToken: string): Promise<GoogleCalendarIntegrationStatus> {
+    return apiClient.post<GoogleCalendarIntegrationStatus>('/calendars/google-integration/connect/claim', {
+      handoffToken
+    });
+  },
+
   async revealGoogleServiceAccount(): Promise<GoogleCalendarServiceAccountReveal> {
     return apiClient.get<GoogleCalendarServiceAccountReveal>('/calendars/google-integration/reveal/service-account');
   },

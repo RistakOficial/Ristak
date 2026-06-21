@@ -6,10 +6,8 @@ import { logger } from '../utils/logger.js'
 import * as localCalendarService from './localCalendarService.js'
 import { clearGoogleCalendarIntegrationCredentials } from './integrationCredentialsCleanupService.js'
 import {
-  deleteCentralGoogleCalendarEvent,
-  isLicenseEnforced,
-  listCentralGoogleCalendarEvents,
-  upsertCentralGoogleCalendarEvent
+  claimCentralOAuthHandoff,
+  refreshCentralGoogleCalendarToken
 } from './licenseService.js'
 
 const CONFIG_KEY = 'google_calendar_service_account_config'
@@ -173,8 +171,12 @@ async function persistConfig(config) {
 }
 
 function publicConfig(config = {}) {
-  const connected = Boolean(config.credentialsEncrypted)
+  const connectionMode = config.connectionMode === 'oauth' ? 'oauth' : 'service_account'
+  const connected = connectionMode === 'oauth'
+    ? Boolean(config.refreshTokenEncrypted)
+    : Boolean(config.credentialsEncrypted)
   return {
+    connectionMode,
     connected,
     calendarId: config.calendarId || '',
     serviceAccountEmail: config.serviceAccountEmail || '',
@@ -191,7 +193,13 @@ function publicConfig(config = {}) {
     syncedCalendarsCount: Number(config.syncedCalendarsCount || 0),
     syncedEventsCount: Number(config.syncedEventsCount || 0),
     connectedAt: config.connectedAt || null,
-    updatedAt: config.updatedAt || null
+    updatedAt: config.updatedAt || null,
+    googleAccountEmail: config.googleAccountEmail || '',
+    googleAccountName: config.googleAccountName || '',
+    googleAccountPictureUrl: config.googleAccountPictureUrl || '',
+    scopes: Array.isArray(config.scopes) ? config.scopes : [],
+    canManageEvents: connectionMode === 'oauth' ? (config.scopes || []).includes('https://www.googleapis.com/auth/calendar.events') : connected,
+    canListCalendars: connectionMode === 'oauth' ? (config.scopes || []).includes('https://www.googleapis.com/auth/calendar.calendarlist.readonly') : connected
   }
 }
 
@@ -201,6 +209,25 @@ export async function getGoogleCalendarConfig({ includeCredentials = false } = {
 
   if (!includeCredentials) {
     return publicConfig(config)
+  }
+
+  if (config.connectionMode === 'oauth') {
+    if (!config.refreshTokenEncrypted) return null
+    try {
+      const encryptedValue = config.refreshTokenEncrypted
+      const refreshToken = isEncrypted(encryptedValue)
+        ? decrypt(encryptedValue)
+        : encryptedValue
+      return {
+        ...config,
+        connectionMode: 'oauth',
+        refreshToken,
+        calendarId: cleanString(config.calendarId)
+      }
+    } catch (error) {
+      logger.warn(`[Google Calendar] No se pudo desencriptar OAuth local: ${error.message}`)
+      return null
+    }
   }
 
   if (!config.credentialsEncrypted) {
@@ -258,6 +285,7 @@ export async function saveGoogleCalendarConfig({ calendarId, credentials }) {
 
   const config = {
     ...existing,
+    connectionMode: 'service_account',
     calendarId: normalizedCalendarId,
     credentialsEncrypted,
     serviceAccountEmail: normalizedCredentials?.client_email || existing?.serviceAccountEmail || '',
@@ -271,6 +299,49 @@ export async function saveGoogleCalendarConfig({ calendarId, credentials }) {
   await persistConfig(config)
   tokenCache = null
   return publicConfig(config)
+}
+
+export async function saveGoogleCalendarOAuthConnection(connection = {}) {
+  const refreshToken = cleanString(connection.refresh_token || connection.refreshToken)
+  if (!refreshToken) {
+    throw new Error('Google Calendar no devolvió refresh token.')
+  }
+
+  const scopes = Array.isArray(connection.scopes)
+    ? connection.scopes
+    : cleanString(connection.scopes || connection.scope).split(/\s+/).filter(Boolean)
+
+  const existing = await getStoredConfig()
+  const config = {
+    ...existing,
+    connectionMode: 'oauth',
+    credentialsEncrypted: '',
+    refreshTokenEncrypted: encrypt(refreshToken),
+    calendarId: cleanString(existing?.calendarId),
+    serviceAccountEmail: '',
+    projectId: '',
+    privateKeyId: '',
+    googleAccountEmail: cleanString(connection.email),
+    googleAccountName: cleanString(connection.name),
+    googleAccountPictureUrl: cleanString(connection.picture_url || connection.pictureUrl),
+    scopes,
+    connectedAt: cleanString(connection.connected_at || connection.connectedAt) || new Date().toISOString(),
+    lastTestStatus: null,
+    lastTestMessage: ''
+  }
+
+  await persistConfig(config)
+  tokenCache = null
+  return publicConfig(config)
+}
+
+export async function claimGoogleCalendarOAuthHandoff(handoffToken = '') {
+  const handoff = await claimCentralOAuthHandoff({
+    provider: 'google_calendar',
+    handoffToken
+  })
+  const calendar = handoff?.payload?.calendar || {}
+  return saveGoogleCalendarOAuthConnection(calendar)
 }
 
 export async function deleteGoogleCalendarConfig() {
@@ -303,6 +374,26 @@ function createServiceAccountAssertion(credentials) {
 }
 
 async function getAccessToken(config) {
+  if (config.connectionMode === 'oauth') {
+    const cacheKey = `oauth:${config.googleAccountEmail || ''}:${config.refreshToken ? crypto.createHash('sha1').update(config.refreshToken).digest('hex') : ''}`
+    if (tokenCache?.cacheKey === cacheKey && tokenCache.expiresAt > Date.now() + 60000) {
+      return tokenCache.accessToken
+    }
+
+    const payload = await refreshCentralGoogleCalendarToken({ refreshToken: config.refreshToken })
+    if (!payload?.access_token) {
+      throw new Error('Google Calendar no devolvió access token.')
+    }
+
+    tokenCache = {
+      cacheKey,
+      accessToken: payload.access_token,
+      expiresAt: Date.now() + Math.max(1, Number(payload.expires_in || 3600) - 30) * 1000
+    }
+
+    return tokenCache.accessToken
+  }
+
   const credentials = config.credentials
   const cacheKey = `${credentials.client_email}:${credentials.private_key_id || ''}`
   if (tokenCache?.cacheKey === cacheKey && tokenCache.expiresAt > Date.now() + 60000) {
@@ -657,9 +748,8 @@ async function resolveGoogleSyncTargets(config, calendarId = null) {
 }
 
 export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId = null, config = null } = {}) {
-  const centralMode = isLicenseEnforced()
-  const activeConfig = centralMode ? null : (config || await getGoogleCalendarConfig({ includeCredentials: true }))
-  if (!centralMode && !activeConfig) {
+  const activeConfig = config || await getGoogleCalendarConfig({ includeCredentials: true })
+  if (!activeConfig) {
     return { enabled: false, saved: 0 }
   }
 
@@ -672,14 +762,7 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
   let saved = 0
   let deleted = 0
   for (const target of targets) {
-    const events = centralMode
-      ? await listCentralGoogleCalendarEvents({
-        googleCalendarId: target.googleCalendarId,
-        timeMin: range.timeMin,
-        timeMax: range.timeMax,
-        showDeleted: true
-      })
-      : await listGoogleEvents({
+    const events = await listGoogleEvents({
         timeMin: range.timeMin,
         timeMax: range.timeMax,
         calendarId: target.googleCalendarId,
@@ -813,7 +896,7 @@ export async function updateLocalCalendarGoogleSync({ calendarId, googleCalendar
 
   const googleCalendar = await findGoogleCalendarOption(normalizedGoogleCalendarId, { config })
   if (!googleCalendar?.id) {
-    throw new Error('Ese calendario de Google no está disponible para el Service Account')
+    throw new Error('Ese calendario de Google no está disponible para esta integración')
   }
 
   if (!canWriteGoogleCalendar(googleCalendar)) {
@@ -897,59 +980,7 @@ async function resolveAppointment(appointmentOrId) {
     : appointmentOrId
 }
 
-async function syncAppointmentToCentralGoogle(appointmentOrId) {
-  const appointment = await resolveAppointment(appointmentOrId)
-
-  if (!appointment?.id) {
-    return { enabled: true, appointment: null }
-  }
-
-  try {
-    const localCalendar = await localCalendarService.getLocalCalendar(appointment.calendarId)
-    const targetGoogleCalendarId = googleCalendarIdFromLocalCalendar(localCalendar)
-    if (!targetGoogleCalendarId) {
-      return {
-        enabled: false,
-        reason: 'calendar_not_linked',
-        appointment
-      }
-    }
-
-    const status = cleanString(appointment.appointmentStatus || appointment.status).toLowerCase()
-    if (status === 'cancelled' || status === 'canceled') {
-      await deleteGoogleEventForAppointment(appointment)
-      return {
-        enabled: true,
-        appointment: await localCalendarService.getLocalAppointment(appointment.id)
-      }
-    }
-
-    const timezone = await getAccountTimezone()
-    const event = await upsertCentralGoogleCalendarEvent({
-      googleCalendarId: targetGoogleCalendarId,
-      googleEventId: appointment.googleEventId,
-      event: buildGoogleEventPayload(appointment, timezone)
-    })
-    const eventId = event?.id || appointment.googleEventId
-
-    if (!eventId) {
-      throw new Error('Google Calendar no devolvio ID de evento')
-    }
-
-    const updated = await markGoogleSyncSuccess(appointment.id, eventId)
-    return { enabled: true, appointment: updated || appointment, event }
-  } catch (error) {
-    await markGoogleSyncError(appointment.id, error.message)
-    logger.warn(`[Google Calendar] No se pudo sincronizar cita ${appointment.id} por OAuth central: ${error.message}`)
-    throw error
-  }
-}
-
 export async function syncAppointmentToGoogle(appointmentOrId) {
-  if (isLicenseEnforced()) {
-    return syncAppointmentToCentralGoogle(appointmentOrId)
-  }
-
   const config = await getGoogleCalendarConfig({ includeCredentials: true })
   if (!config) {
     return { enabled: false, appointment: appointmentOrId }
@@ -1020,9 +1051,8 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
 }
 
 export async function syncLocalAppointmentsToGoogle({ calendarId = null, limit = 500 } = {}) {
-  const centralMode = isLicenseEnforced()
-  const config = centralMode ? null : await getGoogleCalendarConfig({ includeCredentials: true })
-  if (!centralMode && !config) {
+  const config = await getGoogleCalendarConfig({ includeCredentials: true })
+  if (!config) {
     return { enabled: false, total: 0, synced: 0, failed: 0 }
   }
 
@@ -1152,33 +1182,6 @@ export async function mergeRistakAppointmentsIntoGoogle({ sourceCalendarIds = nu
 }
 
 export async function deleteGoogleEventForAppointment(appointmentOrId) {
-  if (isLicenseEnforced()) {
-    const appointment = await resolveAppointment(appointmentOrId)
-
-    if (!appointment?.id || !appointment.googleEventId) {
-      return { enabled: true, deleted: false }
-    }
-
-    try {
-      const localCalendar = await localCalendarService.getLocalCalendar(appointment.calendarId)
-      const targetGoogleCalendarId = googleCalendarIdFromLocalCalendar(localCalendar)
-      if (!targetGoogleCalendarId) {
-        return { enabled: false, deleted: false, reason: 'calendar_not_linked' }
-      }
-
-      await deleteCentralGoogleCalendarEvent({
-        googleCalendarId: targetGoogleCalendarId,
-        googleEventId: appointment.googleEventId
-      })
-    } catch (error) {
-      await markGoogleSyncError(appointment.id, error.message)
-      throw error
-    }
-
-    await markGoogleSyncSuccess(appointment.id, null)
-    return { enabled: true, deleted: true }
-  }
-
   const config = await getGoogleCalendarConfig({ includeCredentials: true })
   if (!config) return { enabled: false }
 
@@ -1220,7 +1223,7 @@ export async function testGoogleCalendarConnection() {
   try {
     const calendars = await listGoogleCalendarOptions({ config })
     if (!calendars.length) {
-      throw new Error('Las credenciales funcionan, pero el Service Account no tiene calendarios compartidos')
+      throw new Error('Las credenciales funcionan, pero la integración no tiene calendarios disponibles')
     }
 
     const writableCalendars = calendars.filter(canWriteGoogleCalendar)
@@ -1254,6 +1257,7 @@ export async function testGoogleCalendarConnection() {
 }
 
 export default {
+  claimGoogleCalendarOAuthHandoff,
   deleteGoogleCalendarConfig,
   deleteGoogleEventForAppointment,
   getGoogleCalendarConfig,
@@ -1265,6 +1269,7 @@ export default {
   listGoogleEvents,
   mergeRistakAppointmentsIntoGoogle,
   normalizeServiceAccountCredentials,
+  saveGoogleCalendarOAuthConnection,
   saveGoogleCalendarConfig,
   syncAppointmentToGoogle,
   syncLocalAppointmentsToGoogle,

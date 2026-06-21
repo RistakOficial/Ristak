@@ -358,6 +358,37 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const handoffToken = params.get('google_handoff_token') || ''
+    const connected = params.get('connected') === '1'
+    if (!handoffToken && !connected) return
+
+    const finishGoogleReturn = async () => {
+      setActiveView('google')
+      setSavingGoogleIntegration(true)
+      try {
+        if (!handoffToken) {
+          throw new Error('Google autorizó, pero no regresó el handoff para guardar la conexión local.')
+        }
+        const data = await calendarsService.claimGoogleOAuth(handoffToken)
+        setGoogleIntegration(data)
+        setGoogleCalendarId(data.calendarId || '')
+        await loadGoogleCalendarOptions(data)
+        await loadCalendars()
+        showToast('success', 'Google Calendar conectado', 'La cuenta quedó lista para sincronizar calendarios desde esta instalación.')
+      } catch (error: any) {
+        await loadGoogleIntegration()
+        showToast('warning', 'Google autorizó, falta guardar', error.message || 'Vuelve a conectar Google Calendar desde esta pantalla.')
+      } finally {
+        setSavingGoogleIntegration(false)
+        navigate('/settings/calendars/google', { replace: true })
+      }
+    }
+
+    void finishGoogleReturn()
+  }, [location.search, navigate, showToast])
+
+  useEffect(() => {
     if (googleIntegration?.connected) {
       loadGoogleCalendarOptions()
     } else {

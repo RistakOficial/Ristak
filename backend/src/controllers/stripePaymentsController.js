@@ -164,7 +164,9 @@ export async function createStripeConnectUrlView(req, res) {
 
 export async function syncStripeConnectView(req, res) {
   try {
-    const config = await syncStripeConnectFromCentral()
+    const config = await syncStripeConnectFromCentral({
+      handoffToken: req.body?.handoffToken || req.body?.handoff_token || ''
+    })
     res.json({ success: true, data: await withStripeWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error sincronizando Stripe Connect central: ${error.message}`)

@@ -295,11 +295,6 @@ export async function hasFeature(featureKey) {
   return !!state.features?.[featureKey]
 }
 
-export async function getCentralGoogleCalendarStatus() {
-  const data = await callLicenseServer('/api/license/google-calendar/status')
-  return data.calendar || {}
-}
-
 export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/settings/calendars/google' } = {}) {
   const data = await callLicenseServer('/api/license/google-calendar/connect-url', {
     return_path: returnPath
@@ -323,45 +318,24 @@ export async function createCentralGoogleLoginUrl({ returnPath = '/dashboard' } 
   }
 }
 
-export async function listCentralGoogleCalendars() {
-  const data = await callLicenseServer('/api/license/google-calendar/calendars')
-  return Array.isArray(data.calendars) ? data.calendars : []
-}
-
-export async function upsertCentralGoogleCalendarEvent({ googleCalendarId, googleEventId = '', event = {} } = {}) {
-  const data = await callLicenseServer('/api/license/google-calendar/events/upsert', {
-    google_calendar_id: googleCalendarId,
-    google_event_id: googleEventId,
-    event
-  })
-  return data.event || {}
-}
-
-export async function listCentralGoogleCalendarEvents({ googleCalendarId, timeMin = '', timeMax = '', showDeleted = false } = {}) {
-  const data = await callLicenseServer('/api/license/google-calendar/events/list', {
-    google_calendar_id: googleCalendarId,
-    time_min: timeMin,
-    time_max: timeMax,
-    show_deleted: Boolean(showDeleted)
-  })
-  return Array.isArray(data.events) ? data.events : []
-}
-
-export async function deleteCentralGoogleCalendarEvent({ googleCalendarId, googleEventId } = {}) {
-  return callLicenseServer('/api/license/google-calendar/events/delete', {
-    google_calendar_id: googleCalendarId,
-    google_event_id: googleEventId
-  })
-}
-
 export async function disconnectCentralGoogleCalendar() {
   const data = await callLicenseServer('/api/license/google-calendar/disconnect')
   return data.calendar || {}
 }
 
-export async function getCentralStripeConnectStatus() {
-  const data = await callLicenseServer('/api/license/stripe-connect/status')
-  return data.connection || {}
+export async function claimCentralOAuthHandoff({ provider, handoffToken } = {}) {
+  const data = await callLicenseServer('/api/license/oauth-handoff/claim', {
+    provider,
+    handoff_token: handoffToken
+  })
+  return data.handoff || {}
+}
+
+export async function refreshCentralGoogleCalendarToken({ refreshToken } = {}) {
+  const data = await callLicenseServer('/api/license/google-calendar/refresh-token', {
+    refresh_token: refreshToken
+  })
+  return data.token || {}
 }
 
 export async function createCentralStripeConnectUrl({ mode = 'test', returnPath = '/settings/payments/stripe', appUrl = '' } = {}) {
@@ -390,11 +364,6 @@ export async function disconnectCentralStripeConnect() {
   return data.connection || {}
 }
 
-export async function getCentralMercadoPagoStatus() {
-  const data = await callLicenseServer('/api/license/mercadopago/status')
-  return data.connection || {}
-}
-
 export async function createCentralMercadoPagoConnectUrl({ mode = 'test', returnPath = '/settings/payments/mercadopago', appUrl = '' } = {}) {
   const payload = {
     mode: mode === 'live' ? 'live' : 'test',
@@ -418,6 +387,14 @@ export async function createCentralMercadoPagoConnectUrl({ mode = 'test', return
 export async function disconnectCentralMercadoPago() {
   const data = await callLicenseServer('/api/license/mercadopago/disconnect')
   return data.connection || {}
+}
+
+export async function refreshCentralMercadoPagoToken({ mode = 'test', refreshToken } = {}) {
+  const data = await callLicenseServer('/api/license/mercadopago/refresh-token', {
+    mode: mode === 'live' ? 'live' : 'test',
+    refresh_token: refreshToken
+  })
+  return data.token || {}
 }
 
 /**

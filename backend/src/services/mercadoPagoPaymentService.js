@@ -5,10 +5,11 @@ import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import {
+  claimCentralOAuthHandoff,
   createCentralMercadoPagoConnectUrl,
   disconnectCentralMercadoPago,
-  getCentralMercadoPagoStatus,
-  isLicenseEnforced
+  isLicenseEnforced,
+  refreshCentralMercadoPagoToken
 } from './licenseService.js'
 import { calculatePaymentTax, getPublicPaymentSettings } from './paymentSettingsService.js'
 
@@ -29,7 +30,8 @@ const CONFIG_KEYS = {
   tokenExpiresAt: 'mercadopago_token_expires_at',
   connectedAt: 'mercadopago_connected_at',
   disconnectedAt: 'mercadopago_disconnected_at',
-  managedByPortal: 'mercadopago_managed_by_portal'
+  managedByPortal: 'mercadopago_managed_by_portal',
+  modeConnections: 'mercadopago_mode_connections'
 }
 
 const DEFAULT_CURRENCY = 'MXN'
@@ -183,31 +185,144 @@ function shouldSyncToken(raw = {}) {
   return Number.isFinite(expires) && expires - Date.now() <= TOKEN_SYNC_WINDOW_MS
 }
 
+function normalizeStoredMercadoPagoConnection(value = {}, mode = 'test') {
+  if (!value || typeof value !== 'object') return null
+  const normalizedMode = normalizeMode(value.mode || mode)
+  const userId = cleanString(value.userId || value.user_id)
+  if (!userId) return null
+
+  return {
+    mode: normalizedMode,
+    accountLabel: cleanString(value.accountLabel || value.account_label),
+    userId,
+    publicKey: cleanString(value.publicKey || value.public_key),
+    scope: cleanString(value.scope),
+    tokenType: cleanString(value.tokenType || value.token_type || 'bearer'),
+    livemode: normalizeBoolean(value.livemode, normalizedMode === 'live'),
+    accessToken: cleanString(value.accessToken || value.access_token),
+    refreshToken: cleanString(value.refreshToken || value.refresh_token),
+    webhookSecret: cleanString(value.webhookSecret || value.webhook_secret),
+    webhookUrl: cleanString(value.webhookUrl || value.webhook_url),
+    tokenExpiresAt: cleanString(value.tokenExpiresAt || value.token_expires_at),
+    connectedAt: cleanString(value.connectedAt || value.connected_at),
+    managedByPortal: normalizeBoolean(value.managedByPortal ?? value.managed_by_portal, false)
+  }
+}
+
+function readMercadoPagoModeConnections(raw = {}) {
+  const parsed = parseJson(raw[CONFIG_KEYS.modeConnections], {})
+  return {
+    test: normalizeStoredMercadoPagoConnection(parsed.test, 'test'),
+    live: normalizeStoredMercadoPagoConnection(parsed.live, 'live')
+  }
+}
+
+function legacyMercadoPagoConnectionFromRaw(raw = {}, mode = 'test') {
+  const userId = cleanString(raw[CONFIG_KEYS.userId])
+  if (!userId) return null
+  const normalizedMode = normalizeMode(raw[CONFIG_KEYS.mode] || mode)
+  return normalizeStoredMercadoPagoConnection({
+    mode: normalizedMode,
+    accountLabel: raw[CONFIG_KEYS.accountLabel],
+    userId,
+    publicKey: raw[CONFIG_KEYS.publicKey],
+    scope: raw[CONFIG_KEYS.scope],
+    tokenType: raw[CONFIG_KEYS.tokenType],
+    livemode: raw[CONFIG_KEYS.livemode],
+    accessToken: raw[CONFIG_KEYS.accessToken],
+    refreshToken: raw[CONFIG_KEYS.refreshToken],
+    webhookSecret: raw[CONFIG_KEYS.webhookSecret],
+    webhookUrl: raw[CONFIG_KEYS.webhookUrl],
+    tokenExpiresAt: raw[CONFIG_KEYS.tokenExpiresAt],
+    connectedAt: raw[CONFIG_KEYS.connectedAt],
+    managedByPortal: raw[CONFIG_KEYS.managedByPortal]
+  }, normalizedMode)
+}
+
+function getMercadoPagoModeConnection(raw = {}, mode = 'test') {
+  const normalizedMode = normalizeMode(mode)
+  const connections = readMercadoPagoModeConnections(raw)
+  if (connections[normalizedMode]) return connections[normalizedMode]
+
+  const legacy = legacyMercadoPagoConnectionFromRaw(raw, normalizedMode)
+  return legacy?.mode === normalizedMode ? legacy : null
+}
+
+function decryptStoredMercadoPagoConnection(connection = null) {
+  if (!connection) return null
+  return {
+    ...connection,
+    accessToken: decryptSecret(connection.accessToken),
+    refreshToken: decryptSecret(connection.refreshToken),
+    webhookSecret: decryptSecret(connection.webhookSecret)
+  }
+}
+
+async function saveMercadoPagoModeConnection(mode, connection) {
+  const raw = await readRawConfig()
+  const connections = readMercadoPagoModeConnections(raw)
+  connections[normalizeMode(mode)] = normalizeStoredMercadoPagoConnection(connection, mode)
+
+  await setAppConfig(CONFIG_KEYS.modeConnections, JSON.stringify({
+    test: connections.test,
+    live: connections.live
+  }))
+}
+
+async function writeActiveMercadoPagoConnection(mode, connection) {
+  const normalizedMode = normalizeMode(mode)
+  const cleanConnection = normalizeStoredMercadoPagoConnection(connection, normalizedMode)
+  if (!cleanConnection) {
+    const error = new Error(`Mercado Pago no está conectado en modo ${normalizedMode === 'live' ? 'en vivo' : 'prueba'}.`)
+    error.status = 400
+    throw error
+  }
+
+  await setAppConfig(CONFIG_KEYS.enabled, '1')
+  await setAppConfig(CONFIG_KEYS.mode, normalizedMode)
+  await setAppConfig(CONFIG_KEYS.defaultCurrency, await getConfiguredCurrency())
+  await setAppConfig(CONFIG_KEYS.accountLabel, cleanConnection.accountLabel)
+  await setAppConfig(CONFIG_KEYS.publicKey, cleanConnection.publicKey)
+  await setAppConfig(CONFIG_KEYS.userId, cleanConnection.userId)
+  await setAppConfig(CONFIG_KEYS.scope, cleanConnection.scope)
+  await setAppConfig(CONFIG_KEYS.tokenType, cleanConnection.tokenType)
+  await setAppConfig(CONFIG_KEYS.livemode, cleanConnection.livemode ? '1' : '0')
+  await setAppConfig(CONFIG_KEYS.webhookUrl, cleanConnection.webhookUrl)
+  await setAppConfig(CONFIG_KEYS.tokenExpiresAt, cleanConnection.tokenExpiresAt)
+  await setAppConfig(CONFIG_KEYS.connectedAt, cleanConnection.connectedAt || new Date().toISOString())
+  await setAppConfig(CONFIG_KEYS.managedByPortal, cleanConnection.managedByPortal ? '1' : '0')
+
+  if (cleanConnection.accessToken) await setAppConfig(CONFIG_KEYS.accessToken, cleanConnection.accessToken)
+  if (cleanConnection.refreshToken) await setAppConfig(CONFIG_KEYS.refreshToken, cleanConnection.refreshToken)
+  if (cleanConnection.webhookSecret) await setAppConfig(CONFIG_KEYS.webhookSecret, cleanConnection.webhookSecret)
+}
+
 function mapConfig(raw = {}, { includeSecrets = false } = {}) {
   const mode = normalizeMode(raw[CONFIG_KEYS.mode])
-  const accessToken = raw[CONFIG_KEYS.accessToken] ? decryptSecret(raw[CONFIG_KEYS.accessToken]) : ''
-  const refreshToken = raw[CONFIG_KEYS.refreshToken] ? decryptSecret(raw[CONFIG_KEYS.refreshToken]) : ''
-  const webhookSecret = raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : ''
+  const selectedConnection = decryptStoredMercadoPagoConnection(getMercadoPagoModeConnection(raw, mode))
+  const accessToken = cleanString(selectedConnection?.accessToken) || (raw[CONFIG_KEYS.accessToken] ? decryptSecret(raw[CONFIG_KEYS.accessToken]) : '')
+  const refreshToken = cleanString(selectedConnection?.refreshToken) || (raw[CONFIG_KEYS.refreshToken] ? decryptSecret(raw[CONFIG_KEYS.refreshToken]) : '')
+  const webhookSecret = cleanString(selectedConnection?.webhookSecret) || (raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : '')
   const enabled = normalizeBoolean(raw[CONFIG_KEYS.enabled], true)
-  const configured = Boolean(enabled && accessToken && cleanString(raw[CONFIG_KEYS.userId]))
+  const configured = Boolean(enabled && accessToken && cleanString(selectedConnection?.userId || raw[CONFIG_KEYS.userId]))
 
   return {
     enabled,
     configured,
     mode,
     defaultCurrency: normalizeCurrency(raw[CONFIG_KEYS.defaultCurrency] || DEFAULT_CURRENCY),
-    accountLabel: cleanString(raw[CONFIG_KEYS.accountLabel]),
-    userId: cleanString(raw[CONFIG_KEYS.userId]),
-    publicKey: cleanString(raw[CONFIG_KEYS.publicKey]),
-    scope: cleanString(raw[CONFIG_KEYS.scope]),
-    tokenType: cleanString(raw[CONFIG_KEYS.tokenType] || 'bearer'),
-    livemode: normalizeBoolean(raw[CONFIG_KEYS.livemode], mode === 'live'),
-    webhookUrl: cleanString(raw[CONFIG_KEYS.webhookUrl]),
+    accountLabel: cleanString(selectedConnection?.accountLabel || raw[CONFIG_KEYS.accountLabel]),
+    userId: cleanString(selectedConnection?.userId || raw[CONFIG_KEYS.userId]),
+    publicKey: cleanString(selectedConnection?.publicKey || raw[CONFIG_KEYS.publicKey]),
+    scope: cleanString(selectedConnection?.scope || raw[CONFIG_KEYS.scope]),
+    tokenType: cleanString(selectedConnection?.tokenType || raw[CONFIG_KEYS.tokenType] || 'bearer'),
+    livemode: normalizeBoolean(selectedConnection?.livemode ?? raw[CONFIG_KEYS.livemode], mode === 'live'),
+    webhookUrl: cleanString(selectedConnection?.webhookUrl || raw[CONFIG_KEYS.webhookUrl]),
     hasWebhookSecret: Boolean(webhookSecret),
-    tokenExpiresAt: raw[CONFIG_KEYS.tokenExpiresAt] || null,
-    connectedAt: raw[CONFIG_KEYS.connectedAt] || null,
+    tokenExpiresAt: selectedConnection?.tokenExpiresAt || raw[CONFIG_KEYS.tokenExpiresAt] || null,
+    connectedAt: selectedConnection?.connectedAt || raw[CONFIG_KEYS.connectedAt] || null,
     disconnectedAt: raw[CONFIG_KEYS.disconnectedAt] || null,
-    managedByPortal: normalizeBoolean(raw[CONFIG_KEYS.managedByPortal], false) || isLicenseEnforced(),
+    managedByPortal: normalizeBoolean(selectedConnection?.managedByPortal ?? raw[CONFIG_KEYS.managedByPortal], false) || isLicenseEnforced(),
     hasAccessToken: Boolean(accessToken),
     hasRefreshToken: Boolean(refreshToken),
     ...(includeSecrets ? { accessToken, refreshToken, webhookSecret } : {})
@@ -222,42 +337,67 @@ async function writeCentralConnection(connection = {}) {
     throw error
   }
 
-  await setAppConfig(CONFIG_KEYS.enabled, '1')
-  await setAppConfig(CONFIG_KEYS.mode, normalizeMode(connection.mode))
-  await setAppConfig(CONFIG_KEYS.defaultCurrency, await getConfiguredCurrency())
-  await setAppConfig(CONFIG_KEYS.accountLabel, cleanString(connection.account_label || connection.account_email || connection.user_id))
-  await setAppConfig(CONFIG_KEYS.publicKey, cleanString(connection.public_key))
-  await setAppConfig(CONFIG_KEYS.userId, cleanString(connection.user_id))
-  await setAppConfig(CONFIG_KEYS.scope, cleanString(connection.scope))
-  await setAppConfig(CONFIG_KEYS.tokenType, cleanString(connection.token_type || 'bearer'))
-  await setAppConfig(CONFIG_KEYS.livemode, connection.livemode ? '1' : '0')
-  await setAppConfig(CONFIG_KEYS.webhookUrl, cleanString(connection.webhook_url))
-  await setAppConfig(CONFIG_KEYS.tokenExpiresAt, cleanString(connection.token_expires_at))
-  await setAppConfig(CONFIG_KEYS.connectedAt, cleanString(connection.connected_at || new Date().toISOString()))
-  await setAppConfig(CONFIG_KEYS.managedByPortal, '1')
-  await setAppConfig(CONFIG_KEYS.accessToken, encryptOptionalSecret(connection.access_token))
-
-  if (connection.refresh_token) {
-    await setAppConfig(CONFIG_KEYS.refreshToken, encryptOptionalSecret(connection.refresh_token))
-  } else {
-    await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.refreshToken])
+  const mode = normalizeMode(connection.mode)
+  const storedConnection = {
+    mode,
+    accountLabel: cleanString(connection.account_label || connection.account_email || connection.user_id),
+    userId: cleanString(connection.user_id),
+    publicKey: cleanString(connection.public_key),
+    scope: cleanString(connection.scope),
+    tokenType: cleanString(connection.token_type || 'bearer'),
+    livemode: Boolean(connection.livemode) || mode === 'live',
+    accessToken: encryptOptionalSecret(connection.access_token),
+    refreshToken: connection.refresh_token ? encryptOptionalSecret(connection.refresh_token) : '',
+    webhookSecret: connection.webhook_secret ? encryptOptionalSecret(connection.webhook_secret) : '',
+    webhookUrl: cleanString(connection.webhook_url),
+    tokenExpiresAt: cleanString(connection.token_expires_at),
+    connectedAt: cleanString(connection.connected_at || new Date().toISOString()),
+    managedByPortal: true
   }
 
-  if (connection.webhook_secret) {
-    await setAppConfig(CONFIG_KEYS.webhookSecret, encryptOptionalSecret(connection.webhook_secret))
-  } else {
-    await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.webhookSecret])
+  await saveMercadoPagoModeConnection(mode, storedConnection)
+  await writeActiveMercadoPagoConnection(mode, storedConnection)
+}
+
+async function refreshMercadoPagoLocalToken(raw = {}) {
+  const current = mapConfig(raw, { includeSecrets: true })
+  if (!current.refreshToken) {
+    const error = new Error('Mercado Pago necesita reconexión porque no hay refresh token local.')
+    error.status = 400
+    throw error
   }
+
+  const token = await refreshCentralMercadoPagoToken({
+    mode: current.mode,
+    refreshToken: current.refreshToken
+  })
+
+  await writeCentralConnection({
+    connected: true,
+    mode: current.mode,
+    user_id: current.userId,
+    account_label: current.accountLabel,
+    public_key: token.public_key || current.publicKey,
+    scope: token.scope || current.scope,
+    token_type: token.token_type || current.tokenType,
+    livemode: token.livemode ?? current.livemode,
+    webhook_url: current.webhookUrl,
+    token_expires_at: token.token_expires_at || current.tokenExpiresAt,
+    connected_at: current.connectedAt || new Date().toISOString(),
+    access_token: token.access_token,
+    refresh_token: token.refresh_token || current.refreshToken,
+    webhook_secret: current.webhookSecret
+  })
 }
 
 export async function getMercadoPagoPaymentConfig({ includeSecrets = false } = {}) {
   let raw = await readRawConfig()
   if (isLicenseEnforced() && raw[CONFIG_KEYS.accessToken] && shouldSyncToken(raw)) {
     try {
-      await syncMercadoPagoFromCentral()
+      await refreshMercadoPagoLocalToken(raw)
       raw = await readRawConfig()
     } catch (error) {
-      logger.warn(`No se pudo refrescar Mercado Pago desde el portal central: ${error.message}`)
+      logger.warn(`No se pudo refrescar Mercado Pago con el broker central: ${error.message}`)
     }
   }
   return mapConfig(raw, { includeSecrets })
@@ -272,21 +412,40 @@ export async function createMercadoPagoOAuthUrl({ mode = 'test', appUrl = '', re
   return result
 }
 
-export async function syncMercadoPagoFromCentral() {
-  const connection = await getCentralMercadoPagoStatus()
+export async function syncMercadoPagoFromCentral({ handoffToken = '' } = {}) {
+  if (!isLicenseEnforced()) {
+    const error = new Error('Esta instalación no está conectada al portal central.')
+    error.status = 400
+    throw error
+  }
+
+  if (!cleanString(handoffToken)) {
+    const error = new Error('Falta el handoff de Mercado Pago. Intenta conectar otra vez desde el botón de Mercado Pago.')
+    error.status = 400
+    throw error
+  }
+
+  const handoff = await claimCentralOAuthHandoff({
+    provider: 'mercadopago',
+    handoffToken
+  })
+  const connection = handoff?.payload?.connection || {}
   await writeCentralConnection(connection)
   return getMercadoPagoPaymentConfig()
 }
 
 export async function setMercadoPagoActiveMode(mode = 'live') {
   const normalizedMode = normalizeMode(mode)
-  const synced = await syncMercadoPagoFromCentral()
-  if (synced.mode !== normalizedMode) {
+  const raw = await readRawConfig()
+  const connection = getMercadoPagoModeConnection(raw, normalizedMode)
+  if (!connection) {
     const error = new Error(`Reconecta Mercado Pago en modo ${normalizedMode === 'live' ? 'en vivo' : 'prueba'} para usar ese token.`)
     error.status = 400
     throw error
   }
-  return synced
+
+  await writeActiveMercadoPagoConnection(normalizedMode, connection)
+  return getMercadoPagoPaymentConfig()
 }
 
 export async function deleteMercadoPagoPaymentConfig() {
@@ -308,10 +467,6 @@ export async function deleteMercadoPagoPaymentConfig() {
 
 async function getMercadoPagoClientConfig() {
   let config = await getMercadoPagoPaymentConfig({ includeSecrets: true })
-  if ((!config.configured || !config.accessToken) && isLicenseEnforced()) {
-    await syncMercadoPagoFromCentral()
-    config = await getMercadoPagoPaymentConfig({ includeSecrets: true })
-  }
 
   if (!config.configured || !config.accessToken) {
     const error = new Error('Mercado Pago no está configurado.')

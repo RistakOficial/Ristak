@@ -133,10 +133,14 @@ export const mercadoPagoPaymentsService = {
     return parseResponse<MercadoPagoConnectUrlResponse>(response)
   },
 
-  async syncConnect(): Promise<MercadoPagoPaymentConfig> {
+  async syncConnect(payload: { handoffToken?: string } = {}): Promise<MercadoPagoPaymentConfig> {
     const response = await fetch(apiUrl('/api/mercadopago/connect/sync'), {
       method: 'POST',
-      credentials: 'include'
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(payload.handoffToken ? { handoffToken: payload.handoffToken } : {})
+      })
     })
     return parseResponse<MercadoPagoPaymentConfig>(response)
   },

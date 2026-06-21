@@ -123,7 +123,9 @@ export async function createMercadoPagoConnectUrlView(req, res) {
 
 export async function syncMercadoPagoConnectView(req, res) {
   try {
-    const config = await syncMercadoPagoFromCentral()
+    const config = await syncMercadoPagoFromCentral({
+      handoffToken: req.body?.handoffToken || req.body?.handoff_token || ''
+    })
     res.json({ success: true, data: await withMercadoPagoWebhookEndpoints(req, config) })
   } catch (error) {
     logger.error(`Error sincronizando Mercado Pago central: ${error.message}`)

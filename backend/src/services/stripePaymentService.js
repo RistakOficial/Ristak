@@ -7,9 +7,9 @@ import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { getPaymentPlanAuditSummary } from './paymentRecordSafetyService.js'
 import {
+  claimCentralOAuthHandoff,
   createCentralStripeConnectUrl,
   disconnectCentralStripeConnect,
-  getCentralStripeConnectStatus,
   isLicenseEnforced
 } from './licenseService.js'
 import { calculatePaymentTax, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
@@ -1037,14 +1037,24 @@ export async function createStripeConnectOAuthUrl({ mode = 'test', baseUrl = '',
   }
 }
 
-export async function syncStripeConnectFromCentral() {
+export async function syncStripeConnectFromCentral({ handoffToken = '' } = {}) {
   if (!isLicenseEnforced()) {
     const error = new Error('Esta instalación no está conectada al portal central.')
     error.status = 400
     throw error
   }
 
-  const connection = await getCentralStripeConnectStatus()
+  if (!cleanString(handoffToken)) {
+    const error = new Error('Falta el handoff de Stripe. Intenta conectar otra vez desde el botón de Stripe.')
+    error.status = 400
+    throw error
+  }
+
+  const handoff = await claimCentralOAuthHandoff({
+    provider: 'stripe_connect',
+    handoffToken
+  })
+  const connection = handoff?.payload?.connection || {}
   if (!connection?.connected || !connection.account_id || !connection.access_token) {
     const error = new Error('Stripe todavía no quedó conectado en el Installer. Intenta conectar otra vez.')
     error.status = 409

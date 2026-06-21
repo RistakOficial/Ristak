@@ -362,30 +362,36 @@ async function startCentralStripeServer({ expectedAppUrl = 'https://app.example.
         return
       }
 
-      if (req.url === '/api/license/stripe-connect/status') {
+      if (req.url === '/api/license/oauth-handoff/claim') {
         assert.equal(lastRequestBody.client_id, 'cli_test_stripe')
+        assert.equal(lastRequestBody.provider, 'stripe_connect')
+        assert.equal(lastRequestBody.handoff_token, 'stripe_handoff_test')
         res.end(JSON.stringify({
           success: true,
-          connection: {
-            connected: true,
-            mode: 'test',
-            account_id: 'acct_central_connected',
-            publishable_key: 'pk_test_connected',
-            scope: 'read_write',
-            livemode: false,
-            token_type: 'bearer',
-            account_email: 'owner@stripe.test',
-            account_label: 'Stripe Central',
-            charges_enabled: true,
-            payouts_enabled: true,
-            details_submitted: true,
-            webhook_endpoint_id: 'we_central_123',
-            webhook_url: `${expectedAppUrl}/api/stripe/webhook`,
-            webhook_status: 'active',
-            connected_at: '2026-06-19T00:00:00.000Z',
-            access_token: 'sk_test_connected_access',
-            refresh_token: 'rt_test_connected',
-            webhook_secret: 'whsec_central_123'
+          handoff: {
+            payload: {
+              connection: {
+                connected: true,
+                mode: 'test',
+                account_id: 'acct_central_connected',
+                publishable_key: 'pk_test_connected',
+                scope: 'read_write',
+                livemode: false,
+                token_type: 'bearer',
+                account_email: 'owner@stripe.test',
+                account_label: 'Stripe Central',
+                charges_enabled: true,
+                payouts_enabled: true,
+                details_submitted: true,
+                webhook_endpoint_id: 'we_central_123',
+                webhook_url: `${expectedAppUrl}/api/stripe/webhook`,
+                webhook_status: 'active',
+                connected_at: '2026-06-19T00:00:00.000Z',
+                access_token: 'sk_test_connected_access',
+                refresh_token: 'rt_test_connected',
+                webhook_secret: 'whsec_central_123'
+              }
+            }
           }
         }))
         return
@@ -408,7 +414,7 @@ async function startCentralStripeServer({ expectedAppUrl = 'https://app.example.
   }
 }
 
-test('Stripe Connect central delega OAuth al Installer y sincroniza credenciales', async () => {
+test('Stripe Connect central delega OAuth y el cliente guarda credenciales desde handoff local', async () => {
   await initializeMasterKey()
 
   await snapshotStripeConfig(async () => {
@@ -445,7 +451,7 @@ test('Stripe Connect central delega OAuth al Installer y sincroniza credenciales
       assert.equal(started.managedByPortal, true)
       assert.equal(started.redirectUri, 'https://portal.test/api/stripe/connect/callback')
 
-      const config = await syncStripeConnectFromCentral()
+      const config = await syncStripeConnectFromCentral({ handoffToken: 'stripe_handoff_test' })
       assert.equal(config.configured, true)
       assert.equal(config.connectionType, 'connect')
       assert.equal(config.connectManagedByPortal, true)

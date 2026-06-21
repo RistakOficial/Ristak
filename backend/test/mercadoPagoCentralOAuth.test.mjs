@@ -63,12 +63,12 @@ async function withMercadoPagoConfigSnapshot(callback) {
   }
 }
 
-test('Mercado Pago central manda modo prueba al Installer y guarda token sandbox', async () => {
+test('Mercado Pago central manda modo prueba y el cliente guarda secretos desde handoff local', async () => {
   await initializeMasterKey()
 
   await withMercadoPagoConfigSnapshot(async () => {
     let connectPayload = null
-    let statusPayload = null
+    let claimPayload = null
 
     const licenseServer = http.createServer(async (req, res) => {
       if (req.method !== 'POST') return writeJson(res, 404, { success: false, error: 'not_found' })
@@ -85,27 +85,33 @@ test('Mercado Pago central manda modo prueba al Installer y guarda token sandbox
         })
       }
 
-      if (req.url === '/api/license/mercadopago/status') {
-        statusPayload = payload
+      if (req.url === '/api/license/oauth-handoff/claim') {
+        claimPayload = payload
+        assert.equal(payload.provider, 'mercadopago')
+        assert.equal(payload.handoff_token, 'mp_handoff_test')
         return writeJson(res, 200, {
           success: true,
-          connection: {
-            configured: true,
-            connected: true,
-            user_id: '998877',
-            public_key: 'APP_USR-sandbox-public-key',
-            scope: 'offline_access',
-            livemode: false,
-            mode: 'test',
-            token_type: 'bearer',
-            account_email: 'mp-sandbox@test.com',
-            account_label: 'Mercado Pago Sandbox',
-            webhook_url: 'https://app.test/api/mercadopago/webhook',
-            token_expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-            connected_at: new Date().toISOString(),
-            access_token: 'APP_USR-sandbox-access-token',
-            refresh_token: 'TG-sandbox-refresh-token',
-            webhook_secret: 'mp_sandbox_webhook_secret'
+          handoff: {
+            payload: {
+              connection: {
+                configured: true,
+                connected: true,
+                user_id: '998877',
+                public_key: 'APP_USR-sandbox-public-key',
+                scope: 'offline_access',
+                livemode: false,
+                mode: 'test',
+                token_type: 'bearer',
+                account_email: 'mp-sandbox@test.com',
+                account_label: 'Mercado Pago Sandbox',
+                webhook_url: 'https://app.test/api/mercadopago/webhook',
+                token_expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+                connected_at: new Date().toISOString(),
+                access_token: 'APP_USR-sandbox-access-token',
+                refresh_token: 'TG-sandbox-refresh-token',
+                webhook_secret: 'mp_sandbox_webhook_secret'
+              }
+            }
           }
         })
       }
@@ -141,8 +147,8 @@ test('Mercado Pago central manda modo prueba al Installer y guarda token sandbox
       assert.equal(connectPayload.app_url, 'https://app.test')
       assert.equal(connectPayload.return_path, '/settings/payments/mercadopago')
 
-      const config = await syncMercadoPagoFromCentral()
-      assert.equal(statusPayload.client_id, 'cli_mp_central')
+      const config = await syncMercadoPagoFromCentral({ handoffToken: 'mp_handoff_test' })
+      assert.equal(claimPayload.client_id, 'cli_mp_central')
       assert.equal(config.configured, true)
       assert.equal(config.mode, 'test')
       assert.equal(config.livemode, false)
