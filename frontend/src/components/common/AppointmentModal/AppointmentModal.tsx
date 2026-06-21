@@ -8,7 +8,7 @@ import { PhoneSelect } from '@/components/phone/PhoneSelect';
 import { PhoneDateTimeField } from '@/components/phone/ui/PhoneDateTimeField';
 import { formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
 import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
-import { PhoneSegmentedTabs } from '@/components/phone/ui';
+import { PhoneSegmentedTabs, PhoneSheet } from '@/components/phone/ui';
 import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot } from '@/services/calendarsService';
 import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
@@ -1625,25 +1625,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     );
   };
 
-  return (
-    <>
-      <Modal
-        isOpen={isOpen}
-        onClose={onClose}
-        title={modalTitle}
-        size="lg"
-        className={isMobileSheet ? styles.mobileSheetModal : styles.appointmentDialogModal}
-        backdropClassName={isMobileSheet ? styles.mobileSheetBackdrop : undefined}
-        contentClassName={isMobileSheet ? styles.mobileSheetContent : undefined}
-        showCloseButton={!isMobileSheet}
-        draggableSheet={isMobileSheet}
-        flushContent
-      >
-        <div
-          className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}
-          data-modal-panel=""
-          data-phone-scrollable={isMobileSheet ? 'true' : undefined}
-        >
+  const appointmentContent = (
+    <div
+      className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}
+      data-modal-panel=""
+      data-phone-scrollable={isMobileSheet ? 'true' : undefined}
+    >
         {showCalendarPicker && (
           <div className={styles.field}>
             <label className={styles.label}>
@@ -2049,7 +2036,35 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           </div>
         )}
       </div>
-    </Modal>
+  );
+
+  return (
+    <>
+      {isMobileSheet ? (
+        <PhoneSheet
+          isOpen={isOpen}
+          onClose={onClose}
+          title={modalTitle}
+          height="tall"
+          scrollable={false}
+          ariaLabel={modalTitle || 'Cita'}
+          panelClassName={styles.mobileAppointmentSheet}
+          contentClassName={styles.mobileSheetContent}
+        >
+          {appointmentContent}
+        </PhoneSheet>
+      ) : (
+        <Modal
+          isOpen={isOpen}
+          onClose={onClose}
+          title={modalTitle}
+          size="lg"
+          className={styles.appointmentDialogModal}
+          flushContent
+        >
+          {appointmentContent}
+        </Modal>
+      )}
 
     <Modal
       isOpen={isClient && showDeleteConfirm}

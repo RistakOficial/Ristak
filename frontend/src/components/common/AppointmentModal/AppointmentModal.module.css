@@ -46,17 +46,7 @@
   }
 }
 
-.mobileSheetBackdrop {
-  --bottom-sheet-backdrop-bg:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.2), rgba(15, 23, 42, 0.72)),
-    rgba(15, 23, 42, 0.58);
-  align-items: flex-end;
-  justify-content: center;
-  padding: 0;
-}
-
-.mobileSheetModal {
-  /* Mismo fondo que el Registrar pago móvil (superficie, no el bg de página) */
+.mobileAppointmentSheet {
   --appointment-mobile-bg: var(--phone-chat-surface, #ffffff);
   --appointment-mobile-surface: var(--phone-chat-surface, #ffffff);
   --appointment-mobile-soft: var(--phone-chat-surface-soft, #f5f5f7);
@@ -75,52 +65,9 @@
   --color-border: var(--appointment-mobile-border);
   --color-primary: var(--phone-chat-accent, #111111);
   --color-primary-rgb: var(--phone-chat-accent-rgb, 17, 17, 17);
-  display: flex;
-  flex-direction: column;
-  width: 100vw !important;
-  max-width: none !important;
-  height: min(86dvh, 820px);
-  max-height: min(86dvh, 820px) !important;
-  margin: 0;
-  /* Sin borde, igual que el sheet del Registrar pago */
-  border: 0;
-  box-shadow: none;
-  border-radius: 24px 24px 0 0;
+
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-bg);
-  touch-action: pan-y;
-  animation: mobileSheetRise 280ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.mobileSheetModal::before {
-  content: none;
-}
-
-.mobileSheetModal > :nth-child(2) {
-  display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) 46px;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 18px;
-  border-bottom: 0;
-  background: var(--appointment-mobile-bg);
-}
-
-.mobileSheetModal > :nth-child(2) > :first-child {
-  grid-column: 2;
-  justify-content: center;
-  min-width: 0;
-}
-
-.mobileSheetModal > :nth-child(2) h2 {
-  width: auto;
-  overflow: hidden;
-  color: var(--appointment-mobile-text);
-  font-size: 20px;
-  font-weight: 820;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .mobileSheetContent {
@@ -128,6 +75,7 @@
   min-height: 0;
   height: auto;
   max-height: none !important;
+  padding: 0 !important;
   overflow: hidden !important;
   background: var(--appointment-mobile-bg);
 }
@@ -156,15 +104,6 @@
 
 .mobileSheetContainer::-webkit-scrollbar {
   display: none;
-}
-
-@keyframes mobileSheetRise {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
 }
 
 .summary {
