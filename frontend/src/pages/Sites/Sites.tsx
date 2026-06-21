@@ -19454,26 +19454,6 @@ const ImportedHtmlEditorPanel: React.FC<{
                 }}
                 onSave={() => undefined}
               />
-              <VideoActionsPanel
-                site={site}
-                block={importedCodeVideoBlock}
-                blocks={codeElementEditor.videoTargetBlocks || []}
-                popupBlocks={[]}
-                pages={pages}
-                activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
-                metaPixelConnected={metaPixelConnected}
-                onPatchSite={onPatchSite}
-                onSaveSite={onSaveSite}
-                onPatchSettings={(patch) => {
-                  setCodeElementEditor(current => current ? {
-                    ...current,
-                    videoSettings: cleanImportedVideoSettings({ ...(current.videoSettings || {}), ...patch }, current.mediaUrl || current.value)
-                  } : current)
-                }}
-                onSave={() => undefined}
-                onTargetHover={(targetId) => hoverImportedVideoActionTarget(targetId, codePreviewIframeRef.current)}
-              />
               <InlineBlockStyleControls
                 site={site}
                 block={importedCodeVideoBlock}
@@ -19497,6 +19477,26 @@ const ImportedHtmlEditorPanel: React.FC<{
                   } : current)
                 }}
                 onSave={() => undefined}
+              />
+              <VideoActionsPanel
+                site={site}
+                block={importedCodeVideoBlock}
+                blocks={codeElementEditor.videoTargetBlocks || []}
+                popupBlocks={[]}
+                pages={pages}
+                activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
+                metaPixelConnected={metaPixelConnected}
+                onPatchSite={onPatchSite}
+                onSaveSite={onSaveSite}
+                onPatchSettings={(patch) => {
+                  setCodeElementEditor(current => current ? {
+                    ...current,
+                    videoSettings: cleanImportedVideoSettings({ ...(current.videoSettings || {}), ...patch }, current.mediaUrl || current.value)
+                  } : current)
+                }}
+                onSave={() => undefined}
+                onTargetHover={(targetId) => hoverImportedVideoActionTarget(targetId, codePreviewIframeRef.current)}
               />
             </>
           )}
@@ -19633,33 +19633,6 @@ const ImportedHtmlEditorPanel: React.FC<{
             )
           },
           {
-            value: 'videoActions',
-            label: 'Acciones de video',
-            icon: <Clock3 size={14} />,
-            content: (
-              <VideoActionsPanel
-                site={site}
-                block={importedVideoBlock}
-                blocks={videoEditor.targetBlocks}
-                popupBlocks={[]}
-                pages={pages}
-                activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
-                metaPixelConnected={metaPixelConnected}
-                onPatchSite={onPatchSite}
-                onSaveSite={onSaveSite}
-                onPatchSettings={(patch) => {
-                  setImportedVideoEditorState(current => current ? {
-                    ...current,
-                    settings: cleanImportedVideoSettings({ ...current.settings, ...patch }, current.value)
-                  } : current)
-                }}
-                onSave={() => void saveImportedVideoEditor()}
-                onTargetHover={(targetId) => hoverImportedVideoActionTarget(targetId, iframeRef.current)}
-              />
-            )
-          },
-          {
             value: 'design',
             label: 'Diseño',
             icon: <Sparkles size={14} />,
@@ -19690,6 +19663,33 @@ const ImportedHtmlEditorPanel: React.FC<{
                   onSave={() => void saveImportedVideoEditor()}
                 />
               </>
+            )
+          },
+          {
+            value: 'videoActions',
+            label: 'Acciones de video',
+            icon: <Clock3 size={14} />,
+            content: (
+              <VideoActionsPanel
+                site={site}
+                block={importedVideoBlock}
+                blocks={videoEditor.targetBlocks}
+                popupBlocks={[]}
+                pages={pages}
+                activePageId={activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
+                metaPixelConnected={metaPixelConnected}
+                onPatchSite={onPatchSite}
+                onSaveSite={onSaveSite}
+                onPatchSettings={(patch) => {
+                  setImportedVideoEditorState(current => current ? {
+                    ...current,
+                    settings: cleanImportedVideoSettings({ ...current.settings, ...patch }, current.value)
+                  } : current)
+                }}
+                onSave={() => void saveImportedVideoEditor()}
+                onTargetHover={(targetId) => hoverImportedVideoActionTarget(targetId, iframeRef.current)}
+              />
             )
           }
         ]}
@@ -23846,6 +23846,7 @@ const VideoPlayerSettingsControls: React.FC<{
 }> = ({ settings, mediaUrl = '', sections = 'all', onPatchSettings, onSave }) => {
   const controlsMode = getVideoControlsMode(settings)
   const showCustomControls = controlsMode === 'clean'
+  const showFrameSection = sections === 'all' || sections === 'chrome'
   const showPlaybackSections = sections === 'all' || sections === 'playback'
   const showChromeSections = sections === 'all' || sections === 'chrome'
   const showCustomControlBar = shouldShowVideoControlBar(settings)
@@ -23881,101 +23882,100 @@ const VideoPlayerSettingsControls: React.FC<{
     }
   }, [metadataPreviewEnabled, metadataSource])
 
-  if (sections === 'chrome' && !showCustomControls) return null
-
   return (
     <div className={styles.videoSettingsBox}>
-      {showPlaybackSections && (
-        <>
-          <section className={styles.videoSettingsSection}>
-            <div className={styles.videoSettingsSectionHeader}>
-              <span>Video</span>
-              <strong>Marco y ajuste</strong>
-            </div>
+      {showFrameSection && (
+        <section className={styles.videoSettingsSection}>
+          <div className={styles.videoSettingsSectionHeader}>
+            <span>Video</span>
+            <strong>Marco y ajuste</strong>
+          </div>
+          <label className={styles.field}>
+            <span>Estilo del reproductor</span>
+            <CustomSelect
+              value={controlsMode}
+              onChange={(event) => {
+                const nextMode = isVideoControlsMode(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROLS_MODE
+                onPatchSettings({
+                  videoControlsMode: nextMode,
+                  videoControls: nextMode === 'native'
+                })
+              }}
+              onBlur={onSave}
+            >
+              {videoControlsModeOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+          <div className={styles.twoColumn}>
             <label className={styles.field}>
-              <span>Estilo del reproductor</span>
+              <span>Formato</span>
               <CustomSelect
-                value={controlsMode}
+                value={getVideoOrientation(settings)}
                 onChange={(event) => {
-                  const nextMode = isVideoControlsMode(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROLS_MODE
-                  onPatchSettings({
-                    videoControlsMode: nextMode,
-                    videoControls: nextMode === 'native'
-                  })
+                  const nextOrientation = isVideoOrientation(event.target.value) ? event.target.value : DEFAULT_VIDEO_ORIENTATION
+                  onPatchSettings(getVideoOrientationPatch(settings, nextOrientation))
                 }}
                 onBlur={onSave}
               >
-                {videoControlsModeOptions.map(option => (
+                {videoOrientationOptions.map(option => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </CustomSelect>
             </label>
-            <div className={styles.twoColumn}>
-              <label className={styles.field}>
-                <span>Formato</span>
-                <CustomSelect
-                  value={getVideoOrientation(settings)}
-                  onChange={(event) => {
-                    const nextOrientation = isVideoOrientation(event.target.value) ? event.target.value : DEFAULT_VIDEO_ORIENTATION
-                    onPatchSettings(getVideoOrientationPatch(settings, nextOrientation))
-                  }}
-                  onBlur={onSave}
-                >
-                  {videoOrientationOptions.map(option => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-              </label>
-              <label className={styles.field}>
-                <span>Ajuste</span>
-                <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
-                  <option value="cover">Cubrir espacio</option>
-                  <option value="contain">Mostrar completo</option>
-                  <option value="fill">Estirar</option>
-                </CustomSelect>
-              </label>
-            </div>
-            <div className={styles.twoColumn}>
-              <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
-              <ColorField
-                label="Borde del video"
-                value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT}
-                allowGradient={false}
-                onChange={(value) => {
-                  const patch: Record<string, unknown> = { videoPlayerBorderColor: value }
-                  if (!isTransparentCssColorValue(value) && getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12) === 0) {
-                    patch.videoPlayerBorderWidth = 1
-                  }
-                  onPatchSettings(patch)
-                }}
-                onCommit={onSave}
-              />
-            </div>
-            <div className={styles.twoColumn}>
-              <VideoDimensionSliderField
-                label="Radio del video"
-                value={getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}
-                min={0}
-                max={80}
-                onChange={(value) => onPatchSettings({ videoPlayerRadius: value })}
-                onCommit={onSave}
-              />
-              <VideoDimensionSliderField
-                label="Borde del video"
-                value={getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}
-                min={0}
-                max={12}
-                onChange={(value) => onPatchSettings({ videoPlayerBorderWidth: value })}
-                onCommit={onSave}
-              />
-            </div>
-          </section>
+            <label className={styles.field}>
+              <span>Ajuste</span>
+              <CustomSelect value={getSettingString(settings, 'videoFit') || 'cover'} onChange={(event) => onPatchSettings({ videoFit: event.target.value })} onBlur={onSave}>
+                <option value="cover">Cubrir espacio</option>
+                <option value="contain">Mostrar completo</option>
+                <option value="fill">Estirar</option>
+              </CustomSelect>
+            </label>
+          </div>
+          <div className={styles.twoColumn}>
+            <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
+            <ColorField
+              label="Borde del video"
+              value={getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT}
+              allowGradient={false}
+              onChange={(value) => {
+                const patch: Record<string, unknown> = { videoPlayerBorderColor: value }
+                if (!isTransparentCssColorValue(value) && getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12) === 0) {
+                  patch.videoPlayerBorderWidth = 1
+                }
+                onPatchSettings(patch)
+              }}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <VideoDimensionSliderField
+              label="Radio del video"
+              value={getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}
+              min={0}
+              max={80}
+              onChange={(value) => onPatchSettings({ videoPlayerRadius: value })}
+              onCommit={onSave}
+            />
+            <VideoDimensionSliderField
+              label="Borde del video"
+              value={getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}
+              min={0}
+              max={12}
+              onChange={(value) => onPatchSettings({ videoPlayerBorderWidth: value })}
+              onCommit={onSave}
+            />
+          </div>
+        </section>
+      )}
 
-          <section className={styles.videoSettingsSection}>
-            <div className={styles.videoSettingsSectionHeader}>
-              <span>Reproducción</span>
-              <strong>Inicio y preview</strong>
-            </div>
+      {showPlaybackSections && (
+        <section className={styles.videoSettingsSection}>
+          <div className={styles.videoSettingsSectionHeader}>
+            <span>Reproducción</span>
+            <strong>Inicio y preview</strong>
+          </div>
             <div className={styles.twoColumn}>
               <label className={styles.field}>
                 <span>Velocidad inicial</span>
@@ -24059,8 +24059,6 @@ const VideoPlayerSettingsControls: React.FC<{
               />
             )}
           </section>
-
-        </>
       )}
 
       {showChromeSections && showCustomControls && (
@@ -33132,8 +33130,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const inspectorTabs: InspectorTab[] = [
     { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
-    ...(videoActionsContent ? [{ value: 'videoActions' as InspectorTabId, label: 'Acciones de video', icon: <Clock3 size={14} />, content: videoActionsContent }] : []),
-    { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent }
+    { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
+    ...(videoActionsContent ? [{ value: 'videoActions' as InspectorTabId, label: 'Acciones de video', icon: <Clock3 size={14} />, content: videoActionsContent }] : [])
   ]
 
   return (
