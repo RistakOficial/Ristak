@@ -171,6 +171,7 @@ interface RecordPaymentModalProps {
   onClose: () => void
   onSuccess?: (context?: RecordPaymentSuccessContext) => void
   initialPaymentMode?: PaymentMode
+  lockPaymentMode?: boolean
   initialContact?: Partial<Contact> | null
   lockInitialContact?: boolean
   showEmbeddedBackButton?: boolean
@@ -502,6 +503,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   onClose,
   onSuccess,
   initialPaymentMode = 'single',
+  lockPaymentMode = false,
   initialContact = null,
   lockInitialContact = false,
   showEmbeddedBackButton = true,
@@ -2415,7 +2417,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     const renderPaymentModeField = () => {
       // Las parcialidades necesitan una pasarela conectada. En modo local solo hay pago único.
-      if (!canUsePaymentPlans) return null
+      if (!canUsePaymentPlans || lockPaymentMode) return null
 
       return (
       <div className={styles.field}>
@@ -2622,8 +2624,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             {renderPaymentSegmentedTabs({
               ariaLabel: 'Tipo de cobro',
               options: [
-                { value: 'direct', label: 'Cobro directo' },
-                { value: 'product', label: 'Guardados' }
+                { value: 'direct', label: 'Personalizado' },
+                { value: 'product', label: 'Precios guardados' }
               ],
               value: chargeType,
               onChange: (value) => {
@@ -3183,7 +3185,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <div className={styles.summaryHeader}>
               <span>Resumen del cobro</span>
               <span className={styles.summaryBadge}>
-                {chargeType === 'product' ? 'Producto' : 'Cobro directo'}
+                {chargeType === 'product' ? 'Precios guardados' : 'Personalizado'}
               </span>
             </div>
             <div className={styles.summaryBody}>
