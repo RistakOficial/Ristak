@@ -19568,6 +19568,13 @@
   box-shadow: var(--shadow-xs);
 }
 
+.videoPreviewFlagStart::after {
+  right: calc(50% - 1px);
+  left: auto;
+  border-radius: 4px 4px 2px 5px;
+  clip-path: polygon(100% 0, 0 0, 0 74%, 100% 100%);
+}
+
 .videoPreviewFlag:focus-visible,
 .videoPreviewRangeHandle:focus-visible {
   outline: 2px solid var(--accent);
@@ -19584,17 +19591,17 @@
 
 .videoPreviewRangeHandle {
   position: absolute;
-  top: 29px;
-  left: clamp(13px, var(--video-preview-center, 50%), calc(100% - 13px));
-  width: 26px;
-  height: 24px;
+  top: 30px;
+  left: clamp(11px, var(--video-preview-center, 50%), calc(100% - 11px));
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
-  border: 0;
+  border: 2px solid var(--surface);
   border-radius: var(--radius-pill);
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: 0 0 0 3px var(--surface), var(--shadow-xs);
+  box-shadow: var(--shadow-xs);
   transform: translateX(-50%);
   z-index: 5;
   cursor: ew-resize;
@@ -19606,9 +19613,9 @@
   content: "";
   position: absolute;
   left: 50%;
-  top: -17px;
-  width: 2px;
-  height: 17px;
+  top: -18px;
+  width: 3px;
+  height: 18px;
   border-radius: var(--radius-pill);
   background: var(--accent);
   transform: translateX(-50%);
@@ -19616,13 +19623,10 @@
 }
 
 .videoPreviewRangeHandle span {
-  width: 11px;
-  height: 2px;
+  width: 6px;
+  height: 6px;
   border-radius: var(--radius-pill);
-  background: currentColor;
-  box-shadow:
-    0 -3px 0 currentColor,
-    0 3px 0 currentColor;
+  background: color-mix(in srgb, currentColor 82%, transparent);
 }
 
 .videoPreviewValueRow {
