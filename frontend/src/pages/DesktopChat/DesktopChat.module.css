@@ -101,7 +101,8 @@
 }
 
 .inboxPanelAgent .inboxHeader,
-.inboxPanelAgent .filterRow {
+.inboxPanelAgent .filterRow,
+.inboxPanelAgent .chatSelectionBar {
   border-bottom-color: color-mix(in srgb, var(--accent) 24%, var(--chat-border));
   background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
 }
@@ -327,25 +328,29 @@
   justify-content: space-between;
   gap: 8px;
   flex: 0 0 auto;
-  min-height: 0;
-  padding: 9px 14px;
+  min-height: 44px;
+  padding: 8px 14px 9px;
+  border-top: 1px solid var(--chat-border);
   border-bottom: 1px solid var(--chat-border);
-  background: var(--surface);
+  background: var(--color-background-primary);
   color: var(--text-dim);
   font-size: var(--font-size-xs);
   overflow: visible;
 }
 
 .chatSelectionBar[data-chat-selection-active='true'] {
-  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--chat-border));
+  background: color-mix(in srgb, var(--accent-soft) 34%, var(--color-background-primary));
 }
 
 .chatSelectionSummary {
   display: flex;
   align-items: center;
+  flex: 1 1 auto;
   gap: 10px;
   min-width: 0;
   min-height: 26px;
+  overflow: hidden;
 }
 
 .chatSelectAll,
@@ -360,6 +365,13 @@
   gap: 7px;
   min-width: 0;
   font-weight: 600;
+}
+
+.chatSelectAll span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chatSelectAll input,
