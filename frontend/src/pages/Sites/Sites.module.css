@@ -19495,15 +19495,15 @@
 
 .videoPreviewControlRail {
   position: relative;
-  height: 54px;
+  height: 56px;
   min-width: 0;
 }
 
 .videoPreviewRailBase,
 .videoPreviewSelection {
   position: absolute;
-  top: 30px;
-  height: 8px;
+  top: 10px;
+  height: 7px;
   border-radius: var(--radius-pill);
 }
 
@@ -19527,19 +19527,14 @@
 
 .videoPreviewFlag {
   position: absolute;
-  top: 0;
-  min-width: 58px;
-  height: 28px;
-  display: inline-grid;
-  place-items: center;
-  gap: 0;
-  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-  color: var(--text);
-  padding: 3px 8px;
+  top: -6px;
+  width: 28px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
   font: inherit;
-  box-shadow: var(--shadow-xs);
   transform: translateX(-50%);
   z-index: 4;
   cursor: ew-resize;
@@ -19547,31 +19542,30 @@
   user-select: none;
 }
 
-.videoPreviewFlag::after {
+.videoPreviewFlag::before {
   content: "";
   position: absolute;
   left: 50%;
-  bottom: -5px;
-  width: 9px;
-  height: 9px;
-  border-inline-end: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
-  border-block-end: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
-  background: var(--surface);
-  transform: translateX(-50%) rotate(45deg);
+  top: 8px;
+  width: 2px;
+  height: 19px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  transform: translateX(-50%);
+  box-shadow: 0 0 0 2px var(--surface);
 }
 
-.videoPreviewFlag span {
-  color: var(--text-mute);
-  font-size: 0.56rem;
-  font-weight: 650;
-  line-height: 1;
-}
-
-.videoPreviewFlag strong {
-  color: var(--accent);
-  font-size: 0.72rem;
-  font-weight: 750;
-  line-height: 1.05;
+.videoPreviewFlag::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 1px);
+  top: 0;
+  width: 12px;
+  height: 13px;
+  border-radius: 4px 4px 5px 2px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 0, 100% 74%, 0 100%);
+  box-shadow: var(--shadow-xs);
 }
 
 .videoPreviewFlag:focus-visible,
@@ -19581,26 +19575,26 @@
 }
 
 .videoPreviewFlagStart {
-  left: clamp(30px, var(--video-preview-start, 0%), calc(100% - 30px));
+  left: clamp(14px, var(--video-preview-start, 0%), calc(100% - 14px));
 }
 
 .videoPreviewFlagEnd {
-  left: clamp(30px, var(--video-preview-end, 100%), calc(100% - 30px));
+  left: clamp(14px, var(--video-preview-end, 100%), calc(100% - 14px));
 }
 
 .videoPreviewRangeHandle {
   position: absolute;
-  top: 24px;
-  left: clamp(18px, var(--video-preview-center, 50%), calc(100% - 18px));
-  width: 36px;
-  height: 20px;
+  top: 29px;
+  left: clamp(13px, var(--video-preview-center, 50%), calc(100% - 13px));
+  width: 26px;
+  height: 24px;
   display: grid;
   place-items: center;
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: 0 0 0 4px var(--surface), var(--shadow-xs);
+  box-shadow: 0 0 0 3px var(--surface), var(--shadow-xs);
   transform: translateX(-50%);
   z-index: 5;
   cursor: ew-resize;
@@ -19608,14 +19602,60 @@
   user-select: none;
 }
 
+.videoPreviewRangeHandle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -17px;
+  width: 2px;
+  height: 17px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
 .videoPreviewRangeHandle span {
-  width: 15px;
+  width: 11px;
   height: 2px;
   border-radius: var(--radius-pill);
   background: currentColor;
   box-shadow:
-    0 -4px 0 currentColor,
-    0 4px 0 currentColor;
+    0 -3px 0 currentColor,
+    0 3px 0 currentColor;
+}
+
+.videoPreviewValueRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  margin-top: -4px;
+}
+
+.videoPreviewValueRow span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.videoPreviewValueRow span:last-child {
+  text-align: right;
+}
+
+.videoPreviewValueRow small {
+  color: var(--text-mute);
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.videoPreviewValueRow strong {
+  color: var(--text);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .videoPreviewTimelineLabels {

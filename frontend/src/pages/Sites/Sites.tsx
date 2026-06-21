@@ -23714,29 +23714,23 @@ const VideoPreviewRangeControl: React.FC<{
           <button
             type="button"
             className={`${styles.videoPreviewFlag} ${styles.videoPreviewFlagStart}`}
-            aria-label="Inicio del loop"
+            aria-label={`Mover inicio del loop: ${formatVideoPreviewSecond(range.start)}`}
             onPointerDown={handleFlagPointerDown('start')}
             onPointerMove={handleDragPointerMove}
             onPointerUp={handleDragPointerUp}
             onPointerCancel={handleDragPointerUp}
             onKeyDown={handleFlagKeyDown('start')}
-          >
-            <span>Inicio</span>
-            <strong>{formatVideoPreviewSecond(range.start)}</strong>
-          </button>
+          />
           <button
             type="button"
             className={`${styles.videoPreviewFlag} ${styles.videoPreviewFlagEnd}`}
-            aria-label="Fin del loop"
+            aria-label={`Mover final del loop: ${formatVideoPreviewSecond(range.end)}`}
             onPointerDown={handleFlagPointerDown('end')}
             onPointerMove={handleDragPointerMove}
             onPointerUp={handleDragPointerUp}
             onPointerCancel={handleDragPointerUp}
             onKeyDown={handleFlagKeyDown('end')}
-          >
-            <span>Final</span>
-            <strong>{formatVideoPreviewSecond(range.end)}</strong>
-          </button>
+          />
           <button
             type="button"
             className={styles.videoPreviewRangeHandle}
@@ -23749,6 +23743,16 @@ const VideoPreviewRangeControl: React.FC<{
           >
             <span aria-hidden="true" />
           </button>
+        </div>
+        <div className={styles.videoPreviewValueRow}>
+          <span>
+            <small>Inicio</small>
+            <strong>{formatVideoPreviewSecond(range.start)}</strong>
+          </span>
+          <span>
+            <small>Final</small>
+            <strong>{formatVideoPreviewSecond(range.end)}</strong>
+          </span>
         </div>
       </div>
       <div className={styles.videoPreviewTimelineLabels}>
