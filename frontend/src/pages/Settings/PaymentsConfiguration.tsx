@@ -151,37 +151,6 @@ const MERCADOPAGO_WEBHOOK_EVENTS = [
   }
 ]
 
-const STRIPE_WEBHOOK_EVENTS = [
-  {
-    name: 'payment_intent.succeeded',
-    description: 'Cuando el pago con tarjeta de la página pública se completa.'
-  },
-  {
-    name: 'payment_intent.payment_failed',
-    description: 'Cuando Stripe rechaza o falla el intento de pago.'
-  },
-  {
-    name: 'payment_intent.canceled',
-    description: 'Cuando un cobro se cancela antes de completarse.'
-  },
-  {
-    name: 'charge.refunded',
-    description: 'Cuando un cargo se reembolsa, incluso si el reembolso es parcial.'
-  },
-  {
-    name: 'refund.created',
-    description: 'Cuando Stripe registra un reembolso nuevo.'
-  },
-  {
-    name: 'invoice.payment_succeeded',
-    description: 'Cuando un comprobante de Stripe queda pagado.'
-  },
-  {
-    name: 'invoice.payment_failed',
-    description: 'Cuando un comprobante de Stripe falla.'
-  }
-]
-
 const isPaymentsSectionId = (value?: string): value is PaymentsSectionId =>
   sectionIds.includes(value as PaymentsSectionId)
 
@@ -428,10 +397,9 @@ export const PaymentsConfiguration: React.FC = () => {
   const [stripeManualCredentials, setStripeManualCredentials] = useState<Record<StripeModeId, StripeModeCredentials>>(emptyStripeModeCredentials)
   const [loadingStripeConfig, setLoadingStripeConfig] = useState(false)
   const [savingHighLevelConfig, setSavingHighLevelConfig] = useState(false)
-  const [savingStripeConfig, setSavingStripeConfig] = useState(false)
-  const [testingStripeConfig, setTestingStripeConfig] = useState(false)
+  const [savingStripeMode, setSavingStripeMode] = useState<StripeModeId | null>(null)
   const [stripeConnectionFailed, setStripeConnectionFailed] = useState(false)
-  const [disconnectingStripe, setDisconnectingStripe] = useState(false)
+  const [disconnectingStripeMode, setDisconnectingStripeMode] = useState<StripeModeId | null>(null)
   const [mercadoPagoConfig, setMercadoPagoConfig] = useState<MercadoPagoPaymentConfig | null>(null)
   const [mercadoPagoMode, setMercadoPagoMode] = useState<'test' | 'live'>('live')
   const [loadingMercadoPagoConfig, setLoadingMercadoPagoConfig] = useState(false)
@@ -571,17 +539,12 @@ export const PaymentsConfiguration: React.FC = () => {
     if (stripeConfigurationStatus === 'disconnected') return { label: 'Desconectado', variant: 'neutral' as const, icon: <Unplug size={14} /> }
     return { label: 'Sin configurar', variant: 'neutral' as const, icon: <KeyRound size={14} /> }
   })()
-  const stripeModeHasAnyInput = (mode: StripeModeId) => {
-    const values = stripeManualCredentials[mode]
-    return Boolean(values.publishableKey.trim() || values.secretKey.trim() || values.webhookSecret.trim())
-  }
   const stripeModeIsComplete = (mode: StripeModeId) => {
     const values = stripeManualCredentials[mode]
     return Boolean(values.publishableKey.trim() && values.secretKey.trim())
   }
-  const stripeHasIncompleteMode = stripeModeIds.some((mode) => stripeModeHasAnyInput(mode) && !stripeModeIsComplete(mode))
-  const stripeHasCompleteMode = stripeModeIds.some((mode) => stripeModeIsComplete(mode))
-  const stripeCanSubmit = stripeHasCompleteMode && !stripeHasIncompleteMode
+  const stripeModeIsSaved = (mode: StripeModeId) => Boolean(stripeConfig?.manualModes?.[mode]?.configured)
+  const stripeModeCanSave = (mode: StripeModeId) => stripeModeIsComplete(mode)
   const stripePrimaryWebhookEndpoint = stripeWebhookEndpoints[0] || null
   const isLoadingPage = loadingSettings || loadingHighLevelConnection || loadingStripeConfig || loadingMercadoPagoConfig
   const paymentWhatsappTemplateOptions = useMemo(() => {
@@ -933,23 +896,27 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
-  const buildStripeConfigPayload = () => ({
-    enabled: true,
-    mode: stripeModeIsComplete('live') ? 'live' as const : 'test' as const,
-    defaultCurrency: accountCurrency,
-    manualModes: {
-      test: {
-        publishableKey: stripeManualCredentials.test.publishableKey.trim(),
-        secretKey: stripeManualCredentials.test.secretKey.trim(),
-        webhookSecret: stripeManualCredentials.test.webhookSecret.trim()
-      },
-      live: {
-        publishableKey: stripeManualCredentials.live.publishableKey.trim(),
-        secretKey: stripeManualCredentials.live.secretKey.trim(),
-        webhookSecret: stripeManualCredentials.live.webhookSecret.trim()
+  const buildStripeModeConfigPayload = (mode: StripeModeId, modeValues: StripeModeCredentials = stripeManualCredentials[mode]) => {
+    const nextModeCredentials = {
+      ...stripeManualCredentials,
+      [mode]: modeValues
+    }
+    const nextLiveIsComplete = Boolean(nextModeCredentials.live.publishableKey.trim() && nextModeCredentials.live.secretKey.trim())
+    const nextTestIsComplete = Boolean(nextModeCredentials.test.publishableKey.trim() && nextModeCredentials.test.secretKey.trim())
+
+    return {
+      enabled: true,
+      mode: (nextLiveIsComplete ? 'live' : nextTestIsComplete ? 'test' : mode) as StripeModeId,
+      defaultCurrency: accountCurrency,
+      manualModes: {
+        [mode]: {
+          publishableKey: modeValues.publishableKey.trim(),
+          secretKey: modeValues.secretKey.trim(),
+          webhookSecret: modeValues.webhookSecret.trim()
+        }
       }
     }
-  })
+  }
 
   const updateStripeModeCredential = (mode: StripeModeId, key: keyof StripeModeCredentials, value: string) => {
     setStripeManualCredentials((current) => ({
@@ -961,46 +928,57 @@ export const PaymentsConfiguration: React.FC = () => {
     }))
   }
 
-  const handleSaveStripeConfig = async () => {
-    setSavingStripeConfig(true)
+  const handleSaveStripeModeConfig = async (mode: StripeModeId) => {
+    setSavingStripeMode(mode)
     try {
-      const config = await stripePaymentsService.saveConfig(buildStripeConfigPayload())
+      const config = await stripePaymentsService.saveConfig(buildStripeModeConfigPayload(mode))
       applyStripeConfig(config)
       invalidateIntegrationsStatus()
-      showToast('success', 'Stripe guardado', 'Ristak ya puede crear links de pago con Stripe.')
+      showToast('success', 'Stripe guardado', `${stripeModeLabels[mode].title} quedó listo para cobrar.`)
     } catch (error: any) {
       setStripeConnectionFailed(true)
       showToast('error', 'No se pudo guardar Stripe', error.message || 'Revisa las credenciales de Stripe.')
     } finally {
-      setSavingStripeConfig(false)
+      setSavingStripeMode(null)
     }
   }
 
-  const handleTestStripeConfig = async () => {
-    setTestingStripeConfig(true)
-    try {
-      await stripePaymentsService.testConfig(buildStripeConfigPayload())
-      setStripeConnectionFailed(false)
-      showToast('success', 'Stripe respondió bien', 'Las llaves permiten consultar la cuenta.')
-    } catch (error: any) {
-      setStripeConnectionFailed(true)
-      showToast('error', 'Stripe no respondió', error.message || 'Revisa las llaves de Stripe.')
-    } finally {
-      setTestingStripeConfig(false)
-    }
-  }
+  const handleDisconnectStripeMode = async (mode: StripeModeId) => {
+    const otherMode = mode === 'live' ? 'test' : 'live'
+    const otherModeHasConfig = stripeModeIsSaved(otherMode) || stripeModeIsComplete(otherMode)
 
-  const handleDisconnectStripe = async () => {
-    setDisconnectingStripe(true)
+    setDisconnectingStripeMode(mode)
     try {
-      const config = await stripePaymentsService.deleteConfig()
+      const emptyMode = { publishableKey: '', secretKey: '', webhookSecret: '' }
+      const disconnectPayload = {
+        ...buildStripeModeConfigPayload(mode, emptyMode),
+        manualModes: {
+          [mode]: {
+            publishableKey: '',
+            secretKey: '',
+            webhookSecret: ''
+          },
+          ...(stripeModeIsComplete(otherMode)
+            ? {
+                [otherMode]: {
+                  publishableKey: stripeManualCredentials[otherMode].publishableKey.trim(),
+                  secretKey: stripeManualCredentials[otherMode].secretKey.trim(),
+                  webhookSecret: stripeManualCredentials[otherMode].webhookSecret.trim()
+                }
+              }
+            : {})
+        }
+      }
+      const config = otherModeHasConfig
+        ? await stripePaymentsService.saveConfig(disconnectPayload)
+        : await stripePaymentsService.deleteConfig()
       applyStripeConfig(config)
       invalidateIntegrationsStatus()
-      showToast('success', 'Stripe desconectado', 'Ristak dejó de usar esta cuenta para nuevos cobros.')
+      showToast('success', 'Stripe desconectado', `${stripeModeLabels[mode].title} dejó de usarse para nuevos cobros.`)
     } catch (error: any) {
       showToast('error', 'No se pudo desconectar Stripe', error.message || 'Intenta de nuevo.')
     } finally {
-      setDisconnectingStripe(false)
+      setDisconnectingStripeMode(null)
     }
   }
 
@@ -1068,26 +1046,6 @@ export const PaymentsConfiguration: React.FC = () => {
     } finally {
       setDisconnectingMercadoPago(false)
     }
-  }
-
-  const handleCopyStripeWebhookEndpoint = async (endpoint: StripeWebhookEndpoint) => {
-    const copied = await copyTextToClipboard(endpoint.url)
-    if (copied) {
-      showToast('success', 'Endpoint copiado', `Copiaste el webhook de ${endpoint.label}.`)
-      return
-    }
-
-    showToast('error', 'No se pudo copiar', endpoint.url)
-  }
-
-  const handleCopyStripeWebhookEvents = async () => {
-    const copied = await copyTextToClipboard(STRIPE_WEBHOOK_EVENTS.map((event) => event.name).join('\n'))
-    if (copied) {
-      showToast('success', 'Eventos copiados', 'Copiaste los eventos que debes seleccionar en Stripe.')
-      return
-    }
-
-    showToast('error', 'No se pudieron copiar', 'Selecciona los eventos manualmente en Stripe.')
   }
 
   const handleCopyMercadoPagoWebhookEndpoint = async (endpoint: MercadoPagoWebhookEndpoint) => {
@@ -2230,33 +2188,14 @@ export const PaymentsConfiguration: React.FC = () => {
           </div>
 
           <div className={styles.stripePanel}>
-            <div className={styles.stripeManualBox}>
-              <div>
-                <h3>{stripeConnected ? 'Stripe listo para cobrar' : 'Configura tus llaves de Stripe'}</h3>
-                <p>Ristak usa tu propia cuenta de Stripe. No retiene fondos, no administra payouts, no cobra en nombre de terceros y no funciona como marketplace.</p>
-              </div>
-            </div>
-
-            <div className={styles.connectionSummary}>
-              <div>
-                <span>Estado</span>
-                <strong>{stripeStatusBadge.label}</strong>
-              </div>
-              <div>
-                <span>Prueba</span>
-                <strong>{stripeModeIsComplete('test') ? 'Llaves listas' : 'Sin completar'}</strong>
-              </div>
-              <div>
-                <span>En vivo</span>
-                <strong>{stripeModeIsComplete('live') ? 'Llaves listas' : 'Sin completar'}</strong>
-              </div>
-            </div>
-
             <div className={styles.stripeModeGrid}>
               {stripeModeIds.map((mode) => {
                 const modeCopy = stripeModeLabels[mode]
                 const values = stripeManualCredentials[mode]
                 const savedMode = stripeConfig?.manualModes?.[mode]
+                const modeSaved = stripeModeIsSaved(mode)
+                const modeIsSaving = savingStripeMode === mode
+                const modeIsDisconnecting = disconnectingStripeMode === mode
 
                 return (
                   <div key={mode} className={styles.stripeModePanel}>
@@ -2288,6 +2227,9 @@ export const PaymentsConfiguration: React.FC = () => {
                           type="password"
                           value={values.secretKey}
                           onChange={(event) => updateStripeModeCredential(mode, 'secretKey', event.target.value)}
+                          onFocus={(event) => {
+                            if (savedMode?.secretKeyPreview && values.secretKey === savedMode.secretKeyPreview) event.currentTarget.select()
+                          }}
                           placeholder={savedMode?.hasSecretKey ? savedMode.secretKeyPreview : modeCopy.secretPlaceholder}
                           autoComplete="new-password"
                           spellCheck={false}
@@ -2299,10 +2241,52 @@ export const PaymentsConfiguration: React.FC = () => {
                           type="password"
                           value={values.webhookSecret}
                           onChange={(event) => updateStripeModeCredential(mode, 'webhookSecret', event.target.value)}
+                          onFocus={(event) => {
+                            if (savedMode?.webhookSecretPreview && values.webhookSecret === savedMode.webhookSecretPreview) event.currentTarget.select()
+                          }}
                           placeholder={savedMode?.hasWebhookSecret ? savedMode.webhookSecretPreview : 'whsec_...'}
                           autoComplete="new-password"
                           spellCheck={false}
                         />
+                      )}
+                    </div>
+
+                    <div className={styles.stripeModeActions}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveStripeModeConfig(mode)}
+                        disabled={modeIsSaving || Boolean(disconnectingStripeMode) || !stripeModeCanSave(mode)}
+                      >
+                        {modeIsSaving ? (
+                          <>
+                            <Loader2 size={15} className={styles.spinIcon} />
+                            Guardando...
+                          </>
+                        ) : (
+                          modeSaved ? 'Guardar cambios' : 'Guardar configuración'
+                        )}
+                      </Button>
+                      {modeSaved && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleDisconnectStripeMode(mode)}
+                          disabled={modeIsDisconnecting || Boolean(savingStripeMode)}
+                        >
+                          {modeIsDisconnecting ? (
+                            <>
+                              <Loader2 size={15} className={styles.spinIcon} />
+                              Desconectando...
+                            </>
+                          ) : (
+                            <>
+                              <Unplug size={15} />
+                              Desconectar
+                            </>
+                          )}
+                        </Button>
                       )}
                     </div>
                   </div>
@@ -2320,72 +2304,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     value={stripePrimaryWebhookEndpoint.url}
                     onFocus={(event) => event.currentTarget.select()}
                   />
-                  <Button type="button" variant="secondary" onClick={() => handleCopyStripeWebhookEndpoint(stripePrimaryWebhookEndpoint)}>
-                    <Copy size={16} />
-                    Copiar URL
-                  </Button>
                 </div>
-                <div className={styles.actionsRow}>
-                  <Button type="button" variant="secondary" onClick={handleCopyStripeWebhookEvents}>
-                    <Copy size={16} />
-                    Copiar eventos
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            <div className={styles.actionsRow}>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={handleTestStripeConfig}
-                disabled={testingStripeConfig || savingStripeConfig || !stripeCanSubmit}
-              >
-                {testingStripeConfig ? (
-                  <>
-                    <Loader2 size={18} className={styles.spinIcon} />
-                    Probando...
-                  </>
-                ) : (
-                  'Probar conexión'
-                )}
-              </Button>
-              <Button
-                type="button"
-                onClick={handleSaveStripeConfig}
-                disabled={savingStripeConfig || testingStripeConfig || !stripeCanSubmit}
-              >
-                {savingStripeConfig ? (
-                  <>
-                    <Loader2 size={18} className={styles.spinIcon} />
-                    Guardando...
-                  </>
-                ) : (
-                  'Guardar configuración'
-                )}
-              </Button>
-            </div>
-
-            {stripeConnected && (
-              <div className={styles.actionsRow}>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={handleDisconnectStripe}
-                  disabled={disconnectingStripe || testingStripeConfig || savingStripeConfig}
-                >
-                  {disconnectingStripe ? (
-                    <>
-                      <Loader2 size={18} className={styles.spinIcon} />
-                      Desconectando...
-                    </>
-                  ) : (
-                    <>
-                      <Unplug size={18} />
-                      Desconectar Stripe
-                    </>
-                  )}
-                </Button>
               </div>
             )}
           </div>

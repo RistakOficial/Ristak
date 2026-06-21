@@ -1260,6 +1260,15 @@
   line-height: 1.45;
 }
 
+.stripeModeActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 2px;
+}
+
 .actionsRow {
   display: flex;
   flex-wrap: wrap;
@@ -1460,6 +1469,7 @@
 
   .gatewayItemActions,
   .actionsRow,
+  .stripeModeActions,
   .copyField,
   .sectionSaveBar,
   .gatewayDetailBar {

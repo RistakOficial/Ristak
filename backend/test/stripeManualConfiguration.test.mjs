@@ -161,6 +161,63 @@ test('Stripe manual: conserva Secret keys existentes cuando la UI reenvía valor
   })
 })
 
+test('Stripe manual: permite guardar o desconectar una modalidad sin afectar la otra', async () => {
+  await initializeMasterKey()
+
+  await snapshotStripeConfig(async () => {
+    await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'live',
+      manualModes: {
+        test: {
+          publishableKey: 'pk_test_manual_public',
+          secretKey: 'sk_test_manual_secret',
+          webhookSecret: 'whsec_manual_test'
+        },
+        live: {
+          publishableKey: 'pk_live_manual_public',
+          secretKey: 'sk_live_manual_secret',
+          webhookSecret: 'whsec_manual_live'
+        }
+      }
+    })
+
+    const testOnlyUpdate = await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'test',
+      manualModes: {
+        test: {
+          publishableKey: 'pk_test_manual_public_updated',
+          secretKey: 'sk_test_manual_secret_updated',
+          webhookSecret: 'whsec_manual_test_updated'
+        }
+      }
+    })
+
+    assert.equal(testOnlyUpdate.manualModes.test.configured, true)
+    assert.equal(testOnlyUpdate.manualModes.live.configured, true)
+    assert.equal(testOnlyUpdate.manualModes.test.publishableKey, 'pk_test_manual_public_updated')
+    assert.equal(testOnlyUpdate.manualModes.live.publishableKey, 'pk_live_manual_public')
+
+    const liveDisconnected = await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'test',
+      manualModes: {
+        live: {
+          publishableKey: '',
+          secretKey: '',
+          webhookSecret: ''
+        }
+      }
+    })
+
+    assert.equal(liveDisconnected.configured, true)
+    assert.equal(liveDisconnected.mode, 'test')
+    assert.equal(liveDisconnected.manualModes.test.configured, true)
+    assert.equal(liveDisconnected.manualModes.live.configured, false)
+  })
+})
+
 test('Stripe manual: prueba conexiones test/live con una llamada mínima sin exponer keys', async () => {
   await initializeMasterKey()
 
@@ -284,7 +341,10 @@ test('Stripe manual: la UI oficial no expone rutas ni copy de OAuth', async () =
   const officialUiSource = `${settingsSource}\n${serviceSource}`
 
   assert.match(officialUiSource, /Secret key/)
-  assert.match(officialUiSource, /No retiene fondos/)
+  assert.match(officialUiSource, /Guardar configuración/)
+  assert.match(officialUiSource, /Desconectar/)
+  assert.doesNotMatch(officialUiSource, /Copiar URL/)
+  assert.doesNotMatch(officialUiSource, /Desconectar Stripe/)
   assert.doesNotMatch(officialUiSource, /Restricted API Key/)
   assert.doesNotMatch(officialUiSource, /Stripe Connect/)
   assert.doesNotMatch(officialUiSource, /stripe_connect/)
