@@ -5891,6 +5891,22 @@ export const PhoneChat: React.FC = () => {
     loadAgentData({ includeDefinitions: false })
   }
 
+  const handleToggleAgentInboxView = () => {
+    if (!agentEnabled) {
+      openAgentGlobalMenu()
+      return
+    }
+
+    setAgentPriorityViewOpen((current) => !current)
+    setArchivedViewOpen(false)
+    setChatFilter('all')
+    setChatQuery('')
+    actionSheetDismiss.requestClose()
+    setContactInfoOpen(false)
+    setMessageInfoOpen(false)
+    closeSwipeActions()
+  }
+
   const handleOpenAppointmentForm = (contact?: Contact | null) => {
     if (contact?.id) {
       startConversationBottomLock(contact.id)
@@ -9509,40 +9525,73 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  const renderSenderBar = () => {
-    if (!activeContact) return null
+  const getSenderChannelHint = () => {
+    const activeOption = GHL_CHAT_CHANNEL_OPTIONS.find((option) => option.id === activeHighLevelChatChannel)
+    const effectiveOption = GHL_CHAT_CHANNEL_OPTIONS.find((option) => option.id === effectiveHighLevelChatChannel)
+
+    return highLevelWhatsAppFallsBackToSms
+      ? 'Fuera de 24 h: se mandará por SMS de GoHighLevel.'
+      : effectiveOption?.hint || activeOption?.hint || 'Sale por la cuenta conectada.'
+  }
+
+  const renderSenderChannelSelect = (className = '') => {
+    if (!activeContact || !sendingThroughHighLevel) return null
+
+    return (
+      <label className={`${styles.senderChannelSelect} ${className}`.trim()}>
+        <span>Enviar por</span>
+        <select
+          value={activeHighLevelChatChannel}
+          onChange={(event) => {
+            const nextChannel = normalizeGhlChatChannelValue(event.target.value)
+            if (!nextChannel || !activeContact?.id) return
+            setContactHighLevelChannelOverrides((current) => ({
+              ...current,
+              [activeContact.id]: nextChannel
+            }))
+            saveConfigPreference(setSelectedHighLevelChatChannel, nextChannel)
+          }}
+          aria-label="Canal de envío"
+        >
+          {GHL_CHAT_CHANNEL_OPTIONS.map((option) => (
+            <option key={option.id} value={option.id}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+    )
+  }
+
+  const renderConversationChannelPicker = () => {
+    if (!isWideChatDevice || !activeContact || aiAgentConversationOpen) return null
 
     if (sendingThroughHighLevel) {
-      const activeOption = GHL_CHAT_CHANNEL_OPTIONS.find((option) => option.id === activeHighLevelChatChannel)
-      const effectiveOption = GHL_CHAT_CHANNEL_OPTIONS.find((option) => option.id === effectiveHighLevelChatChannel)
+      return (
+        <div className={styles.conversationChannelPicker}>
+          {renderSenderChannelSelect(styles.conversationSenderChannelSelect)}
+          <span>{getSenderChannelHint()}</span>
+        </div>
+      )
+    }
 
+    if (!outsideReplyWindow || !selectedQrReady) return null
+
+    return (
+      <span className={styles.conversationReplyWindowNotice}>
+        <Clock size={12} />
+        Fuera de 24 h · QR
+      </span>
+    )
+  }
+
+  const renderSenderBar = () => {
+    if (!activeContact) return null
+    if (isWideChatDevice) return null
+
+    if (sendingThroughHighLevel) {
       return (
         <div className={styles.senderBar}>
-          <label className={styles.senderChannelSelect}>
-            <span>Enviar por</span>
-            <select
-              value={activeHighLevelChatChannel}
-              onChange={(event) => {
-                const nextChannel = normalizeGhlChatChannelValue(event.target.value)
-                if (!nextChannel || !activeContact?.id) return
-                setContactHighLevelChannelOverrides((current) => ({
-                  ...current,
-                  [activeContact.id]: nextChannel
-                }))
-                saveConfigPreference(setSelectedHighLevelChatChannel, nextChannel)
-              }}
-              aria-label="Canal de envío"
-            >
-              {GHL_CHAT_CHANNEL_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <span className={styles.senderChannelHint}>
-            {highLevelWhatsAppFallsBackToSms
-              ? 'Fuera de 24 h: se mandará por SMS de GoHighLevel.'
-              : effectiveOption?.hint || activeOption?.hint || 'Sale por la cuenta conectada.'}
-          </span>
+          {renderSenderChannelSelect()}
+          <span className={styles.senderChannelHint}>{getSenderChannelHint()}</span>
         </div>
       )
     }
@@ -12816,6 +12865,12 @@ export const PhoneChat: React.FC = () => {
             )}
             <div className={styles.chatTitleRow} aria-hidden={chatSearchExpanded}>
               <div className={styles.chatTitleMain}>
+                {isWideChatDevice && renderAgentRobotButton({
+                  active: agentEnabled,
+                  className: styles.tabletAgentInboxButton,
+                  label: agentPriorityViewOpen ? 'Ver todos los chats' : 'Ver chats del agente',
+                  onClick: handleToggleAgentInboxView
+                })}
                 <h1>Chats</h1>
                 {isWideChatDevice && renderTabletNewChatAction()}
               </div>
@@ -12918,7 +12973,7 @@ export const PhoneChat: React.FC = () => {
                 </span>
               </div>
             ) : activeContact ? (
-              <>
+              <div className={styles.conversationContactHeader}>
                 <button
                   type="button"
                   className={styles.conversationContactButton}
@@ -12931,7 +12986,8 @@ export const PhoneChat: React.FC = () => {
                     <span>{getContactDetail(activeContact)}</span>
                   </span>
                 </button>
-              </>
+                {renderConversationChannelPicker()}
+              </div>
             ) : (
               <div className={styles.conversationIdentity}>
                 <strong>Sin contacto</strong>
@@ -13437,7 +13493,7 @@ export const PhoneChat: React.FC = () => {
         defaultScheduleMode="custom"
         accessToken={accessToken || undefined}
         locationId={locationId || undefined}
-        presentation="mobileSheet"
+        presentation={isWideChatDevice ? 'phonePanel' : 'mobileSheet'}
         calendars={calendars}
         calendarsLoading={calendarsLoading}
         selectedCalendarId={selectedCalendar?.id || ''}

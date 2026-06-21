@@ -30,7 +30,7 @@ interface AppointmentModalProps {
   defaultScheduleMode?: 'default' | 'custom'; // Modo de selección de horario al abrir
   accessToken?: string; // Token para cargar slots disponibles
   locationId?: string; // Location ID para consultas
-  presentation?: 'dialog' | 'mobileSheet';
+  presentation?: 'dialog' | 'mobileSheet' | 'phonePanel';
   calendars?: Calendar[];
   calendarsLoading?: boolean;
   selectedCalendarId?: string;
@@ -340,7 +340,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   // Modo de selección de horario: 'default' = solo slots disponibles, 'custom' = libre
   // En celular el modo inicial es 'custom' (Personalizado) salvo que se indique otro.
-  const initialScheduleMode = defaultScheduleMode ?? (presentation === 'mobileSheet' ? 'custom' : 'default');
+  const initialScheduleMode = defaultScheduleMode ?? (presentation === 'dialog' ? 'default' : 'custom');
   const [scheduleMode, setScheduleMode] = useState<'default' | 'custom'>(initialScheduleMode);
   // Duración elegida en el flujo móvil antes de tener fecha+hora completas
   const [pendingDuration, setPendingDuration] = useState<number | null>(null);
@@ -1158,8 +1158,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     .formatToParts(startDate ?? new Date())
     .find((part) => part.type === 'timeZoneName')?.value ?? selectedTimeZone;
   const isMobileSheet = presentation === 'mobileSheet';
-  const showAppointmentSummary = !(isMobileSheet && isCreateMode);
-  const modalTitle = isMobileSheet
+  const isPhonePanel = presentation === 'phonePanel';
+  const isPhoneSurface = isMobileSheet || isPhonePanel;
+  const showAppointmentSummary = !(isPhoneSurface && isCreateMode);
+  const modalTitle = isPhoneSurface
     ? isCreateMode
       ? 'Nueva cita'
       : isReadOnlyMode
@@ -1210,7 +1212,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     disabled?: boolean;
     placeholder?: string;
   }) => (
-    isMobileSheet ? (
+    isPhoneSurface ? (
       <PhoneSelect
         value={value}
         onChange={onChange}
@@ -1302,7 +1304,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // En celular, modo Personalizado arranca con la fecha y hora actuales ya puestas
   // (redondeadas al siguiente múltiplo de 5 minutos); el usuario solo ajusta lo que necesite.
   useEffect(() => {
-    if (!isOpen || !isCreateMode || !isMobileSheet || scheduleMode !== 'custom') return;
+    if (!isOpen || !isCreateMode || !isPhoneSurface || scheduleMode !== 'custom') return;
     if (formData.startTime) return;
     const now = new Date();
     now.setMinutes(Math.ceil(now.getMinutes() / 5) * 5, 0, 0);
@@ -1310,7 +1312,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     const timePart = `${padTwo(now.getHours())}:${padTwo(now.getMinutes())}`;
     applyCustomSchedule(datePart, timePart, effectiveDuration);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, isCreateMode, isMobileSheet, scheduleMode, formData.startTime]);
+  }, [isOpen, isCreateMode, isPhoneSurface, scheduleMode, formData.startTime]);
 
   const handleTimeZoneChange = (newZone: string) => {
     setFormData((prev) => {
@@ -1627,9 +1629,9 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   const appointmentContent = (
     <div
-      className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}
+      className={`${styles.container} ${isPhoneSurface ? styles.mobileSheetContainer : ''}`}
       data-modal-panel=""
-      data-phone-scrollable={isMobileSheet ? 'true' : undefined}
+      data-phone-scrollable={isPhoneSurface ? 'true' : undefined}
     >
         {showCalendarPicker && (
           <div className={styles.field}>
@@ -1767,7 +1769,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 <div className={styles.dateTimeSection}>
                   {/* TabList para seleccionar modo */}
                   <div className={styles.tabListWrapper}>
-                    {isMobileSheet ? (
+                    {isPhoneSurface ? (
                       <PhoneSegmentedTabs
                         ariaLabel="Modo de horario"
                         options={[
@@ -1887,7 +1889,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   ) : (
                     /* Modo Personalizado: en celular fecha + hora + duración; en web DateTimePicker libre */
                     <div className={styles.slotsContent}>
-                      {isMobileSheet ? renderMobileCustomSchedule() : (
+                      {isPhoneSurface ? renderMobileCustomSchedule() : (
                         <div className={styles.fieldRow}>
                           <div className={styles.field}>
                             <DateTimePicker
@@ -1930,7 +1932,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
             {/* Modo View: mostrar campos de fecha/hora normales (fuera de la sección) */}
             {!isCreateMode && (
-              isMobileSheet ? (
+              isPhoneSurface ? (
                 <div className={styles.field}>
                   <label className={styles.label}>Fecha y hora</label>
                   {renderMobileCustomSchedule()}
@@ -2040,7 +2042,34 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   return (
     <>
-      {isMobileSheet ? (
+      {isPhonePanel ? (
+        isOpen ? (
+          <div
+            className={styles.phonePanelBackdrop}
+            onClick={onClose}
+            role="presentation"
+          >
+            <section
+              className={`${styles.mobileAppointmentSheet} ${styles.phonePanel}`}
+              aria-label={modalTitle || 'Cita'}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className={styles.phonePanelHeader}>
+                <div>
+                  <span>Citas</span>
+                  <h2>{modalTitle || 'Cita'}</h2>
+                </div>
+                <button type="button" onClick={onClose} aria-label="Cerrar">
+                  <X size={18} />
+                </button>
+              </header>
+              <div className={styles.phonePanelContent}>
+                {appointmentContent}
+              </div>
+            </section>
+          </div>
+        ) : null
+      ) : isMobileSheet ? (
         <PhoneSheet
           isOpen={isOpen}
           onClose={onClose}
