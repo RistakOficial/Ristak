@@ -1005,10 +1005,18 @@
 }
 
 .aiAgentAvatar {
+  padding: 0;
   color: #ffffff;
-  background: transparent;
+  background: #050505;
   border: none;
-  overflow: visible;
+  overflow: hidden;
+}
+
+.aiAgentAvatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 .aiAgentChatItem {
@@ -3715,8 +3723,8 @@
 
 .agentCompletionMessage {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 10px;
   width: min(92%, 560px);
   padding: 0;
   border: 0;
@@ -3726,20 +3734,31 @@
 }
 
 .agentCompletionMessageIcon {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 46px;
+  height: 46px;
   border-radius: 999px;
-  border: 1px solid var(--phone-chat-border);
-  background: color-mix(in srgb, var(--phone-chat-surface) 88%, var(--phone-chat-primary) 12%);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--phone-chat-border) 62%, transparent);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   overflow: visible;
 }
 
-.agentCompletionMessageRobot {
-  transform: translateY(1px);
+.agentCompletionMessageIcon .agentRobot {
+  width: 46px;
+  height: 46px;
+}
+
+.agentCompletionMessageIcon .agentBotOrbit {
+  inset: -4px;
+}
+
+.agentCompletionMessageIcon .agentBotSparkle {
+  right: -1px;
+  top: 4px;
 }
 
 .agentCompletionMessageBody {

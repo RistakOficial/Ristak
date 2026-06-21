@@ -71,7 +71,6 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAIAgentAvailability, useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
-import { RistakRobot } from '@/components/ai'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import {
   CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
@@ -7924,7 +7923,7 @@ export const PhoneChat: React.FC = () => {
 
   const renderAIAgentAvatar = () => (
     <span className={`${styles.avatar} ${styles.aiAgentAvatar}`}>
-      <RistakRobot thinking={aiSending} />
+      <img src="/ristak-chat-icon-192.png" alt="" loading="lazy" />
     </span>
   )
 
@@ -9224,7 +9223,7 @@ export const PhoneChat: React.FC = () => {
     <div key={`agent-completion-${completion.id}`} className={styles.agentCompletionMessageRow}>
       <article className={styles.agentCompletionMessage}>
         <span className={styles.agentCompletionMessageIcon} aria-hidden="true">
-          <RistakRobot size={30} label="Agente conversacional" className={styles.agentCompletionMessageRobot} />
+          {renderAgentRobotGlyph(true)}
         </span>
         <span className={styles.agentCompletionMessageBody}>
           <span className={styles.agentCompletionMessageHeader}>
