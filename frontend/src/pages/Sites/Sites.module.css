@@ -10177,11 +10177,8 @@
   border-bottom: 0;
 }
 
-.inspectorTabList {
-  min-width: 0;
-}
-
 .inspectorTabListScrollable {
+  min-width: 0;
   justify-content: flex-start;
   overflow-x: auto;
   scrollbar-width: none;
@@ -10194,12 +10191,6 @@
 .inspectorTabListScrollable :global([data-ristak-tablist-tab]) {
   flex: 0 0 auto;
   width: auto;
-}
-
-.inspectorTabList :global([data-ristak-tablist-tab]) {
-  min-width: 0;
-  padding-inline: 8px;
-  font-size: 0.76rem;
 }
 
 .inspectorTabBody {
@@ -17441,30 +17432,18 @@
 }
 
 .pageFrame .containerFocused .sitesShellFocused .propertiesPanel {
-  background: var(--design-panel-bg, var(--color-background-secondary));
+  background: transparent;
 }
 
 .pageFrame .containerFocused .sitesShellFocused .inspectorStickyTop {
-  border-bottom-color: var(--sites-editor-section-border);
-  background: inherit;
+  border-bottom: 0;
+  background: transparent;
 }
 
 .pageFrame .containerFocused .sitesShellFocused .inspectorStickyTop .panelHeader span {
   background: transparent;
   color: var(--color-text-tertiary);
   padding-inline: 0;
-}
-
-.pageFrame .containerFocused .sitesShellFocused .inspectorTabList {
-  border-color: var(--sites-editor-border);
-  background: transparent;
-  box-shadow: none;
-}
-
-.pageFrame .containerFocused .sitesShellFocused .inspectorTabList :global([data-ristak-tablist-tab][data-active='true']) {
-  border-color: var(--sites-editor-border-strong);
-  background: var(--sites-editor-control-bg);
-  box-shadow: none;
 }
 
 .pageFrame .containerFocused .sitesShellFocused .propertiesBody {

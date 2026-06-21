@@ -31364,10 +31364,7 @@ const InspectorTabbedPanel: React.FC<{
 }> = ({ title, subtitle, tabs, defaultTab = 'edit', className, ariaLabel, header }) => {
   const [activeTab, setActiveTab] = useState<InspectorTabId>(defaultTab)
   const activeContent = tabs.find(tab => tab.value === activeTab)?.content || tabs[0]?.content
-  const tabListClassName = [
-    styles.inspectorTabList,
-    tabs.length > 3 ? styles.inspectorTabListScrollable : ''
-  ].filter(Boolean).join(' ')
+  const tabListClassName = tabs.length > 3 ? styles.inspectorTabListScrollable : undefined
 
   useEffect(() => {
     if (!tabs.some(tab => tab.value === activeTab)) {
