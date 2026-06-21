@@ -1734,7 +1734,6 @@ type PaletteViewMode = 'blocks' | 'elements'
 
 type ButtonAction = 'url' | 'next_page' | 'specific_page' | 'open_popup' | 'close_popup'
 type FormCompletionAction = 'form_default' | 'next_page' | 'next_page_if_qualified' | 'redirect_qualified'
-type FormResultDestination = 'result_page' | 'redirect_url'
 type PopupTrigger = NonNullable<SiteTheme['popupTrigger']>
 type PopupCloseDisplay = NonNullable<SiteTheme['popupCloseDisplay']>
 type PopupCloseIcon = NonNullable<SiteTheme['popupCloseIcon']>
@@ -4989,15 +4988,6 @@ const getFormCompletionAction = (settings: Record<string, unknown>): FormComplet
   return isFormCompletionAction(action) ? action : 'form_default'
 }
 
-const getThemeFormCompletionAction = (theme?: SiteTheme): FormCompletionAction => {
-  const action = theme?.formCompletionAction
-  return isFormCompletionAction(action) ? action : 'next_page_if_qualified'
-}
-
-const getThemeDisqualifiedDestination = (theme?: SiteTheme): FormResultDestination => (
-  theme?.formDisqualifiedCompletionAction === 'redirect_url' ? 'redirect_url' : 'result_page'
-)
-
 const normalizeOption = (option: string | SiteBlockOption, index: number): SiteBlockOption => {
   if (typeof option === 'string') {
     return {
@@ -5018,7 +5008,7 @@ const normalizeOption = (option: string | SiteBlockOption, index: number): SiteB
     targetPageId: option.targetPageId || '',
     message: option.message || '',
     redirectUrl: option.redirectUrl || '',
-    submitBeforeAction: option.submitBeforeAction !== false,
+    submitBeforeAction: true,
     tag: option.tag || '',
     category: option.category || ''
   }
@@ -11455,10 +11445,6 @@ export const Sites: React.FC = () => {
       locked={!canManagePages(editorSite) || editorAIGenerating}
       colorFinalPages={isStandardForm(editorSite)}
       isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
-      formCompletionAction={isStandardForm(editorSite) ? getThemeFormCompletionAction(editorSite.theme) : undefined}
-      formQualifiedRedirectUrl={editorSite.theme?.formQualifiedRedirectUrl || ''}
-      formDisqualifiedDestination={getThemeDisqualifiedDestination(editorSite.theme)}
-      formDisqualifiedRedirectUrl={editorSite.theme?.formDisqualifiedRedirectUrl || ''}
       pageMode={getSitePageMode(editorSite)}
       onChangeMode={isLanding(editorSite) && !isImportedHtmlSite(editorSite) ? handleChangePageMode : undefined}
       onAddSubpage={handleAddSubpage}
@@ -25389,10 +25375,6 @@ interface FunnelPagesPanelProps {
   getPageDepth?: (page: SitePage) => number
   canDeletePage?: (page: SitePage) => boolean
   canDuplicatePage?: (page: SitePage) => boolean
-  formCompletionAction?: FormCompletionAction
-  formQualifiedRedirectUrl?: string
-  formDisqualifiedDestination?: FormResultDestination
-  formDisqualifiedRedirectUrl?: string
   onSelectPage: (pageId: string) => void
   onAddPage: () => void
   onDuplicatePage: (pageId: string) => void
@@ -25417,10 +25399,6 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   getPageDepth,
   canDeletePage = () => pages.length > 1,
   canDuplicatePage = () => true,
-  formCompletionAction = 'next_page_if_qualified',
-  formQualifiedRedirectUrl = '',
-  formDisqualifiedDestination = 'result_page',
-  formDisqualifiedRedirectUrl = '',
   onSelectPage,
   onAddPage,
   onDuplicatePage,
@@ -25737,13 +25715,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       locked={locked}
                       pageToneClass={pageToneClass}
                       resultType={resultType}
-                      formCompletionAction={formCompletionAction}
-                      formQualifiedRedirectUrl={formQualifiedRedirectUrl}
-                      formDisqualifiedDestination={formDisqualifiedDestination}
-                      formDisqualifiedRedirectUrl={formDisqualifiedRedirectUrl}
                       onSelect={() => handleSelectPage(page.id)}
-                      onPatchTheme={onPatchTheme}
-                      onSaveSite={onSaveSite}
                     />
                   )
                 })}
@@ -25979,13 +25951,7 @@ interface FunnelFixedPageDropdownItemProps {
   locked: boolean
   pageToneClass: string
   resultType?: 'qualified' | 'disqualified'
-  formCompletionAction?: FormCompletionAction
-  formQualifiedRedirectUrl?: string
-  formDisqualifiedDestination?: FormResultDestination
-  formDisqualifiedRedirectUrl?: string
   onSelect: () => void
-  onPatchTheme?: (patch: Partial<SiteTheme>) => void
-  onSaveSite?: () => void
 }
 
 const FunnelFixedPageDropdownItem: React.FC<FunnelFixedPageDropdownItemProps> = ({
@@ -25995,42 +25961,13 @@ const FunnelFixedPageDropdownItem: React.FC<FunnelFixedPageDropdownItemProps> = 
   locked,
   pageToneClass,
   resultType,
-  formCompletionAction = 'next_page_if_qualified',
-  formQualifiedRedirectUrl = '',
-  formDisqualifiedDestination = 'result_page',
-  formDisqualifiedRedirectUrl = '',
-  onSelect,
-  onPatchTheme,
-  onSaveSite
+  onSelect
 }) => {
   const title = resultType === 'qualified'
     ? 'Cuando califica'
     : resultType === 'disqualified'
       ? 'Cuando descalifica'
       : page.title || `Página ${index + 1}`
-  const resultDestination: FormResultDestination = resultType === 'qualified'
-    ? (formCompletionAction === 'redirect_qualified' ? 'redirect_url' : 'result_page')
-    : formDisqualifiedDestination
-  const resultRedirectUrl = resultType === 'qualified'
-    ? formQualifiedRedirectUrl
-    : formDisqualifiedRedirectUrl
-  const handleResultDestinationChange = (event: { target: { value: string } }) => {
-    if (!onPatchTheme) return
-    const destination = event.target.value === 'redirect_url' ? 'redirect_url' : 'result_page'
-    if (resultType === 'qualified') {
-      onPatchTheme({
-        formCompletionAction: destination === 'redirect_url'
-          ? 'redirect_qualified'
-          : 'next_page_if_qualified'
-      })
-    } else if (resultType === 'disqualified') {
-      onPatchTheme({
-        formCompletionAction: formCompletionAction === 'redirect_qualified' ? 'redirect_qualified' : 'next_page_if_qualified',
-        formDisqualifiedCompletionAction: destination === 'redirect_url' ? 'redirect_url' : 'disqualified_page'
-      })
-    }
-    window.setTimeout(() => { onSaveSite?.() }, 0)
-  }
 
   return (
     <div className={styles.pagesDropdownItemWrap}>
@@ -26040,42 +25977,6 @@ const FunnelFixedPageDropdownItem: React.FC<FunnelFixedPageDropdownItemProps> = 
         <button type="button" className={styles.pagesDropdownSelectButton} onClick={onSelect}>
           <span className={styles.pagesDropdownTitleText}>{title}</span>
         </button>
-        {resultType && onPatchTheme && (
-          <div className={styles.pagesDropdownResultControls}>
-            <div className={styles.pagesDropdownResultField}>
-              <CustomSelect
-                value={resultDestination}
-                disabled={locked}
-                className={styles.pagesDropdownResultSelect}
-                aria-label={title}
-                portal
-                dropdownMinWidth={220}
-                onChange={handleResultDestinationChange}
-                onBlur={onSaveSite}
-              >
-                <option value="result_page">Mostrar esta página</option>
-                <option value="redirect_url">Redirigir a una URL</option>
-              </CustomSelect>
-            </div>
-            {resultDestination === 'redirect_url' && (
-              <div className={styles.pagesDropdownResultField}>
-                <input
-                  type="url"
-                  value={resultRedirectUrl}
-                  disabled={locked}
-                  placeholder={resultType === 'qualified' ? 'https://tudominio.com/gracias' : 'https://tudominio.com/no-califica'}
-                  aria-label={`URL ${title.toLowerCase()}`}
-                  onChange={(event) => onPatchTheme?.(
-                    resultType === 'qualified'
-                      ? { formQualifiedRedirectUrl: event.target.value }
-                      : { formDisqualifiedRedirectUrl: event.target.value }
-                  )}
-                  onBlur={onSaveSite}
-                />
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   )
@@ -31284,55 +31185,6 @@ const PageInspector: React.FC<{
               )}
             </div>
           )}
-          {isStandardForm(site) && (
-            <>
-              <label className={styles.field}>
-                <span>Al enviar formulario</span>
-                <CustomSelect
-                  value={getThemeFormCompletionAction(theme)}
-                  onChange={(event) => onPatchTheme({ formCompletionAction: event.target.value as FormCompletionAction })}
-                  onBlur={onSaveSite}
-                >
-                  <option value="next_page_if_qualified">Mostrar Agradecimiento o Descalificacion segun resultado</option>
-                  <option value="redirect_qualified">Redirigir calificados a una URL</option>
-                  <option value="next_page">Siempre mostrar página Agradecimiento</option>
-                  <option value="form_default">Mostrar mensaje en este formulario</option>
-                </CustomSelect>
-              </label>
-              {getThemeFormCompletionAction(theme) === 'redirect_qualified' && (
-                <label className={styles.field}>
-                  <span>URL para calificados</span>
-                  <input
-                    type="url"
-                    value={theme.formQualifiedRedirectUrl || ''}
-                    placeholder="https://tudominio.com/gracias"
-                    onChange={(event) => onPatchTheme({ formQualifiedRedirectUrl: event.target.value })}
-                    onBlur={onSaveSite}
-                  />
-                </label>
-              )}
-              <label className={styles.field}>
-                <span>Mensaje si califica</span>
-                <textarea
-                  rows={2}
-                  value={theme.finalMessages?.success || ''}
-                  placeholder="Listo. Recibimos tu información."
-                  onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), success: event.target.value } })}
-                  onBlur={onSaveSite}
-                />
-              </label>
-              <label className={styles.field}>
-                <span>Mensaje si no califica</span>
-                <textarea
-                  rows={2}
-                  value={theme.finalMessages?.disqualified || ''}
-                  placeholder="Gracias por responder. Por ahora no parece ser el siguiente paso ideal."
-                  onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), disqualified: event.target.value } })}
-                  onBlur={onSaveSite}
-                />
-              </label>
-            </>
-          )}
         </div>
       )}
     </>
@@ -33000,7 +32852,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
       targetBlockId: action === 'jump' || keepsDisqualifyDestination ? option.targetBlockId || '' : '',
       targetPageId: action === 'site_page' || keepsDisqualifyDestination ? option.targetPageId || '' : '',
       redirectUrl: action === 'redirect' || keepsDisqualifyDestination ? option.redirectUrl || '' : '',
-      submitBeforeAction: exitRuleActions.has(action) ? option.submitBeforeAction !== false : undefined,
+      submitBeforeAction: exitRuleActions.has(action) ? true : undefined,
       message: disqualifyRuleActions.has(action) ? option.message || '' : '',
       tag: '',
       category: ''
@@ -33100,25 +32952,6 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
                 {pageTargets.map(page => <option key={page.id} value={page.id}>{page.title || 'Página'}</option>)}
               </CustomSelect>
             </label>
-          )}
-
-          {exitRuleActions.has(visibleAction) && (
-            <>
-              <label className={styles.field}>
-                <span>Datos del formulario</span>
-                <CustomSelect
-                  value={option.submitBeforeAction === false ? 'skip' : 'submit'}
-                  onChange={(event) => patchOption(index, { submitBeforeAction: event.target.value !== 'skip' })}
-                  onBlur={onSave}
-                >
-                  <option value="submit">Guardar datos y luego redirigir</option>
-                  <option value="skip">Redirigir sin guardar datos</option>
-                </CustomSelect>
-              </label>
-              <p className={styles.customFieldHint}>
-                Si guarda datos, el formulario se envía antes de mandar al usuario al destino.
-              </p>
-            </>
           )}
 
           {isDisqualifyAction && disqualifyOutcome === 'message' && (

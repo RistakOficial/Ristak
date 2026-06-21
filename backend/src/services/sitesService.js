@@ -12456,7 +12456,7 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
         }
         return '';
       };
-      const shouldSubmitRule = rule => !rule || !['redirect', 'site_page'].includes(rule.action) || rule.submitBeforeAction !== false;
+      const shouldSubmitRule = () => true;
       const formatProgress = (index, total) => total > 1 ? 'Pregunta ' + (index + 1) + ' de ' + total : '';
       const parseJson = value => {
         if (!value) return null;
@@ -13665,13 +13665,14 @@ function getBlockOptions(block) {
 }
 
 function optionRuleAttributes(option) {
+  const action = option.action || 'continue'
   const rule = {
-    action: option.action || 'continue',
+    action,
     targetBlockId: option.targetBlockId || '',
     targetPageId: option.targetPageId || '',
     message: option.message || '',
     redirectUrl: safeHref(option.redirectUrl, ''),
-    submitBeforeAction: option.submitBeforeAction !== false,
+    submitBeforeAction: ['redirect', 'site_page'].includes(action) ? true : option.submitBeforeAction !== false,
     tag: option.tag || '',
     category: option.category || ''
   }
@@ -14019,6 +14020,17 @@ function getStandardFormContentBlocks(site, blocks = []) {
 
       return String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
     })
+}
+
+function getStandardFormReachedBlocks(site, blocks = [], submittedPageId = '') {
+  const pages = normalizeSitePages(site)
+  const contentPages = pages.filter(page => !FORM_FINAL_PAGE_IDS.has(page.id))
+  const currentIndex = contentPages.findIndex(page => page.id === submittedPageId)
+  if (currentIndex < 0) return submittedPageId ? getPageBlocks({ ...site, blocks }, submittedPageId) : getStandardFormContentBlocks(site, blocks)
+
+  const reachedPageIds = new Set(contentPages.slice(0, currentIndex + 1).map(page => page.id))
+  return getStandardFormContentBlocks(site, blocks)
+    .filter(block => reachedPageIds.has(getBlockPageId(block, pages)))
 }
 
 function getFieldTargetPageId(site, blocks = [], targetBlockId = '') {
@@ -19464,19 +19476,13 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const completionAction = isLandingType
     ? getFormCompletionAction(blocks)
     : isStandardFormType
-      ? normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page_if_qualified')
+      ? 'next_page_if_qualified'
       : 'form_default'
   const nextPage = (isLandingType || isStandardFormType) ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? buildPageHref(nextPage.id, { site, linkStyle }) : ''
-  const qualifiedRedirectUrl = isStandardFormType
-    ? safeHref(theme.formQualifiedRedirectUrl || theme.form_qualified_redirect_url || '', '')
-    : ''
-  const disqualifiedCompletionAction = cleanString(theme.formDisqualifiedCompletionAction || theme.form_disqualified_completion_action) === 'redirect_url'
-    ? 'redirect_url'
-    : 'disqualified_page'
-  const disqualifiedRedirectUrl = isStandardFormType
-    ? safeHref(theme.formDisqualifiedRedirectUrl || theme.form_disqualified_redirect_url || '', '')
-    : ''
+  const qualifiedRedirectUrl = ''
+  const disqualifiedCompletionAction = 'disqualified_page'
+  const disqualifiedRedirectUrl = ''
   const standardFormNextPageUrl = standardFormNextPage ? pageHref(standardFormNextPage.id) : ''
 	  const disqualifiedPage = isStandardFormType ? pages.find(page => page.id === FORM_DISQUALIFIED_PAGE_ID) : null
 	  const disqualifiedPageUrl = disqualifiedPage ? pageHref(disqualifiedPage.id) : ''
@@ -20316,7 +20322,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
         return preserveUrl(url.toString());
       };
       const isExitRule = (rule) => rule && (rule.action === 'redirect' || rule.action === 'site_page');
-      const shouldSubmitRule = (rule) => !isExitRule(rule) || rule.submitBeforeAction !== false;
+      const shouldSubmitRule = () => true;
       const getRuleRedirectUrl = (rule) => {
         if (!rule) return '';
         if (rule.action === 'redirect') return preserveUrl(rule.redirectUrl || '');
@@ -21516,7 +21522,7 @@ function evaluateSubmissionRules(blocks, responses = {}) {
           targetPageId: option.targetPageId || '',
           message: option.message || '',
           redirectUrl: option.redirectUrl || '',
-          submitBeforeAction: option.submitBeforeAction !== false,
+          submitBeforeAction: ['redirect', 'site_page'].includes(action) ? true : option.submitBeforeAction !== false,
           tag: option.tag || '',
           category: option.category || ''
         })
@@ -21598,48 +21604,16 @@ function getSiteFinalMessage(site, ruleEvaluation) {
 function getStandardFormResultRedirectUrl(site, ruleEvaluation = {}, options = {}) {
   if (site?.siteType !== 'standard_form') return ''
 
-  const theme = site?.theme || {}
   const pages = normalizeSitePages(site)
   const hasPage = pageId => pages.some(page => page.id === pageId)
 
   if (ruleEvaluation.disqualified || ruleEvaluation.status === 'disqualified') {
-    const disqualifiedCompletionAction = cleanString(
-      theme.formDisqualifiedCompletionAction || theme.form_disqualified_completion_action
-    ) === 'redirect_url'
-      ? 'redirect_url'
-      : 'disqualified_page'
-    const disqualifiedRedirectUrl = safeHref(
-      theme.formDisqualifiedRedirectUrl || theme.form_disqualified_redirect_url || '',
-      ''
-    )
-
-    if (disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) {
-      return disqualifiedRedirectUrl
-    }
-
     return hasPage(FORM_DISQUALIFIED_PAGE_ID) ? buildPageHref(FORM_DISQUALIFIED_PAGE_ID, { site }) : ''
   }
 
   if (!options.isFinalStandardFormSubmit) return ''
 
-  const completionAction = normalizeFormCompletionAction(
-    theme.formCompletionAction || theme.form_completion_action,
-    'next_page_if_qualified'
-  )
-  const qualifiedRedirectUrl = safeHref(
-    theme.formQualifiedRedirectUrl || theme.form_qualified_redirect_url || '',
-    ''
-  )
-
-  if (completionAction === 'redirect_qualified' && qualifiedRedirectUrl) {
-    return qualifiedRedirectUrl
-  }
-
-  if (['next_page', 'next_page_if_qualified', 'redirect_qualified'].includes(completionAction)) {
-    return hasPage(FORM_THANK_YOU_PAGE_ID) ? buildPageHref(FORM_THANK_YOU_PAGE_ID, { site }) : ''
-  }
-
-  return ''
+  return hasPage(FORM_THANK_YOU_PAGE_ID) ? buildPageHref(FORM_THANK_YOU_PAGE_ID, { site }) : ''
 }
 
 async function logMetaEvent({ contactId, eventType, metaEventName, eventId, status, requestPayload, responsePayload, errorMessage }) {
@@ -22561,6 +22535,12 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     body.meta?.formFinalSubmit ||
     body.meta?.form_final_submit
   )
+  const isRuleSubmit = normalizeBoolean(
+    body.ruleSubmit ||
+    body.rule_submit ||
+    body.meta?.ruleSubmit ||
+    body.meta?.rule_submit
+  )
   const siteWithBlocks = { ...site, blocks }
   const videoFormGateContext = getVideoFormGateSubmissionContext(siteWithBlocks, blocks, videoFormGateBlockId)
   const orderedSubmissionBlocks = site.siteType === 'interactive_form'
@@ -22569,7 +22549,9 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   const defaultSubmissionBlocks = site.siteType === 'standard_form'
     ? isFinalStandardFormSubmit
       ? getStandardFormContentBlocks(siteWithBlocks, blocks)
-      : submittedPageId
+      : isRuleSubmit && submittedPageId
+        ? getStandardFormReachedBlocks(siteWithBlocks, blocks, submittedPageId)
+        : submittedPageId
         ? getPageBlocks(siteWithBlocks, submittedPageId)
         : orderedSubmissionBlocks
     : site.siteType === 'landing_page' && submittedPageId
