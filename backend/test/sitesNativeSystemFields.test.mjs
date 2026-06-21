@@ -498,6 +498,135 @@ test('native form option rules redirect to site pages, external URLs and disqual
   }
 })
 
+test('standard form qualification flow redirects to the automatic result pages', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const suffix = crypto.randomUUID()
+  const emails = {
+    qualified: `qualified-${suffix}@example.test`,
+    disqualified: `disqualified-${suffix}@example.test`,
+    immediate: `immediate-${suffix}@example.test`
+  }
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    site = await createSite({
+      name: 'Formulario resultados automaticos',
+      slug: `form-results-${Date.now()}`,
+      siteType: 'standard_form',
+      status: 'published',
+      blankCanvas: true
+    })
+
+    let siteWithBlocks = await createBlock(site.id, {
+      blockType: 'email',
+      label: 'Correo electronico',
+      required: true,
+      settings: { systemFieldKey: 'email', internalName: 'email', validation: 'email' }
+    })
+    siteWithBlocks = await createBlock(site.id, {
+      blockType: 'radio',
+      label: 'Calificacion',
+      required: true,
+      settings: { internalName: 'calificacion' },
+      options: [
+        {
+          id: 'qualified',
+          label: 'Si califico',
+          value: 'Si califico',
+          action: 'continue'
+        },
+        {
+          id: 'not-qualified-submit',
+          label: 'No califico al enviar',
+          value: 'No califico al enviar',
+          action: 'disqualify_after_submit',
+          message: 'No califica al enviar.'
+        },
+        {
+          id: 'not-qualified-immediate',
+          label: 'No califico inmediato',
+          value: 'No califico inmediato',
+          action: 'disqualify',
+          message: 'No califica inmediato.'
+        }
+      ]
+    })
+
+    const emailBlock = siteWithBlocks.blocks.find(block => block.blockType === 'email')
+    const qualificationBlock = siteWithBlocks.blocks.find(block => block.blockType === 'radio')
+    assert.ok(emailBlock)
+    assert.ok(qualificationBlock)
+
+    const baseReq = {
+      headers: { host: 'example.test', 'user-agent': 'node-test' },
+      hostname: 'example.test',
+      path: `/${site.slug}`,
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }
+
+    const qualifiedResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      finalSubmit: true,
+      responses: {
+        [emailBlock.id]: emails.qualified,
+        [qualificationBlock.id]: 'Si califico'
+      }
+    })
+
+    assert.equal(qualifiedResult.status, 'received')
+    assert.equal(qualifiedResult.redirectUrl, '?page=page-2')
+
+    const submitDisqualifiedResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      finalSubmit: true,
+      responses: {
+        [emailBlock.id]: emails.disqualified,
+        [qualificationBlock.id]: 'No califico al enviar'
+      }
+    })
+
+    assert.equal(submitDisqualifiedResult.status, 'disqualified')
+    assert.equal(submitDisqualifiedResult.message, 'No califica al enviar.')
+    assert.equal(submitDisqualifiedResult.redirectUrl, '?page=page-3')
+
+    const immediateDisqualifiedResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      meta: { ruleAction: 'disqualify', immediateDisqualify: true },
+      responses: {
+        [emailBlock.id]: emails.immediate,
+        [qualificationBlock.id]: 'No califico inmediato'
+      }
+    })
+
+    assert.equal(immediateDisqualifiedResult.status, 'disqualified')
+    assert.equal(immediateDisqualifiedResult.message, 'No califica inmediato.')
+    assert.equal(immediateDisqualifiedResult.redirectUrl, '?page=page-3')
+  } finally {
+    await db.run(
+      `DELETE FROM contacts WHERE email IN (?, ?, ?)`,
+      [emails.qualified, emails.disqualified, emails.immediate]
+    ).catch(() => undefined)
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
 test('native form submission triggers contact and form automations with mappable answers', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),

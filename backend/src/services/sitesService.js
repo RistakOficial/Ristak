@@ -21540,6 +21540,53 @@ function getSiteFinalMessage(site, ruleEvaluation) {
   return cleanString(finalMessages.success) || 'Listo. Recibimos tu información.'
 }
 
+function getStandardFormResultRedirectUrl(site, ruleEvaluation = {}, options = {}) {
+  if (site?.siteType !== 'standard_form') return ''
+
+  const theme = site?.theme || {}
+  const pages = normalizeSitePages(site)
+  const hasPage = pageId => pages.some(page => page.id === pageId)
+
+  if (ruleEvaluation.disqualified || ruleEvaluation.status === 'disqualified') {
+    const disqualifiedCompletionAction = cleanString(
+      theme.formDisqualifiedCompletionAction || theme.form_disqualified_completion_action
+    ) === 'redirect_url'
+      ? 'redirect_url'
+      : 'disqualified_page'
+    const disqualifiedRedirectUrl = safeHref(
+      theme.formDisqualifiedRedirectUrl || theme.form_disqualified_redirect_url || '',
+      ''
+    )
+
+    if (disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) {
+      return disqualifiedRedirectUrl
+    }
+
+    return hasPage(FORM_DISQUALIFIED_PAGE_ID) ? buildPageHref(FORM_DISQUALIFIED_PAGE_ID, { site }) : ''
+  }
+
+  if (!options.isFinalStandardFormSubmit) return ''
+
+  const completionAction = normalizeFormCompletionAction(
+    theme.formCompletionAction || theme.form_completion_action,
+    'next_page_if_qualified'
+  )
+  const qualifiedRedirectUrl = safeHref(
+    theme.formQualifiedRedirectUrl || theme.form_qualified_redirect_url || '',
+    ''
+  )
+
+  if (completionAction === 'redirect_qualified' && qualifiedRedirectUrl) {
+    return qualifiedRedirectUrl
+  }
+
+  if (['next_page', 'next_page_if_qualified', 'redirect_qualified'].includes(completionAction)) {
+    return hasPage(FORM_THANK_YOU_PAGE_ID) ? buildPageHref(FORM_THANK_YOU_PAGE_ID, { site }) : ''
+  }
+
+  return ''
+}
+
 async function logMetaEvent({ contactId, eventType, metaEventName, eventId, status, requestPayload, responsePayload, errorMessage }) {
   await db.run(`
     INSERT INTO meta_conversion_event_logs (
@@ -22498,6 +22545,9 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   }
   const ruleRedirectUrl = ruleEvaluation.redirectUrl ||
     (ruleTargetPageId ? buildPageHref(ruleTargetPageId, { site }) : '')
+  const submissionRedirectUrl = ruleRedirectUrl || getStandardFormResultRedirectUrl(siteWithBlocks, ruleEvaluation, {
+    isFinalStandardFormSubmit
+  })
 
   const meta = {
     ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
@@ -22529,7 +22579,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       contactPhone: inferredContact.phone || '',
       status: ruleEvaluation.status,
       message: getSiteFinalMessage(finalMessageSite, ruleEvaluation),
-      redirectUrl: ruleRedirectUrl,
+      redirectUrl: submissionRedirectUrl,
       rules: ruleEvaluation,
       rawFields: nativeLayers.rawFields,
       mappedFields: nativeLayers.mappedFields,
@@ -22639,7 +22689,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     contactPhone: inferredContact.phone || '',
     status: ruleEvaluation.status,
     message: getSiteFinalMessage(finalMessageSite, ruleEvaluation),
-    redirectUrl: ruleRedirectUrl,
+    redirectUrl: submissionRedirectUrl,
     rules: ruleEvaluation,
     rawFields: nativeLayers.rawFields,
     mappedFields,
