@@ -475,6 +475,7 @@
 
 .archiveRow,
 .chatRow {
+  position: relative;
   display: grid;
   align-items: center;
   gap: 10px;
@@ -517,7 +518,24 @@
 }
 
 .chatRowUnread {
-  background: color-mix(in srgb, var(--chat-soft-strong) 64%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--surface) 28%);
+}
+
+.chatRowUnread::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background: var(--accent);
+}
+
+.chatRowUnread:hover,
+.chatRowUnread.chatRowActive,
+.chatRowUnread.chatRowSelected {
+  background: color-mix(in srgb, var(--accent-soft) 82%, var(--surface-hover) 18%);
 }
 
 .chatRowAgentAction {
@@ -591,7 +609,13 @@
 }
 
 .chatRowUnread .chatRowTop small {
-  color: var(--color-text-primary);
+  color: var(--accent);
+  font-weight: 750;
+}
+
+.chatRowUnread .chatPreview,
+.chatRowUnread .agentPriorityText {
+  color: var(--text-dim);
   font-weight: 600;
 }
 
@@ -628,11 +652,13 @@
   min-width: 20px;
   height: 20px;
   padding: 0 6px;
-  border-radius: 999px;
-  background: var(--color-text-primary);
-  color: var(--color-background-primary);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--on-accent);
   font-size: 11px;
   font-weight: 750;
+  line-height: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 70%, transparent);
 }
 
 .chatRowAside {
@@ -646,9 +672,9 @@
 .unreadDot {
   width: 8px;
   height: 8px;
-  border-radius: 999px;
-  background: var(--color-text-primary);
-  box-shadow: 0 0 0 3px var(--chat-soft);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 78%, transparent);
 }
 
 .chatRowMenuButton {

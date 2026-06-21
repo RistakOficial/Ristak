@@ -5231,7 +5231,7 @@ export const DesktopChat: React.FC = () => {
                       </span>
                       <span className={styles.chatRowAside}>
                         {unread > 0 ? <span className={styles.unreadDot} data-chat-unread-dot aria-label="Mensaje nuevo" /> : null}
-                        {unread > 1 ? <span className={styles.unread}>{unread > 99 ? '99+' : unread}</span> : null}
+                        {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
                         {renderChatActionsMenu(contact)}
                       </span>
                     </div>
@@ -5300,7 +5300,7 @@ export const DesktopChat: React.FC = () => {
                       </span>
                       <span className={styles.chatRowAside}>
                         {unread > 0 ? <span className={styles.unreadDot} data-chat-unread-dot aria-label="Mensaje nuevo" /> : null}
-                        {unread > 1 ? <span className={styles.unread}>{unread > 99 ? '99+' : unread}</span> : null}
+                        {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
                         {renderChatActionsMenu(contact)}
                       </span>
                     </div>
