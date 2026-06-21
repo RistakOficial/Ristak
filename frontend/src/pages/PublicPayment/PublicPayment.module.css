@@ -1,101 +1,138 @@
 .page {
   min-height: 100vh;
   background:
-    linear-gradient(180deg, var(--bg) 0%, var(--bg-soft) 100%);
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-soft) 48%, var(--bg) 100%);
   color: var(--text);
 }
 
 .shell {
-  width: min(1120px, calc(100vw - 32px));
+  width: min(1100px, calc(100vw - 40px));
   margin: 0 auto;
-  padding: 34px 0 46px;
+  padding: 28px 0 48px;
 }
 
 .header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  padding: 0 0 22px;
+  gap: 16px;
+  padding: 0 0 18px;
   border-bottom: 1px solid var(--border);
 }
 
-.brand {
+.brandLockup {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
 .brandLogo {
-  width: 54px;
-  height: 54px;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
   object-fit: contain;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
   background: var(--surface);
-  padding: 6px;
-  margin-bottom: 6px;
+  padding: 5px;
+}
+
+.brandLockup strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .eyebrow {
+  display: inline-flex;
   font: var(--label-font);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: var(--label-spacing);
   text-transform: var(--label-transform);
   color: var(--text-mute);
 }
 
+.statusBadge {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding-inline: 12px;
+}
+
+.statusBadge svg {
+  flex: 0 0 auto;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 24px;
+  align-items: end;
+  padding: 34px 0 28px;
+}
+
+.heroCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
 .title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 36px;
+  font-size: 38px;
   font-weight: 700;
-  line-height: 1.08;
+  line-height: 1.05;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .subtitle {
   max-width: 620px;
   margin: 0;
   color: var(--text-dim);
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.5;
 }
 
-.statusBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex: 0 0 auto;
-  min-height: 32px;
-  padding: 0 12px;
-  border-radius: var(--radius-pill);
+.totalSummary {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+  min-width: 0;
+  padding: 18px;
   border: 1px solid var(--border);
+  border-radius: var(--radius-card);
   background: var(--surface);
-  color: var(--text-dim);
+  box-shadow: var(--shadow-xs);
+}
+
+.totalSummary span,
+.totalSummary small {
+  color: var(--text-mute);
   font-size: 12px;
+  line-height: 1.35;
+}
+
+.totalSummary strong {
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 34px;
   font-weight: 700;
-}
-
-.statusPaid {
-  border-color: var(--pos);
-  background: var(--pos-soft);
-  color: var(--pos);
-}
-
-.statusFailed {
-  border-color: var(--neg);
-  background: var(--neg-soft);
-  color: var(--neg);
+  line-height: 1;
+  overflow-wrap: anywhere;
 }
 
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(360px, 1.05fr);
-  gap: 28px;
+  grid-template-columns: minmax(0, 1.08fr) minmax(320px, .92fr);
+  gap: 22px;
   align-items: start;
-  padding-top: 28px;
 }
 
 .invoicePanel,
@@ -109,13 +146,14 @@
 
 .invoicePanel {
   overflow: hidden;
+  background: var(--surface);
 }
 
 .invoiceTop {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 24px;
+  gap: 10px;
+  padding: 22px 22px 16px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -131,9 +169,11 @@
 
 .invoiceTitle {
   margin: 0;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.25;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .invoiceDescription {
@@ -143,52 +183,24 @@
   line-height: 1.55;
 }
 
-.amountBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.amountLabel {
-  font: var(--label-font);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: var(--label-spacing);
-  text-transform: var(--label-transform);
-  color: var(--text-mute);
-}
-
-.amount {
-  font-family: var(--num-font);
-  font-size: 34px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--text);
-}
-
 .detailList {
   display: grid;
-  gap: 0;
+  padding: 8px 0;
 }
 
 .detailRow {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 24px;
-  border-top: 1px solid var(--border);
+  padding: 10px 22px;
   color: var(--text-dim);
   font-size: 13px;
 }
 
-.detailRow:first-child {
-  border-top: 0;
-}
-
 .detailRow strong {
-  max-width: 58%;
+  max-width: 62%;
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
   text-align: right;
   word-break: break-word;
 }
@@ -198,7 +210,7 @@
   align-items: center;
   gap: 8px;
   margin: 0;
-  padding: 14px 24px;
+  padding: 14px 22px;
   border-top: 1px solid var(--border);
   color: var(--text-dim);
   font-size: 12px;
@@ -210,21 +222,32 @@
 }
 
 .payPanel {
-  padding: 24px;
+  padding: 26px;
+  background: var(--surface-solid, var(--surface));
 }
 
 .payHeader {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
   margin-bottom: 18px;
+}
+
+.payKicker {
+  font: var(--label-font);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+  color: var(--accent);
 }
 
 .payHeader h2 {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 20px;
+  font-size: 23px;
   font-weight: 700;
+  line-height: 1.15;
   color: var(--text);
 }
 
@@ -238,7 +261,7 @@
 .stripeBox {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .cardAuthorizationNotice {
@@ -248,7 +271,7 @@
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
-  background: var(--surface-solid);
+  background: var(--surface);
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.45;
@@ -262,19 +285,19 @@
 }
 
 .stripeElementShell {
-  padding: 14px;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
-  background: var(--surface-solid);
+  background: var(--surface);
 }
 
 .mercadoPagoBrickShell {
   position: relative;
   min-height: 360px;
-  padding: 14px;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
-  background: var(--surface-solid);
+  background: var(--surface);
   overflow: hidden;
 }
 
@@ -292,10 +315,10 @@
   justify-content: center;
   gap: 9px;
   border-radius: var(--radius-ctl);
-  background: var(--surface-solid);
+  background: var(--surface);
   color: var(--text-dim);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .fallbackAction {
@@ -321,37 +344,10 @@
   gap: 10px;
 }
 
-.button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 42px;
-  padding: 0 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: border-color .15s ease, background .15s ease, color .15s ease;
-}
-
-.button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--surface-hover);
-}
-
-.buttonPrimary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
-.button:disabled {
-  cursor: not-allowed;
-  opacity: .62;
+.payButton[data-btn] {
+  --app-button-height: 48px;
+  --app-button-font-size: 14px;
+  --app-button-font-weight: 600;
 }
 
 .message {
@@ -359,10 +355,10 @@
   align-items: flex-start;
   gap: 9px;
   margin: 0;
-  padding: 11px 12px;
+  padding: 12px 13px;
   border-radius: var(--radius-ctl);
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.45;
@@ -505,12 +501,22 @@
 
   .header {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    padding: 24px 0 18px;
+  }
+
+  .totalSummary {
+    justify-items: start;
   }
 
   .grid {
     grid-template-columns: 1fr;
     gap: 16px;
-    padding-top: 18px;
   }
 
   .invoiceTop,
@@ -522,12 +528,12 @@
     padding: 13px 18px;
   }
 
-  .amount {
-    font-size: 30px;
+  .title {
+    font-size: 29px;
   }
 
-  .title {
-    font-size: 26px;
+  .totalSummary strong {
+    font-size: 30px;
   }
 
   .fallbackAction {
@@ -535,7 +541,7 @@
     flex-direction: column;
   }
 
-  .fallbackAction .button {
+  .fallbackAction [data-btn] {
     width: 100%;
   }
 
@@ -846,7 +852,7 @@
     background-position: bottom left;
   }
 
-  .button,
+  [data-btn],
   .statusBadge {
     display: none;
   }

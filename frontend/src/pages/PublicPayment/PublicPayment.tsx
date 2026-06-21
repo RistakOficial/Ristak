@@ -3,6 +3,7 @@ import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-
 import { loadStripe, type StripeElementsOptions } from '@stripe/stripe-js'
 import { AlertCircle, CheckCircle2, CreditCard, Download, ExternalLink, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
+import { Badge, Button, type BadgeVariant } from '@/components/common'
 import {
   mercadoPagoPaymentsService,
   type MercadoPagoCardPaymentPayload,
@@ -85,12 +86,12 @@ function formatDate(value?: string | null) {
 function getStatusCopy(status: string) {
   const normalized = status.toLowerCase()
   if (['paid', 'succeeded', 'completed'].includes(normalized)) {
-    return { label: 'Pagado', className: styles.statusPaid }
+    return { label: 'Pagado', variant: 'success' as BadgeVariant }
   }
   if (['failed', 'void', 'refunded'].includes(normalized)) {
-    return { label: normalized === 'refunded' ? 'Reembolsado' : 'No disponible', className: styles.statusFailed }
+    return { label: normalized === 'refunded' ? 'Reembolsado' : 'No disponible', variant: 'error' as BadgeVariant }
   }
-  return { label: 'Pendiente', className: '' }
+  return { label: 'Pendiente', variant: 'info' as BadgeVariant }
 }
 
 function readToken(name: string) {
@@ -266,23 +267,16 @@ const PublicPaymentForm: React.FC<{
       )}
 
       <div className={styles.actions}>
-        <button
+        <Button
           type="submit"
-          className={`${styles.button} ${styles.buttonPrimary}`}
+          variant="primary"
+          fullWidth
+          className={styles.payButton}
           disabled={!stripe || !elements || submitting}
+          leftIcon={submitting ? <Loader2 size={16} className={styles.spin} /> : <CreditCard size={16} />}
         >
-          {submitting ? (
-            <>
-              <Loader2 size={16} className={styles.spin} />
-              Procesando
-            </>
-          ) : (
-            <>
-              <CreditCard size={16} />
-              {payment.settings?.checkout?.buttonLabel || 'Pagar'} {formatCurrency(payment.amount, payment.currency)}
-            </>
-          )}
-        </button>
+          {submitting ? 'Procesando' : `${payment.settings?.checkout?.buttonLabel || 'Pagar'} ${formatCurrency(payment.amount, payment.currency)}`}
+        </Button>
       </div>
     </form>
   )
@@ -430,24 +424,15 @@ const MercadoPagoCardPaymentForm: React.FC<{
 
       <div className={styles.fallbackAction}>
         <span>Si tu banco pide otro método, abre el checkout completo de Mercado Pago.</span>
-        <button
+        <Button
           type="button"
-          className={styles.button}
+          variant="secondary"
           onClick={onFallback}
           disabled={fallbackLoading || submitting}
+          leftIcon={fallbackLoading ? <Loader2 size={16} className={styles.spin} /> : <ExternalLink size={16} />}
         >
-          {fallbackLoading ? (
-            <>
-              <Loader2 size={16} className={styles.spin} />
-              Abriendo
-            </>
-          ) : (
-            <>
-              <ExternalLink size={16} />
-              Checkout Pro
-            </>
-          )}
-        </button>
+          {fallbackLoading ? 'Abriendo' : 'Checkout Pro'}
+        </Button>
       </div>
     </div>
   )
@@ -636,92 +621,49 @@ export const PublicPayment: React.FC = () => {
     styles[printTemplateClassById[invoiceDesign.template.id]]
   ].filter(Boolean).join(' ')
   const paymentModeLabel = payment.paymentMode === 'live' ? 'Producción' : 'Prueba'
+  const headline = isPaid
+    ? 'Pago confirmado'
+    : checkoutSettings?.headline || payment.title || 'Pago pendiente'
+  const description = isPaid
+    ? 'Tu pago fue recibido correctamente. Puedes descargar tu comprobante en PDF cuando lo necesites.'
+    : checkoutSettings?.description || `Revisa los datos del cobro y paga de forma segura con ${providerLabel}. Ristak no ve ni guarda el número de tu tarjeta.`
 
   return (
     <main className={styles.page}>
       <div className={styles.shell}>
         <header className={styles.header}>
-          <div className={styles.brand}>
+          <div className={styles.brandLockup}>
             {logoUrl && (
               <img className={styles.brandLogo} src={logoUrl} alt="" />
             )}
-            <span className={styles.eyebrow}>Ristak Payments</span>
-            <h1 className={styles.title}>
-              {isPaid
-                ? 'Pago confirmado'
-                : checkoutSettings?.headline || payment.title || 'Pago pendiente'}
-            </h1>
-            <p className={styles.subtitle}>
-              {isPaid
-                ? 'Tu pago fue recibido correctamente. Puedes descargar tu comprobante en PDF cuando lo necesites.'
-                : checkoutSettings?.description || `Revisa los datos del cobro y paga de forma segura con ${providerLabel}. Ristak no ve ni guarda el número de tu tarjeta.`}
-            </p>
+            <div>
+              <span className={styles.eyebrow}>Ristak Payments</span>
+              <strong>{receiptSettings?.businessName || 'Pago seguro'}</strong>
+            </div>
           </div>
-          <span className={`${styles.statusBadge} ${status.className}`}>
+          <Badge variant={status.variant} className={styles.statusBadge}>
             {isPaid ? <CheckCircle2 size={15} /> : <ShieldCheck size={15} />}
             {status.label}
-          </span>
+          </Badge>
         </header>
 
+        <section className={styles.hero}>
+          <div className={styles.heroCopy}>
+            <span className={styles.eyebrow}>{isPaid ? 'Comprobante listo' : 'Checkout seguro'}</span>
+            <h1 className={styles.title}>{headline}</h1>
+            <p className={styles.subtitle}>{description}</p>
+          </div>
+          <div className={styles.totalSummary} aria-label="Total a pagar">
+            <span>Total</span>
+            <strong>{formatCurrency(payment.amount, payment.currency)}</strong>
+            <small>{providerLabel} · {paymentModeLabel}</small>
+          </div>
+        </section>
+
         <section className={styles.grid}>
-          <aside className={styles.invoicePanel} aria-label="Resumen del pago">
-            <div className={styles.invoiceTop}>
-              <div>
-                <p className={styles.invoiceLabel}>Concepto</p>
-                <h2 className={styles.invoiceTitle}>{payment.title || 'Pago'}</h2>
-                {payment.description && (
-                  <p className={styles.invoiceDescription}>{payment.description}</p>
-                )}
-              </div>
-              <div className={styles.amountBlock}>
-                <span className={styles.amountLabel}>Total</span>
-                <strong className={styles.amount}>{formatCurrency(payment.amount, payment.currency)}</strong>
-              </div>
-            </div>
-
-            <div className={styles.detailList}>
-              <div className={styles.detailRow}>
-                <span>Cliente</span>
-                <strong>{payment.contact?.name || 'Cliente'}</strong>
-              </div>
-              {payment.contact?.email && (
-                <div className={styles.detailRow}>
-                  <span>Email</span>
-                  <strong>{payment.contact.email}</strong>
-                </div>
-              )}
-              <div className={styles.detailRow}>
-                <span>Vencimiento</span>
-                <strong>{formatDate(payment.dueDate)}</strong>
-              </div>
-              {hasTaxBreakdown && (
-                <div className={styles.detailRow}>
-                  <span>Subtotal</span>
-                  <strong>{formatCurrency(taxDetails?.subtotalAmount || 0, payment.currency)}</strong>
-                </div>
-              )}
-              {hasTaxBreakdown && (
-                <div className={styles.detailRow}>
-                  <span>{taxDetails?.calculationMode === 'inclusive' ? 'Impuesto incluido' : 'Impuesto'}</span>
-                  <strong>{taxLabel} · {formatCurrency(taxDetails?.taxAmount || 0, payment.currency)}</strong>
-                </div>
-              )}
-              <div className={styles.detailRow}>
-                <span>Referencia</span>
-                <strong>{payment.publicPaymentId}</strong>
-              </div>
-            </div>
-
-            {checkoutSettings?.showSecureBadge && !isPaid && (
-              <p className={styles.secureNotice}>
-                <ShieldCheck size={16} />
-                <span>Pago procesado de forma segura.</span>
-              </p>
-            )}
-          </aside>
-
           <section className={styles.payPanel} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
+              <span className={styles.payKicker}>{isPaid ? 'Estado final' : 'Método de pago'}</span>
               <h2>{isPaid ? 'Pago confirmado' : 'Pagar con tarjeta'}</h2>
               <p>
                 {isPaid
@@ -786,14 +728,14 @@ export const PublicPayment: React.FC = () => {
                   </div>
                 </div>
                 <div className={styles.actions}>
-                  <button
+                  <Button
                     type="button"
-                    className={styles.button}
+                    variant="secondary"
+                    leftIcon={<Download size={16} />}
                     onClick={handleDownloadPdf}
                   >
-                    <Download size={16} />
                     Descargar PDF
-                  </button>
+                  </Button>
                 </div>
                 {showBusinessInfo && receiptSettings && (
                   <div className={styles.businessInfo}>
@@ -835,28 +777,77 @@ export const PublicPayment: React.FC = () => {
                   </p>
                 )}
                 <div className={styles.actions}>
-                  <button
+                  <Button
                     type="button"
-                    className={`${styles.button} ${styles.buttonPrimary}`}
+                    variant="primary"
+                    fullWidth
+                    className={styles.payButton}
                     onClick={startPayment}
                     disabled={startingPayment || !isStripePayment || !payment.publishableKey}
+                    leftIcon={startingPayment ? <Loader2 size={16} className={styles.spin} /> : <CreditCard size={16} />}
                   >
-                    {startingPayment ? (
-                      <>
-                        <Loader2 size={16} className={styles.spin} />
-                        Preparando
-                      </>
-                    ) : (
-                      <>
-                        <CreditCard size={16} />
-                        {checkoutSettings?.buttonLabel || 'Iniciar pago'}
-                      </>
-                    )}
-                  </button>
+                    {startingPayment ? 'Preparando' : checkoutSettings?.buttonLabel || 'Iniciar pago'}
+                  </Button>
                 </div>
               </div>
             )}
           </section>
+
+          <aside className={styles.invoicePanel} aria-label="Resumen del pago">
+            <div className={styles.invoiceTop}>
+              <div>
+                <p className={styles.invoiceLabel}>Concepto</p>
+                <h2 className={styles.invoiceTitle}>{payment.title || 'Pago'}</h2>
+                {payment.description && (
+                  <p className={styles.invoiceDescription}>{payment.description}</p>
+                )}
+              </div>
+            </div>
+
+            <div className={styles.detailList}>
+              <div className={styles.detailRow}>
+                <span>Cliente</span>
+                <strong>{payment.contact?.name || 'Cliente'}</strong>
+              </div>
+              {payment.contact?.email && (
+                <div className={styles.detailRow}>
+                  <span>Email</span>
+                  <strong>{payment.contact.email}</strong>
+                </div>
+              )}
+              <div className={styles.detailRow}>
+                <span>Vencimiento</span>
+                <strong>{formatDate(payment.dueDate)}</strong>
+              </div>
+              {hasTaxBreakdown && (
+                <div className={styles.detailRow}>
+                  <span>Subtotal</span>
+                  <strong>{formatCurrency(taxDetails?.subtotalAmount || 0, payment.currency)}</strong>
+                </div>
+              )}
+              {hasTaxBreakdown && (
+                <div className={styles.detailRow}>
+                  <span>{taxDetails?.calculationMode === 'inclusive' ? 'Impuesto incluido' : 'Impuesto'}</span>
+                  <strong>{taxLabel} · {formatCurrency(taxDetails?.taxAmount || 0, payment.currency)}</strong>
+                </div>
+              )}
+              <div className={styles.detailRow}>
+                <span>Total</span>
+                <strong>{formatCurrency(totalAmount, payment.currency)}</strong>
+              </div>
+              <div className={styles.detailRow}>
+                <span>Referencia</span>
+                <strong>{payment.publicPaymentId}</strong>
+              </div>
+            </div>
+
+            {checkoutSettings?.showSecureBadge && !isPaid && (
+              <p className={styles.secureNotice}>
+                <ShieldCheck size={16} />
+                <span>Pago cifrado y procesado por {providerLabel}.</span>
+              </p>
+            )}
+          </aside>
         </section>
 
         {supportItems.length > 0 && !isPaid && (
