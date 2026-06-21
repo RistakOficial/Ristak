@@ -12133,6 +12133,7 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
 
   const embeddedTheme = {
     ...DEFAULT_THEME,
+    ...getVideoFormGateThemePreset(settings),
     ...(getVideoFormGateEmbeddedTheme(settings) || {})
   }
   const videoBackground = normalizeVideoFormGateVideoBackground(settings)
@@ -15186,7 +15187,88 @@ const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
+const DEFAULT_VIDEO_FORM_GATE_THEME_MODE = 'dark'
 const DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(0, 0, 0, 0.84)'
+const LIGHT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(248, 250, 252, 0.78)'
+const VIDEO_FORM_GATE_THEME_PRESETS = {
+  dark: {
+    accentColor: '#60a5fa',
+    backgroundColor: 'linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(12, 10, 10, 0.96))',
+    textColor: '#ffffff',
+    textColorCustom: true,
+    formLabelColor: '#ffffff',
+    formHelpColor: 'rgba(255, 255, 255, 0.78)',
+    formFieldBg: 'rgba(15, 23, 42, 0.62)',
+    formFieldText: '#ffffff',
+    formFieldBorder: 'rgba(148, 163, 184, 0.28)',
+    formPlaceholderColor: 'rgba(255, 255, 255, 0.66)',
+    formChoiceSelectedBg: 'rgba(96, 165, 250, 0.16)',
+    formChoiceSelectedBorder: '#60a5fa',
+    formChoiceStyle: 'cards',
+    formSelectStyle: 'filled',
+    formFieldRadius: 12,
+    formFieldBorderWidth: 1,
+    formFieldHeight: 50,
+    formFieldPaddingX: 14,
+    formFieldPaddingY: 13,
+    formFieldWidth: 560,
+    formContentAlign: 'center',
+    submitBg: '#0f2348',
+    submitTextColor: '#ffffff',
+    submitBorderColor: '#0f2348',
+    submitRadius: 14,
+    submitHeight: 50,
+    submitPaddingX: 22,
+    submitPaddingY: 9,
+    submitFontSize: 16,
+    submitBorderWidth: 1,
+    submitWidth: 0,
+    submitAlign: 'center'
+  },
+  light: {
+    accentColor: '#2563eb',
+    backgroundColor: 'linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96))',
+    textColor: '#111827',
+    textColorCustom: true,
+    formLabelColor: '#111827',
+    formHelpColor: '#475569',
+    formFieldBg: '#ffffff',
+    formFieldText: '#111827',
+    formFieldBorder: '#dbe3ef',
+    formPlaceholderColor: '#64748b',
+    formChoiceSelectedBg: 'rgba(37, 99, 235, 0.1)',
+    formChoiceSelectedBorder: '#2563eb',
+    formChoiceStyle: 'cards',
+    formSelectStyle: 'filled',
+    formFieldRadius: 12,
+    formFieldBorderWidth: 1,
+    formFieldHeight: 50,
+    formFieldPaddingX: 14,
+    formFieldPaddingY: 13,
+    formFieldWidth: 560,
+    formContentAlign: 'center',
+    submitBg: '#111827',
+    submitTextColor: '#ffffff',
+    submitBorderColor: '#111827',
+    submitRadius: 14,
+    submitHeight: 50,
+    submitPaddingX: 22,
+    submitPaddingY: 9,
+    submitFontSize: 16,
+    submitBorderWidth: 1,
+    submitWidth: 0,
+    submitAlign: 'center'
+  }
+}
+
+function normalizeVideoFormGateThemeMode(settings = {}) {
+  const mode = cleanString(settings.videoFormGateThemeMode || settings.video_form_gate_theme_mode)
+  return mode === 'light' ? 'light' : DEFAULT_VIDEO_FORM_GATE_THEME_MODE
+}
+
+function getVideoFormGateThemePreset(settings = {}) {
+  return { ...VIDEO_FORM_GATE_THEME_PRESETS[normalizeVideoFormGateThemeMode(settings)] }
+}
 const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
@@ -15215,10 +15297,13 @@ function getVisibleVideoBorderColor(value = '') {
 }
 
 function normalizeVideoFormGateVideoBackground(settings = {}) {
+  const fallback = normalizeVideoFormGateThemeMode(settings) === 'light'
+    ? LIGHT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
+    : DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
   return normalizeCssPaint(
     settings.videoFormGateVideoBackground || settings.video_form_gate_video_background,
-    DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
-  ) || DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
+    fallback
+  ) || fallback
 }
 
 function normalizeVideoPlayIconStyle(value) {
@@ -17506,7 +17591,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-gate input,.rstk-video-form-gate textarea,.rstk-video-form-gate select{box-sizing:border-box;width:100%;max-width:100%;min-width:0;min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border:var(--rstk-form-field-border-width,1px) solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.86rem,2.4cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
 	  .rstk-video-form-gate input::placeholder,.rstk-video-form-gate textarea::placeholder{color:var(--rstk-form-placeholder,color-mix(in srgb,var(--rstk-muted) 80%,transparent))}
 	  .rstk-video-form-gate textarea{min-height:clamp(78px,18cqw,108px)}
-	  .rstk-video-form-gate .rstk-phone-input{display:grid;width:100%;max-width:100%;min-width:0;grid-template-columns:minmax(108px,34%) minmax(0,1fr);gap:8px}
+	  .rstk-video-form-gate .rstk-phone-input{display:grid;width:100%;max-width:100%;min-width:0;grid-template-columns:minmax(96px,max-content) minmax(0,1fr);gap:8px;align-items:stretch}
 	  .rstk-video-form-gate .rstk-phone-input > input,.rstk-video-form-gate .rstk-phone-input > select{min-width:0}
 	  .rstk-video-form-gate .rstk-options{display:grid;gap:clamp(7px,1.8cqw,10px);width:100%;max-width:100%;min-width:0}
 	  .rstk-video-form-gate .rstk-option{width:100%;max-width:100%;min-width:0;min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}

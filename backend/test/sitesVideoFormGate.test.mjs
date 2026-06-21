@@ -13,6 +13,115 @@ const DOMAIN_KEYS = {
   error: 'sites_public_domain_error'
 }
 
+const videoFormGateThemeSite = (settings = {}) => ({
+  id: 'site_video_form_gate_theme',
+  name: 'Landing video form theme',
+  title: 'Landing video form theme',
+  description: '',
+  slug: 'landing-video-form-theme',
+  siteType: 'landing_page',
+  status: 'published',
+  theme: {
+    template: 'ristak',
+    pages: [{ id: 'page-1', title: 'Pagina 1', sortOrder: 0 }]
+  },
+  blocks: [
+    {
+      id: 'video-block-theme',
+      siteId: 'site_video_form_gate_theme',
+      blockType: 'video',
+      label: 'Video',
+      content: '',
+      placeholder: '',
+      required: false,
+      options: [],
+      sortOrder: 0,
+      settings: {
+        pageId: 'page-1',
+        mediaUrl: 'https://cdn.example.com/video-form-theme.mp4',
+        videoFormGateEnabled: true,
+        videoFormGateTitle: 'Antes de continuar',
+        videoFormGateDescription: 'Contesta para seguir viendo el video.',
+        videoFormGateEmbeddedBlocks: [
+          {
+            id: 'video-form-title',
+            siteId: 'site_video_form_gate_theme',
+            blockType: 'title',
+            label: 'Titulo',
+            content: 'Antes de continuar',
+            placeholder: '',
+            required: false,
+            options: [],
+            sortOrder: 0,
+            settings: { pageId: 'video_form_gate' }
+          },
+          {
+            id: 'phone-field',
+            siteId: 'site_video_form_gate_theme',
+            blockType: 'phone',
+            label: 'Telefono',
+            content: '',
+            placeholder: 'Numero de telefono',
+            required: true,
+            options: [],
+            sortOrder: 1,
+            settings: {
+              pageId: 'video_form_gate',
+              internalName: 'phone',
+              validation: 'phone',
+              phoneCountrySelectorEnabled: true,
+              defaultCountryCode: 'MX'
+            }
+          }
+        ],
+        ...settings
+      },
+      createdAt: '',
+      updatedAt: ''
+    }
+  ]
+})
+
+test('video form gate defaults to a dark readable theme and compact phone prefix', async () => {
+  const html = await renderPublicSiteHtml(videoFormGateThemeSite(), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /data-rstk-video-form-gate/)
+  assert.match(html, /class="rstk-phone-input" data-phone-country-field/)
+  assert.match(html, /<option value="MX"[^>]*selected>[^<]*\+52<\/option>/)
+  assert.match(html, /--rstk-ink:#ffffff/)
+  assert.match(html, /--rstk-video-form-panel-bg:linear-gradient\(145deg, rgba\(15, 23, 42, 0\.96\), rgba\(12, 10, 10, 0\.96\)\)/)
+  assert.match(html, /--rstk-video-form-gate-video-bg:rgba\(0, 0, 0, 0\.84\)/)
+  assert.match(html, /--rstk-form-label-color:#ffffff/)
+  assert.match(html, /--rstk-form-help-color:rgba\(255, 255, 255, 0\.78\)/)
+  assert.match(html, /--rstk-form-field-bg:rgba\(15, 23, 42, 0\.62\)/)
+  assert.match(html, /--rstk-form-field-text:#ffffff/)
+  assert.match(html, /--rstk-form-placeholder:rgba\(255, 255, 255, 0\.66\)/)
+  assert.match(html, /--rstk-submit-bg:#0f2348/)
+  assert.match(html, /\.rstk-video-form-gate \.rstk-phone-input\{[^}]*grid-template-columns:minmax\(96px,max-content\) minmax\(0,1fr\)[^}]*align-items:stretch/)
+})
+
+test('video form gate light theme swaps contrast and video overlay background', async () => {
+  const html = await renderPublicSiteHtml(videoFormGateThemeSite({
+    videoFormGateThemeMode: 'light'
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /--rstk-ink:#111827/)
+  assert.match(html, /--rstk-video-form-panel-bg:linear-gradient\(145deg, rgba\(255, 255, 255, 0\.98\), rgba\(248, 250, 252, 0\.96\)\)/)
+  assert.match(html, /--rstk-video-form-gate-video-bg:rgba\(248, 250, 252, 0\.78\)/)
+  assert.match(html, /--rstk-form-label-color:#111827/)
+  assert.match(html, /--rstk-form-field-bg:#ffffff/)
+  assert.match(html, /--rstk-form-field-text:#111827/)
+  assert.match(html, /--rstk-submit-bg:#111827/)
+})
+
 test('video form gate renders inside the video player and posts as the source form', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),

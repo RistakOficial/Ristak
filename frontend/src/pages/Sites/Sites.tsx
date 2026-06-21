@@ -514,6 +514,12 @@ const VIDEO_FORM_GATE_DEFAULT_DESCRIPTION = 'Contesta estas preguntas para segui
 const VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT = 'Siguiente'
 const VIDEO_FORM_GATE_DEFAULT_BACK_TEXT = 'Anterior'
 const VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT = 'Continuar'
+const videoFormGateThemeModeOptions = [
+  { value: 'dark', label: 'Oscuro' },
+  { value: 'light', label: 'Claro' }
+] as const
+type VideoFormGateThemeMode = typeof videoFormGateThemeModeOptions[number]['value']
+const DEFAULT_VIDEO_FORM_GATE_THEME_MODE: VideoFormGateThemeMode = 'dark'
 
 type SystemFormFieldKey =
   | 'full_name'
@@ -810,6 +816,7 @@ const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
 const DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(0, 0, 0, 0.84)'
+const LIGHT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(248, 250, 252, 0.78)'
 const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
 const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
@@ -876,6 +883,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoOrientation: DEFAULT_VIDEO_ORIENTATION,
   videoFit: 'cover',
   videoPlayerBackground: DEFAULT_VIDEO_PLAYER_BACKGROUND,
+  videoFormGateThemeMode: DEFAULT_VIDEO_FORM_GATE_THEME_MODE,
   videoFormGateVideoBackground: DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND,
   videoPlayerRadius: 18,
   videoPlayerBorderColor: DEFAULT_VIDEO_TRANSPARENT,
@@ -888,6 +896,77 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoPlayIconStyle: DEFAULT_VIDEO_PLAY_ICON_STYLE,
   videoPlayIconSize: DEFAULT_VIDEO_PLAY_ICON_SIZE,
   videoSoundColor: DEFAULT_VIDEO_PLAY_COLOR
+}
+
+const VIDEO_FORM_GATE_THEME_PRESETS: Record<VideoFormGateThemeMode, Partial<SiteTheme>> = {
+  dark: {
+    accentColor: '#60a5fa',
+    backgroundColor: 'linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(12, 10, 10, 0.96))',
+    textColor: '#ffffff',
+    textColorCustom: true,
+    formLabelColor: '#ffffff',
+    formHelpColor: 'rgba(255, 255, 255, 0.78)',
+    formFieldBg: 'rgba(15, 23, 42, 0.62)',
+    formFieldText: '#ffffff',
+    formFieldBorder: 'rgba(148, 163, 184, 0.28)',
+    formPlaceholderColor: 'rgba(255, 255, 255, 0.66)',
+    formChoiceSelectedBg: 'rgba(96, 165, 250, 0.16)',
+    formChoiceSelectedBorder: '#60a5fa',
+    formChoiceStyle: 'cards',
+    formSelectStyle: 'filled',
+    formFieldRadius: 12,
+    formFieldBorderWidth: 1,
+    formFieldHeight: 50,
+    formFieldPaddingX: 14,
+    formFieldPaddingY: 13,
+    formFieldWidth: 560,
+    formContentAlign: 'center',
+    submitBg: '#0f2348',
+    submitTextColor: '#ffffff',
+    submitBorderColor: '#0f2348',
+    submitRadius: 14,
+    submitHeight: 50,
+    submitPaddingX: 22,
+    submitPaddingY: 9,
+    submitFontSize: 16,
+    submitBorderWidth: 1,
+    submitWidth: 0,
+    submitAlign: 'center'
+  },
+  light: {
+    accentColor: '#2563eb',
+    backgroundColor: 'linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96))',
+    textColor: '#111827',
+    textColorCustom: true,
+    formLabelColor: '#111827',
+    formHelpColor: '#475569',
+    formFieldBg: '#ffffff',
+    formFieldText: '#111827',
+    formFieldBorder: '#dbe3ef',
+    formPlaceholderColor: '#64748b',
+    formChoiceSelectedBg: 'rgba(37, 99, 235, 0.1)',
+    formChoiceSelectedBorder: '#2563eb',
+    formChoiceStyle: 'cards',
+    formSelectStyle: 'filled',
+    formFieldRadius: 12,
+    formFieldBorderWidth: 1,
+    formFieldHeight: 50,
+    formFieldPaddingX: 14,
+    formFieldPaddingY: 13,
+    formFieldWidth: 560,
+    formContentAlign: 'center',
+    submitBg: '#111827',
+    submitTextColor: '#ffffff',
+    submitBorderColor: '#111827',
+    submitRadius: 14,
+    submitHeight: 50,
+    submitPaddingX: 22,
+    submitPaddingY: 9,
+    submitFontSize: 16,
+    submitBorderWidth: 1,
+    submitWidth: 0,
+    submitAlign: 'center'
+  }
 }
 
 interface VideoFormGateFitState {
@@ -4380,8 +4459,23 @@ const getVideoFormGateStorageValue = (settings: Record<string, unknown> = {}) =>
 const getVideoFormGateVideoBackground = (settings: Record<string, unknown> = {}) => (
   normalizeCssPaint(
     getSettingString(settings, 'videoFormGateVideoBackground') || getSettingString(settings, 'video_form_gate_video_background'),
-    DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
+    getSettingString(settings, 'videoFormGateThemeMode') === 'light' || getSettingString(settings, 'video_form_gate_theme_mode') === 'light'
+      ? LIGHT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
+      : DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
   )
+)
+
+const getVideoFormGateThemeMode = (settings: Record<string, unknown> = {}): VideoFormGateThemeMode => {
+  const raw = getSettingString(settings, 'videoFormGateThemeMode') || getSettingString(settings, 'video_form_gate_theme_mode')
+  return raw === 'light' ? 'light' : DEFAULT_VIDEO_FORM_GATE_THEME_MODE
+}
+
+const getVideoFormGateThemePreset = (mode: VideoFormGateThemeMode): Partial<SiteTheme> => ({
+  ...VIDEO_FORM_GATE_THEME_PRESETS[mode]
+})
+
+const getVideoFormGateThemeVideoBackground = (mode: VideoFormGateThemeMode) => (
+  mode === 'light' ? LIGHT_VIDEO_FORM_GATE_VIDEO_BACKGROUND : DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND
 )
 
 const getVideoFormGateCompletionTargetIds = (settings: Record<string, unknown> = {}) => {
@@ -6052,12 +6146,14 @@ const buildVideoFormGateSourceTheme = (
   settings: Record<string, unknown>
 ): SiteTheme => {
   const embeddedTheme = getVideoFormGateEmbeddedTheme(settings)
+  const themePreset = getVideoFormGateThemePreset(getVideoFormGateThemeMode(settings))
   const nextText = getSettingString(settings, 'videoFormGateNextText') || embeddedTheme.nextText || VIDEO_FORM_GATE_DEFAULT_NEXT_TEXT
   const backText = getSettingString(settings, 'videoFormGateBackText') || embeddedTheme.backText || VIDEO_FORM_GATE_DEFAULT_BACK_TEXT
   const submitText = getSettingString(settings, 'videoFormGateSubmitText') || embeddedTheme.submitText || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT
 
   return {
     ...buildEmbeddedFormSourceTheme(sourceSite, settings, getVideoFormGateSinglePage()),
+    ...themePreset,
     ...cloneJson(embeddedTheme),
     pages: normalizePagesForSave(getVideoFormGateSinglePage()),
     formCompletionAction: getVideoFormGateCompletionAction(settings),
@@ -32200,7 +32296,8 @@ const VideoActionsPanel: React.FC<{
     const hasDraftQuestions = Array.isArray(currentSettings.videoFormGateEmbeddedBlocks)
       && (currentSettings.videoFormGateEmbeddedBlocks as unknown[]).length > 0
     const completionAction = getVideoFormGateCompletionAction(currentSettings)
-    const nextSettingsForTheme = { ...currentSettings, completionAction }
+    const themeMode = getVideoFormGateThemeMode(currentSettings)
+    const nextSettingsForTheme = { ...currentSettings, completionAction, videoFormGateThemeMode: themeMode }
     const patch: Record<string, unknown> = {
       videoFormGateEnabled: true,
       videoFormGateTriggerSeconds: gateRule.timeSeconds,
@@ -32215,6 +32312,7 @@ const VideoActionsPanel: React.FC<{
       videoFormGateRepeatMode: getVideoFormGateRepeatMode(currentSettings),
       videoFormGateStorageValue: getVideoFormGateStorageValue(currentSettings),
       videoFormGateStorageUnit: getVideoFormGateStorageUnit(currentSettings),
+      videoFormGateThemeMode: themeMode,
       completionAction
     }
 
@@ -33614,6 +33712,20 @@ const VideoFormGateSettingsPanel: React.FC<{
     onPatchSettings(settingsPatch)
   }
 
+  const videoGateThemeMode = getVideoFormGateThemeMode(settings)
+  const applyVideoGateThemeMode = (mode: VideoFormGateThemeMode) => {
+    const nextMode = mode === 'light' ? 'light' : DEFAULT_VIDEO_FORM_GATE_THEME_MODE
+    onPatchSettings({
+      videoFormGateThemeMode: nextMode,
+      videoFormGateVideoBackground: getVideoFormGateThemeVideoBackground(nextMode),
+      videoFormGateEmbeddedTheme: {
+        ...videoGateTheme,
+        ...getVideoFormGateThemePreset(nextMode)
+      }
+    })
+    window.setTimeout(onSave, 0)
+  }
+
   const patchButtonCopy = (patch: Record<string, unknown>, themePatch: Partial<SiteTheme>) => {
     onPatchSettings({
       ...patch,
@@ -33639,6 +33751,8 @@ const VideoFormGateSettingsPanel: React.FC<{
     }
 
     const initialQuestions = questions.length ? questions : createVideoFormGateBlocks(site.id)
+    const themeMode = getVideoFormGateThemeMode(settings)
+    const nextSettingsForTheme = { ...settings, videoFormGateThemeMode: themeMode }
     patchAndSaveSoon({
       videoFormGateEnabled: true,
       videoFormGateTitle: getSettingString(settings, 'videoFormGateTitle') || VIDEO_FORM_GATE_DEFAULT_TITLE,
@@ -33653,9 +33767,10 @@ const VideoFormGateSettingsPanel: React.FC<{
       videoFormGateRepeatMode: getVideoFormGateRepeatMode(settings),
       videoFormGateStorageValue: getVideoFormGateStorageValue(settings),
       videoFormGateStorageUnit: getVideoFormGateStorageUnit(settings),
+      videoFormGateThemeMode: themeMode,
       completionAction: getVideoFormGateCompletionAction(settings),
       videoFormGateEmbeddedBlocks: normalizeVideoFormGateBlocks(initialQuestions, selectedFormId || site.id),
-      videoFormGateEmbeddedTheme: buildVideoFormGateSourceTheme(site, settings)
+      videoFormGateEmbeddedTheme: buildVideoFormGateSourceTheme(site, nextSettingsForTheme)
     })
     selectQuestion(initialQuestions[0]?.id || '')
   }
@@ -34134,6 +34249,47 @@ const VideoFormGateSettingsPanel: React.FC<{
             </div>
           )}
 
+          {showDesignControls && (
+            <div className={styles.settingsGroup}>
+              <div className={styles.panelSubheader}>Diseño del formulario</div>
+              <label className={styles.field}>
+                <span>Tema automático</span>
+                <CustomSelect
+                  value={videoGateThemeMode}
+                  onChange={(event) => applyVideoGateThemeMode(event.target.value as VideoFormGateThemeMode)}
+                  onBlur={onSave}
+                >
+                  {videoFormGateThemeModeOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+              <div className={styles.twoColumn}>
+                <ColorField
+                  label="Fondo del formulario"
+                  value={getThemePaint(videoGateTheme, 'backgroundColor', userBgColor(videoGateSite) || resolvedPageBg(videoGateSite))}
+                  allowGradient
+                  onChange={(value) => patchVideoGateTheme({ backgroundColor: value })}
+                  onCommit={onSave}
+                />
+                <ColorField
+                  label="Fondo del video"
+                  value={getVideoFormGateVideoBackground(settings)}
+                  allowGradient
+                  onChange={(value) => onPatchSettings({ videoFormGateVideoBackground: value })}
+                  onCommit={onSave}
+                />
+              </div>
+              <ColorField
+                label="Texto"
+                value={getThemePaint(videoGateTheme, 'textColor', videoGateThemeMode === 'dark' ? '#ffffff' : '#111827')}
+                allowGradient
+                onChange={(value) => patchVideoGateTheme({ textColor: value, textColorCustom: true })}
+                onCommit={onSave}
+              />
+            </div>
+          )}
+
           <div className={styles.settingsGroup}>
             <div className={styles.panelSubheader}>Elementos del formulario</div>
             <p className={styles.muted}>Agrega preguntas, textos o imágenes desde la barra izquierda. Toca un elemento en el video para editarlo aquí.</p>
@@ -34277,32 +34433,7 @@ const VideoFormGateSettingsPanel: React.FC<{
 
           {showDesignControls && (
             <div className={styles.settingsGroup}>
-              <div className={styles.panelSubheader}>Diseño del formulario</div>
-              <div className={styles.twoColumn}>
-                <ColorField
-                  label="Fondo del formulario"
-                  value={getThemePaint(videoGateTheme, 'backgroundColor', userBgColor(videoGateSite) || resolvedPageBg(videoGateSite))}
-                  allowGradient
-                  onChange={(value) => patchVideoGateTheme({ backgroundColor: value })}
-                  onCommit={onSave}
-                />
-                <ColorField
-                  label="Fondo del video"
-                  value={getVideoFormGateVideoBackground(settings)}
-                  allowGradient
-                  onChange={(value) => onPatchSettings({ videoFormGateVideoBackground: value })}
-                  onCommit={onSave}
-                />
-              </div>
-              <div className={styles.twoColumn}>
-                <ColorField
-                  label="Texto"
-                  value={getThemePaint(videoGateTheme, 'textColor', isSiteDark(videoGateSite) ? '#ffffff' : '#111827')}
-                  allowGradient
-                  onChange={(value) => patchVideoGateTheme({ textColor: value, textColorCustom: true })}
-                  onCommit={onSave}
-                />
-              </div>
+              <div className={styles.panelSubheader}>Personalización del formulario</div>
               {hasDesignableFields && (
                 <FormFieldGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
               )}

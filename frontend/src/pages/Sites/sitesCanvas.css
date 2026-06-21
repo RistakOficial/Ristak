@@ -532,8 +532,9 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  grid-template-columns: minmax(108px, 34%) minmax(0, 1fr);
+  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
   gap: 8px;
+  align-items: stretch;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input > input,
 .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input > select {
