@@ -637,7 +637,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )
   )
 
-  const canUsePaymentPlans = highLevelConnected || stripeConnected || mercadoPagoConnected
+  const canUsePaymentPlans = highLevelConnected || stripeConnected
   const canChoosePaymentMode = canUsePaymentPlans && (chargeType === 'direct' || Boolean(selectedProduct && selectedPrice))
   const activePaymentMode: PaymentMode = canChoosePaymentMode ? paymentMode : 'single'
   const subtotalAmount = useMemo(() => (
@@ -700,12 +700,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const stripePlanCanBeAuthorized = stripePlanCardSource === 'saved_card'
     ? Boolean(stripePlanSavedPaymentMethod)
     : firstPaymentCanAuthorizeStripePlan || stripePlanNeedsSetupLink
-  const mercadoPagoPartialMode = activePaymentMode === 'partial' && paymentOption === 'mercadopago'
-  const remainingFrequencyOptions = useMemo(() => (
-    mercadoPagoPartialMode
-      ? REMAINING_FREQUENCY_OPTIONS.filter(option => option.value !== 'custom')
-      : REMAINING_FREQUENCY_OPTIONS
-  ), [mercadoPagoPartialMode])
+  const remainingFrequencyOptions = REMAINING_FREQUENCY_OPTIONS
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
   const isEmbedded = variant === 'embedded'
   const renderPaymentSegmentedTabs = ({
@@ -882,7 +877,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   // En modo local completo (sin pasarela) forzamos pago único manual.
-  // HighLevel, Stripe y Mercado Pago pueden manejar links/planes desde Ristak.
+  // HighLevel y Stripe pueden manejar links/planes desde Ristak.
+  // Mercado Pago maneja links y suscripciones, no parcialidades.
   useEffect(() => {
     if (!highLevelConnected && !stripeConnected && !mercadoPagoConnected) {
       setPaymentMode('single')
@@ -891,10 +887,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }, [highLevelConnected, mercadoPagoConnected, stripeConnected])
 
   useEffect(() => {
-    if (isOpen && (stripeConnected || mercadoPagoConnected) && activePaymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod) {
+    if (isOpen && stripeConnected && activePaymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod) {
       setFirstPaymentMethod('card')
     }
-  }, [isOpen, mercadoPagoConnected, stripeConnected, activePaymentMode, firstPaymentEnabled, firstPaymentMethod])
+  }, [isOpen, stripeConnected, activePaymentMode, firstPaymentEnabled, firstPaymentMethod])
 
   useEffect(() => {
     if (!paymentTaxes.enabled && includeIVA) {
@@ -1125,11 +1121,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       dueDate: getNextDueDate(firstPaymentDate, remainingFrequency, index + 1)
     })))
   }, [activePaymentMode, firstPaymentDate, remainingFrequency])
-
-  useEffect(() => {
-    if (!mercadoPagoPartialMode || remainingFrequency !== 'custom') return
-    setRemainingFrequency('monthly')
-  }, [mercadoPagoPartialMode, remainingFrequency])
 
   useEffect(() => {
     if (activePaymentMode !== 'partial' || !autoDistributeRemaining) return
@@ -1830,7 +1821,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setInvoiceSummary(summary)
 
       if (activePaymentMode === 'partial') {
-        setPaymentOption(stripeConnected ? 'stripe' : mercadoPagoConnected ? 'mercadopago' : 'send')
+        setPaymentOption(stripeConnected ? 'stripe' : 'send')
         setStripePlanCardSource('new_card')
         setStep('options')
         return
@@ -1974,55 +1965,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         onClose()
       } catch (stripePlanError: any) {
         showToast('error', 'No se pudo crear el plan con Stripe', stripePlanError.message || 'Revisa la tarjeta guardada o manda primer pago por link.')
-        setStep('options')
-      } finally {
-        setLoading(false)
-      }
-      return
-    }
-
-    if (paymentOption === 'mercadopago' && activePaymentMode === 'partial') {
-      if (!selectedContact) {
-        showToast('error', 'Selecciona un contacto')
-        setStep('options')
-        setLoading(false)
-        return
-      }
-
-      try {
-        const result = await mercadoPagoPaymentsService.createPaymentPlan(
-          buildStripePaymentPlanPayload(invoicePayload, invoiceSummary)
-        )
-
-        if (result.firstPaymentLink) {
-          showPaymentLinkReady({
-            kind: 'first_payment',
-            title: 'Primer pago Mercado Pago listo',
-            description: 'Comparte este enlace para que el cliente pague por Mercado Pago. Los siguientes links se generarán cuando llegue cada fecha.',
-            paymentUrl: result.firstPaymentLink,
-            amount: firstPaymentAmount,
-            currency: invoiceSummary.currency,
-            contact: selectedContact,
-            paymentId: result.firstPaymentPaymentId
-          })
-          showToast(
-            'success',
-            'Plan de Mercado Pago creado',
-            'El enlace del primer pago está listo para compartir.'
-          )
-          onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
-          return
-        }
-
-        showToast(
-          'success',
-          'Plan de Mercado Pago creado',
-          `${result.scheduledPayments.length} pagos quedaron programados para generar links por fecha.`
-        )
-        onSuccess?.()
-        onClose()
-      } catch (mercadoPagoPlanError: any) {
-        showToast('error', 'No se pudo crear el plan con Mercado Pago', mercadoPagoPlanError.message || 'Revisa la conexión de Mercado Pago.')
         setStep('options')
       } finally {
         setLoading(false)
@@ -3011,9 +2953,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </div>
 
                 <p className={styles.planHint}>
-                  {mercadoPagoPartialMode
-                    ? 'Mercado Pago usa una recurrencia fija; si necesitas fechas salteadas o calendario totalmente personalizado, usa Stripe.'
-                    : remainingFrequency === 'custom'
+                  {remainingFrequency === 'custom'
                     ? `Ajusta ${effectiveRemainingValueType === 'percentage' ? 'el porcentaje' : 'el monto fijo'} y la fecha de cada pago.`
                     : 'Las fechas se calculan automáticamente. Cambia a “Personalizada” para editarlas a mano.'}
                 </p>
@@ -3133,8 +3073,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       : firstPaymentEnabled && firstPaymentMethod === 'card'
                         ? 'Si el primer pago es con tarjeta/link de Stripe, esa tarjeta quedará guardada y activará los cobros futuros.'
                         : `Stripe enviará una liga de domiciliación por ${formatCurrency(cardSetupAmount, currency)}. El plan no se activa hasta que esa tarjeta quede autorizada.`)
-                  : mercadoPagoConnected
-                    ? 'Mercado Pago trabajará con Checkout Pro. Ristak controla las fechas y genera links; Mercado Pago confirma cada pago por webhook.'
                   : (partialNeedsCardAuthorization
                       ? `GoHighLevel validará si existe una tarjeta guardada. Si no existe, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
                       : 'El primer pago con tarjeta autoriza la tarjeta en GoHighLevel. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.')}
@@ -3223,13 +3161,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const stripeAuthorizationLabel = stripePlanCardSource === 'saved_card'
         ? stripeSavedCardLabel
         : stripeNewCardLabel
-      const mercadoPagoPlanLabel = firstPaymentEnabled
-        ? 'Mercado Pago enviará el primer link y Ristak generará los siguientes links cuando toque cada fecha.'
-        : 'Ristak programará links de Mercado Pago para cada fecha del plan.'
       const authorizationLabel = paymentOption === 'stripe'
         ? stripeAuthorizationLabel
-        : paymentOption === 'mercadopago'
-          ? mercadoPagoPlanLabel
         : partialNeedsCardAuthorization
           ? `GoHighLevel usará tarjeta guardada si existe; si no, enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}.`
           : 'El primer pago con tarjeta funcionará como autorización.'
@@ -3259,7 +3192,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               )}
               <div className={styles.summaryRow}>
                 <span>Pagos restantes</span>
-                <span>{resolvedRemainingInstallments.length} {paymentOption === 'mercadopago' ? 'links programados' : 'pagos automáticos'}</span>
+                <span>{resolvedRemainingInstallments.length} pagos programados</span>
               </div>
               <div className={styles.summaryRow}>
                 <span>Autorización</span>
@@ -3327,28 +3260,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       </div>
                     )}
                   </div>
-                )}
-              </button>
-            )}
-
-            {mercadoPagoConnected && (
-              <button
-                type="button"
-                className={`${styles.optionButton} ${paymentOption === 'mercadopago' ? styles.optionButtonActive : ''}`}
-                onClick={() => setPaymentOption('mercadopago')}
-              >
-                <div className={styles.optionInfo}>
-                  <div className={styles.optionIcon}>
-                    <WalletCards size={18} />
-                  </div>
-                  <div>
-                    <p>Usar Mercado Pago</p>
-                    <span>{mercadoPagoPlanLabel}</span>
-                  </div>
-                </div>
-
-                {paymentOption === 'mercadopago' && (
-                  <Check size={18} className={styles.optionCheck} />
                 )}
               </button>
             )}
@@ -3799,8 +3710,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             : stripePlanWillRegisterOfflineFirstPayment
               ? 'Registrar pago y enviar enlace de domiciliación'
               : 'Crear link de domiciliación'
-        : paymentOption === 'mercadopago' && activePaymentMode === 'partial'
-          ? 'Crear plan Mercado Pago'
         : paymentOption === 'stripe'
         ? 'Crear link Stripe'
         : paymentOption === 'mercadopago'

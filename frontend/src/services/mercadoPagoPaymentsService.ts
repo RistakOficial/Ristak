@@ -1,6 +1,5 @@
 import { apiUrl } from './apiBaseUrl'
 import type { PublicPaymentSettings } from './paymentSettingsService'
-import type { StripePaymentPlanPayload } from './stripePaymentsService'
 
 export interface MercadoPagoWebhookEndpoint {
   source: 'render' | 'configured' | 'app_domain' | 'current_request' | string
@@ -95,23 +94,6 @@ export interface PublicMercadoPagoPayment {
     totalAmount: number
   } | null
   settings?: PublicPaymentSettings | null
-}
-
-export interface MercadoPagoPaymentPlanResponse {
-  flowId: string
-  currentState: string
-  paymentMode: 'test' | 'live'
-  firstPaymentLink?: string | null
-  firstPaymentPaymentId?: string | null
-  scheduledPayments: Array<{
-    installmentId: string
-    paymentId: string
-    sequence: number
-    amount: number
-    currency: string
-    dueDate: string
-    status: string
-  }>
 }
 
 export interface MercadoPagoCardPaymentPayload {
@@ -211,16 +193,6 @@ export const mercadoPagoPaymentsService = {
 
   async createPaymentLink(payload: MercadoPagoPaymentLinkPayload): Promise<{ payment: PublicMercadoPagoPayment; paymentUrl: string; publicPaymentId: string; preferenceId: string }> {
     const response = await fetch(apiUrl('/api/mercadopago/payment-links'), {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-    return parseResponse(response)
-  },
-
-  async createPaymentPlan(payload: StripePaymentPlanPayload): Promise<MercadoPagoPaymentPlanResponse> {
-    const response = await fetch(apiUrl('/api/mercadopago/payment-plans'), {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

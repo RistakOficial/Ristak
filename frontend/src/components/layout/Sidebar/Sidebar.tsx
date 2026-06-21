@@ -590,7 +590,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         const mercadoPago = Boolean(status?.mercadopago?.connected)
         const highlevel = Boolean(status?.highlevel?.connected)
         setPaymentCapabilities({
-          paymentPlans: stripe || mercadoPago || highlevel,
+          paymentPlans: stripe || highlevel,
           subscriptions: stripe || mercadoPago
         })
       })

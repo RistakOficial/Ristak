@@ -17,7 +17,6 @@ import {
 } from '../../services/stripePaymentService.js'
 import {
   createMercadoPagoPaymentLink,
-  createMercadoPagoPaymentPlan,
   getMercadoPagoPaymentConfig
 } from '../../services/mercadoPagoPaymentService.js'
 import {
@@ -131,8 +130,8 @@ async function getPaymentBaseUrl() {
 function mapGatewayStatus({ id, connected, mode = null, accountLabel = '', issue = '' }) {
   const capabilities = {
     paymentLinks: id === 'highlevel' || id === 'stripe' || id === 'mercadopago',
-    installmentPlans: id === 'highlevel' || id === 'stripe' || id === 'mercadopago',
-    subscriptions: id === 'stripe',
+    installmentPlans: id === 'highlevel' || id === 'stripe',
+    subscriptions: id === 'stripe' || id === 'mercadopago',
     savedCardCharges: id === 'stripe'
   }
 
@@ -217,7 +216,13 @@ async function selectPaymentGateway(requestedGateway, capability) {
   if (!eligible.length) {
     return {
       ok: false,
-      error: `No hay pasarelas conectadas para ${capabilityLabel}. Conecta Stripe, Mercado Pago o GoHighLevel en Configuración > Pagos.`,
+      error: `No hay pasarelas conectadas para ${capabilityLabel}. Conecta ${
+        capability === 'installmentPlans'
+          ? 'Stripe o GoHighLevel'
+          : capability === 'subscriptions'
+            ? 'Stripe o Mercado Pago'
+            : 'Stripe, Mercado Pago o GoHighLevel'
+      } en Configuración > Pagos.`,
       snapshot
     }
   }
@@ -466,7 +471,7 @@ export const createPaymentLinkTool = tool({
 
 export const createInstallmentPlanTool = tool({
   name: 'create_installment_plan',
-  description: 'Crea un plan de pagos por parcialidades con Stripe, Mercado Pago o GoHighLevel: primer pago opcional + pagos restantes con fechas. La suma del primer pago y los restantes debe ser igual al total. Si hay varias pasarelas conectadas pregunta cuál usar. Confirma el plan completo y pasa confirm=true solo cuando ya aprobó.',
+  description: 'Crea un plan de pagos por parcialidades con Stripe o GoHighLevel: primer pago opcional + pagos restantes con fechas. Mercado Pago no soporta planes de pago en Ristak; úsalo sólo para links o suscripciones. La suma del primer pago y los restantes debe ser igual al total. Si hay varias pasarelas conectadas pregunta cuál usar. Confirma el plan completo y pasa confirm=true solo cuando ya aprobó.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto'),
     totalAmount: z.number().positive().describe('Total a cobrar (debe coincidir con la suma de los pagos)'),
@@ -517,11 +522,6 @@ export const createInstallmentPlanTool = tool({
 
       if (selected.gateway.id === 'stripe') {
         const result = await createStripePaymentPlan(planPayload, { baseUrl: await getPaymentBaseUrl() })
-        return { ok: true, gateway: selected.gateway.id, gatewayLabel: selected.gateway.label, flowId: result?.flowId || null, result }
-      }
-
-      if (selected.gateway.id === 'mercadopago') {
-        const result = await createMercadoPagoPaymentPlan(planPayload, { baseUrl: await getPaymentBaseUrl() })
         return { ok: true, gateway: selected.gateway.id, gatewayLabel: selected.gateway.label, flowId: result?.flowId || null, result }
       }
 
@@ -632,7 +632,7 @@ export const listSubscriptionsTool = tool({
 
 export const createSubscriptionTool = tool({
   name: 'create_subscription',
-  description: 'Crea una suscripción recurrente. En Ristak las suscripciones automáticas por pasarela usan Stripe con tarjeta guardada; si no hay tarjeta guardada, usa list_saved_payment_methods o pide conectar/guardar tarjeta. Confirma todo antes de llamar.',
+  description: 'Crea una suscripción recurrente. En Ristak las suscripciones automáticas por pasarela usan Stripe con tarjeta guardada o Mercado Pago con autorización/preapproval. Para Stripe, si no hay tarjeta guardada, usa list_saved_payment_methods o pide conectar/guardar tarjeta. Confirma todo antes de llamar.',
   parameters: z.object({
     contactId: z.string().describe('ID del contacto'),
     name: z.string().describe('Nombre de la suscripción'),
@@ -641,8 +641,8 @@ export const createSubscriptionTool = tool({
     intervalType: z.enum(['daily', 'weekly', 'monthly', 'yearly']).describe('Frecuencia de cobro'),
     intervalCount: z.number().int().min(1).max(24).nullable().describe('Cada cuántos intervalos se cobra (default 1)'),
     startDate: z.string().nullable().describe('Fecha de inicio ISO 8601 o YYYY-MM-DD (opcional)'),
-    paymentMethodId: z.string().nullable().describe('ID de tarjeta guardada de Stripe; si falta, se usará la tarjeta default si existe'),
-    gateway: z.enum(['auto', 'stripe']).nullable().describe('Pasarela para la suscripción. Actualmente las suscripciones automáticas usan Stripe.'),
+    paymentMethodId: z.string().nullable().describe('ID de tarjeta guardada de Stripe; para Mercado Pago puede ir null porque se genera autorización de suscripción.'),
+    gateway: z.enum(['auto', 'stripe', 'mercadopago']).nullable().describe('Pasarela para la suscripción: auto, stripe o mercadopago.'),
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente la suscripción')
   }),
   execute: async ({ contactId, name, description, amount, intervalType, intervalCount, startDate, paymentMethodId, gateway, confirm }) => {
@@ -662,10 +662,10 @@ export const createSubscriptionTool = tool({
         intervalType,
         intervalCount: intervalCount || 1,
         startDate: startDate || undefined,
-        paymentProvider: 'stripe',
-        paymentMethod: 'stripe_saved_card',
-        paymentMethodId: paymentMethodId || undefined,
-        stripePaymentMethodId: paymentMethodId || undefined,
+        paymentProvider: selected.gateway.id,
+        paymentMethod: selected.gateway.id === 'mercadopago' ? 'mercadopago_subscription' : 'stripe_saved_card',
+        paymentMethodId: selected.gateway.id === 'stripe' ? paymentMethodId || undefined : undefined,
+        stripePaymentMethodId: selected.gateway.id === 'stripe' ? paymentMethodId || undefined : undefined,
         source: 'ai_agent'
       })
       return {

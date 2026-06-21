@@ -603,7 +603,8 @@ export const Transactions: React.FC = () => {
   const [transactionDeleteConfirmation, setTransactionDeleteConfirmation] = useState('')
   const [deletingTransactions, setDeletingTransactions] = useState(false)
 
-  // Los planes de pago pueden programarse con Stripe, Mercado Pago o HighLevel.
+  // Los planes de pago pueden programarse con Stripe o HighLevel.
+  // Mercado Pago queda disponible para links y suscripciones, no parcialidades.
   // La lista histórica sigue leyendo schedules de HighLevel cuando está conectado.
   const { connected: highLevelConnected, loading: highLevelLoading } = useHighLevelConnected()
   const [stripeConnected, setStripeConnected] = useState(false)
@@ -720,7 +721,7 @@ export const Transactions: React.FC = () => {
     if (paymentTableTab !== 'payment-plans') return
 
     fetchPaymentPlans()
-  }, [highLevelConnected, mercadoPagoConnected, paymentTableTab, stripeConnected])
+  }, [highLevelConnected, paymentTableTab, stripeConnected])
 
   useEffect(() => {
     setPaymentTableTab(current => current === routeState.tab ? current : routeState.tab)
@@ -796,8 +797,8 @@ export const Transactions: React.FC = () => {
     setSyncing(true)
     try {
       if (paymentTableTab === 'payment-plans') {
-        if (!stripeConnected && !mercadoPagoConnected && !highLevelConnected && paymentPlans.length === 0) {
-          showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Mercado Pago o HighLevel para consultar y programar planes de pago.')
+        if (!stripeConnected && !highLevelConnected && paymentPlans.length === 0) {
+          showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o HighLevel para consultar y programar planes de pago.')
           return
         }
         showToast('info', 'Actualizando planes de pago', 'Consultando planes guardados en Ristak y tus pasarelas conectadas...')
@@ -865,7 +866,7 @@ export const Transactions: React.FC = () => {
   }
 
   const openPaymentPlanCreateModal = () => {
-    if (stripeConnected || mercadoPagoConnected) {
+    if (stripeConnected) {
       setPaymentTableTab('payment-plans')
       setRecordPaymentInitialMode('partial')
       setShowRecordPaymentModal(true)
@@ -874,7 +875,7 @@ export const Transactions: React.FC = () => {
     }
 
     if (!highLevelConnected) {
-      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Mercado Pago o HighLevel para programar planes de pago.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o HighLevel para programar planes de pago.')
       return
     }
 
@@ -1390,17 +1391,17 @@ export const Transactions: React.FC = () => {
   }, [routeState.createTransaction])
 
   useEffect(() => {
-    const paymentPlanLinkFlowOpen = routeState.createPaymentPlan && (stripeConnected || mercadoPagoConnected)
+    const paymentPlanLinkFlowOpen = routeState.createPaymentPlan && stripeConnected
     if (!routeState.createTransaction && !paymentPlanLinkFlowOpen && showRecordPaymentModal) {
       setShowRecordPaymentModal(false)
     }
-  }, [mercadoPagoConnected, routeState.createPaymentPlan, routeState.createTransaction, showRecordPaymentModal, stripeConnected])
+  }, [routeState.createPaymentPlan, routeState.createTransaction, showRecordPaymentModal, stripeConnected])
 
   useEffect(() => {
     if (!routeState.createPaymentPlan) return
     setPaymentTableTab('payment-plans')
 
-    if (stripeConnected || mercadoPagoConnected) {
+    if (stripeConnected) {
       setRecordPaymentInitialMode('partial')
       setShowRecordPaymentModal(true)
       return
@@ -1409,7 +1410,7 @@ export const Transactions: React.FC = () => {
     if (stripeStatusLoading || highLevelLoading) return
 
     if (!highLevelConnected) {
-      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Mercado Pago o HighLevel para programar planes de pago.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o HighLevel para programar planes de pago.')
       navigateTransactionsPath(buildPaymentPlansPath(), { replace: true })
       return
     }
@@ -1423,7 +1424,7 @@ export const Transactions: React.FC = () => {
       endType: 'never',
       monthlyMode: 'dayOfMonth'
     })
-  }, [highLevelConnected, highLevelLoading, mercadoPagoConnected, navigateTransactionsPath, routeState.createPaymentPlan, showToast, stripeConnected, stripeStatusLoading])
+  }, [highLevelConnected, highLevelLoading, navigateTransactionsPath, routeState.createPaymentPlan, showToast, stripeConnected, stripeStatusLoading])
 
   useEffect(() => {
     if (!routeState.createPaymentPlan && paymentPlanCreateModal.open) {
@@ -2527,7 +2528,7 @@ export const Transactions: React.FC = () => {
   const selectedPaymentPlanRemainingTotal = selectedPaymentPlanIsLocalCheckout
     ? stripePlanInstallmentsTotal
     : Number(paymentPlanModal.plan?.total || 0)
-  const canProgramPaymentPlan = stripeConnected || mercadoPagoConnected || highLevelConnected
+  const canProgramPaymentPlan = stripeConnected || highLevelConnected
   const paymentPlanConnectionLoading = stripeStatusLoading || highLevelLoading
   const paymentsRefreshBusy = syncing || paymentPlansLoading
   const paymentsRefreshLabel = isPaymentPlansPage ? 'Actualizar planes de pago' : 'Actualizar transacciones'
@@ -2616,7 +2617,7 @@ export const Transactions: React.FC = () => {
                 variant="secondary"
                 onClick={openPaymentPlanCreateModal}
                 disabled={paymentPlanConnectionLoading || !canProgramPaymentPlan}
-                title={!canProgramPaymentPlan ? 'Conecta Stripe, Mercado Pago o HighLevel para programar planes' : undefined}
+                title={!canProgramPaymentPlan ? 'Conecta Stripe o HighLevel para programar planes' : undefined}
               >
                 <Plus size={16} />
                 Programar plan
@@ -2733,7 +2734,7 @@ export const Transactions: React.FC = () => {
             data={filteredPaymentPlans}
             keyExtractor={(item) => item.id}
             onRowClick={handleOpenPaymentPlan}
-            emptyMessage={canProgramPaymentPlan ? 'No hay planes de pago' : 'Conecta Stripe, Mercado Pago o HighLevel para ver y programar planes de pago'}
+            emptyMessage={canProgramPaymentPlan ? 'No hay planes de pago' : 'Conecta Stripe o HighLevel para ver y programar planes de pago'}
             loading={paymentPlansLoading}
             searchable={true}
             searchPlaceholder="Buscar planes de pago..."

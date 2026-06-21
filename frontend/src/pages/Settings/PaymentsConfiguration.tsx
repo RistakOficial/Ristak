@@ -510,8 +510,8 @@ export const PaymentsConfiguration: React.FC = () => {
       id: 'mercadopago',
       name: 'Mercado Pago',
       description: mercadoPagoConfig?.configured
-        ? `Cobra con Checkout Pro (${mercadoPagoConfig.mode === 'live' ? 'en vivo' : 'prueba'}).`
-        : 'Conecta Mercado Pago para links de cobro y parcialidades controladas por Ristak.',
+        ? `Cobra links y suscripciones con Checkout Pro (${mercadoPagoConfig.mode === 'live' ? 'en vivo' : 'prueba'}).`
+        : 'Conecta Mercado Pago para links de cobro y suscripciones.',
       status: mercadoPagoConfig?.configured ? 'connected' : 'available'
     },
     {
@@ -2039,7 +2039,7 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.sectionHeader}>
             <div>
               <h2>Pasarela de pagos</h2>
-              <p>Elige con qué proveedor se cobran links, tarjetas y parcialidades.</p>
+              <p>Elige con qué proveedor se cobran links, tarjetas, parcialidades y suscripciones.</p>
             </div>
             <Badge variant={stripeConnected || mercadoPagoConnected || highLevelConnected ? 'success' : 'warning'}>
               {stripeConnected || mercadoPagoConnected || highLevelConnected ? <CheckCircle size={14} /> : <KeyRound size={14} />}
@@ -2317,7 +2317,7 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.sectionHeader}>
             <div>
               <h2>Mercado Pago</h2>
-              <p>Conecta Mercado Pago para crear links de Checkout Pro y controlar parcialidades desde Ristak.</p>
+              <p>Conecta Mercado Pago para crear links de Checkout Pro y suscripciones desde Ristak.</p>
             </div>
             {loadingMercadoPagoConfig ? (
               <Badge variant="warning">

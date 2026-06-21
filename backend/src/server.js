@@ -17,7 +17,6 @@ import { startAppointmentRemindersCron } from './jobs/appointmentReminders.cron.
 import { startWhatsAppQrWatchdogCron } from './jobs/whatsappQrWatchdog.cron.js'
 import { startStripePaymentPlansCron } from './jobs/stripePaymentPlans.cron.js'
 import { startPaymentAutomationsCron } from './jobs/paymentAutomations.cron.js'
-import { startMercadoPagoPaymentPlansCron } from './jobs/mercadoPagoPaymentPlans.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
@@ -287,7 +286,6 @@ async function startRuntimeServices() {
   startWhatsAppQrWatchdogCron()    // Reabre sesiones de WhatsApp Web al arrancar y las mantiene vivas
   startStripePaymentPlansCron()    // Cobra parcialidades Stripe vencidas con tarjetas guardadas
   startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
-  startMercadoPagoPaymentPlansCron() // Genera links Mercado Pago para parcialidades vencidas
   startupState.ready = true
   logger.success('App lista para recibir tráfico')
 }
