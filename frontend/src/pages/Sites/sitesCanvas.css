@@ -1829,6 +1829,9 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
     opacity .16s ease,
     box-shadow .16s ease;
 }
+.rstkCanvas .rstkCalendarBlock.rstkSel {
+  will-change: auto;
+}
 .rstkCanvas .rstkSelActive {
   z-index: 40;
 }

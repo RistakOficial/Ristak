@@ -4005,7 +4005,11 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
     style['--rstk-media-margin-right'] = margins.right
   }
   if (settings.mediaRadius !== undefined) style['--rstk-media-radius'] = `${getSettingNumber(settings, 'mediaRadius', 18, 0, 48)}px`
-  if (settings.embedHeight !== undefined) style['--rstk-embed-height'] = `${getSettingNumber(settings, 'embedHeight', EMBED_DEFAULT_HEIGHT, EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)}px`
+  if (settings.embedHeight !== undefined) {
+    const embedHeight = getSettingNumber(settings, 'embedHeight', isCalendarEmbed ? CALENDAR_EMBED_DEFAULT_HEIGHT : EMBED_DEFAULT_HEIGHT, EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)
+    const minHeight = isCalendarEmbed ? getCalendarEmbedLayoutMinHeight(settings) : EMBED_MIN_HEIGHT
+    style['--rstk-embed-height'] = `${Math.max(embedHeight, minHeight)}px`
+  }
   if (isCalendarEmbed && settings.calendarFrameBorderWidth !== undefined) {
     style['--rstk-calendar-frame-border-width'] = `${getSettingNumber(settings, 'calendarFrameBorderWidth', 0, 0, 8)}px`
   }
@@ -5110,20 +5114,32 @@ const calendarEmbedDesignModeOptions = [
 ] as const
 
 const calendarEmbedLayoutOptions = [
-  { value: 'classic', label: 'Clásico' },
-  { value: 'compact', label: 'Compacto' },
-  { value: 'stacked', label: 'Vertical' }
+  { value: 'classic', label: 'Clásico', description: 'Info, calendario y horarios en columnas.' },
+  { value: 'compact', label: 'Compacto', description: 'Info arriba; fecha y horarios juntos.' },
+  { value: 'stacked', label: 'Vertical', description: 'Todo fluye hacia abajo sin columnas.' }
 ] as const
+
+type CalendarEmbedLayout = typeof calendarEmbedLayoutOptions[number]['value']
+
+const calendarEmbedLayoutRecommendedHeights: Record<CalendarEmbedLayout, number> = {
+  classic: CALENDAR_EMBED_DEFAULT_HEIGHT,
+  compact: 720,
+  stacked: 980
+}
 
 const getCalendarEmbedDesignMode = (settings: Record<string, unknown>) => (
   getSettingString(settings, 'calendarDesignMode') === 'original' ? 'original' : 'custom'
 )
 
-const getCalendarEmbedLayout = (settings: Record<string, unknown>) => {
+const getCalendarEmbedLayout = (settings: Record<string, unknown>): CalendarEmbedLayout => {
   const value = getSettingString(settings, 'calendarLayout')
   if (value === 'compact' || value === 'stacked') return value
   return 'classic'
 }
+
+const getCalendarEmbedLayoutMinHeight = (settings: Record<string, unknown>) => (
+  calendarEmbedLayoutRecommendedHeights[getCalendarEmbedLayout(settings)]
+)
 
 const getCalendarEmbedStyleParams = (settings: Record<string, unknown>) => {
   const params: Record<string, string> = {}
@@ -28785,6 +28801,16 @@ const CalendarBlockDesignControls: React.FC<{
   const defaultLine = isSiteDark(site) ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
   const designMode = getCalendarEmbedDesignMode(settings)
   const customDesign = designMode === 'custom'
+  const currentLayout = getCalendarEmbedLayout(settings)
+  const currentHeight = getSettingNumber(settings, 'embedHeight', CALENDAR_EMBED_DEFAULT_HEIGHT, EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)
+  const handleLayoutChange = (layout: CalendarEmbedLayout) => {
+    const recommendedHeight = calendarEmbedLayoutRecommendedHeights[layout]
+    onPatchSettings({
+      calendarLayout: layout,
+      ...(currentHeight < recommendedHeight ? { embedHeight: recommendedHeight } : {})
+    })
+    window.setTimeout(onSave, 0)
+  }
 
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
@@ -28827,18 +28853,34 @@ const CalendarBlockDesignControls: React.FC<{
           onCommit={onSave}
         />
       </div>
-      <label className={styles.field}>
+      <div className={styles.calendarLayoutField}>
         <span>Layout</span>
-        <CustomSelect
-          value={getCalendarEmbedLayout(settings)}
-          onChange={(event) => onPatchSettings({ calendarLayout: event.target.value })}
-          onBlur={onSave}
-        >
-          {calendarEmbedLayoutOptions.map(option => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </CustomSelect>
-      </label>
+        <div className={styles.calendarLayoutChoices} role="radiogroup" aria-label="Layout del calendario">
+          {calendarEmbedLayoutOptions.map(option => {
+            const active = option.value === currentLayout
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className={`${styles.calendarLayoutChoice} ${active ? styles.calendarLayoutChoiceActive : ''}`}
+                aria-pressed={active}
+                onClick={() => handleLayoutChange(option.value)}
+              >
+                <span className={`${styles.calendarLayoutPreview} ${styles[`calendarLayoutPreview_${option.value}`]}`} aria-hidden="true">
+                  <span className={styles.calendarLayoutIntro} />
+                  <span className={styles.calendarLayoutMonth} />
+                  <span className={styles.calendarLayoutSlots} />
+                </span>
+                <span className={styles.calendarLayoutChoiceCopy}>
+                  <strong>{option.label}</strong>
+                  <small>{option.description}</small>
+                </span>
+                {active && <Check size={14} className={styles.calendarLayoutCheck} aria-hidden="true" />}
+              </button>
+            )
+          })}
+        </div>
+      </div>
       <MediaUploadControl
         kind="image"
         label="Imagen de perfil"

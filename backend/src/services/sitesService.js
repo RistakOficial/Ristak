@@ -13417,6 +13417,7 @@ const EMBED_SANDBOX_URL = 'allow-scripts allow-same-origin allow-forms allow-pop
 const EMBED_SANDBOX_HTML = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox'
 const EMBED_MIN_HEIGHT = 180
 const EMBED_MAX_HEIGHT = 5000
+const CALENDAR_EMBED_DEFAULT_HEIGHT = 760
 
 function decodeHtmlAttribute(value) {
   return cleanString(value)
@@ -15529,6 +15530,16 @@ const calendarEmbedNumberQuerySettings = [
 ]
 
 const calendarEmbedLayouts = new Set(['classic', 'compact', 'stacked'])
+const calendarEmbedLayoutRecommendedHeights = {
+  classic: CALENDAR_EMBED_DEFAULT_HEIGHT,
+  compact: 720,
+  stacked: 980
+}
+
+function getCalendarEmbedLayoutValue(settings = {}) {
+  const layout = cleanString(settings.calendarLayout || settings.calendar_layout).toLowerCase()
+  return calendarEmbedLayouts.has(layout) ? layout : 'classic'
+}
 
 function appendCalendarEmbedParams(value, settings = {}, options = {}) {
   const raw = cleanString(value)
@@ -15538,14 +15549,14 @@ function appendCalendarEmbedParams(value, settings = {}, options = {}) {
     const absolute = /^https?:\/\//i.test(raw)
     const parsed = new URL(raw, 'https://rstk.local')
     const designMode = cleanString(settings.calendarDesignMode || settings.calendar_design_mode).toLowerCase() === 'original' ? 'original' : 'custom'
-    const layout = cleanString(settings.calendarLayout || settings.calendar_layout).toLowerCase()
+    const layout = getCalendarEmbedLayoutValue(settings)
     const coverImage = cleanString(settings.calendarCoverImage || settings.calendar_cover_image)
 
     parsed.searchParams.set('test', '1')
     parsed.searchParams.set('embed', '1')
     parsed.searchParams.set('designMode', designMode)
     if (options.preview) parsed.searchParams.set('editor_preview', '1')
-    if (calendarEmbedLayouts.has(layout)) parsed.searchParams.set('layout', layout)
+    parsed.searchParams.set('layout', layout)
     if (coverImage) parsed.searchParams.set('coverImage', coverImage)
 
     if (designMode === 'custom') {
@@ -15891,7 +15902,12 @@ function renderBlockStyleVars(block) {
     vars.push(`--rstk-media-margin-right:${margins.right}`)
   }
   if (mediaRadius !== null) vars.push(`--rstk-media-radius:${mediaRadius}px`)
-  if (embedHeight !== null) vars.push(`--rstk-embed-height:${embedHeight}px`)
+  if (embedHeight !== null) {
+    const minEmbedHeight = isCalendarEmbed
+      ? calendarEmbedLayoutRecommendedHeights[getCalendarEmbedLayoutValue(settings)]
+      : EMBED_MIN_HEIGHT
+    vars.push(`--rstk-embed-height:${Math.max(embedHeight, minEmbedHeight)}px`)
+  }
   if (isCalendarEmbed) {
     const calendarFrameBorderWidth = blockSettingNumber(settings, 'calendarFrameBorderWidth', 0, 8)
     const calendarFrameBorder = blockSettingColor(settings, 'calendarFrameBorderColor')

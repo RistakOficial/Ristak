@@ -1320,14 +1320,21 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .page{min-height:100vh;width:min(1180px,calc(100% - 32px));margin:0 auto;padding:clamp(24px,4vw,54px) 0;display:grid;place-items:center}
     body.rstk-calendar-embedded .page{width:100%;padding:0;place-items:stretch}
     .shell{width:100%;min-height:min(760px,calc(100vh - 80px));display:grid;grid-template-columns:340px minmax(390px,1fr) minmax(260px,300px);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 32px 90px -60px rgba(15,23,42,.45);overflow:hidden}
-    body.rstk-calendar-embedded .shell{min-height:100vh;border:0;border-radius:0;box-shadow:none}
-    .shell.layout-compact{grid-template-columns:minmax(390px,1fr) minmax(260px,320px)}
+    body.rstk-calendar-embedded .shell{min-height:100vh;min-width:0;border:0;border-radius:0;box-shadow:none}
+    body.rstk-calendar-embedded.rstk-calendar-layout-stacked .page{place-items:start center}
+    .shell.layout-compact{grid-template-columns:minmax(0,1fr) minmax(240px,320px)}
     .shell.layout-compact .intro{grid-column:1/-1;grid-template-columns:auto minmax(0,1fr);align-items:center;border-right:0;border-bottom:1px solid var(--line);padding:26px 30px}
     .shell.layout-compact .avatar{width:78px;height:78px;font-size:2.2rem}
-    .shell.layout-stacked{max-width:760px;margin:0 auto;grid-template-columns:1fr}
-    body.rstk-calendar-embedded .shell.layout-stacked{max-width:none}
+    .shell.layout-compact .calendarPane,.shell.layout-compact .timesPane{min-width:0}
+    .shell.layout-stacked{width:100%;max-width:760px;margin:0 auto;grid-template-columns:minmax(0,1fr);min-height:0}
+    body.rstk-calendar-embedded .shell.layout-stacked{max-width:min(760px,100%);min-height:0}
+    .shell.layout-stacked .intro{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:16px;padding:24px 28px}
+    .shell.layout-stacked .avatar{width:78px;height:78px;font-size:2.2rem}
     .shell.layout-stacked .intro,.shell.layout-stacked .calendarPane,.shell.layout-stacked .timesPane{border-right:0;border-left:0}
     .shell.layout-stacked .calendarPane,.shell.layout-stacked .timesPane{border-top:1px solid var(--line)}
+    .shell.layout-stacked .calendarPane,.shell.layout-stacked .timesPane{padding:26px 28px}
+    .shell.layout-stacked .timesPane{grid-template-rows:auto auto}
+    .shell.layout-stacked .slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}
     .shell.bookingActive{grid-template-columns:340px minmax(320px,520px);justify-content:center}
     .shell.layout-compact.bookingActive{grid-template-columns:minmax(320px,520px)}
     .shell.layout-stacked.bookingActive{grid-template-columns:1fr}
@@ -1405,7 +1412,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell,.shell.bookingActive{grid-template-columns:1fr;min-height:0;border-radius:14px}.shell.bookingActive .timesPane{grid-column:auto}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
   </style>
 </head>
-<body class="${[embedded ? 'rstk-calendar-embedded' : '', preview ? 'rstk-calendar-preview' : ''].filter(Boolean).join(' ')}">
+<body class="${[embedded ? 'rstk-calendar-embedded' : '', preview ? 'rstk-calendar-preview' : '', `rstk-calendar-layout-${layout}`].filter(Boolean).join(' ')}">
   <main class="page">
     <div class="shell layout-${escapeHtml(layout)}">
       <section class="intro">

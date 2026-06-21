@@ -52,7 +52,8 @@ test('site calendar preview is interactive but flagged as non-booking preview', 
     calendarLayout: 'stacked',
     calendarCoverImage: '/media/calendar-cover.png',
     calendarAccentColor: '#ff0055',
-    calendarSlotRadius: 18
+    calendarSlotRadius: 18,
+    embedHeight: 760
   }), {
     pageId: 'page-1',
     trackingEnabled: false,
@@ -70,6 +71,7 @@ test('site calendar preview is interactive but flagged as non-booking preview', 
   assert.equal(url.searchParams.get('coverImage'), '/media/calendar-cover.png')
   assert.equal(url.searchParams.get('accent'), null)
   assert.equal(url.searchParams.get('slotRadius'), null)
+  assert.match(html, /--rstk-embed-height:980px/)
 })
 
 test('site calendar custom mode passes editable style params for live embeds', async () => {
