@@ -7,13 +7,13 @@ import { NumberInput } from '../NumberInput'
 import { PhoneDateField } from '@/components/phone/PhoneDateField'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneSegmentedTabs } from '@/components/phone/ui'
+import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '@/components/common/PaymentPlatformLogo'
 import {
   Search,
   Loader2,
   X,
   ChevronLeft,
   ChevronRight,
-  CreditCard,
   DollarSign,
   Link as LinkIcon,
   Check,
@@ -27,8 +27,7 @@ import {
   Copy,
   ExternalLink,
   Mail,
-  MessageCircle,
-  WalletCards
+  MessageCircle
 } from 'lucide-react'
 import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -359,6 +358,7 @@ interface CreatedPaymentLink {
   kind: CreatedPaymentLinkKind
   title: string
   description: string
+  provider?: PaymentPlatformLogoId
   paymentUrl: string
   amount: number
   currency: string
@@ -1697,6 +1697,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         kind: 'card_setup',
         title: 'Enlace de domiciliación listo',
         description: 'Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.',
+        provider: 'stripe',
         paymentUrl: data.cardSetupPaymentLink,
         amount: cardSetupAmount,
         currency: summary.currency,
@@ -1713,6 +1714,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         kind: 'first_payment',
         title: 'Primer pago listo',
         description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.',
+        provider: 'stripe',
         paymentUrl: data.firstPaymentLink,
         amount: firstPaymentAmount,
         currency: summary.currency,
@@ -2099,6 +2101,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             kind: 'card_setup',
             title: 'Enlace de domiciliación listo',
             description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.`,
+            provider: 'stripe',
             paymentUrl: result.cardSetupLink,
             amount: setupAmount,
             currency: invoiceSummary.currency,
@@ -2117,6 +2120,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             kind: 'first_payment',
             title: 'Primer pago listo',
             description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.',
+            provider: 'stripe',
             paymentUrl: result.firstPaymentLink,
             amount: firstPaymentAmount,
             currency: invoiceSummary.currency,
@@ -2178,6 +2182,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace de pago listo',
           description: 'Comparte este enlace para que el cliente pague con tarjeta desde la página pública segura.',
+          provider: 'stripe',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
           currency: invoiceSummary.currency,
@@ -2229,6 +2234,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace Conekta listo',
           description: 'Comparte este enlace para que el cliente pague con tarjeta en el tokenizador seguro de Conekta.',
+          provider: 'conekta',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
           currency: invoiceSummary.currency,
@@ -2280,6 +2286,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace Mercado Pago listo',
           description: 'Comparte este enlace para que el cliente pague con Mercado Pago. Ristak actualizará el estado por webhook.',
+          provider: 'mercadopago',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
           currency: invoiceSummary.currency,
@@ -3441,7 +3448,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               >
                 <div className={styles.optionInfo}>
                   <div className={styles.optionIcon}>
-                    <CreditCard size={18} />
+                    <PaymentPlatformLogo platform="stripe" size="md" decorative />
                   </div>
                   <div>
                     <p>Enviar link para nueva tarjeta</p>
@@ -3466,7 +3473,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               >
                 <div className={styles.optionInfo}>
                   <div className={styles.optionIcon}>
-                    <ShieldCheck size={18} />
+                    <PaymentPlatformLogo platform="stripe" size="md" decorative />
                   </div>
                   <div>
                     <p>Usar tarjeta guardada</p>
@@ -3602,7 +3609,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 >
                   <div className={styles.optionInfo}>
                     <div className={styles.optionIcon}>
-                      <CreditCard size={18} />
+                      <PaymentPlatformLogo platform="stripe" size="md" decorative />
                     </div>
                     <div>
                       <p>Stripe</p>
@@ -3621,7 +3628,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 >
                   <div className={styles.optionInfo}>
                     <div className={styles.optionIcon}>
-                      <CreditCard size={18} />
+                      <PaymentPlatformLogo platform="conekta" size="md" decorative />
                     </div>
                     <div>
                       <p>Conekta</p>
@@ -3640,7 +3647,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 >
                   <div className={styles.optionInfo}>
                     <div className={styles.optionIcon}>
-                      <WalletCards size={18} />
+                      <PaymentPlatformLogo platform="mercadopago" size="md" decorative />
                     </div>
                     <div>
                       <p>Mercado Pago</p>
@@ -3707,7 +3714,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 >
                   <div className={styles.optionInfo}>
                     <div className={styles.optionIcon}>
-                      <ShieldCheck size={18} />
+                      <PaymentPlatformLogo platform="stripe" size="md" decorative />
                     </div>
                     <div>
                       <p>Cobrar tarjeta guardada</p>
@@ -3743,7 +3750,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 >
                   <div className={styles.optionInfo}>
                     <div className={styles.optionIcon}>
-                      <ShieldCheck size={18} />
+                      <PaymentPlatformLogo platform="conekta" size="md" decorative />
                     </div>
                     <div>
                       <p>Cobrar tarjeta guardada Conekta</p>
@@ -3913,7 +3920,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       <div className={styles.paymentLinkReady}>
         <div className={styles.paymentLinkReadyHeader}>
           <div className={styles.paymentLinkReadyIcon}>
-            <LinkIcon size={20} aria-hidden="true" />
+            {createdPaymentLink.provider ? (
+              <PaymentPlatformLogo platform={createdPaymentLink.provider} size="md" decorative />
+            ) : (
+              <LinkIcon size={20} aria-hidden="true" />
+            )}
           </div>
           <div className={styles.paymentLinkReadyTitle}>
             <p>{createdPaymentLink.title}</p>

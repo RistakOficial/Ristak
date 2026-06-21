@@ -54,6 +54,23 @@
   min-width: 0;
 }
 
+.methodMain,
+.providerHint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.methodMain {
+  align-items: center;
+  max-width: 100%;
+}
+
+.providerHint {
+  padding: 10px 0 0;
+}
+
 .identityCell strong,
 .methodStack strong {
   max-width: 100%;
@@ -148,6 +165,7 @@
 }
 
 .formHint {
+  margin: 0;
   color: var(--text-mute);
   font-size: 12px;
   line-height: 1.4;

@@ -30,6 +30,8 @@ import {
   NumberInput,
   PageContainer,
   PageHeader,
+  PaymentPlatformLogo,
+  type PaymentPlatformLogoId,
   SegmentTabs,
   Switch
 } from '@/components/common'
@@ -99,6 +101,7 @@ interface PaymentGatewayOption {
   name: string
   description: string
   status: 'connected' | 'available'
+  logo?: PaymentPlatformLogoId
 }
 
 const gatewayStatusCopy: Record<PaymentGatewayOption['status'], { label: string; variant: 'success' | 'neutral' }> = {
@@ -512,6 +515,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const stripeGatewayOption: PaymentGatewayOption = useMemo(() => ({
     id: 'stripe',
     name: 'Stripe',
+    logo: 'stripe',
     description: stripeConfig?.configured
       ? `Configurado manualmente con tu cuenta de Stripe en modo ${stripeConfig.mode === 'live' ? 'en vivo' : 'prueba'}.`
       : 'Configura Stripe con las llaves de tu propia cuenta.',
@@ -521,6 +525,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const conektaGatewayOption: PaymentGatewayOption = useMemo(() => ({
     id: 'conekta',
     name: 'Conekta',
+    logo: 'conekta',
     description: conektaConfig?.configured
       ? `Configurado con tu cuenta de Conekta en modo ${conektaConfig.mode === 'live' ? 'en vivo' : 'prueba'}.`
       : 'Configura Conekta para links de pago y cobros con tarjetas guardadas.',
@@ -541,6 +546,7 @@ export const PaymentsConfiguration: React.FC = () => {
     {
       id: 'mercadopago',
       name: 'Mercado Pago',
+      logo: 'mercadopago',
       description: mercadoPagoConfig?.configured
         ? `Cobra links y suscripciones con Checkout Pro (${mercadoPagoConfig.mode === 'live' ? 'en vivo' : 'prueba'}).`
         : 'Conecta Mercado Pago para links de cobro y suscripciones.',
@@ -1755,7 +1761,10 @@ export const PaymentsConfiguration: React.FC = () => {
                 </div>
                 <div>
                   <span>Pasarela</span>
-                  <strong>Stripe</strong>
+                  <strong className={styles.platformValue}>
+                    <PaymentPlatformLogo platform="stripe" size="sm" decorative />
+                    <span>Stripe</span>
+                  </strong>
                 </div>
                 <div>
                   <span>Moneda</span>
@@ -2165,12 +2174,17 @@ export const PaymentsConfiguration: React.FC = () => {
 
               return (
                 <Card key={gateway.id} className={styles.gatewayItem} padding="md">
-                  <div className={styles.gatewayItemCopy}>
-                    <div className={styles.gatewayItemTitleRow}>
-                      <strong>{gateway.name}</strong>
-                      <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
+                  <div className={styles.gatewayItemIdentity}>
+                    {gateway.logo && (
+                      <PaymentPlatformLogo platform={gateway.logo} size="lg" decorative />
+                    )}
+                    <div className={styles.gatewayItemCopy}>
+                      <div className={styles.gatewayItemTitleRow}>
+                        <strong>{gateway.name}</strong>
+                        <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
+                      </div>
+                      <p>{gateway.description}</p>
                     </div>
-                    <p>{gateway.description}</p>
                   </div>
                   <div className={styles.gatewayItemActions}>
                     <Button type="button" variant="primary" size="sm" onClick={() => handleSelectGateway(gateway)}>
@@ -2275,9 +2289,12 @@ export const PaymentsConfiguration: React.FC = () => {
       {activeGatewayRoute === 'stripe' && (
         <Card className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
-            <div>
-              <h2>Configuración manual de Stripe</h2>
-              <p>Pega las llaves de prueba y en vivo de tu propia cuenta de Stripe. Ristak las guarda en backend y las usa para crear cobros, links, planes y suscripciones.</p>
+            <div className={styles.gatewaySectionTitle}>
+              <PaymentPlatformLogo platform="stripe" size="lg" decorative />
+              <div>
+                <h2>Configuración manual de Stripe</h2>
+                <p>Pega las llaves de prueba y en vivo de tu propia cuenta de Stripe. Ristak las guarda en backend y las usa para crear cobros, links, planes y suscripciones.</p>
+              </div>
             </div>
             <Badge variant={stripeStatusBadge.variant}>
               {stripeStatusBadge.icon}
@@ -2415,9 +2432,12 @@ export const PaymentsConfiguration: React.FC = () => {
       {activeGatewayRoute === 'conekta' && (
         <Card className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
-            <div>
-              <h2>Configuración manual de Conekta</h2>
-              <p>Pega las llaves pública y privada de Conekta. Ristak usa la pública para tokenizar tarjetas y la privada para crear órdenes y cargos con tarjetas guardadas.</p>
+            <div className={styles.gatewaySectionTitle}>
+              <PaymentPlatformLogo platform="conekta" size="lg" decorative />
+              <div>
+                <h2>Configuración manual de Conekta</h2>
+                <p>Pega las llaves pública y privada de Conekta. Ristak usa la pública para tokenizar tarjetas y la privada para crear órdenes y cargos con tarjetas guardadas.</p>
+              </div>
             </div>
             <Badge variant={conektaStatusBadge.variant}>
               {conektaStatusBadge.icon}
@@ -2524,9 +2544,12 @@ export const PaymentsConfiguration: React.FC = () => {
       {activeGatewayRoute === 'mercadopago' && (
         <Card className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
-            <div>
-              <h2>Mercado Pago</h2>
-              <p>Conecta Mercado Pago para crear links de Checkout Pro y suscripciones desde Ristak.</p>
+            <div className={styles.gatewaySectionTitle}>
+              <PaymentPlatformLogo platform="mercadopago" size="lg" decorative />
+              <div>
+                <h2>Mercado Pago</h2>
+                <p>Conecta Mercado Pago para crear links de Checkout Pro y suscripciones desde Ristak.</p>
+              </div>
             </div>
             {loadingMercadoPagoConfig ? (
               <Badge variant="warning">
@@ -2758,7 +2781,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
         <Card className={styles.gigstackCard}>
           <div className={styles.gigstackHeader}>
-            <Sparkles size={22} />
+            <PaymentPlatformLogo platform="gigstack" size="lg" decorative />
             <Badge variant={taxes.gigstackEnabled ? (taxes.hasGigstackApiToken ? 'success' : 'warning') : 'neutral'}>
               Gigstack
             </Badge>

@@ -120,6 +120,24 @@
   line-height: 1.35;
 }
 
+.providerSummary,
+.providerValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.providerSummary {
+  justify-content: flex-start;
+}
+
+.providerSummary span,
+.providerValue span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .summaryAmountBlock strong {
   color: var(--text);
   font-family: var(--num-font);
@@ -326,6 +344,17 @@
   margin-bottom: 18px;
 }
 
+.payHeaderTop {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.payHeaderTop > div {
+  min-width: 0;
+}
+
 .payKicker {
   font: var(--label-font);
   font-size: 11px;
@@ -488,6 +517,11 @@
   font-weight: 700;
   text-align: right;
   overflow-wrap: anywhere;
+}
+
+.receiptRows .providerValue span {
+  color: var(--text);
+  font-size: 13px;
 }
 
 .businessInfo {
@@ -760,6 +794,15 @@
 
   .printPaymentMeta strong {
     margin-top: 4px;
+    font-size: 11px;
+  }
+
+  .printPaymentMeta .providerValue {
+    justify-content: flex-start;
+  }
+
+  .printPaymentMeta .providerValue span {
+    color: var(--invoice-text, var(--text));
     font-size: 11px;
   }
 

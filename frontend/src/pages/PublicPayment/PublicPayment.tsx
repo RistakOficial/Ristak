@@ -4,6 +4,7 @@ import { loadStripe, type StripeElementsOptions } from '@stripe/stripe-js'
 import { AlertCircle, CheckCircle2, CreditCard, Download, ExternalLink, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Badge, Button, type BadgeVariant } from '@/components/common'
+import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '@/components/common/PaymentPlatformLogo'
 import {
   mercadoPagoPaymentsService,
   type MercadoPagoCardPaymentPayload,
@@ -706,6 +707,7 @@ export const PublicPayment: React.FC = () => {
   const paymentPlan = stripePayment?.paymentPlan || null
   const shouldSavePaymentMethod = Boolean(stripePayment?.contact?.id || paymentPlan?.cardSetupRequired)
   const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : 'Stripe'
+  const providerLogo: PaymentPlatformLogoId = isMercadoPagoPayment ? 'mercadopago' : isConektaPayment ? 'conekta' : 'stripe'
 
   const stripePromise = useMemo<StripePromise | null>(() => {
     if (!stripePayment) return null
@@ -928,7 +930,10 @@ export const PublicPayment: React.FC = () => {
                   ? 'Sin cargo inmediato'
                   : formatCurrency(totalAmount, payment.currency)}
               </strong>
-              <small>{providerLabel} · {paymentModeLabel}</small>
+              <small className={styles.providerSummary}>
+                <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
+                <span>{providerLabel} · {paymentModeLabel}</span>
+              </small>
             </div>
 
             <div className={styles.summarySection}>
@@ -1050,6 +1055,7 @@ export const PublicPayment: React.FC = () => {
             {checkoutSettings?.showSecureBadge && !isPaid && (
               <p className={styles.secureNotice}>
                 <ShieldCheck size={16} />
+                <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
                 <span>{secureCopy}</span>
               </p>
             )}
@@ -1063,8 +1069,13 @@ export const PublicPayment: React.FC = () => {
 
           <section className={styles.payPanel} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
-              <span className={styles.payKicker}>{isPaid ? 'Estado final' : 'Método de pago'}</span>
-              <h2>{isPaid ? 'Pago confirmado' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
+              <div className={styles.payHeaderTop}>
+                <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
+                <div>
+                  <span className={styles.payKicker}>{isPaid ? 'Estado final' : 'Método de pago'}</span>
+                  <h2>{isPaid ? 'Pago confirmado' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
+                </div>
+              </div>
               <p>
                 {isPaid
                   ? 'Este pago ya aparece como pagado en Ristak.'
@@ -1124,7 +1135,10 @@ export const PublicPayment: React.FC = () => {
                   )}
                   <div>
                     <span>Pasarela</span>
-                    <strong>{providerLabel} · {paymentModeLabel}</strong>
+                    <strong className={styles.providerValue}>
+                      <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
+                      <span>{providerLabel} · {paymentModeLabel}</span>
+                    </strong>
                   </div>
                   <div>
                     <span>Referencia</span>
@@ -1243,7 +1257,10 @@ export const PublicPayment: React.FC = () => {
               </div>
               <div>
                 <span>Pasarela</span>
-                <strong>{providerLabel} · {paymentModeLabel}</strong>
+                <strong className={styles.providerValue}>
+                  <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
+                  <span>{providerLabel} · {paymentModeLabel}</span>
+                </strong>
               </div>
             </section>
 

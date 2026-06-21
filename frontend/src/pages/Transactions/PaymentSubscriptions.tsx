@@ -32,9 +32,10 @@ import {
   NumberInput,
   PageContainer,
   PageHeader,
+  PaymentPlatformLogo,
   Table
 } from '@/components/common'
-import type { BadgeVariant, Column } from '@/components/common'
+import type { BadgeVariant, Column, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency } from '@/hooks'
 import type { Contact } from '@/types'
@@ -209,6 +210,12 @@ function getSourceLabel(subscription: PaymentSubscription) {
   if (subscription.stripeSubscriptionId || subscription.paymentProvider === 'stripe') return 'Stripe'
   if (subscription.source === 'ghl') return 'HighLevel'
   return 'Ristak'
+}
+
+function getSubscriptionProviderLogo(subscription: PaymentSubscription): PaymentPlatformLogoId | null {
+  if (subscription.mercadoPagoPreapprovalId || subscription.paymentProvider === 'mercadopago') return 'mercadopago'
+  if (subscription.stripeSubscriptionId || subscription.paymentProvider === 'stripe') return 'stripe'
+  return null
 }
 
 function getMercadoPagoSubscriptionLink(subscription: PaymentSubscription) {
@@ -587,12 +594,19 @@ export const PaymentSubscriptions: React.FC = () => {
     {
       key: 'paymentMethod',
       header: 'Método',
-      render: (_value, item) => (
-        <div className={styles.methodStack}>
-          <strong>{getPaymentMethodLabel(item.paymentMethod)}</strong>
-          <span className={styles.secondaryLine}>{getSourceLabel(item)}</span>
-        </div>
-      ),
+      render: (_value, item) => {
+        const providerLogo = getSubscriptionProviderLogo(item)
+
+        return (
+          <div className={styles.methodStack}>
+            <div className={styles.methodMain}>
+              {providerLogo && <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />}
+              <strong>{getPaymentMethodLabel(item.paymentMethod)}</strong>
+            </div>
+            <span className={styles.secondaryLine}>{getSourceLabel(item)}</span>
+          </div>
+        )
+      },
       searchValue: (_value, item) => [item.paymentMethod, item.paymentProvider, item.source, item.stripeCustomerId, item.mercadoPagoPreapprovalId],
       sortable: true
     },
@@ -876,11 +890,14 @@ export const PaymentSubscriptions: React.FC = () => {
                 </CustomSelect>
               </div>
 
-              <p className={`${styles.formHint} ${styles.fullWidth}`}>
-                {isMercadoPagoSelected
-                  ? 'Mercado Pago creará una autorización de suscripción. Copia el link y envíalo al cliente; los cobros se activan cuando acepte el método de pago.'
-                  : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto y guardará los datos técnicos por debajo.'}
-              </p>
+              <div className={`${styles.providerHint} ${styles.fullWidth}`}>
+                <PaymentPlatformLogo platform={isMercadoPagoSelected ? 'mercadopago' : 'stripe'} size="sm" decorative />
+                <p className={styles.formHint}>
+                  {isMercadoPagoSelected
+                    ? 'Mercado Pago creará una autorización de suscripción. Copia el link y envíalo al cliente; los cobros se activan cuando acepte el método de pago.'
+                    : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto y guardará los datos técnicos por debajo.'}
+                </p>
+              </div>
             </div>
 
             <div className={styles.footerActions}>

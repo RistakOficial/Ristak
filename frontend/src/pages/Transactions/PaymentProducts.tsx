@@ -15,6 +15,7 @@ import {
   NumberInput,
   PageContainer,
   PageHeader,
+  PaymentPlatformLogo,
   Table
 } from '@/components/common'
 import type { BadgeVariant, Column } from '@/components/common'
@@ -347,7 +348,12 @@ export const PaymentProducts: React.FC = () => {
     },
     ...(gigstackProductMappingEnabled ? [{
       key: 'gigstackProductKey',
-      header: 'Gigstack',
+      header: (
+        <span className={styles.fiscalHeader}>
+          <PaymentPlatformLogo platform="gigstack" size="sm" decorative />
+          <span>Gigstack</span>
+        </span>
+      ),
       render: (_value, item) => item.gigstackProductKey ? (
         <div className={styles.fiscalCell}>
           <Badge variant="info">{item.gigstackProductKey}</Badge>
@@ -544,7 +550,10 @@ export const PaymentProducts: React.FC = () => {
               {gigstackProductMappingEnabled && (
                 <div className={`${styles.fiscalPanel} ${styles.fullWidth}`}>
                   <div className={styles.fiscalPanelHeader}>
-                    <span>Gigstack</span>
+                    <span className={styles.fiscalTitle}>
+                      <PaymentPlatformLogo platform="gigstack" size="sm" decorative />
+                      <span>Gigstack</span>
+                    </span>
                     <Badge variant={productForm.gigstackProductKey ? 'success' : 'neutral'}>
                       {productForm.gigstackProductKey ? 'Mapeado' : 'Default'}
                     </Badge>

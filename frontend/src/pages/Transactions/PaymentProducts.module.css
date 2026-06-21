@@ -69,6 +69,19 @@
   min-width: 0;
 }
 
+.fiscalHeader,
+.fiscalTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fiscalHeader > span:not([data-platform]),
+.fiscalTitle > span:not([data-platform]) {
+  min-width: 0;
+}
+
 .fiscalCell span {
   color: var(--text-mute);
   font-size: 12px;

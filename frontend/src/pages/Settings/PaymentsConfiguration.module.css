@@ -88,6 +88,17 @@
   line-height: 1.5;
 }
 
+.gatewaySectionTitle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.gatewaySectionTitle > div {
+  min-width: 0;
+}
+
 .formGrid,
 .settingsMatrix {
   display: grid;
@@ -440,8 +451,7 @@
   margin-bottom: 18px;
 }
 
-.receiptTop > svg,
-.gigstackHeader > svg {
+.receiptTop > svg {
   color: var(--accent);
 }
 
@@ -779,6 +789,21 @@
 .documentPaymentMeta strong {
   margin-top: 4px;
   font-size: 12px;
+}
+
+.platformValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.documentPaymentMeta .platformValue span {
+  color: var(--invoice-ink, var(--text));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .documentParties {
@@ -1152,6 +1177,13 @@
   gap: 14px;
 }
 
+.gatewayItemIdentity {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
 .gatewayItemCopy {
   min-width: 0;
 }
@@ -1445,6 +1477,7 @@
   .stripeManualBox,
   .stripeConnectBox,
   .stripeModeHeader,
+  .gatewaySectionTitle,
   .gatewayItem :global([data-ristak-card-content]) {
     flex-direction: column;
   }
