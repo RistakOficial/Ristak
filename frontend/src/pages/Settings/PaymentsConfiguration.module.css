@@ -96,6 +96,13 @@
   min-width: 0;
 }
 
+.gigstackDefaultsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 16px;
+}
+
 .formField {
   display: flex;
   flex-direction: column;

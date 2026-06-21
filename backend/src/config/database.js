@@ -1990,6 +1990,9 @@ async function initTables() {
         image TEXT,
         available_in_store INTEGER DEFAULT 0,
         currency TEXT DEFAULT 'MXN',
+        gigstack_product_key TEXT,
+        gigstack_unit_key TEXT,
+        gigstack_unit_name TEXT,
         is_active INTEGER DEFAULT 1,
         source TEXT DEFAULT 'ristak',
         sync_status TEXT DEFAULT 'pending',
@@ -2043,6 +2046,17 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_products_ghl_product ON products(ghl_product_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_products_sync_status ON products(sync_status)')
+    for (const [columnName, columnType] of [
+      ['gigstack_product_key', 'TEXT'],
+      ['gigstack_unit_key', 'TEXT'],
+      ['gigstack_unit_name', 'TEXT']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE products ADD COLUMN ${columnName} ${columnType}`)
+      } catch {
+        // Columna ya existe, ignorar.
+      }
+    }
     await db.run('CREATE INDEX IF NOT EXISTS idx_product_prices_product ON product_prices(product_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_product_prices_ghl_price ON product_prices(ghl_price_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_product_prices_sync_status ON product_prices(sync_status)')

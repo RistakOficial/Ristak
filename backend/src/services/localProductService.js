@@ -96,6 +96,25 @@ function normalizeCurrency(value) {
   return cleanString(value || DEFAULT_CURRENCY).toUpperCase() || DEFAULT_CURRENCY
 }
 
+function readEditableField(object = {}, camelKey, snakeKey) {
+  if (Object.prototype.hasOwnProperty.call(object, camelKey)) return object[camelKey]
+  return object[snakeKey]
+}
+
+function hasEditableField(object = {}, camelKey, snakeKey) {
+  return Object.prototype.hasOwnProperty.call(object, camelKey) ||
+    Object.prototype.hasOwnProperty.call(object, snakeKey)
+}
+
+function normalizeGigstackProductKey(value) {
+  const cleanValue = cleanString(value).replace(/\D/g, '').slice(0, 8)
+  return cleanValue.length === 8 ? cleanValue : ''
+}
+
+function normalizeGigstackUnitKey(value) {
+  return cleanString(value).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
+}
+
 async function getDefaultProductCurrency() {
   try {
     return normalizeCurrency(await getAccountCurrency())
@@ -137,6 +156,9 @@ function normalizeProductRecord(raw = {}, options = {}) {
     image: cleanString(product.image || product.imageUrl || product.image_url || '') || null,
     availableInStore: toBoolInt(product.availableInStore ?? product.available_in_store, false),
     currency: normalizeCurrency(sourceIsGhl ? product.currency || product.defaultCurrency || defaultCurrency : defaultCurrency),
+    gigstackProductKey: normalizeGigstackProductKey(readEditableField(product, 'gigstackProductKey', 'gigstack_product_key')),
+    gigstackUnitKey: normalizeGigstackUnitKey(readEditableField(product, 'gigstackUnitKey', 'gigstack_unit_key')),
+    gigstackUnitName: cleanString(readEditableField(product, 'gigstackUnitName', 'gigstack_unit_name') || '').slice(0, 120),
     isActive: toBoolInt(product.isActive ?? product.is_active ?? product.active, true),
     source,
     syncStatus: options.syncStatus || product.syncStatus || product.sync_status || (sourceIsGhl ? 'synced' : 'pending'),
@@ -222,6 +244,9 @@ export function productRowToApi(row = {}, prices = undefined) {
     image: row.image || null,
     availableInStore: row.available_in_store === 1 || row.available_in_store === true,
     currency: row.currency || DEFAULT_CURRENCY,
+    gigstackProductKey: row.gigstack_product_key || '',
+    gigstackUnitKey: row.gigstack_unit_key || '',
+    gigstackUnitName: row.gigstack_unit_name || '',
     isActive: row.is_active !== 0,
     source: row.source || 'ristak',
     syncStatus: row.sync_status || 'pending',
@@ -331,6 +356,7 @@ export async function upsertLocalProduct(raw = {}, options = {}) {
     ...options,
     defaultCurrency: options.defaultCurrency || await getDefaultProductCurrency()
   })
+  const productInput = raw.product && typeof raw.product === 'object' ? raw.product : raw
   const existingByGhl = normalized.ghlProductId ? await getLocalProduct(normalized.ghlProductId) : null
   const existingByName = normalized.ghlProductId && !existingByGhl
     ? await findUnlinkedProductByName(normalized.name)
@@ -340,14 +366,24 @@ export async function upsertLocalProduct(raw = {}, options = {}) {
   if (existing?.id) {
     normalized.id = existing.id
     normalized.source = existing.source || normalized.source
+    if (!hasEditableField(productInput, 'gigstackProductKey', 'gigstack_product_key')) {
+      normalized.gigstackProductKey = existing.gigstack_product_key || ''
+    }
+    if (!hasEditableField(productInput, 'gigstackUnitKey', 'gigstack_unit_key')) {
+      normalized.gigstackUnitKey = existing.gigstack_unit_key || ''
+    }
+    if (!hasEditableField(productInput, 'gigstackUnitName', 'gigstack_unit_name')) {
+      normalized.gigstackUnitName = existing.gigstack_unit_name || ''
+    }
   }
 
   await db.run(`
     INSERT INTO products (
       id, ghl_product_id, location_id, name, description, product_type,
-      image, available_in_store, currency, is_active, source, sync_status,
+      image, available_in_store, currency, gigstack_product_key, gigstack_unit_key,
+      gigstack_unit_name, is_active, source, sync_status,
       sync_origin, sync_error, raw_json, last_synced_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'synced' THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'synced' THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
     ON CONFLICT (id) DO UPDATE SET
       ghl_product_id = COALESCE(excluded.ghl_product_id, products.ghl_product_id),
       location_id = COALESCE(excluded.location_id, products.location_id),
@@ -357,6 +393,9 @@ export async function upsertLocalProduct(raw = {}, options = {}) {
       image = COALESCE(excluded.image, products.image),
       available_in_store = excluded.available_in_store,
       currency = excluded.currency,
+      gigstack_product_key = excluded.gigstack_product_key,
+      gigstack_unit_key = excluded.gigstack_unit_key,
+      gigstack_unit_name = excluded.gigstack_unit_name,
       is_active = excluded.is_active,
       source = COALESCE(products.source, excluded.source),
       sync_status = excluded.sync_status,
@@ -375,6 +414,9 @@ export async function upsertLocalProduct(raw = {}, options = {}) {
     normalized.image,
     normalized.availableInStore,
     normalized.currency,
+    normalized.gigstackProductKey,
+    normalized.gigstackUnitKey,
+    normalized.gigstackUnitName,
     normalized.isActive,
     normalized.source,
     normalized.syncStatus,

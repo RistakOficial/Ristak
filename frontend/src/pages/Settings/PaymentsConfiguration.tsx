@@ -14,6 +14,7 @@ import {
   KeyRound,
   Loader2,
   Paintbrush,
+  PackageCheck,
   Percent,
   ReceiptText,
   ShieldCheck,
@@ -67,6 +68,12 @@ import {
   getWhatsAppStatusConnectionAvailability,
   type WhatsAppConnectionAvailability
 } from '@/utils/whatsappQrFallbackWarning'
+import {
+  getGigstackUnitName,
+  gigstackPaymentMethodOptions,
+  gigstackProductKeyOptions,
+  gigstackUnitOptions
+} from '@/utils/gigstackFiscalCatalog'
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'automations' | 'gateways' | 'taxes'
@@ -616,6 +623,17 @@ export const PaymentsConfiguration: React.FC = () => {
     setSettings((current) => ({
       ...current,
       taxes: { ...current.taxes, [key]: value }
+    }))
+  }
+
+  const setGigstackDefaultUnit = (unitKey: string) => {
+    setSettings((current) => ({
+      ...current,
+      taxes: {
+        ...current.taxes,
+        gigstackDefaultUnitKey: unitKey,
+        gigstackDefaultUnitName: getGigstackUnitName(unitKey) || current.taxes.gigstackDefaultUnitName
+      }
     }))
   }
 
@@ -2570,6 +2588,43 @@ export const PaymentsConfiguration: React.FC = () => {
             />,
             taxes.hasGigstackApiToken ? 'Ya hay un token guardado. Pega uno nuevo solo si quieres reemplazarlo.' : 'Se obtiene desde app.gigstack.pro/settings?subtab=api.'
           )}
+          <div className={styles.gigstackDefaultsGrid}>
+            {renderField(
+              'Clave SAT por defecto',
+              <CustomSelect
+                value={taxes.gigstackDefaultProductKey || defaultPaymentSettings.taxes.gigstackDefaultProductKey}
+                onValueChange={(value) => setTaxValue('gigstackDefaultProductKey', value)}
+                options={gigstackProductKeyOptions}
+              />,
+              'Se usa en cobros directos o productos sin mapeo propio.'
+            )}
+            {renderField(
+              'Unidad SAT por defecto',
+              <CustomSelect
+                value={taxes.gigstackDefaultUnitKey || defaultPaymentSettings.taxes.gigstackDefaultUnitKey}
+                onValueChange={setGigstackDefaultUnit}
+                options={gigstackUnitOptions}
+              />
+            )}
+            {renderField(
+              'Forma de pago fallback',
+              <CustomSelect
+                value={taxes.gigstackDefaultPaymentMethod || defaultPaymentSettings.taxes.gigstackDefaultPaymentMethod}
+                onValueChange={(value) => setTaxValue('gigstackDefaultPaymentMethod', value)}
+                options={gigstackPaymentMethodOptions}
+              />,
+              'Ristak detecta tarjeta, transferencia o efectivo; esto cubre casos desconocidos.'
+            )}
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => navigate('/transactions/products')}
+          >
+            <PackageCheck size={15} />
+            Mapear productos
+          </Button>
           <Button
             type="button"
             variant="ghost"

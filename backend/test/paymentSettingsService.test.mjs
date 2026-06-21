@@ -151,4 +151,24 @@ describe('payment settings tax calculation', () => {
   it('skips taxes only when the global switch is off', () => {
     assert.equal(calculatePaymentTax(100, { enabled: false, country: 'MX' }), null)
   })
+
+  it('normalizes Gigstack fiscal defaults selected from dropdowns', () => {
+    const settings = normalizePaymentSettings({
+      taxes: {
+        enabled: true,
+        gigstackEnabled: true,
+        gigstackDefaultProductKey: '82101800',
+        gigstackDefaultUnitKey: 'e48',
+        gigstackDefaultUnitName: 'Unidad de Servicio',
+        gigstackDefaultPaymentMethod: '4',
+        gigstackAutomateInvoiceOnComplete: true
+      }
+    })
+
+    assert.equal(settings.taxes.gigstackDefaultProductKey, '82101800')
+    assert.equal(settings.taxes.gigstackDefaultUnitKey, 'E48')
+    assert.equal(settings.taxes.gigstackDefaultUnitName, 'Unidad de Servicio')
+    assert.equal(settings.taxes.gigstackDefaultPaymentMethod, '04')
+    assert.equal(settings.taxes.gigstackAutomateInvoiceOnComplete, true)
+  })
 })

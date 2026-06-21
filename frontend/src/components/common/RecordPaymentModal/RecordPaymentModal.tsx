@@ -297,6 +297,9 @@ interface Product {
   description?: string
   currency?: string
   syncStatus?: string
+  gigstackProductKey?: string
+  gigstackUnitKey?: string
+  gigstackUnitName?: string
   prices?: Price[]
 }
 
@@ -1749,6 +1752,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             description: resolvedDescription || selectedProduct.description || selectedPrice.name || selectedProduct.name || resolvedTitle,
             priceId: priceCatalogId,
             productId: productCatalogId,
+            localProductId: selectedProduct.localId || '',
+            gigstackProductKey: selectedProduct.gigstackProductKey || '',
+            gigstackUnitKey: selectedProduct.gigstackUnitKey || '',
+            gigstackUnitName: selectedProduct.gigstackUnitName || '',
             amount: parsedAmount,
             qty: 1,
             currency: finalCurrency
@@ -2136,6 +2143,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           description: [invoiceSummary.description, manualPaymentData.notes].filter(Boolean).join('\n'),
           dueDate: invoicePayload.dueDate,
           metadata: {
+            lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
             ...(invoiceSummary.includesTax && {
               tax: {
                 enabled: true,
@@ -2222,6 +2230,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             ...(item.priceId && { priceId: item.priceId }),
             ...(item.productId && { productId: item.productId })
           })) || [],
+          metadata: {
+            lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+            ...(invoiceSummary.includesTax && {
+              tax: {
+                enabled: true,
+                taxName: invoiceSummary.taxName,
+                rateType: 'percentage',
+                rateValue: invoiceSummary.taxRate,
+                rateSource: 'automatic',
+                calculationMode: invoiceSummary.taxCalculationMode,
+                subtotalAmount: invoiceSummary.subtotal,
+                taxAmount: invoiceSummary.taxAmount,
+                totalAmount: invoiceSummary.amount
+              }
+            })
+          },
           issueDate: invoicePayload.issueDate,
           dueDate: invoicePayload.dueDate,
           liveMode: invoicePayload.liveMode,
@@ -2329,7 +2353,23 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             reference: manualPaymentData.reference,
             title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
             description: [invoiceSummary.description, manualPaymentData.notes].filter(Boolean).join('\n'),
-            dueDate: invoicePayload.dueDate
+            dueDate: invoicePayload.dueDate,
+            metadata: {
+              lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+              ...(invoiceSummary.includesTax && {
+                tax: {
+                  enabled: true,
+                  taxName: invoiceSummary.taxName,
+                  rateType: 'percentage',
+                  rateValue: invoiceSummary.taxRate,
+                  rateSource: 'automatic',
+                  calculationMode: invoiceSummary.taxCalculationMode,
+                  subtotalAmount: invoiceSummary.subtotal,
+                  taxAmount: invoiceSummary.taxAmount,
+                  totalAmount: invoiceSummary.amount
+                }
+              })
+            }
           })
 
           showToast('success', 'Pago registrado localmente', 'Cuando conectes HighLevel, Ristak lo importará y lo enlazará para evitar duplicados.')

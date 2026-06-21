@@ -9,6 +9,7 @@ import { syncWebhookCustomValues, getHighLevelConfig } from '../services/webhook
 import { getGHLClient } from '../services/ghlClient.js';
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
+import { registerGigstackPaymentForTransactionInBackground } from '../services/gigstackInvoiceService.js';
 import { sendPaymentNotification } from '../services/pushNotificationsService.js';
 import { markHumanTakeoverIfActive } from '../services/conversationalAgentService.js';
 import { renderTemplateVariables } from '../services/templateVariablesService.js';
@@ -1686,8 +1687,14 @@ export const createInvoice = async (req, res) => {
   try {
     const liveMode = await getGhlInvoiceLiveMode();
     const paymentMode = liveMode ? 'live' : 'test';
+    const rawInvoiceBody = { ...(req.body || {}) };
+    const ristakMetadata = rawInvoiceBody.metadata && typeof rawInvoiceBody.metadata === 'object'
+      ? rawInvoiceBody.metadata
+      : null;
+    delete rawInvoiceBody.metadata;
+
     const formattedInvoiceData = formatInvoicePayloadText({
-      ...(req.body || {}),
+      ...rawInvoiceBody,
       liveMode
     });
 
@@ -1735,8 +1742,8 @@ export const createInvoice = async (req, res) => {
         `INSERT INTO payments (
           id, contact_id, amount, currency, status, payment_method, payment_mode,
           payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
-          due_date, sent_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          due_date, sent_at, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
           contact_id = excluded.contact_id,
           amount = excluded.amount,
@@ -1751,6 +1758,7 @@ export const createInvoice = async (req, res) => {
           ghl_invoice_id = excluded.ghl_invoice_id,
           invoice_number = excluded.invoice_number,
           due_date = excluded.due_date,
+          metadata_json = COALESCE(excluded.metadata_json, payments.metadata_json),
           updated_at = CURRENT_TIMESTAMP`,
         [
           ghlInvoiceId,
@@ -1768,7 +1776,8 @@ export const createInvoice = async (req, res) => {
           ghlInvoiceId,
           createdInvoice.invoiceNumber || null,
           createdInvoice.dueDate || null,
-          null // sent_at (se llena cuando se envíe)
+          null, // sent_at (se llena cuando se envíe)
+          ristakMetadata ? JSON.stringify(ristakMetadata) : null
         ]
       );
 
@@ -2011,6 +2020,10 @@ export const recordPayment = async (req, res) => {
          LIMIT 1`,
         [invoiceId]
       );
+
+      if (savedPayment?.id) {
+        registerGigstackPaymentForTransactionInBackground(savedPayment.id);
+      }
 
       sendPaymentNotification({
         id: savedPayment?.id || invoiceId,

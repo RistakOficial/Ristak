@@ -24,13 +24,129 @@ function roundMoney(value) {
   return Math.round(parsed * 100) / 100
 }
 
-function resolvePaymentForm(method = '') {
+function normalizeGigstackProductKey(value, fallback = '82101800') {
+  const normalized = cleanString(value, 20).replace(/\D/g, '').slice(0, 8)
+  return normalized.length === 8 ? normalized : fallback
+}
+
+function normalizeGigstackUnitKey(value, fallback = 'E48') {
+  const normalized = cleanString(value, 10).toUpperCase().replace(/[^A-Z0-9]/g, '')
+  return normalized || fallback
+}
+
+function resolvePaymentMethod(method = '', fallback = '99') {
   const normalized = cleanString(method).toLowerCase()
-  if (['card', 'stripe', 'stripe_saved_card', 'mercadopago', 'mercadopago_checkout'].includes(normalized)) return '04'
+  if (['card', 'credit_card', 'stripe', 'stripe_saved_card', 'mercadopago', 'mercadopago_checkout'].includes(normalized)) return '04'
+  if (['debit_card'].includes(normalized)) return '28'
   if (['bank_transfer', 'transfer', 'spei'].includes(normalized)) return '03'
   if (['cash', 'deposit'].includes(normalized)) return '01'
   if (normalized === 'check') return '02'
-  return '99'
+  const fallbackDigits = cleanString(fallback, 2).replace(/\D/g, '')
+  return fallbackDigits ? fallbackDigits.padStart(2, '0').slice(-2) : '99'
+}
+
+function getStoredLineItems(row) {
+  const metadata = parseJson(row.metadata_json)
+  return Array.isArray(metadata.lineItems)
+    ? metadata.lineItems.filter((item) => item && typeof item === 'object')
+    : []
+}
+
+function getItemAmount(item) {
+  return roundMoney(item.amount ?? item.unit_price ?? item.unitPrice ?? item.price ?? 0)
+}
+
+async function getProductFiscalConfig(item = {}) {
+  const candidates = [
+    item.localProductId,
+    item.productId,
+    item.product_id,
+    item.ghlProductId,
+    item.ghl_product_id
+  ]
+    .map((value) => cleanString(value, 180))
+    .filter(Boolean)
+
+  for (const productId of candidates) {
+    const row = await db.get(
+      `SELECT gigstack_product_key, gigstack_unit_key, gigstack_unit_name
+       FROM products
+       WHERE id = ? OR ghl_product_id = ?
+       LIMIT 1`,
+      [productId, productId]
+    )
+    if (row) return row
+  }
+
+  return null
+}
+
+function buildGigstackTaxLine(tax) {
+  return {
+    factor: 'Tasa',
+    inclusive: tax.calculationMode === 'inclusive',
+    rate: roundMoney(tax.rateValue / 100),
+    type: cleanString(tax.taxName || tax.name || 'IVA', 20) || 'IVA',
+    withholding: false
+  }
+}
+
+async function buildGigstackItems(row, settings, tax) {
+  const taxes = settings.taxes || {}
+  const storedItems = getStoredLineItems(row)
+  const sourceItems = storedItems.length > 0
+    ? storedItems
+    : [{
+        description: row.description || row.title || 'Pago',
+        amount: tax.calculationMode === 'inclusive' ? tax.totalAmount : tax.subtotalAmount,
+        quantity: 1
+      }]
+  const sourceTotal = sourceItems.reduce((total, item) => total + getItemAmount(item), 0)
+  const ratioBase = sourceTotal > 0
+    ? sourceTotal
+    : tax.calculationMode === 'inclusive'
+      ? tax.totalAmount
+      : tax.subtotalAmount
+  const taxLine = buildGigstackTaxLine(tax)
+
+  const items = []
+  for (const item of sourceItems) {
+    const productConfig = await getProductFiscalConfig(item)
+    const rawAmount = getItemAmount(item)
+    const ratio = ratioBase > 0 && rawAmount > 0 ? rawAmount / ratioBase : 1 / sourceItems.length
+    const amount = tax.calculationMode === 'inclusive'
+      ? roundMoney(tax.totalAmount * ratio)
+      : roundMoney((rawAmount || tax.subtotalAmount * ratio))
+    const productKey = normalizeGigstackProductKey(
+      item.gigstackProductKey || item.product_key || productConfig?.gigstack_product_key,
+      normalizeGigstackProductKey(taxes.gigstackDefaultProductKey)
+    )
+    const unitKey = normalizeGigstackUnitKey(
+      item.gigstackUnitKey || item.unit_key || productConfig?.gigstack_unit_key,
+      normalizeGigstackUnitKey(taxes.gigstackDefaultUnitKey)
+    )
+    const unitName = cleanString(
+      item.gigstackUnitName ||
+        item.unit_name ||
+        productConfig?.gigstack_unit_name ||
+        taxes.gigstackDefaultUnitName ||
+        'Unidad de Servicio',
+      120
+    )
+
+    items.push({
+      description: cleanString(item.description || item.name || row.description || row.title || 'Pago'),
+      discount: roundMoney(item.discount || 0),
+      product_key: productKey,
+      unit_key: unitKey,
+      unit_name: unitName,
+      taxes: [taxLine],
+      quantity: Number(item.quantity || item.qty || 1) || 1,
+      amount
+    })
+  }
+
+  return items
 }
 
 function getPaymentTax(row, settings) {
@@ -60,53 +176,21 @@ function getPaymentTax(row, settings) {
   return calculatePaymentTax(row.amount, settings.taxes)
 }
 
-function buildGigstackPayload(row, settings, tax) {
+async function buildGigstackPayload(row, settings, tax) {
   const taxes = settings.taxes
-  const contactName = cleanString(row.contact_name || row.contact_full_name || row.contact_email || row.contact_phone || 'Cliente')
-  const description = cleanString(row.description || row.title || 'Pago')
+  const metadata = parseJson(row.metadata_json)
 
   return {
-    external_id: row.id,
-    payment_form: resolvePaymentForm(row.payment_method || row.payment_provider),
-    client: {
-      id: cleanString(row.contact_id),
-      name: contactName,
-      email: cleanString(row.contact_email),
-      phone: cleanString(row.contact_phone)
-    },
-    issuer: {
-      tax_id: cleanString(taxes.fiscalId),
-      legal_name: cleanString(taxes.fiscalLegalName),
-      tax_regime: cleanString(taxes.fiscalRegime),
-      postal_code: cleanString(taxes.fiscalPostalCode),
-      country: cleanString(taxes.country || 'MX')
-    },
-    payment: {
-      id: row.id,
-      amount: tax.totalAmount,
-      currency: cleanString(row.currency || 'MXN').toUpperCase(),
-      paid_at: row.paid_at || row.date || new Date().toISOString(),
-      method: cleanString(row.payment_method || row.payment_provider || 'other'),
-      reference: cleanString(row.reference || row.public_payment_id || row.ghl_invoice_id)
-    },
-    items: [
-      {
-        description,
-        quantity: 1,
-        unit_price: tax.subtotalAmount,
-        tax: {
-          name: tax.taxName,
-          rate: tax.rateValue,
-          amount: tax.taxAmount,
-          calculation_mode: tax.calculationMode
-        }
-      }
-    ],
-    metadata: {
-      ristak_payment_id: row.id,
-      provider: cleanString(row.payment_provider || 'manual'),
-      mode: cleanString(row.payment_mode || 'live')
-    }
+    paid: true,
+    items: await buildGigstackItems(row, settings, tax),
+    currency: cleanString(row.currency || 'MXN').toUpperCase(),
+    paymentMethod: resolvePaymentMethod(
+      row.payment_method || row.payment_provider,
+      taxes.gigstackDefaultPaymentMethod
+    ),
+    automateInvoiceOnComplete: taxes.gigstackAutomateInvoiceOnComplete !== false,
+    clientId: cleanString(metadata.gigstackClientId || metadata.clientId || ''),
+    email: cleanString(row.contact_email)
   }
 }
 
@@ -158,7 +242,7 @@ export async function registerGigstackPaymentForTransaction(paymentId) {
   const tax = getPaymentTax(row, settings)
   if (!tax?.enabled || tax.taxAmount <= 0) return { skipped: true, reason: 'missing_tax' }
 
-  const payload = buildGigstackPayload(row, settings, tax)
+  const payload = await buildGigstackPayload(row, settings, tax)
   const response = await fetch(`${GIGSTACK_API_BASE_URL}/payments/register`, {
     method: 'POST',
     headers: {
@@ -180,11 +264,12 @@ export async function registerGigstackPaymentForTransaction(paymentId) {
     throw error
   }
 
+  const result = data?.data && typeof data.data === 'object' ? data.data : data
   await updateGigstackMetadata(cleanPaymentId, {
-    status: data?.status || data?.invoice?.status || 'registered',
-    id: data?.id || data?.payment?.id || data?.invoice?.id || '',
-    uuid: data?.uuid || data?.invoice?.uuid || '',
-    pdfUrl: data?.pdf_url || data?.invoice?.pdf_url || '',
+    status: result?.status || result?.invoice?.status || 'registered',
+    id: result?.id || result?.payment?.id || result?.invoice?.id || '',
+    uuid: result?.uuid || result?.invoice?.uuid || '',
+    pdfUrl: result?.pdf_url || result?.invoice?.pdf_url || '',
     registeredAt: new Date().toISOString()
   })
 

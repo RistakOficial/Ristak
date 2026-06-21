@@ -72,6 +72,11 @@ const DEFAULT_PAYMENT_SETTINGS = {
     fiscalRegime: '',
     provider: 'gigstack',
     gigstackEnabled: false,
+    gigstackDefaultProductKey: '82101800',
+    gigstackDefaultUnitKey: 'E48',
+    gigstackDefaultUnitName: 'Unidad de Servicio',
+    gigstackDefaultPaymentMethod: '99',
+    gigstackAutomateInvoiceOnComplete: true,
     gigstackApiTokenEncrypted: ''
   }
 }
@@ -116,6 +121,21 @@ function cleanNumber(value, fallback, { min = 0, max = 9999, decimals = 0 } = {}
 function cleanCountry(value) {
   const normalized = cleanString(value, 2).toUpperCase()
   return /^[A-Z]{2}$/.test(normalized) ? normalized : DEFAULT_PAYMENT_SETTINGS.taxes.country
+}
+
+function cleanGigstackProductKey(value, fallback = DEFAULT_PAYMENT_SETTINGS.taxes.gigstackDefaultProductKey) {
+  const normalized = cleanString(value, 20).replace(/\D/g, '').slice(0, 8)
+  return normalized.length === 8 ? normalized : fallback
+}
+
+function cleanGigstackUnitKey(value, fallback = DEFAULT_PAYMENT_SETTINGS.taxes.gigstackDefaultUnitKey) {
+  const normalized = cleanString(value, 10).toUpperCase().replace(/[^A-Z0-9]/g, '')
+  return normalized || fallback
+}
+
+function cleanGigstackPaymentMethod(value, fallback = DEFAULT_PAYMENT_SETTINGS.taxes.gigstackDefaultPaymentMethod) {
+  const digits = cleanString(value, 2).replace(/\D/g, '')
+  return digits ? digits.padStart(2, '0').slice(-2) : fallback
 }
 
 function resolveAutomaticTaxRate(country) {
@@ -270,6 +290,11 @@ export function normalizePaymentSettings(input = {}, options = {}) {
       fiscalRegime: cleanString(taxes.fiscalRegime || taxes.taxRegime, 120),
       provider: 'gigstack',
       gigstackEnabled: cleanBoolean(taxes.gigstackEnabled ?? taxes.jigsawEnabled, DEFAULT_PAYMENT_SETTINGS.taxes.gigstackEnabled),
+      gigstackDefaultProductKey: cleanGigstackProductKey(taxes.gigstackDefaultProductKey || taxes.productKey),
+      gigstackDefaultUnitKey: cleanGigstackUnitKey(taxes.gigstackDefaultUnitKey || taxes.unitKey),
+      gigstackDefaultUnitName: cleanString(taxes.gigstackDefaultUnitName || taxes.unitName, 120) || DEFAULT_PAYMENT_SETTINGS.taxes.gigstackDefaultUnitName,
+      gigstackDefaultPaymentMethod: cleanGigstackPaymentMethod(taxes.gigstackDefaultPaymentMethod || taxes.paymentMethod),
+      gigstackAutomateInvoiceOnComplete: cleanBoolean(taxes.gigstackAutomateInvoiceOnComplete, DEFAULT_PAYMENT_SETTINGS.taxes.gigstackAutomateInvoiceOnComplete),
       gigstackApiTokenPreview: maskSecret(gigstackToken.plain),
       hasGigstackApiToken
     }

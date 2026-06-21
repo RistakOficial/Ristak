@@ -24,6 +24,9 @@ export interface ProductItem {
   source?: string
   syncStatus?: string
   syncError?: string | null
+  gigstackProductKey?: string
+  gigstackUnitKey?: string
+  gigstackUnitName?: string
   prices?: ProductPrice[]
 }
 
@@ -31,6 +34,9 @@ export interface ProductPayload {
   name: string
   description?: string
   currency?: string
+  gigstackProductKey?: string
+  gigstackUnitKey?: string
+  gigstackUnitName?: string
   prices?: Array<{
     id?: string
     localId?: string

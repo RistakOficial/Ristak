@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  CustomSelect,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -26,6 +27,12 @@ import {
   type ProductPayload,
   type ProductPrice
 } from '@/services/productsService'
+import { paymentSettingsService } from '@/services/paymentSettingsService'
+import {
+  getGigstackUnitName,
+  gigstackProductKeyOptions,
+  gigstackUnitOptions
+} from '@/utils/gigstackFiscalCatalog'
 import styles from './PaymentProducts.module.css'
 
 type ProductFormMode = 'create' | 'edit' | null
@@ -35,13 +42,17 @@ interface ProductFormState {
   description: string
   priceName: string
   amount: string
+  gigstackProductKey: string
+  gigstackUnitKey: string
 }
 
 const createEmptyProductForm = (): ProductFormState => ({
   name: '',
   description: '',
   priceName: 'Precio base',
-  amount: ''
+  amount: '',
+  gigstackProductKey: '',
+  gigstackUnitKey: ''
 })
 
 const getProductId = (product: ProductItem) => product.localId || product.id || product._id || ''
@@ -90,6 +101,7 @@ export const PaymentProducts: React.FC = () => {
   const [formMode, setFormMode] = useState<ProductFormMode>(null)
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null)
   const [productForm, setProductForm] = useState<ProductFormState>(() => createEmptyProductForm())
+  const [gigstackProductMappingEnabled, setGigstackProductMappingEnabled] = useState(false)
 
   const loadProducts = async ({ refresh = false, sync = false }: { refresh?: boolean; sync?: boolean } = {}) => {
     if (refresh) setRefreshing(true)
@@ -112,6 +124,24 @@ export const PaymentProducts: React.FC = () => {
 
   useEffect(() => {
     void loadProducts()
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    paymentSettingsService.getSettings()
+      .then((settings) => {
+        if (!cancelled) {
+          setGigstackProductMappingEnabled(Boolean(settings.taxes?.enabled && settings.taxes?.gigstackEnabled))
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setGigstackProductMappingEnabled(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const productMetrics = useMemo(() => {
@@ -155,7 +185,9 @@ export const PaymentProducts: React.FC = () => {
       name: product.name || '',
       description: product.description || '',
       priceName: price?.name || 'Precio base',
-      amount: getPriceAmount(price) ? String(getPriceAmount(price)) : ''
+      amount: getPriceAmount(price) ? String(getPriceAmount(price)) : '',
+      gigstackProductKey: product.gigstackProductKey || '',
+      gigstackUnitKey: product.gigstackUnitKey || ''
     })
     setFormMode('edit')
   }
@@ -193,6 +225,9 @@ export const PaymentProducts: React.FC = () => {
       name,
       description: productForm.description.trim(),
       currency,
+      gigstackProductKey: productForm.gigstackProductKey,
+      gigstackUnitKey: productForm.gigstackUnitKey,
+      gigstackUnitName: getGigstackUnitName(productForm.gigstackUnitKey),
       prices: [
         {
           id: getPriceId(currentPrice) || undefined,
@@ -310,6 +345,19 @@ export const PaymentProducts: React.FC = () => {
       render: (value) => <Badge variant="neutral">{getProductTypeLabel(value)}</Badge>,
       sortable: true
     },
+    ...(gigstackProductMappingEnabled ? [{
+      key: 'gigstackProductKey',
+      header: 'Gigstack',
+      render: (_value, item) => item.gigstackProductKey ? (
+        <div className={styles.fiscalCell}>
+          <Badge variant="info">{item.gigstackProductKey}</Badge>
+          <span>{item.gigstackUnitKey || 'Sin unidad'}</span>
+        </div>
+      ) : (
+        <span className={styles.mutedCell}>Usa default</span>
+      ),
+      sortable: false
+    } satisfies Column<ProductItem>] : []),
     {
       key: 'source',
       header: 'Origen',
@@ -492,6 +540,41 @@ export const PaymentProducts: React.FC = () => {
                   <strong>{accountCurrency}</strong>
                 </div>
               </div>
+
+              {gigstackProductMappingEnabled && (
+                <div className={`${styles.fiscalPanel} ${styles.fullWidth}`}>
+                  <div className={styles.fiscalPanelHeader}>
+                    <span>Gigstack</span>
+                    <Badge variant={productForm.gigstackProductKey ? 'success' : 'neutral'}>
+                      {productForm.gigstackProductKey ? 'Mapeado' : 'Default'}
+                    </Badge>
+                  </div>
+                  <div className={styles.fiscalGrid}>
+                    <div className={styles.formGroup}>
+                      <label>Clave SAT</label>
+                      <CustomSelect
+                        value={productForm.gigstackProductKey}
+                        onValueChange={(value) => patchProductForm('gigstackProductKey', value)}
+                        options={[
+                          { value: '', label: 'Usar default de Gigstack' },
+                          ...gigstackProductKeyOptions
+                        ]}
+                      />
+                    </div>
+                    <div className={styles.formGroup}>
+                      <label>Unidad SAT</label>
+                      <CustomSelect
+                        value={productForm.gigstackUnitKey}
+                        onValueChange={(value) => patchProductForm('gigstackUnitKey', value)}
+                        options={[
+                          { value: '', label: 'Usar default de Gigstack' },
+                          ...gigstackUnitOptions
+                        ]}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {editingProduct && (
                 <div className={styles.formMeta}>

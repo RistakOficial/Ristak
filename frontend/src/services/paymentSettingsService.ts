@@ -70,6 +70,11 @@ export interface PaymentTaxSettings {
   fiscalRegime: string
   provider: 'gigstack'
   gigstackEnabled: boolean
+  gigstackDefaultProductKey: string
+  gigstackDefaultUnitKey: string
+  gigstackDefaultUnitName: string
+  gigstackDefaultPaymentMethod: string
+  gigstackAutomateInvoiceOnComplete: boolean
   gigstackApiToken?: string
   gigstackApiTokenPreview?: string
   hasGigstackApiToken?: boolean
@@ -157,6 +162,11 @@ export const defaultPaymentSettings: PaymentSettings = {
     fiscalRegime: '',
     provider: 'gigstack',
     gigstackEnabled: false,
+    gigstackDefaultProductKey: '82101800',
+    gigstackDefaultUnitKey: 'E48',
+    gigstackDefaultUnitName: 'Unidad de Servicio',
+    gigstackDefaultPaymentMethod: '99',
+    gigstackAutomateInvoiceOnComplete: true,
     gigstackApiToken: '',
     gigstackApiTokenPreview: '',
     hasGigstackApiToken: false

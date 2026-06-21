@@ -62,6 +62,18 @@
   gap: 5px;
 }
 
+.fiscalCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fiscalCell span {
+  color: var(--text-mute);
+  font-size: 12px;
+}
+
 .syncError {
   max-width: 18rem;
   overflow: hidden;
@@ -137,6 +149,35 @@
   grid-column: 1 / -1;
 }
 
+.fiscalPanel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.fiscalPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fiscalPanelHeader > span {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.fiscalGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .formMeta {
   display: inline-flex;
   align-items: center;
@@ -192,7 +233,8 @@
 
 @media (max-width: 760px) {
   .metricsGrid,
-  .formGrid {
+  .formGrid,
+  .fiscalGrid {
     grid-template-columns: 1fr;
   }
 
