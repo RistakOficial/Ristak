@@ -39,14 +39,14 @@ function normalizeBaseUrl(value) {
 }
 
 function getRequestBaseUrl(req) {
-  const configured = process.env.PUBLIC_APP_URL || process.env.APP_PUBLIC_URL || process.env.FRONTEND_URL || process.env.RENDER_EXTERNAL_URL
-  if (configured) return String(configured).replace(/\/+$/, '')
-
   const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim()
   const host = forwardedHost || req.headers.host
   const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim()
   const protocol = forwardedProto || req.protocol || 'https'
-  return `${protocol}://${host}`
+  if (host) return `${protocol}://${host}`.replace(/\/+$/, '')
+
+  const configured = process.env.PUBLIC_APP_URL || process.env.APP_PUBLIC_URL || process.env.FRONTEND_URL || process.env.RENDER_EXTERNAL_URL
+  return configured ? String(configured).replace(/\/+$/, '') : ''
 }
 
 function addWebhookEndpoint(items, seen, source, label, description, baseUrl) {

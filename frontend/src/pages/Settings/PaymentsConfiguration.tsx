@@ -545,7 +545,6 @@ export const PaymentsConfiguration: React.FC = () => {
   }
   const stripeModeIsSaved = (mode: StripeModeId) => Boolean(stripeConfig?.manualModes?.[mode]?.configured)
   const stripeModeCanSave = (mode: StripeModeId) => stripeModeIsComplete(mode)
-  const stripePrimaryWebhookEndpoint = stripeWebhookEndpoints[0] || null
   const isLoadingPage = loadingSettings || loadingHighLevelConnection || loadingStripeConfig || loadingMercadoPagoConfig
   const paymentWhatsappTemplateOptions = useMemo(() => {
     const options = Object.values(paymentAutomationTemplateDefaults).map((template) => ({
@@ -2294,17 +2293,20 @@ export const PaymentsConfiguration: React.FC = () => {
               })}
             </div>
 
-            {stripePrimaryWebhookEndpoint && (
+            {stripeWebhookEndpoints.length > 0 && (
               <div className={styles.webhookList}>
                 <h3>Endpoint URL</h3>
-                <div className={styles.copyField}>
-                  <input
-                    type="text"
-                    readOnly
-                    value={stripePrimaryWebhookEndpoint.url}
-                    onFocus={(event) => event.currentTarget.select()}
-                  />
-                </div>
+                {stripeWebhookEndpoints.map((endpoint) => (
+                  <div key={endpoint.url} className={styles.formField}>
+                    <span>{endpoint.label}</span>
+                    <input
+                      type="text"
+                      readOnly
+                      value={endpoint.url}
+                      onFocus={(event) => event.currentTarget.select()}
+                    />
+                  </div>
+                ))}
               </div>
             )}
           </div>
