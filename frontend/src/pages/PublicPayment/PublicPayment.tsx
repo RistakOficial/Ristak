@@ -1,9 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe, type StripeElementsOptions } from '@stripe/stripe-js'
-import { AlertCircle, CheckCircle2, CreditCard, Download, ExternalLink, Loader2, ShieldCheck, WalletCards } from 'lucide-react'
+import { AlertCircle, CheckCircle2, CreditCard, Download, ExternalLink, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { mercadoPagoPaymentsService, type PublicMercadoPagoPayment } from '@/services/mercadoPagoPaymentsService'
+import {
+  mercadoPagoPaymentsService,
+  type MercadoPagoCardPaymentPayload,
+  type PublicMercadoPagoPayment
+} from '@/services/mercadoPagoPaymentsService'
 import {
   stripePaymentsService,
   type PublicStripePayment,
@@ -19,6 +23,46 @@ import styles from './PublicPayment.module.css'
 
 type StripePromise = ReturnType<typeof loadStripe>
 type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment
+type MercadoPagoBrickController = { unmount?: () => void }
+type MercadoPagoBrickBuilder = {
+  create: (
+    type: 'cardPayment',
+    containerId: string,
+    settings: Record<string, unknown>
+  ) => Promise<MercadoPagoBrickController>
+}
+type MercadoPagoInstance = {
+  bricks: () => MercadoPagoBrickBuilder
+}
+type MercadoPagoConstructor = new (publicKey: string, options?: { locale?: string }) => MercadoPagoInstance
+type MercadoPagoCardSubmitData = {
+  token?: string
+  payment_method_id?: string
+  paymentMethodId?: string
+  issuer_id?: string | number
+  issuerId?: string | number
+  installments?: string | number
+  payer?: {
+    email?: string
+    first_name?: string
+    firstName?: string
+    last_name?: string
+    lastName?: string
+    identification?: {
+      type?: string
+      number?: string
+    }
+  }
+}
+
+declare global {
+  interface Window {
+    MercadoPago?: MercadoPagoConstructor
+  }
+}
+
+const MERCADOPAGO_SDK_SRC = 'https://sdk.mercadopago.com/js/v2'
+let mercadoPagoSdkPromise: Promise<void> | null = null
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -66,6 +110,90 @@ function buildStripeAppearance() {
       colorDanger: readToken('--neg'),
       fontFamily: readToken('--font-body'),
       borderRadius: '10px'
+    }
+  }
+}
+
+function loadMercadoPagoSdk() {
+  if (typeof window === 'undefined') return Promise.reject(new Error('Mercado Pago solo se puede cargar en el navegador.'))
+  if (window.MercadoPago) return Promise.resolve()
+  if (mercadoPagoSdkPromise) return mercadoPagoSdkPromise
+
+  mercadoPagoSdkPromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${MERCADOPAGO_SDK_SRC}"]`)
+    const handleReady = () => {
+      if (window.MercadoPago) {
+        resolve()
+      } else {
+        reject(new Error('No se pudo cargar el SDK de Mercado Pago.'))
+      }
+    }
+
+    if (existingScript) {
+      existingScript.addEventListener('load', handleReady, { once: true })
+      existingScript.addEventListener('error', () => reject(new Error('No se pudo cargar el SDK de Mercado Pago.')), { once: true })
+      window.setTimeout(handleReady, 0)
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = MERCADOPAGO_SDK_SRC
+    script.async = true
+    script.addEventListener('load', handleReady, { once: true })
+    script.addEventListener('error', () => reject(new Error('No se pudo cargar el SDK de Mercado Pago.')), { once: true })
+    document.head.appendChild(script)
+  })
+
+  return mercadoPagoSdkPromise
+}
+
+function createPaymentAttemptKey(publicPaymentId: string) {
+  const randomId = typeof window !== 'undefined' && window.crypto?.randomUUID
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `ristak-${publicPaymentId}-${randomId}`
+}
+
+function normalizeMercadoPagoStatusMessage(status?: string, statusDetail?: string) {
+  const normalized = String(status || '').toLowerCase()
+  if (['approved', 'paid', 'succeeded', 'completed'].includes(normalized)) {
+    return { kind: 'success' as const, text: 'Pago recibido. Gracias.' }
+  }
+  if (['pending', 'in_process', 'authorized'].includes(normalized)) {
+    return { kind: 'info' as const, text: 'Mercado Pago está procesando el pago. Esta página se actualizará cuando se confirme.' }
+  }
+
+  const detail = String(statusDetail || '').trim()
+  return {
+    kind: 'error' as const,
+    text: detail
+      ? `Mercado Pago rechazó el pago: ${detail}. Revisa los datos o intenta con otra tarjeta.`
+      : 'Mercado Pago rechazó el pago. Revisa los datos o intenta con otra tarjeta.'
+  }
+}
+
+function buildMercadoPagoCardPayload(payment: PublicMercadoPagoPayment, formData: MercadoPagoCardSubmitData): MercadoPagoCardPaymentPayload {
+  const token = String(formData.token || '').trim()
+  const paymentMethodId = String(formData.payment_method_id || formData.paymentMethodId || '').trim()
+  const issuerId = String(formData.issuer_id || formData.issuerId || '').trim()
+  const payer = formData.payer || {}
+  const email = String(payer.email || payment.contact?.email || '').trim()
+
+  if (!email) {
+    throw new Error('Agrega un correo para poder procesar el pago con Mercado Pago.')
+  }
+
+  return {
+    token,
+    paymentMethodId,
+    issuerId,
+    installments: Number(formData.installments || 1),
+    idempotencyKey: createPaymentAttemptKey(payment.publicPaymentId),
+    payer: {
+      email,
+      firstName: payer.firstName || payer.first_name,
+      lastName: payer.lastName || payer.last_name,
+      identification: payer.identification
     }
   }
 }
@@ -157,6 +285,171 @@ const PublicPaymentForm: React.FC<{
         </button>
       </div>
     </form>
+  )
+}
+
+const MercadoPagoCardPaymentForm: React.FC<{
+  payment: PublicMercadoPagoPayment
+  onPaid: () => Promise<void>
+  onFallback: () => Promise<void>
+  fallbackLoading: boolean
+}> = ({ payment, onPaid, onFallback, fallbackLoading }) => {
+  const containerId = useMemo(
+    () => `mercadopago-card-${payment.publicPaymentId.replace(/[^a-zA-Z0-9_-]/g, '')}`,
+    [payment.publicPaymentId]
+  )
+  const controllerRef = useRef<MercadoPagoBrickController | null>(null)
+  const onPaidRef = useRef(onPaid)
+  const [loadingBrick, setLoadingBrick] = useState(Boolean(payment.publicKey))
+  const [submitting, setSubmitting] = useState(false)
+  const [message, setMessage] = useState('')
+  const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
+
+  useEffect(() => {
+    onPaidRef.current = onPaid
+  }, [onPaid])
+
+  useEffect(() => {
+    if (!payment.publicKey) {
+      setLoadingBrick(false)
+      setMessage('Mercado Pago no devolvió una llave pública para montar el formulario. Usa Checkout Pro como respaldo.')
+      setMessageKind('error')
+      return
+    }
+
+    let cancelled = false
+    const mountBrick = async () => {
+      setLoadingBrick(true)
+      setMessage('')
+
+      try {
+        await loadMercadoPagoSdk()
+        if (cancelled || !window.MercadoPago) return
+
+        const container = document.getElementById(containerId)
+        if (container) container.innerHTML = ''
+
+        const mercadoPago = new window.MercadoPago(payment.publicKey || '', { locale: 'es-MX' })
+        const bricksBuilder = mercadoPago.bricks()
+        const controller = await bricksBuilder.create('cardPayment', containerId, {
+          initialization: {
+            amount: Number(payment.amount || 0)
+          },
+          callbacks: {
+            onReady: () => {
+              if (!cancelled) setLoadingBrick(false)
+            },
+            onSubmit: async (cardFormData: MercadoPagoCardSubmitData) => {
+              setSubmitting(true)
+              setMessage('')
+
+              try {
+                const payload = buildMercadoPagoCardPayload(payment, cardFormData)
+                const result = await mercadoPagoPaymentsService.createPublicCardPayment(payment.publicPaymentId, payload)
+                const statusMessage = normalizeMercadoPagoStatusMessage(result.payment?.status || result.status, result.statusDetail)
+                setMessageKind(statusMessage.kind)
+                setMessage(statusMessage.text)
+                await onPaidRef.current()
+
+                if (statusMessage.kind === 'error') {
+                  throw new Error(statusMessage.text)
+                }
+
+                return result
+              } catch (submitError: any) {
+                const text = submitError?.message || 'No se pudo completar el pago. Revisa los datos e intenta otra vez.'
+                setMessageKind('error')
+                setMessage(text)
+                throw submitError
+              } finally {
+                setSubmitting(false)
+              }
+            },
+            onError: () => {
+              if (cancelled) return
+              setLoadingBrick(false)
+              setMessageKind('error')
+              setMessage('Mercado Pago no pudo montar el formulario de tarjeta. Puedes intentar de nuevo o abrir Checkout Pro.')
+            }
+          }
+        })
+
+        if (cancelled) {
+          controller?.unmount?.()
+          return
+        }
+        controllerRef.current = controller
+      } catch (brickError: any) {
+        if (cancelled) return
+        setLoadingBrick(false)
+        setMessageKind('error')
+        setMessage(brickError?.message || 'No se pudo cargar el formulario de Mercado Pago.')
+      }
+    }
+
+    mountBrick()
+
+    return () => {
+      cancelled = true
+      controllerRef.current?.unmount?.()
+      controllerRef.current = null
+      const container = document.getElementById(containerId)
+      if (container) container.innerHTML = ''
+    }
+  }, [containerId, payment.amount, payment.publicKey, payment.publicPaymentId])
+
+  const messageClassName = [
+    styles.message,
+    messageKind === 'success' ? styles.messageSuccess : '',
+    messageKind === 'error' ? styles.messageError : ''
+  ].filter(Boolean).join(' ')
+
+  return (
+    <div className={styles.stripeBox}>
+      <p className={styles.cardAuthorizationNotice}>
+        <ShieldCheck size={16} />
+        <span>La tarjeta se captura en campos seguros de Mercado Pago. Ristak solo recibe el resultado del cobro.</span>
+      </p>
+
+      <div className={styles.mercadoPagoBrickShell}>
+        {loadingBrick && (
+          <div className={styles.brickLoading}>
+            <Loader2 size={18} className={styles.spin} />
+            <span>Cargando formulario seguro</span>
+          </div>
+        )}
+        <div id={containerId} className={styles.mercadoPagoBrick} />
+      </div>
+
+      {message && (
+        <p className={messageClassName}>
+          {messageKind === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          <span>{message}</span>
+        </p>
+      )}
+
+      <div className={styles.fallbackAction}>
+        <span>Si tu banco pide otro método, abre el checkout completo de Mercado Pago.</span>
+        <button
+          type="button"
+          className={styles.button}
+          onClick={onFallback}
+          disabled={fallbackLoading || submitting}
+        >
+          {fallbackLoading ? (
+            <>
+              <Loader2 size={16} className={styles.spin} />
+              Abriendo
+            </>
+          ) : (
+            <>
+              <ExternalLink size={16} />
+              Checkout Pro
+            </>
+          )}
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -429,12 +722,12 @@ export const PublicPayment: React.FC = () => {
 
           <section className={styles.payPanel} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
-              <h2>{isPaid ? 'Pago confirmado' : isMercadoPagoPayment ? 'Pagar con Mercado Pago' : 'Pagar con tarjeta'}</h2>
+              <h2>{isPaid ? 'Pago confirmado' : 'Pagar con tarjeta'}</h2>
               <p>
                 {isPaid
                   ? 'Este pago ya aparece como pagado en Ristak.'
                   : isMercadoPagoPayment
-                    ? 'Mercado Pago abrirá su checkout seguro para completar el cobro.'
+                    ? 'Captura la tarjeta en el formulario seguro de Mercado Pago sin salir de esta página.'
                     : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
@@ -517,32 +810,12 @@ export const PublicPayment: React.FC = () => {
                 <span>Este link ya no está disponible para cobrar.</span>
               </p>
             ) : isMercadoPagoPayment ? (
-              <div className={styles.stripeBox}>
-                <p className={styles.message}>
-                  <WalletCards size={16} />
-                  <span>Mercado Pago abrirá Checkout Pro para que puedas pagar con los métodos disponibles de tu cuenta.</span>
-                </p>
-                <div className={styles.actions}>
-                  <button
-                    type="button"
-                    className={`${styles.button} ${styles.buttonPrimary}`}
-                    onClick={startPayment}
-                    disabled={startingPayment}
-                  >
-                    {startingPayment ? (
-                      <>
-                        <Loader2 size={16} className={styles.spin} />
-                        Abriendo
-                      </>
-                    ) : (
-                      <>
-                        <ExternalLink size={16} />
-                        {checkoutSettings?.buttonLabel || 'Pagar con Mercado Pago'}
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
+              <MercadoPagoCardPaymentForm
+                payment={payment}
+                onPaid={() => loadPayment(true)}
+                onFallback={startPayment}
+                fallbackLoading={startingPayment}
+              />
             ) : isStripePayment && stripePromise && elementsOptions ? (
               <Elements stripe={stripePromise} options={elementsOptions}>
                 <PublicPaymentForm payment={payment} onPaid={() => loadPayment(true)} />

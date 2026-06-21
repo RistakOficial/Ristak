@@ -3,6 +3,7 @@ import {
   createMercadoPagoConnectUrlView,
   createMercadoPagoPaymentLinkView,
   createMercadoPagoPaymentPlanView,
+  createPublicMercadoPagoCardPaymentView,
   deleteMercadoPagoConfigView,
   ensurePublicMercadoPagoPreferenceView,
   getMercadoPagoConfigView,
@@ -20,6 +21,7 @@ const router = express.Router()
 router.post('/webhook', mercadoPagoWebhookView)
 router.get('/public/payments/:publicPaymentId', getPublicMercadoPagoPaymentView)
 router.post('/public/payments/:publicPaymentId/preference', ensurePublicMercadoPagoPreferenceView)
+router.post('/public/payments/:publicPaymentId/card', createPublicMercadoPagoCardPaymentView)
 
 router.use(requireAuth)
 

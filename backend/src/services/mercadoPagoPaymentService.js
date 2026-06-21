@@ -619,6 +619,118 @@ function buildPreferencePayload(row, { baseUrl = '' } = {}) {
   }
 }
 
+function normalizeInstallments(value) {
+  const installments = Number(value)
+  if (!Number.isFinite(installments) || installments <= 0) return 1
+  return Math.max(1, Math.min(Math.trunc(installments), 60))
+}
+
+function normalizeIdempotencyKey(value, fallbackSeed) {
+  const clean = cleanString(value)
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .slice(0, 120)
+
+  if (clean.length >= 8) return clean
+  return `ristak-mp-card-${fallbackSeed}-${randomBytes(8).toString('hex')}`.slice(0, 120)
+}
+
+function splitPayerName(value) {
+  const clean = cleanString(value)
+  if (!clean) return { firstName: '', lastName: '' }
+  const parts = clean.split(/\s+/).filter(Boolean)
+  if (parts.length <= 1) return { firstName: clean, lastName: '' }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' ')
+  }
+}
+
+function buildCardPaymentPayer(row, metadata, input = {}) {
+  const payerInput = input && typeof input === 'object' ? input : {}
+  const email = cleanString(payerInput.email || row.contact_email || metadata.contactEmail).toLowerCase()
+  if (!email) {
+    const error = new Error('El correo del pagador es requerido para Mercado Pago.')
+    error.status = 400
+    throw error
+  }
+
+  const fallbackName = splitPayerName(row.contact_name || metadata.contactName)
+  const firstName = cleanString(payerInput.firstName || payerInput.first_name || fallbackName.firstName)
+  const lastName = cleanString(payerInput.lastName || payerInput.last_name || fallbackName.lastName)
+  const identificationInput = payerInput.identification && typeof payerInput.identification === 'object'
+    ? payerInput.identification
+    : {}
+  const identificationType = cleanString(
+    identificationInput.type ||
+    identificationInput.identificationType ||
+    payerInput.identificationType ||
+    payerInput.identification_type
+  )
+  const identificationNumber = cleanString(
+    identificationInput.number ||
+    identificationInput.identificationNumber ||
+    payerInput.identificationNumber ||
+    payerInput.identification_number
+  )
+
+  return {
+    email,
+    ...(firstName ? { first_name: firstName } : {}),
+    ...(lastName ? { last_name: lastName } : {}),
+    ...(identificationType && identificationNumber
+      ? { identification: { type: identificationType, number: identificationNumber } }
+      : {})
+  }
+}
+
+function buildCardPaymentPayload(row, input = {}, { baseUrl = '' } = {}) {
+  const metadata = parseJson(row.metadata_json, {})
+  const token = cleanString(input.token)
+  const paymentMethodId = cleanString(input.paymentMethodId || input.payment_method_id)
+  const issuerId = cleanString(input.issuerId || input.issuer_id)
+  const amount = Number(row.amount)
+
+  if (!token) {
+    const error = new Error('Mercado Pago no devolvió el token de la tarjeta.')
+    error.status = 400
+    throw error
+  }
+
+  if (!paymentMethodId) {
+    const error = new Error('Mercado Pago no devolvió el método de pago.')
+    error.status = 400
+    throw error
+  }
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const error = new Error('El monto del pago no es válido.')
+    error.status = 400
+    throw error
+  }
+
+  const cleanBaseUrl = cleanString(baseUrl).replace(/\/+$/, '')
+  const notificationUrl = cleanBaseUrl ? `${cleanBaseUrl}${MERCADOPAGO_WEBHOOK_PATH}` : ''
+  const description = cleanString(row.description || row.title || 'Pago Ristak').slice(0, 255)
+
+  return {
+    transaction_amount: Math.round(amount * 100) / 100,
+    token,
+    description,
+    installments: normalizeInstallments(input.installments),
+    payment_method_id: paymentMethodId,
+    ...(issuerId ? { issuer_id: issuerId } : {}),
+    payer: buildCardPaymentPayer(row, metadata, input.payer),
+    external_reference: row.id,
+    notification_url: notificationUrl || undefined,
+    metadata: {
+      ristak_payment_id: row.id,
+      public_payment_id: row.public_payment_id,
+      source: metadata.source || 'ristak_card_brick',
+      ...(metadata.paymentPlan ? { payment_plan: metadata.paymentPlan } : {})
+    }
+  }
+}
+
 async function createPreferenceForPayment(row, { baseUrl = '' } = {}) {
   const { payload, config } = await mercadoPagoApiRequest('/checkout/preferences', {
     method: 'POST',
@@ -838,6 +950,51 @@ export async function ensurePublicMercadoPagoPreference(publicPaymentId, { baseU
   }
 
   return createPreferenceForPayment(row, { baseUrl })
+}
+
+export async function createPublicMercadoPagoCardPayment(publicPaymentId, input = {}, { baseUrl } = {}) {
+  const row = await findPaymentByPublicId(publicPaymentId)
+  if (!row || row.payment_provider !== 'mercadopago') {
+    const error = new Error('Pago no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  if (['paid', 'succeeded', 'completed', 'refunded', 'void', 'deleted'].includes(cleanString(row.status).toLowerCase())) {
+    const error = new Error('Este pago ya no acepta nuevos cobros.')
+    error.status = 409
+    throw error
+  }
+
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey || input.idempotency_key, row.id)
+  const paymentPayload = buildCardPaymentPayload(row, input, { baseUrl })
+  const { payload, config } = await mercadoPagoApiRequest('/v1/payments', {
+    method: 'POST',
+    idempotencyKey,
+    body: paymentPayload
+  })
+
+  const referencedPayload = {
+    ...payload,
+    external_reference: cleanString(payload?.external_reference) || row.id,
+    metadata: {
+      ...(payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {}),
+      ristak_payment_id: row.id,
+      public_payment_id: row.public_payment_id
+    }
+  }
+  const updated = await updatePaymentFromMercadoPagoPayment(referencedPayload)
+  const refreshed = updated || await findPaymentById(row.id)
+  const paymentSettings = await getPublicPaymentSettings()
+
+  return {
+    payment: mapPublicPayment(refreshed, config, baseUrl, paymentSettings),
+    mercadoPagoPaymentId: cleanString(payload?.id),
+    status: cleanString(payload?.status),
+    statusDetail: cleanString(payload?.status_detail),
+    paymentMethodId: cleanString(payload?.payment_method_id),
+    paymentTypeId: cleanString(payload?.payment_type_id)
+  }
 }
 
 function validatePlanPayload(input = {}) {

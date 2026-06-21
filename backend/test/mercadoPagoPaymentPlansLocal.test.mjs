@@ -4,7 +4,9 @@ import assert from 'node:assert/strict'
 import { db, setAppConfig } from '../src/config/database.js'
 import { actionInvoiceSchedule, getInvoiceSchedule } from '../src/controllers/highlevelController.js'
 import {
+  createMercadoPagoPaymentLink,
   createMercadoPagoPaymentPlan,
+  createPublicMercadoPagoCardPayment,
   ensurePublicMercadoPagoPreference,
   processDueMercadoPagoPaymentPlanCharges,
   setMercadoPagoFetchForTest
@@ -62,6 +64,9 @@ async function snapshotMercadoPagoConfig(callback) {
 }
 
 async function cleanup(ids) {
+  if (ids.paymentId) {
+    await db.run('DELETE FROM payments WHERE id = ?', [ids.paymentId]).catch(() => undefined)
+  }
   if (ids.flowId) {
     await db.run('DELETE FROM payment_plans WHERE id = ?', [ids.flowId]).catch(() => undefined)
     await db.run('DELETE FROM installment_payments WHERE flow_id = ?', [ids.flowId]).catch(() => undefined)
@@ -194,6 +199,130 @@ test('Mercado Pago crea planes locales y el cron genera links vencidos sin dupli
 
       const flow = await db.get('SELECT current_state FROM payment_flows WHERE id = ?', [ids.flowId])
       assert.equal(flow.current_state, 'cancelled')
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
+test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto del navegador', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_card_${suffix}`,
+      paymentId: ''
+    }
+    const preferenceCalls = []
+    const cardPaymentCalls = []
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(options.method, 'POST')
+      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+
+      if (url === 'https://api.mercadopago.com/checkout/preferences') {
+        const body = JSON.parse(String(options.body || '{}'))
+        preferenceCalls.push(body)
+
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: `pref_card_${preferenceCalls.length}`,
+            init_point: `https://www.mercadopago.com.mx/checkout/v1/redirect?pref_id=card_${preferenceCalls.length}`,
+            sandbox_init_point: `https://sandbox.mercadopago.com.mx/checkout/v1/redirect?pref_id=card_${preferenceCalls.length}`
+          })
+        }
+      }
+
+      assert.equal(url, 'https://api.mercadopago.com/v1/payments')
+      assert.equal(options.headers?.['X-Idempotency-Key'], 'card-test-key-123')
+      const body = JSON.parse(String(options.body || '{}'))
+      cardPaymentCalls.push(body)
+
+      assert.equal(body.transaction_amount, 123.45)
+      assert.equal(body.token, 'tok_card_test')
+      assert.equal(body.payment_method_id, 'visa')
+      assert.equal(body.installments, 1)
+      assert.equal(body.payer.email, 'cliente-card@example.test')
+      assert.equal(body.external_reference, ids.paymentId)
+      assert.equal(body.metadata.ristak_payment_id, ids.paymentId)
+
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: 'mp_card_payment_1',
+          status: 'approved',
+          status_detail: 'accredited',
+          transaction_amount: 123.45,
+          currency_id: 'MXN',
+          payment_method_id: 'visa',
+          payment_type_id: 'credit_card',
+          external_reference: ids.paymentId,
+          metadata: {
+            ristak_payment_id: ids.paymentId
+          },
+          date_approved: '2026-06-20T20:00:00.000Z'
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente Card Mercado Pago', 'cliente-card@example.test', '+5215555555557']
+    )
+
+    try {
+      const created = await createMercadoPagoPaymentLink({
+        contactId: ids.contactId,
+        contactName: 'Cliente Card Mercado Pago',
+        email: 'cliente-card@example.test',
+        phone: '+5215555555557',
+        amount: 123.45,
+        currency: 'MXN',
+        title: 'Pago con tarjeta Mercado Pago',
+        description: 'Pago con tarjeta Mercado Pago',
+        applyTax: false
+      }, { baseUrl: 'https://app.example.test' })
+      ids.paymentId = created.payment.id
+
+      const charged = await createPublicMercadoPagoCardPayment(created.publicPaymentId, {
+        token: 'tok_card_test',
+        paymentMethodId: 'visa',
+        issuerId: '123',
+        installments: 1,
+        idempotencyKey: 'card-test-key-123',
+        transaction_amount: 1,
+        payer: {
+          email: 'cliente-card@example.test',
+          identification: {
+            type: 'RFC',
+            number: 'XAXX010101000'
+          }
+        }
+      }, { baseUrl: 'https://app.example.test' })
+
+      assert.equal(preferenceCalls.length, 1)
+      assert.equal(cardPaymentCalls.length, 1)
+      assert.equal(charged.payment.status, 'paid')
+      assert.equal(charged.payment.mercadoPagoPaymentId, 'mp_card_payment_1')
+      assert.equal(charged.status, 'approved')
+
+      const saved = await db.get(
+        `SELECT status, amount, payment_method, mercadopago_payment_id, paid_at, metadata_json
+         FROM payments
+         WHERE id = ?`,
+        [ids.paymentId]
+      )
+      assert.equal(saved.status, 'paid')
+      assert.equal(saved.amount, 123.45)
+      assert.equal(saved.payment_method, 'credit_card')
+      assert.equal(saved.mercadopago_payment_id, 'mp_card_payment_1')
+      assert.ok(saved.paid_at)
+      assert.ok(!String(saved.metadata_json).includes('tok_card_test'))
     } finally {
       await cleanup(ids)
     }

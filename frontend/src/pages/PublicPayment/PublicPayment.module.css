@@ -268,6 +268,52 @@
   background: var(--surface-solid);
 }
 
+.mercadoPagoBrickShell {
+  position: relative;
+  min-height: 360px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid);
+  overflow: hidden;
+}
+
+.mercadoPagoBrick {
+  min-height: 320px;
+  color: var(--text);
+}
+
+.brickLoading {
+  position: absolute;
+  inset: 14px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.fallbackAction {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.fallbackAction span {
+  min-width: 0;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -482,6 +528,24 @@
 
   .title {
     font-size: 26px;
+  }
+
+  .fallbackAction {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .fallbackAction .button {
+    width: 100%;
+  }
+
+  .mercadoPagoBrickShell {
+    min-height: 340px;
+    padding: 10px;
+  }
+
+  .brickLoading {
+    inset: 10px;
   }
 }
 

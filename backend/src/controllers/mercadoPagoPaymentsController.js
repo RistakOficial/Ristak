@@ -2,6 +2,7 @@ import {
   createMercadoPagoOAuthUrl,
   createMercadoPagoPaymentLink,
   createMercadoPagoPaymentPlan,
+  createPublicMercadoPagoCardPayment,
   deleteMercadoPagoPaymentConfig,
   ensurePublicMercadoPagoPreference,
   getMercadoPagoPaymentConfig,
@@ -213,6 +214,18 @@ export async function ensurePublicMercadoPagoPreferenceView(req, res) {
   } catch (error) {
     logger.error(`Error preparando preferencia Mercado Pago: ${error.message}`)
     sendMercadoPagoError(res, error, 'No se pudo preparar el pago')
+  }
+}
+
+export async function createPublicMercadoPagoCardPaymentView(req, res) {
+  try {
+    const result = await createPublicMercadoPagoCardPayment(req.params.publicPaymentId, req.body || {}, {
+      baseUrl: getRequestBaseUrl(req)
+    })
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error cobrando tarjeta Mercado Pago: ${error.message}`)
+    sendMercadoPagoError(res, error, 'No se pudo cobrar la tarjeta con Mercado Pago')
   }
 }
 

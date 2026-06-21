@@ -114,6 +114,37 @@ export interface MercadoPagoPaymentPlanResponse {
   }>
 }
 
+export interface MercadoPagoCardPaymentPayload {
+  token: string
+  paymentMethodId?: string
+  payment_method_id?: string
+  issuerId?: string
+  issuer_id?: string
+  installments?: number
+  idempotencyKey?: string
+  idempotency_key?: string
+  payer: {
+    email: string
+    firstName?: string
+    first_name?: string
+    lastName?: string
+    last_name?: string
+    identification?: {
+      type?: string
+      number?: string
+    }
+  }
+}
+
+export interface MercadoPagoCardPaymentResponse {
+  payment: PublicMercadoPagoPayment
+  mercadoPagoPaymentId?: string
+  status?: string
+  statusDetail?: string
+  paymentMethodId?: string
+  paymentTypeId?: string
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}))
   if (!response.ok || data?.success === false) {
@@ -208,5 +239,14 @@ export const mercadoPagoPaymentsService = {
       method: 'POST'
     })
     return parseResponse(response)
+  },
+
+  async createPublicCardPayment(publicPaymentId: string, payload: MercadoPagoCardPaymentPayload): Promise<MercadoPagoCardPaymentResponse> {
+    const response = await fetch(apiUrl(`/api/mercadopago/public/payments/${encodeURIComponent(publicPaymentId)}/card`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    return parseResponse<MercadoPagoCardPaymentResponse>(response)
   }
 }
