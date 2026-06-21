@@ -71,6 +71,52 @@
   flex-wrap: wrap;
 }
 
+.planProgressCell {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 116px;
+}
+
+.planProgressLabel {
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.planProgressMuted {
+  color: var(--text-mute);
+  font-size: 12.5px;
+}
+
+.planProgressBar {
+  display: block;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+.planProgressBar::-webkit-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+}
+
+.planProgressBar::-webkit-progress-value {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.planProgressBar::-moz-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
 .testModeBadge {
   border: 1px solid rgba(245, 158, 11, 0.28);
 }

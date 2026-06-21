@@ -17,6 +17,7 @@ import {
   Receipt,
   RotateCcw,
   MoreVertical,
+  Clock,
   Eye,
   Link2,
   Send,
@@ -358,6 +359,9 @@ const PAYMENT_PLAN_STATUS_ORDER = [
   'deleted'
 ]
 
+const PAYMENT_PLAN_PAID_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'registered'])
+const PAYMENT_PLAN_IGNORED_PAYMENT_STATUSES = new Set(['cancelled', 'canceled', 'deleted', 'void'])
+
 const DELETE_CONFIRMATION_WORD = 'ELIMINAR'
 
 const getDayOfWeekCode = (date: Date) => {
@@ -372,6 +376,87 @@ const getMonthOfYearCode = (date: Date) => {
 
 const isLastDayOfMonth = (date: Date) => {
   return date.getDate() === new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()
+}
+
+interface PaymentPlanProgress {
+  known: boolean
+  completed: number
+  total: number
+  remaining: number
+}
+
+const getObjectValue = (value: unknown): Record<string, any> => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
+)
+
+const getFirstArray = (...values: unknown[]) => {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length > 0) return value
+  }
+  return []
+}
+
+const getPositiveNumber = (...values: unknown[]) => {
+  for (const value of values) {
+    const number = Number(value)
+    if (Number.isFinite(number) && number > 0) return number
+  }
+  return 0
+}
+
+const getPaymentRowStatus = (row: Record<string, any>) => (
+  String(row.status || row.paymentStatus || row.state || '').toLowerCase()
+)
+
+const getPaymentPlanProgress = (plan: PaymentPlan): PaymentPlanProgress => {
+  const raw = getObjectValue(plan.raw)
+  const schedule = getObjectValue(raw.schedule)
+  const response = getObjectValue(raw.response)
+  const firstPayment = getObjectValue(schedule.firstPayment || raw.firstPayment)
+  const rows: Record<string, any>[] = []
+
+  if (Object.keys(firstPayment).length > 0) {
+    const firstPaymentAmount = getPositiveNumber(firstPayment.amount, firstPayment.total, firstPayment.value)
+    if (firstPaymentAmount > 0 || firstPayment.status || firstPayment.paymentId) {
+      rows.push(firstPayment)
+    }
+  }
+
+  rows.push(...getFirstArray(
+    schedule.installments,
+    raw.installments,
+    schedule.scheduledPayments,
+    raw.scheduledPayments,
+    response.scheduledPayments
+  ).filter((row): row is Record<string, any> => Boolean(row && typeof row === 'object' && !Array.isArray(row))))
+
+  const visibleRows = rows.filter((row) => !PAYMENT_PLAN_IGNORED_PAYMENT_STATUSES.has(getPaymentRowStatus(row)))
+
+  if (visibleRows.length > 0) {
+    const completed = visibleRows.filter((row) => PAYMENT_PLAN_PAID_STATUSES.has(getPaymentRowStatus(row))).length
+    const total = visibleRows.length
+    return {
+      known: true,
+      completed,
+      total,
+      remaining: Math.max(total - completed, 0)
+    }
+  }
+
+  const recurrence = getObjectValue(schedule.rrule || schedule.recurrence || raw.rrule || raw.recurrence)
+  const fallbackTotal = getPositiveNumber(recurrence.count, schedule.count, raw.count)
+  if (fallbackTotal > 0) {
+    const status = String(plan.status || '').toLowerCase()
+    const completed = ['completed', 'complete'].includes(status) ? fallbackTotal : 0
+    return {
+      known: true,
+      completed,
+      total: fallbackTotal,
+      remaining: Math.max(fallbackTotal - completed, 0)
+    }
+  }
+
+  return { known: false, completed: 0, total: 0, remaining: 0 }
 }
 
 interface PaymentPlanScheduleOptions {
@@ -2260,6 +2345,40 @@ export const Transactions: React.FC = () => {
       sortable: true
     },
     {
+      key: 'paymentProgress',
+      header: 'Avance',
+      render: (_value, item) => {
+        const progress = getPaymentPlanProgress(item)
+
+        if (!progress.known) {
+          return (
+            <div className={styles.planProgressCell}>
+              <span className={styles.planProgressMuted}>Sin detalle</span>
+            </div>
+          )
+        }
+
+        return (
+          <div className={styles.planProgressCell} title={`Faltan ${progress.remaining} pago${progress.remaining === 1 ? '' : 's'}`}>
+            <span className={styles.planProgressLabel}>
+              {progress.completed}/{progress.total} pagos
+            </span>
+            <progress
+              className={styles.planProgressBar}
+              value={progress.completed}
+              max={progress.total}
+              aria-label={`${progress.completed} de ${progress.total} pagos completados`}
+            />
+          </div>
+        )
+      },
+      searchValue: (_value, item) => {
+        const progress = getPaymentPlanProgress(item)
+        return progress.known ? `${progress.completed}/${progress.total}` : 'sin detalle'
+      },
+      sortable: false
+    },
+    {
       key: 'description',
       header: 'Descripción',
       render: (value) => value || '-',
@@ -2366,6 +2485,31 @@ export const Transactions: React.FC = () => {
   }
 
   const transactionsRefreshing = paymentTableTab === 'transactions' && loading && hasLoadedTransactions
+  const paymentPlanTotals = useMemo(() => {
+    return paymentPlans.reduce((acc, plan) => {
+      const status = getPlanFilterStatus(plan)
+      acc.total += 1
+
+      if (['active', 'scheduled', 'pending', 'sent'].includes(status)) {
+        acc.active += 1
+      }
+
+      if (['paused', 'inactive', 'draft', 'cancelled', 'canceled', 'deleted'].includes(status)) {
+        acc.inactive += 1
+      }
+
+      if (['completed', 'complete'].includes(status)) {
+        acc.completed += 1
+      }
+
+      return acc
+    }, {
+      total: 0,
+      active: 0,
+      inactive: 0,
+      completed: 0
+    })
+  }, [paymentPlans])
 
   if (paymentTableTab === 'transactions' && loading && !hasLoadedTransactions) {
     return <Loading message="Cargando pagos..." page="transactions" />
@@ -2385,6 +2529,8 @@ export const Transactions: React.FC = () => {
     : Number(paymentPlanModal.plan?.total || 0)
   const canProgramPaymentPlan = stripeConnected || mercadoPagoConnected || highLevelConnected
   const paymentPlanConnectionLoading = stripeStatusLoading || highLevelLoading
+  const paymentsRefreshBusy = syncing || paymentPlansLoading
+  const paymentsRefreshLabel = isPaymentPlansPage ? 'Actualizar planes de pago' : 'Actualizar transacciones'
   const pageTitle = isPaymentPlansPage ? 'Planes de pago' : 'Transacciones'
   const pageSubtitle = isPaymentPlansPage
     ? 'Administra facturas recurrentes, estados y próximas ejecuciones.'
@@ -2395,6 +2541,18 @@ export const Transactions: React.FC = () => {
       <div className={styles.container}>
         <PageHeader
           title={pageTitle}
+          titleActions={(
+            <Button
+              type="button"
+              variant="secondary"
+              iconOnly
+              aria-label={paymentsRefreshLabel}
+              title={paymentsRefreshLabel}
+              onClick={handleSync}
+              disabled={paymentsRefreshBusy}
+              leftIcon={<RefreshCw size={16} className={paymentsRefreshBusy ? styles.spinning : ''} />}
+            />
+          )}
           subtitle={pageSubtitle}
           actions={(
             <Button
@@ -2452,14 +2610,6 @@ export const Transactions: React.FC = () => {
             </div>
           )}
           <div className={styles.actions}>
-            <Button
-              variant="secondary"
-              onClick={handleSync}
-              disabled={syncing || paymentPlansLoading}
-            >
-              <RefreshCw size={16} className={syncing || paymentPlansLoading ? styles.spinning : ''} />
-              {syncing || paymentPlansLoading ? 'Actualizando...' : 'Actualizar'}
-            </Button>
             {paymentTableTab === 'transactions' && (
               <Button
                 variant="secondary"
@@ -2520,6 +2670,35 @@ export const Transactions: React.FC = () => {
               deltaLabel="vs periodo anterior"
               loading={transactionsRefreshing}
               icon={<RotateCcw className="text-[var(--color-text-tertiary)]" />}
+            />
+          </div>
+        )}
+
+        {isPaymentPlansPage && (
+          <div className={styles.kpiRow}>
+            <KpiCard
+              title="Planes activos"
+              value={formatNumber(paymentPlanTotals.active)}
+              loading={paymentPlansLoading}
+              icon={<PlayCircle className="text-[var(--color-text-tertiary)]" />}
+            />
+            <KpiCard
+              title="Planes inactivos"
+              value={formatNumber(paymentPlanTotals.inactive)}
+              loading={paymentPlansLoading}
+              icon={<PauseCircle className="text-[var(--color-text-tertiary)]" />}
+            />
+            <KpiCard
+              title="Completados"
+              value={formatNumber(paymentPlanTotals.completed)}
+              loading={paymentPlansLoading}
+              icon={<CheckCircle className="text-[var(--color-text-tertiary)]" />}
+            />
+            <KpiCard
+              title="No completados"
+              value={formatNumber(Math.max(paymentPlanTotals.total - paymentPlanTotals.completed, 0))}
+              loading={paymentPlansLoading}
+              icon={<Clock className="text-[var(--color-text-tertiary)]" />}
             />
           </div>
         )}

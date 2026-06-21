@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import { Edit3, MoreVertical, Package, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, CheckCircle, DollarSign, Edit3, MoreVertical, Package, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -9,6 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  KpiCard,
   Modal,
   NumberInput,
   PageContainer,
@@ -112,6 +113,33 @@ export const PaymentProducts: React.FC = () => {
   useEffect(() => {
     void loadProducts()
   }, [])
+
+  const productMetrics = useMemo(() => {
+    return products.reduce((acc, product) => {
+      const price = getPrimaryPrice(product)
+      const amount = getPriceAmount(price)
+      const syncStatus = String(product.syncStatus || '').toLowerCase()
+
+      acc.total += 1
+
+      if (amount > 0) {
+        acc.withPrice += 1
+      } else {
+        acc.withoutPrice += 1
+      }
+
+      if (syncStatus === 'synced' || getProductSourceLabel(product) === 'HighLevel') {
+        acc.synced += 1
+      }
+
+      return acc
+    }, {
+      total: 0,
+      withPrice: 0,
+      withoutPrice: 0,
+      synced: 0
+    })
+  }, [products])
 
   const openCreateProduct = () => {
     setEditingProduct(null)
@@ -360,23 +388,34 @@ export const PaymentProducts: React.FC = () => {
       <div className={styles.page}>
         <PageHeader
           title="Productos"
+          titleActions={(
+            <Button
+              type="button"
+              variant="secondary"
+              iconOnly
+              aria-label="Actualizar productos"
+              title="Actualizar productos"
+              onClick={() => void loadProducts({ refresh: true, sync: highLevelConnected })}
+              disabled={refreshing}
+              leftIcon={<RefreshCw size={16} className={refreshing ? styles.spin : undefined} />}
+            />
+          )}
           subtitle="Administra los productos y precios guardados en la base de datos."
           actions={
             <>
-              <Button
-                variant="secondary"
-                onClick={() => void loadProducts({ refresh: true, sync: highLevelConnected })}
-                disabled={refreshing}
-                leftIcon={<RefreshCw size={16} className={refreshing ? styles.spin : undefined} />}
-              >
-                {refreshing ? 'Actualizando...' : 'Actualizar'}
-              </Button>
               <Button onClick={openCreateProduct} leftIcon={<Plus size={16} />}>
                 Nuevo producto
               </Button>
             </>
           }
         />
+
+        <div className={styles.metricsGrid}>
+          <KpiCard title="Productos" value={productMetrics.total} icon={Package} loading={loading} />
+          <KpiCard title="Con precio" value={productMetrics.withPrice} icon={DollarSign} loading={loading} />
+          <KpiCard title="Sin precio" value={productMetrics.withoutPrice} icon={AlertTriangle} loading={loading} />
+          <KpiCard title="Sincronizados" value={productMetrics.synced} icon={CheckCircle} loading={loading} />
+        </div>
 
         <Card padding="none">
           <Table

@@ -546,6 +546,18 @@ export const PaymentSubscriptions: React.FC = () => {
       <div className={styles.page}>
         <PageHeader
           title="Suscripciones"
+          titleActions={(
+            <Button
+              type="button"
+              variant="secondary"
+              iconOnly
+              aria-label="Actualizar suscripciones"
+              title="Actualizar suscripciones"
+              onClick={() => void loadSubscriptions({ refresh: true })}
+              disabled={refreshing}
+              leftIcon={<RefreshCw size={16} className={refreshing ? styles.spin : undefined} />}
+            />
+          )}
           subtitle="Administra cobros recurrentes, tarjetas guardadas y próximos ciclos de pago."
           actions={
             <>
@@ -556,14 +568,6 @@ export const PaymentSubscriptions: React.FC = () => {
                 leftIcon={<Settings size={16} />}
               >
                 Configurar pasarelas
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => void loadSubscriptions({ refresh: true })}
-                disabled={refreshing}
-                leftIcon={<RefreshCw size={16} className={refreshing ? styles.spin : undefined} />}
-              >
-                {refreshing ? 'Actualizando...' : 'Actualizar'}
               </Button>
               <Button onClick={openCreateSubscription} leftIcon={<Plus size={16} />}>
                 Nueva suscripción
