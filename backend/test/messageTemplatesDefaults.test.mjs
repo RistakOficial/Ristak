@@ -304,6 +304,48 @@ test('crea plantillas default de pagos con botones dinamicos de pago y comproban
   })
 })
 
+test('arma parámetros de pago fallido aunque falte el snapshot local de la plantilla', async () => {
+  await deleteDefaultPaymentTemplates()
+
+  try {
+    const sendComponents = await buildDefaultMessageTemplateSendComponents({
+      templateName: 'pago_fallido_reintento',
+      language: 'es_MX',
+      variableOptions: {
+        publicBaseUrl: 'https://pagos.ristak.test',
+        extraVariables: {
+          'contact.first_name': 'Luis',
+          'payment.product': 'Plan mensual',
+          'payment.amount': '$1,499 MXN',
+          'payment.public_id': 'pay_reintento_123',
+          'payment.url': 'https://pagos.ristak.test/pay/pay_reintento_123'
+        }
+      }
+    })
+
+    assert.deepEqual(sendComponents, [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Luis' },
+          { type: 'text', text: 'Plan mensual' },
+          { type: 'text', text: '$1,499 MXN' }
+        ]
+      },
+      {
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [
+          { type: 'text', text: 'pay_reintento_123' }
+        ]
+      }
+    ])
+  } finally {
+    await deleteDefaultPaymentTemplates()
+  }
+})
+
 test('repara defaults existentes sin enviar y manda solo los pendientes', async () => {
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()

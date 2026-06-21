@@ -7,6 +7,7 @@ import {
   getWhatsAppApiConfigKeys,
   sendWhatsAppApiInteractiveMessage,
   sendWhatsAppApiTemplateMessage,
+  setMetaDirectFetchForTest,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
 import {
@@ -19,6 +20,7 @@ function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
     ok: status >= 200 && status < 300,
     status,
     statusText,
+    json: async () => body,
     text: async () => JSON.stringify(body)
   }
 }
@@ -100,6 +102,52 @@ async function withYCloudMessageCapture(callback) {
       return await callback(captures)
     } finally {
       setYCloudFetchForTest(null)
+    }
+  })
+}
+
+async function withMetaDirectMessageCapture(callback) {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken,
+    keys.metaLastError
+  ]
+  const captures = []
+
+  return snapshotAppConfig(configKeys, async () => {
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, 'waba_meta_direct_buttons_test')
+    await setAppConfig(keys.metaPhoneNumberId, 'phone_meta_direct_buttons_test')
+    await setAppConfig(keys.metaDisplayPhoneNumber, '+526561234567')
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_test_token'))
+    await setAppConfig(keys.metaLastError, '')
+
+    setMetaDirectFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const method = String(options.method || 'GET').toUpperCase()
+      if (parsed.pathname.endsWith('/phone_meta_direct_buttons_test/messages') && method === 'POST') {
+        const body = JSON.parse(options.body || '{}')
+        captures.push(body)
+        return ycloudJsonResponse({
+          messaging_product: 'whatsapp',
+          contacts: [{ input: body.to, wa_id: body.to.replace(/\D/g, '') }],
+          messages: [{ id: `wamid.meta_direct_${captures.length}` }]
+        })
+      }
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      return await callback(captures)
+    } finally {
+      setMetaDirectFetchForTest(null)
     }
   })
 }
@@ -266,6 +314,90 @@ test('guarda en el chat el texto renderizado de plantillas enviadas por YCloud',
       await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_id = ?', [templateId])
       await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId])
       await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR phone = ? OR to_phone = ?', [ycloudMessageId, to, to])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+    }
+  })
+})
+
+test('guarda en el chat el texto renderizado de plantillas enviadas por Meta Direct', async () => {
+  await withMetaDirectMessageCapture(async (captures) => {
+    const suffix = randomUUID()
+    const templateId = `template_meta_history_${suffix}`
+    const templateName = `seguimiento_meta_${suffix.replace(/-/g, '_')}`
+    const to = `+52156${Date.now().toString().slice(-8)}`
+    const components = [
+      {
+        type: 'BODY',
+        text: 'Hola {{1}}, tu pago de {{2}} está listo.'
+      },
+      {
+        type: 'FOOTER',
+        text: 'Gracias'
+      }
+    ]
+
+    try {
+      await db.run(
+        `INSERT INTO whatsapp_api_templates (
+          id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
+        ) VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
+        [
+          templateId,
+          `official_${suffix}`,
+          'waba_meta_direct_buttons_test',
+          templateName,
+          'es_MX',
+          JSON.stringify(components),
+          JSON.stringify({ components })
+        ]
+      )
+
+      await sendWhatsAppApiTemplateMessage({
+        to,
+        templateId,
+        variables: {
+          1: 'Ana',
+          2: 'Plan mensual'
+        }
+      })
+
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'template')
+      assert.deepEqual(captures[0].template.components, [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: 'Ana' },
+            { type: 'text', text: 'Plan mensual' }
+          ]
+        }
+      ])
+
+      const row = await db.get(
+        `SELECT provider, message_type, message_text, wamid, status
+         FROM whatsapp_api_messages
+         WHERE wamid = ?
+         LIMIT 1`,
+        ['wamid.meta_direct_1']
+      )
+
+      assert.equal(row.provider, 'meta_direct')
+      assert.equal(row.message_type, 'template')
+      assert.equal(row.message_text, 'Hola Ana, tu pago de Plan mensual está listo.\n\nGracias')
+      assert.equal(row.status, 'sent')
+
+      const sendRow = await db.get(
+        'SELECT raw_payload_json FROM whatsapp_api_template_sends WHERE template_id = ? LIMIT 1',
+        [templateId]
+      )
+      const sendPayload = JSON.parse(sendRow.raw_payload_json)
+      assert.equal(sendPayload.request.provider, 'meta_direct')
+      assert.equal(sendPayload.template.renderedText, row.message_text)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_id = ?', [templateId])
+      await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE wamid = ? OR phone = ? OR to_phone = ?', ['wamid.meta_direct_1', to, to])
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
       await db.run('DELETE FROM contacts WHERE phone = ?', [to])
     }

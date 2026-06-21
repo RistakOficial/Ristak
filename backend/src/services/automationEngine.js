@@ -2483,6 +2483,7 @@ async function sendWhatsAppBlocks(node, ctx) {
           to,
           templateId: str(block.templateId) || undefined,
           templateName: str(block.templateName) || undefined,
+          language: str(block.language || config.language) || undefined,
           ...(components.length ? { components } : {}),
           contactId: ctx.contact?.id,
           publicBaseUrl: ctx.publicBaseUrl,

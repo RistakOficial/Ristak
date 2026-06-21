@@ -718,7 +718,7 @@ export function ContactDetailsModal({
   onUpdatePreferredWhatsAppPhoneNumber
 }: ContactDetailsModalProps) {
   const [selectedContact, setSelectedContact] = useState<ContactDetail | null>(null)
-  const chatEndRef = useRef<HTMLDivElement | null>(null)
+  const chatMessagesRef = useRef<HTMLDivElement | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [chatMessages, setChatMessages] = useState<ContactChatMessage[]>([])
   const [chatLoading, setChatLoading] = useState(false)
@@ -944,7 +944,10 @@ export function ContactDetailsModal({
   }, [isOpen, loadContactChat, selectedContact?.id])
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ block: 'end' })
+    const messagesSurface = chatMessagesRef.current
+    if (!messagesSurface) return
+
+    messagesSurface.scrollTop = messagesSurface.scrollHeight
   }, [chatLoading, chatMessages])
 
   const preparedContactSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
@@ -1701,7 +1704,7 @@ export function ContactDetailsModal({
           </span>
         </header>
 
-        <ChatMessageSurface className={styles.contactChatMessages}>
+        <ChatMessageSurface ref={chatMessagesRef} className={styles.contactChatMessages}>
           {chatLoading ? (
             <div className={styles.contactChatState} role="status" aria-live="polite">
               <Loader2 size={18} className={styles.spinIcon} aria-hidden="true" />
@@ -1754,7 +1757,6 @@ export function ContactDetailsModal({
               </div>
             ))
           )}
-          <div ref={chatEndRef} />
         </ChatMessageSurface>
 
         <form

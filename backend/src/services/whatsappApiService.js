@@ -55,9 +55,14 @@ const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 let ycloudFetch = nodeFetch
+let metaDirectFetch = nodeFetch
 
 export function setYCloudFetchForTest(fetchImpl) {
   ycloudFetch = typeof fetchImpl === 'function' ? fetchImpl : nodeFetch
+}
+
+export function setMetaDirectFetchForTest(fetchImpl) {
+  metaDirectFetch = typeof fetchImpl === 'function' ? fetchImpl : nodeFetch
 }
 const WHATSAPP_IMAGE_PUBLIC_PATH = '/uploads/whatsapp-images'
 const MAX_WHATSAPP_IMAGE_INPUT_BYTES = 25 * 1024 * 1024
@@ -4475,7 +4480,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     seenAt: messageTimestamp
   })
 
-  const provider = PROVIDER_NAME
+  const provider = cleanString(normalizedMessage.provider || payload.provider) || PROVIDER_NAME
   const origin = cleanString(normalizedMessage.origin || payload.origin || payload.field || payload.type)
   const rawMessageId = cleanString(normalizedMessage.id)
   const metaMessageId = ''
@@ -5903,7 +5908,7 @@ async function metaDirectGraphRequest(path, { method = 'GET', token, query, body
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value))
   }
 
-  const response = await nodeFetch(url.toString(), {
+  const response = await metaDirectFetch(url.toString(), {
     method,
     headers: {
       Authorization: `Bearer ${cleanToken}`,
@@ -6273,7 +6278,7 @@ async function sendTemplateViaMetaDirect({ to, template, components, externalId 
   if (!toPhone) throw new Error('Falta el número destino')
   if (!template?.name || !template?.language) throw new Error('Falta la plantilla de Meta')
 
-  return metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
     method: 'POST',
     token: config.systemUserToken,
     body: {
@@ -6288,6 +6293,26 @@ async function sendTemplateViaMetaDirect({ to, template, components, externalId 
       ...(externalId ? { biz_opaque_callback_data: externalId } : {})
     }
   })
+
+  const message = Array.isArray(response?.messages) ? response.messages[0] : null
+  const contact = Array.isArray(response?.contacts) ? response.contacts[0] : null
+  const messageId = cleanString(response?.id || response?.messageId || response?.message_id || message?.id)
+
+  return {
+    ...response,
+    id: messageId || cleanString(externalId),
+    wamid: cleanString(response?.wamid || response?.waMessageId || message?.id) || messageId || null,
+    status: cleanString(response?.status || message?.message_status) || 'sent',
+    from: normalizePhoneForStorage(config.displayPhoneNumber) || cleanString(config.displayPhoneNumber),
+    to: normalizePhoneForStorage(contact?.input || toPhone) || cleanString(contact?.input || toPhone),
+    type: 'template',
+    transport: 'api',
+    template: {
+      name: template.name,
+      language: { code: template.language },
+      ...(Array.isArray(components) && components.length ? { components } : {})
+    }
+  }
 }
 
 function normalizeInteractiveReplyButtons(buttons = []) {
@@ -6815,14 +6840,69 @@ export async function sendWhatsAppApiTemplateMessage({
     components: templateComponents,
     variables: normalizedVariables
   })
+  const templateRequest = {
+    name: finalTemplate.name,
+    language: {
+      code: finalTemplate.language,
+      policy: 'deterministic'
+    },
+    ...(templateComponents.length ? { components: templateComponents } : {})
+  }
 
   if (config.provider === META_DIRECT_PROVIDER_NAME) {
-    return sendTemplateViaMetaDirect({
+    const response = await sendTemplateViaMetaDirect({
       to: toPhone,
       template: finalTemplate,
       components: templateComponents,
       externalId
     })
+
+    const metaRequestBody = {
+      from: response.from || '',
+      to: response.to || toPhone,
+      type: 'template',
+      template: templateRequest,
+      provider: META_DIRECT_PROVIDER_NAME,
+      ...(externalId ? { externalId } : {})
+    }
+
+    await saveTemplateSend({
+      template: finalTemplate,
+      requestBody: {
+        ...metaRequestBody,
+        ...(renderedTemplateText ? { renderedText: renderedTemplateText } : {})
+      },
+      response,
+      variables: normalizedVariables,
+      renderedText: renderedTemplateText
+    })
+
+    await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waapi_meta_tpl_send_event', `${response.from}|${toPhone}|${finalTemplate.name}`),
+        type: 'whatsapp.message.updated',
+        createTime: nowIso(),
+        provider: META_DIRECT_PROVIDER_NAME,
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        provider: META_DIRECT_PROVIDER_NAME,
+        origin: response.origin || 'manual_template_send',
+        from: response.from || metaRequestBody.from,
+        to: response.to || toPhone,
+        type: 'template',
+        template: response.template || templateRequest,
+        text: response.text || (renderedTemplateText ? { body: renderedTemplateText } : undefined),
+        transport: 'api',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'api',
+      contactId
+    })
+
+    return response
   }
 
   if (!config.enabled || !config.apiKey) {
@@ -6835,14 +6915,7 @@ export async function sendWhatsAppApiTemplateMessage({
     from: fromPhone,
     to: toPhone,
     type: 'template',
-    template: {
-      name: finalTemplate.name,
-      language: {
-        code: finalTemplate.language,
-        policy: 'deterministic'
-      },
-      ...(templateComponents.length ? { components: templateComponents } : {})
-    },
+    template: templateRequest,
     filterUnsubscribed: true,
     filterBlocked: true,
     ...(externalId ? { externalId } : {})

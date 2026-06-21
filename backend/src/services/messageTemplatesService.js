@@ -718,6 +718,32 @@ function mapTemplate(row) {
   }
 }
 
+function getBuiltinDefaultMessageTemplateForSend({ templateName, language, publicBaseUrl = '' } = {}) {
+  const cleanTemplateName = cleanString(templateName)
+  if (!cleanTemplateName) return null
+
+  const cleanLanguage = cleanString(language)
+  const defaults = [
+    ...DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES,
+    ...getDefaultPaymentMessageTemplates({ publicBaseUrl })
+  ]
+  const template = defaults.find((item) => (
+    item.name === cleanTemplateName &&
+    (!cleanLanguage || item.language === cleanLanguage)
+  ))
+  if (!template) return null
+
+  return {
+    ...template,
+    id: null,
+    folderId: null,
+    ycloudTemplateName: template.name,
+    ycloudTemplateId: null,
+    ycloudStatus: null,
+    ycloudRawPayload: null
+  }
+}
+
 function customFieldVariables(customFields = []) {
   return customFields.map((field) => ({
     key: `contact.custom.${field.fieldKey}`,
@@ -1995,7 +2021,12 @@ export async function buildDefaultMessageTemplateSendComponents({
   language,
   variableOptions = {}
 } = {}) {
-  const template = await findMessageTemplateForSendDefaults({ templateId, templateName, language })
+  const template = await findMessageTemplateForSendDefaults({ templateId, templateName, language }) ||
+    getBuiltinDefaultMessageTemplateForSend({
+      templateName,
+      language,
+      publicBaseUrl: variableOptions.publicBaseUrl
+    })
   if (!template) return []
 
   const components = []

@@ -36,7 +36,10 @@ import {
   createScheduledChatMessage,
   listScheduledChatMessages
 } from '../services/scheduledChatMessagesService.js'
-import { ensureDefaultWhatsAppApiMessageTemplates } from '../services/messageTemplatesService.js'
+import {
+  buildDefaultMessageTemplateSendComponents,
+  ensureDefaultWhatsAppApiMessageTemplates
+} from '../services/messageTemplatesService.js'
 import {
   getWhatsAppQrDripSettings,
   saveWhatsAppQrDripSettings
@@ -683,18 +686,41 @@ export async function getWhatsAppApiTemplatesView(req, res) {
 
 export async function sendWhatsAppApiTemplateMessageView(req, res) {
   try {
+    const publicBaseUrl = getPublicBaseUrl(req)
+    const bodyVariables = req.body?.variables
+    const hasRequestVariables = Array.isArray(bodyVariables)
+      ? bodyVariables.length > 0
+      : bodyVariables && typeof bodyVariables === 'object'
+      ? Object.keys(bodyVariables).length > 0
+      : Boolean(cleanString(bodyVariables))
+    const requestComponents = Array.isArray(req.body?.components) && req.body.components.length
+      ? req.body.components
+      : hasRequestVariables
+      ? []
+      : await buildDefaultMessageTemplateSendComponents({
+        templateId: req.body?.templateId,
+        templateName: req.body?.templateName,
+        language: req.body?.language,
+        variableOptions: {
+          contactId: req.body?.contactId,
+          phone: req.body?.to,
+          userId: req.user?.userId,
+          publicBaseUrl
+        }
+      })
+
     const data = await sendWhatsAppApiTemplateMessage({
       to: req.body?.to,
       from: req.body?.from,
       templateId: req.body?.templateId,
       templateName: req.body?.templateName,
       language: req.body?.language,
-      components: req.body?.components,
+      components: requestComponents,
       variables: req.body?.variables,
       externalId: req.body?.externalId,
       contactId: req.body?.contactId,
       userId: req.user?.userId,
-      publicBaseUrl: getPublicBaseUrl(req),
+      publicBaseUrl,
       phoneNumberId: req.body?.phoneNumberId
     })
     notifyHumanTakeover(req.body?.to)
