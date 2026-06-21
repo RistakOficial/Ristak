@@ -312,6 +312,56 @@ function normalizeStoredAdvancedClosingContext(raw) {
   }
 }
 
+function hasAdvancedClosingContext(context = {}) {
+  return ADVANCED_CLOSING_CONTEXT_FIELDS.some((field) => Boolean(context?.[field.key]))
+}
+
+function addCompletionSummaryPart(parts, seen, label, value, maxLength = 320) {
+  const clean = cleanAdvancedClosingContextValue(value, maxLength)
+  if (!clean) return
+  const key = clean.toLowerCase()
+  if (seen.has(key)) return
+  seen.add(key)
+  parts.push(`${label}: ${clean}`)
+}
+
+function buildCompletionSummaryFromClosingContext({ signal, summary = '', reason = '', closingContext = {} } = {}) {
+  const baseSummary = cleanAdvancedClosingContextValue(summary, 500)
+  const baseReason = cleanAdvancedClosingContextValue(reason, 420)
+  const normalizedContext = normalizeStoredAdvancedClosingContext(closingContext)
+
+  if (!CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(String(signal || '').trim()) || !hasAdvancedClosingContext(normalizedContext)) {
+    return baseSummary || baseReason
+  }
+
+  const parts = []
+  const seen = new Set()
+  addCompletionSummaryPart(parts, seen, 'Resultado', baseSummary || baseReason, 500)
+  addCompletionSummaryPart(parts, seen, 'Motivo', normalizedContext.contactReason)
+  addCompletionSummaryPart(parts, seen, 'Situacion', normalizedContext.surfaceProblem)
+  addCompletionSummaryPart(parts, seen, 'Por que ahora', normalizedContext.whyNow)
+  addCompletionSummaryPart(parts, seen, 'Fondo detectado', normalizedContext.realProblem)
+  addCompletionSummaryPart(parts, seen, 'Ya intento', normalizedContext.attemptedBefore)
+  addCompletionSummaryPart(parts, seen, 'Impacto', normalizedContext.impact)
+  addCompletionSummaryPart(parts, seen, 'Freno', normalizedContext.objection)
+  addCompletionSummaryPart(parts, seen, 'Quiere lograr', normalizedContext.desiredOutcome)
+  addCompletionSummaryPart(parts, seen, 'Quiere evitar', normalizedContext.scenarioToAvoid)
+  addCompletionSummaryPart(parts, seen, 'Urgencia', normalizedContext.urgencyLevel, 80)
+  addCompletionSummaryPart(parts, seen, 'Decision', normalizedContext.decisionSignal)
+  addCompletionSummaryPart(parts, seen, 'Interes', normalizedContext.productInterest)
+  addCompletionSummaryPart(parts, seen, 'Disponibilidad', normalizedContext.timingPreference)
+  addCompletionSummaryPart(parts, seen, 'Notas', normalizedContext.notes)
+
+  let output = ''
+  for (const part of parts) {
+    const next = output ? `${output}. ${part}` : part
+    if (next.length > 1200) break
+    output = next
+  }
+
+  return output || baseSummary || baseReason
+}
+
 export function mergeAdvancedClosingContext(current = {}, patch = {}, { updatedBy = 'agent', nowIso = new Date().toISOString() } = {}) {
   const normalizedCurrent = normalizeStoredAdvancedClosingContext(current)
   const normalizedPatch = normalizeAdvancedClosingContext(patch)
@@ -2783,17 +2833,31 @@ export async function setConversationStatus(contactId, status, { updatedBy = 'sy
 
 export async function setConversationSignal(contactId, signal, { reason = '', summary = '', status = 'completed' } = {}) {
   await ensureConversationState(contactId)
+  const currentState = await db.get('SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null)
+  const closingContext = normalizeStoredAdvancedClosingContext(currentState?.closing_context_json || '{}')
+  const signalSummary = buildCompletionSummaryFromClosingContext({ signal, summary, reason, closingContext })
+  const cleanReason = String(reason || '').slice(0, 600)
+  const cleanSummary = String(signalSummary || '').slice(0, 1200)
   await db.run(`
     UPDATE conversational_agent_state
     SET signal = ?, signal_reason = ?, signal_summary = ?, signal_at = CURRENT_TIMESTAMP,
         status = ?, updated_by = 'agent', updated_at = CURRENT_TIMESTAMP
     WHERE contact_id = ?
-  `, [signal, String(reason || '').slice(0, 600), String(summary || '').slice(0, 1200), status, contactId])
+  `, [signal, cleanReason, cleanSummary, status, contactId])
+
+  const originalSummary = cleanAdvancedClosingContextValue(summary, 1200)
+  const detail = { signal, reason: cleanReason, summary: cleanSummary, status }
+  if (originalSummary && originalSummary !== cleanSummary) {
+    detail.originalSummary = originalSummary
+  }
+  if (hasAdvancedClosingContext(closingContext)) {
+    detail.closingContextUsed = true
+  }
 
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'signal_set',
-    detail: { signal, reason, summary, status }
+    detail
   })
 
   return getConversationState(contactId)

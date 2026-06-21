@@ -26,6 +26,7 @@ import {
   normalizeAgentReplyDelivery,
   normalizeConversationalSuccessAction,
   recordConversationalAgentEvent,
+  setConversationSignal,
   shouldMigrateLegacyConversationalAgentConfig,
   updateConversationalAgent
 } from '../src/services/conversationalAgentService.js'
@@ -604,6 +605,62 @@ test('acción final del agente asigna el contacto al usuario configurado', async
     assert.equal(customFields.assignedUserName, 'Ana Ventas')
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('resumen de meta concretada usa el contexto de cierre aprendido', async () => {
+  const contactId = 'test_completion_closing_context_summary'
+
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215550000066', 'closing-summary@test.local', 'Closing Summary Test', 'test']
+    )
+    await db.run(
+      `INSERT INTO conversational_agent_state (contact_id, status, closing_context_json, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+      [contactId, 'active', JSON.stringify({
+        contactReason: 'Dolor en rodilla derecha al subir escaleras y caminar',
+        whyNow: 'Lleva tres semanas sin mejorar y ya no quiere dejarlo pasar',
+        realProblem: 'Teme una lesion de menisco por correr y jugar futbol',
+        attemptedBefore: 'Rodillera, hielo e ibuprofeno con alivio minimo',
+        impact: 'Trabaja de pie y no puede entrenar con confianza',
+        objection: 'Pensaba que se iba a quitar solo y le preocupaba el gasto',
+        desiredOutcome: 'Volver a entrenar sin miedo',
+        timingPreference: 'Jueves 25 de junio a las 11:00 AM'
+      })]
+    )
+
+    await setConversationSignal(contactId, 'appointment_booked', {
+      reason: 'Cita agendada por el agente',
+      summary: 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z',
+      status: 'completed'
+    })
+
+    const state = await getConversationState(contactId)
+    assert.match(state.signalSummary, /Motivo: Dolor en rodilla derecha/)
+    assert.match(state.signalSummary, /Por que ahora: Lleva tres semanas/)
+    assert.match(state.signalSummary, /Freno: Pensaba que se iba a quitar solo/)
+    assert.match(state.signalSummary, /Quiere lograr: Volver a entrenar sin miedo/)
+
+    const event = await db.get(
+      "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'signal_set' ORDER BY created_at DESC LIMIT 1",
+      [contactId]
+    )
+    const detail = JSON.parse(event.detail_json)
+    assert.equal(detail.signal, 'appointment_booked')
+    assert.equal(detail.closingContextUsed, true)
+    assert.match(detail.summary, /Trabaja de pie/)
+    assert.match(detail.summary, /preocupaba el gasto/)
+    assert.equal(detail.originalSummary, 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z')
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })
