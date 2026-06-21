@@ -626,6 +626,41 @@ export const PaymentsConfiguration: React.FC = () => {
     }))
   }
 
+  const patchTaxValues = (patch: Partial<PaymentTaxSettings>) => {
+    setSettings((current) => ({
+      ...current,
+      taxes: { ...current.taxes, ...patch }
+    }))
+  }
+
+  const handleGigstackTokenChange = (value: string) => {
+    patchTaxValues({
+      gigstackApiToken: value,
+      clearGigstackApiToken: false
+    })
+  }
+
+  const handleDisconnectGigstack = () => {
+    showConfirm(
+      'Desconectar Gigstack',
+      'Se apagará el timbrado automático y se borrará el token API guardado. Después podrás pegar una key nueva desde este mismo campo.',
+      () => {
+        patchTaxValues({
+          gigstackEnabled: false,
+          gigstackApiToken: '',
+          gigstackApiTokenPreview: '',
+          hasGigstackApiToken: false,
+          clearGigstackApiToken: true
+        })
+        showToast('success', 'Gigstack desconectado', 'La API key se borrará de Ristak al guardar automáticamente.')
+      },
+      'Desconectar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
+  }
+
   const setGigstackDefaultUnit = (unitKey: string) => {
     setSettings((current) => ({
       ...current,
@@ -2477,6 +2512,8 @@ export const PaymentsConfiguration: React.FC = () => {
       ? previewBaseAmount + previewTaxAmount
       : previewBaseAmount
     const taxRateLabel = `${getTaxRateValue(taxes)}%`
+    const gigstackTokenInputValue = taxes.gigstackApiToken || (taxes.hasGigstackApiToken ? taxes.gigstackApiTokenPreview || '••••' : '')
+    const showingSavedGigstackToken = Boolean(!taxes.gigstackApiToken && taxes.hasGigstackApiToken && gigstackTokenInputValue)
 
     return (
       <div className={styles.twoColumnLayout}>
@@ -2581,12 +2618,28 @@ export const PaymentsConfiguration: React.FC = () => {
             'Token API de Gigstack',
             <input
               type="password"
-              value={taxes.gigstackApiToken || ''}
-              onChange={(event) => setTaxValue('gigstackApiToken', event.target.value)}
-              placeholder={taxes.gigstackApiTokenPreview || 'Pega el token JWT'}
+              value={gigstackTokenInputValue}
+              onChange={(event) => handleGigstackTokenChange(event.target.value)}
+              onFocus={(event) => {
+                if (showingSavedGigstackToken) event.currentTarget.select()
+              }}
+              placeholder="Pega el token JWT"
               autoComplete="off"
             />,
-            taxes.hasGigstackApiToken ? 'Ya hay un token guardado. Pega uno nuevo solo si quieres reemplazarlo.' : 'Se obtiene desde app.gigstack.pro/settings?subtab=api.'
+            taxes.hasGigstackApiToken ? 'La key guardada se muestra enmascarada. Selecciona el campo y pega una nueva para reemplazarla.' : 'Se obtiene desde app.gigstack.pro/settings?subtab=api.'
+          )}
+          {taxes.hasGigstackApiToken && (
+            <div className={styles.gigstackTokenActions}>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={handleDisconnectGigstack}
+              >
+                <Unplug size={15} />
+                Desconectar Gigstack
+              </Button>
+            </div>
           )}
           <div className={styles.gigstackDefaultsGrid}>
             {renderField(

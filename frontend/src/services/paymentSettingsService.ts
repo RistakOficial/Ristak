@@ -78,6 +78,7 @@ export interface PaymentTaxSettings {
   gigstackApiToken?: string
   gigstackApiTokenPreview?: string
   hasGigstackApiToken?: boolean
+  clearGigstackApiToken?: boolean
 }
 
 export interface PaymentSettings {
@@ -169,7 +170,8 @@ export const defaultPaymentSettings: PaymentSettings = {
     gigstackAutomateInvoiceOnComplete: true,
     gigstackApiToken: '',
     gigstackApiTokenPreview: '',
-    hasGigstackApiToken: false
+    hasGigstackApiToken: false,
+    clearGigstackApiToken: false
   }
 }
 

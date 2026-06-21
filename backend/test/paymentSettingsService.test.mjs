@@ -171,4 +171,22 @@ describe('payment settings tax calculation', () => {
     assert.equal(settings.taxes.gigstackDefaultPaymentMethod, '04')
     assert.equal(settings.taxes.gigstackAutomateInvoiceOnComplete, true)
   })
+
+  it('clears the saved Gigstack token when disconnecting', () => {
+    const settings = normalizePaymentSettings({
+      taxes: {
+        enabled: true,
+        gigstackEnabled: false,
+        clearGigstackApiToken: true,
+        gigstackApiToken: 'new-token-that-should-be-ignored'
+      }
+    }, {
+      previousTaxes: {
+        gigstackApiTokenEncrypted: 'encrypted-token'
+      }
+    })
+
+    assert.equal(settings.taxes.hasGigstackApiToken, false)
+    assert.equal(settings.taxes.gigstackApiTokenPreview, '')
+  })
 })
