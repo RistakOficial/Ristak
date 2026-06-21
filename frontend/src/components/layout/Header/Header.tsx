@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Bell, CircleAlert, Info, RefreshCw, Smartphone } from 'lucide-react'
+import { AlertTriangle, Bell, CircleAlert, Info, MessageCircle, RefreshCw, Smartphone } from 'lucide-react'
 import { cn } from '@/utils/cn'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useScrollDirection } from '@/hooks/useScrollDirection'
+import { Button } from '@/components/common'
 import { GlobalSearch } from '@/components/common/GlobalSearch/GlobalSearch'
 import { notificationsService, type SystemNotification } from '@/services/notificationsService'
 import {
@@ -87,6 +88,7 @@ function getNotificationTone(severity?: string) {
 
 export const Header: React.FC<HeaderProps> = ({ sitesEditorActive = false }) => {
   const navigate = useNavigate()
+  const location = useLocation()
   const [showNotifications, setShowNotifications] = useState(false)
   const [showTabletSwitcher, setShowTabletSwitcher] = useState(false)
   const [notifications, setNotifications] = useState<SystemNotification[]>([])
@@ -182,9 +184,15 @@ export const Header: React.FC<HeaderProps> = ({ sitesEditorActive = false }) => 
     navigate(PHONE_APP_HOME_PATH)
   }
 
+  const handleOpenSimpleChatView = () => {
+    if (typeof window === 'undefined') return
+    window.open(PHONE_APP_HOME_PATH, '_blank', 'noopener,noreferrer')
+  }
+
   const unreadNotifications = notifications.filter((notification) => !seenNotificationIds.has(notification.id))
   const unreadCount = unreadNotifications.length
   const badgeTone = getNotificationTone(unreadNotifications[0]?.severity || notifications[0]?.severity)
+  const showSimpleChatButton = location.pathname === '/chat' || location.pathname.startsWith('/chat/')
 
   // Determinar si el header debe estar oculto
   const shouldHide = !sitesEditorActive && scrollDirection === 'down' && scrollY > 50
@@ -199,10 +207,24 @@ export const Header: React.FC<HeaderProps> = ({ sitesEditorActive = false }) => 
       )}
       style={{ height: 'var(--header-height)', zIndex: 'var(--z-index-header)' }}
     >
-      <div className="flex items-center gap-2 sm:gap-4 flex-1 max-w-xl ml-12 lg:ml-0">
+      <div className="flex items-center gap-2 sm:gap-3 flex-1 max-w-3xl ml-12 lg:ml-0">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <GlobalSearch />
         </div>
+        {showSimpleChatButton && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="hidden lg:inline-flex shrink-0 whitespace-nowrap"
+            leftIcon={<MessageCircle size={16} aria-hidden="true" />}
+            onClick={handleOpenSimpleChatView}
+            aria-label="Abrir vista sencilla del chat en una nueva pestaña"
+            title="Abrir vista sencilla del chat"
+          >
+            Vista sencilla del chat
+          </Button>
+        )}
       </div>
 
       <div className="flex items-center gap-1 sm:gap-3">

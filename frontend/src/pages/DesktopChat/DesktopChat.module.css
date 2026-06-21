@@ -188,19 +188,6 @@
   box-sizing: border-box;
 }
 
-.simpleChatButton[data-btn] {
-  flex: 1 0 152px;
-  min-width: 152px;
-  min-height: 40px;
-  gap: 8px;
-  justify-content: center;
-  white-space: nowrap;
-}
-
-.simpleChatButton[data-btn] svg {
-  flex: 0 0 auto;
-}
-
 .sectionTitleRow button,
 .filterPanelHeader button,
 .emptyChatList button {
