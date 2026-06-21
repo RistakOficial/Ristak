@@ -22846,9 +22846,10 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
   }
 
   const patchActiveColor = (next: { h?: number; s?: number; v?: number; a?: number }) => {
+    const hueOnlyChange = next.h !== undefined && next.s === undefined && next.v === undefined
     const nextH = next.h ?? hsv.h
-    const nextS = next.s ?? hsv.s
-    const nextV = next.v ?? hsv.v
+    const nextS = next.s ?? (hueOnlyChange && hsv.s < 0.02 ? 0.72 : hsv.s)
+    const nextV = next.v ?? (hueOnlyChange && hsv.v < 0.12 ? 0.42 : hsv.v)
     const nextA = next.a ?? rgba.a
     const rgb = hsvToRgb(nextH, nextS, nextV)
     const formatted = formatCssColor({ ...rgb, a: nextA })
