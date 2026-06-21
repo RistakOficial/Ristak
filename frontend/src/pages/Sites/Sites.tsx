@@ -31138,7 +31138,7 @@ const PageInspector: React.FC<{
               <span>Guarda el formulario cuando una respuesta lo manda a otra página o URL.</span>
             </div>
             <Switch
-              checked={theme.submitIncompleteOnExit !== false}
+              checked={theme.submitIncompleteOnExit === true}
               onChange={(checked) => {
                 onPatchTheme({ submitIncompleteOnExit: checked })
                 window.setTimeout(() => { onSaveSite() }, 0)

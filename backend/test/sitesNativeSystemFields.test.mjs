@@ -657,6 +657,7 @@ test('standard form rule redirects save reached multipage answers before leaving
       status: 'published',
       blankCanvas: true,
       theme: {
+        submitIncompleteOnExit: true,
         pages: [
           { id: 'page-1', title: 'Datos', sortOrder: 0 },
           { id: 'page-4', title: 'Filtro', sortOrder: 1 },
@@ -735,7 +736,7 @@ test('standard form rule redirects save reached multipage answers before leaving
   }
 })
 
-test('standard form can skip incomplete rule submissions when the exit switch is disabled', async () => {
+test('standard form skips incomplete rule submissions by default', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),
     verified: await getAppConfig(DOMAIN_KEYS.verified),
@@ -759,7 +760,6 @@ test('standard form can skip incomplete rule submissions when the exit switch is
       status: 'published',
       blankCanvas: true,
       theme: {
-        submitIncompleteOnExit: false,
         pages: [
           { id: 'page-1', title: 'Datos', sortOrder: 0 },
           { id: 'page-4', title: 'Filtro', sortOrder: 1 },

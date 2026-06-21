@@ -771,7 +771,7 @@ function normalizeSubmitIncompleteOnExit(theme = {}) {
   const value = Object.prototype.hasOwnProperty.call(source, 'submitIncompleteOnExit')
     ? source.submitIncompleteOnExit
     : source.submit_incomplete_on_exit
-  if (value === undefined || value === null || value === '') return true
+  if (value === undefined || value === null || value === '') return false
   return normalizeBoolean(value) === 1
 }
 
