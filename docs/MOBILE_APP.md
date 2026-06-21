@@ -24,6 +24,8 @@ npm run mobile:open:android
 npm run mobile:open:ios
 ```
 
+Para preparar y subir a App Store Connect el shell iOS enfocado en `/phone/chat`, usa la guía específica en `docs/APP_STORE_IOS.md`.
+
 Si tu terminal sigue en Node 20, usa Node 22 temporal:
 
 ```bash
