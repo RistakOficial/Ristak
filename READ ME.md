@@ -7,7 +7,7 @@ Este archivo es la fuente de verdad operativa del proyecto. Actualizado contra e
 1. No crear módulos duplicados si ya existe uno equivalente.
 2. No dejar código muerto, imports fantasma ni componentes huérfanos.
 3. No usar `alert`, `confirm` ni `prompt`; usar `NotificationContext` y modales propios.
-4. No implementar OAuth centralizado para Stripe. Cada instancia usa la cuenta propia del usuario mediante configuración manual y credenciales limitadas guardadas en backend.
+4. No implementar OAuth centralizado para Stripe. Cada instancia usa la cuenta propia del usuario mediante configuración manual y sus llaves de Stripe guardadas en backend.
 5. No contar pagos `refunded`, `cancelled`, `void`, `failed` o `pending` como ingresos.
 6. No borrar Custom Values en HighLevel cuando el usuario limpia campos en Ristak; solo limpiar estado local/DB de Ristak.
 7. Mantener esta documentación sincronizada cuando cambien rutas, schema, deploy o arquitectura.

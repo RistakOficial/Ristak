@@ -99,7 +99,7 @@ Frontend:
 - El primer usuario se crea desde `/setup`; ya no existe usuario admin por defecto.
 - `ENCRYPTION_MASTER_KEY` se lee de env si existe o se genera y guarda en DB.
 - `JWT_SECRET` debe existir en producción para no usar el fallback de desarrollo.
-- Tokens de HighLevel y Meta se configuran desde Settings. Stripe se configura manualmente desde Settings con la cuenta propia del usuario y una Restricted API Key guardada cifrada en backend.
+- Tokens de HighLevel y Meta se configuran desde Settings. Stripe se configura manualmente desde Settings con la cuenta propia del usuario y Secret keys guardadas cifradas en backend.
 
 ## Licencia
 

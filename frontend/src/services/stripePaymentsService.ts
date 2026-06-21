@@ -15,6 +15,7 @@ export interface StripePaymentConfig {
   secretKeyPreview?: string
   hasWebhookSecret: boolean
   webhookSecretPreview?: string
+  manualModes?: Record<'test' | 'live', StripeManualModeStatus>
   webhookEndpointPath?: string
   webhookEndpoints?: StripeWebhookEndpoint[]
   connectedAccountId?: string
@@ -42,6 +43,17 @@ export interface StripePaymentConfig {
   hasConnectRefreshToken?: boolean
 }
 
+export interface StripeManualModeStatus {
+  mode: 'test' | 'live'
+  configured: boolean
+  publishableKey: string
+  hasSecretKey: boolean
+  secretKeyPreview?: string
+  hasWebhookSecret: boolean
+  webhookSecretPreview?: string
+  updatedAt?: string
+}
+
 export interface StripeConnectModeStatus {
   connected: boolean
   mode: 'test' | 'live'
@@ -64,12 +76,17 @@ export interface StripeWebhookEndpoint {
 
 export interface SaveStripePaymentConfigPayload {
   enabled?: boolean
-  mode: 'test' | 'live'
-  defaultCurrency: string
+  mode?: 'test' | 'live'
+  defaultCurrency?: string
   accountLabel?: string
-  publishableKey: string
+  publishableKey?: string
   secretKey?: string
   webhookSecret?: string
+  manualModes?: Partial<Record<'test' | 'live', {
+    publishableKey?: string
+    secretKey?: string
+    webhookSecret?: string
+  }>>
 }
 
 export interface StripePaymentLinkPayload {

@@ -1222,6 +1222,44 @@
   background: var(--surface-solid);
 }
 
+.stripeModeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stripeModePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid);
+}
+
+.stripeModeHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stripeModeHeader h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stripeModeHeader p {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .actionsRow {
   display: flex;
   flex-wrap: wrap;
@@ -1397,11 +1435,13 @@
   .sectionHeader,
   .stripeManualBox,
   .stripeConnectBox,
+  .stripeModeHeader,
   .gatewayItem :global([data-ristak-card-content]) {
     flex-direction: column;
   }
 
   .formGrid,
+  .stripeModeGrid,
   .settingsMatrix,
   .gatewayList,
   .templateChooser,

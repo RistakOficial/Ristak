@@ -59,24 +59,36 @@ async function snapshotStripeConfig(callback) {
   }
 }
 
-test('Stripe manual: guarda Restricted API Key cifrada como flujo oficial', async () => {
+test('Stripe manual: guarda Secret keys de prueba y en vivo cifradas como flujo oficial', async () => {
   await initializeMasterKey()
 
   await snapshotStripeConfig(async () => {
     const config = await saveStripePaymentConfig({
       enabled: true,
-      mode: 'test',
-      publishableKey: 'pk_test_manual_public',
-      secretKey: 'rk_test_manual_restricted',
-      webhookSecret: 'whsec_manual_secret',
-      accountLabel: 'Stripe usuario'
+      mode: 'live',
+      manualModes: {
+        test: {
+          publishableKey: 'pk_test_manual_public',
+          secretKey: 'sk_test_manual_secret',
+          webhookSecret: 'whsec_manual_test'
+        },
+        live: {
+          publishableKey: 'pk_live_manual_public',
+          secretKey: 'sk_live_manual_secret',
+          webhookSecret: 'whsec_manual_live'
+        }
+      }
     })
 
     assert.equal(config.configured, true)
     assert.equal(config.connectionType, 'manual')
     assert.equal(config.configurationStatus, 'configured_manually')
-    assert.equal(config.accountLabel, 'Stripe usuario')
+    assert.equal(config.mode, 'live')
     assert.equal(config.hasSecretKey, true)
+    assert.equal(config.manualModes.test.configured, true)
+    assert.equal(config.manualModes.live.configured, true)
+    assert.equal(config.manualModes.test.publishableKey, 'pk_test_manual_public')
+    assert.equal(config.manualModes.live.publishableKey, 'pk_live_manual_public')
     assert.equal(config.secretKey, undefined)
 
     const secretRow = await db.get(
@@ -84,43 +96,113 @@ test('Stripe manual: guarda Restricted API Key cifrada como flujo oficial', asyn
       ['stripe_secret_key_encrypted']
     )
     assert.ok(secretRow?.config_value)
-    assert.notEqual(secretRow.config_value, 'rk_test_manual_restricted')
+    assert.notEqual(secretRow.config_value, 'sk_live_manual_secret')
+
+    const modesRow = await db.get(
+      'SELECT config_value FROM app_config WHERE config_key = ?',
+      ['stripe_manual_mode_connections']
+    )
+    assert.ok(modesRow?.config_value)
+    assert.equal(modesRow.config_value.includes('sk_test_manual_secret'), false)
+    assert.equal(modesRow.config_value.includes('sk_live_manual_secret'), false)
   })
 })
 
-test('Stripe manual: prueba conexión con una llamada mínima sin exponer la key', async () => {
+test('Stripe manual: conserva Secret keys existentes cuando la UI reenvía valores enmascarados', async () => {
   await initializeMasterKey()
 
   await snapshotStripeConfig(async () => {
-    let receivedSecretKey = ''
+    const initial = await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'live',
+      manualModes: {
+        test: {
+          publishableKey: 'pk_test_manual_public',
+          secretKey: 'sk_test_manual_secret',
+          webhookSecret: 'whsec_manual_test'
+        },
+        live: {
+          publishableKey: 'pk_live_manual_public',
+          secretKey: 'sk_live_manual_secret',
+          webhookSecret: 'whsec_manual_live'
+        }
+      }
+    })
+
+    const updated = await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'live',
+      manualModes: {
+        test: {
+          publishableKey: initial.manualModes.test.publishableKey,
+          secretKey: initial.manualModes.test.secretKeyPreview,
+          webhookSecret: initial.manualModes.test.webhookSecretPreview
+        },
+        live: {
+          publishableKey: initial.manualModes.live.publishableKey,
+          secretKey: initial.manualModes.live.secretKeyPreview,
+          webhookSecret: initial.manualModes.live.webhookSecretPreview
+        }
+      }
+    })
+
+    assert.equal(updated.configured, true)
+    assert.equal(updated.mode, 'live')
+    assert.equal(updated.manualModes.test.configured, true)
+    assert.equal(updated.manualModes.live.configured, true)
+
+    const withSecrets = await getStripePaymentConfig({ includeSecrets: true, mode: 'test' })
+    assert.equal(withSecrets.secretKey, 'sk_test_manual_secret')
+    assert.equal(withSecrets.webhookSecret, 'whsec_manual_test')
+
+    const liveWithSecrets = await getStripePaymentConfig({ includeSecrets: true, mode: 'live' })
+    assert.equal(liveWithSecrets.secretKey, 'sk_live_manual_secret')
+    assert.equal(liveWithSecrets.webhookSecret, 'whsec_manual_live')
+  })
+})
+
+test('Stripe manual: prueba conexiones test/live con una llamada mínima sin exponer keys', async () => {
+  await initializeMasterKey()
+
+  await snapshotStripeConfig(async () => {
+    const receivedSecretKeys = []
     setStripeFactoryForTest((secretKey) => {
-      receivedSecretKey = secretKey
+      receivedSecretKeys.push(secretKey)
       return {
         balance: {
           retrieve: async () => ({
-            livemode: false,
+            livemode: secretKey.includes('_live_'),
             available: [{ amount: 1000, currency: 'mxn' }]
           })
         }
       }
     })
 
-    await saveStripePaymentConfig({
+    const result = await testStripePaymentConfig({
       enabled: true,
-      mode: 'test',
-      publishableKey: 'pk_test_manual_public',
-      secretKey: 'rk_test_manual_restricted',
-      accountLabel: 'Stripe usuario'
+      mode: 'live',
+      manualModes: {
+        test: {
+          publishableKey: 'pk_test_manual_public',
+          secretKey: 'sk_test_manual_secret'
+        },
+        live: {
+          publishableKey: 'pk_live_manual_public',
+          secretKey: 'sk_live_manual_secret'
+        }
+      }
     })
-
-    const result = await testStripePaymentConfig()
 
     assert.equal(result.ok, true)
     assert.equal(result.connectionType, 'manual')
-    assert.equal(result.livemode, false)
+    assert.equal(result.mode, 'live')
+    assert.equal(result.livemode, true)
     assert.equal(result.available, 1)
-    assert.equal(receivedSecretKey, 'rk_test_manual_restricted')
-    assert.equal(JSON.stringify(result).includes('rk_test_manual_restricted'), false)
+    assert.deepEqual(receivedSecretKeys, ['sk_test_manual_secret', 'sk_live_manual_secret'])
+    assert.equal(result.modes.test.ok, true)
+    assert.equal(result.modes.live.ok, true)
+    assert.equal(JSON.stringify(result).includes('sk_test_manual_secret'), false)
+    assert.equal(JSON.stringify(result).includes('sk_live_manual_secret'), false)
   })
 })
 
@@ -132,7 +214,7 @@ test('Stripe manual: desconecta y elimina credenciales guardadas', async () => {
       enabled: true,
       mode: 'test',
       publishableKey: 'pk_test_manual_public',
-      secretKey: 'rk_test_manual_restricted',
+      secretKey: 'sk_test_manual_secret',
       webhookSecret: 'whsec_manual_secret',
       accountLabel: 'Stripe usuario'
     })
@@ -201,8 +283,9 @@ test('Stripe manual: la UI oficial no expone rutas ni copy de OAuth', async () =
   const serviceSource = await readFile(servicePath, 'utf8')
   const officialUiSource = `${settingsSource}\n${serviceSource}`
 
-  assert.match(officialUiSource, /Restricted API Key/)
-  assert.match(officialUiSource, /Ristak no procesa pagos en nombre de terceros/)
+  assert.match(officialUiSource, /Secret key/)
+  assert.match(officialUiSource, /No retiene fondos/)
+  assert.doesNotMatch(officialUiSource, /Restricted API Key/)
   assert.doesNotMatch(officialUiSource, /Stripe Connect/)
   assert.doesNotMatch(officialUiSource, /stripe_connect/)
   assert.doesNotMatch(officialUiSource, /\/api\/stripe\/connect/)
