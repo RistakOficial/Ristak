@@ -254,6 +254,15 @@ test('native form option rules redirect to site pages, external URLs and disqual
     })
 
     let siteWithFields = await createBlock(site.id, {
+      blockType: 'short_text',
+      label: 'Pregunta de seguimiento',
+      required: false,
+      settings: { pageId: 'page-2' }
+    })
+    const followUpField = siteWithFields.blocks.find(block => block.label === 'Pregunta de seguimiento')
+    assert.ok(followUpField)
+
+    siteWithFields = await createBlock(site.id, {
       blockType: 'radio',
       label: 'Destino',
       required: false,
@@ -282,6 +291,44 @@ test('native form option rules redirect to site pages, external URLs and disqual
           action: 'disqualify_after_submit',
           message: 'No califica por ahora.',
           redirectUrl: 'https://example.com/no-califica'
+        },
+        {
+          id: 'not-qualified-message',
+          label: 'No califico mensaje',
+          value: 'No califico mensaje',
+          action: 'disqualify_after_submit',
+          message: 'No califica, mostrar mensaje.'
+        },
+        {
+          id: 'not-qualified-page',
+          label: 'No califico pagina',
+          value: 'No califico pagina',
+          action: 'disqualify_after_submit',
+          message: 'No califica, ir a pagina.',
+          targetPageId: 'page-2'
+        },
+        {
+          id: 'not-qualified-question',
+          label: 'No califico pregunta',
+          value: 'No califico pregunta',
+          action: 'disqualify_after_submit',
+          message: 'No califica, ir a pregunta.',
+          targetBlockId: followUpField.id
+        },
+        {
+          id: 'immediate-message',
+          label: 'Inmediato mensaje',
+          value: 'Inmediato mensaje',
+          action: 'disqualify',
+          message: 'Descalificado inmediato.'
+        },
+        {
+          id: 'immediate-url',
+          label: 'Inmediato URL',
+          value: 'Inmediato URL',
+          action: 'disqualify',
+          message: 'Descalificado inmediato con URL.',
+          redirectUrl: 'https://example.com/inmediato'
         }
       ]
     })
@@ -360,6 +407,72 @@ test('native form option rules redirect to site pages, external URLs and disqual
     assert.equal(disqualifiedResult.message, 'No califica por ahora.')
     assert.equal(disqualifiedResult.redirectUrl, 'https://example.com/no-califica')
     assert.equal(disqualifiedResult.rules.actions[0].action, 'disqualify_after_submit')
+
+    const disqualifiedMessageResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      pageId: 'page-1',
+      responses: {
+        [field.id]: 'No califico mensaje'
+      }
+    })
+
+    assert.equal(disqualifiedMessageResult.status, 'disqualified')
+    assert.equal(disqualifiedMessageResult.message, 'No califica, mostrar mensaje.')
+    assert.equal(disqualifiedMessageResult.redirectUrl, '')
+    assert.equal(disqualifiedMessageResult.rules.actions[0].action, 'disqualify_after_submit')
+
+    const disqualifiedPageResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      pageId: 'page-1',
+      responses: {
+        [field.id]: 'No califico pagina'
+      }
+    })
+
+    assert.equal(disqualifiedPageResult.status, 'disqualified')
+    assert.equal(disqualifiedPageResult.message, 'No califica, ir a pagina.')
+    assert.equal(disqualifiedPageResult.redirectUrl, '?page=page-2')
+    assert.equal(disqualifiedPageResult.rules.targetPageId, 'page-2')
+
+    const disqualifiedQuestionResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      pageId: 'page-1',
+      responses: {
+        [field.id]: 'No califico pregunta'
+      }
+    })
+
+    assert.equal(disqualifiedQuestionResult.status, 'disqualified')
+    assert.equal(disqualifiedQuestionResult.message, 'No califica, ir a pregunta.')
+    assert.equal(disqualifiedQuestionResult.redirectUrl, '?page=page-2')
+    assert.equal(disqualifiedQuestionResult.rules.targetBlockId, followUpField.id)
+    assert.equal(disqualifiedQuestionResult.rules.targetPageId, 'page-2')
+
+    const immediateMessageResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      pageId: 'page-1',
+      meta: { ruleAction: 'disqualify', immediateDisqualify: true },
+      responses: {
+        [field.id]: 'Inmediato mensaje'
+      }
+    })
+
+    assert.equal(immediateMessageResult.status, 'disqualified')
+    assert.equal(immediateMessageResult.message, 'Descalificado inmediato.')
+    assert.equal(immediateMessageResult.redirectUrl, '')
+
+    const immediateUrlResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      pageId: 'page-1',
+      meta: { ruleAction: 'disqualify', immediateDisqualify: true },
+      responses: {
+        [field.id]: 'Inmediato URL'
+      }
+    })
+
+    assert.equal(immediateUrlResult.status, 'disqualified')
+    assert.equal(immediateUrlResult.message, 'Descalificado inmediato con URL.')
+    assert.equal(immediateUrlResult.redirectUrl, 'https://example.com/inmediato')
 
     const dropdownDisqualifiedResult = await createSubmissionFromRequest(baseReq, {
       siteId: site.id,

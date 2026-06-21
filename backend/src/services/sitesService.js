@@ -13925,6 +13925,15 @@ function getStandardFormContentBlocks(site, blocks = []) {
     })
 }
 
+function getFieldTargetPageId(site, blocks = [], targetBlockId = '') {
+  const cleanTargetBlockId = cleanString(targetBlockId)
+  if (!cleanTargetBlockId) return ''
+  const pages = normalizeSitePages(site)
+  const entry = collectFieldBlockPageEntries(blocks, pages)
+    .find(([blockId]) => blockId === cleanTargetBlockId)
+  return cleanString(entry?.[1])
+}
+
 function getDefaultFormThankYouBlocks(siteId) {
   return [
     {
@@ -21420,6 +21429,7 @@ function evaluateSubmissionRules(blocks, responses = {}) {
   let disqualified = false
   let message = ''
   let redirectUrl = ''
+  let targetBlockId = ''
   let targetPageId = ''
 
   for (const block of fields) {
@@ -21468,6 +21478,14 @@ function evaluateSubmissionRules(blocks, responses = {}) {
         redirectUrl = safeHref(option.redirectUrl, '')
       }
 
+      if ((action === 'disqualify' || action === 'disqualify_after_submit') && option.targetBlockId && !targetBlockId) {
+        targetBlockId = cleanString(option.targetBlockId)
+      }
+
+      if ((action === 'disqualify' || action === 'disqualify_after_submit') && option.targetPageId && !targetPageId) {
+        targetPageId = cleanString(option.targetPageId)
+      }
+
       if (action === 'end_form' && !message) {
         message = option.message || 'Gracias. Tu información fue recibida.'
       }
@@ -21487,6 +21505,7 @@ function evaluateSubmissionRules(blocks, responses = {}) {
     disqualified,
     message,
     redirectUrl,
+    targetBlockId,
     targetPageId,
     tags: Array.from(tags),
     categories: Array.from(categories),
@@ -22472,8 +22491,13 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   }
 
   let ruleEvaluation = evaluateSubmissionRules(submissionBlocks, responses)
+  const ruleTargetPageId = ruleEvaluation.targetPageId ||
+    getFieldTargetPageId(siteWithBlocks, blocks, ruleEvaluation.targetBlockId)
+  if (ruleTargetPageId && ruleTargetPageId !== ruleEvaluation.targetPageId) {
+    ruleEvaluation = { ...ruleEvaluation, targetPageId: ruleTargetPageId }
+  }
   const ruleRedirectUrl = ruleEvaluation.redirectUrl ||
-    (ruleEvaluation.targetPageId ? buildPageHref(ruleEvaluation.targetPageId, { site }) : '')
+    (ruleTargetPageId ? buildPageHref(ruleTargetPageId, { site }) : '')
 
   const meta = {
     ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),

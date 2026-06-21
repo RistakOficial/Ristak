@@ -479,7 +479,13 @@ const normalizeVisibleRuleAction = (action?: SiteOptionAction): SiteOptionAction
 )
 const exitRuleActions = new Set<SiteOptionAction>(['redirect', 'site_page'])
 const disqualifyRuleActions = new Set<SiteOptionAction>(['disqualify', 'disqualify_after_submit'])
-const externalUrlRuleActions = new Set<SiteOptionAction>(['redirect', 'disqualify', 'disqualify_after_submit'])
+type DisqualifyRuleOutcome = 'message' | 'redirect' | 'jump' | 'site_page'
+const disqualifyRuleOutcomes: Array<{ value: DisqualifyRuleOutcome; label: string }> = [
+  { value: 'message', label: 'Mostrar mensaje' },
+  { value: 'redirect', label: 'Redirigir a URL' },
+  { value: 'jump', label: 'Saltar a pregunta' },
+  { value: 'site_page', label: 'Dirigir a página del sitio' }
+]
 const fieldValidationOptions = [
   { value: '', label: 'Ninguna' },
   { value: 'email', label: 'Correo' },
@@ -32978,15 +32984,34 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
     action && visibleRuleActionValues.has(action) ? action : 'continue'
   )
 
-  const buildRuleActionPatch = (option: SiteBlockOption, action: SiteOptionAction): Partial<SiteBlockOption> => ({
-    action,
-    targetBlockId: action === 'jump' ? option.targetBlockId || '' : '',
-    targetPageId: action === 'site_page' ? option.targetPageId || '' : '',
-    redirectUrl: externalUrlRuleActions.has(action) ? option.redirectUrl || '' : '',
-    submitBeforeAction: exitRuleActions.has(action) ? option.submitBeforeAction !== false : undefined,
-    message: disqualifyRuleActions.has(action) ? option.message || '' : '',
-    tag: '',
-    category: ''
+  const getDisqualifyOutcome = (option: SiteBlockOption): DisqualifyRuleOutcome => {
+    if (option.targetBlockId) return 'jump'
+    if (option.targetPageId) return 'site_page'
+    if (option.redirectUrl) return 'redirect'
+    return 'message'
+  }
+
+  const buildRuleActionPatch = (option: SiteBlockOption, action: SiteOptionAction): Partial<SiteBlockOption> => {
+    const wasDisqualifyAction = disqualifyRuleActions.has(getVisibleRuleAction(option.action))
+    const keepsDisqualifyDestination = disqualifyRuleActions.has(action) && wasDisqualifyAction
+
+    return {
+      action,
+      targetBlockId: action === 'jump' || keepsDisqualifyDestination ? option.targetBlockId || '' : '',
+      targetPageId: action === 'site_page' || keepsDisqualifyDestination ? option.targetPageId || '' : '',
+      redirectUrl: action === 'redirect' || keepsDisqualifyDestination ? option.redirectUrl || '' : '',
+      submitBeforeAction: exitRuleActions.has(action) ? option.submitBeforeAction !== false : undefined,
+      message: disqualifyRuleActions.has(action) ? option.message || '' : '',
+      tag: '',
+      category: ''
+    }
+  }
+
+  const buildDisqualifyOutcomePatch = (option: SiteBlockOption, outcome: DisqualifyRuleOutcome): Partial<SiteBlockOption> => ({
+    targetBlockId: outcome === 'jump' ? option.targetBlockId || '' : '',
+    targetPageId: outcome === 'site_page' ? option.targetPageId || '' : '',
+    redirectUrl: outcome === 'redirect' ? option.redirectUrl || '' : '',
+    message: option.message || ''
   })
 
   return (
@@ -32998,7 +33023,15 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
           Agregar
         </button>
       </div>
-      {options.map((option, index) => (
+      {options.map((option, index) => {
+        const visibleAction = getVisibleRuleAction(option.action)
+        const isDisqualifyAction = disqualifyRuleActions.has(visibleAction)
+        const disqualifyOutcome = getDisqualifyOutcome(option)
+        const showQuestionTarget = visibleAction === 'jump' || (isDisqualifyAction && disqualifyOutcome === 'jump')
+        const showPageTarget = visibleAction === 'site_page' || (isDisqualifyAction && disqualifyOutcome === 'site_page')
+        const showRedirectUrl = visibleAction === 'redirect' || (isDisqualifyAction && disqualifyOutcome === 'redirect')
+
+        return (
         <div key={option.id || index} className={styles.optionRuleCard}>
           <div className={styles.twoColumn}>
             <label className={styles.field}>
@@ -33012,7 +33045,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             <label className={styles.field}>
               <span>Regla</span>
               <CustomSelect
-                value={getVisibleRuleAction(option.action)}
+                value={visibleAction}
                 onChange={(event) => {
                   const action = event.target.value as SiteOptionAction
                   patchOption(index, buildRuleActionPatch(option, action))
@@ -33024,7 +33057,20 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             </label>
           </div>
 
-          {option.action === 'jump' && (
+          {isDisqualifyAction && (
+            <label className={styles.field}>
+              <span>Qué pasa al descalificar</span>
+              <CustomSelect
+                value={disqualifyOutcome}
+                onChange={(event) => patchOption(index, buildDisqualifyOutcomePatch(option, event.target.value as DisqualifyRuleOutcome))}
+                onBlur={onSave}
+              >
+                {disqualifyRuleOutcomes.map(outcome => <option key={outcome.value} value={outcome.value}>{outcome.label}</option>)}
+              </CustomSelect>
+            </label>
+          )}
+
+          {showQuestionTarget && (
             <label className={styles.field}>
               <span>Saltar a pregunta</span>
               <CustomSelect value={option.targetBlockId || ''} onChange={(event) => patchOption(index, { targetBlockId: event.target.value })} onBlur={onSave}>
@@ -33034,19 +33080,19 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             </label>
           )}
 
-          {externalUrlRuleActions.has(getVisibleRuleAction(option.action)) && (
+          {showRedirectUrl && (
             <label className={styles.field}>
-              <span>{getVisibleRuleAction(option.action) === 'redirect' ? 'URL destino' : 'URL destino al descalificar'}</span>
+              <span>{visibleAction === 'redirect' ? 'URL destino' : 'URL destino al descalificar'}</span>
               <input
                 value={option.redirectUrl || ''}
-                placeholder={getVisibleRuleAction(option.action) === 'redirect' ? 'https://tusitio.com' : 'https://tusitio.com/no-califica'}
+                placeholder={visibleAction === 'redirect' ? 'https://tusitio.com' : 'https://tusitio.com/no-califica'}
                 onChange={(event) => patchOption(index, { redirectUrl: event.target.value })}
                 onBlur={onSave}
               />
             </label>
           )}
 
-          {option.action === 'site_page' && (
+          {showPageTarget && (
             <label className={styles.field}>
               <span>Página del sitio</span>
               <CustomSelect value={option.targetPageId || ''} onChange={(event) => patchOption(index, { targetPageId: event.target.value })} onBlur={onSave}>
@@ -33056,7 +33102,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             </label>
           )}
 
-          {exitRuleActions.has(getVisibleRuleAction(option.action)) && (
+          {exitRuleActions.has(visibleAction) && (
             <>
               <label className={styles.field}>
                 <span>Datos del formulario</span>
@@ -33075,13 +33121,13 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             </>
           )}
 
-          {disqualifyRuleActions.has(getVisibleRuleAction(option.action)) && (
+          {isDisqualifyAction && disqualifyOutcome === 'message' && (
             <label className={styles.field}>
               <span>Mensaje cuando se descalifique</span>
               <textarea
                 rows={2}
                 value={option.message || ''}
-                placeholder={option.action === 'disqualify' ? 'Gracias. Por ahora no califica.' : 'Gracias. Tu información fue recibida.'}
+                placeholder={visibleAction === 'disqualify' ? 'Gracias. Por ahora no califica.' : 'Gracias. Tu información fue recibida.'}
                 onChange={(event) => patchOption(index, { message: event.target.value })}
                 onBlur={onSave}
               />
@@ -33093,7 +33139,8 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             Quitar opción
           </button>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
