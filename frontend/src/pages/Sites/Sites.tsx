@@ -32706,7 +32706,7 @@ const VideoActionsPanel: React.FC<{
     const videoFormActionTaken = rule.action !== 'open_video_form' && rules.some(item => item.action === 'open_video_form')
 
     return (
-      <div className={styles.videoActionInlineEditor}>
+      <div className={`${styles.videoActionInlineEditor} ${rule.action === 'open_video_form' ? styles.videoActionInlineEditorVideoForm : ''}`}>
         <div className={styles.videoActionTimeControl}>
           <div className={styles.videoActionTimeRow}>
             <label className={styles.videoActionTimeMeta}>

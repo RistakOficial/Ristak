@@ -7010,6 +7010,17 @@
   padding: 12px;
 }
 
+.videoActionInlineEditorVideoForm {
+  gap: 14px;
+  padding: 10px;
+}
+
+.videoActionInlineEditorVideoForm .videoFormGatePanel {
+  width: 100%;
+  min-width: 0;
+  border-top-color: var(--sites-editor-section-border, var(--border));
+}
+
 .videoActionInlineEditor .field > span {
   font-weight: 400;
 }
@@ -13473,12 +13484,12 @@
 }
 
 .containerFocused .builderGridLanding {
-  grid-template-columns: minmax(260px, 288px) minmax(0, 1fr) minmax(350px, 376px);
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(380px, 420px);
   justify-content: stretch;
 }
 
 .containerFocused .builderGridForm {
-  grid-template-columns: minmax(260px, 288px) minmax(0, 1fr) minmax(350px, 376px);
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(380px, 420px);
   justify-content: stretch;
 }
 
@@ -15864,7 +15875,14 @@
 
   .containerFocused:has(.builder) .builderGridLanding,
   .containerFocused:has(.builder) .builderGridForm {
-    grid-template-columns: minmax(220px, 248px) minmax(420px, 1fr) minmax(300px, 332px) !important;
+    grid-template-columns: minmax(232px, 260px) minmax(420px, 1fr) minmax(340px, 380px) !important;
+    gap: 10px;
+  }
+
+  .builderGridFormMode,
+  .containerFocused .builderGridFormMode,
+  .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
+    grid-template-columns: minmax(232px, 260px) minmax(420px, 1fr) minmax(340px, 380px) !important;
     gap: 10px;
   }
 
@@ -16478,7 +16496,7 @@
 .containerEditorFocus .builderGrid,
 .containerEditorFocus .builderGridLanding,
 .containerEditorFocus .builderGridForm {
-  grid-template-columns: minmax(236px, 276px) minmax(0, 1fr) minmax(304px, 364px) !important;
+  grid-template-columns: minmax(260px, 304px) minmax(0, 1fr) minmax(360px, 420px) !important;
   gap: 0 !important;
   align-items: stretch;
 }
@@ -18511,7 +18529,7 @@
 .builderGridFormMode,
 .containerFocused .builderGridFormMode,
 .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
-  grid-template-columns: minmax(248px, 286px) minmax(520px, 1fr) minmax(360px, 420px);
+  grid-template-columns: minmax(280px, 320px) minmax(520px, 1fr) minmax(460px, 540px);
 }
 
 .builderGridFormMode > .formModeRail {
@@ -18725,26 +18743,26 @@
 @media (min-width: 1361px) {
   .pageFrame .containerFocused:has(.builder) .builderGridLanding,
   .pageFrame .containerFocused:has(.builder) .builderGridForm {
-    grid-template-columns: minmax(260px, 288px) minmax(0, 1fr) minmax(440px, 520px) !important;
+    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(460px, 540px) !important;
   }
 
   .builderGridFormMode,
   .containerFocused .builderGridFormMode,
   .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
-    grid-template-columns: minmax(248px, 288px) minmax(560px, 1fr) minmax(390px, 440px) !important;
+    grid-template-columns: minmax(280px, 320px) minmax(560px, 1fr) minmax(460px, 540px) !important;
   }
 }
 
 @media (min-width: 1181px) and (max-width: 1360px) {
   .pageFrame .containerFocused:has(.builder) .builderGridLanding,
   .pageFrame .containerFocused:has(.builder) .builderGridForm {
-    grid-template-columns: minmax(224px, 260px) minmax(0, 1fr) minmax(390px, 450px) !important;
+    grid-template-columns: minmax(236px, 272px) minmax(0, 1fr) minmax(400px, 460px) !important;
   }
 
   .builderGridFormMode,
   .containerFocused .builderGridFormMode,
   .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
-    grid-template-columns: minmax(220px, 248px) minmax(520px, 1fr) minmax(340px, 390px) !important;
+    grid-template-columns: minmax(236px, 272px) minmax(500px, 1fr) minmax(400px, 460px) !important;
   }
 }
 
@@ -19912,14 +19930,14 @@
 
   .pageFrame .containerFocused:has(.builder) .builderGridLanding,
   .pageFrame .containerFocused:has(.builder) .builderGridForm {
-    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(360px, 420px) !important;
+    grid-template-columns: minmax(236px, 272px) minmax(0, 1fr) minmax(400px, 460px) !important;
     gap: 10px;
   }
 
   .builderGridFormMode,
   .containerFocused .builderGridFormMode,
   .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
-    grid-template-columns: minmax(220px, 248px) minmax(520px, 1fr) minmax(340px, 390px) !important;
+    grid-template-columns: minmax(236px, 272px) minmax(500px, 1fr) minmax(400px, 460px) !important;
   }
 
   .pageFrame .containerFocused:has(.builder) .blocksRail,
@@ -20003,14 +20021,14 @@
 
   .pageFrame .containerFocused:has(.builder) .builderGridLanding,
   .pageFrame .containerFocused:has(.builder) .builderGridForm {
-    grid-template-columns: minmax(198px, 232px) minmax(0, 1fr) minmax(312px, 360px) !important;
+    grid-template-columns: minmax(220px, 248px) minmax(0, 1fr) minmax(340px, 388px) !important;
     gap: 8px;
   }
 
   .builderGridFormMode,
   .containerFocused .builderGridFormMode,
   .pageFrame .containerFocused:has(.builder) .builderGridFormMode {
-    grid-template-columns: minmax(208px, 236px) minmax(500px, 1fr) minmax(320px, 360px) !important;
+    grid-template-columns: minmax(220px, 248px) minmax(480px, 1fr) minmax(340px, 388px) !important;
   }
 
   .importedCodeEditorPanel {
