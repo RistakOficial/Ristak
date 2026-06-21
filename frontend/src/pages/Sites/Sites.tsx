@@ -29177,6 +29177,11 @@ const VideoFormGateCanvasPreview: React.FC<{
   const description = getSettingString(settings, 'videoFormGateDescription') || VIDEO_FORM_GATE_DEFAULT_DESCRIPTION
   const submitText = getSettingString(settings, 'videoFormGateSubmitText') || VIDEO_FORM_GATE_DEFAULT_SUBMIT_TEXT
   const videoBackground = getVideoFormGateVideoBackground(settings)
+  const panelBackground = getThemePaint(
+    videoGateTheme,
+    'backgroundColor',
+    String(canvasVars['--rstk-page-bg'] || canvasVars['--rstk-surface'] || 'transparent')
+  )
 
   return (
     <div
@@ -29185,6 +29190,7 @@ const VideoFormGateCanvasPreview: React.FC<{
         ...canvasVars,
         width: '100%',
         ['--rstk-block-bg' as string]: canvasVars['--rstk-page-bg'] || canvasVars['--rstk-surface'] || 'transparent',
+        ['--rstk-video-form-panel-bg' as string]: panelBackground,
         ['--rstk-video-form-gate-video-bg' as string]: videoBackground
       } as React.CSSProperties}
       aria-hidden={editor ? undefined : true}

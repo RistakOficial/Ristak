@@ -414,21 +414,27 @@
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-panel {
   width: min(100%, 680px);
-  height: 100%;
+  height: auto;
   max-width: 100%;
   max-height: 100%;
   min-height: 0;
+  --rstk-video-form-item-gap: clamp(8px, 2cqw, 14px);
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
-  gap: clamp(8px, 1.8cqw, 14px);
+  grid-template-rows: auto auto minmax(0, max-content) auto auto;
+  gap: var(--rstk-video-form-item-gap);
   overflow: hidden;
   border: var(--rstk-video-form-panel-border-width, 0) solid var(--rstk-form-field-border, var(--rstk-input-border));
   border-radius: clamp(10px, 2.4cqw, 20px);
-  background: var(--rstk-block-bg, var(--rstk-surface));
+  background: var(--rstk-video-form-panel-bg, var(--rstk-block-bg, var(--rstk-surface)));
   color: var(--rstk-ink);
   box-shadow: 0 24px 70px -42px rgba(0, 0, 0, .66);
   padding: clamp(12px, 3cqw, 24px);
   text-align: var(--rstk-form-content-align, left);
+}
+.rstkCanvas .rstk-video-form-gate-fit-expanded .rstk-video-form-gate-preview .rstk-video-form-gate-panel,
+.rstkCanvas .rstk-video-gate-active.rstk-video-form-gate-fit-expanded .rstk-video-form-gate-panel {
+  height: 100%;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-header {
   display: grid;
@@ -462,14 +468,14 @@
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-  padding: 2px 4px 4px;
+  padding: 2px 4px 0;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field-stack {
   display: grid;
   width: min(100%, var(--rstk-form-field-width, 560px));
   max-width: 100%;
   justify-self: var(--rstk-form-field-justify, center);
-  gap: clamp(8px, 2cqw, 14px);
+  gap: var(--rstk-video-form-item-gap);
   min-width: 0;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-field {
@@ -541,6 +547,17 @@
 .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input > select {
   min-width: 0;
 }
+.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input > select {
+  appearance: none;
+  -webkit-appearance: none;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--rstk-form-field-text, var(--rstk-muted)) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--rstk-form-field-text, var(--rstk-muted)) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
+    var(--rstk-form-field-bg, var(--rstk-input-bg));
+  color: var(--rstk-form-field-text, var(--rstk-input-ink));
+  padding-left: clamp(10px, 2.4cqw, var(--rstk-form-field-pad-x, 14px));
+  padding-right: 42px;
+}
 .rstkCanvas .rstk-video-form-gate-preview .rstk-options {
   display: grid;
   gap: clamp(7px, 1.8cqw, 10px);
@@ -583,7 +600,9 @@
   min-width: 0;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-actions button {
+  box-sizing: border-box;
   width: var(--rstk-submit-width, fit-content);
+  max-width: 100%;
   min-width: min(128px, 46%);
   min-height: clamp(38px, 7.5cqw, var(--rstk-submit-height, 48px));
   border: var(--rstk-submit-border-width, 1px) solid var(--rstk-submit-border, var(--rstk-accent));
@@ -595,7 +614,7 @@
   font-weight: var(--rstk-btn-weight, 800);
   cursor: default;
   flex: 0 1 var(--rstk-submit-width, fit-content);
-  padding: 9px 14px;
+  padding: var(--rstk-submit-pad-y, 9px) var(--rstk-submit-pad-x, 14px);
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-submit-message {
   min-height: 18px;
@@ -610,7 +629,8 @@
     padding: 8px;
   }
   .rstkCanvas .rstk-video-form-gate-preview .rstk-video-form-gate-panel {
-    gap: 8px;
+    --rstk-video-form-item-gap: 8px;
+    gap: var(--rstk-video-form-item-gap);
     padding: 10px;
     border-radius: 12px;
   }

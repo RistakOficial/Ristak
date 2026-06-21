@@ -103,6 +103,9 @@ test('video form gate defaults to a dark readable theme and compact phone prefix
   assert.match(html, /--rstk-submit-bg:#0f2348/)
   assert.match(html, /\.rstk-video-form-content\{[^}]*--rstk-block-text:var\(--rstk-ink\)/)
   assert.match(html, /\.rstk-video-form-gate \.rstk-phone-input\{[^}]*grid-template-columns:minmax\(96px,max-content\) minmax\(0,1fr\)[^}]*align-items:stretch/)
+  assert.match(html, /\.rstk-video-form-gate \.rstk-phone-input > select\{[^}]*var\(--rstk-form-field-bg,var\(--rstk-input-bg\)\)[^}]*color:var\(--rstk-form-field-text,var\(--rstk-input-ink\)\)/)
+  assert.match(html, /\.rstk-video-form-gate-panel\{[^}]*height:auto;[^}]*--rstk-video-form-item-gap:clamp\(8px,2cqw,14px\)[^}]*grid-template-rows:auto auto minmax\(0,max-content\) auto auto/)
+  assert.match(html, /\.rstk-video-form-gate-fit-expanded \.rstk-video-form-gate-panel,[^}]*\.rstk-video-gate-active\.rstk-video-form-gate-fit-expanded \.rstk-video-form-gate-panel\{height:100%;grid-template-rows:auto auto minmax\(0,1fr\) auto auto\}/)
 })
 
 test('video form gate light theme swaps contrast and video overlay background', async () => {
@@ -363,7 +366,8 @@ test('video form gate renders inside the video player and posts as the source fo
     assert.match(html, /--rstk-submit-size:16px/)
     assert.doesNotMatch(html, /--rstk-submit-bg:#ef4444/)
     assert.match(html, /\.rstk-video-form-actions button\{[^}]*background:var\(--rstk-submit-bg,var\(--rstk-accent\)\)/)
-    assert.match(html, /\.rstk-video-form-fields\{[^}]*overflow-y:auto;overflow-x:hidden;[^}]*padding:2px 4px 4px/)
+    assert.match(html, /\.rstk-video-form-actions button\{[^}]*padding:var\(--rstk-submit-pad-y,9px\) var\(--rstk-submit-pad-x,14px\)/)
+    assert.match(html, /\.rstk-video-form-fields\{[^}]*overflow-y:auto;overflow-x:hidden;[^}]*padding:2px 4px 0/)
     assert.match(html, /\.rstk-video-form-gate input,[^}]*\{box-sizing:border-box;width:100%;max-width:100%;min-width:0;/)
     assert.match(html, /data-completion-action="show_targets"/)
     assert.match(html, /data-repeat-mode="remember_visitor"/)
