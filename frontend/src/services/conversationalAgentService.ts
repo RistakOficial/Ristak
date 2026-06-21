@@ -327,6 +327,18 @@ export interface ConversationalAgentEvent {
   createdAt: string
 }
 
+export interface ConversationalAgentCompletionEvent {
+  id: string
+  contactId: string | null
+  signal: Exclude<ConversationSignal, 'discarded'>
+  title: string
+  summary: string
+  reason: string
+  status: string
+  createdAt: string
+  agentId: string | null
+}
+
 export interface ConversationalAgentMetricByAgent {
   agentId: string
   name: string
@@ -383,6 +395,14 @@ const VALID_CONVERSATIONAL_SUCCESS_ACTIONS = new Set<ConversationalSuccessAction
   'none'
 ])
 const VALID_CONVERSATIONAL_AI_PROVIDERS = new Set<ConversationalAIProviderId>(['openai', 'gemini', 'claude', 'deepseek'])
+const COMPLETION_SIGNAL_LABELS: Record<Exclude<ConversationSignal, 'discarded'>, string> = {
+  ready_for_human: 'Objetivo concretado',
+  ready_to_schedule: 'Listo para agendar',
+  ready_to_buy: 'Listo para cobrar',
+  appointment_booked: 'Cita agendada',
+  purchase_completed: 'Pago completado'
+}
+const COMPLETION_SIGNAL_SET = new Set<Exclude<ConversationSignal, 'discarded'>>(Object.keys(COMPLETION_SIGNAL_LABELS) as Array<Exclude<ConversationSignal, 'discarded'>>)
 
 const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
@@ -543,6 +563,32 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
 
 function normalizeAgentDefs(agents: ConversationalAgentDef[] = []) {
   return agents.map(normalizeAgentDef)
+}
+
+function getRecordString(record: Record<string, unknown>, key: string) {
+  const value = record[key]
+  return value === null || value === undefined ? '' : String(value).trim()
+}
+
+function normalizeCompletionEvent(event: ConversationalAgentEvent): ConversationalAgentCompletionEvent | null {
+  if (event.eventType !== 'signal_set' || !event.detail || typeof event.detail !== 'object') return null
+  const detail = event.detail as Record<string, unknown>
+  const signal = getRecordString(detail, 'signal') as Exclude<ConversationSignal, 'discarded'>
+  if (!COMPLETION_SIGNAL_SET.has(signal)) return null
+
+  const summary = getRecordString(detail, 'summary')
+  const reason = getRecordString(detail, 'reason')
+  return {
+    id: event.id,
+    contactId: event.contactId,
+    signal,
+    title: COMPLETION_SIGNAL_LABELS[signal],
+    summary: summary || reason || 'El agente concretó una meta en esta conversación.',
+    reason,
+    status: getRecordString(detail, 'status') || 'completed',
+    createdAt: event.createdAt,
+    agentId: getRecordString(detail, 'agentId') || null
+  }
 }
 
 function getLocalStorage() {
@@ -767,11 +813,19 @@ export const conversationalAgentService = {
     })
   },
 
-  listEvents(params: { contactId?: string; limit?: number } = {}): Promise<ConversationalAgentEvent[]> {
+  listEvents(params: { contactId?: string; limit?: number; kind?: 'completion' } = {}): Promise<ConversationalAgentEvent[]> {
     const search = new URLSearchParams()
     if (params.contactId) search.set('contactId', params.contactId)
     if (params.limit) search.set('limit', String(params.limit))
+    if (params.kind) search.set('kind', params.kind)
     const query = search.toString()
     return request<ConversationalAgentEvent[]>(`/events${query ? `?${query}` : ''}`)
+  },
+
+  async listCompletionEvents(params: { contactId?: string; limit?: number } = {}): Promise<ConversationalAgentCompletionEvent[]> {
+    const events = await conversationalAgentService.listEvents({ ...params, kind: 'completion' })
+    return events
+      .map(normalizeCompletionEvent)
+      .filter((event): event is ConversationalAgentCompletionEvent => Boolean(event))
   }
 }

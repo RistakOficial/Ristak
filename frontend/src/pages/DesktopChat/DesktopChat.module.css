@@ -1042,6 +1042,75 @@
   text-align: center;
 }
 
+.agentCompletionRow {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.agentCompletionCard {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  width: min(88%, 620px);
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text-dim);
+  box-shadow: var(--shadow-xs);
+}
+
+.agentCompletionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.agentCompletionBody {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agentCompletionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.agentCompletionHeader strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentCompletionHeader small,
+.agentCompletionReason {
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.agentCompletionCard p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .messageMeta {
   display: inline-flex;
   align-items: center;
@@ -2542,6 +2611,53 @@
 
 .mutedLine {
   margin: 0;
+}
+
+.agentHistoryList {
+  display: grid;
+  gap: 10px;
+  margin-top: 11px;
+}
+
+.agentHistoryItem {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+  color: var(--text-mute);
+}
+
+.agentHistoryItem svg {
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.agentHistoryItem span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.agentHistoryItem strong {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.agentHistoryItem small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.agentHistoryItem em {
+  color: var(--text-mute);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
 }
 
 .journeyList {

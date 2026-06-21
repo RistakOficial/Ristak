@@ -2959,24 +2959,54 @@ export async function recordConversationalAgentEvent({ contactId = null, eventTy
   }
 }
 
-export async function listConversationalAgentEvents({ contactId = null, limit = 100 } = {}) {
-  const params = []
-  let sql = 'SELECT * FROM conversational_agent_events'
-  if (contactId) {
-    sql += ' WHERE contact_id = ?'
-    params.push(contactId)
-  }
-  sql += ' ORDER BY created_at DESC LIMIT ?'
-  params.push(Math.min(Math.max(Number(limit) || 100, 1), 500))
+const CONVERSATIONAL_AGENT_COMPLETION_SIGNALS = new Set([
+  'ready_for_human',
+  'ready_to_schedule',
+  'ready_to_buy',
+  'appointment_booked',
+  'purchase_completed'
+])
 
-  const rows = await db.all(sql, params)
-  return rows.map((row) => ({
+function isCompletionSignalEvent(row) {
+  if (row?.event_type !== 'signal_set') return false
+  const detail = row.detail_json ? safeParse(row.detail_json) : null
+  if (!detail || typeof detail !== 'object') return false
+  const signal = String(detail.signal || '').trim()
+  return CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(signal)
+}
+
+function mapConversationalAgentEventRow(row) {
+  return {
     id: row.id,
     contactId: row.contact_id,
     eventType: row.event_type,
     detail: row.detail_json ? safeParse(row.detail_json) : null,
     createdAt: row.created_at
-  }))
+  }
+}
+
+export async function listConversationalAgentEvents({ contactId = null, limit = 100, kind = null } = {}) {
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 100, 1), 500)
+  const params = []
+  const where = []
+  if (contactId) {
+    where.push('contact_id = ?')
+    params.push(contactId)
+  }
+  if (kind === 'completion') {
+    where.push("event_type = 'signal_set'")
+  }
+
+  let sql = 'SELECT * FROM conversational_agent_events'
+  if (where.length) {
+    sql += ` WHERE ${where.join(' AND ')}`
+  }
+  sql += ' ORDER BY created_at DESC LIMIT ?'
+  params.push(kind === 'completion' ? Math.min(normalizedLimit * 4, 500) : normalizedLimit)
+
+  const rows = await db.all(sql, params)
+  const filteredRows = kind === 'completion' ? rows.filter(isCompletionSignalEvent).slice(0, normalizedLimit) : rows
+  return filteredRows.map(mapConversationalAgentEventRow)
 }
 
 function safeParse(text) {

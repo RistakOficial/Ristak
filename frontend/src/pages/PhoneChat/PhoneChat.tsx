@@ -87,6 +87,7 @@ import {
   type ConversationAgentState,
   type ConversationStateAction,
   type ConversationalAgentConfig,
+  type ConversationalAgentCompletionEvent,
   type ConversationalAgentDef,
   type ConversationalAgentDefInput,
   type ConversationalObjective,
@@ -252,7 +253,7 @@ type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
 type PhotoPickDestination = 'chat' | 'cameraShare'
 type AddDraftAttachmentOptions = { showReadyToast?: boolean }
-type ContactInfoDetailPanel = 'payments' | 'appointments' | 'journey' | null
+type ContactInfoDetailPanel = 'payments' | 'appointments' | 'journey' | 'agent_history' | null
 type ContactInfoRecordDetail = { type: 'payment'; id: string } | { type: 'appointment'; id: string } | null
 type ContactInfoArchiveTab = 'media' | 'links' | 'documents'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
@@ -642,6 +643,10 @@ interface ChatMessage {
     isGif?: boolean
   }
 }
+
+type PhoneConversationTimelineItem =
+  | { type: 'message'; id: string; date: string; message: ChatMessage }
+  | { type: 'agentCompletion'; id: string; date: string; completion: ConversationalAgentCompletionEvent }
 
 interface VoiceDraftAttachment {
   id: string
@@ -3133,6 +3138,7 @@ export const PhoneChat: React.FC = () => {
   const [contactHighLevelChannelOverrides, setContactHighLevelChannelOverrides] = useState<Record<string, HighLevelChatChannel>>({})
   const [conversationOpen, setConversationOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [agentCompletionEvents, setAgentCompletionEvents] = useState<ConversationalAgentCompletionEvent[]>([])
   const [scheduledCountdownNow, setScheduledCountdownNow] = useState(() => Date.now())
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
@@ -3483,27 +3489,46 @@ export const PhoneChat: React.FC = () => {
     const groups: Array<{
       key: string
       label: string
-      messages: ChatMessage[]
+      items: PhoneConversationTimelineItem[]
     }> = []
 
-    messages.forEach((message) => {
-      const dayKey = getConversationDayKey(message.date, timezone) || 'sin-fecha'
+    const items: PhoneConversationTimelineItem[] = [
+      ...messages.map((message) => ({
+        type: 'message' as const,
+        id: `message-${message.id}`,
+        date: message.date,
+        message
+      })),
+      ...agentCompletionEvents.map((completion) => ({
+        type: 'agentCompletion' as const,
+        id: `agent-completion-${completion.id}`,
+        date: completion.createdAt,
+        completion
+      }))
+    ].sort((left, right) => {
+      const leftTime = Date.parse(left.date)
+      const rightTime = Date.parse(right.date)
+      return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
+    })
+
+    items.forEach((item) => {
+      const dayKey = getConversationDayKey(item.date, timezone) || 'sin-fecha'
       const currentGroup = groups[groups.length - 1]
 
       if (!currentGroup || currentGroup.key !== dayKey) {
         groups.push({
           key: dayKey,
-          label: dayKey === 'sin-fecha' ? '' : getConversationDayLabel(message.date, timezone),
-          messages: [message]
+          label: dayKey === 'sin-fecha' ? '' : getConversationDayLabel(item.date, timezone),
+          items: [item]
         })
         return
       }
 
-      currentGroup.messages.push(message)
+      currentGroup.items.push(item)
     })
 
     return groups
-  }, [messages, timezone])
+  }, [agentCompletionEvents, messages, timezone])
   const latestMessageKey = useMemo(() => {
     const lastMessage = messages[messages.length - 1]
     if (!lastMessage) return ''
@@ -4301,36 +4326,41 @@ export const PhoneChat: React.FC = () => {
     const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
     const useCache = options.useCache !== false && !silentRefresh
     const cacheKey = getPhoneDailyCacheKey('phone-chat', 'conversation', locationId || 'default', contactId)
-    const cachedConversation = useCache ? readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[] }>(cacheKey) : null
+    const cachedConversation = useCache ? readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[]; agentCompletions?: ConversationalAgentCompletionEvent[] }>(cacheKey) : null
     const showedCachedConversation = Boolean(cachedConversation)
 
     if (cachedConversation) {
       const cachedJourney = Array.isArray(cachedConversation.data.journey) ? cachedConversation.data.journey : []
       const cachedMessages = Array.isArray(cachedConversation.data.messages) ? cachedConversation.data.messages : []
+      const cachedAgentCompletions = Array.isArray(cachedConversation.data.agentCompletions) ? cachedConversation.data.agentCompletions : []
       setContactJourney((currentJourney) => (
         areJourneyEventsEquivalent(currentJourney, cachedJourney) ? currentJourney : cachedJourney
       ))
       setMessages((currentMessages) => (
         areMessagesEquivalent(currentMessages, cachedMessages) ? currentMessages : cachedMessages
       ))
+      setAgentCompletionEvents(cachedAgentCompletions)
       setMessagesLoading(false)
       setMessagesRefreshing(showCacheRefresh)
     } else if (!silentRefresh) {
       setMessages([])
+      setAgentCompletionEvents([])
       setContactJourney([])
       setMessagesLoading(true)
       setMessagesRefreshing(false)
     }
 
     try {
-      const [journey, scheduledMessages] = await Promise.all([
+      const [journey, scheduledMessages, agentCompletions] = await Promise.all([
         contactsService.getContactJourney(contactId, { includeBusinessMessages: true, refreshExternalStatuses: false }),
-        whatsappApiService.getScheduledMessages(contactId).catch(() => [])
+        whatsappApiService.getScheduledMessages(contactId).catch(() => []),
+        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
       ])
       if (!isCurrentConversationLoad()) return
       setContactJourney((currentJourney) => (
         areJourneyEventsEquivalent(currentJourney, journey) ? currentJourney : journey
       ))
+      setAgentCompletionEvents(agentCompletions)
       const journeyMessages = journey
         .map(getJourneyMessage)
         .filter((message): message is ChatMessage => Boolean(message))
@@ -4343,10 +4373,11 @@ export const PhoneChat: React.FC = () => {
       setMessages((currentMessages) => (
         areMessagesEquivalent(currentMessages, nextMessages) ? currentMessages : nextMessages
       ))
-      writePhoneDailyCache(cacheKey, { journey, messages: nextMessages }, { maxEntryChars: 360_000 })
+      writePhoneDailyCache(cacheKey, { journey, messages: nextMessages, agentCompletions }, { maxEntryChars: 360_000 })
     } catch {
       if (isCurrentConversationLoad() && !showedCachedConversation && !silentRefresh) {
         setMessages([])
+        setAgentCompletionEvents([])
         setContactJourney([])
       }
     } finally {
@@ -4910,6 +4941,7 @@ export const PhoneChat: React.FC = () => {
   useLayoutEffect(() => {
     if (!activeContact?.id || accessState !== 'allowed') {
       setMessages([])
+      setAgentCompletionEvents([])
       setContactJourney([])
       return
     }
@@ -9172,6 +9204,24 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderAgentCompletionMessage = (completion: ConversationalAgentCompletionEvent) => (
+    <div key={`agent-completion-${completion.id}`} className={styles.agentCompletionMessageRow}>
+      <article className={styles.agentCompletionMessage}>
+        <span className={styles.agentCompletionMessageIcon} aria-hidden="true">
+          <Bot size={15} />
+        </span>
+        <span className={styles.agentCompletionMessageBody}>
+          <span className={styles.agentCompletionMessageHeader}>
+            <strong>{completion.title}</strong>
+            <small>{formatMessageTime(completion.createdAt)}</small>
+          </span>
+          <p>{completion.summary}</p>
+          {completion.reason && completion.reason !== completion.summary ? <em>{completion.reason}</em> : null}
+        </span>
+      </article>
+    </div>
+  )
+
   const renderMessages = () => {
     if (aiAgentConversationOpen) {
       return (
@@ -9217,7 +9267,7 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
-    if (messages.length === 0) {
+    if (messages.length === 0 && agentCompletionEvents.length === 0) {
       return (
         <div className={styles.emptyConversation}>
           <Icon name="whatsapp" size={38} />
@@ -9242,7 +9292,11 @@ export const PhoneChat: React.FC = () => {
                 <span>{group.label}</span>
               </div>
             )}
-            {group.messages.map((message) => {
+            {group.items.map((item) => {
+              if (item.type === 'agentCompletion') {
+                return renderAgentCompletionMessage(item.completion)
+              }
+              const message = item.message
               const isAudioAttachment = message.attachment?.type === 'audio'
               const isAudioMessage = isAudioAttachment && Boolean(message.attachment?.dataUrl || message.attachment?.url)
               const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
@@ -9787,7 +9841,9 @@ export const PhoneChat: React.FC = () => {
         ? 'Pagos totales'
         : contactInfoDetailPanel === 'appointments'
           ? 'Citas'
-          : 'Viaje del cliente'
+          : contactInfoDetailPanel === 'agent_history'
+            ? 'Historial del agente'
+            : 'Viaje del cliente'
       const selectedPayment = contactInfoDetailPanel === 'payments' && contactInfoRecordDetail?.type === 'payment'
         ? contactInfoPayments.find((payment) => payment.id === contactInfoRecordDetail.id) || null
         : null
@@ -9968,6 +10024,30 @@ export const PhoneChat: React.FC = () => {
                   </div>
                 ) : (
                   <p className={styles.contactInfoDetailEmpty}>Aún no hay citas guardadas para este contacto.</p>
+                )}
+              </section>
+            )}
+
+            {contactInfoDetailPanel === 'agent_history' && (
+              <section className={styles.contactInfoDetailSection}>
+                {agentCompletionEvents.length > 0 ? (
+                  <div className={styles.contactInfoAgentHistory}>
+                    {agentCompletionEvents.map((completion) => (
+                      <article key={completion.id} className={styles.contactInfoAgentHistoryItem}>
+                        <span className={styles.contactInfoAgentHistoryIcon}>
+                          <Bot size={17} />
+                        </span>
+                        <div>
+                          <strong>{completion.title}</strong>
+                          <p>{completion.summary}</p>
+                          {completion.reason && completion.reason !== completion.summary ? <small>{completion.reason}</small> : null}
+                          <em>{formatLocalDateTime(completion.createdAt)}</em>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.contactInfoDetailEmpty}>Aún no hay metas concretadas por el agente.</p>
                 )}
               </section>
             )}
@@ -10285,6 +10365,38 @@ export const PhoneChat: React.FC = () => {
                   formatPlainStatus(payment.status)
                 ))}
               </div>
+            </section>
+          )}
+
+          {agentCompletionEvents.length > 0 && (
+            <section className={styles.contactInfoSection}>
+              <h3>Historial del agente</h3>
+              <button
+                type="button"
+                className={styles.contactInfoAgentHistoryButton}
+                onClick={() => {
+                  setContactInfoArchiveOpen(false)
+                  setContactInfoRecordDetail(null)
+                  setContactInfoDetailPanel('agent_history')
+                }}
+                aria-label="Ver historial del agente"
+              >
+                <span className={styles.contactInfoArchiveSummaryIcon}>
+                  <Bot size={18} />
+                </span>
+                <span className={styles.contactInfoArchiveSummaryText}>
+                  <strong>{agentCompletionEvents[0]?.title || 'Objetivo concretado'}</strong>
+                  <small>
+                    {agentCompletionEvents.length === 1
+                      ? agentCompletionEvents[0]?.summary
+                      : `${agentCompletionEvents.length} resúmenes guardados · Último: ${agentCompletionEvents[0]?.summary || 'sin detalle'}`}
+                  </small>
+                </span>
+                <span className={styles.contactInfoArchiveSummaryAction}>
+                  Ver
+                  <ChevronRight size={16} />
+                </span>
+              </button>
             </section>
           )}
 

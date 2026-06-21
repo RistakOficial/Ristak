@@ -426,7 +426,8 @@ export async function listEvents(req, res) {
   try {
     const events = await listConversationalAgentEvents({
       contactId: String(req.query?.contactId || '').trim() || null,
-      limit: req.query?.limit
+      limit: req.query?.limit,
+      kind: String(req.query?.kind || '').trim() || null
     })
     res.json({ success: true, data: events })
   } catch (error) {

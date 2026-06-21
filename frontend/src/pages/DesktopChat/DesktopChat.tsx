@@ -69,7 +69,13 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import apiClient from '@/services/apiClient'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
-import { conversationalAgentService, type ConversationAgentState, type ConversationStateAction, type ConversationalAgentDef } from '@/services/conversationalAgentService'
+import {
+  conversationalAgentService,
+  type ConversationAgentState,
+  type ConversationStateAction,
+  type ConversationalAgentCompletionEvent,
+  type ConversationalAgentDef
+} from '@/services/conversationalAgentService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { subscribeToChatLiveEvents, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
 import { emailService } from '@/services/emailService'
@@ -185,9 +191,14 @@ interface DesktopChatMessage {
 interface ConversationCacheSnapshot {
   journey: JourneyEvent[]
   messages: DesktopChatMessage[]
+  agentCompletions: ConversationalAgentCompletionEvent[]
   contactInfo: Contact | null
   agentState: ConversationAgentState | null
 }
+
+type DesktopConversationTimelineItem =
+  | { type: 'message'; id: string; date: string; message: DesktopChatMessage }
+  | { type: 'agentCompletion'; id: string; date: string; completion: ConversationalAgentCompletionEvent }
 
 interface DesktopDraftAttachment {
   id: string
@@ -1001,10 +1012,11 @@ function readCachedConversation(locationId: string | null | undefined, contactId
 
     const journey = Array.isArray(parsed.journey) ? parsed.journey : []
     const messages = Array.isArray(parsed.messages) ? parsed.messages : []
+    const agentCompletions = Array.isArray(parsed.agentCompletions) ? parsed.agentCompletions : []
     const contactInfo = parsed.contactInfo && typeof parsed.contactInfo === 'object' ? normalizeCachedContact(parsed.contactInfo) : null
     const agentState = parsed.agentState && typeof parsed.agentState === 'object' ? parsed.agentState as ConversationAgentState : null
 
-    return { journey, messages, contactInfo, agentState }
+    return { journey, messages, agentCompletions, contactInfo, agentState }
   } catch {
     window.localStorage.removeItem(cacheKey)
     return null
@@ -1024,6 +1036,7 @@ function writeCachedConversation(
       storedAt: Date.now(),
       journey: snapshot.journey,
       messages: snapshot.messages.slice(-320),
+      agentCompletions: snapshot.agentCompletions.slice(0, 40),
       contactInfo: snapshot.contactInfo,
       agentState: snapshot.agentState
     })
@@ -1959,6 +1972,7 @@ export const DesktopChat: React.FC = () => {
   const [bulkAgentActionBusy, setBulkAgentActionBusy] = useState<BulkAgentSelectionAction | null>(null)
 
   const [messages, setMessages] = useState<DesktopChatMessage[]>([])
+  const [agentCompletionEvents, setAgentCompletionEvents] = useState<ConversationalAgentCompletionEvent[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesRefreshing, setMessagesRefreshing] = useState(false)
   const [messagesError, setMessagesError] = useState('')
@@ -1967,6 +1981,7 @@ export const DesktopChat: React.FC = () => {
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [savingPrimaryPhone, setSavingPrimaryPhone] = useState<string | null>(null)
   const [infoPanelView, setInfoPanelView] = useState<InfoPanelView>('summary')
+  const [agentHistoryExpanded, setAgentHistoryExpanded] = useState(false)
 
   const [composerText, setComposerText] = useState('')
   const [composerChannel, setComposerChannel] = useState<ComposerChannel>('whatsapp')
@@ -2292,19 +2307,37 @@ export const DesktopChat: React.FC = () => {
     : showBulkAgentAssignmentActions
     ? 'Gestiona estos chats o mándalos a un agente.'
     : 'Gestiona estos chats sin abrirlos uno por uno.'
-  const messageGroups = useMemo(() => {
-    const groups: Array<{ key: string; label: string; messages: DesktopChatMessage[] }> = []
-    messages.forEach((message) => {
-      const key = getConversationDayKey(message.date, timezone) || 'unknown'
+  const conversationTimelineGroups = useMemo(() => {
+    const items: DesktopConversationTimelineItem[] = [
+      ...messages.map((message) => ({
+        type: 'message' as const,
+        id: `message-${message.id}`,
+        date: message.date,
+        message
+      })),
+      ...agentCompletionEvents.map((completion) => ({
+        type: 'agentCompletion' as const,
+        id: `agent-completion-${completion.id}`,
+        date: completion.createdAt,
+        completion
+      }))
+    ].sort((left, right) => {
+      const leftTime = Date.parse(left.date)
+      const rightTime = Date.parse(right.date)
+      return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
+    })
+    const groups: Array<{ key: string; label: string; items: DesktopConversationTimelineItem[] }> = []
+    items.forEach((item) => {
+      const key = getConversationDayKey(item.date, timezone) || 'unknown'
       const current = groups[groups.length - 1]
       if (!current || current.key !== key) {
-        groups.push({ key, label: getConversationDayLabel(message.date, timezone), messages: [message] })
+        groups.push({ key, label: getConversationDayLabel(item.date, timezone), items: [item] })
         return
       }
-      current.messages.push(message)
+      current.items.push(item)
     })
     return groups
-  }, [messages, timezone])
+  }, [agentCompletionEvents, messages, timezone])
   const detectedComposerChannel = normalizeComposerChannel(activeContact?.lastMessageChannel || activeContact?.lastMessageTransport || messages[messages.length - 1]?.transport || '')
   const activeConversationChannel = getHighLevelChannelForComposer(composerChannel)
   const isEmailComposer = composerChannel === 'email'
@@ -2503,6 +2536,7 @@ export const DesktopChat: React.FC = () => {
           return areDesktopMessagesEquivalent(current, nextMessages) ? current : nextMessages
         })()
       ))
+      setAgentCompletionEvents(cachedConversation.agentCompletions)
       setContactInfoData(cachedConversation.contactInfo)
       setConversationAgentState(cachedConversation.agentState)
       if (cachedConversation.agentState) {
@@ -2513,6 +2547,7 @@ export const DesktopChat: React.FC = () => {
       setMessagesRefreshing(options.showCacheRefresh !== false)
     } else if (!silent) {
       setMessages([])
+      setAgentCompletionEvents([])
       setContactJourney([])
       setContactInfoData(null)
       setMessagesRefreshing(false)
@@ -2522,11 +2557,12 @@ export const DesktopChat: React.FC = () => {
     }
     setMessagesError('')
     try {
-      const [journey, scheduledMessages, details, agentState] = await Promise.all([
+      const [journey, scheduledMessages, details, agentState, agentCompletions] = await Promise.all([
         contactsService.getContactJourney(contactId, { includeBusinessMessages: true, refreshExternalStatuses: false }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => []),
         contactsService.getContactDetails(contactId).catch(() => null),
-        conversationalAgentService.getState(contactId).catch(() => null)
+        conversationalAgentService.getState(contactId).catch(() => null),
+        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
       ])
       if (!isCurrentConversationLoad()) return
 
@@ -2534,6 +2570,7 @@ export const DesktopChat: React.FC = () => {
       setContactJourney((current) => (
         areJourneyEventsEquivalent(current, journey) ? current : journey
       ))
+      setAgentCompletionEvents(agentCompletions)
       setContactInfoData(details)
       setConversationAgentState(agentState)
       setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
@@ -2546,6 +2583,7 @@ export const DesktopChat: React.FC = () => {
       writeCachedConversation(locationId, contactId, {
         journey,
         messages: nextMessages,
+        agentCompletions,
         contactInfo: details,
         agentState
       })
@@ -2558,6 +2596,7 @@ export const DesktopChat: React.FC = () => {
       if (!isCurrentConversationLoad()) return
       if (!silent && !showedCachedConversation) {
         setMessages([])
+        setAgentCompletionEvents([])
         setContactJourney([])
         setContactInfoData(null)
         setConversationAgentState(null)
@@ -2702,6 +2741,7 @@ export const DesktopChat: React.FC = () => {
   useEffect(() => {
     if (!activeContactId) {
       setMessages([])
+      setAgentCompletionEvents([])
       setContactJourney([])
       setContactInfoData(null)
       setConversationAgentState(null)
@@ -2709,12 +2749,13 @@ export const DesktopChat: React.FC = () => {
       return
     }
     setInfoPanelView('summary')
+    setAgentHistoryExpanded(false)
     loadConversation(activeContactId)
   }, [activeContactId, loadConversation])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [messages, messagesLoading])
+  }, [agentCompletionEvents, messages, messagesLoading])
 
   const clearVoiceTimer = useCallback(() => {
     if (voiceTimerRef.current) {
@@ -4917,6 +4958,24 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
+  const renderAgentCompletionCard = (completion: ConversationalAgentCompletionEvent) => (
+    <article className={styles.agentCompletionCard} aria-label={`Resumen del agente: ${completion.title}`}>
+      <span className={styles.agentCompletionIcon} aria-hidden="true">
+        <Bot size={16} />
+      </span>
+      <div className={styles.agentCompletionBody}>
+        <span className={styles.agentCompletionHeader}>
+          <strong>{completion.title}</strong>
+          <small>{formatLocalDateTime(completion.createdAt)}</small>
+        </span>
+        <p>{completion.summary}</p>
+        {completion.reason && completion.reason !== completion.summary ? (
+          <small className={styles.agentCompletionReason}>{completion.reason}</small>
+        ) : null}
+      </div>
+    </article>
+  )
+
   const schedulePreviewDate = getScheduleDateFromDraft(scheduleDraft)
   const canSubmitSchedule = Boolean(schedulePreviewDate && composerText.trim() && !schedulingMessage)
 
@@ -5382,20 +5441,28 @@ export const DesktopChat: React.FC = () => {
                     <span>{messagesError}</span>
                     <Button variant="secondary" size="sm" onClick={() => { void loadConversation(activeContact.id) }}>Reintentar</Button>
                   </div>
-                ) : messages.length === 0 ? (
+                ) : messages.length === 0 && agentCompletionEvents.length === 0 ? (
                   <div className={styles.emptyConversation}>
                     <MessageCircle size={22} />
                     <strong>Sin mensajes todavía</strong>
                     <span>Escribe abajo para empezar la conversación.</span>
                   </div>
-                ) : messageGroups.map((group) => (
+                ) : conversationTimelineGroups.map((group) => (
                   <div key={group.key} className={styles.messageGroup}>
                     <div className={styles.dayDivider}>{group.label}</div>
-                    {group.messages.map((message) => {
+                    {group.items.map((item) => {
+                      if (item.type === 'agentCompletion') {
+                        return (
+                          <div key={item.id} className={styles.agentCompletionRow}>
+                            {renderAgentCompletionCard(item.completion)}
+                          </div>
+                        )
+                      }
+                      const message = item.message
                       const routingDetails = getMessageRoutingDetails(message, whatsappStatus)
                       return (
                         <article
-                          key={message.id}
+                          key={item.id}
                           className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''}`}
                         >
 	                          {renderAttachment(message)}
@@ -5792,6 +5859,34 @@ export const DesktopChat: React.FC = () => {
                       {contactPayments.length === 0 ? <p className={styles.mutedLine}>Sin pagos registrados.</p> : null}
                     </div>
                   </div>
+
+                  {agentCompletionEvents.length > 0 ? (
+                    <div className={styles.infoSection}>
+                      <div className={styles.sectionTitleRow}>
+                        <h3>Historial del agente</h3>
+                        {agentCompletionEvents.length > 2 ? (
+                          <button type="button" onClick={() => setAgentHistoryExpanded((current) => !current)}>
+                            {agentHistoryExpanded ? 'Ver menos' : `Ver ${agentCompletionEvents.length}`}
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className={styles.agentHistoryList}>
+                        {(agentHistoryExpanded ? agentCompletionEvents : agentCompletionEvents.slice(0, 2)).map((completion) => (
+                          <div
+                            key={completion.id}
+                            className={styles.agentHistoryItem}
+                          >
+                            <Bot size={15} />
+                            <span>
+                              <strong>{completion.title}</strong>
+                              <small>{completion.summary}</small>
+                              <em>{formatLocalDateTime(completion.createdAt)}</em>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className={styles.infoSection}>
                     <h3>Origen</h3>

@@ -1,5 +1,5 @@
 import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
-import { CheckCheck, CircleAlert, Clock, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
+import { Bot, CheckCheck, CircleAlert, Clock, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
 import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
 import {
   Modal,
@@ -26,6 +26,7 @@ import automationsService, {
   type ContactAutomationActivityItem
 } from '@/services/automationsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import { conversationalAgentService, type ConversationalAgentCompletionEvent } from '@/services/conversationalAgentService'
 import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import {
@@ -163,6 +164,10 @@ interface ContactChatMessage {
   transport?: string
   channel?: ContactChatComposerChannel
 }
+
+type ContactChatTimelineItem =
+  | { type: 'message'; id: string; date: string; message: ContactChatMessage }
+  | { type: 'agentCompletion'; id: string; date: string; completion: ConversationalAgentCompletionEvent }
 
 const CONTACT_PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'enviando', 'enviando por qr', 'scheduled'])
 const CONTACT_FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
@@ -787,6 +792,7 @@ export function ContactDetailsModal({
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [chatMessages, setChatMessages] = useState<ContactChatMessage[]>([])
+  const [agentCompletionEvents, setAgentCompletionEvents] = useState<ConversationalAgentCompletionEvent[]>([])
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState('')
   const [chatDraft, setChatDraft] = useState('')
@@ -804,6 +810,7 @@ export function ContactDetailsModal({
   const [paymentsExpanded, setPaymentsExpanded] = useState(false)
   const [refundsExpanded, setRefundsExpanded] = useState(false)
   const [appointmentsExpanded, setAppointmentsExpanded] = useState(false)
+  const [agentHistoryExpanded, setAgentHistoryExpanded] = useState(false)
   const [customFieldsExpanded, setCustomFieldsExpanded] = useState(false)
   const [automationsExpanded, setAutomationsExpanded] = useState(false)
   const [customFieldDrafts, setCustomFieldDrafts] = useState<Record<string, string>>({})
@@ -842,6 +849,7 @@ export function ContactDetailsModal({
       setSelectedContact(null)
       setSearchQuery('')
       setChatMessages([])
+      setAgentCompletionEvents([])
       setChatLoading(false)
       setChatError('')
       setChatDraft('')
@@ -859,6 +867,7 @@ export function ContactDetailsModal({
       setPaymentsExpanded(false)
       setRefundsExpanded(false)
       setAppointmentsExpanded(false)
+      setAgentHistoryExpanded(false)
       setCustomFieldsExpanded(false)
       setAutomationsExpanded(false)
       setCustomFieldDrafts({})
@@ -888,9 +897,11 @@ export function ContactDetailsModal({
     setPaymentsExpanded(false)
     setRefundsExpanded(false)
     setAppointmentsExpanded(false)
+    setAgentHistoryExpanded(false)
     setCustomFieldsExpanded(false)
     setAutomationsExpanded(false)
     setChatMessages([])
+    setAgentCompletionEvents([])
     setChatLoading(false)
     setChatError('')
     setChatDraft('')
@@ -933,9 +944,10 @@ export function ContactDetailsModal({
     setChatError('')
 
     try {
-      const [journey, scheduledMessages] = await Promise.all([
+      const [journey, scheduledMessages, agentCompletions] = await Promise.all([
         contactsService.getContactJourney(contactId, { includeBusinessMessages: true }),
-        whatsappApiService.getScheduledMessages(contactId).catch(() => [] as ScheduledChatMessage[])
+        whatsappApiService.getScheduledMessages(contactId).catch(() => [] as ScheduledChatMessage[]),
+        conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
       ])
       const journeyMessages = journey
         .map(getJourneyChatMessage)
@@ -946,10 +958,12 @@ export function ContactDetailsModal({
 
       const loadedMessages = [...journeyMessages, ...scheduledBubbles]
         .sort((left, right) => Date.parse(left.date) - Date.parse(right.date))
+      setAgentCompletionEvents(agentCompletions)
       setChatMessages((current) => mergeContactChatMessagesWithOptimistic(loadedMessages, current))
     } catch {
       if (!silent) {
         setChatMessages([])
+        setAgentCompletionEvents([])
         setChatError('No se pudo cargar la conversacion.')
       }
     } finally {
@@ -992,6 +1006,7 @@ export function ContactDetailsModal({
     const contactId = selectedContact?.id
     if (!isOpen || !contactId) {
       setChatMessages([])
+      setAgentCompletionEvents([])
       return
     }
 
@@ -1016,7 +1031,7 @@ export function ContactDetailsModal({
     if (!messagesSurface) return
 
     messagesSurface.scrollTop = messagesSurface.scrollHeight
-  }, [chatLoading, chatMessages])
+  }, [agentCompletionEvents, chatLoading, chatMessages])
 
   const preparedContactSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
   const contactSearchIndexes = useMemo(() => {
@@ -1492,18 +1507,36 @@ export function ContactDetailsModal({
   const selectedChatRouteLabel = selectedChatChannelOption?.label || CONTACT_CHAT_CHANNEL_LABELS[selectedChatChannel]
   const selectedContactPhones = useMemo(() => getContactPhoneEntries(selectedContact), [selectedContact])
   const chatMessageGroups = useMemo(() => {
-    const groups: Array<{ key: string; label: string; messages: ContactChatMessage[] }> = []
-    chatMessages.forEach((message) => {
-      const key = getChatDayKey(message.date, timezone)
+    const items: ContactChatTimelineItem[] = [
+      ...chatMessages.map((message) => ({
+        type: 'message' as const,
+        id: `message-${message.id}`,
+        date: message.date,
+        message
+      })),
+      ...agentCompletionEvents.map((completion) => ({
+        type: 'agentCompletion' as const,
+        id: `agent-completion-${completion.id}`,
+        date: completion.createdAt,
+        completion
+      }))
+    ].sort((left, right) => {
+      const leftTime = Date.parse(left.date)
+      const rightTime = Date.parse(right.date)
+      return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
+    })
+    const groups: Array<{ key: string; label: string; items: ContactChatTimelineItem[] }> = []
+    items.forEach((item) => {
+      const key = getChatDayKey(item.date, timezone)
       const current = groups[groups.length - 1]
       if (!current || current.key !== key) {
-        groups.push({ key, label: getChatDayLabel(message.date, timezone), messages: [message] })
+        groups.push({ key, label: getChatDayLabel(item.date, timezone), items: [item] })
         return
       }
-      current.messages.push(message)
+      current.items.push(item)
     })
     return groups
-  }, [chatMessages, timezone])
+  }, [agentCompletionEvents, chatMessages, timezone])
   const chatChannelReady = selectedChatChannel === 'email'
     ? Boolean(selectedContact?.email && emailConnected)
     : selectedChatChannel === 'whatsapp'
@@ -1755,6 +1788,22 @@ export function ContactDetailsModal({
     )
   }
 
+  const renderAgentCompletionCard = (completion: ConversationalAgentCompletionEvent) => (
+    <article className={styles.contactChatAgentSummary} aria-label={`Resumen del agente: ${completion.title}`}>
+      <span className={styles.contactChatAgentSummaryIcon} aria-hidden="true">
+        <Bot size={15} />
+      </span>
+      <span className={styles.contactChatAgentSummaryBody}>
+        <span className={styles.contactChatAgentSummaryHeader}>
+          <strong>{completion.title}</strong>
+          <small>{getChatTimeLabel(completion.createdAt, timezone)}</small>
+        </span>
+        <p>{completion.summary}</p>
+        {completion.reason && completion.reason !== completion.summary ? <em>{completion.reason}</em> : null}
+      </span>
+    </article>
+  )
+
   const renderContactChatPanel = () => {
     if (!selectedContact) return null
 
@@ -1786,7 +1835,7 @@ export function ContactDetailsModal({
                 Reintentar
               </Button>
             </div>
-          ) : chatMessages.length === 0 ? (
+          ) : chatMessages.length === 0 && agentCompletionEvents.length === 0 ? (
             <div className={styles.contactChatEmpty}>
               <MessageCircle size={22} aria-hidden="true" />
               <strong>Sin mensajes todavía</strong>
@@ -1796,7 +1845,15 @@ export function ContactDetailsModal({
             chatMessageGroups.map((group) => (
               <div key={group.key} className={styles.contactChatGroup}>
                 <div className={styles.contactChatDay}>{group.label}</div>
-                {group.messages.map((message) => {
+                {group.items.map((item) => {
+                  if (item.type === 'agentCompletion') {
+                    return (
+                      <div key={item.id} className={styles.contactChatAgentSummaryRow}>
+                        {renderAgentCompletionCard(item.completion)}
+                      </div>
+                    )
+                  }
+                  const message = item.message
                   const status = String(message.status || '').trim().toLowerCase()
                   const failed = CONTACT_FAILED_MESSAGE_STATUSES.has(status) || Boolean(message.errorReason)
                   const pending = CONTACT_PENDING_MESSAGE_STATUSES.has(status)
@@ -1805,7 +1862,7 @@ export function ContactDetailsModal({
 
                   return (
                     <article
-                      key={message.id}
+                      key={item.id}
                       className={`${styles.contactChatBubble} ${
                         message.direction === 'outbound'
                           ? styles.contactChatOutbound
@@ -2690,6 +2747,47 @@ export function ContactDetailsModal({
                     </div>
                   )}
                 </div>
+
+                {agentCompletionEvents.length > 0 && (
+                  <div className={styles.detailSection}>
+                    <button
+                      type="button"
+                      className={`${styles.summaryCardButton} ${agentHistoryExpanded ? styles.summaryCardButtonOpen : ''}`}
+                      onClick={() => setAgentHistoryExpanded(prev => !prev)}
+                      aria-expanded={agentHistoryExpanded}
+                      data-contact-summary-trigger="agent-history"
+                    >
+                      <div className={styles.summaryCardContent}>
+                        <div>
+                          <h5 className={styles.summaryTitle}>Historial del agente</h5>
+                          <p className={styles.summaryCount}>{agentCompletionEvents.length}</p>
+                        </div>
+                        <Icon
+                          name={agentHistoryExpanded ? 'chevron-down' : 'chevron-right'}
+                          size={20}
+                          className={styles.summaryCardChevron}
+                        />
+                      </div>
+                    </button>
+
+                    {agentHistoryExpanded && (
+                      <ul className={styles.agentHistoryList} data-contact-summary-list="agent-history">
+                        {agentCompletionEvents.map((completion) => (
+                          <li key={completion.id} className={styles.agentHistoryItem}>
+                            <span className={styles.agentHistoryIcon}>
+                              <Bot size={15} />
+                            </span>
+                            <div>
+                              <strong>{completion.title}</strong>
+                              <p>{completion.summary}</p>
+                              <small>{formatLocalDateTime(completion.createdAt)}</small>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
 
                 {/* Reembolsos */}
                 {refunds.length > 0 && (
