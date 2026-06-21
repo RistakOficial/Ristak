@@ -981,7 +981,7 @@
 
 .qrDripInputRow {
   display: grid;
-  grid-template-columns: minmax(0, 120px) auto;
+  grid-template-columns: minmax(0, 120px) minmax(138px, 170px);
   align-items: center;
   gap: 10px;
 }
@@ -990,9 +990,14 @@
   min-height: 42px;
 }
 
-.qrDripInputRow span {
+.qrDripUnitSelect {
+  min-width: 0;
+}
+
+.qrDripDelayHint {
   color: var(--text-dim);
   font-size: 13px;
+  line-height: 1.4;
 }
 
 .qrDripExampleBox {

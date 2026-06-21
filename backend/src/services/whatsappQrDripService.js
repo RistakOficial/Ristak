@@ -5,10 +5,14 @@ export const WHATSAPP_QR_DRIP_CONFIG_KEY = 'whatsapp_qr_drip_settings'
 export const WHATSAPP_QR_DRIP_MIN_DELAY_SECONDS = 15
 export const WHATSAPP_QR_DRIP_MAX_DELAY_SECONDS = 600
 export const WHATSAPP_QR_DRIP_DEFAULT_DELAY_SECONDS = 30
+export const WHATSAPP_QR_DRIP_DEFAULT_DELAY_UNIT = 'seconds'
+
+const WHATSAPP_QR_DRIP_DELAY_UNITS = new Set(['seconds', 'minutes'])
 
 const DEFAULT_WHATSAPP_QR_DRIP_SETTINGS = {
   enabled: true,
-  delaySeconds: WHATSAPP_QR_DRIP_DEFAULT_DELAY_SECONDS
+  delaySeconds: WHATSAPP_QR_DRIP_DEFAULT_DELAY_SECONDS,
+  delayUnit: WHATSAPP_QR_DRIP_DEFAULT_DELAY_UNIT
 }
 
 let qrDripReservationQueue = Promise.resolve()
@@ -28,6 +32,11 @@ function cleanNumber(value, fallback, { min, max } = {}) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return fallback
   return Math.min(Math.max(Math.round(parsed), min), max)
+}
+
+function cleanDelayUnit(value, fallback = WHATSAPP_QR_DRIP_DEFAULT_DELAY_UNIT) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return WHATSAPP_QR_DRIP_DELAY_UNITS.has(normalized) ? normalized : fallback
 }
 
 function parseStoredSettings(rawValue) {
@@ -54,6 +63,7 @@ export function normalizeWhatsAppQrDripSettings(input = {}) {
       min: WHATSAPP_QR_DRIP_MIN_DELAY_SECONDS,
       max: WHATSAPP_QR_DRIP_MAX_DELAY_SECONDS
     }),
+    delayUnit: cleanDelayUnit(merged.delayUnit, DEFAULT_WHATSAPP_QR_DRIP_SETTINGS.delayUnit),
     minDelaySeconds: WHATSAPP_QR_DRIP_MIN_DELAY_SECONDS,
     maxDelaySeconds: WHATSAPP_QR_DRIP_MAX_DELAY_SECONDS
   }
@@ -73,7 +83,8 @@ export async function saveWhatsAppQrDripSettings(input = {}) {
 
   await setAppConfig(WHATSAPP_QR_DRIP_CONFIG_KEY, {
     enabled: next.enabled,
-    delaySeconds: next.delaySeconds
+    delaySeconds: next.delaySeconds,
+    delayUnit: next.delayUnit
   })
 
   if (!next.enabled) {

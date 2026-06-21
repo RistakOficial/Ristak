@@ -3079,7 +3079,7 @@ export async function getWhatsAppApiStatus() {
     }),
     getWhatsAppQrDripSettings().catch(error => {
       logger.warn(`No se pudo leer configuración anti-bloqueos QR: ${error.message}`)
-      return { enabled: true, delaySeconds: 30, minDelaySeconds: 15, maxDelaySeconds: 600 }
+      return { enabled: true, delaySeconds: 30, delayUnit: 'seconds', minDelaySeconds: 15, maxDelaySeconds: 600 }
     })
   ])
 

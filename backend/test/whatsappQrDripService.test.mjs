@@ -46,16 +46,20 @@ test('normalizes WhatsApp QR drip settings with safe defaults and limits', () =>
   assert.deepEqual(normalizeWhatsAppQrDripSettings({ enabled: 'off', delaySeconds: 4 }), {
     enabled: false,
     delaySeconds: 15,
+    delayUnit: 'seconds',
     minDelaySeconds: 15,
     maxDelaySeconds: 600
   })
 
-  assert.deepEqual(normalizeWhatsAppQrDripSettings({ enabled: 'yes', delaySeconds: 9999 }), {
+  assert.deepEqual(normalizeWhatsAppQrDripSettings({ enabled: 'yes', delaySeconds: 9999, delayUnit: 'minutes' }), {
     enabled: true,
     delaySeconds: 600,
+    delayUnit: 'minutes',
     minDelaySeconds: 15,
     maxDelaySeconds: 600
   })
+
+  assert.equal(normalizeWhatsAppQrDripSettings({ delayUnit: 'hours' }).delayUnit, 'seconds')
 })
 
 test('loads default-on drip settings and persists user updates', async () => {
@@ -63,13 +67,15 @@ test('loads default-on drip settings and persists user updates', async () => {
     assert.deepEqual(await getWhatsAppQrDripSettings(), {
       enabled: true,
       delaySeconds: 30,
+      delayUnit: 'seconds',
       minDelaySeconds: 15,
       maxDelaySeconds: 600
     })
 
-    assert.deepEqual(await saveWhatsAppQrDripSettings({ enabled: false, delaySeconds: 9 }), {
+    assert.deepEqual(await saveWhatsAppQrDripSettings({ enabled: false, delaySeconds: 9, delayUnit: 'minutes' }), {
       enabled: false,
       delaySeconds: 15,
+      delayUnit: 'minutes',
       minDelaySeconds: 15,
       maxDelaySeconds: 600
     })
@@ -77,6 +83,7 @@ test('loads default-on drip settings and persists user updates', async () => {
     assert.deepEqual(await getWhatsAppQrDripSettings(), {
       enabled: false,
       delaySeconds: 15,
+      delayUnit: 'minutes',
       minDelaySeconds: 15,
       maxDelaySeconds: 600
     })

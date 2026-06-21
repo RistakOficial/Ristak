@@ -469,7 +469,8 @@ export async function updateWhatsAppQrDripSettingsView(req, res) {
   try {
     const data = await saveWhatsAppQrDripSettings({
       enabled: req.body?.enabled,
-      delaySeconds: req.body?.delaySeconds
+      delaySeconds: req.body?.delaySeconds,
+      delayUnit: req.body?.delayUnit
     })
     res.json({ success: true, data })
   } catch (error) {

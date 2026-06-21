@@ -20,10 +20,10 @@ import {
   Wallet
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
-import { Badge, Button, Modal, NumberInput, PageHeader, SearchField, Switch } from '@/components/common'
+import { Badge, Button, CustomSelect, Modal, NumberInput, PageHeader, SearchField, Switch } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
-import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
+import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrDripDelayUnit, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
 import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
 
@@ -52,10 +52,15 @@ const QR_DRIP_DISABLE_CONFIRM_WORD = 'APAGAR'
 const DEFAULT_QR_DRIP_SETTINGS: Required<WhatsAppQrDripSettings> = {
   enabled: true,
   delaySeconds: 30,
+  delayUnit: 'seconds',
   minDelaySeconds: 15,
   maxDelaySeconds: 600
 }
 const QR_DRIP_EXAMPLE_NAMES = ['María López', 'Carlos Vega', 'Ana Ruiz', 'Luis Ortega', 'Diana Solís']
+const QR_DRIP_DELAY_UNIT_OPTIONS: Array<{ value: WhatsAppQrDripDelayUnit; label: string }> = [
+  { value: 'seconds', label: 'Segundos' },
+  { value: 'minutes', label: 'Minutos' }
+]
 
 function parseJson<T>(value?: string | null): T | null {
   if (!value) return null
@@ -142,14 +147,48 @@ function normalizeQrDripSettings(settings?: WhatsAppQrDripSettings | null): Requ
   const delaySeconds = Number(settings?.delaySeconds)
   const minDelaySeconds = Number(settings?.minDelaySeconds) || DEFAULT_QR_DRIP_SETTINGS.minDelaySeconds
   const maxDelaySeconds = Number(settings?.maxDelaySeconds) || DEFAULT_QR_DRIP_SETTINGS.maxDelaySeconds
+  const delayUnit = settings?.delayUnit === 'minutes' ? 'minutes' : DEFAULT_QR_DRIP_SETTINGS.delayUnit
   return {
     enabled: settings?.enabled ?? DEFAULT_QR_DRIP_SETTINGS.enabled,
     delaySeconds: Number.isFinite(delaySeconds)
       ? Math.min(Math.max(Math.round(delaySeconds), minDelaySeconds), maxDelaySeconds)
       : DEFAULT_QR_DRIP_SETTINGS.delaySeconds,
+    delayUnit,
     minDelaySeconds,
     maxDelaySeconds
   }
+}
+
+function clampQrDripDelaySeconds(seconds: number, settings: Required<WhatsAppQrDripSettings>) {
+  return Math.min(Math.max(Math.round(seconds), settings.minDelaySeconds), settings.maxDelaySeconds)
+}
+
+function getQrDripDelayAmount(delaySeconds: number, unit: WhatsAppQrDripDelayUnit) {
+  if (unit === 'minutes') {
+    return Number((Math.max(1, delaySeconds) / 60).toFixed(2))
+  }
+
+  return Math.max(1, Math.round(delaySeconds))
+}
+
+function getQrDripDelayBounds(settings: Required<WhatsAppQrDripSettings>, unit: WhatsAppQrDripDelayUnit) {
+  if (unit === 'minutes') {
+    return {
+      min: Number((settings.minDelaySeconds / 60).toFixed(2)),
+      max: Number((settings.maxDelaySeconds / 60).toFixed(2)),
+      step: 0.25
+    }
+  }
+
+  return {
+    min: settings.minDelaySeconds,
+    max: settings.maxDelaySeconds,
+    step: 5
+  }
+}
+
+function parseQrDripDelayUnit(value: string): WhatsAppQrDripDelayUnit {
+  return value === 'minutes' ? 'minutes' : 'seconds'
 }
 
 function formatQrDripDelay(seconds: number) {
@@ -221,6 +260,7 @@ export const WhatsAppSettings: React.FC = () => {
   const [qrModalView, setQrModalView] = useState<'consent' | 'qr'>('consent')
   const [qrDripModalOpen, setQrDripModalOpen] = useState(false)
   const [qrDripDelayDraft, setQrDripDelayDraft] = useState(DEFAULT_QR_DRIP_SETTINGS.delaySeconds)
+  const [qrDripDelayUnitDraft, setQrDripDelayUnitDraft] = useState<WhatsAppQrDripDelayUnit>(DEFAULT_QR_DRIP_SETTINGS.delayUnit)
   const [qrDripSaving, setQrDripSaving] = useState(false)
   const [qrDripDisableConfirmOpen, setQrDripDisableConfirmOpen] = useState(false)
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
@@ -230,10 +270,14 @@ export const WhatsAppSettings: React.FC = () => {
   const hasAnyWhatsAppConnection = apiConnected || hasWhatsAppNumbers
   const qrDripSettings = useMemo(() => normalizeQrDripSettings(apiStatus?.qr?.drip), [apiStatus?.qr?.drip])
   const qrDripExample = useMemo(() => buildQrDripExample(qrDripDelayDraft), [qrDripDelayDraft])
+  const qrDripDelayBounds = useMemo(() => getQrDripDelayBounds(qrDripSettings, qrDripDelayUnitDraft), [qrDripDelayUnitDraft, qrDripSettings])
+  const qrDripDelayAmountDraft = useMemo(() => getQrDripDelayAmount(qrDripDelayDraft, qrDripDelayUnitDraft), [qrDripDelayDraft, qrDripDelayUnitDraft])
+  const qrDripDelayChanged = qrDripDelayDraft !== qrDripSettings.delaySeconds || qrDripDelayUnitDraft !== qrDripSettings.delayUnit
 
   useEffect(() => {
     setQrDripDelayDraft(qrDripSettings.delaySeconds)
-  }, [qrDripSettings.delaySeconds])
+    setQrDripDelayUnitDraft(qrDripSettings.delayUnit)
+  }, [qrDripSettings.delaySeconds, qrDripSettings.delayUnit])
 
   useEffect(() => {
     setActiveSection(current => current === routeSection ? current : routeSection)
@@ -443,6 +487,7 @@ export const WhatsAppSettings: React.FC = () => {
       const nextSettings = await whatsappApiService.updateQrDripSettings(patch)
       mergeQrDripSettings(nextSettings)
       setQrDripDelayDraft(nextSettings.delaySeconds)
+      setQrDripDelayUnitDraft(normalizeQrDripSettings(nextSettings).delayUnit)
       if (!options.quiet) {
         showToast(
           'success',
@@ -471,7 +516,16 @@ export const WhatsAppSettings: React.FC = () => {
   }
 
   const saveQrDripDelay = () => {
-    saveQrDripSettings({ delaySeconds: qrDripDelayDraft }).catch(() => null)
+    saveQrDripSettings({ delaySeconds: qrDripDelayDraft, delayUnit: qrDripDelayUnitDraft }).catch(() => null)
+  }
+
+  const updateQrDripDelayAmount = (amount: number) => {
+    const nextSeconds = qrDripDelayUnitDraft === 'minutes' ? amount * 60 : amount
+    setQrDripDelayDraft(clampQrDripDelaySeconds(nextSeconds, qrDripSettings))
+  }
+
+  const updateQrDripDelayUnit = (value: string) => {
+    setQrDripDelayUnitDraft(parseQrDripDelayUnit(value))
   }
 
   const openAddNumberModal = () => {
@@ -1264,21 +1318,28 @@ export const WhatsAppSettings: React.FC = () => {
         />
       </div>
 
-      <label className={styles.fieldLabel}>
-        Esperar antes del siguiente mensaje QR
-        <div className={styles.qrDripInputRow}>
+      <div className={styles.fieldLabel}>
+        <span id="qr-drip-delay-label">Esperar antes del siguiente mensaje QR</span>
+        <div className={styles.qrDripInputRow} role="group" aria-labelledby="qr-drip-delay-label">
           <NumberInput
             className={styles.qrDripNumberInput}
-            value={qrDripDelayDraft}
-            min={qrDripSettings.minDelaySeconds}
-            max={qrDripSettings.maxDelaySeconds}
-            step={5}
-            onValueChange={setQrDripDelayDraft}
-            aria-label="Segundos entre mensajes QR automáticos"
+            value={qrDripDelayAmountDraft}
+            min={qrDripDelayBounds.min}
+            max={qrDripDelayBounds.max}
+            step={qrDripDelayBounds.step}
+            onValueChange={updateQrDripDelayAmount}
+            aria-label="Tiempo entre mensajes QR automáticos"
           />
-          <span>segundos</span>
+          <CustomSelect
+            className={styles.qrDripUnitSelect}
+            value={qrDripDelayUnitDraft}
+            options={QR_DRIP_DELAY_UNIT_OPTIONS}
+            onValueChange={updateQrDripDelayUnit}
+            aria-label="Unidad del goteo automático"
+          />
         </div>
-      </label>
+        <span className={styles.qrDripDelayHint}>Equivale a {formatQrDripDelay(qrDripDelayDraft)} entre mensajes.</span>
+      </div>
 
       <div className={styles.qrDripExampleBox}>
         <div className={styles.qrDripExampleHeader}>
@@ -1312,7 +1373,7 @@ export const WhatsAppSettings: React.FC = () => {
           variant="primary"
           loading={qrDripSaving}
           onClick={saveQrDripDelay}
-          disabled={qrDripDelayDraft === qrDripSettings.delaySeconds}
+          disabled={!qrDripDelayChanged}
         >
           Guardar tiempo
         </Button>

@@ -151,14 +151,17 @@ export interface WhatsAppApiStatus {
   lastError?: string | null
 }
 
+export type WhatsAppQrDripDelayUnit = 'seconds' | 'minutes'
+
 export interface WhatsAppQrDripSettings {
   enabled: boolean
   delaySeconds: number
+  delayUnit?: WhatsAppQrDripDelayUnit
   minDelaySeconds?: number
   maxDelaySeconds?: number
 }
 
-export type WhatsAppQrDripSettingsPayload = Partial<Pick<WhatsAppQrDripSettings, 'enabled' | 'delaySeconds'>>
+export type WhatsAppQrDripSettingsPayload = Partial<Pick<WhatsAppQrDripSettings, 'enabled' | 'delaySeconds' | 'delayUnit'>>
 
 export interface WhatsAppMetaDirectStatus {
   provider: 'meta_direct' | string
