@@ -36,9 +36,11 @@ export interface GoogleCalendarStatus {
 export interface StripeStatus {
   configured: boolean
   connected: boolean
+  connectionType?: 'manual' | 'connect'
   mode?: 'test' | 'live'
   publishableKey?: string | null
   accountLabel?: string | null
+  connectedAccountId?: string | null
 }
 
 export interface MercadoPagoStatus {
