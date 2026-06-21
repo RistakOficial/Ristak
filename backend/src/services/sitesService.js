@@ -21464,6 +21464,10 @@ function evaluateSubmissionRules(blocks, responses = {}) {
         }
       }
 
+      if ((action === 'disqualify' || action === 'disqualify_after_submit') && option.redirectUrl && !redirectUrl) {
+        redirectUrl = safeHref(option.redirectUrl, '')
+      }
+
       if (action === 'end_form' && !message) {
         message = option.message || 'Gracias. Tu información fue recibida.'
       }

@@ -478,6 +478,8 @@ const normalizeVisibleRuleAction = (action?: SiteOptionAction): SiteOptionAction
   action && visibleRuleActionValues.has(action) ? action : 'continue'
 )
 const exitRuleActions = new Set<SiteOptionAction>(['redirect', 'site_page'])
+const disqualifyRuleActions = new Set<SiteOptionAction>(['disqualify', 'disqualify_after_submit'])
+const externalUrlRuleActions = new Set<SiteOptionAction>(['redirect', 'disqualify', 'disqualify_after_submit'])
 const fieldValidationOptions = [
   { value: '', label: 'Ninguna' },
   { value: 'email', label: 'Correo' },
@@ -32980,9 +32982,9 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
     action,
     targetBlockId: action === 'jump' ? option.targetBlockId || '' : '',
     targetPageId: action === 'site_page' ? option.targetPageId || '' : '',
-    redirectUrl: action === 'redirect' ? option.redirectUrl || '' : '',
+    redirectUrl: externalUrlRuleActions.has(action) ? option.redirectUrl || '' : '',
     submitBeforeAction: exitRuleActions.has(action) ? option.submitBeforeAction !== false : undefined,
-    message: action === 'disqualify' || action === 'disqualify_after_submit' ? option.message || '' : '',
+    message: disqualifyRuleActions.has(action) ? option.message || '' : '',
     tag: '',
     category: ''
   })
@@ -33032,12 +33034,12 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             </label>
           )}
 
-          {option.action === 'redirect' && (
+          {externalUrlRuleActions.has(getVisibleRuleAction(option.action)) && (
             <label className={styles.field}>
-              <span>URL destino</span>
+              <span>{getVisibleRuleAction(option.action) === 'redirect' ? 'URL destino' : 'URL destino al descalificar'}</span>
               <input
                 value={option.redirectUrl || ''}
-                placeholder="https://tusitio.com"
+                placeholder={getVisibleRuleAction(option.action) === 'redirect' ? 'https://tusitio.com' : 'https://tusitio.com/no-califica'}
                 onChange={(event) => patchOption(index, { redirectUrl: event.target.value })}
                 onBlur={onSave}
               />
@@ -33073,7 +33075,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
             </>
           )}
 
-          {(option.action === 'disqualify' || option.action === 'disqualify_after_submit') && (
+          {disqualifyRuleActions.has(getVisibleRuleAction(option.action)) && (
             <label className={styles.field}>
               <span>Mensaje cuando se descalifique</span>
               <textarea

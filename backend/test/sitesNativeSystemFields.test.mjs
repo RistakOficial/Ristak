@@ -223,7 +223,7 @@ test('native phone country selector keeps a bounded readable width', async () =>
   }
 })
 
-test('native form option rules redirect to site pages and external URLs with submit preference', async () => {
+test('native form option rules redirect to site pages, external URLs and disqualified destinations', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),
     verified: await getAppConfig(DOMAIN_KEYS.verified),
@@ -253,10 +253,10 @@ test('native form option rules redirect to site pages and external URLs with sub
       }
     })
 
-    const siteWithField = await createBlock(site.id, {
+    let siteWithFields = await createBlock(site.id, {
       blockType: 'radio',
       label: 'Destino',
-      required: true,
+      required: false,
       settings: { pageId: 'page-1' },
       options: [
         {
@@ -280,13 +280,38 @@ test('native form option rules redirect to site pages and external URLs with sub
           label: 'No califico',
           value: 'No califico',
           action: 'disqualify_after_submit',
-          message: 'No califica por ahora.'
+          message: 'No califica por ahora.',
+          redirectUrl: 'https://example.com/no-califica'
+        }
+      ]
+    })
+    siteWithFields = await createBlock(site.id, {
+      blockType: 'dropdown',
+      label: 'Segmento',
+      required: false,
+      settings: { pageId: 'page-1' },
+      options: [
+        {
+          id: 'qualified-dropdown',
+          label: 'Califica',
+          value: 'Califica',
+          action: 'continue'
+        },
+        {
+          id: 'not-qualified-dropdown',
+          label: 'No apto',
+          value: 'No apto',
+          action: 'disqualify_after_submit',
+          message: 'Ruta no apta.',
+          redirectUrl: 'https://example.com/lista-espera'
         }
       ]
     })
 
-    const field = siteWithField.blocks.find(block => block.blockType === 'radio')
+    const field = siteWithFields.blocks.find(block => block.blockType === 'radio')
+    const dropdownField = siteWithFields.blocks.find(block => block.blockType === 'dropdown')
     assert.ok(field)
+    assert.ok(dropdownField)
 
     const baseReq = {
       headers: { host: 'example.test', 'user-agent': 'node-test' },
@@ -333,8 +358,21 @@ test('native form option rules redirect to site pages and external URLs with sub
 
     assert.equal(disqualifiedResult.status, 'disqualified')
     assert.equal(disqualifiedResult.message, 'No califica por ahora.')
-    assert.equal(disqualifiedResult.redirectUrl, '')
+    assert.equal(disqualifiedResult.redirectUrl, 'https://example.com/no-califica')
     assert.equal(disqualifiedResult.rules.actions[0].action, 'disqualify_after_submit')
+
+    const dropdownDisqualifiedResult = await createSubmissionFromRequest(baseReq, {
+      siteId: site.id,
+      pageId: 'page-1',
+      responses: {
+        [dropdownField.id]: 'No apto'
+      }
+    })
+
+    assert.equal(dropdownDisqualifiedResult.status, 'disqualified')
+    assert.equal(dropdownDisqualifiedResult.message, 'Ruta no apta.')
+    assert.equal(dropdownDisqualifiedResult.redirectUrl, 'https://example.com/lista-espera')
+    assert.equal(dropdownDisqualifiedResult.rules.actions[0].action, 'disqualify_after_submit')
   } finally {
     if (site?.id) {
       await deleteSite(site.id).catch(() => undefined)
