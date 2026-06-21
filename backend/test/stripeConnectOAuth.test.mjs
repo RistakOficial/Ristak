@@ -25,7 +25,8 @@ const STRIPE_ENV_KEYS = [
   'CLIENT_ID',
   'LICENSE_KEY',
   'INSTALLATION_ID',
-  'APP_URL'
+  'APP_URL',
+  'STRIPE_CONNECT_OAUTH_ENABLED'
 ]
 
 async function snapshotStripeConfig(callback) {
@@ -36,6 +37,7 @@ async function snapshotStripeConfig(callback) {
 
   try {
     await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")
+    process.env.STRIPE_CONNECT_OAUTH_ENABLED = '1'
     return await callback()
   } finally {
     await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")

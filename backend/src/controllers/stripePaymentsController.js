@@ -10,6 +10,7 @@ import {
   getStripePaymentConfig,
   getStripeSavedPaymentMethods,
   handleStripeWebhookEvent,
+  isStripeConnectOAuthEnabled,
   saveStripePaymentConfig,
   setStripeConnectActiveMode,
   syncStripeConnectFromCentral,
@@ -148,6 +149,13 @@ export async function getStripeConfigView(req, res) {
 
 export async function createStripeConnectUrlView(req, res) {
   try {
+    if (!isStripeConnectOAuthEnabled()) {
+      return res.status(404).json({
+        success: false,
+        error: 'Stripe OAuth no está disponible. Configura Stripe manualmente.'
+      })
+    }
+
     const requestBaseUrl = getRequestBaseUrl(req)
     const result = await createStripeConnectOAuthUrl({
       mode: req.body?.mode || req.query?.mode || 'test',
@@ -164,6 +172,13 @@ export async function createStripeConnectUrlView(req, res) {
 
 export async function syncStripeConnectView(req, res) {
   try {
+    if (!isStripeConnectOAuthEnabled()) {
+      return res.status(404).json({
+        success: false,
+        error: 'Stripe OAuth no está disponible. Configura Stripe manualmente.'
+      })
+    }
+
     const config = await syncStripeConnectFromCentral({
       handoffToken: req.body?.handoffToken || req.body?.handoff_token || ''
     })
@@ -176,6 +191,13 @@ export async function syncStripeConnectView(req, res) {
 
 export async function setStripeConnectModeView(req, res) {
   try {
+    if (!isStripeConnectOAuthEnabled()) {
+      return res.status(404).json({
+        success: false,
+        error: 'Stripe OAuth no está disponible. Configura Stripe manualmente.'
+      })
+    }
+
     const config = await setStripeConnectActiveMode(req.body?.mode || 'live')
     res.json({ success: true, data: await withStripeWebhookEndpoints(req, config) })
   } catch (error) {
@@ -187,6 +209,10 @@ export async function setStripeConnectModeView(req, res) {
 export async function stripeConnectCallbackView(req, res) {
   let returnPath = '/settings/payments/stripe'
   try {
+    if (!isStripeConnectOAuthEnabled()) {
+      return res.status(404).send('Stripe OAuth no está disponible. Configura Stripe manualmente.')
+    }
+
     if (req.query?.error) {
       const message = cleanString(req.query.error_description || req.query.error || 'Stripe canceló la conexión.')
       return res.redirect(buildStripeSettingsRedirect(returnPath, {

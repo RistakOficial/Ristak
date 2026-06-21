@@ -3,29 +3,19 @@ import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
 import {
-  completeStripeConnectOAuth,
-  createStripeConnectOAuthUrl,
   createStripePaymentPlan,
   createStripeSavedCardPayment,
   getStripeSavedPaymentMethods,
   handleStripeWebhookEvent,
   processDueStripePaymentPlanCharges,
-  setStripeConnectActiveMode,
-  setStripeConnectFetchForTest,
+  saveStripePaymentConfig,
   setStripeFactoryForTest
 } from '../src/services/stripePaymentService.js'
 import { createSubscription } from '../src/services/subscriptionsService.js'
 import { saveAccountLocaleSettings } from '../src/utils/accountLocale.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
-const STRIPE_ENV_KEYS = [
-  'STRIPE_CONNECT_TEST_CLIENT_ID',
-  'STRIPE_CONNECT_TEST_SECRET_KEY',
-  'STRIPE_CONNECT_TEST_PUBLISHABLE_KEY',
-  'STRIPE_CONNECT_LIVE_CLIENT_ID',
-  'STRIPE_CONNECT_LIVE_SECRET_KEY',
-  'STRIPE_CONNECT_LIVE_PUBLISHABLE_KEY'
-]
+const STRIPE_ENV_KEYS = ['STRIPE_CONNECT_OAUTH_ENABLED']
 
 function suffix(label = 'live_parity') {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -60,7 +50,6 @@ async function snapshotStripeConfig(callback) {
       }
     }
 
-    setStripeConnectFetchForTest(null)
     setStripeFactoryForTest(null)
   }
 }
@@ -164,7 +153,7 @@ function createStripeModeMock() {
   function stripeFor(secretKey) {
     const mode = modeFromSecret(secretKey)
     const connectedAccountId = mode === 'live' ? 'acct_live_connected' : 'acct_test_connected'
-    const webhookSecret = mode === 'live' ? 'whsec_acct_live_connected' : 'whsec_acct_test_connected'
+    const webhookSecret = mode === 'live' ? 'whsec_manual_live' : 'whsec_manual_test'
 
     return {
       accounts: {
@@ -343,72 +332,32 @@ function createStripeModeMock() {
   }
 }
 
-async function connectBothStripeModes() {
-  process.env.STRIPE_CONNECT_TEST_CLIENT_ID = 'ca_test_client'
-  process.env.STRIPE_CONNECT_TEST_SECRET_KEY = 'sk_test_platform'
-  process.env.STRIPE_CONNECT_TEST_PUBLISHABLE_KEY = 'pk_test_platform'
-  process.env.STRIPE_CONNECT_LIVE_CLIENT_ID = 'ca_live_client'
-  process.env.STRIPE_CONNECT_LIVE_SECRET_KEY = 'sk_live_platform'
-  process.env.STRIPE_CONNECT_LIVE_PUBLISHABLE_KEY = 'pk_live_platform'
-
-  setStripeConnectFetchForTest(async (_url, options = {}) => {
-    const params = new URLSearchParams(String(options.body))
-    const code = params.get('code')
-    const live = code === 'ac_live_code'
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({
-        scope: 'read_write',
-        stripe_user_id: live ? 'acct_live_connected' : 'acct_test_connected',
-        livemode: live,
-        token_type: 'bearer',
-        access_token: live ? 'sk_live_connected_access' : 'sk_test_connected_access',
-        refresh_token: live ? 'rt_live_connected' : 'rt_test_connected',
-        stripe_publishable_key: live ? 'pk_live_connected' : 'pk_test_connected'
-      })
-    }
-  })
-
-  const startedTest = await createStripeConnectOAuthUrl({
-    mode: 'test',
-    baseUrl: 'https://app.example.com',
-    returnPath: '/settings/payments/stripe?stripe_setup=dual&stripe_step=test'
-  })
-  const testUrl = new URL(startedTest.url)
-  await completeStripeConnectOAuth({
-    code: 'ac_test_code',
-    state: testUrl.searchParams.get('state'),
-    baseUrl: 'https://app.example.com'
-  })
-
-  const startedLive = await createStripeConnectOAuthUrl({
+async function configureManualStripeLive() {
+  const liveConfig = await saveStripePaymentConfig({
+    enabled: true,
     mode: 'live',
-    baseUrl: 'https://app.example.com',
-    returnPath: '/settings/payments/stripe?stripe_setup=dual&stripe_step=live'
-  })
-  const liveUrl = new URL(startedLive.url)
-  await completeStripeConnectOAuth({
-    code: 'ac_live_code',
-    state: liveUrl.searchParams.get('state'),
-    baseUrl: 'https://app.example.com'
+    publishableKey: 'pk_live_manual_public',
+    secretKey: 'rk_live_manual_restricted',
+    webhookSecret: 'whsec_manual_live',
+    accountLabel: 'Stripe manual live'
   })
 
-  const liveConfig = await setStripeConnectActiveMode('live')
   assert.equal(liveConfig.mode, 'live')
-  assert.equal(liveConfig.connectedAccountId, 'acct_live_connected')
-  assert.equal(liveConfig.connectModes.test.connected, true)
-  assert.equal(liveConfig.connectModes.live.connected, true)
+  assert.equal(liveConfig.connectionType, 'manual')
+  assert.equal(liveConfig.configurationStatus, 'configured_manually')
+  assert.equal(liveConfig.connectedAccountId, '')
+  assert.equal(liveConfig.hasSecretKey, true)
+  assert.equal(liveConfig.hasWebhookSecret, true)
 }
 
-test('Stripe live parity: OAuth live usa customer y tarjeta live en pagos, planes y suscripciones', async () => {
+test('Stripe live parity: configuración manual live usa customer y tarjeta live en pagos, planes y suscripciones', async () => {
   await initializeMasterKey()
   const stripeMock = createStripeModeMock()
   setStripeFactoryForTest(stripeMock.factory)
 
   await snapshotStripeConfig(async () => {
     await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
-    await connectBothStripeModes()
+    await configureManualStripeLive()
 
     const { contactId, contact, liveSavedMethodId } = await seedDualModeContact('live_modes')
     try {
@@ -474,31 +423,26 @@ test('Stripe live parity: OAuth live usa customer y tarjeta live en pagos, plane
   })
 })
 
-test('Stripe live parity: webhook activo live tambien acepta test conectado y descarta cuentas ajenas', async () => {
+test('Stripe live parity: webhook manual live valida con el signing secret guardado', async () => {
   await initializeMasterKey()
   const stripeMock = createStripeModeMock()
   setStripeFactoryForTest(stripeMock.factory)
 
   await snapshotStripeConfig(async () => {
     await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
-    await connectBothStripeModes()
-
-    stripeMock.state.webhookMode = 'test'
-    const testResult = await handleStripeWebhookEvent(Buffer.from('{}'), 'sig_test')
-    assert.equal(testResult.received, true)
-    assert.equal(testResult.type, 'account.updated')
-    assert.equal(stripeMock.calls.webhooksConstructEvent.at(0).secret, 'whsec_acct_live_connected')
-    assert.equal(stripeMock.calls.webhooksConstructEvent.at(1).secret, 'whsec_acct_test_connected')
+    await configureManualStripeLive()
 
     stripeMock.state.webhookMode = 'live'
     const liveResult = await handleStripeWebhookEvent(Buffer.from('{}'), 'sig_live')
     assert.equal(liveResult.received, true)
     assert.equal(liveResult.type, 'account.updated')
+    assert.equal(stripeMock.calls.webhooksConstructEvent.at(0).secret, 'whsec_manual_live')
 
-    stripeMock.state.webhookMode = 'live_other'
-    const ignoredResult = await handleStripeWebhookEvent(Buffer.from('{}'), 'sig_live_other')
-    assert.equal(ignoredResult.received, true)
-    assert.equal(ignoredResult.ignored, true)
-    assert.equal(ignoredResult.account, 'acct_other_connected')
+    stripeMock.state.webhookMode = 'test'
+    await assert.rejects(
+      () => handleStripeWebhookEvent(Buffer.from('{}'), 'sig_test'),
+      /Firma test no corresponde/
+    )
+    assert.equal(stripeMock.calls.webhooksConstructEvent.length, 2)
   })
 })

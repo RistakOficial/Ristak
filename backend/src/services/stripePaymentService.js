@@ -25,6 +25,7 @@ const CONFIG_KEYS = {
   webhookSecret: 'stripe_webhook_secret_encrypted',
   defaultCurrency: 'stripe_default_currency',
   accountLabel: 'stripe_account_label',
+  disconnectedAt: 'stripe_disconnected_at',
   connectAccountId: 'stripe_connect_account_id',
   connectScope: 'stripe_connect_scope',
   connectLivemode: 'stripe_connect_livemode',
@@ -229,6 +230,17 @@ function normalizeBoolean(value, fallback = true) {
   return !['0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase())
 }
 
+export function isStripeConnectOAuthEnabled() {
+  return normalizeBoolean(process.env.STRIPE_CONNECT_OAUTH_ENABLED, false)
+}
+
+function assertStripeConnectOAuthEnabled() {
+  if (isStripeConnectOAuthEnabled()) return
+  const error = new Error('Stripe OAuth no está disponible. Configura Stripe manualmente con una Restricted API Key.')
+  error.status = 404
+  throw error
+}
+
 function normalizeDateOnly(value) {
   if (!value) return new Date().toISOString().slice(0, 10)
   const text = String(value).trim()
@@ -300,8 +312,8 @@ function encryptOptionalSecret(value) {
 function assertStripeSecret(secretKey) {
   const clean = cleanString(secretKey)
   if (!clean) return ''
-  if (!/^sk_(test|live)_/.test(clean)) {
-    const error = new Error('La Secret key de Stripe debe empezar con sk_test_ o sk_live_.')
+  if (!/^(sk|rk)_(test|live)_/.test(clean)) {
+    const error = new Error('La API key de Stripe debe empezar con rk_test_, rk_live_, sk_test_ o sk_live_. Usa una Restricted API Key siempre que sea posible.')
     error.status = 400
     throw error
   }
@@ -590,12 +602,19 @@ export async function getStripePaymentConfig({ includeSecrets = false, mode: mod
   const raw = await readRawConfig()
   const accountCurrency = await getConfiguredCurrency()
   const mode = normalizeMode(modeOverride || raw[CONFIG_KEYS.mode])
-  const connectionType = normalizeConnectionType(raw[CONFIG_KEYS.connectionType])
-  const selectedStoredConnection = connectionType === 'connect'
+  const stripeConnectOAuthEnabled = isStripeConnectOAuthEnabled()
+  const storedConnectionType = normalizeConnectionType(raw[CONFIG_KEYS.connectionType])
+  const legacyConnectDisabled = storedConnectionType === 'connect' && !stripeConnectOAuthEnabled
+  const connectionType = stripeConnectOAuthEnabled ? storedConnectionType : 'manual'
+  const selectedStoredConnection = stripeConnectOAuthEnabled && connectionType === 'connect'
     ? decryptStoredConnection(getConnectModeConnection(raw, mode))
     : null
-  const managedByPortal = normalizeBoolean(selectedStoredConnection?.managedByPortal ?? raw[CONFIG_KEYS.connectManagedByPortal], false) || isLicenseEnforced()
-  const platform = getStripeConnectPlatformConfig(mode)
+  const managedByPortal = stripeConnectOAuthEnabled
+    ? normalizeBoolean(selectedStoredConnection?.managedByPortal ?? raw[CONFIG_KEYS.connectManagedByPortal], false) || isLicenseEnforced()
+    : false
+  const platform = stripeConnectOAuthEnabled && connectionType === 'connect'
+    ? getStripeConnectPlatformConfig(mode)
+    : { mode, clientId: '', secretKey: '', publishableKey: '', missing: [] }
   const connectedAccountId = cleanString(selectedStoredConnection?.accountId || raw[CONFIG_KEYS.connectAccountId])
   const connectAccessToken = cleanString(selectedStoredConnection?.accessToken)
     || (raw[CONFIG_KEYS.connectAccessToken] ? decryptSecret(raw[CONFIG_KEYS.connectAccessToken]) : '')
@@ -609,6 +628,7 @@ export async function getStripePaymentConfig({ includeSecrets = false, mode: mod
     || (raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : '')
   const enabled = normalizeBoolean(raw[CONFIG_KEYS.enabled], true)
   const connectReady = Boolean(
+    stripeConnectOAuthEnabled &&
     connectedAccountId &&
     (connectAccessToken || platform.secretKey) &&
     publishableKey
@@ -616,56 +636,67 @@ export async function getStripePaymentConfig({ includeSecrets = false, mode: mod
   const manualReady = Boolean(publishableKey && secretKey)
   const configured = Boolean(enabled && (connectionType === 'connect' ? connectReady : manualReady))
   const oauthReadyByMode = {
-    test: managedByPortal || getStripeConnectPlatformConfig('test').missing.length === 0,
-    live: managedByPortal || getStripeConnectPlatformConfig('live').missing.length === 0
+    test: stripeConnectOAuthEnabled && (managedByPortal || getStripeConnectPlatformConfig('test').missing.length === 0),
+    live: stripeConnectOAuthEnabled && (managedByPortal || getStripeConnectPlatformConfig('live').missing.length === 0)
   }
   const connectUsesAccessToken = Boolean(connectionType === 'connect' && connectAccessToken)
   const connectUsesPlatformAccountHeader = Boolean(connectionType === 'connect' && !connectAccessToken && platform.secretKey && connectedAccountId)
+  const configurationStatus = configured
+    ? 'configured_manually'
+    : legacyConnectDisabled || cleanString(raw[CONFIG_KEYS.disconnectedAt]) || cleanString(raw[CONFIG_KEYS.connectDisconnectedAt])
+      ? 'disconnected'
+      : 'not_configured'
 
   return {
     enabled,
     configured,
     connectionType,
+    configurationStatus,
+    stripeConnectOAuthEnabled,
     mode,
     defaultCurrency: accountCurrency,
-    accountLabel: cleanString(selectedStoredConnection?.accountLabel || raw[CONFIG_KEYS.accountLabel]),
+    accountLabel: connectionType === 'connect'
+      ? cleanString(selectedStoredConnection?.accountLabel || raw[CONFIG_KEYS.accountLabel])
+      : cleanString(raw[CONFIG_KEYS.accountLabel]),
     publishableKey,
     hasSecretKey: connectionType === 'manual' ? Boolean(secretKey) : Boolean(connectAccessToken || platform.secretKey),
     secretKeyPreview: connectionType === 'manual' ? maskSecret(secretKey) : '',
     hasWebhookSecret: Boolean(webhookSecret),
     webhookSecretPreview: maskSecret(webhookSecret),
-    connectedAccountId,
-    connectedAccountPreview: connectedAccountId ? `${connectedAccountId.slice(0, 8)}...${connectedAccountId.slice(-4)}` : '',
-    connectScope: cleanString(selectedStoredConnection?.scope || raw[CONFIG_KEYS.connectScope]),
-    connectLivemode: normalizeBoolean(selectedStoredConnection?.livemode ?? raw[CONFIG_KEYS.connectLivemode], mode === 'live'),
+    connectedAccountId: stripeConnectOAuthEnabled ? connectedAccountId : '',
+    connectedAccountPreview: stripeConnectOAuthEnabled && connectedAccountId ? `${connectedAccountId.slice(0, 8)}...${connectedAccountId.slice(-4)}` : '',
+    connectScope: stripeConnectOAuthEnabled ? cleanString(selectedStoredConnection?.scope || raw[CONFIG_KEYS.connectScope]) : '',
+    connectLivemode: stripeConnectOAuthEnabled ? normalizeBoolean(selectedStoredConnection?.livemode ?? raw[CONFIG_KEYS.connectLivemode], mode === 'live') : false,
     connectReady,
     connectManagedByPortal: managedByPortal,
     connectUsesAccessToken,
     connectUsesPlatformAccountHeader,
     connectOauthReady: oauthReadyByMode[mode],
     connectOauthReadyByMode: oauthReadyByMode,
-    connectMissingEnv: managedByPortal ? [] : platform.missing,
-    connectModes: {
-      test: summarizeConnectModeConnection(raw, 'test'),
-      live: summarizeConnectModeConnection(raw, 'live')
-    },
-    connectAccountEmail: cleanString(selectedStoredConnection?.accountEmail || raw[CONFIG_KEYS.connectAccountEmail]),
-    connectChargesEnabled: normalizeBoolean(selectedStoredConnection?.chargesEnabled ?? raw[CONFIG_KEYS.connectChargesEnabled], false),
-    connectPayoutsEnabled: normalizeBoolean(selectedStoredConnection?.payoutsEnabled ?? raw[CONFIG_KEYS.connectPayoutsEnabled], false),
-    connectDetailsSubmitted: normalizeBoolean(selectedStoredConnection?.detailsSubmitted ?? raw[CONFIG_KEYS.connectDetailsSubmitted], false),
-    connectWebhookEndpointId: cleanString(selectedStoredConnection?.webhookEndpointId || raw[CONFIG_KEYS.connectWebhookEndpointId]),
-    connectWebhookUrl: cleanString(selectedStoredConnection?.webhookUrl || raw[CONFIG_KEYS.connectWebhookUrl]),
-    connectWebhookStatus: cleanString(selectedStoredConnection?.webhookStatus || raw[CONFIG_KEYS.connectWebhookStatus]),
-    connectWebhookLastError: cleanString(selectedStoredConnection?.webhookLastError || raw[CONFIG_KEYS.connectWebhookLastError]),
-    connectConnectedAt: cleanString(selectedStoredConnection?.connectedAt || raw[CONFIG_KEYS.connectConnectedAt]),
-    hasConnectAccessToken: Boolean(connectAccessToken),
-    hasConnectRefreshToken: Boolean(connectRefreshToken),
+    connectMissingEnv: stripeConnectOAuthEnabled && !managedByPortal ? platform.missing : [],
+    connectModes: stripeConnectOAuthEnabled
+      ? {
+          test: summarizeConnectModeConnection(raw, 'test'),
+          live: summarizeConnectModeConnection(raw, 'live')
+        }
+      : undefined,
+    connectAccountEmail: stripeConnectOAuthEnabled ? cleanString(selectedStoredConnection?.accountEmail || raw[CONFIG_KEYS.connectAccountEmail]) : '',
+    connectChargesEnabled: stripeConnectOAuthEnabled ? normalizeBoolean(selectedStoredConnection?.chargesEnabled ?? raw[CONFIG_KEYS.connectChargesEnabled], false) : false,
+    connectPayoutsEnabled: stripeConnectOAuthEnabled ? normalizeBoolean(selectedStoredConnection?.payoutsEnabled ?? raw[CONFIG_KEYS.connectPayoutsEnabled], false) : false,
+    connectDetailsSubmitted: stripeConnectOAuthEnabled ? normalizeBoolean(selectedStoredConnection?.detailsSubmitted ?? raw[CONFIG_KEYS.connectDetailsSubmitted], false) : false,
+    connectWebhookEndpointId: stripeConnectOAuthEnabled ? cleanString(selectedStoredConnection?.webhookEndpointId || raw[CONFIG_KEYS.connectWebhookEndpointId]) : '',
+    connectWebhookUrl: stripeConnectOAuthEnabled ? cleanString(selectedStoredConnection?.webhookUrl || raw[CONFIG_KEYS.connectWebhookUrl]) : '',
+    connectWebhookStatus: stripeConnectOAuthEnabled ? cleanString(selectedStoredConnection?.webhookStatus || raw[CONFIG_KEYS.connectWebhookStatus]) : '',
+    connectWebhookLastError: stripeConnectOAuthEnabled ? cleanString(selectedStoredConnection?.webhookLastError || raw[CONFIG_KEYS.connectWebhookLastError]) : '',
+    connectConnectedAt: stripeConnectOAuthEnabled ? cleanString(selectedStoredConnection?.connectedAt || raw[CONFIG_KEYS.connectConnectedAt]) : '',
+    hasConnectAccessToken: stripeConnectOAuthEnabled ? Boolean(connectAccessToken) : false,
+    hasConnectRefreshToken: stripeConnectOAuthEnabled ? Boolean(connectRefreshToken) : false,
     ...(includeSecrets
       ? {
-          secretKey: connectionType === 'connect' ? (connectAccessToken || platform.secretKey) : secretKey,
+          secretKey: connectionType === 'connect' && stripeConnectOAuthEnabled ? (connectAccessToken || platform.secretKey) : secretKey,
           webhookSecret,
-          connectAccessToken,
-          connectRefreshToken
+          connectAccessToken: stripeConnectOAuthEnabled ? connectAccessToken : '',
+          connectRefreshToken: stripeConnectOAuthEnabled ? connectRefreshToken : ''
         }
       : {})
   }
@@ -723,6 +754,7 @@ export async function deleteStripePaymentConfig() {
     `DELETE FROM app_config WHERE config_key IN (${configKeys.map(() => '?').join(', ')})`,
     configKeys
   )
+  await setAppConfig(CONFIG_KEYS.disconnectedAt, new Date().toISOString())
   return getStripePaymentConfig()
 }
 
@@ -994,6 +1026,7 @@ async function saveStripeConnectConnection({
 }
 
 export async function createStripeConnectOAuthUrl({ mode = 'test', baseUrl = '', appUrl = '', returnPath = '/settings/payments/stripe' } = {}) {
+  assertStripeConnectOAuthEnabled()
   const normalizedMode = normalizeMode(mode)
   const installedAppUrl = normalizeStripeAppBaseUrl(appUrl) || normalizeStripeAppBaseUrl(baseUrl)
   if (isLicenseEnforced()) {
@@ -1039,6 +1072,7 @@ export async function createStripeConnectOAuthUrl({ mode = 'test', baseUrl = '',
 }
 
 export async function syncStripeConnectFromCentral({ handoffToken = '' } = {}) {
+  assertStripeConnectOAuthEnabled()
   if (!isLicenseEnforced()) {
     const error = new Error('Esta instalación no está conectada al portal central.')
     error.status = 400
@@ -1130,6 +1164,7 @@ export async function syncStripeConnectFromCentral({ handoffToken = '' } = {}) {
 }
 
 export async function setStripeConnectActiveMode(mode = 'live') {
+  assertStripeConnectOAuthEnabled()
   const normalizedMode = normalizeMode(mode)
   const raw = await readRawConfig()
   const connectionType = normalizeConnectionType(raw[CONFIG_KEYS.connectionType])
@@ -1158,6 +1193,7 @@ export async function setStripeConnectActiveMode(mode = 'live') {
 }
 
 export async function completeStripeConnectOAuth({ code = '', state = '', baseUrl = '' } = {}) {
+  assertStripeConnectOAuthEnabled()
   const cleanCode = cleanString(code)
   const cleanState = cleanString(state)
   const savedState = await readStripeOAuthState()
