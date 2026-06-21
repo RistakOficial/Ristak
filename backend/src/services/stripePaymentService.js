@@ -14,6 +14,7 @@ import {
 } from './licenseService.js'
 import { calculatePaymentTax, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 
 const CONFIG_KEYS = {
   enabled: 'stripe_enabled',
@@ -1523,7 +1524,15 @@ export async function createStripePaymentLink(input = {}, { baseUrl } = {}) {
   }
 
   const paymentSettings = await getPublicPaymentSettings()
-  const tax = calculatePaymentTax(amount, paymentSettings.taxes, { provider: 'stripe' })
+  const shouldApplyTax = input.applyTax !== false
+  const taxSettings = {
+    ...paymentSettings.taxes,
+    enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
+    calculationMode: ['exclusive', 'inclusive'].includes(input.taxCalculationMode)
+      ? input.taxCalculationMode
+      : paymentSettings.taxes?.calculationMode
+  }
+  const tax = calculatePaymentTax(amount, taxSettings)
   const chargeAmount = tax?.totalAmount || Math.round(amount * 100) / 100
   const publicPaymentId = createPublicId()
   const id = createId('stripe_payment')
@@ -1800,6 +1809,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
   }
 
   if (row?.contact_id && nextStatus === 'paid') {
+    registerGigstackPaymentForTransactionInBackground(row.id)
     queuePaymentAutomationMessage('receipt', { ...row, status: nextStatus, stripe_payment_intent_id: intent.id })
   }
 
@@ -3862,6 +3872,17 @@ export async function createStripeSavedCardPayment(input = {}) {
   const now = new Date().toISOString()
   const title = cleanString(input.title) || 'Pago'
   const description = cleanString(input.description) || title
+  const paymentSettings = await getPublicPaymentSettings()
+  const shouldApplyTax = input.applyTax !== false
+  const taxSettings = {
+    ...paymentSettings.taxes,
+    enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
+    calculationMode: ['exclusive', 'inclusive'].includes(input.taxCalculationMode)
+      ? input.taxCalculationMode
+      : paymentSettings.taxes?.calculationMode
+  }
+  const tax = calculatePaymentTax(amount, taxSettings)
+  const chargeAmount = tax?.totalAmount || Math.round(amount * 100) / 100
   const metadata = {
     source: cleanString(input.source || 'ristak_saved_card'),
     contactName: cleanString(input.contactName || savedMethod.contact_name),
@@ -3875,7 +3896,8 @@ export async function createStripeSavedCardPayment(input = {}) {
       expMonth: savedMethod.exp_month || null,
       expYear: savedMethod.exp_year || null
     },
-    lineItems: Array.isArray(input.lineItems) ? input.lineItems : []
+    lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
+    ...(tax ? { tax } : {})
   }
 
   await db.run(
@@ -3887,7 +3909,7 @@ export async function createStripeSavedCardPayment(input = {}) {
     [
       id,
       contactId,
-      Math.round(amount * 100) / 100,
+      chargeAmount,
       currency,
       'pending',
       'stripe_saved_card',

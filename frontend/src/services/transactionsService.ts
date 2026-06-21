@@ -26,6 +26,7 @@ export interface Transaction {
   paymentUrl?: string
   stripePaymentIntentId?: string
   paidAt?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface TransactionSummary {

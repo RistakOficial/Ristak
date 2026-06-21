@@ -82,19 +82,22 @@ describe('payment settings tax calculation', () => {
       calculatePaymentTax(100, {
         enabled: true,
         taxName: 'IVA',
-        rateType: 'percentage',
-        rateValue: 16,
-        calculationMode: 'exclusive',
-        applyToStripe: true
+        country: 'MX',
+        calculationMode: 'exclusive'
       }),
       {
         enabled: true,
         taxName: 'IVA',
         rateType: 'percentage',
         rateValue: 16,
+        rateSource: 'automatic',
         calculationMode: 'exclusive',
+        country: 'MX',
         fiscalId: '',
-        provider: 'jigsaw',
+        fiscalLegalName: '',
+        fiscalPostalCode: '',
+        fiscalRegime: '',
+        provider: 'gigstack',
         subtotalAmount: 100,
         taxAmount: 16,
         totalAmount: 116
@@ -107,19 +110,22 @@ describe('payment settings tax calculation', () => {
       calculatePaymentTax(116, {
         enabled: true,
         taxName: 'IVA',
-        rateType: 'percentage',
-        rateValue: 16,
-        calculationMode: 'inclusive',
-        applyToStripe: true
+        country: 'MX',
+        calculationMode: 'inclusive'
       }),
       {
         enabled: true,
         taxName: 'IVA',
         rateType: 'percentage',
         rateValue: 16,
+        rateSource: 'automatic',
         calculationMode: 'inclusive',
+        country: 'MX',
         fiscalId: '',
-        provider: 'jigsaw',
+        fiscalLegalName: '',
+        fiscalPostalCode: '',
+        fiscalRegime: '',
+        provider: 'gigstack',
         subtotalAmount: 100,
         taxAmount: 16,
         totalAmount: 116
@@ -127,29 +133,22 @@ describe('payment settings tax calculation', () => {
     )
   })
 
-  it('skips taxes when Stripe application is disabled', () => {
-    assert.equal(
-      calculatePaymentTax(100, {
-        enabled: true,
-        rateType: 'fixed',
-        rateValue: 25,
-        calculationMode: 'exclusive',
-        applyToStripe: false
-      }),
-      null
-    )
+  it('uses the automatic country rate and ignores legacy provider gates', () => {
+    const tax = calculatePaymentTax(100, {
+      enabled: true,
+      country: 'CO',
+      calculationMode: 'exclusive',
+      applyToStripe: false,
+      applyToMercadoPago: false
+    })
+
+    assert.equal(tax.rateValue, 19)
+    assert.equal(tax.country, 'CO')
+    assert.equal(tax.taxAmount, 19)
+    assert.equal(tax.totalAmount, 119)
   })
 
-  it('skips taxes when Mercado Pago application is disabled', () => {
-    assert.equal(
-      calculatePaymentTax(100, {
-        enabled: true,
-        rateType: 'fixed',
-        rateValue: 25,
-        calculationMode: 'exclusive',
-        applyToMercadoPago: false
-      }, { provider: 'mercadopago' }),
-      null
-    )
+  it('skips taxes only when the global switch is off', () => {
+    assert.equal(calculatePaymentTax(100, { enabled: false, country: 'MX' }), null)
   })
 })

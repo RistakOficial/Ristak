@@ -110,6 +110,14 @@ const defaultStripeConnectMode: StripePaymentConfig['mode'] = 'live'
 const STRIPE_CONNECT_WIZARD_KEY = 'ristak:stripe-connect-dual-wizard'
 const STRIPE_MODE_VERIFICATION_PENDING_KEY = 'ristak:stripe-mode-verification-pending'
 const STRIPE_MODE_VERIFICATION_DONE_KEY = 'ristak:stripe-mode-verification-done'
+const GIGSTACK_API_URL = 'https://gigstack.pro/api-facturacion'
+
+const taxCountryOptions = [
+  { value: 'MX', label: 'México · IVA 16%' },
+  { value: 'CO', label: 'Colombia · IVA 19%' },
+  { value: 'CL', label: 'Chile · IVA 19%' },
+  { value: 'US', label: 'Estados Unidos · automático 0%' }
+]
 
 const MERCADOPAGO_WEBHOOK_EVENTS = [
   {
@@ -362,6 +370,23 @@ function formatCompactMoney(value: number, currency = 'MXN') {
     currency,
     maximumFractionDigits: 0
   }).format(value)
+}
+
+function getTaxRateValue(taxes: PaymentTaxSettings) {
+  const parsed = Number(taxes.rateValue)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function calculatePreviewTax(baseAmount: number, taxes: PaymentTaxSettings) {
+  if (!taxes.enabled) return 0
+  const rateValue = getTaxRateValue(taxes)
+  if (rateValue <= 0) return 0
+
+  if (taxes.calculationMode === 'inclusive') {
+    return Math.round(baseAmount - (baseAmount / (1 + rateValue / 100)))
+  }
+
+  return Math.round(baseAmount * (rateValue / 100))
 }
 
 const channelOptions = [
@@ -1518,11 +1543,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const renderReceiptSection = () => {
     const previewBaseAmount = 2490
-    const previewTaxAmount = taxes.enabled
-      ? taxes.rateType === 'percentage'
-        ? Math.round(previewBaseAmount * (taxes.rateValue / 100))
-        : Math.round(taxes.rateValue)
-      : 0
+    const previewTaxAmount = calculatePreviewTax(previewBaseAmount, taxes)
     const previewSubtotal = taxes.enabled && taxes.calculationMode === 'inclusive'
       ? Math.max(0, previewBaseAmount - previewTaxAmount)
       : previewBaseAmount
@@ -2881,106 +2902,151 @@ export const PaymentsConfiguration: React.FC = () => {
     </Modal>
   )
 
-  const renderTaxesSection = () => (
-    <div className={styles.twoColumnLayout}>
-      <Card className={styles.sectionCard}>
-        <div className={styles.sectionHeader}>
-          <div>
-            <h2>Impuestos</h2>
-            <p>Define la tasa, si va incluida o separada, y conecta herramientas fiscales.</p>
+  const renderTaxesSection = () => {
+    const previewBaseAmount = 2490
+    const previewTaxAmount = calculatePreviewTax(previewBaseAmount, taxes)
+    const previewTotalAmount = taxes.enabled && taxes.calculationMode === 'exclusive'
+      ? previewBaseAmount + previewTaxAmount
+      : previewBaseAmount
+    const taxRateLabel = `${getTaxRateValue(taxes)}%`
+
+    return (
+      <div className={styles.twoColumnLayout}>
+        <Card className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
+            <div>
+              <h2>Impuestos</h2>
+              <p>Activa una regla fiscal global para que los formularios de cobro muestren impuestos solo cuando corresponda.</p>
+            </div>
+            <Badge variant={taxes.enabled ? 'success' : 'neutral'}>
+              <Percent size={14} />
+              {taxes.enabled ? 'Activo' : 'Apagado'}
+            </Badge>
           </div>
-          <Badge variant={taxes.enabled ? 'success' : 'neutral'}>
-            <Percent size={14} />
-            {taxes.enabled ? 'Activo' : 'Apagado'}
-          </Badge>
-        </div>
 
-        <div className={styles.switchStack}>
-          {renderSwitchRow('Cobrar impuestos', 'Activa el cálculo de impuesto como regla estándar de pagos.', taxes.enabled, (next) => setTaxValue('enabled', next))}
-          {renderSwitchRow('Aplicar a Stripe', 'Usa esta regla para links de cobro con Stripe.', taxes.applyToStripe, (next) => setTaxValue('applyToStripe', next))}
-          {renderSwitchRow('Aplicar a Mercado Pago', 'Usa esta regla para links de Checkout Pro.', taxes.applyToMercadoPago, (next) => setTaxValue('applyToMercadoPago', next))}
-          {renderSwitchRow('Aplicar a GoHighLevel', 'Usa esta regla cuando generes comprobantes de GoHighLevel.', taxes.applyToHighLevel, (next) => setTaxValue('applyToHighLevel', next))}
-        </div>
+          <div className={styles.switchStack}>
+            {renderSwitchRow('Cobrar impuestos', 'Cuando está apagado, registrar pagos y links no muestran opciones de impuestos.', taxes.enabled, (next) => setTaxValue('enabled', next))}
+          </div>
 
-        <div className={styles.formGrid}>
+          <div className={styles.formGrid}>
+            {renderField(
+              'Nombre del impuesto',
+              <input
+                type="text"
+                value={taxes.taxName}
+                onChange={(event) => setTaxValue('taxName', event.target.value)}
+                placeholder="IVA"
+              />
+            )}
+            {renderField(
+              'País de la tasa automática',
+              <CustomSelect
+                value={taxes.country || 'MX'}
+                onValueChange={(value) => setTaxValue('country', value)}
+                options={taxCountryOptions}
+              />,
+              `Ristak usará ${taxRateLabel} según el país seleccionado.`
+            )}
+            {renderField(
+              'Modo de cálculo',
+              <CustomSelect
+                value={taxes.calculationMode}
+                onValueChange={(value) => setTaxValue('calculationMode', value as PaymentTaxSettings['calculationMode'])}
+                options={[
+                  { value: 'exclusive', label: 'Se suma al total' },
+                  { value: 'inclusive', label: 'Ya incluido en el precio' }
+                ]}
+              />
+            )}
+            {renderField(
+              'RFC / ID fiscal',
+              <input
+                type="text"
+                value={taxes.fiscalId}
+                onChange={(event) => setTaxValue('fiscalId', event.target.value)}
+                placeholder="RFC o identificador fiscal"
+              />
+            )}
+            {renderField(
+              'Razón social fiscal',
+              <input
+                type="text"
+                value={taxes.fiscalLegalName}
+                onChange={(event) => setTaxValue('fiscalLegalName', event.target.value)}
+                placeholder="Nombre o razón social"
+              />
+            )}
+            {renderField(
+              'Código postal fiscal',
+              <input
+                type="text"
+                value={taxes.fiscalPostalCode}
+                onChange={(event) => setTaxValue('fiscalPostalCode', event.target.value)}
+                placeholder="Ej. 06600"
+              />
+            )}
+            {renderField(
+              'Régimen fiscal',
+              <input
+                type="text"
+                value={taxes.fiscalRegime}
+                onChange={(event) => setTaxValue('fiscalRegime', event.target.value)}
+                placeholder="Ej. 612 - Personas físicas"
+              />
+            )}
+          </div>
+
+          {renderSectionSaveBar('Guardar impuestos')}
+        </Card>
+
+        <Card className={styles.gigstackCard}>
+          <div className={styles.gigstackHeader}>
+            <Sparkles size={22} />
+            <Badge variant={taxes.gigstackEnabled ? (taxes.hasGigstackApiToken ? 'success' : 'warning') : 'neutral'}>
+              GYStack
+            </Badge>
+          </div>
+          <h3>Timbrado automático</h3>
+          <p>GYStack permite registrar el pago y dejar que su API genere el CFDI con validación fiscal y timbrado ante el SAT.</p>
+          {renderSwitchRow('Activar GYStack', 'Al registrar un pago con impuestos, Ristak intentará enviarlo a GYStack para timbrarlo automáticamente.', taxes.gigstackEnabled, (next) => setTaxValue('gigstackEnabled', next))}
           {renderField(
-            'Nombre del impuesto',
+            'Token API de GYStack',
             <input
-              type="text"
-              value={taxes.taxName}
-              onChange={(event) => setTaxValue('taxName', event.target.value)}
-              placeholder="IVA"
-            />
-          )}
-          {renderField(
-            'Tipo de tasa',
-            <CustomSelect
-              value={taxes.rateType}
-              onValueChange={(value) => setTaxValue('rateType', value as PaymentTaxSettings['rateType'])}
-              options={[
-                { value: 'percentage', label: 'Porcentaje' },
-                { value: 'fixed', label: 'Monto fijo' }
-              ]}
-            />
-          )}
-          {renderField(
-            taxes.rateType === 'percentage' ? 'Tasa impositiva' : 'Monto fijo',
-            <NumberInput
-              min="0"
-              step="0.01"
-              value={taxes.rateValue}
-              onValueChange={(value) => setTaxValue('rateValue', value)}
+              type="password"
+              value={taxes.gigstackApiToken || ''}
+              onChange={(event) => setTaxValue('gigstackApiToken', event.target.value)}
+              placeholder={taxes.gigstackApiTokenPreview || 'Pega el token JWT'}
+              autoComplete="off"
             />,
-            taxes.rateType === 'percentage' ? 'Ejemplo: 16 para IVA 16%.' : 'Monto que se suma o se reporta como impuesto.'
+            taxes.hasGigstackApiToken ? 'Ya hay un token guardado. Pega uno nuevo solo si quieres reemplazarlo.' : 'Se obtiene desde app.gigstack.pro/settings?subtab=api.'
           )}
-          {renderField(
-            'Modo de cálculo',
-            <CustomSelect
-              value={taxes.calculationMode}
-              onValueChange={(value) => setTaxValue('calculationMode', value as PaymentTaxSettings['calculationMode'])}
-              options={[
-                { value: 'exclusive', label: 'Se suma al total' },
-                { value: 'inclusive', label: 'Ya incluido en el precio' }
-              ]}
-            />
-          )}
-          {renderField(
-            'RFC / ID fiscal',
-            <input
-              type="text"
-              value={taxes.fiscalId}
-              onChange={(event) => setTaxValue('fiscalId', event.target.value)}
-              placeholder="RFC o identificador fiscal"
-            />
-          )}
-        </div>
-      </Card>
-
-      <Card className={styles.jigsawCard}>
-        <div className={styles.jigsawHeader}>
-          <Sparkles size={22} />
-          <Badge variant="warning">Próximamente</Badge>
-        </div>
-        <h3>Jigsaw</h3>
-        <p>Jigsaw vive aquí, en impuestos, para preparar el flujo fiscal sin contaminar la lista de pasarelas de cobro.</p>
-        {renderSwitchRow('Preparar conexión con Jigsaw', 'Deja marcada la intención de conectar Jigsaw cuando se libere.', taxes.jigsawEnabled, (next) => setTaxValue('jigsawEnabled', next))}
-        <div className={styles.taxPreview}>
-          <div>
-            <span>Subtotal</span>
-            <strong>{formatCompactMoney(2490, accountCurrency)}</strong>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => window.open(GIGSTACK_API_URL, '_blank', 'noopener,noreferrer')}
+          >
+            <ExternalLink size={15} />
+            Ver API de facturación
+          </Button>
+          <div className={styles.taxPreview}>
+            <div>
+              <span>Subtotal</span>
+              <strong>{formatCompactMoney(previewBaseAmount, accountCurrency)}</strong>
+            </div>
+            <div>
+              <span>{taxes.taxName || 'IVA'} · {taxRateLabel}</span>
+              <strong>{taxes.enabled ? formatCompactMoney(previewTaxAmount, accountCurrency) : 'Apagado'}</strong>
+            </div>
+            <div>
+              <span>Total mostrado</span>
+              <strong>{formatCompactMoney(previewTotalAmount, accountCurrency)}</strong>
+            </div>
           </div>
-          <div>
-            <span>{taxes.taxName || 'IVA'} {taxes.rateType === 'percentage' ? `${taxes.rateValue}%` : ''}</span>
-            <strong>{taxes.calculationMode === 'inclusive' ? 'Incluido' : formatCompactMoney(taxes.rateType === 'percentage' ? 398 : taxes.rateValue, accountCurrency)}</strong>
-          </div>
-          <div>
-            <span>Total mostrado</span>
-            <strong>{formatCompactMoney(taxes.calculationMode === 'inclusive' ? 2490 : 2888, accountCurrency)}</strong>
-          </div>
-        </div>
-      </Card>
-    </div>
-  )
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <PageContainer size="wide" className={styles.page}>

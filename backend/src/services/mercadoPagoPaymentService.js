@@ -12,6 +12,7 @@ import {
   refreshCentralMercadoPagoToken
 } from './licenseService.js'
 import { calculatePaymentTax, getPublicPaymentSettings } from './paymentSettingsService.js'
+import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 
 const CONFIG_KEYS = {
   enabled: 'mercadopago_enabled',
@@ -717,7 +718,15 @@ export async function createMercadoPagoPaymentLink(input = {}, { baseUrl } = {})
   }
 
   const paymentSettings = await getPublicPaymentSettings()
-  const tax = calculatePaymentTax(amount, paymentSettings.taxes, { provider: 'mercadopago' })
+  const shouldApplyTax = input.applyTax !== false
+  const taxSettings = {
+    ...paymentSettings.taxes,
+    enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
+    calculationMode: ['exclusive', 'inclusive'].includes(input.taxCalculationMode)
+      ? input.taxCalculationMode
+      : paymentSettings.taxes?.calculationMode
+  }
+  const tax = calculatePaymentTax(amount, taxSettings)
   const chargeAmount = tax?.totalAmount || Math.round(amount * 100) / 100
   const currency = normalizeCurrency(input.currency || await getConfiguredCurrency())
   const contact = {
@@ -1972,6 +1981,7 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
 
   const updated = await findPaymentById(row.id)
   if (updated?.contact_id && nextStatus === 'paid') {
+    registerGigstackPaymentForTransactionInBackground(updated.id)
     updateSingleContactStats(updated.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por pago Mercado Pago ${row.id}: ${error.message}`)
     })

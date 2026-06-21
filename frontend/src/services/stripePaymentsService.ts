@@ -77,6 +77,8 @@ export interface StripePaymentLinkPayload {
   phone?: string
   amount: number
   currency: string
+  applyTax?: boolean
+  taxCalculationMode?: 'exclusive' | 'inclusive'
   title?: string
   description?: string
   dueDate?: string
@@ -112,9 +114,14 @@ export interface PublicStripePayment {
     taxName: string
     rateType: 'percentage' | 'fixed'
     rateValue: number
+    rateSource?: 'automatic'
     calculationMode: 'exclusive' | 'inclusive'
+    country?: string
     fiscalId?: string
-    provider?: 'jigsaw'
+    fiscalLegalName?: string
+    fiscalPostalCode?: string
+    fiscalRegime?: string
+    provider?: 'gigstack'
     subtotalAmount: number
     taxAmount: number
     totalAmount: number
@@ -161,6 +168,8 @@ export interface StripeSavedCardPaymentPayload {
   phone?: string
   amount: number
   currency: string
+  applyTax?: boolean
+  taxCalculationMode?: 'exclusive' | 'inclusive'
   title?: string
   description?: string
   dueDate?: string

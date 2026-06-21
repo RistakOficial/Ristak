@@ -61,13 +61,18 @@ export interface PaymentTaxSettings {
   taxName: string
   rateType: 'percentage' | 'fixed'
   rateValue: number
+  rateSource: 'automatic'
   calculationMode: 'exclusive' | 'inclusive'
+  country: string
   fiscalId: string
-  provider: 'jigsaw'
-  jigsawEnabled: boolean
-  applyToStripe: boolean
-  applyToMercadoPago: boolean
-  applyToHighLevel: boolean
+  fiscalLegalName: string
+  fiscalPostalCode: string
+  fiscalRegime: string
+  provider: 'gigstack'
+  gigstackEnabled: boolean
+  gigstackApiToken?: string
+  gigstackApiTokenPreview?: string
+  hasGigstackApiToken?: boolean
 }
 
 export interface PaymentSettings {
@@ -143,13 +148,18 @@ export const defaultPaymentSettings: PaymentSettings = {
     taxName: 'IVA',
     rateType: 'percentage',
     rateValue: 16,
+    rateSource: 'automatic',
     calculationMode: 'exclusive',
+    country: 'MX',
     fiscalId: '',
-    provider: 'jigsaw',
-    jigsawEnabled: false,
-    applyToStripe: true,
-    applyToMercadoPago: true,
-    applyToHighLevel: true
+    fiscalLegalName: '',
+    fiscalPostalCode: '',
+    fiscalRegime: '',
+    provider: 'gigstack',
+    gigstackEnabled: false,
+    gigstackApiToken: '',
+    gigstackApiTokenPreview: '',
+    hasGigstackApiToken: false
   }
 }
 

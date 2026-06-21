@@ -1,4 +1,6 @@
 import { getAppConfig, setAppConfig } from '../config/database.js'
+import { decrypt, encrypt } from '../utils/encryption.js'
+import { logger } from '../utils/logger.js'
 
 const PAYMENT_SETTINGS_CONFIG_KEY = 'payments_settings'
 
@@ -61,14 +63,24 @@ const DEFAULT_PAYMENT_SETTINGS = {
     taxName: 'IVA',
     rateType: 'percentage',
     rateValue: 16,
+    rateSource: 'automatic',
     calculationMode: 'exclusive',
+    country: 'MX',
     fiscalId: '',
-    provider: 'jigsaw',
-    jigsawEnabled: false,
-    applyToStripe: true,
-    applyToMercadoPago: true,
-    applyToHighLevel: true
+    fiscalLegalName: '',
+    fiscalPostalCode: '',
+    fiscalRegime: '',
+    provider: 'gigstack',
+    gigstackEnabled: false,
+    gigstackApiTokenEncrypted: ''
   }
+}
+
+const AUTOMATIC_TAX_RATES_BY_COUNTRY = {
+  MX: 16,
+  CO: 19,
+  CL: 19,
+  US: 0
 }
 
 function cleanString(value, maxLength = 500) {
@@ -101,6 +113,64 @@ function cleanNumber(value, fallback, { min = 0, max = 9999, decimals = 0 } = {}
   return Math.round(bounded * factor) / factor
 }
 
+function cleanCountry(value) {
+  const normalized = cleanString(value, 2).toUpperCase()
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : DEFAULT_PAYMENT_SETTINGS.taxes.country
+}
+
+function resolveAutomaticTaxRate(country) {
+  return AUTOMATIC_TAX_RATES_BY_COUNTRY[country] ?? AUTOMATIC_TAX_RATES_BY_COUNTRY.MX
+}
+
+function maskSecret(value = '') {
+  const cleanValue = cleanString(value, 500)
+  if (!cleanValue) return ''
+  if (cleanValue.length <= 8) return '••••'
+  return `${cleanValue.slice(0, 4)}••••${cleanValue.slice(-4)}`
+}
+
+function isMaskedSecret(value = '') {
+  return /[•*]/.test(String(value || ''))
+}
+
+function decryptSecret(value = '') {
+  const cleanValue = cleanString(value, 3000)
+  if (!cleanValue) return ''
+  try {
+    return decrypt(cleanValue)
+  } catch (error) {
+    logger.warn(`No se pudo desencriptar el token de GYStack: ${error.message}`)
+    return ''
+  }
+}
+
+function resolveGigstackTokenStorage(taxes = {}, previousTaxes = {}) {
+  if (cleanBoolean(taxes.clearGigstackApiToken, false)) {
+    return { encrypted: '', plain: '' }
+  }
+
+  const submittedToken = cleanString(taxes.gigstackApiToken || taxes.gigstackToken, 3000)
+  if (submittedToken && !isMaskedSecret(submittedToken)) {
+    return {
+      encrypted: encrypt(submittedToken),
+      plain: submittedToken
+    }
+  }
+
+  const encrypted = cleanString(
+    taxes.gigstackApiTokenEncrypted ||
+      taxes.gigstackTokenEncrypted ||
+      previousTaxes.gigstackApiTokenEncrypted ||
+      previousTaxes.gigstackTokenEncrypted,
+    3000
+  )
+
+  return {
+    encrypted,
+    plain: decryptSecret(encrypted)
+  }
+}
+
 function cleanEnum(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback
 }
@@ -121,13 +191,18 @@ function parseStoredSettings(rawValue) {
   }
 }
 
-export function normalizePaymentSettings(input = {}) {
+export function normalizePaymentSettings(input = {}, options = {}) {
   const checkout = input.checkout || {}
   const receipt = input.receipt || {}
   const automations = input.automations || {}
   const taxes = input.taxes || {}
+  const previousTaxes = options.previousTaxes || {}
+  const country = cleanCountry(taxes.country || taxes.countryCode || taxes.businessCountry || previousTaxes.country)
+  const rateValue = resolveAutomaticTaxRate(country)
+  const gigstackToken = resolveGigstackTokenStorage(taxes, previousTaxes)
+  const hasGigstackApiToken = Boolean(gigstackToken.plain || gigstackToken.encrypted)
 
-  return {
+  const normalized = {
     checkout: {
       logoUrl: cleanString(checkout.logoUrl, 1000),
       headline: cleanString(checkout.headline, 120) || DEFAULT_PAYMENT_SETTINGS.checkout.headline,
@@ -184,28 +259,39 @@ export function normalizePaymentSettings(input = {}) {
     taxes: {
       enabled: cleanBoolean(taxes.enabled, DEFAULT_PAYMENT_SETTINGS.taxes.enabled),
       taxName: cleanString(taxes.taxName, 80) || DEFAULT_PAYMENT_SETTINGS.taxes.taxName,
-      rateType: cleanEnum(taxes.rateType, ['percentage', 'fixed'], DEFAULT_PAYMENT_SETTINGS.taxes.rateType),
-      rateValue: cleanNumber(taxes.rateValue, DEFAULT_PAYMENT_SETTINGS.taxes.rateValue, { min: 0, max: 1000000, decimals: 2 }),
+      rateType: 'percentage',
+      rateValue,
+      rateSource: 'automatic',
       calculationMode: cleanEnum(taxes.calculationMode, ['exclusive', 'inclusive'], DEFAULT_PAYMENT_SETTINGS.taxes.calculationMode),
+      country,
       fiscalId: cleanString(taxes.fiscalId, 120),
-      provider: 'jigsaw',
-      jigsawEnabled: cleanBoolean(taxes.jigsawEnabled, DEFAULT_PAYMENT_SETTINGS.taxes.jigsawEnabled),
-      applyToStripe: cleanBoolean(taxes.applyToStripe, DEFAULT_PAYMENT_SETTINGS.taxes.applyToStripe),
-      applyToMercadoPago: cleanBoolean(taxes.applyToMercadoPago, DEFAULT_PAYMENT_SETTINGS.taxes.applyToMercadoPago),
-      applyToHighLevel: cleanBoolean(taxes.applyToHighLevel, DEFAULT_PAYMENT_SETTINGS.taxes.applyToHighLevel)
+      fiscalLegalName: cleanString(taxes.fiscalLegalName || taxes.legalName, 180),
+      fiscalPostalCode: cleanString(taxes.fiscalPostalCode || taxes.postalCode, 20),
+      fiscalRegime: cleanString(taxes.fiscalRegime || taxes.taxRegime, 120),
+      provider: 'gigstack',
+      gigstackEnabled: cleanBoolean(taxes.gigstackEnabled ?? taxes.jigsawEnabled, DEFAULT_PAYMENT_SETTINGS.taxes.gigstackEnabled),
+      gigstackApiTokenPreview: maskSecret(gigstackToken.plain),
+      hasGigstackApiToken
     }
   }
+
+  if (options.includeSecrets) {
+    normalized.taxes.gigstackApiToken = gigstackToken.plain
+  }
+
+  if (options.includePrivateStorage) {
+    normalized.taxes.gigstackApiTokenEncrypted = gigstackToken.encrypted
+  }
+
+  return normalized
 }
 
-export function calculatePaymentTax(amount, rawTaxes = {}, { provider = 'stripe' } = {}) {
+export function calculatePaymentTax(amount, rawTaxes = {}) {
   const taxes = normalizePaymentSettings({ taxes: rawTaxes }).taxes
   const baseAmount = roundMoney(amount)
   const rateValue = roundMoney(taxes.rateValue)
 
   if (!taxes.enabled || baseAmount <= 0 || rateValue <= 0) return null
-  if (provider === 'stripe' && !taxes.applyToStripe) return null
-  if (provider === 'mercadopago' && !taxes.applyToMercadoPago) return null
-  if (provider === 'highlevel' && !taxes.applyToHighLevel) return null
 
   const isPercentage = taxes.rateType === 'percentage'
   const inclusive = taxes.calculationMode === 'inclusive'
@@ -230,8 +316,13 @@ export function calculatePaymentTax(amount, rawTaxes = {}, { provider = 'stripe'
     taxName: taxes.taxName,
     rateType: taxes.rateType,
     rateValue,
+    rateSource: taxes.rateSource,
     calculationMode: taxes.calculationMode,
+    country: taxes.country,
     fiscalId: taxes.fiscalId,
+    fiscalLegalName: taxes.fiscalLegalName,
+    fiscalPostalCode: taxes.fiscalPostalCode,
+    fiscalRegime: taxes.fiscalRegime,
     provider: taxes.provider,
     subtotalAmount: roundMoney(subtotalAmount),
     taxAmount: roundMoney(taxAmount),
@@ -239,26 +330,41 @@ export function calculatePaymentTax(amount, rawTaxes = {}, { provider = 'stripe'
   }
 }
 
-export async function getPaymentSettings() {
+function settingsForStorage(settings = {}) {
+  return {
+    ...settings,
+    taxes: {
+      ...(settings.taxes || {}),
+      gigstackApiToken: undefined,
+      gigstackApiTokenPreview: undefined,
+      hasGigstackApiToken: undefined
+    }
+  }
+}
+
+export async function getPaymentSettings(options = {}) {
   const stored = parseStoredSettings(await getAppConfig(PAYMENT_SETTINGS_CONFIG_KEY))
   return normalizePaymentSettings({
     checkout: { ...DEFAULT_PAYMENT_SETTINGS.checkout, ...(stored.checkout || {}) },
     receipt: { ...DEFAULT_PAYMENT_SETTINGS.receipt, ...(stored.receipt || {}) },
     automations: { ...DEFAULT_PAYMENT_SETTINGS.automations, ...(stored.automations || {}) },
     taxes: { ...DEFAULT_PAYMENT_SETTINGS.taxes, ...(stored.taxes || {}) }
-  })
+  }, options)
 }
 
 export async function savePaymentSettings(input = {}) {
-  const current = await getPaymentSettings()
+  const current = await getPaymentSettings({ includeSecrets: true, includePrivateStorage: true })
   const next = normalizePaymentSettings({
     checkout: { ...current.checkout, ...(input.checkout || {}) },
     receipt: { ...current.receipt, ...(input.receipt || {}) },
     automations: { ...current.automations, ...(input.automations || {}) },
     taxes: { ...current.taxes, ...(input.taxes || {}) }
+  }, {
+    previousTaxes: current.taxes,
+    includePrivateStorage: true
   })
-  await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, next)
-  return next
+  await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, settingsForStorage(next))
+  return normalizePaymentSettings(next)
 }
 
 export async function getPublicPaymentSettings() {

@@ -45,6 +45,8 @@ export interface MercadoPagoPaymentLinkPayload {
   phone?: string
   amount: number
   currency: string
+  applyTax?: boolean
+  taxCalculationMode?: 'exclusive' | 'inclusive'
   title?: string
   description?: string
   dueDate?: string
@@ -80,9 +82,14 @@ export interface PublicMercadoPagoPayment {
     taxName: string
     rateType: 'percentage' | 'fixed'
     rateValue: number
+    rateSource?: 'automatic'
     calculationMode: 'exclusive' | 'inclusive'
+    country?: string
     fiscalId?: string
-    provider?: 'jigsaw'
+    fiscalLegalName?: string
+    fiscalPostalCode?: string
+    fiscalRegime?: string
+    provider?: 'gigstack'
     subtotalAmount: number
     taxAmount: number
     totalAmount: number

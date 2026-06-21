@@ -40,10 +40,14 @@ import { highLevelService } from '@/services/highLevelService'
 import { transactionsService } from '@/services/transactionsService'
 import { mercadoPagoPaymentsService } from '@/services/mercadoPagoPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
+import {
+  defaultPaymentSettings,
+  paymentSettingsService,
+  type PaymentTaxSettings
+} from '@/services/paymentSettingsService'
 import { contactsService, type PaymentLinkDeliveryChannelKey, type PaymentLinkDeliveryOptions } from '@/services/contactsService'
 import { emailService } from '@/services/emailService'
 
-const IVA_RATE = 0.16
 const DEFAULT_INVOICE_TITLE = 'Pago'
 const CONTACT_SEARCH_DELAY_MS = 90
 
@@ -57,6 +61,52 @@ const normalizeAmount = (value: string | number): number => {
   const parsed = parseFloat(String(value).replace(/[^0-9.-]/g, ''))
   if (Number.isNaN(parsed)) return 0
   return Math.round(parsed * 100) / 100
+}
+
+const getConfiguredTaxRate = (taxes: PaymentTaxSettings) => {
+  const rateValue = Number(taxes.rateValue)
+  return Number.isFinite(rateValue) ? rateValue : 0
+}
+
+const getConfiguredTaxName = (taxes: PaymentTaxSettings) => taxes.taxName?.trim() || 'Impuesto'
+
+const calculateConfiguredTax = (
+  amount: number,
+  taxes: PaymentTaxSettings,
+  applyTax: boolean,
+  calculationMode: PaymentTaxSettings['calculationMode']
+) => {
+  const rateValue = getConfiguredTaxRate(taxes)
+
+  if (!taxes.enabled || !applyTax || amount <= 0 || rateValue <= 0) {
+    return {
+      subtotalAmount: amount,
+      taxAmount: 0,
+      totalAmount: amount,
+      includesTax: false,
+      calculationMode
+    }
+  }
+
+  if (calculationMode === 'inclusive') {
+    const taxAmount = normalizeAmount(amount - (amount / (1 + rateValue / 100)))
+    return {
+      subtotalAmount: normalizeAmount(amount - taxAmount),
+      taxAmount,
+      totalAmount: amount,
+      includesTax: true,
+      calculationMode
+    }
+  }
+
+  const taxAmount = normalizeAmount(amount * (rateValue / 100))
+  return {
+    subtotalAmount: amount,
+    taxAmount,
+    totalAmount: normalizeAmount(amount + taxAmount),
+    includesTax: true,
+    calculationMode
+  }
 }
 
 type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago'
@@ -271,6 +321,10 @@ interface InvoiceSummary {
   subtotal: number
   taxAmount: number
   includesTax: boolean
+  taxName: string
+  taxRate: number
+  taxCalculationMode: PaymentTaxSettings['calculationMode']
+  taxBaseAmount: number
   currency: string
   description: string
   invoiceId?: string
@@ -470,6 +524,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [description, setDescription] = useState('')
   const [currency, setCurrency] = useState('MXN')
   const [includeIVA, setIncludeIVA] = useState(false)
+  const [taxCalculationMode, setTaxCalculationMode] = useState<PaymentTaxSettings['calculationMode']>(defaultPaymentSettings.taxes.calculationMode)
+  const [paymentTaxes, setPaymentTaxes] = useState<PaymentTaxSettings>(defaultPaymentSettings.taxes)
 
   // Partial payments
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
@@ -584,8 +640,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       : normalizeAmount(amount)
   ), [amount, chargeType, customAmount])
 
-  const taxAmount = includeIVA ? normalizeAmount(subtotalAmount * IVA_RATE) : 0
-  const totalAmount = includeIVA ? normalizeAmount(subtotalAmount + taxAmount) : subtotalAmount
+  const currentTaxBreakdown = useMemo(() => (
+    calculateConfiguredTax(subtotalAmount, paymentTaxes, includeIVA, taxCalculationMode)
+  ), [includeIVA, paymentTaxes, subtotalAmount, taxCalculationMode])
+  const taxAmount = currentTaxBreakdown.taxAmount
+  const totalAmount = currentTaxBreakdown.totalAmount
   const firstPaymentAmount = firstPaymentEnabled
     ? resolvePartialAmount(firstPaymentType, firstPaymentValue, totalAmount)
     : 0
@@ -715,7 +774,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setPaymentTitle('')
     setDescription('')
     setCurrency(accountCurrency)
-    setIncludeIVA(false)
+    setIncludeIVA(Boolean(paymentTaxes.enabled))
+    setTaxCalculationMode(paymentTaxes.calculationMode || defaultPaymentSettings.taxes.calculationMode)
     setPaymentMode(initialPaymentMode)
     setFirstPaymentEnabled(false)
     setFirstPaymentType('amount')
@@ -782,6 +842,20 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
+  const loadPaymentTaxSettings = async () => {
+    try {
+      const paymentSettings = await paymentSettingsService.getSettings()
+      const nextTaxes = paymentSettings.taxes || defaultPaymentSettings.taxes
+      setPaymentTaxes(nextTaxes)
+      setTaxCalculationMode(nextTaxes.calculationMode || defaultPaymentSettings.taxes.calculationMode)
+      setIncludeIVA(Boolean(nextTaxes.enabled))
+    } catch {
+      setPaymentTaxes(defaultPaymentSettings.taxes)
+      setTaxCalculationMode(defaultPaymentSettings.taxes.calculationMode)
+      setIncludeIVA(false)
+    }
+  }
+
   const loadIntegrationStatus = async () => {
     try {
       const data = await getIntegrationsStatus()
@@ -809,6 +883,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setFirstPaymentMethod('card')
     }
   }, [isOpen, mercadoPagoConnected, stripeConnected, activePaymentMode, firstPaymentEnabled, firstPaymentMethod])
+
+  useEffect(() => {
+    if (!paymentTaxes.enabled && includeIVA) {
+      setIncludeIVA(false)
+    }
+  }, [includeIVA, paymentTaxes.enabled])
 
   useEffect(() => {
     let cancelled = false
@@ -862,6 +942,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     resetForm()
     loadConfig()
+    loadPaymentTaxSettings()
     loadIntegrationStatus()
   }, [isOpen, initialPaymentMode, initialContact?.id, initialContact?.email, initialContact?.phone, initialContact?.name, accountCurrency])
 
@@ -1522,7 +1603,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     onClose()
   }
 
-  const buildInvoicePayload = (preparedTaxAmount: number, finalCurrency: string, contactName: string, invoiceTitle: string, items: any[], contactId: string, contactEmail: string, contactPhone: string) => {
+  const buildInvoicePayload = (taxBreakdown: ReturnType<typeof calculateConfiguredTax>, finalCurrency: string, contactName: string, invoiceTitle: string, items: any[], contactId: string, contactEmail: string, contactPhone: string) => {
     const businessDetails: Record<string, any> = {
       name: businessName || 'Mi Negocio'
     }
@@ -1562,11 +1643,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       issueDate: new Date().toISOString().split('T')[0],
       dueDate,
       liveMode: ghlInvoiceMode === 'live',
-      ...(includeIVA && {
+      ...(taxBreakdown.includesTax && {
         tax: {
-          name: 'IVA',
-          rate: IVA_RATE * 100,
-          amount: preparedTaxAmount
+          name: getConfiguredTaxName(paymentTaxes),
+          rate: getConfiguredTaxRate(paymentTaxes),
+          amount: taxBreakdown.taxAmount,
+          calculationMode: taxBreakdown.calculationMode,
+          country: paymentTaxes.country,
+          fiscalId: paymentTaxes.fiscalId
         }
       }),
       ...(invoiceTermsNotes && { termsNotes: invoiceTermsNotes })
@@ -1684,11 +1768,18 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ]
       }
 
-      const taxAmount = includeIVA ? normalizeAmount(subtotal * IVA_RATE) : 0
-      const totalAmount = includeIVA ? normalizeAmount(subtotal + taxAmount) : subtotal
+      const taxBreakdown = calculateConfiguredTax(subtotal, paymentTaxes, includeIVA, taxCalculationMode)
+      const totalAmount = taxBreakdown.totalAmount
+
+      if (taxBreakdown.includesTax && taxBreakdown.calculationMode === 'inclusive') {
+        items = items.map((item) => ({
+          ...item,
+          amount: taxBreakdown.subtotalAmount
+        }))
+      }
 
       const payload = buildInvoicePayload(
-        taxAmount,
+        taxBreakdown,
         finalCurrency,
         contactName,
         resolvedTitle,
@@ -1703,9 +1794,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         contactName,
         contactEmail: selectedContact.email || '',
         amount: totalAmount,
-        subtotal,
-        taxAmount,
-        includesTax: includeIVA,
+        subtotal: taxBreakdown.subtotalAmount,
+        taxAmount: taxBreakdown.taxAmount,
+        includesTax: taxBreakdown.includesTax,
+        taxName: getConfiguredTaxName(paymentTaxes),
+        taxRate: getConfiguredTaxRate(paymentTaxes),
+        taxCalculationMode: taxBreakdown.calculationMode,
+        taxBaseAmount: taxBreakdown.calculationMode === 'exclusive' ? taxBreakdown.subtotalAmount : taxBreakdown.totalAmount,
         currency: finalCurrency,
         description: resolvedDescription || (chargeType === 'product' && selectedProduct ? selectedProduct.name : resolvedTitle)
       }
@@ -1765,8 +1860,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           contactName: invoiceSummary.contactName || selectedContact.name,
           email: selectedContact.email || invoiceSummary.contactEmail || '',
           phone: selectedContact.phone || '',
-          amount: invoiceSummary.amount,
+          amount: invoiceSummary.taxBaseAmount,
           currency: invoiceSummary.currency,
+          applyTax: invoiceSummary.includesTax,
+          taxCalculationMode: invoiceSummary.taxCalculationMode,
           title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
           description: invoiceSummary.description,
           dueDate: invoicePayload.dueDate,
@@ -1926,8 +2023,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           contactName: invoiceSummary.contactName || selectedContact.name,
           email: selectedContact.email || invoiceSummary.contactEmail || '',
           phone: selectedContact.phone || '',
-          amount: invoiceSummary.amount,
+          amount: invoiceSummary.taxBaseAmount,
           currency: invoiceSummary.currency,
+          applyTax: invoiceSummary.includesTax,
+          taxCalculationMode: invoiceSummary.taxCalculationMode,
           title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
           description: invoiceSummary.description,
           dueDate: invoicePayload.dueDate,
@@ -1975,8 +2074,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           contactName: invoiceSummary.contactName || selectedContact.name,
           email: selectedContact.email || invoiceSummary.contactEmail || '',
           phone: selectedContact.phone || '',
-          amount: invoiceSummary.amount,
+          amount: invoiceSummary.taxBaseAmount,
           currency: invoiceSummary.currency,
+          applyTax: invoiceSummary.includesTax,
+          taxCalculationMode: invoiceSummary.taxCalculationMode,
           title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
           description: invoiceSummary.description,
           dueDate: invoicePayload.dueDate,
@@ -2033,7 +2134,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           reference: manualPaymentData.reference,
           title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
           description: [invoiceSummary.description, manualPaymentData.notes].filter(Boolean).join('\n'),
-          dueDate: invoicePayload.dueDate
+          dueDate: invoicePayload.dueDate,
+          metadata: {
+            ...(invoiceSummary.includesTax && {
+              tax: {
+                enabled: true,
+                taxName: invoiceSummary.taxName,
+                rateType: 'percentage',
+                rateValue: invoiceSummary.taxRate,
+                rateSource: 'automatic',
+                calculationMode: invoiceSummary.taxCalculationMode,
+                subtotalAmount: invoiceSummary.subtotal,
+                taxAmount: invoiceSummary.taxAmount,
+                totalAmount: invoiceSummary.amount
+              }
+            })
+          }
         })
 
         showToast('success', 'Éxito', 'Pago registrado correctamente')
@@ -2239,8 +2355,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       ? normalizeAmount(customAmount)
       : normalizeAmount(amount)
 
-    const taxAmount = includeIVA ? normalizeAmount(subtotalAmount * IVA_RATE) : 0
-    const totalAmount = includeIVA ? normalizeAmount(subtotalAmount + taxAmount) : subtotalAmount
+    const taxBreakdown = calculateConfiguredTax(subtotalAmount, paymentTaxes, includeIVA, taxCalculationMode)
+    const taxAmount = taxBreakdown.taxAmount
+    const totalAmount = taxBreakdown.totalAmount
+    const taxName = getConfiguredTaxName(paymentTaxes)
+    const taxRate = getConfiguredTaxRate(paymentTaxes)
 
     const renderPaymentModeField = () => {
       // Las parcialidades dependen de HighLevel. En modo local solo hay pago único.
@@ -2968,20 +3087,41 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           </div>
         )}
 
-        <div className={styles.field}>
-          <label className={styles.label}>IVA</label>
-          <div className={styles.segmentedTabsField}>
-            {renderPaymentSegmentedTabs({
-              ariaLabel: 'IVA',
-              options: [
-                { value: 'sin', label: 'Sin IVA' },
-                { value: 'con', label: 'Aplicar IVA 16%' }
-              ],
-              value: includeIVA ? 'con' : 'sin',
-              onChange: (value) => setIncludeIVA(value === 'con')
-            })}
-          </div>
-        </div>
+        {paymentTaxes.enabled && (
+          <>
+            <div className={styles.field}>
+              <label className={styles.label}>{taxName}</label>
+              <div className={styles.segmentedTabsField}>
+                {renderPaymentSegmentedTabs({
+                  ariaLabel: taxName,
+                  options: [
+                    { value: 'sin', label: `Sin ${taxName}` },
+                    { value: 'con', label: `Aplicar ${taxRate}%` }
+                  ],
+                  value: includeIVA ? 'con' : 'sin',
+                  onChange: (value) => setIncludeIVA(value === 'con')
+                })}
+              </div>
+            </div>
+
+            {includeIVA && (
+              <div className={styles.field}>
+                <label className={styles.label}>Cálculo del impuesto</label>
+                <div className={styles.segmentedTabsField}>
+                  {renderPaymentSegmentedTabs({
+                    ariaLabel: 'Cálculo del impuesto',
+                    options: [
+                      { value: 'exclusive', label: 'Se suma al total' },
+                      { value: 'inclusive', label: 'Ya incluido' }
+                    ],
+                    value: taxCalculationMode,
+                    onChange: (value) => setTaxCalculationMode(value as PaymentTaxSettings['calculationMode'])
+                  })}
+                </div>
+              </div>
+            )}
+          </>
+        )}
 
         {/* En embedded el total vive en la barra inferior fija; la tarjeta solo aplica en el modal de escritorio */}
         {!isEmbedded && (
@@ -2997,10 +3137,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 <span>Subtotal</span>
                 <span>{formatCurrency(subtotalAmount, currency)}</span>
               </div>
-              {includeIVA && (
+              {taxBreakdown.includesTax && (
                 <div className={styles.summaryRow}>
-                  <span>IVA (16%)</span>
-                  <span className={styles.summaryTax}>+ {formatCurrency(taxAmount, currency)}</span>
+                  <span>{taxName} ({taxRate}%)</span>
+                  <span className={styles.summaryTax}>{taxCalculationMode === 'exclusive' ? '+ ' : ''}{formatCurrency(taxAmount, currency)}</span>
                 </div>
               )}
             </div>
@@ -3228,12 +3368,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 <span>{formatCurrency(invoiceSummary.subtotal, invoiceSummary.currency)}</span>
               </div>
               <div className={styles.summaryRow}>
-                <span>IVA (16%)</span>
-                <span className={styles.summaryTax}>+ {formatCurrency(invoiceSummary.taxAmount, invoiceSummary.currency)}</span>
+                <span>{invoiceSummary.taxName} ({invoiceSummary.taxRate}%)</span>
+                <span className={styles.summaryTax}>{invoiceSummary.taxCalculationMode === 'exclusive' ? '+ ' : ''}{formatCurrency(invoiceSummary.taxAmount, invoiceSummary.currency)}</span>
               </div>
             </div>
           ) : (
-            <p className={styles.summaryDetail}>Este cobro no incluye IVA</p>
+            <p className={styles.summaryDetail}>Este cobro no incluye impuestos</p>
           )}
           {invoiceSummary.description && (
             <div className={styles.summaryDescription}>
@@ -3742,7 +3882,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 <div className={styles.embeddedTotalRow}>
                   <span>
                     Total a cobrar
-                    {includeIVA && <small>Incluye IVA · {formatCurrency(taxAmount, currency)}</small>}
+                    {currentTaxBreakdown.includesTax && <small>{getConfiguredTaxName(paymentTaxes)} · {formatCurrency(taxAmount, currency)}</small>}
                   </span>
                   <strong>{formatCurrency(totalAmount, currency)}</strong>
                 </div>

@@ -330,7 +330,7 @@ export const PublicPayment: React.FC = () => {
     checkoutSettings?.supportPhone
   ].filter(Boolean)
   const taxLabel = taxDetails?.enabled
-    ? `${taxDetails.taxName || 'Impuesto'} ${taxDetails.rateType === 'percentage' ? `${taxDetails.rateValue}%` : formatCurrency(taxDetails.rateValue || 0, payment.currency)}`
+    ? `${taxDetails.taxName || 'Impuesto'} ${taxDetails.rateValue || 0}%`
     : ''
   const hasTaxBreakdown = Boolean(taxDetails?.enabled && taxDetails.taxAmount > 0)
   const subtotalAmount = hasTaxBreakdown ? taxDetails?.subtotalAmount || 0 : payment.amount

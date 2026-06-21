@@ -11,6 +11,7 @@ import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerWhatsappFirstPurchaseEvent } from '../services/metaWhatsappEventsService.js'
 import { sendPaymentNotification } from '../services/pushNotificationsService.js'
 import { queuePaymentAutomationMessage } from '../services/paymentAutomationsService.js'
+import { registerGigstackPaymentForTransactionInBackground } from '../services/gigstackInvoiceService.js'
 import {
   getPaymentDeletionGuard,
   isSuccessfulPaymentStatus
@@ -485,7 +486,8 @@ export const createTransaction = async (req, res) => {
       contactName,
       email,
       phone,
-      paymentMode
+      paymentMode,
+      metadata
     } = req.body
 
     const finalAmount = normalizeAmount(amount)
@@ -525,12 +527,13 @@ export const createTransaction = async (req, res) => {
     const finalDescription = cleanString(description || title || 'Pago')
     const finalDate = date || new Date().toISOString()
     const finalPaymentMode = normalizePaymentMode(paymentMode)
+    const metadataJson = metadata && typeof metadata === 'object' ? JSON.stringify(metadata) : null
 
     await db.run(
       `INSERT INTO payments (
         id, contact_id, amount, currency, status, payment_method, payment_mode,
-        payment_provider, reference, title, description, date, due_date, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        payment_provider, reference, title, description, date, due_date, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         transactionId,
         finalContactId,
@@ -544,7 +547,8 @@ export const createTransaction = async (req, res) => {
         finalTitle,
         finalDescription,
         finalDate,
-        dueDate || null
+        dueDate || null,
+        metadataJson
       ]
     )
 
@@ -570,6 +574,7 @@ export const createTransaction = async (req, res) => {
     const createdTransaction = await getTransactionByIdForResponse(transactionId)
 
     if (createdTransaction && SUCCESS_PAYMENT_STATUSES.has(finalStatus)) {
+      registerGigstackPaymentForTransactionInBackground(transactionId)
       queuePaymentAutomationMessage('receipt', transactionId)
       sendPaymentNotification(createdTransaction).catch((pushError) => {
         logger.warn(`No se pudo enviar aviso de pago ${transactionId}: ${pushError.message}`)
@@ -1446,6 +1451,7 @@ export const recordPayment = async (req, res) => {
 
     const paidTransaction = await getTransactionByIdForResponse(id)
     if (paidTransaction) {
+      registerGigstackPaymentForTransactionInBackground(id)
       queuePaymentAutomationMessage('receipt', id)
       sendPaymentNotification(paidTransaction).catch((pushError) => {
         logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
