@@ -596,7 +596,6 @@ export const PaymentsConfiguration: React.FC = () => {
     mercadoPagoConfig?.modeConnections?.[mode]?.connected ||
     (mercadoPagoConnected && mercadoPagoConfig?.mode === mode)
   )
-  const isLoadingPage = loadingSettings || loadingHighLevelConnection || loadingStripeConfig || loadingConektaConfig || loadingMercadoPagoConfig
   const paymentWhatsappTemplateOptions = useMemo(() => {
     const options = Object.values(paymentAutomationTemplateDefaults).map((template) => ({
       value: template.defaultName,
@@ -2164,10 +2163,6 @@ export const PaymentsConfiguration: React.FC = () => {
               <h2>Pasarela de pagos</h2>
               <p>Elige con qué proveedor se cobran links, tarjetas, parcialidades y suscripciones.</p>
             </div>
-            <Badge variant={stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? 'success' : 'warning'}>
-              {stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? <CheckCircle size={14} /> : <KeyRound size={14} />}
-              {stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? 'Conectada' : 'Pendiente'}
-            </Badge>
           </div>
 
           <div className={styles.gatewayList}>
@@ -2888,12 +2883,6 @@ export const PaymentsConfiguration: React.FC = () => {
         eyebrow="Configuración"
         title="Pagos"
         subtitle="Configura el cobro, comprobante, automatizaciones, pasarelas e impuestos desde un solo setup."
-        actions={(
-          <Badge variant={stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? 'success' : 'warning'}>
-            {isLoadingPage ? <Loader2 size={14} className={styles.spinIcon} /> : stripeConnected || conektaConnected || mercadoPagoConnected || highLevelConnected ? <CheckCircle size={14} /> : <Clock size={14} />}
-            {isLoadingPage ? 'Cargando' : stripeConnected ? 'Stripe conectado' : conektaConnected ? 'Conekta conectado' : mercadoPagoConnected ? 'Mercado Pago conectado' : highLevelConnected ? 'GoHighLevel conectado' : 'Pasarela pendiente'}
-          </Badge>
-        )}
       />
 
       <div className={styles.setupHeader}>
