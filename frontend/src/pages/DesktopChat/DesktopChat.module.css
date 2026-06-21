@@ -330,7 +330,7 @@
   flex: 0 0 auto;
   min-height: 44px;
   padding: 8px 14px 9px;
-  border-top: 1px solid var(--chat-border);
+  border-top: 1px solid transparent;
   border-bottom: 1px solid var(--chat-border);
   background: var(--color-background-primary);
   color: var(--text-dim);
@@ -340,6 +340,7 @@
 
 .chatSelectionBar[data-chat-selection-active='true'] {
   border-color: color-mix(in srgb, var(--accent) 22%, var(--chat-border));
+  border-top-color: transparent;
   background: color-mix(in srgb, var(--accent-soft) 34%, var(--color-background-primary));
 }
 
