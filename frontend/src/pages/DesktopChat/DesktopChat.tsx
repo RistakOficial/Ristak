@@ -89,6 +89,7 @@ import {
 import type { Contact, ContactAppointment, ContactPayment, ContactPhoneNumber } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
+import { PHONE_APP_HOME_PATH } from '@/utils/phoneAccess'
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
@@ -3595,6 +3596,11 @@ export const DesktopChat: React.FC = () => {
     setChatFilter((current) => (current === 'agent' ? 'all' : 'agent'))
   }, [])
 
+  const handleOpenSimpleChatView = useCallback(() => {
+    if (typeof window === 'undefined') return
+    window.open(PHONE_APP_HOME_PATH, '_blank', 'noopener,noreferrer')
+  }, [])
+
   const handleToggleChatSelection = useCallback((contactId: string) => {
     setSelectedChatIds((current) => (
       current.includes(contactId)
@@ -4947,16 +4953,29 @@ export const DesktopChat: React.FC = () => {
             </Button>
           </div>
 
-          <SearchField
-            className={styles.chatSearchField}
-            value={chatQuery}
-            placeholder="Buscar chat, contacto, teléfono o correo"
-            onChange={(nextQuery) => setChatQuery(nextQuery)}
-            onClear={() => setChatQuery('')}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void handleSearchContacts()
-            }}
-          />
+          <div className={styles.chatSearchBar}>
+            <SearchField
+              className={styles.chatSearchField}
+              value={chatQuery}
+              placeholder="Buscar chat, contacto, teléfono o correo"
+              onChange={(nextQuery) => setChatQuery(nextQuery)}
+              onClear={() => setChatQuery('')}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleSearchContacts()
+              }}
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              className={styles.simpleChatButton}
+              leftIcon={<MessageCircle size={16} aria-hidden="true" />}
+              onClick={handleOpenSimpleChatView}
+              aria-label="Abrir vista sencilla de chat en una nueva pestaña"
+              title="Abrir vista sencilla"
+            >
+              Vista sencilla
+            </Button>
+          </div>
 
           <div className={styles.filterRow} role="tablist" aria-label="Filtros de chat">
             <button

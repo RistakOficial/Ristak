@@ -155,14 +155,40 @@
   pointer-events: none;
 }
 
-.chatSearchField {
+.chatSearchBar {
   --chat-panel-gutter: 14px;
 
+  display: flex;
+  align-items: stretch;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
   width: calc(100% - var(--chat-panel-gutter) - var(--chat-panel-gutter));
   max-width: calc(100% - var(--chat-panel-gutter) - var(--chat-panel-gutter));
   margin: 14px var(--chat-panel-gutter) 10px;
   box-sizing: border-box;
+}
+
+.chatSearchField {
+  flex: 1 1 188px;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.simpleChatButton[data-btn] {
+  flex: 1 0 152px;
+  min-width: 152px;
+  min-height: 40px;
+  gap: 8px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.simpleChatButton[data-btn] svg {
+  flex: 0 0 auto;
 }
 
 .sectionTitleRow button,
