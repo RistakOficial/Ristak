@@ -19172,6 +19172,42 @@
   line-height: 1.35;
 }
 
+.videoFormGateThemeHeader {
+  display: grid;
+  gap: 8px;
+}
+
+.videoFormGateToneControl {
+  width: 100%;
+}
+
+.videoFormGateToneControl :global([data-ristak-tablist-tab]) {
+  min-height: 34px;
+}
+
+.videoFormGateToneControl svg {
+  width: 15px;
+  height: 15px;
+}
+
+.videoFormGateSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.videoFormGateSectionHeader span {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-mute);
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
 .videoFormGateQuestionTools {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

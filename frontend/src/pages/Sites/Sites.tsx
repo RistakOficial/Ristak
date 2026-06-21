@@ -33710,6 +33710,11 @@ const VideoFormGateSettingsPanel: React.FC<{
   }
 
   const videoGateThemeMode = getVideoFormGateThemeMode(settings)
+  const videoGateThemeTabs = videoFormGateThemeModeOptions.map(option => ({
+    value: option.value,
+    label: option.label,
+    icon: option.value === 'dark' ? <Moon size={15} /> : <Sun size={15} />
+  }))
   const applyVideoGateThemeMode = (mode: VideoFormGateThemeMode) => {
     const nextMode = mode === 'light' ? 'light' : DEFAULT_VIDEO_FORM_GATE_THEME_MODE
     onPatchSettings({
@@ -34028,7 +34033,7 @@ const VideoFormGateSettingsPanel: React.FC<{
       <div className={styles.videoFormGateSwitchRow}>
         <div>
           <strong>Formulario de video</strong>
-          <span>Bloquea el video y captura respuestas dentro del mismo reproductor.</span>
+          <span>Captura respuestas dentro del reproductor.</span>
         </div>
         {showEnableSwitch && (
           <Switch checked={enabled} onChange={enableGate} aria-label="Activar formulario de video" />
@@ -34216,7 +34221,7 @@ const VideoFormGateSettingsPanel: React.FC<{
               <div className={styles.panelSubheader}>Evento Meta al completar</div>
               <MetaVideoEventSettings
                 title="Meta Pixel + CAPI"
-                description="Solo se envía si la persona completa el formulario sin quedar descalificada"
+                description="Se envía al completar."
                 siteMetaEnabled={Boolean(site.metaCapiEnabled)}
                 metaPixelConnected={metaPixelConnected}
                 eventEnabled={videoFormGateMetaEnabled}
@@ -34240,27 +34245,22 @@ const VideoFormGateSettingsPanel: React.FC<{
                 onChangeParameters={(metaEventParameters) => onPatchSettings({ videoFormGateMetaEventParameters: metaEventParameters })}
                 onCommit={onSave}
               />
-              <p className={styles.muted}>
-                Si una respuesta descalifica el formulario, no se enviará este evento personalizado de Meta.
-              </p>
             </div>
           )}
 
           {showDesignControls && (
             <div className={styles.settingsGroup}>
-              <div className={styles.panelSubheader}>Diseño del formulario</div>
-              <label className={styles.field}>
-                <span>Tema automático</span>
-                <CustomSelect
-                  value={videoGateThemeMode}
-                  onChange={(event) => applyVideoGateThemeMode(event.target.value as VideoFormGateThemeMode)}
-                  onBlur={onSave}
-                >
-                  {videoFormGateThemeModeOptions.map(option => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </CustomSelect>
-              </label>
+              <div className={styles.videoFormGateThemeHeader}>
+                <div className={styles.panelSubheader}>Diseño del formulario</div>
+                <TabList
+                  tabs={videoGateThemeTabs}
+                  activeTab={videoGateThemeMode}
+                  onTabChange={(value) => applyVideoGateThemeMode(value as VideoFormGateThemeMode)}
+                  variant="compact"
+                  fullWidth
+                  className={styles.videoFormGateToneControl}
+                />
+              </div>
               <div className={styles.twoColumn}>
                 <ColorField
                   label="Fondo del formulario"
@@ -34288,8 +34288,10 @@ const VideoFormGateSettingsPanel: React.FC<{
           )}
 
           <div className={styles.settingsGroup}>
-            <div className={styles.panelSubheader}>Elementos del formulario</div>
-            <p className={styles.muted}>Agrega preguntas, textos o imágenes desde la barra izquierda. Toca un elemento en el video para editarlo aquí.</p>
+            <div className={styles.videoFormGateSectionHeader}>
+              <div className={styles.panelSubheader}>Elementos</div>
+              <span>{questions.length} {questions.length === 1 ? 'elemento' : 'elementos'}</span>
+            </div>
 
             <div className={styles.formFieldList}>
               {questions.map((question, index) => {
