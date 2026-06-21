@@ -22,6 +22,7 @@ import {
   Send,
   Mail,
   MessageCircle,
+  Settings,
   PauseCircle,
   PlayCircle,
   Ban,
@@ -2395,6 +2396,16 @@ export const Transactions: React.FC = () => {
         <PageHeader
           title={pageTitle}
           subtitle={pageSubtitle}
+          actions={(
+            <Button
+              type="button"
+              variant="secondary"
+              leftIcon={<Settings size={16} />}
+              onClick={() => navigate('/settings/payments')}
+            >
+              Configuración
+            </Button>
+          )}
         />
 
         <div className={styles.controlsRow}>
