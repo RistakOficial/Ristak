@@ -1815,7 +1815,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
    into directly on the canvas. Inline-edit text nodes opt back in below. */
 .rstkCanvas input, .rstkCanvas textarea, .rstkCanvas select { pointer-events: none; }
 .rstkCanvas iframe { pointer-events: none; }
-.rstkCanvas iframe.rstk-calendar-embed { pointer-events: auto; }
+.rstkCanvas .rstkSelActive iframe.rstk-calendar-embed { pointer-events: auto; }
 
 /* Selectable block wrapper. */
 .rstkCanvas .rstk-block-style { position: relative; }

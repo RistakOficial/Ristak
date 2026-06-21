@@ -28841,14 +28841,14 @@ const CalendarBlockDesignControls: React.FC<{
       </label>
       <MediaUploadControl
         kind="image"
-        label="Elegir imagen"
+        label="Imagen de perfil"
         moduleEntityId={site.id}
         currentUrl={getSettingString(settings, 'calendarCoverImage') || calendar?.calendarCoverImage || ''}
         onUploaded={(url) => onPatchSettings({ calendarCoverImage: url })}
         onCommit={onSave}
       />
       <label className={styles.field}>
-        <span>URL de imagen</span>
+        <span>URL de imagen de perfil</span>
         <input
           value={getSettingString(settings, 'calendarCoverImage')}
           placeholder={calendar?.calendarCoverImage || 'https://...'}
