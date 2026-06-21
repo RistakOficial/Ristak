@@ -1,5 +1,5 @@
 import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
-import { CheckCheck, CircleAlert, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
+import { CheckCheck, CircleAlert, Clock, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
 import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
 import {
   Modal,
@@ -149,6 +149,7 @@ type ContactChatComposerChannel = 'whatsapp' | 'email' | 'messenger' | 'instagra
 
 interface ContactChatMessage {
   id: string
+  optimisticId?: string
   text: string
   subject?: string
   date: string
@@ -162,6 +163,11 @@ interface ContactChatMessage {
   transport?: string
   channel?: ContactChatComposerChannel
 }
+
+const CONTACT_PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'enviando', 'enviando por qr', 'scheduled'])
+const CONTACT_FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
+const CONTACT_OPTIMISTIC_MESSAGE_ID_PREFIXES = ['contact-modal-chat-']
+const CONTACT_OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 
 interface ContactDetailsModalProps {
   isOpen: boolean
@@ -563,6 +569,66 @@ const getChatTimeLabel = (date: string, timeZone: string) => {
 const isScheduledContactChatMessage = (message: ContactChatMessage) =>
   String(message.status || '').trim().toLowerCase() === 'scheduled' || Boolean(message.scheduledAt && message.scheduledMessageId)
 
+const normalizeContactChatMatchText = (value?: string) =>
+  String(value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+
+const getContactChatTimeValue = (value?: string) => {
+  const timestamp = Date.parse(String(value || ''))
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+const isOptimisticContactChatMessage = (message: ContactChatMessage) => {
+  if (message.optimisticId) return true
+  return CONTACT_OPTIMISTIC_MESSAGE_ID_PREFIXES.some((prefix) => message.id.startsWith(prefix))
+}
+
+const isRecentOptimisticContactChatMessage = (message: ContactChatMessage) => {
+  if (!isOptimisticContactChatMessage(message)) return false
+  const timestamp = getContactChatTimeValue(message.date)
+  if (!timestamp) return true
+  return Date.now() - timestamp < CONTACT_OPTIMISTIC_MESSAGE_MAX_AGE_MS
+}
+
+const getOptimisticContactChatMessageKey = (message: ContactChatMessage) =>
+  message.optimisticId || message.id
+
+const contactChatMessagesLookLikeSameSend = (loaded: ContactChatMessage, optimistic: ContactChatMessage) => {
+  const optimisticKey = getOptimisticContactChatMessageKey(optimistic)
+  if (loaded.id === optimistic.id || loaded.id === optimisticKey || loaded.optimisticId === optimisticKey) return true
+  if (loaded.direction !== optimistic.direction || optimistic.direction !== 'outbound') return false
+
+  const loadedTime = getContactChatTimeValue(loaded.date)
+  const optimisticTime = getContactChatTimeValue(optimistic.date)
+  if (loadedTime && optimisticTime && Math.abs(loadedTime - optimisticTime) > CONTACT_OPTIMISTIC_MESSAGE_MAX_AGE_MS) return false
+
+  const loadedText = normalizeContactChatMatchText(loaded.text)
+  const optimisticText = normalizeContactChatMatchText(optimistic.text)
+  const sameSubject = normalizeContactChatMatchText(loaded.subject) === normalizeContactChatMatchText(optimistic.subject)
+  return Boolean(loadedText && optimisticText && loadedText === optimisticText && sameSubject) &&
+    (!loadedTime || !optimisticTime || loadedTime >= optimisticTime - 5000)
+}
+
+const mergeContactChatMessagesWithOptimistic = (loadedMessages: ContactChatMessage[], currentMessages: ContactChatMessage[]) => {
+  const merged = [...loadedMessages]
+  const matchedLoadedIndexes = new Set<number>()
+
+  currentMessages.forEach((message) => {
+    if (!isRecentOptimisticContactChatMessage(message)) return
+    const matchIndex = loadedMessages.findIndex((loaded, index) => (
+      !matchedLoadedIndexes.has(index) && contactChatMessagesLookLikeSameSend(loaded, message)
+    ))
+    if (matchIndex >= 0) {
+      matchedLoadedIndexes.add(matchIndex)
+      return
+    }
+    if (!merged.some((loaded) => loaded.id === message.id || loaded.id === getOptimisticContactChatMessageKey(message))) {
+      merged.push(message)
+    }
+  })
+
+  return merged.sort((left, right) => getContactChatTimeValue(left.date) - getContactChatTimeValue(right.date))
+}
+
 const toDateTimeLocalInputValue = (date: Date) => {
   const pad = (value: number) => String(value).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
@@ -878,7 +944,9 @@ export function ContactDetailsModal({
         .map(getScheduledChatBubble)
         .filter((message): message is ContactChatMessage => Boolean(message))
 
-      setChatMessages([...journeyMessages, ...scheduledBubbles].sort((left, right) => Date.parse(left.date) - Date.parse(right.date)))
+      const loadedMessages = [...journeyMessages, ...scheduledBubbles]
+        .sort((left, right) => Date.parse(left.date) - Date.parse(right.date))
+      setChatMessages((current) => mergeContactChatMessagesWithOptimistic(loadedMessages, current))
     } catch {
       if (!silent) {
         setChatMessages([])
@@ -1529,6 +1597,7 @@ export function ContactDetailsModal({
     const sentAt = new Date().toISOString()
     const optimisticMessage: ContactChatMessage = {
       id: optimisticId,
+      optimisticId,
       text,
       subject: selectedChatChannel === 'email' ? subject : undefined,
       date: sentAt,
@@ -1727,33 +1796,43 @@ export function ContactDetailsModal({
             chatMessageGroups.map((group) => (
               <div key={group.key} className={styles.contactChatGroup}>
                 <div className={styles.contactChatDay}>{group.label}</div>
-                {group.messages.map((message) => (
-                  <article
-                    key={message.id}
-                    className={`${styles.contactChatBubble} ${
-                      message.direction === 'outbound'
-                        ? styles.contactChatOutbound
-                        : message.direction === 'system'
-                        ? styles.contactChatSystem
-                        : styles.contactChatInbound
-                    } ${isScheduledContactChatMessage(message) ? styles.contactChatScheduled : ''}`}
-                  >
-                    {message.subject ? <strong className={styles.contactChatSubject}>{message.subject}</strong> : null}
-                    {message.text ? <p>{message.text}</p> : null}
-                    {message.errorReason ? <small className={styles.contactChatError}>{message.errorReason}</small> : null}
-                    {message.scheduledAt ? (
-                      <small className={styles.contactChatScheduledText}>
-                        Programado para {formatLocalDateTime(message.scheduledAt)}
+                {group.messages.map((message) => {
+                  const status = String(message.status || '').trim().toLowerCase()
+                  const failed = CONTACT_FAILED_MESSAGE_STATUSES.has(status) || Boolean(message.errorReason)
+                  const pending = CONTACT_PENDING_MESSAGE_STATUSES.has(status)
+                  const scheduled = isScheduledContactChatMessage(message)
+                  const sending = message.direction === 'outbound' && pending && !scheduled && !failed
+
+                  return (
+                    <article
+                      key={message.id}
+                      className={`${styles.contactChatBubble} ${
+                        message.direction === 'outbound'
+                          ? styles.contactChatOutbound
+                          : message.direction === 'system'
+                          ? styles.contactChatSystem
+                          : styles.contactChatInbound
+                      } ${scheduled ? styles.contactChatScheduled : ''}`}
+                    >
+                      {message.subject ? <strong className={styles.contactChatSubject}>{message.subject}</strong> : null}
+                      {message.text ? <p>{message.text}</p> : null}
+                      {message.errorReason ? <small className={styles.contactChatError}>{message.errorReason}</small> : null}
+                      {message.scheduledAt ? (
+                        <small className={styles.contactChatScheduledText}>
+                          Programado para {formatLocalDateTime(message.scheduledAt)}
+                        </small>
+                      ) : null}
+                      <small className={styles.contactChatMeta}>
+                        {failed ? <CircleAlert size={12} aria-hidden="true" /> : null}
+                        <span>{getChatTimeLabel(message.date, timezone)}</span>
+                        {message.transport ? <em>{message.transport}</em> : null}
+                        {message.direction === 'outbound' && !failed && !pending ? <CheckCheck size={13} aria-hidden="true" /> : null}
+                        {scheduled ? <Clock size={12} aria-hidden="true" /> : null}
+                        {sending ? <Loader2 size={12} className={styles.spinIcon} aria-label="Enviando" /> : null}
                       </small>
-                    ) : null}
-                    <small className={styles.contactChatMeta}>
-                      {message.status === 'error' ? <CircleAlert size={12} aria-hidden="true" /> : null}
-                      <span>{getChatTimeLabel(message.date, timezone)}</span>
-                      {message.transport ? <em>{message.transport}</em> : null}
-                      {message.direction === 'outbound' && message.status !== 'error' ? <CheckCheck size={13} aria-hidden="true" /> : null}
-                    </small>
-                  </article>
-                ))}
+                    </article>
+                  )
+                })}
               </div>
             ))
           )}
@@ -1867,7 +1946,6 @@ export function ContactDetailsModal({
                 variant="primary"
                 size="sm"
                 className={styles.contactChatSendButton}
-                loading={chatSending}
                 disabled={!canSendChatMessage}
                 aria-label="Enviar mensaje"
               >

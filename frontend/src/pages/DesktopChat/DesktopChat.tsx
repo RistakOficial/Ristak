@@ -154,6 +154,7 @@ interface ChatListCacheSnapshot {
 
 interface DesktopChatMessage {
   id: string
+  optimisticId?: string
   text: string
   subject?: string
   date: string
@@ -353,6 +354,8 @@ const MESSAGE_AUDIO_WAVE_PATTERN = [13, 24, 36, 19, 30, 46, 22, 15, 40, 52, 34, 
 const MESSAGE_AUDIO_WAVE_BAR_COUNT = 30
 const FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
 const PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'enviando', 'enviando por qr', 'scheduled'])
+const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['desktop-chat-', 'desktop-email-', 'desktop-template-']
+const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CANCELED_APPOINTMENT_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'noshow', 'invalid', 'failed', 'missed', 'deleted', 'void', 'voided'])
@@ -816,6 +819,7 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
   const attachment = message.attachment
   return [
     message.id,
+    message.optimisticId,
     message.text,
     message.subject,
     message.date,
@@ -845,6 +849,89 @@ function areDesktopMessagesEquivalent(left: DesktopChatMessage[], right: Desktop
   if (left === right) return true
   if (left.length !== right.length) return false
   return left.every((message, index) => getDesktopMessageSignature(message) === getDesktopMessageSignature(right[index]))
+}
+
+function normalizeMessageMatchText(value?: string) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function getMessageTimeValue(value?: string) {
+  const timestamp = Date.parse(String(value || ''))
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+function isOptimisticDesktopMessage(message: DesktopChatMessage) {
+  if (message.optimisticId) return true
+  return OPTIMISTIC_MESSAGE_ID_PREFIXES.some((prefix) => message.id.startsWith(prefix))
+}
+
+function isRecentOptimisticDesktopMessage(message: DesktopChatMessage) {
+  if (!isOptimisticDesktopMessage(message)) return false
+  const timestamp = getMessageTimeValue(message.date)
+  if (!timestamp) return true
+  return Date.now() - timestamp < OPTIMISTIC_MESSAGE_MAX_AGE_MS
+}
+
+function getOptimisticMessageKey(message: DesktopChatMessage) {
+  return message.optimisticId || message.id
+}
+
+function getMessageAttachmentMatchKey(message: DesktopChatMessage) {
+  const attachment = message.attachment
+  if (!attachment) return ''
+  return [
+    attachment.type,
+    normalizeMessageMatchText(attachment.name),
+    normalizeMessageMatchText(attachment.mimeType)
+  ].join(':')
+}
+
+function messagesLookLikeSameOptimisticSend(loaded: DesktopChatMessage, optimistic: DesktopChatMessage) {
+  const optimisticKey = getOptimisticMessageKey(optimistic)
+  if (loaded.id === optimistic.id || loaded.id === optimisticKey || loaded.optimisticId === optimisticKey) return true
+  if (loaded.direction !== optimistic.direction || optimistic.direction !== 'outbound') return false
+
+  const loadedTime = getMessageTimeValue(loaded.date)
+  const optimisticTime = getMessageTimeValue(optimistic.date)
+  if (loadedTime && optimisticTime && Math.abs(loadedTime - optimisticTime) > OPTIMISTIC_MESSAGE_MAX_AGE_MS) return false
+
+  const loadedText = normalizeMessageMatchText(loaded.text)
+  const optimisticText = normalizeMessageMatchText(optimistic.text)
+  const sameText = Boolean(loadedText && optimisticText && loadedText === optimisticText)
+  const sameSubject = normalizeMessageMatchText(loaded.subject) === normalizeMessageMatchText(optimistic.subject)
+  const loadedAttachment = getMessageAttachmentMatchKey(loaded)
+  const optimisticAttachment = getMessageAttachmentMatchKey(optimistic)
+  const sameAttachment = Boolean(loadedAttachment && optimisticAttachment && loadedAttachment === optimisticAttachment)
+
+  if ((sameText || sameAttachment) && sameSubject) {
+    return !loadedTime || !optimisticTime || loadedTime >= optimisticTime - 5000
+  }
+  return optimistic.id.startsWith('desktop-template-') &&
+    Boolean(loadedText || loaded.attachment) &&
+    (!loadedTime || !optimisticTime || loadedTime >= optimisticTime - 5000)
+}
+
+function mergeDesktopMessagesWithOptimistic(loadedMessages: DesktopChatMessage[], currentMessages: DesktopChatMessage[]) {
+  const merged = [...loadedMessages]
+  const matchedLoadedIndexes = new Set<number>()
+
+  currentMessages.forEach((message) => {
+    if (!isRecentOptimisticDesktopMessage(message)) return
+
+    const matchIndex = loadedMessages.findIndex((loaded, index) => (
+      !matchedLoadedIndexes.has(index) && messagesLookLikeSameOptimisticSend(loaded, message)
+    ))
+    if (matchIndex >= 0) {
+      matchedLoadedIndexes.add(matchIndex)
+      return
+    }
+
+    if (!merged.some((loaded) => loaded.id === message.id || loaded.id === getOptimisticMessageKey(message))) {
+      merged.push(message)
+    }
+  })
+
+  return merged.sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
 }
 
 function getJourneyEventSignature(event: JourneyEvent) {
@@ -2408,7 +2495,10 @@ export const DesktopChat: React.FC = () => {
         areJourneyEventsEquivalent(current, cachedConversation.journey) ? current : cachedConversation.journey
       ))
       setMessages((current) => (
-        areDesktopMessagesEquivalent(current, cachedConversation.messages) ? current : cachedConversation.messages
+        (() => {
+          const nextMessages = mergeDesktopMessagesWithOptimistic(cachedConversation.messages, current)
+          return areDesktopMessagesEquivalent(current, nextMessages) ? current : nextMessages
+        })()
       ))
       setContactInfoData(cachedConversation.contactInfo)
       setConversationAgentState(cachedConversation.agentState)
@@ -2445,7 +2535,10 @@ export const DesktopChat: React.FC = () => {
       setConversationAgentState(agentState)
       setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
       setMessages((current) => (
-        areDesktopMessagesEquivalent(current, nextMessages) ? current : nextMessages
+        (() => {
+          const mergedMessages = mergeDesktopMessagesWithOptimistic(nextMessages, current)
+          return areDesktopMessagesEquivalent(current, mergedMessages) ? current : mergedMessages
+        })()
       ))
       writeCachedConversation(locationId, contactId, {
         journey,
@@ -2977,6 +3070,7 @@ export const DesktopChat: React.FC = () => {
       ...current,
       {
         id: optimisticId,
+        optimisticId,
         text: preview,
         date: sentAt,
         direction: 'outbound',
@@ -3836,8 +3930,9 @@ export const DesktopChat: React.FC = () => {
 		      const optimisticId = `desktop-email-${Date.now()}`
 		      const sentAt = new Date().toISOString()
 	      const optimisticMessage: DesktopChatMessage = {
-	        id: optimisticId,
-	        text,
+        id: optimisticId,
+        optimisticId,
+        text,
 	        subject,
 	        date: sentAt,
 	        direction: 'outbound',
@@ -3939,6 +4034,7 @@ export const DesktopChat: React.FC = () => {
     const optimisticMessages: DesktopChatMessage[] = voiceToSend
       ? [{
           id: `${optimisticId}-audio`,
+          optimisticId: `${optimisticId}-audio`,
           text: '',
           date: sentAt,
           direction: 'outbound',
@@ -3957,6 +4053,7 @@ export const DesktopChat: React.FC = () => {
       : attachmentsToSend.length > 0
       ? attachmentsToSend.map((attachment, index) => ({
           id: `${optimisticId}-attachment-${index}`,
+          optimisticId: `${optimisticId}-attachment-${index}`,
           text: index === 0 ? text : '',
           date: sentAt,
           direction: 'outbound',
@@ -3973,6 +4070,7 @@ export const DesktopChat: React.FC = () => {
         }))
       : [{
           id: optimisticId,
+          optimisticId,
           text,
           date: sentAt,
           direction: 'outbound',
@@ -4797,12 +4895,15 @@ export const DesktopChat: React.FC = () => {
     const status = String(message.status || '').trim().toLowerCase()
     const failed = FAILED_MESSAGE_STATUSES.has(status) || Boolean(message.errorReason)
     const pending = PENDING_MESSAGE_STATUSES.has(status)
+    const scheduled = isMessageScheduled(message)
+    const sending = message.direction === 'outbound' && pending && !scheduled && !failed
     return (
       <span className={styles.messageMeta}>
         {transportLabel ? <em className={styles.messageTransport}>{transportLabel}</em> : null}
         {formatMessageTime(message.date)}
         {message.direction === 'outbound' && !failed && !pending ? <CheckCheck size={13} /> : null}
-        {pending ? <Clock size={13} /> : null}
+        {scheduled ? <Clock size={13} /> : null}
+        {sending ? <Loader2 size={13} className={styles.spin} aria-label="Enviando" /> : null}
         {failed ? <CircleAlert size={13} /> : null}
       </span>
     )
@@ -5502,9 +5603,9 @@ export const DesktopChat: React.FC = () => {
 	                    >
 	                      {voiceProcessing ? <Loader2 size={18} className={styles.spin} /> : voiceRecording ? <Square size={16} /> : <Mic size={18} />}
 	                    </button>
-	                    <button type="submit" className={styles.sendButton} disabled={!canSend} aria-label="Enviar mensaje">
-	                      {composerStatus === 'sending' ? <Loader2 size={18} className={styles.spin} /> : <ArrowUp size={18} />}
-	                    </button>
+                    <button type="submit" className={styles.sendButton} disabled={!canSend} aria-label="Enviar mensaje">
+                      <ArrowUp size={18} />
+                    </button>
 	                  </>
 	                )}
               </form>
