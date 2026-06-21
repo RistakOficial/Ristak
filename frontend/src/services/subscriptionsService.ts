@@ -31,6 +31,14 @@ export interface PaymentSubscription {
   stripeProductId?: string | null
   stripePriceId?: string | null
   stripePaymentMethodId?: string | null
+  mercadoPagoPreapprovalId?: string | null
+  mercadoPagoPreapprovalPlanId?: string | null
+  mercadoPagoInitPoint?: string | null
+  mercadoPagoSandboxInitPoint?: string | null
+  mercadoPagoPayerId?: string | null
+  mercadoPagoCardId?: string | null
+  mercadoPagoPaymentMethodId?: string | null
+  mercadoPagoNextPaymentDate?: string | null
   metadata?: Record<string, unknown> | null
   raw?: Record<string, unknown> | null
   createdAt?: string | null
@@ -74,6 +82,14 @@ export interface SubscriptionPayload {
   stripeProductId?: string | null
   stripePriceId?: string | null
   stripePaymentMethodId?: string | null
+  mercadoPagoPreapprovalId?: string | null
+  mercadoPagoPreapprovalPlanId?: string | null
+  mercadoPagoInitPoint?: string | null
+  mercadoPagoSandboxInitPoint?: string | null
+  mercadoPagoPayerId?: string | null
+  mercadoPagoCardId?: string | null
+  mercadoPagoPaymentMethodId?: string | null
+  mercadoPagoNextPaymentDate?: string | null
   metadata?: Record<string, unknown> | null
 }
 

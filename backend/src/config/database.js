@@ -2207,6 +2207,14 @@ async function initTables() {
         stripe_product_id TEXT,
         stripe_price_id TEXT,
         stripe_payment_method_id TEXT,
+        mercadopago_preapproval_id TEXT UNIQUE,
+        mercadopago_preapproval_plan_id TEXT,
+        mercadopago_init_point TEXT,
+        mercadopago_sandbox_init_point TEXT,
+        mercadopago_payer_id TEXT,
+        mercadopago_card_id TEXT,
+        mercadopago_payment_method_id TEXT,
+        mercadopago_next_payment_date DATETIME,
         metadata_json TEXT,
         raw_json TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -2219,6 +2227,7 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_next_run ON subscriptions(next_run_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions(stripe_customer_id)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_mercadopago_preapproval ON subscriptions(mercadopago_preapproval_id)')
 
     // Tabla de citas
     await db.run(`
@@ -3598,6 +3607,35 @@ async function initTables() {
           if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
             throw err
           }
+        }
+      }
+
+      const subscriptionProviderColumns = [
+        ['mercadopago_preapproval_id', 'TEXT'],
+        ['mercadopago_preapproval_plan_id', 'TEXT'],
+        ['mercadopago_init_point', 'TEXT'],
+        ['mercadopago_sandbox_init_point', 'TEXT'],
+        ['mercadopago_payer_id', 'TEXT'],
+        ['mercadopago_card_id', 'TEXT'],
+        ['mercadopago_payment_method_id', 'TEXT'],
+        ['mercadopago_next_payment_date', 'DATETIME']
+      ]
+
+      for (const [column, type] of subscriptionProviderColumns) {
+        try {
+          await db.run(`ALTER TABLE subscriptions ADD COLUMN ${column} ${type}`)
+        } catch (err) {
+          if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+            throw err
+          }
+        }
+      }
+
+      try {
+        await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_mercadopago_preapproval ON subscriptions(mercadopago_preapproval_id)')
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
+          throw err
         }
       }
 

@@ -8,6 +8,13 @@ import {
   syncStripeSubscriptionInvoicePayment,
   updateStripeRecurringSubscription
 } from './stripePaymentService.js'
+import {
+  cancelMercadoPagoRecurringSubscription,
+  createMercadoPagoRecurringSubscription,
+  pauseMercadoPagoRecurringSubscription,
+  resumeMercadoPagoRecurringSubscription,
+  updateMercadoPagoRecurringSubscription
+} from './mercadoPagoPaymentService.js'
 import { getSubscriptionAuditSummary } from './paymentRecordSafetyService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 
@@ -214,6 +221,14 @@ function rowToApi(row = {}) {
     stripeProductId: row.stripe_product_id || null,
     stripePriceId: row.stripe_price_id || null,
     stripePaymentMethodId: row.stripe_payment_method_id || null,
+    mercadoPagoPreapprovalId: row.mercadopago_preapproval_id || null,
+    mercadoPagoPreapprovalPlanId: row.mercadopago_preapproval_plan_id || null,
+    mercadoPagoInitPoint: row.mercadopago_init_point || null,
+    mercadoPagoSandboxInitPoint: row.mercadopago_sandbox_init_point || null,
+    mercadoPagoPayerId: row.mercadopago_payer_id || null,
+    mercadoPagoCardId: row.mercadopago_card_id || null,
+    mercadoPagoPaymentMethodId: row.mercadopago_payment_method_id || null,
+    mercadoPagoNextPaymentDate: row.mercadopago_next_payment_date || null,
     metadata,
     raw,
     createdAt: row.created_at || null,
@@ -283,6 +298,14 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     stripe_product_id: nullableString(payload.stripeProductId ?? payload.stripe_product_id ?? existing.stripe_product_id),
     stripe_price_id: nullableString(payload.stripePriceId ?? payload.stripe_price_id ?? existing.stripe_price_id),
     stripe_payment_method_id: nullableString(payload.stripePaymentMethodId ?? payload.stripe_payment_method_id ?? existing.stripe_payment_method_id),
+    mercadopago_preapproval_id: nullableString(payload.mercadoPagoPreapprovalId ?? payload.mercadopago_preapproval_id ?? existing.mercadopago_preapproval_id),
+    mercadopago_preapproval_plan_id: nullableString(payload.mercadoPagoPreapprovalPlanId ?? payload.mercadopago_preapproval_plan_id ?? existing.mercadopago_preapproval_plan_id),
+    mercadopago_init_point: nullableString(payload.mercadoPagoInitPoint ?? payload.mercadopago_init_point ?? existing.mercadopago_init_point),
+    mercadopago_sandbox_init_point: nullableString(payload.mercadoPagoSandboxInitPoint ?? payload.mercadopago_sandbox_init_point ?? existing.mercadopago_sandbox_init_point),
+    mercadopago_payer_id: nullableString(payload.mercadoPagoPayerId ?? payload.mercadopago_payer_id ?? existing.mercadopago_payer_id),
+    mercadopago_card_id: nullableString(payload.mercadoPagoCardId ?? payload.mercadopago_card_id ?? existing.mercadopago_card_id),
+    mercadopago_payment_method_id: nullableString(payload.mercadoPagoPaymentMethodId ?? payload.mercadopago_payment_method_id ?? existing.mercadopago_payment_method_id),
+    mercadopago_next_payment_date: nullableDate(payload.mercadoPagoNextPaymentDate ?? payload.mercadopago_next_payment_date ?? existing.mercadopago_next_payment_date),
     metadata_json: jsonOrNull(payload.metadata ?? payload.metadata_json ?? existing.metadata_json),
     raw_json: jsonOrNull(payload.raw ?? payload.raw_json ?? existing.raw_json)
   }
@@ -324,6 +347,62 @@ async function attachStripeSubscriptionIfNeeded(row, payload = {}) {
   }
 }
 
+function mergeRawJson(currentRaw, providerKey, value) {
+  const current = parseJson(currentRaw, {})
+  return jsonOrNull({
+    ...current,
+    [providerKey]: value
+  })
+}
+
+function applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription) {
+  if (!mercadoPagoSubscription) return row
+
+  return {
+    ...row,
+    status: mercadoPagoSubscription.status || row.status,
+    payment_method: 'mercadopago_subscription',
+    payment_provider: 'mercadopago',
+    payment_mode: mercadoPagoSubscription.paymentMode || row.payment_mode,
+    mercadopago_preapproval_id: mercadoPagoSubscription.mercadoPagoPreapprovalId || row.mercadopago_preapproval_id,
+    mercadopago_preapproval_plan_id: mercadoPagoSubscription.mercadoPagoPreapprovalPlanId || row.mercadopago_preapproval_plan_id,
+    mercadopago_init_point: mercadoPagoSubscription.mercadoPagoInitPoint || row.mercadopago_init_point,
+    mercadopago_sandbox_init_point: mercadoPagoSubscription.mercadoPagoSandboxInitPoint || row.mercadopago_sandbox_init_point,
+    mercadopago_payer_id: mercadoPagoSubscription.mercadoPagoPayerId || row.mercadopago_payer_id,
+    mercadopago_card_id: mercadoPagoSubscription.mercadoPagoCardId || row.mercadopago_card_id,
+    mercadopago_payment_method_id: mercadoPagoSubscription.mercadoPagoPaymentMethodId || row.mercadopago_payment_method_id,
+    mercadopago_next_payment_date: mercadoPagoSubscription.mercadoPagoNextPaymentDate || row.mercadopago_next_payment_date,
+    next_run_at: mercadoPagoSubscription.nextRunAt || row.next_run_at,
+    current_period_end: mercadoPagoSubscription.currentPeriodEnd || row.current_period_end,
+    raw_json: mergeRawJson(row.raw_json, 'mercadoPago', mercadoPagoSubscription.raw)
+  }
+}
+
+async function attachMercadoPagoSubscriptionIfNeeded(row) {
+  if (row.mercadopago_preapproval_id) return row
+  if (row.payment_provider !== 'mercadopago') return row
+
+  if (!row.contact_email) {
+    const error = new Error('Mercado Pago necesita el email del contacto para enviar la autorización de suscripción.')
+    error.status = 422
+    throw error
+  }
+
+  const mercadoPagoSubscription = await createMercadoPagoRecurringSubscription({
+    ristakSubscriptionId: row.id,
+    name: row.name,
+    amount: row.amount,
+    currency: row.currency,
+    intervalType: row.interval_type,
+    intervalCount: row.interval_count,
+    startDate: row.start_date,
+    cancelAt: row.cancel_at,
+    contactEmail: row.contact_email
+  })
+
+  return applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription)
+}
+
 async function syncStripeSubscriptionUpdateIfNeeded(row, existing) {
   if (!existing.stripe_subscription_id) return row
 
@@ -356,6 +435,28 @@ async function syncStripeSubscriptionUpdateIfNeeded(row, existing) {
     current_period_end: stripeSubscription.currentPeriodEnd || row.current_period_end,
     next_run_at: stripeSubscription.nextRunAt || row.next_run_at
   }
+}
+
+async function syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing = {}) {
+  if (!existing.mercadopago_preapproval_id) return attachMercadoPagoSubscriptionIfNeeded(row)
+
+  if (row.payment_provider !== 'mercadopago') {
+    const error = new Error('Esta suscripción ya está activa en Mercado Pago. Cancélala antes de cambiarla a otro método.')
+    error.status = 422
+    throw error
+  }
+
+  const mercadoPagoSubscription = await updateMercadoPagoRecurringSubscription({
+    ristakSubscriptionId: row.id,
+    mercadoPagoPreapprovalId: existing.mercadopago_preapproval_id,
+    name: row.name,
+    amount: row.amount,
+    currency: row.currency,
+    cancelAt: row.cancel_at,
+    nextRunAt: row.next_run_at
+  })
+
+  return applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription)
 }
 
 export async function listSubscriptions({ status } = {}) {
@@ -403,6 +504,7 @@ export async function createSubscription(payload = {}) {
   if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
   row = await attachStripeSubscriptionIfNeeded(row, payload)
+  row = await attachMercadoPagoSubscriptionIfNeeded(row, payload)
 
   await db.run(
     `INSERT INTO subscriptions (
@@ -410,9 +512,12 @@ export async function createSubscription(payload = {}) {
       amount, currency, interval_type, interval_count, start_date, next_run_at,
       current_period_start, current_period_end, cancel_at, cancelled_at,
       payment_method, payment_provider, payment_mode, source, stripe_customer_id, stripe_subscription_id,
-      stripe_product_id, stripe_price_id, stripe_payment_method_id, metadata_json, raw_json,
+      stripe_product_id, stripe_price_id, stripe_payment_method_id,
+      mercadopago_preapproval_id, mercadopago_preapproval_plan_id, mercadopago_init_point,
+      mercadopago_sandbox_init_point, mercadopago_payer_id, mercadopago_card_id,
+      mercadopago_payment_method_id, mercadopago_next_payment_date, metadata_json, raw_json,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       row.id,
       row.contact_id,
@@ -441,6 +546,14 @@ export async function createSubscription(payload = {}) {
       row.stripe_product_id,
       row.stripe_price_id,
       row.stripe_payment_method_id,
+      row.mercadopago_preapproval_id,
+      row.mercadopago_preapproval_plan_id,
+      row.mercadopago_init_point,
+      row.mercadopago_sandbox_init_point,
+      row.mercadopago_payer_id,
+      row.mercadopago_card_id,
+      row.mercadopago_payment_method_id,
+      row.mercadopago_next_payment_date,
       row.metadata_json,
       row.raw_json
     ]
@@ -469,6 +582,7 @@ export async function updateSubscription(subscriptionId, payload = {}) {
   if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
   row = await syncStripeSubscriptionUpdateIfNeeded(row, existing)
+  row = await syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing)
 
   await db.run(
     `UPDATE subscriptions
@@ -498,6 +612,14 @@ export async function updateSubscription(subscriptionId, payload = {}) {
          stripe_product_id = ?,
          stripe_price_id = ?,
          stripe_payment_method_id = ?,
+         mercadopago_preapproval_id = ?,
+         mercadopago_preapproval_plan_id = ?,
+         mercadopago_init_point = ?,
+         mercadopago_sandbox_init_point = ?,
+         mercadopago_payer_id = ?,
+         mercadopago_card_id = ?,
+         mercadopago_payment_method_id = ?,
+         mercadopago_next_payment_date = ?,
          metadata_json = ?,
          raw_json = ?,
          updated_at = CURRENT_TIMESTAMP
@@ -529,6 +651,14 @@ export async function updateSubscription(subscriptionId, payload = {}) {
       row.stripe_product_id,
       row.stripe_price_id,
       row.stripe_payment_method_id,
+      row.mercadopago_preapproval_id,
+      row.mercadopago_preapproval_plan_id,
+      row.mercadopago_init_point,
+      row.mercadopago_sandbox_init_point,
+      row.mercadopago_payer_id,
+      row.mercadopago_card_id,
+      row.mercadopago_payment_method_id,
+      row.mercadopago_next_payment_date,
       row.metadata_json,
       row.raw_json,
       subscriptionId
@@ -554,6 +684,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     if (existing.stripe_subscription_id) {
       await pauseStripeRecurringSubscription(existing.stripe_subscription_id)
     }
+    if (existing.mercadopago_preapproval_id) {
+      await pauseMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
+    }
 
     await db.run(
       `UPDATE subscriptions
@@ -564,6 +697,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
   } else if (normalizedAction === 'activate' || normalizedAction === 'resume') {
     if (existing.stripe_subscription_id) {
       await resumeStripeRecurringSubscription(existing.stripe_subscription_id)
+    }
+    if (existing.mercadopago_preapproval_id) {
+      await resumeMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
     }
 
     const nextRunAt = nullableDate(payload.nextRunAt ?? payload.next_run_at ?? existing.next_run_at) || new Date().toISOString()
@@ -579,6 +715,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
   } else if (normalizedAction === 'cancel') {
     if (existing.stripe_subscription_id) {
       await cancelStripeRecurringSubscription(existing.stripe_subscription_id)
+    }
+    if (existing.mercadopago_preapproval_id) {
+      await cancelMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
     }
 
     await db.run(
@@ -609,6 +748,18 @@ export async function deleteSubscription(subscriptionId) {
     const error = new Error('Esta suscripción ya tiene cobros registrados. No se puede eliminar; cancélala para conservar el historial.')
     error.status = 422
     throw error
+  }
+
+  const existing = await db.get(
+    `SELECT id, status, mercadopago_preapproval_id
+     FROM subscriptions
+     WHERE id = ? AND COALESCE(status, '') <> 'deleted'
+     LIMIT 1`,
+    [subscriptionId]
+  )
+
+  if (existing?.mercadopago_preapproval_id && existing.status !== 'cancelled') {
+    await cancelMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
   }
 
   const result = await db.run(

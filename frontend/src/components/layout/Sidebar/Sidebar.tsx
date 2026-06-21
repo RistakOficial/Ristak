@@ -57,6 +57,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import automationsService from '@/services/automationsService'
+import { getIntegrationsStatus } from '@/services/integrationsService'
 
 interface SidebarProps {
   collapsed?: boolean
@@ -309,6 +310,7 @@ const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({
 interface PaymentsNavGroupProps {
   pathname: string
   open: boolean
+  items: SidebarNavChild[]
   collapsed?: boolean
   onToggle: () => void
   onRequestExpand?: () => void
@@ -318,6 +320,7 @@ interface PaymentsNavGroupProps {
 const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
   pathname,
   open,
+  items,
   collapsed = false,
   onToggle,
   onRequestExpand,
@@ -367,7 +370,7 @@ const PaymentsNavGroup: React.FC<PaymentsNavGroupProps> = ({
 
       {open && (
         <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[var(--border)] pl-2.5">
-          {PAYMENTS_NAV_ITEMS.map((child) => {
+          {items.map((child) => {
             const childActive = child.exact ? pathname === child.to : pathname.startsWith(child.to)
             return (
               <Link
@@ -563,6 +566,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isPaymentsRoute = location.pathname.startsWith('/transactions')
   const [aiAgentOpen, setAiAgentOpen] = useState(isAIAgentRoute)
   const [paymentsOpen, setPaymentsOpen] = useState(isPaymentsRoute)
+  const [paymentCapabilities, setPaymentCapabilities] = useState({
+    paymentPlans: false,
+    subscriptions: false
+  })
 
   // Sincronizar el estado de los grupos con la ruta actual
   useEffect(() => {
@@ -572,6 +579,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     setPaymentsOpen(isPaymentsRoute)
   }, [isPaymentsRoute])
+
+  useEffect(() => {
+    let cancelled = false
+
+    getIntegrationsStatus()
+      .then((status) => {
+        if (cancelled) return
+        const stripe = Boolean(status?.stripe?.connected)
+        const mercadoPago = Boolean(status?.mercadopago?.connected)
+        const highlevel = Boolean(status?.highlevel?.connected)
+        setPaymentCapabilities({
+          paymentPlans: stripe || mercadoPago || highlevel,
+          subscriptions: stripe || mercadoPago
+        })
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPaymentCapabilities({
+            paymentPlans: false,
+            subscriptions: false
+          })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [location.pathname])
+
+  const visiblePaymentsNavigation = useMemo(() => (
+    PAYMENTS_NAV_ITEMS.filter((item) => {
+      if (item.to === '/transactions/payment-plans') return paymentCapabilities.paymentPlans
+      if (item.to === '/transactions/subscriptions') return paymentCapabilities.subscriptions
+      return true
+    })
+  ), [paymentCapabilities.paymentPlans, paymentCapabilities.subscriptions])
 
   useEffect(() => {
     if (!collapsed) return
@@ -1010,6 +1053,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     key={item.id}
                     pathname={location.pathname}
                     open={paymentsOpen}
+                    items={visiblePaymentsNavigation}
                     collapsed={collapsed}
                     onToggle={() => setPaymentsOpen((current) => !current)}
                     onRequestExpand={handleRequestExpand}

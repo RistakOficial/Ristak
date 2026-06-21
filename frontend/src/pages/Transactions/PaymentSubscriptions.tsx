@@ -2,8 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   CalendarClock,
+  Copy,
   CreditCard,
   Edit3,
+  ExternalLink,
   MoreVertical,
   Pause,
   Play,
@@ -37,6 +39,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency } from '@/hooks'
 import type { Contact } from '@/types'
 import { formatCurrency, formatDate } from '@/utils/format'
+import { getIntegrationsStatus } from '@/services/integrationsService'
 import {
   subscriptionsService,
   type PaymentSubscription,
@@ -48,6 +51,7 @@ import {
 import styles from './PaymentSubscriptions.module.css'
 
 type SubscriptionFormMode = 'create' | 'edit' | null
+type PaymentGatewayProvider = 'stripe' | 'mercadopago'
 
 interface SubscriptionFormState {
   name: string
@@ -96,10 +100,10 @@ const STATUS_OPTIONS: Array<{ value: SubscriptionStatus; label: string }> = [
   { value: 'cancelled', label: 'Cancelada' }
 ]
 
-const PAYMENT_METHOD_OPTIONS = [
-  { value: 'stripe_saved_card', label: 'Stripe - tarjeta guardada' },
-  { value: 'stripe_link', label: 'Stripe - enlace de pago' },
-  { value: 'manual', label: 'Manual / offline' }
+const PAYMENT_METHOD_OPTIONS: Array<{ value: string; label: string; provider: PaymentGatewayProvider }> = [
+  { value: 'stripe_saved_card', label: 'Stripe - tarjeta guardada', provider: 'stripe' },
+  { value: 'stripe_link', label: 'Stripe - enlace de pago', provider: 'stripe' },
+  { value: 'mercadopago_subscription', label: 'Mercado Pago - suscripción', provider: 'mercadopago' }
 ]
 
 function toDateInputValue(value?: string | null) {
@@ -128,6 +132,19 @@ function createEmptyForm(): SubscriptionFormState {
     paymentMethod: 'stripe_saved_card',
     paymentProvider: 'stripe'
   }
+}
+
+function createEmptyFormForProvider(provider: PaymentGatewayProvider | null): SubscriptionFormState {
+  const form = createEmptyForm()
+  if (provider === 'mercadopago') {
+    return {
+      ...form,
+      status: 'incomplete',
+      paymentMethod: 'mercadopago_subscription',
+      paymentProvider: 'mercadopago'
+    }
+  }
+  return form
 }
 
 function getSubscriptionStatusLabel(status?: string | null) {
@@ -182,14 +199,23 @@ function getPaymentMethodLabel(value?: string | null) {
   const normalized = String(value || '').toLowerCase()
   if (normalized === 'stripe_saved_card') return 'Tarjeta guardada'
   if (normalized === 'stripe_link') return 'Link de Stripe'
+  if (normalized === 'mercadopago_subscription') return 'Suscripción Mercado Pago'
   if (normalized === 'manual') return 'Manual'
   return value || 'Sin método'
 }
 
 function getSourceLabel(subscription: PaymentSubscription) {
+  if (subscription.mercadoPagoPreapprovalId || subscription.paymentProvider === 'mercadopago') return 'Mercado Pago'
   if (subscription.stripeSubscriptionId || subscription.paymentProvider === 'stripe') return 'Stripe'
   if (subscription.source === 'ghl') return 'HighLevel'
   return 'Ristak'
+}
+
+function getMercadoPagoSubscriptionLink(subscription: PaymentSubscription) {
+  if (subscription.paymentMode === 'test') {
+    return subscription.mercadoPagoSandboxInitPoint || subscription.mercadoPagoInitPoint || ''
+  }
+  return subscription.mercadoPagoInitPoint || subscription.mercadoPagoSandboxInitPoint || ''
 }
 
 function matchesStatusFilter(subscription: PaymentSubscription, filter: string) {
@@ -230,6 +256,9 @@ export const PaymentSubscriptions: React.FC = () => {
   const [editingSubscription, setEditingSubscription] = useState<PaymentSubscription | null>(null)
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [form, setForm] = useState<SubscriptionFormState>(() => createEmptyForm())
+  const [stripeConnected, setStripeConnected] = useState(false)
+  const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
+  const [integrationsLoading, setIntegrationsLoading] = useState(true)
 
   const loadSubscriptions = async ({ refresh = false } = {}) => {
     if (refresh) setRefreshing(true)
@@ -251,15 +280,53 @@ export const PaymentSubscriptions: React.FC = () => {
     void loadSubscriptions()
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+
+    getIntegrationsStatus()
+      .then((data) => {
+        if (cancelled) return
+        setStripeConnected(Boolean(data?.stripe?.connected))
+        setMercadoPagoConnected(Boolean(data?.mercadopago?.connected))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setStripeConnected(false)
+        setMercadoPagoConnected(false)
+      })
+      .finally(() => {
+        if (!cancelled) setIntegrationsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const availablePaymentMethodOptions = useMemo(() => (
+    PAYMENT_METHOD_OPTIONS.filter((option) => (
+      option.provider === 'stripe' ? stripeConnected : mercadoPagoConnected
+    ))
+  ), [mercadoPagoConnected, stripeConnected])
+
+  const defaultProvider = stripeConnected ? 'stripe' : mercadoPagoConnected ? 'mercadopago' : null
+  const hasSubscriptionGateway = Boolean(defaultProvider)
+  const isMercadoPagoSelected = form.paymentProvider === 'mercadopago' || form.paymentMethod === 'mercadopago_subscription'
+
   const filteredSubscriptions = useMemo(
     () => subscriptions.filter((subscription) => matchesStatusFilter(subscription, statusFilter)),
     [statusFilter, subscriptions]
   )
 
   const openCreateSubscription = () => {
+    if (!hasSubscriptionGateway) {
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o Mercado Pago para crear suscripciones automáticas.')
+      return
+    }
+
     setEditingSubscription(null)
     setSelectedContact(null)
-    setForm(createEmptyForm())
+    setForm(createEmptyFormForProvider(defaultProvider))
     setFormMode('create')
   }
 
@@ -280,6 +347,20 @@ export const PaymentSubscriptions: React.FC = () => {
     })
     setFormMode('edit')
   }
+
+  useEffect(() => {
+    if (formMode !== 'create') return
+    if (!availablePaymentMethodOptions.length) return
+    if (availablePaymentMethodOptions.some((option) => option.value === form.paymentMethod)) return
+
+    const fallback = availablePaymentMethodOptions[0]
+    setForm((current) => ({
+      ...current,
+      paymentMethod: fallback.value,
+      paymentProvider: fallback.provider,
+      status: fallback.provider === 'mercadopago' ? 'incomplete' : current.status
+    }))
+  }, [availablePaymentMethodOptions, form.paymentMethod, formMode])
 
   const closeForm = () => {
     if (saving) return
@@ -314,22 +395,30 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
+    const provider = form.paymentMethod === 'mercadopago_subscription' ? 'mercadopago' : form.paymentProvider
+    const contactEmail = selectedContact?.email || editingSubscription?.contactEmail || null
+
+    if (provider === 'mercadopago' && !contactEmail) {
+      showToast('warning', 'Falta el email', 'Mercado Pago necesita email para que el cliente autorice la suscripción.')
+      return null
+    }
+
     return {
       contactId: selectedContact?.id || null,
       contactName: selectedContact?.name || editingSubscription?.contactName || null,
-      contactEmail: selectedContact?.email || editingSubscription?.contactEmail || null,
+      contactEmail,
       contactPhone: selectedContact?.phone || editingSubscription?.contactPhone || null,
       name,
       description: form.description.trim(),
-      status: form.status,
+      status: provider === 'mercadopago' && formMode !== 'edit' ? 'incomplete' : form.status,
       amount,
       currency: accountCurrency,
       intervalType: form.intervalType,
       intervalCount,
       startDate: form.startDate || null,
-      nextRunAt: form.nextRunAt || null,
+      nextRunAt: provider === 'mercadopago' ? null : form.nextRunAt || null,
       paymentMethod: form.paymentMethod,
-      paymentProvider: form.paymentProvider,
+      paymentProvider: provider,
       source: editingSubscription?.source || 'ristak'
     }
   }
@@ -344,8 +433,12 @@ export const PaymentSubscriptions: React.FC = () => {
         await subscriptionsService.updateSubscription(editingSubscription.id, payload)
         showToast('success', 'Suscripción actualizada', `${payload.name} ya quedó lista.`)
       } else {
-        await subscriptionsService.createSubscription(payload)
-        showToast('success', 'Suscripción creada', `${payload.name} ya aparece en la lista.`)
+        const created = await subscriptionsService.createSubscription(payload)
+        if (created.paymentProvider === 'mercadopago' && getMercadoPagoSubscriptionLink(created)) {
+          showToast('success', 'Autorización Mercado Pago lista', `Copia el link de ${payload.name} para que el cliente active la suscripción.`)
+        } else {
+          showToast('success', 'Suscripción creada', `${payload.name} ya aparece en la lista.`)
+        }
       }
 
       closeForm()
@@ -395,6 +488,27 @@ export const PaymentSubscriptions: React.FC = () => {
     )
   }
 
+  const copyMercadoPagoAuthorizationLink = async (subscription: PaymentSubscription) => {
+    const link = getMercadoPagoSubscriptionLink(subscription)
+    if (!link) {
+      showToast('warning', 'Link no disponible', 'Mercado Pago todavía no devolvió un link de autorización para esta suscripción.')
+      return
+    }
+
+    await navigator.clipboard.writeText(link)
+    showToast('success', 'Link copiado', 'Ya puedes enviarlo al cliente para autorizar la suscripción.')
+  }
+
+  const openMercadoPagoAuthorizationLink = (subscription: PaymentSubscription) => {
+    const link = getMercadoPagoSubscriptionLink(subscription)
+    if (!link) {
+      showToast('warning', 'Link no disponible', 'Mercado Pago todavía no devolvió un link de autorización para esta suscripción.')
+      return
+    }
+
+    window.open(link, '_blank', 'noopener,noreferrer')
+  }
+
   const columns: Column<PaymentSubscription>[] = [
     {
       key: 'name',
@@ -412,7 +526,7 @@ export const PaymentSubscriptions: React.FC = () => {
           {item.description && <small>{item.description}</small>}
         </button>
       ),
-      searchValue: (_value, item) => [item.name, item.description, item.stripeSubscriptionId],
+      searchValue: (_value, item) => [item.name, item.description, item.stripeSubscriptionId, item.mercadoPagoPreapprovalId],
       sortable: true
     },
     {
@@ -472,7 +586,7 @@ export const PaymentSubscriptions: React.FC = () => {
           <span className={styles.secondaryLine}>{getSourceLabel(item)}</span>
         </div>
       ),
-      searchValue: (_value, item) => [item.paymentMethod, item.paymentProvider, item.source, item.stripeCustomerId],
+      searchValue: (_value, item) => [item.paymentMethod, item.paymentProvider, item.source, item.stripeCustomerId, item.mercadoPagoPreapprovalId],
       sortable: true
     },
     {
@@ -481,9 +595,11 @@ export const PaymentSubscriptions: React.FC = () => {
       render: (_value, item) => {
         const busy = actingId === item.id
         const status = String(item.status || '').toLowerCase()
+        const isMercadoPago = item.paymentProvider === 'mercadopago' || Boolean(item.mercadoPagoPreapprovalId)
         const canPause = status === 'active' || status === 'trialing'
-        const canActivate = status === 'paused' || status === 'draft' || status === 'past_due' || status === 'incomplete'
+        const canActivate = (status === 'paused' || status === 'draft' || status === 'past_due' || status === 'incomplete') && !(isMercadoPago && status === 'incomplete')
         const canCancel = status !== 'cancelled'
+        const mercadoPagoAuthorizationLink = getMercadoPagoSubscriptionLink(item)
 
         return (
           <div className={styles.rowActions} onClick={(event) => event.stopPropagation()}>
@@ -498,11 +614,23 @@ export const PaymentSubscriptions: React.FC = () => {
                   <MoreVertical size={16} />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+                <DropdownMenuContent align="end">
                 <DropdownMenuItem disabled={busy} onClick={() => openEditSubscription(item)}>
                   <Edit3 size={16} />
                   <span>Ver / editar</span>
                 </DropdownMenuItem>
+                {mercadoPagoAuthorizationLink && (
+                  <>
+                    <DropdownMenuItem disabled={busy} onClick={() => void copyMercadoPagoAuthorizationLink(item)}>
+                      <Copy size={16} />
+                      <span>Copiar autorización</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={busy} onClick={() => openMercadoPagoAuthorizationLink(item)}>
+                      <ExternalLink size={16} />
+                      <span>Abrir autorización</span>
+                    </DropdownMenuItem>
+                  </>
+                )}
                 {canActivate && (
                   <DropdownMenuItem disabled={busy} onClick={() => void runAction(item, 'activate')}>
                     <Play size={16} />
@@ -557,7 +685,12 @@ export const PaymentSubscriptions: React.FC = () => {
               >
                 Configurar pasarelas
               </Button>
-              <Button onClick={openCreateSubscription} leftIcon={<Plus size={16} />}>
+              <Button
+                onClick={openCreateSubscription}
+                leftIcon={<Plus size={16} />}
+                disabled={integrationsLoading || !hasSubscriptionGateway}
+                title={!hasSubscriptionGateway ? 'Conecta Stripe o Mercado Pago para crear suscripciones' : undefined}
+              >
                 Nueva suscripción
               </Button>
               <Button
@@ -639,6 +772,7 @@ export const PaymentSubscriptions: React.FC = () => {
                 <CustomSelect
                   value={form.status}
                   onChange={(event) => patchForm('status', event.target.value)}
+                  disabled={isMercadoPagoSelected && formMode === 'create'}
                 >
                   {STATUS_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -704,32 +838,41 @@ export const PaymentSubscriptions: React.FC = () => {
                 />
               </div>
 
-              <div className={styles.formGroup}>
-                <label>Próximo cobro</label>
-                <input
-                  value={form.nextRunAt}
-                  onChange={(event) => patchForm('nextRunAt', event.target.value)}
-                  type="date"
-                />
-              </div>
+              {!isMercadoPagoSelected && (
+                <div className={styles.formGroup}>
+                  <label>Próximo cobro</label>
+                  <input
+                    value={form.nextRunAt}
+                    onChange={(event) => patchForm('nextRunAt', event.target.value)}
+                    type="date"
+                  />
+                </div>
+              )}
 
               <div className={styles.formGroup}>
                 <label>Método de cobro</label>
                 <CustomSelect
                   value={form.paymentMethod}
                   onChange={(event) => {
-                    patchForm('paymentMethod', event.target.value)
-                    patchForm('paymentProvider', event.target.value === 'manual' ? 'manual' : 'stripe')
+                    const option = availablePaymentMethodOptions.find((item) => item.value === event.target.value)
+                    setForm((current) => ({
+                      ...current,
+                      paymentMethod: event.target.value,
+                      paymentProvider: option?.provider || 'stripe',
+                      status: option?.provider === 'mercadopago' && formMode === 'create' ? 'incomplete' : current.status
+                    }))
                   }}
                 >
-                  {PAYMENT_METHOD_OPTIONS.map((option) => (
+                  {availablePaymentMethodOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </CustomSelect>
               </div>
 
               <p className={`${styles.formHint} ${styles.fullWidth}`}>
-                Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto y guardará los datos técnicos por debajo.
+                {isMercadoPagoSelected
+                  ? 'Mercado Pago creará una autorización de suscripción. Copia el link y envíalo al cliente; los cobros se activan cuando acepte el método de pago.'
+                  : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto y guardará los datos técnicos por debajo.'}
               </p>
             </div>
 

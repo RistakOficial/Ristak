@@ -8,9 +8,11 @@ import {
   createMercadoPagoPaymentPlan,
   createPublicMercadoPagoCardPayment,
   ensurePublicMercadoPagoPreference,
+  handleMercadoPagoWebhookEvent,
   processDueMercadoPagoPaymentPlanCharges,
   setMercadoPagoFetchForTest
 } from '../src/services/mercadoPagoPaymentService.js'
+import { createSubscription } from '../src/services/subscriptionsService.js'
 import { encrypt } from '../src/utils/encryption.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
@@ -72,6 +74,10 @@ async function cleanup(ids) {
     await db.run('DELETE FROM installment_payments WHERE flow_id = ?', [ids.flowId]).catch(() => undefined)
     await db.run('DELETE FROM payment_flows WHERE id = ?', [ids.flowId]).catch(() => undefined)
     await db.run('DELETE FROM payments WHERE metadata_json LIKE ?', [`%${ids.flowId}%`]).catch(() => undefined)
+  }
+  if (ids.subscriptionId) {
+    await db.run('DELETE FROM payments WHERE metadata_json LIKE ?', [`%${ids.subscriptionId}%`]).catch(() => undefined)
+    await db.run('DELETE FROM subscriptions WHERE id = ?', [ids.subscriptionId]).catch(() => undefined)
   }
   await db.run('DELETE FROM contacts WHERE id = ?', [ids.contactId]).catch(() => undefined)
 }
@@ -436,6 +442,193 @@ test('Mercado Pago sincroniza la parcialidad cuando la preferencia se genera des
 
       assert.equal(secondEnsure.preferenceId, 'pref_public_1')
       assert.equal(preferenceCalls.length, 1)
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
+test('Mercado Pago crea suscripcion recurrente real con preapproval pendiente', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_sub_${suffix}`,
+      subscriptionId: ''
+    }
+    const calls = []
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+      assert.equal(url, 'https://api.mercadopago.com/preapproval')
+      assert.equal(options.method, 'POST')
+
+      const body = JSON.parse(String(options.body || '{}'))
+      calls.push(body)
+
+      assert.equal(body.reason, 'Membresia Mercado Pago')
+      assert.equal(body.payer_email, 'cliente-mp-sub@example.test')
+      assert.equal(body.status, 'pending')
+      assert.equal(body.auto_recurring.frequency, 1)
+      assert.equal(body.auto_recurring.frequency_type, 'months')
+      assert.equal(body.auto_recurring.transaction_amount, 149)
+      assert.equal(body.auto_recurring.currency_id, 'MXN')
+      assert.ok(String(body.back_url).includes('/transactions/subscriptions'))
+      assert.ok(String(body.external_reference).startsWith('rstk_sub_'))
+
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: 'mp_preapproval_test_1',
+          external_reference: body.external_reference,
+          init_point: 'https://www.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1',
+          sandbox_init_point: 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1',
+          auto_recurring: body.auto_recurring,
+          payer_id: 'payer_123',
+          status: 'pending',
+          next_payment_date: '2026-07-21T10:00:00.000-06:00'
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MP Sub', 'cliente-mp-sub@example.test', '+5215555555501']
+    )
+
+    try {
+      const subscription = await createSubscription({
+        contactId: ids.contactId,
+        name: 'Membresia Mercado Pago',
+        amount: 149,
+        intervalType: 'monthly',
+        intervalCount: 1,
+        startDate: '2026-06-21',
+        paymentMethod: 'mercadopago_subscription',
+        paymentProvider: 'mercadopago',
+        status: 'incomplete'
+      })
+      ids.subscriptionId = subscription.id
+
+      assert.equal(calls.length, 1)
+      assert.equal(subscription.paymentProvider, 'mercadopago')
+      assert.equal(subscription.paymentMethod, 'mercadopago_subscription')
+      assert.equal(subscription.status, 'incomplete')
+      assert.equal(subscription.mercadoPagoPreapprovalId, 'mp_preapproval_test_1')
+      assert.equal(subscription.mercadoPagoSandboxInitPoint, 'https://sandbox.mercadopago.com.mx/subscriptions/checkout?preapproval_id=mp_preapproval_test_1')
+
+      const saved = await db.get(
+        `SELECT status, payment_provider, payment_method, mercadopago_preapproval_id, mercadopago_sandbox_init_point
+         FROM subscriptions
+         WHERE id = ?`,
+        [subscription.id]
+      )
+
+      assert.equal(saved.status, 'incomplete')
+      assert.equal(saved.payment_provider, 'mercadopago')
+      assert.equal(saved.payment_method, 'mercadopago_subscription')
+      assert.equal(saved.mercadopago_preapproval_id, 'mp_preapproval_test_1')
+      assert.equal(saved.mercadopago_sandbox_init_point, subscription.mercadoPagoSandboxInitPoint)
+    } finally {
+      await cleanup(ids)
+    }
+  })
+})
+
+test('Mercado Pago registra cobro recurrente por webhook subscription_authorized_payment', async () => {
+  await initializeMasterKey()
+
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const ids = {
+      contactId: `contact_mp_sub_pay_${suffix}`,
+      subscriptionId: `rstk_sub_mp_pay_${suffix}`
+    }
+
+    setMercadoPagoFetchForTest(async (url, options = {}) => {
+      assert.equal(options.headers?.Authorization, 'Bearer TEST-access-token')
+      assert.equal(url, 'https://api.mercadopago.com/authorized_payments/auth_pay_1')
+      assert.equal(options.method, 'GET')
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'auth_pay_1',
+          type: 'scheduled',
+          preapproval_id: 'mp_preapproval_pay_1',
+          reason: 'Membresia MP cobrada',
+          external_reference: ids.subscriptionId,
+          currency_id: 'MXN',
+          transaction_amount: '199.50',
+          debit_date: '2026-07-21T10:00:00.000-06:00',
+          status: 'processed',
+          summarized: 'charged',
+          payment: {
+            id: 'mp_payment_sub_1',
+            status: 'approved',
+            status_detail: 'accredited'
+          }
+        })
+      }
+    })
+
+    await db.run(
+      `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.contactId, 'Cliente MP Cobro', 'cliente-mp-pay@example.test', '+5215555555502']
+    )
+
+    await db.run(
+      `INSERT INTO subscriptions (
+        id, contact_id, contact_name, contact_email, contact_phone, name, description, status,
+        amount, currency, interval_type, interval_count, start_date, next_run_at,
+        payment_method, payment_provider, payment_mode, source, mercadopago_preapproval_id,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, 'MXN', 'monthly', 1, ?, ?, 'mercadopago_subscription', 'mercadopago', 'test', 'ristak', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        ids.subscriptionId,
+        ids.contactId,
+        'Cliente MP Cobro',
+        'cliente-mp-pay@example.test',
+        '+5215555555502',
+        'Membresia MP cobrada',
+        '',
+        199.5,
+        '2026-06-21',
+        '2026-07-21T10:00:00.000-06:00',
+        'mp_preapproval_pay_1'
+      ]
+    )
+
+    try {
+      const result = await handleMercadoPagoWebhookEvent({
+        type: 'subscription_authorized_payment',
+        action: 'subscription_authorized_payment.updated',
+        data: { id: 'auth_pay_1' }
+      }, {}, {})
+
+      assert.equal(result.received, true)
+      assert.equal(result.subscriptionId, ids.subscriptionId)
+      assert.equal(result.status, 'approved')
+
+      const payment = await db.get(
+        `SELECT status, amount, currency, payment_method, payment_provider, reference, mercadopago_payment_id, metadata_json
+         FROM payments
+         WHERE mercadopago_payment_id = ?`,
+        ['mp_payment_sub_1']
+      )
+
+      assert.equal(payment.status, 'paid')
+      assert.equal(payment.amount, 199.5)
+      assert.equal(payment.currency, 'MXN')
+      assert.equal(payment.payment_method, 'mercadopago_subscription')
+      assert.equal(payment.payment_provider, 'mercadopago')
+      assert.equal(payment.reference, 'mp_authorized_payment:auth_pay_1')
+      assert.ok(String(payment.metadata_json).includes(ids.subscriptionId))
     } finally {
       await cleanup(ids)
     }

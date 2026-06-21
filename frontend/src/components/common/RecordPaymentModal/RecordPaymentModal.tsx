@@ -635,7 +635,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )
   )
 
-  const canChoosePaymentMode = chargeType === 'direct' || Boolean(selectedProduct && selectedPrice)
+  const canUsePaymentPlans = highLevelConnected || stripeConnected || mercadoPagoConnected
+  const canChoosePaymentMode = canUsePaymentPlans && (chargeType === 'direct' || Boolean(selectedProduct && selectedPrice))
   const activePaymentMode: PaymentMode = canChoosePaymentMode ? paymentMode : 'single'
   const subtotalAmount = useMemo(() => (
     chargeType === 'product'
@@ -697,6 +698,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const stripePlanCanBeAuthorized = stripePlanCardSource === 'saved_card'
     ? Boolean(stripePlanSavedPaymentMethod)
     : firstPaymentCanAuthorizeStripePlan || stripePlanNeedsSetupLink
+  const mercadoPagoPartialMode = activePaymentMode === 'partial' && paymentOption === 'mercadopago'
+  const remainingFrequencyOptions = useMemo(() => (
+    mercadoPagoPartialMode
+      ? REMAINING_FREQUENCY_OPTIONS.filter(option => option.value !== 'custom')
+      : REMAINING_FREQUENCY_OPTIONS
+  ), [mercadoPagoPartialMode])
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
   const isEmbedded = variant === 'embedded'
   const renderPaymentSegmentedTabs = ({
@@ -873,7 +880,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   // En modo local completo (sin pasarela) forzamos pago único manual.
-  // Stripe y Mercado Pago pueden manejar links/planes desde Ristak.
+  // HighLevel, Stripe y Mercado Pago pueden manejar links/planes desde Ristak.
   useEffect(() => {
     if (!highLevelConnected && !stripeConnected && !mercadoPagoConnected) {
       setPaymentMode('single')
@@ -1116,6 +1123,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       dueDate: getNextDueDate(firstPaymentDate, remainingFrequency, index + 1)
     })))
   }, [activePaymentMode, firstPaymentDate, remainingFrequency])
+
+  useEffect(() => {
+    if (!mercadoPagoPartialMode || remainingFrequency !== 'custom') return
+    setRemainingFrequency('monthly')
+  }, [mercadoPagoPartialMode, remainingFrequency])
 
   useEffect(() => {
     if (activePaymentMode !== 'partial' || !autoDistributeRemaining) return
@@ -2402,8 +2414,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const taxRate = getConfiguredTaxRate(paymentTaxes)
 
     const renderPaymentModeField = () => {
-      // Las parcialidades dependen de HighLevel. En modo local solo hay pago único.
-      if (!highLevelConnected) return null
+      // Las parcialidades necesitan una pasarela conectada. En modo local solo hay pago único.
+      if (!canUsePaymentPlans) return null
 
       return (
       <div className={styles.field}>
@@ -2986,7 +2998,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     {renderPaymentSelect({
                       value: remainingFrequency,
                       onChange: (value) => setRemainingFrequency(value as RemainingFrequency),
-                      options: REMAINING_FREQUENCY_OPTIONS,
+                      options: remainingFrequencyOptions,
                       title: 'Frecuencia de cobro'
                     })}
                   </div>
@@ -2997,7 +3009,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </div>
 
                 <p className={styles.planHint}>
-                  {remainingFrequency === 'custom'
+                  {mercadoPagoPartialMode
+                    ? 'Mercado Pago usa una recurrencia fija; si necesitas fechas salteadas o calendario totalmente personalizado, usa Stripe.'
+                    : remainingFrequency === 'custom'
                     ? `Ajusta ${effectiveRemainingValueType === 'percentage' ? 'el porcentaje' : 'el monto fijo'} y la fecha de cada pago.`
                     : 'Las fechas se calculan automáticamente. Cambia a “Personalizada” para editarlas a mano.'}
                 </p>

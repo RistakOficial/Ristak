@@ -2076,6 +2076,187 @@ function mapMercadoPagoStatus(status) {
   return 'pending'
 }
 
+function mapMercadoPagoPreapprovalStatus(status) {
+  const normalized = cleanString(status).toLowerCase()
+  if (normalized === 'authorized') return 'active'
+  if (normalized === 'paused') return 'paused'
+  if (normalized === 'cancelled' || normalized === 'canceled') return 'cancelled'
+  if (normalized === 'pending') return 'incomplete'
+  return normalized || 'incomplete'
+}
+
+function buildMercadoPagoAutoRecurring({
+  amount,
+  currency,
+  intervalType,
+  intervalCount,
+  startDate,
+  endDate
+} = {}) {
+  const normalizedInterval = cleanString(intervalType || 'monthly').toLowerCase()
+  const count = Math.max(1, Number.parseInt(intervalCount, 10) || 1)
+  const autoRecurring = {
+    frequency: count,
+    frequency_type: 'months',
+    transaction_amount: normalizePositiveAmount(amount),
+    currency_id: normalizeCurrency(currency)
+  }
+
+  if (normalizedInterval === 'daily') {
+    autoRecurring.frequency_type = 'days'
+  } else if (normalizedInterval === 'weekly') {
+    autoRecurring.frequency = count * 7
+    autoRecurring.frequency_type = 'days'
+  } else if (normalizedInterval === 'yearly') {
+    autoRecurring.frequency = count * 12
+    autoRecurring.frequency_type = 'months'
+  }
+
+  const cleanStartDate = timestampToIso(startDate)
+  const cleanEndDate = timestampToIso(endDate)
+  if (cleanStartDate) autoRecurring.start_date = cleanStartDate
+  if (cleanEndDate) autoRecurring.end_date = cleanEndDate
+
+  return autoRecurring
+}
+
+function getMercadoPagoSubscriptionBackUrl(baseUrl = '') {
+  const cleanBase = cleanString(baseUrl || getConfiguredBaseUrl()).replace(/\/+$/, '')
+  return `${cleanBase || 'https://www.ristak.com'}/transactions/subscriptions?mercadopago=return`
+}
+
+function mapMercadoPagoSubscriptionResponse(payload = {}, fallback = {}) {
+  const autoRecurring = payload.auto_recurring && typeof payload.auto_recurring === 'object'
+    ? payload.auto_recurring
+    : {}
+  const mode = payload.livemode === true ? 'live' : fallback.paymentMode || fallback.mode || 'test'
+  const initPoint = cleanString(payload.init_point)
+  const sandboxInitPoint = cleanString(payload.sandbox_init_point)
+  const nextPaymentDate = timestampToIso(payload.next_payment_date)
+
+  return {
+    status: mapMercadoPagoPreapprovalStatus(payload.status),
+    mercadoPagoPreapprovalId: cleanString(payload.id),
+    mercadoPagoPreapprovalPlanId: cleanString(payload.preapproval_plan_id),
+    mercadoPagoInitPoint: initPoint,
+    mercadoPagoSandboxInitPoint: sandboxInitPoint,
+    mercadoPagoPayerId: cleanString(payload.payer_id),
+    mercadoPagoCardId: cleanString(payload.card_id),
+    mercadoPagoPaymentMethodId: cleanString(payload.payment_method_id),
+    mercadoPagoNextPaymentDate: nextPaymentDate,
+    nextRunAt: nextPaymentDate || fallback.nextRunAt || null,
+    currentPeriodEnd: nextPaymentDate || fallback.currentPeriodEnd || null,
+    paymentMode: normalizeMode(mode),
+    raw: {
+      provider: 'mercadopago',
+      preapproval: payload,
+      autoRecurring
+    }
+  }
+}
+
+export async function createMercadoPagoRecurringSubscription(input = {}, { baseUrl = '' } = {}) {
+  const payerEmail = cleanString(input.contactEmail || input.email || input.payerEmail)
+  if (!payerEmail) {
+    const error = new Error('Mercado Pago necesita el email del contacto para crear la suscripción.')
+    error.status = 422
+    throw error
+  }
+
+  const subscriptionId = cleanString(input.ristakSubscriptionId || input.subscriptionId)
+  if (!subscriptionId) {
+    const error = new Error('Falta el ID local de la suscripción para Mercado Pago.')
+    error.status = 422
+    throw error
+  }
+
+  const body = {
+    reason: cleanString(input.name || input.reason || 'Suscripción Ristak'),
+    external_reference: subscriptionId,
+    payer_email: payerEmail,
+    auto_recurring: buildMercadoPagoAutoRecurring({
+      amount: input.amount,
+      currency: input.currency,
+      intervalType: input.intervalType,
+      intervalCount: input.intervalCount,
+      startDate: input.startDate,
+      endDate: input.cancelAt || input.endDate
+    }),
+    back_url: getMercadoPagoSubscriptionBackUrl(baseUrl),
+    status: 'pending'
+  }
+
+  const { payload, config } = await mercadoPagoApiRequest('/preapproval', {
+    method: 'POST',
+    body,
+    idempotencyKey: `rstk-subscription-${subscriptionId}`
+  })
+
+  return mapMercadoPagoSubscriptionResponse(payload, {
+    paymentMode: config.mode,
+    nextRunAt: input.nextRunAt
+  })
+}
+
+export async function updateMercadoPagoRecurringSubscription(input = {}) {
+  const preapprovalId = cleanString(input.mercadoPagoPreapprovalId || input.preapprovalId)
+  if (!preapprovalId) {
+    const error = new Error('Falta el ID de suscripción de Mercado Pago.')
+    error.status = 422
+    throw error
+  }
+
+  const body = {
+    reason: cleanString(input.name || input.reason || 'Suscripción Ristak'),
+    external_reference: cleanString(input.ristakSubscriptionId || input.subscriptionId),
+    auto_recurring: {
+      transaction_amount: normalizePositiveAmount(input.amount),
+      currency_id: normalizeCurrency(input.currency)
+    }
+  }
+
+  const cleanEndDate = timestampToIso(input.cancelAt || input.endDate)
+  if (cleanEndDate) body.auto_recurring.end_date = cleanEndDate
+
+  const { payload, config } = await mercadoPagoApiRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`, {
+    method: 'PUT',
+    body
+  })
+
+  return mapMercadoPagoSubscriptionResponse(payload, {
+    paymentMode: config.mode,
+    nextRunAt: input.nextRunAt
+  })
+}
+
+async function setMercadoPagoRecurringSubscriptionStatus(preapprovalId, status) {
+  const cleanPreapprovalId = cleanString(preapprovalId)
+  if (!cleanPreapprovalId) {
+    const error = new Error('Falta el ID de suscripción de Mercado Pago.')
+    error.status = 422
+    throw error
+  }
+
+  const { payload, config } = await mercadoPagoApiRequest(`/preapproval/${encodeURIComponent(cleanPreapprovalId)}`, {
+    method: 'PUT',
+    body: { status }
+  })
+
+  return mapMercadoPagoSubscriptionResponse(payload, { paymentMode: config.mode })
+}
+
+export async function pauseMercadoPagoRecurringSubscription(preapprovalId) {
+  return setMercadoPagoRecurringSubscriptionStatus(preapprovalId, 'paused')
+}
+
+export async function resumeMercadoPagoRecurringSubscription(preapprovalId) {
+  return setMercadoPagoRecurringSubscriptionStatus(preapprovalId, 'authorized')
+}
+
+export async function cancelMercadoPagoRecurringSubscription(preapprovalId) {
+  return setMercadoPagoRecurringSubscriptionStatus(preapprovalId, 'canceled')
+}
+
 function timestampToIso(value) {
   if (!value) return null
   const date = new Date(value)
@@ -2189,6 +2370,223 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
   return updated
 }
 
+async function findSubscriptionForMercadoPagoPreapproval(preapproval = {}) {
+  const subscriptionId = cleanString(preapproval.external_reference)
+  const preapprovalId = cleanString(preapproval.id || preapproval.preapproval_id)
+  const filters = []
+  const params = []
+
+  if (subscriptionId) {
+    filters.push('id = ?')
+    params.push(subscriptionId)
+  }
+
+  if (preapprovalId) {
+    filters.push('mercadopago_preapproval_id = ?')
+    params.push(preapprovalId)
+  }
+
+  if (!filters.length) return null
+
+  return db.get(
+    `SELECT *
+     FROM subscriptions
+     WHERE ${filters.join(' OR ')}
+     LIMIT 1`,
+    params
+  )
+}
+
+async function updateSubscriptionFromMercadoPagoPreapproval(preapproval = {}) {
+  const existing = await findSubscriptionForMercadoPagoPreapproval(preapproval)
+  if (!existing) return null
+
+  const mapped = mapMercadoPagoSubscriptionResponse(preapproval, {
+    paymentMode: existing.payment_mode,
+    nextRunAt: existing.next_run_at,
+    currentPeriodEnd: existing.current_period_end
+  })
+  const raw = {
+    ...parseJson(existing.raw_json, {}),
+    mercadoPago: mapped.raw
+  }
+
+  await db.run(
+    `UPDATE subscriptions
+     SET status = ?,
+         payment_provider = 'mercadopago',
+         payment_method = 'mercadopago_subscription',
+         payment_mode = COALESCE(?, payment_mode),
+         mercadopago_preapproval_id = COALESCE(?, mercadopago_preapproval_id),
+         mercadopago_preapproval_plan_id = COALESCE(?, mercadopago_preapproval_plan_id),
+         mercadopago_init_point = COALESCE(?, mercadopago_init_point),
+         mercadopago_sandbox_init_point = COALESCE(?, mercadopago_sandbox_init_point),
+         mercadopago_payer_id = COALESCE(?, mercadopago_payer_id),
+         mercadopago_card_id = COALESCE(?, mercadopago_card_id),
+         mercadopago_payment_method_id = COALESCE(?, mercadopago_payment_method_id),
+         mercadopago_next_payment_date = COALESCE(?, mercadopago_next_payment_date),
+         next_run_at = COALESCE(?, next_run_at),
+         current_period_end = COALESCE(?, current_period_end),
+         cancelled_at = CASE WHEN ? = 'cancelled' THEN COALESCE(cancelled_at, CURRENT_TIMESTAMP) ELSE cancelled_at END,
+         raw_json = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      mapped.status,
+      mapped.paymentMode || null,
+      mapped.mercadoPagoPreapprovalId || null,
+      mapped.mercadoPagoPreapprovalPlanId || null,
+      mapped.mercadoPagoInitPoint || null,
+      mapped.mercadoPagoSandboxInitPoint || null,
+      mapped.mercadoPagoPayerId || null,
+      mapped.mercadoPagoCardId || null,
+      mapped.mercadoPagoPaymentMethodId || null,
+      mapped.mercadoPagoNextPaymentDate || null,
+      mapped.nextRunAt || null,
+      mapped.currentPeriodEnd || null,
+      mapped.status,
+      JSON.stringify(raw),
+      existing.id
+    ]
+  )
+
+  return db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
+}
+
+async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authorizedPayment = {}, subscriptionRow = null) {
+  if (!subscriptionRow) return null
+
+  const authorizedPaymentId = cleanString(authorizedPayment.id)
+  const paymentIdFromMercadoPago = cleanString(authorizedPayment.payment?.id)
+  const reference = authorizedPaymentId ? `mp_authorized_payment:${authorizedPaymentId}` : paymentIdFromMercadoPago
+  if (!reference && !paymentIdFromMercadoPago) return null
+
+  const existing = await db.get(
+    `SELECT id
+     FROM payments
+     WHERE (reference IS NOT NULL AND reference = ?)
+        OR (mercadopago_payment_id IS NOT NULL AND mercadopago_payment_id = ?)
+     LIMIT 1`,
+    [reference || '', paymentIdFromMercadoPago || '']
+  )
+
+  const currency = normalizeCurrency(authorizedPayment.currency_id || subscriptionRow.currency)
+  const amount = normalizePositiveAmount(authorizedPayment.transaction_amount || subscriptionRow.amount)
+  const statusSource = authorizedPayment.payment?.status || authorizedPayment.summarized || authorizedPayment.status
+  const nextStatus = mapMercadoPagoStatus(statusSource)
+  const paidAt = nextStatus === 'paid'
+    ? timestampToIso(authorizedPayment.payment?.date_approved || authorizedPayment.last_modified || authorizedPayment.debit_date) || new Date().toISOString()
+    : null
+  const metadata = {
+    source: 'mercadopago_subscription_authorized_payment',
+    ristakSubscriptionId: subscriptionRow.id,
+    mercadoPagoPreapprovalId: cleanString(authorizedPayment.preapproval_id) || subscriptionRow.mercadopago_preapproval_id || '',
+    mercadoPagoAuthorizedPaymentId: authorizedPaymentId,
+    mercadoPagoPaymentId: paymentIdFromMercadoPago,
+    mercadoPagoStatus: cleanString(authorizedPayment.status),
+    mercadoPagoSummarized: cleanString(authorizedPayment.summarized)
+  }
+
+  if (existing?.id) {
+    await db.run(
+      `UPDATE payments
+       SET amount = ?,
+           currency = ?,
+           status = ?,
+           payment_method = 'mercadopago_subscription',
+           payment_mode = ?,
+           payment_provider = 'mercadopago',
+           mercadopago_payment_id = COALESCE(?, mercadopago_payment_id),
+           paid_at = COALESCE(?, paid_at),
+           date = COALESCE(?, date),
+           metadata_json = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        amount,
+        currency,
+        nextStatus,
+        subscriptionRow.payment_mode || 'test',
+        paymentIdFromMercadoPago || null,
+        paidAt,
+        paidAt || timestampToIso(authorizedPayment.debit_date),
+        JSON.stringify(metadata),
+        existing.id
+      ]
+    )
+    return existing.id
+  }
+
+  const localPaymentId = createId('mercadopago_subscription_payment')
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, public_payment_id, payment_url,
+      mercadopago_payment_id, paid_at, metadata_json, date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      localPaymentId,
+      subscriptionRow.contact_id || null,
+      amount,
+      currency,
+      nextStatus,
+      'mercadopago_subscription',
+      subscriptionRow.payment_mode || 'test',
+      'mercadopago',
+      reference || paymentIdFromMercadoPago,
+      subscriptionRow.name || 'Suscripción',
+      `Cobro recurrente de ${subscriptionRow.name || 'suscripción'}`,
+      null,
+      null,
+      paymentIdFromMercadoPago || null,
+      paidAt,
+      JSON.stringify(metadata),
+      paidAt || timestampToIso(authorizedPayment.debit_date) || new Date().toISOString()
+    ]
+  )
+
+  if (subscriptionRow.contact_id && nextStatus === 'paid') {
+    registerGigstackPaymentForTransactionInBackground(localPaymentId)
+    updateSingleContactStats(subscriptionRow.contact_id).catch((error) => {
+      logger.warn(`No se pudieron actualizar stats del contacto por suscripción Mercado Pago ${subscriptionRow.id}: ${error.message}`)
+    })
+  }
+
+  return localPaymentId
+}
+
+export async function refreshMercadoPagoSubscription(preapprovalId) {
+  const cleanPreapprovalId = cleanString(preapprovalId)
+  if (!cleanPreapprovalId) return null
+  const { payload } = await mercadoPagoApiRequest(`/preapproval/${encodeURIComponent(cleanPreapprovalId)}`)
+  return updateSubscriptionFromMercadoPagoPreapproval(payload)
+}
+
+export async function refreshMercadoPagoAuthorizedPayment(authorizedPaymentId) {
+  const cleanAuthorizedPaymentId = cleanString(authorizedPaymentId)
+  if (!cleanAuthorizedPaymentId) return null
+  const { payload } = await mercadoPagoApiRequest(`/authorized_payments/${encodeURIComponent(cleanAuthorizedPaymentId)}`)
+
+  let subscription = await findSubscriptionForMercadoPagoPreapproval({
+    id: payload?.preapproval_id,
+    external_reference: payload?.external_reference
+  })
+
+  if (!subscription && payload?.preapproval_id) {
+    subscription = await refreshMercadoPagoSubscription(payload.preapproval_id)
+  }
+
+  if (subscription?.id) {
+    await insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(payload, subscription)
+  }
+
+  return {
+    authorizedPaymentId: cleanAuthorizedPaymentId,
+    subscriptionId: subscription?.id || null,
+    status: cleanString(payload?.payment?.status || payload?.summarized || payload?.status) || null
+  }
+}
+
 export async function refreshMercadoPagoPayment(mercadoPagoPaymentId) {
   const paymentId = cleanString(mercadoPagoPaymentId)
   if (!paymentId) return null
@@ -2215,6 +2613,28 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
 
   const type = cleanString(body.type || body.topic || query.topic || query.type)
   const action = cleanString(body.action)
+  if (dataId && (type.includes('subscription_preapproval') || action.includes('preapproval'))) {
+    const updated = await refreshMercadoPagoSubscription(dataId)
+    return {
+      received: true,
+      type,
+      action,
+      subscriptionId: updated?.id || null,
+      status: updated?.status || null
+    }
+  }
+
+  if (dataId && (type.includes('subscription_authorized_payment') || action.includes('authorized_payment'))) {
+    const updated = await refreshMercadoPagoAuthorizedPayment(dataId)
+    return {
+      received: true,
+      type,
+      action,
+      subscriptionId: updated?.subscriptionId || null,
+      status: updated?.status || null
+    }
+  }
+
   if (!dataId || !(type.includes('payment') || action.includes('payment'))) {
     return { received: true, ignored: true, type, action }
   }
