@@ -77,7 +77,7 @@ import {
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'automations' | 'gateways' | 'taxes'
-type PaymentGatewayId = 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip'
+type PaymentGatewayId = 'highlevel' | 'stripe' | 'conekta' | 'mercadopago'
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 type PaymentAutomationTemplateKind = 'reminder' | 'receipt' | 'failed'
 type StripeModeId = 'test' | 'live'
@@ -98,13 +98,12 @@ interface PaymentGatewayOption {
   id: PaymentGatewayId
   name: string
   description: string
-  status: 'connected' | 'available' | 'soon'
+  status: 'connected' | 'available'
 }
 
-const gatewayStatusCopy: Record<PaymentGatewayOption['status'], { label: string; variant: 'success' | 'warning' | 'neutral' }> = {
+const gatewayStatusCopy: Record<PaymentGatewayOption['status'], { label: string; variant: 'success' | 'neutral' }> = {
   connected: { label: 'Conectada', variant: 'success' },
-  available: { label: 'Sin conexión', variant: 'neutral' },
-  soon: { label: 'Próximamente', variant: 'warning' }
+  available: { label: 'Sin conexión', variant: 'neutral' }
 }
 
 const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.ReactNode }> = [
@@ -116,7 +115,7 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
 ]
 
 const sectionIds = sectionItems.map((item) => item.id)
-const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip']
+const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'conekta', 'mercadopago']
 const GIGSTACK_API_URL = 'https://gigstack.pro/api-facturacion'
 const stripeModeIds: StripeModeId[] = ['test', 'live']
 const mercadoPagoModeIds: MercadoPagoModeId[] = ['test', 'live']
@@ -546,12 +545,6 @@ export const PaymentsConfiguration: React.FC = () => {
         ? `Cobra links y suscripciones con Checkout Pro (${mercadoPagoConfig.mode === 'live' ? 'en vivo' : 'prueba'}).`
         : 'Conecta Mercado Pago para links de cobro y suscripciones.',
       status: mercadoPagoConfig?.configured ? 'connected' : 'available'
-    },
-    {
-      id: 'clip',
-      name: 'Clip',
-      description: 'Para ventas con terminal o links de pago conectados a Clip.',
-      status: 'soon'
     }
   ]
 
@@ -2168,7 +2161,6 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.gatewayList}>
             {gatewayOptions.map((gateway) => {
               const isConnected = gateway.status === 'connected'
-              const isAvailable = gateway.status === 'available'
               const statusCopy = gatewayStatusCopy[gateway.status]
 
               return (
@@ -2181,23 +2173,13 @@ export const PaymentsConfiguration: React.FC = () => {
                     <p>{gateway.description}</p>
                   </div>
                   <div className={styles.gatewayItemActions}>
-                    <Button type="button" variant={isConnected || isAvailable ? 'primary' : 'secondary'} size="sm" onClick={() => handleSelectGateway(gateway)}>
-                      {isConnected ? 'Abrir' : isAvailable ? 'Configurar' : 'Ver estado'}
+                    <Button type="button" variant="primary" size="sm" onClick={() => handleSelectGateway(gateway)}>
+                      {isConnected ? 'Abrir' : 'Configurar'}
                     </Button>
                   </div>
                 </Card>
               )
             })}
-          </div>
-        </Card>
-      )}
-
-      {activeGatewayRoute && selectedGatewayOption?.status === 'soon' && (
-        <Card className={styles.noticeCard}>
-          <AlertTriangle size={18} />
-          <div>
-            <strong>{selectedGatewayOption.name} estará disponible próximamente</strong>
-            <p>La dejamos visible para que el flujo ya tenga espacio sin mezclarlo con impuestos ni comprobantes.</p>
           </div>
         </Card>
       )}
