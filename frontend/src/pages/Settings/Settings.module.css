@@ -780,9 +780,14 @@ body.dark .select:focus {
   gap: 16px;
   padding: 16px 0 0;
   border: 0;
-  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  border-top: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
+}
+
+.accountGrid > .accountSection:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .accountSectionWide {
