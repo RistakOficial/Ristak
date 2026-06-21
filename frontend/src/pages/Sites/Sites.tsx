@@ -5141,26 +5141,6 @@ const EMBED_MIN_HEIGHT = 180
 const EMBED_MAX_HEIGHT = 5000
 const CALENDAR_EMBED_DEFAULT_HEIGHT = 760
 
-const calendarEmbedColorQuerySettings = [
-  { key: 'calendarAccentColor', param: 'accent' },
-  { key: 'calendarTextColor', param: 'text' },
-  { key: 'calendarMutedColor', param: 'muted' },
-  { key: 'calendarLineColor', param: 'line' },
-  { key: 'calendarControlBg', param: 'controlBg' },
-  { key: 'calendarSlotBg', param: 'slotBg' },
-  { key: 'calendarSlotText', param: 'slotText' },
-  { key: 'calendarSelectedText', param: 'selectedText' },
-  { key: 'calendarFieldBg', param: 'fieldBg' },
-  { key: 'calendarFieldText', param: 'fieldText' },
-  { key: 'calendarFieldBorder', param: 'fieldBorder' },
-  { key: 'calendarButtonText', param: 'buttonText' }
-] as const
-
-const calendarEmbedNumberQuerySettings = [
-  { key: 'calendarSlotRadius', param: 'slotRadius', fallback: 8, min: 0, max: 32 },
-  { key: 'calendarFieldRadius', param: 'fieldRadius', fallback: 8, min: 0, max: 32 }
-] as const
-
 const calendarEmbedDesignModeOptions = [
   { value: 'original', label: 'Modo original del calendario' },
   { value: 'custom', label: 'Personalizar para sitio' }
@@ -5194,30 +5174,122 @@ const getCalendarEmbedLayoutMinHeight = (settings: Record<string, unknown>) => (
   calendarEmbedLayoutRecommendedHeights[getCalendarEmbedLayout(settings)]
 )
 
-const getCalendarEmbedStyleParams = (settings: Record<string, unknown>) => {
-  const params: Record<string, string> = {}
+type CalendarPreviewStyle = React.CSSProperties & Record<string, string | number>
+
+const calendarPreviewWeekdays = ['DOM', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB']
+const calendarPreviewFallbackSlots = [9 * 60, 10 * 60, 11 * 60, 12 * 60, 13 * 60, 14 * 60]
+
+const formatCalendarPreviewTime = (totalMinutes: number) => {
+  const normalized = ((Math.round(totalMinutes) % 1440) + 1440) % 1440
+  const hour24 = Math.floor(normalized / 60)
+  const minute = normalized % 60
+  const hour12 = ((hour24 + 11) % 12) + 1
+  return `${String(hour12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${hour24 < 12 ? 'a.m.' : 'p.m.'}`
+}
+
+const getCalendarPreviewOpenWeekdays = (calendar?: CalendarType) => {
+  const configured = (calendar?.openHours || [])
+    .flatMap(item => Array.isArray(item.daysOfTheWeek) ? item.daysOfTheWeek : [])
+    .map(day => Number(day))
+    .filter(day => Number.isFinite(day))
+
+  if (!configured.length) return new Set([1, 2, 3, 4, 5])
+  return new Set(configured.map(day => ((Math.round(day) % 7) + 7) % 7))
+}
+
+const getCalendarPreviewSlots = (calendar?: CalendarType) => {
+  const firstRange = (calendar?.openHours || [])
+    .flatMap(item => Array.isArray(item.hours) ? item.hours : [])
+    .find(range => {
+      const start = Number(range?.openHour) * 60 + Number(range?.openMinute || 0)
+      const end = Number(range?.closeHour) * 60 + Number(range?.closeMinute || 0)
+      return Number.isFinite(start) && Number.isFinite(end) && end > start
+    })
+
+  const interval = Math.max(15, Math.min(180, Number(calendar?.slotInterval || calendar?.slotDuration || 60) || 60))
+  const start = firstRange
+    ? Number(firstRange.openHour) * 60 + Number(firstRange.openMinute || 0)
+    : calendarPreviewFallbackSlots[0]
+  const end = firstRange
+    ? Number(firstRange.closeHour) * 60 + Number(firstRange.closeMinute || 0)
+    : start + interval * calendarPreviewFallbackSlots.length
+  const slots: number[] = []
+
+  for (let cursor = start; cursor < end && slots.length < 6; cursor += interval) {
+    slots.push(cursor)
+  }
+
+  return (slots.length >= 3 ? slots : calendarPreviewFallbackSlots).slice(0, 6).map(formatCalendarPreviewTime)
+}
+
+const getCalendarPreviewMonth = (calendar?: CalendarType) => {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = today.getMonth()
+  const firstWeekday = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const openWeekdays = getCalendarPreviewOpenWeekdays(calendar)
+  const monthLabel = new Intl.DateTimeFormat('es-MX', { month: 'long', year: 'numeric' }).format(today)
+  const todayStart = new Date(year, month, today.getDate()).getTime()
+  const days: Array<{ key: string; label: string; muted: boolean; available: boolean; today: boolean }> = []
+
+  for (let index = 0; index < firstWeekday; index += 1) {
+    days.push({ key: `empty-start-${index}`, label: '', muted: true, available: false, today: false })
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(year, month, day)
+    const dateStart = date.getTime()
+    days.push({
+      key: `day-${day}`,
+      label: String(day),
+      muted: dateStart < todayStart,
+      available: dateStart >= todayStart && openWeekdays.has(date.getDay()),
+      today: dateStart === todayStart
+    })
+  }
+
+  while (days.length % 7 !== 0 || days.length < 35) {
+    days.push({ key: `empty-end-${days.length}`, label: '', muted: true, available: false, today: false })
+  }
+
+  return { monthLabel, days }
+}
+
+const getCalendarPreviewStyle = (
+  settings: Record<string, unknown>,
+  site?: PublicSite,
+  calendar?: CalendarType
+): CalendarPreviewStyle => {
+  const siteIsDark = site ? isSiteDark(site) : false
+  const fallbackAccent = site ? defaultAccentForSite(site) : '#2563eb'
+  const defaultAccent = getSettingHex({ value: calendar?.eventColor || fallbackAccent }, 'value', fallbackAccent)
+  const defaultText = site ? paintFallbackColor(getPageTextPaint(site), siteIsDark ? '#ffffff' : '#111827') : '#111827'
+  const defaultMuted = siteIsDark ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
+  const defaultLine = siteIsDark ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
   const designMode = getCalendarEmbedDesignMode(settings)
+  const style: CalendarPreviewStyle = {
+    '--rstk-calendar-preview-accent': defaultAccent,
+    '--rstk-calendar-preview-text': defaultText,
+    '--rstk-calendar-preview-muted': defaultMuted,
+    '--rstk-calendar-preview-line': defaultLine,
+    '--rstk-calendar-preview-control-bg': 'transparent',
+    '--rstk-calendar-preview-slot-bg': 'transparent',
+    '--rstk-calendar-preview-slot-text': defaultAccent,
+    '--rstk-calendar-preview-slot-radius': `${getSettingNumber(settings, 'calendarSlotRadius', 8, 0, 32)}px`
+  }
 
-  params.designMode = designMode
-  params.layout = getCalendarEmbedLayout(settings)
+  if (designMode === 'custom') {
+    style['--rstk-calendar-preview-accent'] = getSettingHex(settings, 'calendarAccentColor', defaultAccent)
+    style['--rstk-calendar-preview-text'] = getSettingHex(settings, 'calendarTextColor', defaultText)
+    style['--rstk-calendar-preview-muted'] = getSettingHex(settings, 'calendarMutedColor', defaultMuted)
+    style['--rstk-calendar-preview-line'] = getSettingHex(settings, 'calendarLineColor', defaultLine)
+    style['--rstk-calendar-preview-control-bg'] = getSettingHex(settings, 'calendarControlBg', 'transparent')
+    style['--rstk-calendar-preview-slot-bg'] = getSettingHex(settings, 'calendarSlotBg', 'transparent')
+    style['--rstk-calendar-preview-slot-text'] = getSettingHex(settings, 'calendarSlotText', defaultAccent)
+  }
 
-  const coverImage = getSettingString(settings, 'calendarCoverImage')
-  if (coverImage) params.coverImage = coverImage
-
-  if (designMode !== 'custom') return params
-
-  calendarEmbedColorQuerySettings.forEach(({ key, param }) => {
-    if (settings[key] === undefined) return
-    const color = getSettingHex(settings, key, '')
-    if (color) params[param] = color
-  })
-
-  calendarEmbedNumberQuerySettings.forEach(({ key, param, fallback, min, max }) => {
-    if (settings[key] === undefined) return
-    params[param] = String(getSettingNumber(settings, key, fallback, min, max))
-  })
-
-  return params
+  return style
 }
 
 const decodeHtmlEntities = (value: string) => value
@@ -30209,37 +30281,87 @@ const BunnyStreamStoragePreview: React.FC<{
   )
 }
 
-const CalendarEmbedPreviewFrame: React.FC<{
-  calendarSlug: string
+const CalendarEmbedStaticPreview: React.FC<{
   calendarName: string
+  calendar?: CalendarType
+  site?: PublicSite
   settings: Record<string, unknown>
-  selected?: boolean
-}> = ({ calendarSlug, calendarName, settings, selected = false }) => {
-  const iframeRef = useRef<HTMLIFrameElement>(null)
-  const src = useMemo(() => sitesService.getCalendarPreviewUrl(calendarSlug), [calendarSlug])
-  const styleParams = useMemo(() => getCalendarEmbedStyleParams(settings), [settings])
-
-  const postStyleParams = useCallback(() => {
-    iframeRef.current?.contentWindow?.postMessage({
-      type: 'ristak:calendar-embed-style',
-      style: styleParams
-    }, '*')
-  }, [styleParams])
-
-  useEffect(() => {
-    postStyleParams()
-  }, [postStyleParams])
+}> = ({ calendarName, calendar, site, settings }) => {
+  const layout = getCalendarEmbedLayout(settings)
+  const monthPreview = useMemo(() => getCalendarPreviewMonth(calendar), [calendar])
+  const slots = useMemo(() => getCalendarPreviewSlots(calendar), [calendar])
+  const style = useMemo(() => getCalendarPreviewStyle(settings, site, calendar), [settings, site, calendar])
+  const profileImage = safePublicMediaUrl(getSettingString(settings, 'calendarCoverImage') || calendar?.calendarCoverImage || '', 'image')
+  const title = calendarName || calendar?.name || 'Calendario'
+  const eventTitle = calendar?.eventTitle || 'Cita'
+  const description = calendar?.description || 'Calendario principal creado en Ristak'
+  const duration = `${Math.max(1, Number(calendar?.slotDuration) || 60)} min`
+  const confirmation = calendar?.autoConfirm === false ? 'Confirmacion manual' : 'Confirmacion automatica'
+  const initial = (title.trim()[0] || 'C').toUpperCase()
 
   return (
-    <iframe
-      ref={iframeRef}
-      className={`rstk-embed rstk-calendar-embed ${selected ? 'rstk-calendar-embed-selected' : ''}`}
-      src={src}
-      title={calendarName || `Calendario /${calendarSlug}`}
-      loading="lazy"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-      onLoad={postStyleParams}
-    />
+    <section
+      className={`rstk-calendar-preview rstk-calendar-preview-${layout}`}
+      style={style}
+      aria-label={`Vista previa de ${title}`}
+    >
+      <div className="rstk-calendar-preview-shell">
+        <aside className="rstk-calendar-preview-intro">
+          <span className="rstk-calendar-preview-avatar" aria-hidden="true">
+            {profileImage ? <img src={profileImage} alt="" loading="lazy" /> : initial}
+          </span>
+          <span className="rstk-calendar-preview-kicker">{eventTitle}</span>
+          <strong className="rstk-calendar-preview-title">{title}</strong>
+          <span className="rstk-calendar-preview-description">{description}</span>
+          <span className="rstk-calendar-preview-meta">
+            <Clock3 size={16} aria-hidden="true" />
+            {duration}
+          </span>
+          <span className="rstk-calendar-preview-meta">
+            <Check size={16} aria-hidden="true" />
+            {confirmation}
+          </span>
+        </aside>
+
+        <section className="rstk-calendar-preview-month" aria-label={monthPreview.monthLabel}>
+          <header className="rstk-calendar-preview-month-head">
+            <span className="rstk-calendar-preview-nav rstk-calendar-preview-nav-prev" aria-hidden="true">
+              <ChevronRight size={18} />
+            </span>
+            <strong>{monthPreview.monthLabel}</strong>
+            <span className="rstk-calendar-preview-nav" aria-hidden="true">
+              <ChevronRight size={18} />
+            </span>
+          </header>
+          <div className="rstk-calendar-preview-weekdays" aria-hidden="true">
+            {calendarPreviewWeekdays.map(day => <span key={day}>{day}</span>)}
+          </div>
+          <div className="rstk-calendar-preview-days">
+            {monthPreview.days.map(day => (
+              <span
+                key={day.key}
+                className={[
+                  'rstk-calendar-preview-day',
+                  day.muted ? 'rstk-calendar-preview-day-muted' : '',
+                  day.available ? 'rstk-calendar-preview-day-available' : '',
+                  day.today ? 'rstk-calendar-preview-day-today' : ''
+                ].filter(Boolean).join(' ')}
+                aria-hidden={!day.label}
+              >
+                {day.label}
+              </span>
+            ))}
+          </div>
+        </section>
+
+        <aside className="rstk-calendar-preview-slots" aria-label="Horarios disponibles">
+          <strong>Horarios disponibles</strong>
+          <div className="rstk-calendar-preview-slot-list">
+            {slots.map(slot => <span key={slot} className="rstk-calendar-preview-slot">{slot}</span>)}
+          </div>
+        </aside>
+      </div>
+    </section>
   )
 }
 
@@ -30661,14 +30783,15 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const selectedCalendarId = getSettingString(settings, 'calendarId')
     const calendarName = getSettingString(settings, 'calendarName')
     const calendarSlug = getSettingString(settings, 'calendarSlug')
+    const calendar = calendars.find(item => item.id === selectedCalendarId)
     const hasSelectedCalendarOption = calendars.some(calendar => calendar.id === selectedCalendarId)
     if (calendarSlug) {
       return (
-        <CalendarEmbedPreviewFrame
-          calendarSlug={calendarSlug}
+        <CalendarEmbedStaticPreview
           calendarName={calendarName}
+          calendar={calendar}
+          site={site}
           settings={settings}
-          selected={selected}
         />
       )
     }
