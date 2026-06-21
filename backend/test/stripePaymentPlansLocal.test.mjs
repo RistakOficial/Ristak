@@ -8,6 +8,7 @@ import {
   updateInvoiceSchedule
 } from '../src/controllers/highlevelController.js'
 import {
+  getPublicStripePayment,
   processDueStripePaymentPlanCharges,
   refreshStripePaymentFromIntent,
   saveStripePaymentConfig,
@@ -148,6 +149,17 @@ async function seedStripePlan() {
   return ids
 }
 
+async function ensurePublicStripeConfig() {
+  await initializeMasterKey()
+  await saveStripePaymentConfig({
+    enabled: true,
+    mode: 'test',
+    publishableKey: 'pk_test_public_plan_summary',
+    secretKey: 'sk_test_public_plan_summary',
+    defaultCurrency: 'MXN'
+  })
+}
+
 test('abre un plan local de Stripe sin depender de HighLevel', async () => {
   const ids = await seedStripePlan()
 
@@ -160,6 +172,30 @@ test('abre un plan local de Stripe sin depender de HighLevel', async () => {
     assert.equal(res.payload.source, 'local_stripe')
     assert.equal(res.payload.data.id, ids.flowId)
     assert.equal(res.payload.data.source, 'stripe')
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('expone resumen de plan en el link público de domiciliación Stripe', async () => {
+  const ids = await seedStripePlan()
+
+  try {
+    await ensurePublicStripeConfig()
+
+    const payment = await getPublicStripePayment('pay_setup_test', { baseUrl: 'https://example.test' })
+
+    assert.ok(payment)
+    assert.equal(payment.provider, 'stripe')
+    assert.equal(payment.paymentPlan.flowId, ids.flowId)
+    assert.equal(payment.paymentPlan.trigger, 'card_setup')
+    assert.equal(payment.paymentPlan.total, 1000)
+    assert.equal(payment.paymentPlan.currency, 'MXN')
+    assert.equal(payment.paymentPlan.cardSetupRequired, true)
+    assert.equal(payment.paymentPlan.installments.length, 1)
+    assert.equal(payment.paymentPlan.installments[0].amount, 975)
+    assert.equal(payment.paymentPlan.installments[0].dueDate, '2099-01-01')
+    assert.equal(payment.paymentPlan.changeSummary, null)
   } finally {
     await cleanup(ids)
   }
@@ -305,6 +341,16 @@ test('edita calendario de pagos de un plan Stripe local', async () => {
     assert.equal(installments[1].amount, 250)
     assert.equal(installments[1].payment_method, 'bank_transfer')
     assert.equal(installments[1].automatic, 0)
+
+    await ensurePublicStripeConfig()
+    const publicPayment = await getPublicStripePayment('pay_setup_test', { baseUrl: 'https://example.test' })
+    const addedInstallment = publicPayment.paymentPlan.installments.find((installment) => installment.changeType === 'added')
+
+    assert.equal(publicPayment.paymentPlan.changeSummary.addedInstallmentCount, 1)
+    assert.equal(publicPayment.paymentPlan.changeSummary.label, '1 pago agregado')
+    assert.ok(addedInstallment)
+    assert.equal(addedInstallment.amount, 250)
+    assert.equal(addedInstallment.dueDate, '2099-03-01')
   } finally {
     await cleanup(ids)
   }

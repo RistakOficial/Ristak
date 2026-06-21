@@ -105,6 +105,48 @@ export interface StripePaymentLinkPayload {
   lineItems?: Array<Record<string, unknown>>
 }
 
+export interface PublicStripePaymentPlanInstallment {
+  id: string
+  sequence: number
+  amount: number
+  percentage?: number | null
+  dueDate?: string | null
+  status?: string | null
+  paymentId?: string | null
+  paymentMethod?: string | null
+  changeType?: 'added' | null
+}
+
+export interface PublicStripePaymentPlan {
+  provider: 'stripe'
+  flowId: string
+  trigger?: string | null
+  title: string
+  description?: string
+  status?: string | null
+  total: number
+  currency: string
+  remainingFrequency?: string | null
+  recurrenceLabel?: string | null
+  cardSetupRequired?: boolean
+  cardSetupStatus?: string | null
+  cardSetupAmount?: number
+  stripePaymentMethodLabel?: string | null
+  firstPayment?: {
+    amount: number
+    date?: string | null
+    method?: string | null
+    status?: string | null
+    paymentId?: string | null
+  } | null
+  installments: PublicStripePaymentPlanInstallment[]
+  changeSummary?: {
+    type: 'added_installments'
+    label: string
+    addedInstallmentCount: number
+  } | null
+}
+
 export interface PublicStripePayment {
   id: string
   publicPaymentId: string
@@ -128,6 +170,7 @@ export interface PublicStripePayment {
   stripePaymentIntentId?: string | null
   publishableKey: string
   stripeAccountId?: string
+  paymentPlan?: PublicStripePaymentPlan | null
   tax?: {
     enabled: boolean
     taxName: string

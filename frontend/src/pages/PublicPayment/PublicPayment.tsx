@@ -82,6 +82,9 @@ const MERCADOPAGO_SDK_SRC = 'https://sdk.mercadopago.com/js/v2'
 const CONEKTA_CHECKOUT_SDK_SRC = 'https://pay.conekta.com/v1.0/js/conekta-checkout.min.js'
 let mercadoPagoSdkPromise: Promise<void> | null = null
 let conektaCheckoutSdkPromise: Promise<void> | null = null
+const STRIPE_SPANISH_COUNTRIES = new Set([
+  'AR', 'BO', 'CL', 'CO', 'CR', 'CU', 'DO', 'EC', 'ES', 'GT', 'HN', 'MX', 'NI', 'PA', 'PE', 'PR', 'PY', 'SV', 'UY', 'VE'
+])
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -92,7 +95,10 @@ const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
 
 function formatDate(value?: string | null) {
   if (!value) return 'Sin vencimiento'
-  const date = new Date(value)
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  const date = dateOnlyMatch
+    ? new Date(Number(dateOnlyMatch[1]), Number(dateOnlyMatch[2]) - 1, Number(dateOnlyMatch[3]))
+    : new Date(value)
   if (Number.isNaN(date.getTime())) return String(value).split('T')[0]
   return new Intl.DateTimeFormat('es-MX', {
     day: '2-digit',
@@ -131,6 +137,29 @@ function buildStripeAppearance() {
       borderRadius: '10px'
     }
   }
+}
+
+function resolveStripeLocale(payment?: PublicStripePayment | null): StripeElementsOptions['locale'] {
+  const country = payment?.tax?.country?.trim().toUpperCase()
+  if (country && !STRIPE_SPANISH_COUNTRIES.has(country)) return 'auto'
+  return 'es'
+}
+
+function getPlanInstallmentStatusCopy(status?: string | null) {
+  const normalized = String(status || '').toLowerCase()
+  if (['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'registered'].includes(normalized)) return 'Pagado'
+  if (['scheduled', 'active'].includes(normalized)) return 'Programado'
+  if (['waiting_card_authorization', 'requires_payment_method'].includes(normalized)) return 'Espera tarjeta'
+  if (['deleted', 'cancelled', 'canceled', 'void'].includes(normalized)) return 'Cancelado'
+  return 'Pendiente'
+}
+
+function getPlanPaymentMethodCopy(method?: string | null) {
+  const normalized = String(method || '').toLowerCase()
+  if (normalized.includes('stripe') || normalized.includes('card') || normalized.includes('tarjeta')) return 'Tarjeta domiciliada'
+  if (normalized.includes('cash') || normalized.includes('efectivo')) return 'Manual'
+  if (normalized.includes('transfer')) return 'Transferencia'
+  return method || 'Por definir'
 }
 
 function loadMercadoPagoSdk() {
@@ -274,6 +303,11 @@ const PublicPaymentForm: React.FC<{
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [success, setSuccess] = useState(false)
+  const isCardSetupPlan = Boolean(payment.paymentPlan?.cardSetupRequired || payment.paymentPlan?.trigger === 'card_setup')
+  const submitLabel = isCardSetupPlan
+    ? 'Autorizar tarjeta'
+    : payment.settings?.checkout?.buttonLabel || 'Pagar'
+  const submitAmount = Number(payment.amount || 0) > 0 ? ` ${formatCurrency(payment.amount, payment.currency)}` : ''
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -327,7 +361,9 @@ const PublicPaymentForm: React.FC<{
         <p className={styles.cardAuthorizationNotice}>
           <ShieldCheck size={16} />
           <span>
-            Al pagar este invoice autorizas que esta tarjeta quede resguardada en Stripe para futuros cargos acordados con este negocio.
+            {isCardSetupPlan
+              ? 'Al confirmar, Stripe guardará esta tarjeta para cobrar automáticamente los pagos programados de este plan.'
+              : 'Al pagar autorizas que esta tarjeta quede resguardada en Stripe para futuros cargos acordados con este negocio.'}
           </span>
         </p>
       )}
@@ -341,7 +377,7 @@ const PublicPaymentForm: React.FC<{
           disabled={!stripe || !elements || submitting}
           leftIcon={submitting ? <Loader2 size={16} className={styles.spin} /> : <CreditCard size={16} />}
         >
-          {submitting ? 'Procesando' : `${payment.settings?.checkout?.buttonLabel || 'Pagar'} ${formatCurrency(payment.amount, payment.currency)}`}
+          {submitting ? 'Procesando' : `${submitLabel}${submitAmount}`}
         </Button>
       </div>
     </form>
@@ -666,23 +702,26 @@ export const PublicPayment: React.FC = () => {
   const isStripePayment = payment?.provider === 'stripe'
   const isMercadoPagoPayment = payment?.provider === 'mercadopago'
   const isConektaPayment = payment?.provider === 'conekta'
-  const shouldSavePaymentMethod = Boolean(isStripePayment && payment?.contact?.id)
+  const stripePayment = payment?.provider === 'stripe' ? payment : null
+  const paymentPlan = stripePayment?.paymentPlan || null
+  const shouldSavePaymentMethod = Boolean(stripePayment?.contact?.id || paymentPlan?.cardSetupRequired)
   const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : 'Stripe'
 
   const stripePromise = useMemo<StripePromise | null>(() => {
-    if (!payment || payment.provider !== 'stripe') return null
-    const key = intent?.publishableKey || payment?.publishableKey
-    const stripeAccount = intent?.stripeAccountId || payment?.stripeAccountId
+    if (!stripePayment) return null
+    const key = intent?.publishableKey || stripePayment.publishableKey
+    const stripeAccount = intent?.stripeAccountId || stripePayment.stripeAccountId
     return key ? loadStripe(key, stripeAccount ? { stripeAccount } : undefined) : null
-  }, [intent?.publishableKey, intent?.stripeAccountId, payment])
+  }, [intent?.publishableKey, intent?.stripeAccountId, stripePayment])
 
   const elementsOptions = useMemo<StripeElementsOptions | null>(() => {
-    if (!intent?.clientSecret) return null
+    if (!intent?.clientSecret || !stripePayment) return null
     return {
       clientSecret: intent.clientSecret,
-      appearance: buildStripeAppearance()
+      appearance: buildStripeAppearance(),
+      locale: resolveStripeLocale(stripePayment)
     }
-  }, [intent?.clientSecret])
+  }, [intent?.clientSecret, stripePayment])
 
   const loadPayment = async (sync = false) => {
     if (!publicPaymentId) return
@@ -843,6 +882,17 @@ export const PublicPayment: React.FC = () => {
   const description = isPaid
     ? 'Tu pago fue recibido correctamente. Puedes descargar tu comprobante en PDF cuando lo necesites.'
     : checkoutSettings?.description || `Revisa los datos del cobro y paga de forma segura con ${providerLabel}. Ristak no ve ni guarda el número de tu tarjeta.`
+  const planInstallments = paymentPlan?.installments || []
+  const firstPlanPayment = paymentPlan?.firstPayment || null
+  const scheduledPlanCount = planInstallments.length
+  const totalPlanPayments = scheduledPlanCount + (firstPlanPayment ? 1 : 0)
+  const isCardSetupPlan = Boolean(paymentPlan?.cardSetupRequired || paymentPlan?.trigger === 'card_setup')
+  const planTotal = Number(paymentPlan?.total || 0)
+  const addedInstallmentCount = Number(paymentPlan?.changeSummary?.addedInstallmentCount || 0)
+  const hasPlanSummary = Boolean(paymentPlan && (planTotal > 0 || firstPlanPayment || scheduledPlanCount > 0))
+  const secureCopy = isCardSetupPlan
+    ? `Este link autoriza la tarjeta para domiciliar los cobros de ${paymentPlan?.title || 'este plan de pagos'}.`
+    : `Pago cifrado y procesado por ${providerLabel}.`
 
   return (
     <main className={styles.page}>
@@ -863,24 +913,158 @@ export const PublicPayment: React.FC = () => {
           </Badge>
         </header>
 
-        <section className={styles.hero}>
-          <div className={styles.heroCopy}>
-            <span className={styles.eyebrow}>{isPaid ? 'Comprobante listo' : 'Checkout seguro'}</span>
-            <h1 className={styles.title}>{headline}</h1>
-            <p className={styles.subtitle}>{description}</p>
-          </div>
-          <div className={styles.totalSummary} aria-label="Total a pagar">
-            <span>Total</span>
-            <strong>{formatCurrency(payment.amount, payment.currency)}</strong>
-            <small>{providerLabel} · {paymentModeLabel}</small>
-          </div>
-        </section>
+        <section className={styles.checkoutLayout}>
+          <section className={styles.summaryPane} aria-label="Resumen del pago">
+            <div className={styles.summaryIntro}>
+              <span className={styles.eyebrow}>{isPaid ? 'Comprobante listo' : hasPlanSummary ? 'Plan de pagos' : 'Checkout seguro'}</span>
+              <h1 className={styles.title}>{headline}</h1>
+              <p className={styles.subtitle}>{description}</p>
+            </div>
 
-        <section className={styles.grid}>
+            <div className={styles.summaryAmountBlock} aria-label={isPaid ? 'Total pagado' : 'Total a pagar'}>
+              <span>{isPaid ? 'Total pagado' : isCardSetupPlan ? 'Monto de este link' : 'Total a pagar'}</span>
+              <strong>
+                {isCardSetupPlan && Number(totalAmount || 0) <= 0
+                  ? 'Sin cargo inmediato'
+                  : formatCurrency(totalAmount, payment.currency)}
+              </strong>
+              <small>{providerLabel} · {paymentModeLabel}</small>
+            </div>
+
+            <div className={styles.summarySection}>
+              <div className={styles.sectionHeading}>
+                <span className={styles.eyebrow}>Concepto</span>
+                <h2>{payment.title || 'Pago'}</h2>
+                {payment.description && <p>{payment.description}</p>}
+              </div>
+
+              <div className={styles.summaryRows}>
+                <div>
+                  <span>Cliente</span>
+                  <strong>{payment.contact?.name || 'Cliente'}</strong>
+                </div>
+                {payment.contact?.email && (
+                  <div>
+                    <span>Email</span>
+                    <strong>{payment.contact.email}</strong>
+                  </div>
+                )}
+                <div>
+                  <span>Vencimiento</span>
+                  <strong>{formatDate(payment.dueDate)}</strong>
+                </div>
+                {hasTaxBreakdown && (
+                  <div>
+                    <span>Subtotal</span>
+                    <strong>{formatCurrency(subtotalAmount, payment.currency)}</strong>
+                  </div>
+                )}
+                {hasTaxBreakdown && (
+                  <div>
+                    <span>{taxDetails?.calculationMode === 'inclusive' ? 'Impuesto incluido' : 'Impuesto'}</span>
+                    <strong>{taxLabel} · {formatCurrency(taxAmount, payment.currency)}</strong>
+                  </div>
+                )}
+                <div>
+                  <span>Total</span>
+                  <strong>{formatCurrency(totalAmount, payment.currency)}</strong>
+                </div>
+                <div>
+                  <span>Referencia</span>
+                  <strong>{payment.publicPaymentId}</strong>
+                </div>
+              </div>
+            </div>
+
+            {hasPlanSummary && paymentPlan && (
+              <div className={styles.planSection}>
+                <div className={styles.sectionHeading}>
+                  <span className={styles.eyebrow}>Resumen del plan</span>
+                  <h2>{paymentPlan.title || 'Plan de pagos'}</h2>
+                  {paymentPlan.description && <p>{paymentPlan.description}</p>}
+                </div>
+
+                {isCardSetupPlan && (
+                  <p className={styles.planNotice}>
+                    Este link domicilia tu tarjeta para cobrar automáticamente los pagos programados del plan.
+                  </p>
+                )}
+
+                {addedInstallmentCount > 0 && (
+                  <p className={styles.planNotice}>
+                    {paymentPlan.changeSummary?.label || `${addedInstallmentCount} pagos agregados`}. Ya están incluidos en el calendario de cobro.
+                  </p>
+                )}
+
+                <div className={styles.planStats}>
+                  <div>
+                    <span>Total del plan</span>
+                    <strong>{formatCurrency(planTotal || totalAmount, paymentPlan.currency || payment.currency)}</strong>
+                  </div>
+                  <div>
+                    <span>Pagos del plan</span>
+                    <strong>{totalPlanPayments || scheduledPlanCount || 1}</strong>
+                  </div>
+                  <div>
+                    <span>Frecuencia</span>
+                    <strong>{paymentPlan.recurrenceLabel || 'Personalizada'}</strong>
+                  </div>
+                </div>
+
+                {firstPlanPayment && (
+                  <div className={styles.planLine}>
+                    <span>Primer pago</span>
+                    <strong>
+                      {formatCurrency(firstPlanPayment.amount, paymentPlan.currency || payment.currency)} · {formatDate(firstPlanPayment.date)}
+                    </strong>
+                    <small>
+                      {getPlanInstallmentStatusCopy(firstPlanPayment.status)} · {getPlanPaymentMethodCopy(firstPlanPayment.method)}
+                    </small>
+                  </div>
+                )}
+
+                {scheduledPlanCount > 0 && (
+                  <div className={styles.planTimeline}>
+                    <div className={styles.planTimelineHeader}>
+                      <span>Calendario</span>
+                      <strong>{scheduledPlanCount} {scheduledPlanCount === 1 ? 'pago programado' : 'pagos programados'}</strong>
+                    </div>
+                    {planInstallments.map((installment, index) => (
+                      <div className={styles.timelineItem} key={installment.id || `${installment.sequence}-${index}`}>
+                        <span className={styles.timelineIndex}>{installment.sequence || index + 1}</span>
+                        <div>
+                          <strong>
+                            {formatCurrency(installment.amount, paymentPlan.currency || payment.currency)}
+                            {installment.changeType === 'added' && <span className={styles.addedTag}>Agregado</span>}
+                          </strong>
+                          <span>{formatDate(installment.dueDate)} · {getPlanInstallmentStatusCopy(installment.status)}</span>
+                          <small>{getPlanPaymentMethodCopy(installment.paymentMethod)}</small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {checkoutSettings?.showSecureBadge && !isPaid && (
+              <p className={styles.secureNotice}>
+                <ShieldCheck size={16} />
+                <span>{secureCopy}</span>
+              </p>
+            )}
+
+            {supportItems.length > 0 && !isPaid && (
+              <p className={styles.supportLine}>
+                ¿Necesitas ayuda con tu pago? {supportItems.join(' · ')}
+              </p>
+            )}
+          </section>
+
           <section className={styles.payPanel} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
               <span className={styles.payKicker}>{isPaid ? 'Estado final' : 'Método de pago'}</span>
-              <h2>{isPaid ? 'Pago confirmado' : 'Pagar con tarjeta'}</h2>
+              <h2>{isPaid ? 'Pago confirmado' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
               <p>
                 {isPaid
                   ? 'Este pago ya aparece como pagado en Ristak.'
@@ -888,7 +1072,9 @@ export const PublicPayment: React.FC = () => {
                     ? 'Captura la tarjeta en el formulario seguro de Mercado Pago sin salir de esta página.'
                     : isConektaPayment
                       ? 'Captura la tarjeta en el tokenizador seguro de Conekta sin salir de esta página.'
-                    : 'Los datos se capturan en el formulario seguro de Stripe.'}
+                      : isCardSetupPlan
+                        ? 'Stripe guardará la tarjeta para cobrar el plan según el calendario mostrado.'
+                        : 'Los datos se capturan en el formulario seguro de Stripe.'}
               </p>
             </div>
 
@@ -995,7 +1181,9 @@ export const PublicPayment: React.FC = () => {
                   <p className={styles.cardAuthorizationNotice}>
                     <ShieldCheck size={16} />
                     <span>
-                      Al iniciar y completar este pago, Stripe guardará la tarjeta para que el negocio pueda cobrar futuros pagos que acuerdes.
+                      {isCardSetupPlan
+                        ? 'Al iniciar, Stripe preparará la autorización para guardar la tarjeta y domiciliar este plan.'
+                        : 'Al iniciar y completar este pago, Stripe guardará la tarjeta para que el negocio pueda cobrar futuros pagos que acuerdes.'}
                     </span>
                   </p>
                 )}
@@ -1009,75 +1197,13 @@ export const PublicPayment: React.FC = () => {
                     disabled={startingPayment || !isStripePayment || !payment.publishableKey}
                     leftIcon={startingPayment ? <Loader2 size={16} className={styles.spin} /> : <CreditCard size={16} />}
                   >
-                    {startingPayment ? 'Preparando' : checkoutSettings?.buttonLabel || 'Iniciar pago'}
+                    {startingPayment ? 'Preparando' : isCardSetupPlan ? 'Autorizar tarjeta' : checkoutSettings?.buttonLabel || 'Iniciar pago'}
                   </Button>
                 </div>
               </div>
             )}
           </section>
-
-          <aside className={styles.invoicePanel} aria-label="Resumen del pago">
-            <div className={styles.invoiceTop}>
-              <div>
-                <p className={styles.invoiceLabel}>Concepto</p>
-                <h2 className={styles.invoiceTitle}>{payment.title || 'Pago'}</h2>
-                {payment.description && (
-                  <p className={styles.invoiceDescription}>{payment.description}</p>
-                )}
-              </div>
-            </div>
-
-            <div className={styles.detailList}>
-              <div className={styles.detailRow}>
-                <span>Cliente</span>
-                <strong>{payment.contact?.name || 'Cliente'}</strong>
-              </div>
-              {payment.contact?.email && (
-                <div className={styles.detailRow}>
-                  <span>Email</span>
-                  <strong>{payment.contact.email}</strong>
-                </div>
-              )}
-              <div className={styles.detailRow}>
-                <span>Vencimiento</span>
-                <strong>{formatDate(payment.dueDate)}</strong>
-              </div>
-              {hasTaxBreakdown && (
-                <div className={styles.detailRow}>
-                  <span>Subtotal</span>
-                  <strong>{formatCurrency(taxDetails?.subtotalAmount || 0, payment.currency)}</strong>
-                </div>
-              )}
-              {hasTaxBreakdown && (
-                <div className={styles.detailRow}>
-                  <span>{taxDetails?.calculationMode === 'inclusive' ? 'Impuesto incluido' : 'Impuesto'}</span>
-                  <strong>{taxLabel} · {formatCurrency(taxDetails?.taxAmount || 0, payment.currency)}</strong>
-                </div>
-              )}
-              <div className={styles.detailRow}>
-                <span>Total</span>
-                <strong>{formatCurrency(totalAmount, payment.currency)}</strong>
-              </div>
-              <div className={styles.detailRow}>
-                <span>Referencia</span>
-                <strong>{payment.publicPaymentId}</strong>
-              </div>
-            </div>
-
-            {checkoutSettings?.showSecureBadge && !isPaid && (
-              <p className={styles.secureNotice}>
-                <ShieldCheck size={16} />
-                <span>Pago cifrado y procesado por {providerLabel}.</span>
-              </p>
-            )}
-          </aside>
         </section>
-
-        {supportItems.length > 0 && !isPaid && (
-          <p className={styles.supportLine}>
-            ¿Necesitas ayuda con tu pago? {supportItems.join(' · ')}
-          </p>
-        )}
       </div>
 
       {isPaid && (

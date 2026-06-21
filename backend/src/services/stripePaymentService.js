@@ -1508,7 +1508,7 @@ async function findPaymentByPublicId(publicPaymentId) {
   )
 }
 
-function mapPublicPayment(row, config, baseUrl = '', settings = null) {
+function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPlan = null) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
   const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
@@ -1537,7 +1537,89 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null) {
     publishableKey: config?.publishableKey || '',
     stripeAccountId: config?.connectUsesPlatformAccountHeader ? config.connectedAccountId || '' : '',
     tax,
+    paymentPlan,
     settings: settings || null
+  }
+}
+
+function normalizePublicPaymentPlanInstallment(installment = {}, addedIds = new Set()) {
+  const id = cleanString(installment.id || installment.installmentId)
+  return {
+    id,
+    sequence: Number(installment.sequence || 0),
+    amount: Number(installment.amount || 0),
+    percentage: installment.percentage ?? null,
+    dueDate: installment.dueDate || null,
+    status: installment.status || null,
+    paymentId: installment.paymentId || null,
+    paymentMethod: installment.paymentMethod || null,
+    changeType: id && addedIds.has(id) ? 'added' : null
+  }
+}
+
+async function buildPublicPaymentPlanSummary(row) {
+  const metadata = parseJson(row?.metadata_json, {})
+  const paymentPlanMetadata = metadata.paymentPlan && typeof metadata.paymentPlan === 'object'
+    ? metadata.paymentPlan
+    : null
+  const flowId = cleanString(paymentPlanMetadata?.flowId)
+  if (!flowId) return null
+
+  let mirror = null
+  try {
+    mirror = await persistStripePaymentPlanMirror(flowId)
+  } catch (error) {
+    logger.warn(`No se pudo refrescar resumen público del plan Stripe ${flowId}: ${error.message}`)
+  }
+  if (!mirror) {
+    mirror = await db.get('SELECT * FROM payment_plans WHERE id = ?', [flowId])
+  }
+  if (!mirror) return null
+
+  const schedule = parseJson(mirror.schedule_json, {})
+  const raw = parseJson(mirror.raw_json, {})
+  const addedInstallments = Array.isArray(raw.addedInstallments) ? raw.addedInstallments : []
+  const addedIds = new Set(addedInstallments.map((installment) => (
+    cleanString(installment.id || installment.installmentId)
+  )).filter(Boolean))
+  const installments = Array.isArray(schedule.installments)
+    ? schedule.installments.map((installment) => normalizePublicPaymentPlanInstallment(installment, addedIds))
+    : []
+  const firstPayment = schedule.firstPayment && Number(schedule.firstPayment.amount || 0) > 0
+    ? {
+        amount: Number(schedule.firstPayment.amount || 0),
+        date: schedule.firstPayment.date || null,
+        method: schedule.firstPayment.method || null,
+        status: schedule.firstPayment.status || null,
+        paymentId: schedule.firstPayment.paymentId || null
+      }
+    : null
+  const addedInstallmentCount = Number(raw.addedInstallmentCount || addedInstallments.length || 0)
+
+  return {
+    provider: 'stripe',
+    flowId,
+    trigger: cleanString(paymentPlanMetadata.trigger),
+    title: mirror.title || mirror.name || 'Plan de pagos',
+    description: mirror.description || '',
+    status: mirror.status || null,
+    total: Number(mirror.total || 0),
+    currency: mirror.currency || row.currency || DEFAULT_CURRENCY,
+    remainingFrequency: schedule.remainingFrequency || null,
+    recurrenceLabel: mirror.recurrence_label || getStripePlanRecurrenceLabel(schedule.remainingFrequency || 'custom'),
+    cardSetupRequired: Boolean(schedule.cardSetupRequired),
+    cardSetupStatus: schedule.cardSetupStatus || null,
+    cardSetupAmount: Number(schedule.cardSetupAmount || 0),
+    stripePaymentMethodLabel: schedule.stripePaymentMethodLabel || null,
+    firstPayment,
+    installments,
+    changeSummary: addedInstallmentCount > 0
+      ? {
+          type: 'added_installments',
+          label: `${addedInstallmentCount} ${addedInstallmentCount === 1 ? 'pago agregado' : 'pagos agregados'}`,
+          addedInstallmentCount
+        }
+      : null
   }
 }
 
@@ -1843,7 +1925,8 @@ export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = 
   }
 
   const paymentSettings = await getPublicPaymentSettings()
-  return mapPublicPayment(row, config, baseUrl, paymentSettings)
+  const paymentPlan = await buildPublicPaymentPlanSummary(row)
+  return mapPublicPayment(row, config, baseUrl, paymentSettings, paymentPlan)
 }
 
 export async function createStripePaymentIntent(publicPaymentId, options = {}) {
@@ -3147,6 +3230,8 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
      ORDER BY sequence ASC`,
     [cleanFlowId]
   )
+  const previousMirror = await db.get('SELECT raw_json FROM payment_plans WHERE id = ?', [cleanFlowId])
+  const previousRawJson = parseJson(previousMirror?.raw_json, {})
   const metadata = parseJson(flow.metadata, {})
   const visibleInstallments = (installments || []).filter((installment) => (
     !['cancelled', 'canceled', 'deleted', 'void'].includes(cleanString(installment.status).toLowerCase())
@@ -3185,6 +3270,13 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
       paymentMethod: installment.payment_method || null
     }))
   }
+  const hasExtra = extra && Object.keys(extra).length > 0
+  const preservedChangeSummary = hasExtra
+    ? {}
+    : {
+        ...(Array.isArray(previousRawJson.addedInstallments) ? { addedInstallments: previousRawJson.addedInstallments } : {}),
+        ...(previousRawJson.addedInstallmentCount ? { addedInstallmentCount: previousRawJson.addedInstallmentCount } : {})
+      }
   const rawJson = {
     id: cleanFlowId,
     provider: 'stripe',
@@ -3197,7 +3289,8 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
       stripePaymentMethodLabel: flow.stripe_payment_method_label || null
     },
     schedule: scheduleJson,
-    ...(extra && Object.keys(extra).length ? extra : {})
+    ...preservedChangeSummary,
+    ...(hasExtra ? extra : {})
   }
 
   await db.run(
@@ -3309,6 +3402,7 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
   )
   const existingById = new Map((existingInstallments || []).map(installment => [installment.id, installment]))
   const submittedExistingIds = new Set()
+  const addedInstallments = []
   let nextSequence = 1
   let remainingTotal = 0
 
@@ -3406,6 +3500,14 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
           notes
         ]
       )
+
+      addedInstallments.push({
+        id: installmentId,
+        sequence: nextSequence,
+        amount,
+        dueDate,
+        paymentMethod: method.installmentMethod
+      })
     }
 
     await db.run(
@@ -3633,7 +3735,9 @@ export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
 
   const mirrored = await persistStripePaymentPlanMirror(cleanFlowId, {
     localAction: 'update_schedule',
-    actionedAt: new Date().toISOString()
+    actionedAt: new Date().toISOString(),
+    addedInstallmentCount: addedInstallments.length,
+    addedInstallments
   })
 
   return mirrored
