@@ -5035,46 +5035,6 @@ export const DesktopChat: React.FC = () => {
               </div>
             ) : (
               <>
-                {!archivedViewOpen && agentPriorityChatRows.map((contact) => {
-                  const active = contact.id === activeContactId
-                  const unread = Number(contact.unreadCount || 0)
-                  const agentState = agentStates[contact.id]
-                  return (
-                    <div
-                      key={`agent-${contact.id}`}
-                      role="button"
-                      tabIndex={0}
-                      data-chat-row="agent-priority"
-                      className={`${styles.chatRow} ${styles.chatRowAgentAction} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''} ${selectedChatIdSet.has(contact.id) ? styles.chatRowSelected : ''}`}
-                      onClick={() => handleSelectChat(contact)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          handleSelectChat(contact)
-                        }
-                      }}
-                    >
-                      {renderChatSelectionControl(contact)}
-                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge: true })}
-                      <span className={styles.chatRowBody}>
-                        <span className={styles.chatRowTop}>
-                          <strong>{getContactName(contact)}</strong>
-                          <small>{contact.lastMessageDate ? formatMessageTime(contact.lastMessageDate) : ''}</small>
-                        </span>
-                        <span className={styles.chatPreviewLine}>
-                          <span className={styles.agentPriorityText}>
-                            {[AGENT_SIGNAL_LABELS[agentState?.signal || ''] || 'Prioridad del agente', agentState?.signalReason || agentState?.signalSummary].filter(Boolean).join(' · ')}
-                          </span>
-                        </span>
-                      </span>
-                      <span className={styles.chatRowAside}>
-                        {unread > 0 ? <span className={styles.unreadDot} data-chat-unread-dot aria-label="Mensaje nuevo" /> : null}
-                        {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
-                        {renderChatActionsMenu(contact)}
-                      </span>
-                    </div>
-                  )
-                })}
                 {archivedViewOpen ? (
                   <button
                     type="button"
@@ -5268,6 +5228,49 @@ export const DesktopChat: React.FC = () => {
                     </DropdownMenu>
                   ) : null}
                 </div>
+                {!archivedViewOpen && agentPriorityChatRows.map((contact) => {
+                  const active = contact.id === activeContactId
+                  const unread = Number(contact.unreadCount || 0)
+                  const agentState = agentStates[contact.id]
+                  return (
+                    <div
+                      key={`agent-${contact.id}`}
+                      role="button"
+                      tabIndex={0}
+                      data-chat-row="agent-priority"
+                      className={`${styles.chatRow} ${styles.chatRowAgentAction} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''} ${selectedChatIdSet.has(contact.id) ? styles.chatRowSelected : ''}`}
+                      onClick={() => handleSelectChat(contact)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          handleSelectChat(contact)
+                        }
+                      }}
+                    >
+                      {renderChatSelectionControl(contact)}
+                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge: true })}
+                      <span className={styles.chatRowBody}>
+                        <span className={styles.chatRowTop}>
+                          <strong>{getContactName(contact)}</strong>
+                          <small>{contact.lastMessageDate ? formatMessageTime(contact.lastMessageDate) : ''}</small>
+                        </span>
+                        <span className={styles.chatPreviewLine}>
+                          <span className={styles.agentPriorityText}>
+                            {[AGENT_SIGNAL_LABELS[agentState?.signal || ''] || 'Prioridad del agente', agentState?.signalReason || agentState?.signalSummary].filter(Boolean).join(' · ')}
+                          </span>
+                        </span>
+                      </span>
+                      <span className={styles.chatRowAside}>
+                        {unread > 0 ? <span className={styles.unreadDot} data-chat-unread-dot aria-label="Mensaje nuevo" /> : null}
+                        {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
+                        {renderChatActionsMenu(contact)}
+                      </span>
+                    </div>
+                  )
+                })}
+                {agentPriorityChatRows.length > 0 && filteredChats.length > 0 ? (
+                  <div className={styles.agentPriorityDivider} aria-hidden="true" />
+                ) : null}
                 {filteredChats.map((contact) => {
                   const active = contact.id === activeContactId
                   const unread = Number(contact.unreadCount || 0)

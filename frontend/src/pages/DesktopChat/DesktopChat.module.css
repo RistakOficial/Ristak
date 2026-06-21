@@ -539,7 +539,32 @@
 }
 
 .chatRowAgentAction {
-  background: color-mix(in srgb, var(--chat-soft-strong) 74%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--neg) 26%, var(--chat-border));
+  background: color-mix(in srgb, var(--neg-soft) 72%, var(--surface) 28%);
+}
+
+.chatRowAgentAction::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background: var(--neg);
+}
+
+.chatRowAgentAction:hover,
+.chatRowAgentAction.chatRowActive,
+.chatRowAgentAction.chatRowSelected {
+  background: color-mix(in srgb, var(--neg-soft) 82%, var(--surface-hover) 18%);
+}
+
+.agentPriorityDivider {
+  height: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--neg) 32%, var(--chat-border));
+  border-bottom: 1px solid var(--chat-border);
+  background: color-mix(in srgb, var(--neg-soft) 28%, transparent);
 }
 
 .chatRowAgentAssigned {
@@ -645,6 +670,12 @@
   white-space: nowrap;
 }
 
+.chatRowAgentAction .chatRowTop small,
+.chatRowAgentAction .agentPriorityText {
+  color: color-mix(in srgb, var(--neg) 72%, var(--text-dim));
+  font-weight: 650;
+}
+
 .unread {
   display: inline-flex;
   align-items: center;
@@ -675,6 +706,12 @@
   border-radius: var(--radius-pill);
   background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 78%, transparent);
+}
+
+.chatRowAgentAction .unread,
+.chatRowAgentAction .unreadDot {
+  background: var(--neg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--neg-soft) 78%, transparent);
 }
 
 .chatRowMenuButton {
