@@ -19,7 +19,7 @@ Any other route opened inside the native iOS shell is redirected back to `/phone
 - Apple team: `Y2L8669JNL`
 - Category: Business
 - Version: `1.0`
-- Build: `1`
+- Build: `2`
 - Minimum iOS: `15.0`
 - Device family: iPhone
 
