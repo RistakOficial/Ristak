@@ -10,6 +10,7 @@ import {
   Hash as HashIcon,
   KeyRound,
   Link2,
+  MoreHorizontal,
   Plus,
   QrCode,
   RefreshCw,
@@ -20,7 +21,21 @@ import {
   Wallet
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
-import { Badge, Button, CustomSelect, Modal, NumberInput, PageHeader, SearchField, Switch } from '@/components/common'
+import {
+  Badge,
+  Button,
+  CustomSelect,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  Modal,
+  NumberInput,
+  PageHeader,
+  SearchField,
+  Switch
+} from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
 import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrDripDelayUnit, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
@@ -116,7 +131,7 @@ function getAlertWeight(severity?: string | null) {
 
 function getQrStatusLabel(status?: string | null) {
   const normalized = String(status || '').toLowerCase()
-  if (!normalized) return 'QR opcional'
+  if (!normalized) return 'Sin QR'
   if (normalized === 'connected') return 'QR conectado'
   if (normalized === 'qr_pending') return 'Escanea QR'
   if (normalized === 'starting') return 'Preparando QR'
@@ -129,14 +144,6 @@ function getQrStatusLabel(status?: string | null) {
   if (normalized === 'logged_out') return 'QR cerrado'
   if (normalized.startsWith('disconnected')) return 'QR desconectado'
   return 'QR apagado'
-}
-
-function getQrStatusClass(status?: string | null) {
-  const normalized = String(status || '').toLowerCase()
-  if (normalized === 'connected') return styles.qrBadgeConnected
-  if (['qr_pending', 'starting', 'restarting', 'reconnecting', 'disconnected_515'].includes(normalized)) return styles.qrBadgePending
-  if (['number_mismatch', 'logged_out', 'bad_session', 'connection_replaced'].includes(normalized) || normalized.includes('disconnect')) return styles.qrBadgeWarning
-  return styles.qrBadgeMuted
 }
 
 function isQrWorkingStatus(status?: string | null) {
@@ -957,6 +964,8 @@ export const WhatsAppSettings: React.FC = () => {
       return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, apiEnabled, needsAttention }
     })
     const query = phoneSearch.trim().toLowerCase()
+    const qrConnectedCount = enrichedPhones.filter((row) => row.qrConnected).length
+    const needsAttentionCount = enrichedPhones.filter((row) => row.needsAttention).length
     const filteredPhones = enrichedPhones.filter((row) => {
       if (phoneFilter === 'main' && !row.isSender) return false
       if (phoneFilter === 'qr' && !row.qrConnected) return false
@@ -973,6 +982,8 @@ export const WhatsAppSettings: React.FC = () => {
         getQrStatusLabel(row.qrStatus)
       ].some((value) => String(value || '').toLowerCase().includes(query))
     })
+    const balanceLabel = balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'
+    const hasAdvancedActions = Boolean(paymentConfigUrl || apiConnected)
 
     return (
       <div className={styles.layout}>
@@ -994,12 +1005,12 @@ export const WhatsAppSettings: React.FC = () => {
           <button type="button" className={`${styles.sideItem} ${phoneFilter === 'qr' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('qr')}>
             <QrCode size={16} />
             <span>QR conectado</span>
-            <b>{enrichedPhones.filter((row) => row.qrConnected).length}</b>
+            <b>{qrConnectedCount}</b>
           </button>
           <button type="button" className={`${styles.sideItem} ${phoneFilter === 'attention' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('attention')}>
             <AlertTriangle size={16} />
             <span>Revisar</span>
-            <b>{enrichedPhones.filter((row) => row.needsAttention).length}</b>
+            <b>{needsAttentionCount}</b>
           </button>
         </aside>
 
@@ -1013,15 +1024,11 @@ export const WhatsAppSettings: React.FC = () => {
               onClear={() => setPhoneSearch('')}
             />
             <div className={styles.toolbarActions}>
-              <span>{filteredPhones.length} números</span>
-              <span className={styles.balancePill}><Wallet size={15} />{balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'}</span>
-              {paymentConfigUrl && (
-                <a className={styles.externalButton} href={paymentConfigUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink size={15} />
-                  Configuración de pago
-                </a>
-              )}
-              <Button variant="outline" onClick={openAddNumberModal}>
+              <span className={styles.toolbarMeta}>
+                <Wallet size={15} />
+                {formatMetric(filteredPhones.length)} de {formatMetric(phoneRows.length)} números · {balanceLabel}
+              </span>
+              <Button variant="primary" onClick={openAddNumberModal}>
                 <Plus size={16} />
                 Agregar número
               </Button>
@@ -1029,22 +1036,52 @@ export const WhatsAppSettings: React.FC = () => {
                 <RefreshCw size={16} />
                 Sincronizar
               </Button>
-              {apiConnected && (
-                <>
-                  <a className={styles.externalButton} href={YCLOUD_CONSOLE_URL} target="_blank" rel="noopener noreferrer">
-                    <ExternalLink size={15} />
-                    Abrir API
-                  </a>
-                  <Button variant="danger" onClick={confirmApiDisconnect} loading={apiDisconnecting}>
-                    <Unplug size={16} />
-                    Desconectar
-                  </Button>
-                </>
+              {hasAdvancedActions && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" aria-label="Más acciones de WhatsApp">
+                      <MoreHorizontal size={16} />
+                      Más acciones
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className={styles.actionsMenu}>
+                    {paymentConfigUrl && (
+                      <DropdownMenuItem asChild>
+                        <a href={paymentConfigUrl} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink size={15} />
+                          Configurar pagos de Meta
+                        </a>
+                      </DropdownMenuItem>
+                    )}
+                    {apiConnected && (
+                      <>
+                        <DropdownMenuItem asChild>
+                          <a href={YCLOUD_CONSOLE_URL} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink size={15} />
+                            Abrir consola API
+                          </a>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className={styles.destructiveMenuItem}
+                          disabled={apiDisconnecting}
+                          onSelect={(event) => {
+                            event.preventDefault()
+                            confirmApiDisconnect()
+                          }}
+                        >
+                          <Unplug size={15} />
+                          Desconectar WhatsApp API
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
           </div>
 
-          {renderQrDripPanel()}
+          {renderQrDripPanel(true)}
 
           {filteredPhones.length > 0 ? (
             <div className={styles.tableWrap}>
@@ -1053,9 +1090,8 @@ export const WhatsAppSettings: React.FC = () => {
                   <tr>
                     <th>Número</th>
                     <th>Nombre</th>
-                    <th>Categoría</th>
-                    <th>API</th>
-                    <th>QR opcional</th>
+                    <th>Envío oficial</th>
+                    <th>Respaldo QR</th>
                     <th>Calidad</th>
                     <th>Límite</th>
                     <th aria-label="Acciones" />
@@ -1074,16 +1110,18 @@ export const WhatsAppSettings: React.FC = () => {
                           </td>
                           <td>{displayName}</td>
                           <td>
-                            <div className={styles.categoryCell}>
-                              {apiEnabled && <Badge variant="success">WhatsApp API</Badge>}
-                              {qrConnected && <Badge variant="info">QR</Badge>}
-                              {!apiEnabled && !qrConnected && <Badge variant="neutral">Pendiente</Badge>}
+                            <div className={styles.apiCell}>
+                              <Badge variant={apiEnabled ? 'success' : 'neutral'}>
+                                {apiEnabled ? (isSender ? 'Principal' : 'Oficial') : 'No conectado'}
+                              </Badge>
+                              {isSender && <span>Usado por defecto</span>}
                             </div>
                           </td>
-                          <td><Badge variant={apiEnabled ? 'success' : 'neutral'}>{apiEnabled ? (isSender ? 'Principal' : 'Oficial') : 'No conectado'}</Badge></td>
                           <td>
                             <div className={styles.qrCell}>
-                              <span className={`${styles.statusPill} ${getQrStatusClass(qrStatus)}`}>{getQrStatusLabel(qrStatus)}</span>
+                              <Badge variant={qrConnected ? 'info' : qrPending ? 'warning' : 'neutral'}>
+                                {getQrStatusLabel(qrStatus)}
+                              </Badge>
                               {qrConnected ? (
                                 <Button
                                   variant="outline"
@@ -1102,7 +1140,7 @@ export const WhatsAppSettings: React.FC = () => {
                                   onClick={() => openQrConsentForPhone(phone)}
                                 >
                                   <QrCode size={14} />
-                                  {qrPending ? 'Ver código QR' : 'Conectar QR'}
+                                  {qrPending ? 'Ver QR' : 'Conectar'}
                                 </Button>
                               )}
                             </div>
@@ -1121,7 +1159,7 @@ export const WhatsAppSettings: React.FC = () => {
                         </tr>
                         {qrError ? (
                           <tr className={styles.detailRow}>
-                            <td colSpan={8}>
+                            <td colSpan={7}>
                               <p className={styles.errorText}>{qrError}</p>
                             </td>
                           </tr>
@@ -1268,13 +1306,13 @@ export const WhatsAppSettings: React.FC = () => {
       </div>
       <div className={styles.qrDripCopy}>
         <div className={styles.qrDripTitleRow}>
-          <h3>Sistema anti-bloqueos de WhatsApp</h3>
+          <h3>Pausas automáticas para QR</h3>
           <Badge variant={qrDripSettings.enabled ? 'success' : 'warning'}>
             {qrDripSettings.enabled ? 'Activo' : 'Apagado'}
           </Badge>
         </div>
         <p>
-          Cuando una automatización use QR, Ristak reparte los envíos con {formatQrDripDelay(qrDripSettings.delaySeconds)} entre mensajes para no mandar todo de golpe.
+          Si una automatización usa QR, Ristak espera {formatQrDripDelay(qrDripSettings.delaySeconds)} entre mensajes.
         </p>
       </div>
       <div className={styles.qrDripControls}>
