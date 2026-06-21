@@ -5,6 +5,8 @@ export interface StripePaymentConfig {
   enabled: boolean
   configured: boolean
   connectionType?: 'manual' | 'connect'
+  configurationStatus?: 'not_configured' | 'configured_manually' | 'connection_failed' | 'disconnected'
+  stripeConnectOAuthEnabled?: boolean
   mode: 'test' | 'live'
   defaultCurrency: string
   accountLabel?: string
@@ -134,13 +136,6 @@ export interface StripePaymentIntentResponse {
   publishableKey: string
   stripeAccountId?: string
   status: string
-}
-
-export interface StripeConnectUrlResponse {
-  url: string
-  mode: 'test' | 'live'
-  redirectUri: string
-  scope: string
 }
 
 export interface StripeSavedPaymentMethod {
@@ -282,44 +277,6 @@ export const stripePaymentsService = {
       body: JSON.stringify(payload || {})
     })
     return parseApiResponse(response)
-  },
-
-  async createConnectUrl(payload: { mode: 'test' | 'live'; returnPath?: string; appUrl?: string }): Promise<StripeConnectUrlResponse> {
-    const response = await fetch(apiUrl('/api/stripe/connect/url'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeaders()
-      },
-      body: JSON.stringify(payload)
-    })
-    return parseApiResponse<StripeConnectUrlResponse>(response)
-  },
-
-  async syncConnect(payload: { handoffToken?: string } = {}): Promise<StripePaymentConfig> {
-    const response = await fetch(apiUrl('/api/stripe/connect/sync'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeaders()
-      },
-      body: JSON.stringify({
-        ...(payload.handoffToken ? { handoffToken: payload.handoffToken } : {})
-      })
-    })
-    return parseApiResponse<StripePaymentConfig>(response)
-  },
-
-  async setConnectMode(mode: 'test' | 'live'): Promise<StripePaymentConfig> {
-    const response = await fetch(apiUrl('/api/stripe/connect/mode'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeaders()
-      },
-      body: JSON.stringify({ mode })
-    })
-    return parseApiResponse<StripePaymentConfig>(response)
   },
 
   async deleteConfig(): Promise<StripePaymentConfig> {
