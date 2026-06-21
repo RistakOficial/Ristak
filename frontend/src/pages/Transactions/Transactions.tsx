@@ -619,6 +619,7 @@ export const Transactions: React.FC = () => {
   const [hasLoadedTransactions, setHasLoadedTransactions] = useState(false)
   const handledOpenPaymentRef = useRef<string | null>(null)
   const handledOpenPaymentPlanRef = useRef<string | null>(null)
+  const paymentPlansUnavailableRedirectedRef = useRef(false)
 
   const navigateTransactionsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
     navigate({ pathname, search: location.search }, options)
@@ -727,6 +728,36 @@ export const Transactions: React.FC = () => {
     setPaymentTableTab(current => current === routeState.tab ? current : routeState.tab)
     setViewMode(current => current === routeState.viewMode ? current : routeState.viewMode)
   }, [routeState.tab, routeState.viewMode])
+
+  useEffect(() => {
+    if (paymentTableTab !== 'payment-plans') {
+      paymentPlansUnavailableRedirectedRef.current = false
+      return
+    }
+
+    if (stripeStatusLoading || highLevelLoading) return
+
+    if (stripeConnected || highLevelConnected) {
+      paymentPlansUnavailableRedirectedRef.current = false
+      return
+    }
+
+    if (!paymentPlansUnavailableRedirectedRef.current) {
+      showToast('warning', 'Planes no disponibles', 'Los planes de pago necesitan Stripe o HighLevel. Mercado Pago queda disponible para links y suscripciones.')
+      paymentPlansUnavailableRedirectedRef.current = true
+    }
+
+    navigateTransactionsPath(buildTransactionsPath(viewMode), { replace: true })
+  }, [
+    highLevelConnected,
+    highLevelLoading,
+    navigateTransactionsPath,
+    paymentTableTab,
+    showToast,
+    stripeConnected,
+    stripeStatusLoading,
+    viewMode
+  ])
 
   useEffect(() => {
     setIsClient(true)

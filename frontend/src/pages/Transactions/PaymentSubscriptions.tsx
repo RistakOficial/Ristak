@@ -313,6 +313,13 @@ export const PaymentSubscriptions: React.FC = () => {
   const hasSubscriptionGateway = Boolean(defaultProvider)
   const isMercadoPagoSelected = form.paymentProvider === 'mercadopago' || form.paymentMethod === 'mercadopago_subscription'
 
+  useEffect(() => {
+    if (integrationsLoading || hasSubscriptionGateway) return
+
+    showToast('warning', 'Suscripciones no disponibles', 'Conecta Stripe o Mercado Pago para crear suscripciones automáticas.')
+    navigate('/transactions', { replace: true })
+  }, [hasSubscriptionGateway, integrationsLoading, navigate, showToast])
+
   const filteredSubscriptions = useMemo(
     () => subscriptions.filter((subscription) => matchesStatusFilter(subscription, statusFilter)),
     [statusFilter, subscriptions]

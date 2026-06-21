@@ -111,6 +111,8 @@ const calculateConfiguredTax = (
 
 type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago'
 type PaymentMode = 'single' | 'partial'
+type SinglePaymentAction = 'payment_link' | 'saved_card' | 'manual'
+type SinglePaymentOptionsStage = 'method' | 'gateway'
 type InstallmentValueType = 'percentage' | 'amount'
 type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
 type RemainingFrequency = 'custom' | 'weekly' | 'biweekly' | 'monthly'
@@ -578,6 +580,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   // Payment options
   const [invoicePayload, setInvoicePayload] = useState<Record<string, any> | null>(null)
   const [invoiceSummary, setInvoiceSummary] = useState<InvoiceSummary | null>(null)
+  const [singlePaymentAction, setSinglePaymentAction] = useState<SinglePaymentAction>('payment_link')
+  const [singlePaymentOptionsStage, setSinglePaymentOptionsStage] = useState<SinglePaymentOptionsStage>('method')
   const [paymentOption, setPaymentOption] = useState<PaymentOption>('send')
   const [sendMethod, setSendMethod] = useState<SendMethod>(DEFAULT_SEND_METHOD)
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(defaultManualPaymentData)
@@ -738,10 +742,37 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )
   }
 
-  const getDefaultPaymentOption = () : PaymentOption => {
+  const paymentLinkGatewayLabels = [
+    stripeConnected ? 'Stripe' : null,
+    mercadoPagoConnected ? 'Mercado Pago' : null,
+    highLevelConnected ? 'HighLevel' : null
+  ].filter(Boolean) as string[]
+  const paymentLinkGatewayCount = paymentLinkGatewayLabels.length
+  const hasPaymentLinkGateways = paymentLinkGatewayCount > 0
+  const hasMultiplePaymentLinkGateways = paymentLinkGatewayCount > 1
+  const defaultPaymentLinkOption: PaymentOption | null = stripeConnected
+    ? 'stripe'
+    : mercadoPagoConnected
+      ? 'mercadopago'
+      : highLevelConnected
+        ? 'send'
+        : null
+
+  const getDefaultPaymentOption = (): PaymentOption => {
     if (stripeConnected) return 'stripe'
     if (mercadoPagoConnected) return 'mercadopago'
     return highLevelConnected ? 'send' : 'manual'
+  }
+
+  const getDefaultSinglePaymentAction = (): SinglePaymentAction => {
+    if (hasPaymentLinkGateways) return 'payment_link'
+    if (stripeConnected && savedPaymentMethods.length > 0) return 'saved_card'
+    return 'manual'
+  }
+
+  const selectSinglePaymentLinkAction = () => {
+    setSinglePaymentAction('payment_link')
+    setPaymentOption(defaultPaymentLinkOption || 'manual')
   }
 
   useEffect(() => {
@@ -807,6 +838,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setNewProductAmount('')
     setInvoicePayload(null)
     setInvoiceSummary(null)
+    setSinglePaymentAction(getDefaultSinglePaymentAction())
+    setSinglePaymentOptionsStage('method')
     setPaymentOption(getDefaultPaymentOption())
     setSendMethod(resolvedInitialContact ? getDefaultSendMethod(getSendMethodOptions(resolvedInitialContact)) : DEFAULT_SEND_METHOD)
     setManualPaymentData(defaultManualPaymentData())
@@ -882,6 +915,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   useEffect(() => {
     if (!highLevelConnected && !stripeConnected && !mercadoPagoConnected) {
       setPaymentMode('single')
+      setSinglePaymentAction('manual')
+      setSinglePaymentOptionsStage('method')
       setPaymentOption('manual')
     }
   }, [highLevelConnected, mercadoPagoConnected, stripeConnected])
@@ -905,6 +940,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setSavedPaymentMethods([])
       setSelectedSavedPaymentMethodId('')
       if (paymentOption === 'stripe_saved_card') {
+        setSinglePaymentAction(getDefaultSinglePaymentAction())
         setPaymentOption(getDefaultPaymentOption())
       }
       return () => {
@@ -925,6 +961,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           return preferred?.stripePaymentMethodId || ''
         })
         if (!methods.length && paymentOption === 'stripe_saved_card') {
+          setSinglePaymentAction(getDefaultSinglePaymentAction())
           setPaymentOption(getDefaultPaymentOption())
         }
       })
@@ -933,6 +970,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         setSavedPaymentMethods([])
         setSelectedSavedPaymentMethodId('')
         if (paymentOption === 'stripe_saved_card') {
+          setSinglePaymentAction(getDefaultSinglePaymentAction())
           setPaymentOption(getDefaultPaymentOption())
         }
       })
@@ -1437,6 +1475,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setStep('form')
     setInvoicePayload(null)
     setInvoiceSummary(null)
+    setSinglePaymentAction(getDefaultSinglePaymentAction())
+    setSinglePaymentOptionsStage('method')
     setPaymentOption(getDefaultPaymentOption())
     setCreatedPaymentLink(null)
     setPaymentLinkDeliveryOptions(null)
@@ -1450,6 +1490,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     if (step === 'options') {
+      if (activePaymentMode !== 'partial' && singlePaymentOptionsStage === 'gateway') {
+        setSinglePaymentOptionsStage('method')
+        return
+      }
       returnToPaymentForm()
       return
     }
@@ -1828,6 +1872,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
 
       setManualPaymentData(defaultManualPaymentData())
+      setSinglePaymentAction(getDefaultSinglePaymentAction())
+      setSinglePaymentOptionsStage('method')
       setPaymentOption(getDefaultPaymentOption())
 
       setStep('options')
@@ -3312,6 +3358,17 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       )
     }
 
+    const showGatewayPicker = singlePaymentOptionsStage === 'gateway' && singlePaymentAction === 'payment_link' && hasMultiplePaymentLinkGateways
+    const paymentLinkActionDescription = hasMultiplePaymentLinkGateways
+      ? `Después eliges ${paymentLinkGatewayLabels.join(', ')}.`
+      : defaultPaymentLinkOption === 'stripe'
+        ? 'Usa Stripe para generar el enlace de pago.'
+        : defaultPaymentLinkOption === 'mercadopago'
+          ? 'Usa Mercado Pago Checkout Pro para generar el link.'
+          : defaultPaymentLinkOption === 'send'
+            ? 'Usa HighLevel para enviar el enlace al cliente.'
+            : 'Conecta una pasarela para enviar enlaces de pago.'
+
     return (
       <div className={styles.optionsContent}>
         <div className={styles.summaryCard}>
@@ -3351,146 +3408,174 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         </div>
 
         <div className={styles.paymentOptions}>
-          {stripeConnected && savedPaymentMethods.length > 0 && (
-            <button
-              type="button"
-              className={`${styles.optionButton} ${paymentOption === 'stripe_saved_card' ? styles.optionButtonActive : ''}`}
-              onClick={() => setPaymentOption('stripe_saved_card')}
-            >
-              <div className={styles.optionInfo}>
-                <div className={styles.optionIcon}>
-                  <ShieldCheck size={18} />
-                </div>
-                <div>
-                  <p>Cobrar tarjeta guardada</p>
-                  <span>{getSavedCardDescription(selectedSavedPaymentMethod || savedPaymentMethods[0])}</span>
-                </div>
-              </div>
-              {paymentOption === 'stripe_saved_card' && (
-                <div className={styles.optionAction}>
-                  <Check size={18} className={styles.optionCheck} />
-                  {savedPaymentMethods.length > 1 && (
-                    <div className={styles.savedCardSelector} onClick={(e) => e.stopPropagation()}>
-                      <CustomSelect
-                        value={selectedSavedPaymentMethodId}
-                        onValueChange={setSelectedSavedPaymentMethodId}
-                        options={savedPaymentMethodOptions}
-                        portal
-                      />
+          {showGatewayPicker ? (
+            <>
+              {stripeConnected && (
+                <button
+                  type="button"
+                  className={`${styles.optionButton} ${paymentOption === 'stripe' ? styles.optionButtonActive : ''}`}
+                  onClick={() => setPaymentOption('stripe')}
+                >
+                  <div className={styles.optionInfo}>
+                    <div className={styles.optionIcon}>
+                      <CreditCard size={18} />
+                    </div>
+                    <div>
+                      <p>Stripe</p>
+                      <span>Genera tu página pública de invoice con campo seguro de tarjeta.</span>
+                    </div>
+                  </div>
+                  {paymentOption === 'stripe' && <Check size={18} className={styles.optionCheck} />}
+                </button>
+              )}
+
+              {mercadoPagoConnected && (
+                <button
+                  type="button"
+                  className={`${styles.optionButton} ${paymentOption === 'mercadopago' ? styles.optionButtonActive : ''}`}
+                  onClick={() => setPaymentOption('mercadopago')}
+                >
+                  <div className={styles.optionInfo}>
+                    <div className={styles.optionIcon}>
+                      <WalletCards size={18} />
+                    </div>
+                    <div>
+                      <p>Mercado Pago</p>
+                      <span>Genera tu página pública de pago con Mercado Pago integrado.</span>
+                    </div>
+                  </div>
+                  {paymentOption === 'mercadopago' && <Check size={18} className={styles.optionCheck} />}
+                </button>
+              )}
+
+              {highLevelConnected && (
+                <div
+                  className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
+                  onClick={() => setPaymentOption('send')}
+                >
+                  <div className={styles.optionInfo}>
+                    <div className={styles.optionIcon}>
+                      <Send size={18} />
+                    </div>
+                    <div>
+                      <p>HighLevel</p>
+                      <span>
+                        {(!selectedContact?.email && !selectedContact?.phone) ? (
+                          <span style={{ color: 'var(--color-status-error)' }}>Sin email ni teléfono</span>
+                        ) : (
+                          'Envía automáticamente al cliente.'
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  {paymentOption === 'send' && (
+                    <div className={styles.optionAction}>
+                      <Check size={18} className={styles.optionCheck} />
+                      <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
+                        {sendMethodOptions.length === 0 ? (
+                          <div className={styles.noOptionsMessage}>
+                            <AlertCircle size={14} />
+                            <span>El contacto no tiene email ni teléfono</span>
+                          </div>
+                        ) : (
+                          <CustomSelect
+                            value={sendMethod}
+                            onValueChange={(value) => setSendMethod(value as SendMethod)}
+                            options={sendMethodOptions}
+                            portal
+                          />
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
               )}
-            </button>
-          )}
-
-          {stripeConnected && (
-            <button
-              type="button"
-              className={`${styles.optionButton} ${paymentOption === 'stripe' ? styles.optionButtonActive : ''}`}
-              onClick={() => setPaymentOption('stripe')}
-            >
-              <div className={styles.optionInfo}>
-                <div className={styles.optionIcon}>
-                  <CreditCard size={18} />
-                </div>
-                <div>
-                  <p>Crear enlace con Stripe</p>
-                  <span>Genera tu página pública de invoice con campo seguro de tarjeta</span>
-                </div>
-              </div>
-              {paymentOption === 'stripe' && <Check size={18} className={styles.optionCheck} />}
-            </button>
-          )}
-
-          {mercadoPagoConnected && (
-            <button
-              type="button"
-              className={`${styles.optionButton} ${paymentOption === 'mercadopago' ? styles.optionButtonActive : ''}`}
-              onClick={() => setPaymentOption('mercadopago')}
-            >
-              <div className={styles.optionInfo}>
-                <div className={styles.optionIcon}>
-                  <WalletCards size={18} />
-                </div>
-                <div>
-                  <p>Crear enlace con Mercado Pago</p>
-                  <span>Genera tu página pública de pago con Mercado Pago integrado</span>
-                </div>
-              </div>
-              {paymentOption === 'mercadopago' && <Check size={18} className={styles.optionCheck} />}
-            </button>
-          )}
-
-          {/* Enviar enlace de pago por... (solo disponible con HighLevel conectado) */}
-          {highLevelConnected && (
-          <div
-            className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
-            onClick={() => setPaymentOption('send')}
-          >
-            <div className={styles.optionInfo}>
-              <div className={styles.optionIcon}>
-                <Send size={18} />
-              </div>
-              <div>
-                <p>Enviar enlace de pago por</p>
-                <span>
-                  {(!selectedContact?.email && !selectedContact?.phone) ? (
-                    <span style={{ color: 'var(--color-status-error)' }}>⚠️ Sin email ni teléfono</span>
-                  ) : (
-                    'Envía automáticamente al cliente'
-                  )}
-                </span>
-              </div>
-            </div>
-            {/* Selector integrado en el mismo botón */}
-            {paymentOption === 'send' && (
-              <div className={styles.optionAction}>
-                <Check size={18} className={styles.optionCheck} />
-                <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
-                  {sendMethodOptions.length === 0 ? (
-                    <div className={styles.noOptionsMessage}>
-                      <AlertCircle size={14} />
-                      <span>El contacto no tiene email ni teléfono</span>
+            </>
+          ) : (
+            <>
+              {stripeConnected && savedPaymentMethods.length > 0 && (
+                <button
+                  type="button"
+                  className={`${styles.optionButton} ${singlePaymentAction === 'saved_card' && paymentOption === 'stripe_saved_card' ? styles.optionButtonActive : ''}`}
+                  onClick={() => {
+                    setSinglePaymentAction('saved_card')
+                    setPaymentOption('stripe_saved_card')
+                  }}
+                >
+                  <div className={styles.optionInfo}>
+                    <div className={styles.optionIcon}>
+                      <ShieldCheck size={18} />
                     </div>
-                  ) : (
-                    <CustomSelect
-                      value={sendMethod}
-                      onValueChange={(value) => setSendMethod(value as SendMethod)}
-                      options={sendMethodOptions}
-                      portal
-                    />
+                    <div>
+                      <p>Cobrar tarjeta guardada</p>
+                      <span>{getSavedCardDescription(selectedSavedPaymentMethod || savedPaymentMethods[0])}</span>
+                    </div>
+                  </div>
+                  {singlePaymentAction === 'saved_card' && paymentOption === 'stripe_saved_card' && (
+                    <div className={styles.optionAction}>
+                      <Check size={18} className={styles.optionCheck} />
+                      {savedPaymentMethods.length > 1 && (
+                        <div className={styles.savedCardSelector} onClick={(e) => e.stopPropagation()}>
+                          <CustomSelect
+                            value={selectedSavedPaymentMethodId}
+                            onValueChange={setSelectedSavedPaymentMethodId}
+                            options={savedPaymentMethodOptions}
+                            portal
+                          />
+                        </div>
+                      )}
+                    </div>
                   )}
-                </div>
-              </div>
-            )}
-          </div>
-          )}
+                </button>
+              )}
 
-          {/* Registrar pago manual */}
-          <button
-            type="button"
-            className={`${styles.optionButton} ${paymentOption === 'manual' ? styles.optionButtonActive : ''}`}
-            onClick={() => setPaymentOption('manual')}
-          >
-            <div className={styles.optionInfo}>
-              <div className={styles.optionIcon}>
-                <DollarSign size={18} />
-              </div>
-              <div>
-                <p>Registrar pago manual</p>
-                <span>
-                  {highLevelConnected
-                    ? 'Marca el invoice como pagado (efectivo, transferencia, etc.)'
-                    : 'Registra el pago en Ristak (efectivo, transferencia, etc.)'}
-                </span>
-              </div>
-            </div>
-            {paymentOption === 'manual' && <Check size={18} className={styles.optionCheck} />}
-          </button>
+              {hasPaymentLinkGateways && (
+                <button
+                  type="button"
+                  className={`${styles.optionButton} ${singlePaymentAction === 'payment_link' ? styles.optionButtonActive : ''}`}
+                  onClick={selectSinglePaymentLinkAction}
+                >
+                  <div className={styles.optionInfo}>
+                    <div className={styles.optionIcon}>
+                      <LinkIcon size={18} />
+                    </div>
+                    <div>
+                      <p>Enviar enlace de pago</p>
+                      <span>{paymentLinkActionDescription}</span>
+                    </div>
+                  </div>
+                  {singlePaymentAction === 'payment_link' && <Check size={18} className={styles.optionCheck} />}
+                </button>
+              )}
+
+              <button
+                type="button"
+                className={`${styles.optionButton} ${singlePaymentAction === 'manual' && paymentOption === 'manual' ? styles.optionButtonActive : ''}`}
+                onClick={() => {
+                  setSinglePaymentAction('manual')
+                  setPaymentOption('manual')
+                }}
+              >
+                <div className={styles.optionInfo}>
+                  <div className={styles.optionIcon}>
+                    <DollarSign size={18} />
+                  </div>
+                  <div>
+                    <p>Registrar pago manual</p>
+                    <span>
+                      {highLevelConnected
+                        ? 'Marca el invoice como pagado (efectivo, transferencia, etc.)'
+                        : 'Registra el pago en Ristak (efectivo, transferencia, etc.)'}
+                    </span>
+                  </div>
+                </div>
+                {singlePaymentAction === 'manual' && paymentOption === 'manual' && <Check size={18} className={styles.optionCheck} />}
+              </button>
+            </>
+          )}
         </div>
 
-        {paymentOption === 'manual' && (
+        {!showGatewayPicker && singlePaymentAction === 'manual' && paymentOption === 'manual' && (
           <div className={styles.manualFields}>
             <div className={styles.manualGrid}>
               <div className={styles.manualField}>
@@ -3691,7 +3776,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     if (step === 'options') {
-      const requiresDeliveryChannel = paymentOption === 'send'
+      const needsGatewayChoice = activePaymentMode !== 'partial' &&
+        singlePaymentOptionsStage === 'method' &&
+        singlePaymentAction === 'payment_link' &&
+        hasMultiplePaymentLinkGateways
+      const requiresDeliveryChannel = paymentOption === 'send' && !needsGatewayChoice
       const lacksDeliveryChannel = requiresDeliveryChannel && !selectedContact?.email && !selectedContact?.phone
       const lacksSavedCard = paymentOption === 'stripe_saved_card' && !selectedSavedPaymentMethodId
       const lacksStripePlanSavedCard = paymentOption === 'stripe' &&
@@ -3702,7 +3791,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         activePaymentMode === 'partial' &&
         !stripePlanCanBeAuthorized
       const stripePlanWillRegisterOfflineFirstPayment = firstPaymentEnabled && isOfflineFirstPaymentMethod(firstPaymentMethod)
-      const confirmLabel = paymentOption === 'stripe_saved_card'
+      const confirmLabel = needsGatewayChoice
+        ? 'Elegir pasarela'
+        : paymentOption === 'stripe_saved_card'
         ? 'Cobrar tarjeta'
         : paymentOption === 'stripe' && activePaymentMode === 'partial'
           ? stripePlanCardSource === 'saved_card'
@@ -3723,7 +3814,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           {!isEmbedded && (
             <Button
               variant="secondary"
-              onClick={returnToPaymentForm}
+              onClick={() => {
+                if (activePaymentMode !== 'partial' && singlePaymentOptionsStage === 'gateway') {
+                  setSinglePaymentOptionsStage('method')
+                  return
+                }
+                returnToPaymentForm()
+              }}
               disabled={loading}
             >
               Regresar
@@ -3732,7 +3829,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           <div className={styles.confirmButtonWrapper}>
             <Button
               variant="primary"
-              onClick={() => handleConfirm()}
+              onClick={() => {
+                if (needsGatewayChoice) {
+                  setSinglePaymentOptionsStage('gateway')
+                  return
+                }
+                handleConfirm()
+              }}
               disabled={
                 loading ||
                 lacksDeliveryChannel ||
@@ -3868,7 +3971,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         step === 'link_ready'
           ? 'Enlace de pago listo'
           : step === 'options'
-          ? 'Elige cómo cobrar'
+          ? activePaymentMode !== 'partial' && singlePaymentOptionsStage === 'gateway'
+            ? 'Elige pasarela'
+            : 'Elige cómo cobrar'
           : activePaymentMode === 'partial' ? 'Registrar cobro parcial' : 'Registrar nuevo cobro'
       }
       size="md"
