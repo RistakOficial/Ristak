@@ -9208,7 +9208,7 @@ export const PhoneChat: React.FC = () => {
     <div key={`agent-completion-${completion.id}`} className={styles.agentCompletionMessageRow}>
       <article className={styles.agentCompletionMessage}>
         <span className={styles.agentCompletionMessageIcon} aria-hidden="true">
-          <Bot size={15} />
+          <RistakRobot size={30} label="Agente conversacional" className={styles.agentCompletionMessageRobot} />
         </span>
         <span className={styles.agentCompletionMessageBody}>
           <span className={styles.agentCompletionMessageHeader}>

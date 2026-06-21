@@ -40,6 +40,7 @@ import { getContactAvatarUrl, getContactDetailLabel, getContactDisplayName, getC
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
+import { AgentRobot } from '@/components/ai'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import type { ContactCustomField, ContactCustomFieldValue, ContactMetaAttribution, ContactPhoneNumber } from '@/types'
@@ -1791,7 +1792,7 @@ export function ContactDetailsModal({
   const renderAgentCompletionCard = (completion: ConversationalAgentCompletionEvent) => (
     <article className={styles.contactChatAgentSummary} aria-label={`Resumen del agente: ${completion.title}`}>
       <span className={styles.contactChatAgentSummaryIcon} aria-hidden="true">
-        <Bot size={15} />
+        <AgentRobot size={34} active label="Agente conversacional" className={styles.contactChatAgentSummaryRobot} />
       </span>
       <span className={styles.contactChatAgentSummaryBody}>
         <span className={styles.contactChatAgentSummaryHeader}>

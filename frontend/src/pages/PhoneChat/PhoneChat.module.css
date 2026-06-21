@@ -3692,39 +3692,49 @@
 
 .agentCompletionMessageRow {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
   margin: 7px 0;
 }
 
 .agentCompletionMessage {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 34px minmax(0, 1fr);
   gap: 9px;
-  width: min(88%, 560px);
-  padding: 10px;
-  border: 1px solid var(--phone-chat-border);
-  border-radius: 15px;
-  background: color-mix(in srgb, var(--phone-chat-system) 72%, var(--phone-chat-surface) 28%);
+  width: min(92%, 560px);
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--phone-chat-text);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--phone-chat-border) 62%, transparent);
+  box-shadow: none;
 }
 
 .agentCompletionMessageIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   border-radius: 999px;
-  color: var(--phone-chat-text-on-primary);
-  background: var(--phone-chat-primary);
+  border: 1px solid var(--phone-chat-border);
+  background: color-mix(in srgb, var(--phone-chat-surface) 88%, var(--phone-chat-primary) 12%);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--phone-chat-border) 62%, transparent);
+  overflow: visible;
+}
+
+.agentCompletionMessageRobot {
+  transform: translateY(1px);
 }
 
 .agentCompletionMessageBody {
   display: grid;
   gap: 5px;
   min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 15px 15px 15px 6px;
+  background: color-mix(in srgb, var(--phone-chat-system) 72%, var(--phone-chat-surface) 28%);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--phone-chat-border) 62%, transparent);
 }
 
 .agentCompletionMessageHeader {

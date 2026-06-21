@@ -4961,7 +4961,7 @@ export const DesktopChat: React.FC = () => {
   const renderAgentCompletionCard = (completion: ConversationalAgentCompletionEvent) => (
     <article className={styles.agentCompletionCard} aria-label={`Resumen del agente: ${completion.title}`}>
       <span className={styles.agentCompletionIcon} aria-hidden="true">
-        <Bot size={16} />
+        <AgentRobot size={36} active label="Agente conversacional" className={styles.agentCompletionRobot} />
       </span>
       <div className={styles.agentCompletionBody}>
         <span className={styles.agentCompletionHeader}>

@@ -1044,38 +1044,48 @@
 
 .agentCompletionRow {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
 }
 
 .agentCompletionCard {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 42px minmax(0, 1fr);
   gap: 10px;
-  width: min(88%, 620px);
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
+  width: min(88%, 640px);
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text-dim);
-  box-shadow: var(--shadow-xs);
+  box-shadow: none;
 }
 
 .agentCompletionIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 42px;
+  height: 42px;
   border-radius: var(--radius-pill);
-  background: var(--accent-soft);
-  color: var(--accent);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  overflow: visible;
+}
+
+.agentCompletionRobot {
+  transform: translateY(1px);
 }
 
 .agentCompletionBody {
   display: grid;
   gap: 6px;
   min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card) var(--radius-card) var(--radius-card) 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
 }
 
 .agentCompletionHeader {
