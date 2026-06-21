@@ -2909,6 +2909,10 @@ const getVideoAspectRatio = (orientation: Exclude<VideoOrientation, 'auto'>) =>
 const getVideoAspectRatioNumber = (orientation: Exclude<VideoOrientation, 'auto'>) =>
   orientation === 'portrait' ? 9 / 16 : 16 / 9
 
+const isDefaultVideoPortraitMediaWidth = (value: number) => (
+  Number.isFinite(value) && Math.abs(value - DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH) < 0.01
+)
+
 const readCssPixelValue = (value: string | null | undefined) => {
   const parsed = Number.parseFloat(String(value || ''))
   return Number.isFinite(parsed) ? parsed : 0
@@ -2959,12 +2963,14 @@ const withUploadedVideoSettings = (
   const orientation = getVideoOrientationFromAsset(asset)
   const currentMediaWidth = Number(settings.mediaWidth)
   const shouldSetPortraitWidth = orientation === 'portrait' && (!Number.isFinite(currentMediaWidth) || currentMediaWidth >= 90)
+  const shouldResetLandscapeWidth = orientation === 'landscape' && isDefaultVideoPortraitMediaWidth(currentMediaWidth)
 
   return {
     ...withDefaultVideoPlayerSettings(settings),
     mediaUrl,
     ...(orientation ? { videoOrientation: orientation } : {}),
-    ...(shouldSetPortraitWidth ? { mediaWidth: DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH } : {})
+    ...(shouldSetPortraitWidth ? { mediaWidth: DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH } : {}),
+    ...(shouldResetLandscapeWidth ? { mediaWidth: 100 } : {})
   }
 }
 
@@ -2974,9 +2980,11 @@ const getVideoOrientationPatch = (
 ) => {
   const currentMediaWidth = Number(settings.mediaWidth)
   const shouldSetPortraitWidth = nextOrientation === 'portrait' && (!Number.isFinite(currentMediaWidth) || currentMediaWidth >= 90)
+  const shouldResetLandscapeWidth = nextOrientation === 'landscape' && isDefaultVideoPortraitMediaWidth(currentMediaWidth)
   return {
     videoOrientation: nextOrientation,
-    ...(shouldSetPortraitWidth ? { mediaWidth: DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH } : {})
+    ...(shouldSetPortraitWidth ? { mediaWidth: DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH } : {}),
+    ...(shouldResetLandscapeWidth ? { mediaWidth: 100 } : {})
   }
 }
 

@@ -17688,7 +17688,8 @@ const RSTK_BASE_CSS = `
   .rstkButtonPaddingOverride .rstk-button-link,.rstkButtonPaddingOverride .rstk-actions button{min-height:auto}
   .rstk-kind-landing .rstk-button-link:hover{transform:none;box-shadow:none}
 
-  .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-video,.rstk-kind-landing .rstk-embed{border-radius:var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px)));box-shadow:none}
+  .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-embed{border-radius:var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px)));box-shadow:none}
+  .rstk-kind-landing .rstk-video{border-radius:var(--rstk-video-radius,var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px))));box-shadow:none}
   .rstk-kind-landing .rstk-calendar-embed{border-radius:var(--rstk-media-radius,0)}
   .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);background:var(--rstk-block-bg,transparent);width:100%;margin-inline:auto}
   @media (max-width:760px){.rstk-section-columns{grid-template-columns:1fr}}

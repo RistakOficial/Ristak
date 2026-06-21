@@ -120,6 +120,7 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /<span class="rstk-video-sound\b/)
   assert.match(html, /--rstk-video-bg:#111827/)
   assert.match(html, /--rstk-video-radius:28px/)
+  assert.match(html, /\.rstk-kind-landing \.rstk-video\{[^}]*border-radius:var\(--rstk-video-radius/)
   assert.match(html, /--rstk-video-border-color:#38bdf8/)
   assert.match(html, /--rstk-video-border-width:3px/)
   assert.match(html, /--rstk-video-player-color:rgba\(15, 23, 42, 0\.72\)/)

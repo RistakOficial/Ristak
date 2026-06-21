@@ -1617,7 +1617,8 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 .rstkCanvas.rstk-kind-landing .rstk-button-link { border-radius: var(--rstk-block-button-radius, 999px); min-height: var(--rstk-button-height, 54px); padding: var(--rstk-button-pad-y, 0) var(--rstk-button-pad-x, 28px); font-family: var(--rstk-button-font, var(--rstk-display)); font-weight: var(--rstk-button-weight, 600); }
 .rstkCanvas .rstkButtonPaddingOverride .rstk-button-link,
 .rstkCanvas .rstkButtonPaddingOverride .rstk-actions button { min-height: auto; }
-.rstkCanvas.rstk-kind-landing .rstk-media, .rstkCanvas.rstk-kind-landing .rstk-video, .rstkCanvas.rstk-kind-landing .rstk-embed { border-radius: var(--rstk-media-radius, var(--rstk-block-radius, clamp(16px, 2vw, 22px))); box-shadow: none; }
+.rstkCanvas.rstk-kind-landing .rstk-media, .rstkCanvas.rstk-kind-landing .rstk-embed { border-radius: var(--rstk-media-radius, var(--rstk-block-radius, clamp(16px, 2vw, 22px))); box-shadow: none; }
+.rstkCanvas.rstk-kind-landing .rstk-video { border-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, clamp(16px, 2vw, 22px)))); box-shadow: none; }
 .rstkCanvas.rstk-kind-landing .rstk-calendar-embed { border-radius: var(--rstk-media-radius, 0); }
 .rstkCanvas.rstk-kind-landing .rstk-embedded-form { padding: clamp(24px, 3vw, 40px); border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent); border-radius: var(--rstk-block-radius, 0); background: var(--rstk-block-bg, transparent); width: 100%; margin-inline: auto; }
 
