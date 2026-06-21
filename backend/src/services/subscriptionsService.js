@@ -15,6 +15,13 @@ import {
   resumeMercadoPagoRecurringSubscription,
   updateMercadoPagoRecurringSubscription
 } from './mercadoPagoPaymentService.js'
+import {
+  cancelConektaRecurringSubscription,
+  createConektaRecurringSubscription,
+  pauseConektaRecurringSubscription,
+  resumeConektaRecurringSubscription,
+  updateConektaRecurringSubscription
+} from './conektaPaymentService.js'
 import { getSubscriptionAuditSummary } from './paymentRecordSafetyService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 
@@ -229,6 +236,11 @@ function rowToApi(row = {}) {
     mercadoPagoCardId: row.mercadopago_card_id || null,
     mercadoPagoPaymentMethodId: row.mercadopago_payment_method_id || null,
     mercadoPagoNextPaymentDate: row.mercadopago_next_payment_date || null,
+    conektaCustomerId: row.conekta_customer_id || null,
+    conektaPlanId: row.conekta_plan_id || null,
+    conektaSubscriptionId: row.conekta_subscription_id || null,
+    conektaPaymentSourceId: row.conekta_payment_source_id || null,
+    conektaNextBillingAt: row.conekta_next_billing_at || null,
     metadata,
     raw,
     createdAt: row.created_at || null,
@@ -306,6 +318,11 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     mercadopago_card_id: nullableString(payload.mercadoPagoCardId ?? payload.mercadopago_card_id ?? existing.mercadopago_card_id),
     mercadopago_payment_method_id: nullableString(payload.mercadoPagoPaymentMethodId ?? payload.mercadopago_payment_method_id ?? existing.mercadopago_payment_method_id),
     mercadopago_next_payment_date: nullableDate(payload.mercadoPagoNextPaymentDate ?? payload.mercadopago_next_payment_date ?? existing.mercadopago_next_payment_date),
+    conekta_customer_id: nullableString(payload.conektaCustomerId ?? payload.conekta_customer_id ?? existing.conekta_customer_id),
+    conekta_plan_id: nullableString(payload.conektaPlanId ?? payload.conekta_plan_id ?? existing.conekta_plan_id),
+    conekta_subscription_id: nullableString(payload.conektaSubscriptionId ?? payload.conekta_subscription_id ?? existing.conekta_subscription_id),
+    conekta_payment_source_id: nullableString(payload.conektaPaymentSourceId ?? payload.conekta_payment_source_id ?? payload.paymentMethodId ?? existing.conekta_payment_source_id),
+    conekta_next_billing_at: nullableDate(payload.conektaNextBillingAt ?? payload.conekta_next_billing_at ?? existing.conekta_next_billing_at),
     metadata_json: jsonOrNull(payload.metadata ?? payload.metadata_json ?? existing.metadata_json),
     raw_json: jsonOrNull(payload.raw ?? payload.raw_json ?? existing.raw_json)
   }
@@ -403,6 +420,50 @@ async function attachMercadoPagoSubscriptionIfNeeded(row) {
   return applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription)
 }
 
+function applyConektaSubscriptionToRow(row, conektaSubscription) {
+  if (!conektaSubscription) return row
+
+  return {
+    ...row,
+    status: conektaSubscription.status || row.status,
+    payment_method: 'conekta_subscription',
+    payment_provider: 'conekta',
+    payment_mode: conektaSubscription.paymentMode || row.payment_mode,
+    conekta_customer_id: conektaSubscription.conektaCustomerId || row.conekta_customer_id,
+    conekta_plan_id: conektaSubscription.conektaPlanId || row.conekta_plan_id,
+    conekta_subscription_id: conektaSubscription.conektaSubscriptionId || row.conekta_subscription_id,
+    conekta_payment_source_id: conektaSubscription.conektaPaymentSourceId || row.conekta_payment_source_id,
+    conekta_next_billing_at: conektaSubscription.nextRunAt || row.conekta_next_billing_at,
+    next_run_at: conektaSubscription.nextRunAt || row.next_run_at,
+    current_period_start: conektaSubscription.currentPeriodStart || row.current_period_start,
+    current_period_end: conektaSubscription.currentPeriodEnd || row.current_period_end,
+    raw_json: mergeRawJson(row.raw_json, 'conekta', conektaSubscription.raw)
+  }
+}
+
+async function attachConektaSubscriptionIfNeeded(row, payload = {}) {
+  if (row.conekta_subscription_id) return row
+  if (row.payment_provider !== 'conekta') return row
+
+  const conektaSubscription = await createConektaRecurringSubscription({
+    ristakSubscriptionId: row.id,
+    contactId: row.contact_id,
+    name: row.name,
+    description: row.description,
+    amount: row.amount,
+    currency: row.currency,
+    intervalType: row.interval_type,
+    intervalCount: row.interval_count,
+    startDate: row.start_date,
+    paymentMethodId: row.conekta_payment_source_id || payload.paymentMethodId || payload.conektaPaymentSourceId,
+    contactName: row.contact_name,
+    contactEmail: row.contact_email,
+    contactPhone: row.contact_phone
+  })
+
+  return applyConektaSubscriptionToRow(row, conektaSubscription)
+}
+
 async function syncStripeSubscriptionUpdateIfNeeded(row, existing) {
   if (!existing.stripe_subscription_id) return row
 
@@ -459,6 +520,32 @@ async function syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing = {}) {
   return applyMercadoPagoSubscriptionToRow(row, mercadoPagoSubscription)
 }
 
+async function syncConektaSubscriptionUpdateIfNeeded(row, existing = {}, payload = {}) {
+  if (!existing.conekta_subscription_id) return attachConektaSubscriptionIfNeeded(row, payload)
+
+  if (row.payment_provider !== 'conekta') {
+    const error = new Error('Esta suscripción ya está activa en Conekta. Cancélala antes de cambiarla a otro método.')
+    error.status = 422
+    throw error
+  }
+
+  const conektaSubscription = await updateConektaRecurringSubscription({
+    ristakSubscriptionId: row.id,
+    conektaCustomerId: existing.conekta_customer_id,
+    conektaSubscriptionId: existing.conekta_subscription_id,
+    conektaPaymentSourceId: row.conekta_payment_source_id || existing.conekta_payment_source_id || payload.paymentMethodId,
+    contactId: row.contact_id,
+    name: row.name,
+    description: row.description,
+    amount: row.amount,
+    currency: row.currency,
+    intervalType: row.interval_type,
+    intervalCount: row.interval_count
+  })
+
+  return applyConektaSubscriptionToRow(row, conektaSubscription)
+}
+
 export async function listSubscriptions({ status } = {}) {
   const cleanStatus = cleanString(status).toLowerCase()
   const params = []
@@ -505,6 +592,7 @@ export async function createSubscription(payload = {}) {
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
   row = await attachStripeSubscriptionIfNeeded(row, payload)
   row = await attachMercadoPagoSubscriptionIfNeeded(row, payload)
+  row = await attachConektaSubscriptionIfNeeded(row, payload)
 
   await db.run(
     `INSERT INTO subscriptions (
@@ -515,9 +603,11 @@ export async function createSubscription(payload = {}) {
       stripe_product_id, stripe_price_id, stripe_payment_method_id,
       mercadopago_preapproval_id, mercadopago_preapproval_plan_id, mercadopago_init_point,
       mercadopago_sandbox_init_point, mercadopago_payer_id, mercadopago_card_id,
-      mercadopago_payment_method_id, mercadopago_next_payment_date, metadata_json, raw_json,
+      mercadopago_payment_method_id, mercadopago_next_payment_date,
+      conekta_customer_id, conekta_plan_id, conekta_subscription_id,
+      conekta_payment_source_id, conekta_next_billing_at, metadata_json, raw_json,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       row.id,
       row.contact_id,
@@ -554,6 +644,11 @@ export async function createSubscription(payload = {}) {
       row.mercadopago_card_id,
       row.mercadopago_payment_method_id,
       row.mercadopago_next_payment_date,
+      row.conekta_customer_id,
+      row.conekta_plan_id,
+      row.conekta_subscription_id,
+      row.conekta_payment_source_id,
+      row.conekta_next_billing_at,
       row.metadata_json,
       row.raw_json
     ]
@@ -583,6 +678,7 @@ export async function updateSubscription(subscriptionId, payload = {}) {
   if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
   row = await syncStripeSubscriptionUpdateIfNeeded(row, existing)
   row = await syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing)
+  row = await syncConektaSubscriptionUpdateIfNeeded(row, existing, payload)
 
   await db.run(
     `UPDATE subscriptions
@@ -620,6 +716,11 @@ export async function updateSubscription(subscriptionId, payload = {}) {
          mercadopago_card_id = ?,
          mercadopago_payment_method_id = ?,
          mercadopago_next_payment_date = ?,
+         conekta_customer_id = ?,
+         conekta_plan_id = ?,
+         conekta_subscription_id = ?,
+         conekta_payment_source_id = ?,
+         conekta_next_billing_at = ?,
          metadata_json = ?,
          raw_json = ?,
          updated_at = CURRENT_TIMESTAMP
@@ -659,6 +760,11 @@ export async function updateSubscription(subscriptionId, payload = {}) {
       row.mercadopago_card_id,
       row.mercadopago_payment_method_id,
       row.mercadopago_next_payment_date,
+      row.conekta_customer_id,
+      row.conekta_plan_id,
+      row.conekta_subscription_id,
+      row.conekta_payment_source_id,
+      row.conekta_next_billing_at,
       row.metadata_json,
       row.raw_json,
       subscriptionId
@@ -687,6 +793,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     if (existing.mercadopago_preapproval_id) {
       await pauseMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
     }
+    if (existing.conekta_subscription_id) {
+      await pauseConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
+    }
 
     await db.run(
       `UPDATE subscriptions
@@ -700,6 +809,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     }
     if (existing.mercadopago_preapproval_id) {
       await resumeMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
+    }
+    if (existing.conekta_subscription_id) {
+      await resumeConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
     }
 
     const nextRunAt = nullableDate(payload.nextRunAt ?? payload.next_run_at ?? existing.next_run_at) || new Date().toISOString()
@@ -718,6 +830,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     }
     if (existing.mercadopago_preapproval_id) {
       await cancelMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
+    }
+    if (existing.conekta_subscription_id) {
+      await cancelConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
     }
 
     await db.run(
@@ -751,7 +866,7 @@ export async function deleteSubscription(subscriptionId) {
   }
 
   const existing = await db.get(
-    `SELECT id, status, mercadopago_preapproval_id
+    `SELECT id, status, mercadopago_preapproval_id, conekta_customer_id, conekta_subscription_id
      FROM subscriptions
      WHERE id = ? AND COALESCE(status, '') <> 'deleted'
      LIMIT 1`,
@@ -760,6 +875,9 @@ export async function deleteSubscription(subscriptionId) {
 
   if (existing?.mercadopago_preapproval_id && existing.status !== 'cancelled') {
     await cancelMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
+  }
+  if (existing?.conekta_subscription_id && existing.status !== 'cancelled') {
+    await cancelConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
   }
 
   const result = await db.run(

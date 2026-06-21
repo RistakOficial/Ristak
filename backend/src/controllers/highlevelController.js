@@ -35,6 +35,7 @@ import {
   updateLocalProduct
 } from '../services/localProductService.js';
 import { applyStripePaymentPlanAction, refreshStripePaymentPlanMirrors, updateStripePaymentPlanSchedule } from '../services/stripePaymentService.js';
+import { applyConektaPaymentPlanAction, refreshConektaPaymentPlanMirrors, updateConektaPaymentPlanSchedule } from '../services/conektaPaymentService.js';
 import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
@@ -2950,6 +2951,12 @@ function isMercadoPagoLocalInvoiceSchedule(schedule) {
     || schedule?.raw?.schedule?.provider === 'mercadopago';
 }
 
+function isConektaLocalInvoiceSchedule(schedule) {
+  return schedule?.source === 'conekta'
+    || schedule?.raw?.provider === 'conekta'
+    || schedule?.raw?.schedule?.provider === 'conekta';
+}
+
 async function markLocalInvoiceScheduleStatus(scheduleId, status, rawPatch = {}) {
   const now = new Date().toISOString();
   const existing = await getLocalInvoiceSchedule(scheduleId);
@@ -3163,10 +3170,17 @@ export const listInvoiceSchedules = async (req, res) => {
     await refreshStripePaymentPlanMirrors().catch((error) => {
       logger.warn(`No se pudieron refrescar espejos locales de planes Stripe: ${error.message}`);
     });
+    await refreshConektaPaymentPlanMirrors().catch((error) => {
+      logger.warn(`No se pudieron refrescar espejos locales de planes Conekta: ${error.message}`);
+    });
 
     const localStripePlans = await listLocalInvoiceSchedules({
       activeOnly,
       source: 'stripe'
+    });
+    const localConektaPlans = await listLocalInvoiceSchedules({
+      activeOnly,
+      source: 'conekta'
     });
 
     const ghlClient = await getGHLClient();
@@ -3192,6 +3206,11 @@ export const listInvoiceSchedules = async (req, res) => {
     const mergedData = [
       ...data,
       ...localStripePlans.filter(schedule => {
+        if (!schedule.id || seenIds.has(schedule.id)) return false;
+        seenIds.add(schedule.id);
+        return true;
+      }),
+      ...localConektaPlans.filter(schedule => {
         if (!schedule.id || seenIds.has(schedule.id)) return false;
         seenIds.add(schedule.id);
         return true;
@@ -3251,6 +3270,14 @@ export const getInvoiceSchedule = async (req, res) => {
         success: true,
         data: localSchedule,
         source: 'local_mercadopago'
+      });
+    }
+
+    if (isConektaLocalInvoiceSchedule(localSchedule)) {
+      return res.json({
+        success: true,
+        data: localSchedule,
+        source: 'local_conekta'
       });
     }
 
@@ -3338,6 +3365,17 @@ export const updateInvoiceSchedule = async (req, res) => {
         success: true,
         data: updatedLocalSchedule,
         source: 'local_mercadopago'
+      });
+    }
+
+    if (isConektaLocalInvoiceSchedule(localSchedule)) {
+      await updateConektaPaymentPlanSchedule(scheduleId, payload, { baseUrl: getPublicBaseUrl(req) });
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+
+      return res.json({
+        success: true,
+        data: updatedLocalSchedule,
+        source: 'local_conekta'
       });
     }
 
@@ -3478,6 +3516,33 @@ export const actionInvoiceSchedule = async (req, res) => {
         success: true,
         data: updatedLocalSchedule,
         source: 'local_mercadopago'
+      });
+    }
+
+    if (isConektaLocalInvoiceSchedule(localSchedule)) {
+      const actionMap = {
+        activate: 'activate',
+        pause: 'pause',
+        cancel: 'cancel',
+        delete: 'delete',
+        change_card: 'change_card'
+      };
+      const conektaAction = actionMap[action];
+
+      if (!conektaAction) {
+        return res.status(409).json({
+          success: false,
+          error: 'Esta acción no aplica para planes de Conekta.'
+        });
+      }
+
+      await applyConektaPaymentPlanAction(scheduleId, conektaAction, { baseUrl: getPublicBaseUrl(req) });
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+
+      return res.json({
+        success: true,
+        data: updatedLocalSchedule,
+        source: 'local_conekta'
       });
     }
 

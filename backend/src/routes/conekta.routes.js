@@ -1,6 +1,7 @@
 import express from 'express'
 import {
   createConektaPaymentLinkView,
+  createConektaPaymentPlanView,
   createConektaSavedCardPaymentView,
   createPublicConektaCardPaymentView,
   deleteConektaConfigView,
@@ -25,6 +26,7 @@ router.post('/config', requireModuleAccess('settings_payments'), saveConektaConf
 router.delete('/config', requireModuleAccess('settings_payments'), deleteConektaConfigView)
 router.post('/config/test', requireModuleAccess('settings_payments'), testConektaConfigView)
 router.post('/payment-links', requireModuleAccess('payments'), createConektaPaymentLinkView)
+router.post('/payment-plans', requireModuleAccess('payments'), createConektaPaymentPlanView)
 router.get('/contacts/:contactId/payment-sources', requireModuleAccess('payments'), getConektaSavedPaymentSourcesView)
 router.post('/saved-card-payments', requireModuleAccess('payments'), createConektaSavedCardPaymentView)
 

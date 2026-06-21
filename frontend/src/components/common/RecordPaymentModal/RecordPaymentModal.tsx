@@ -656,7 +656,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )
   )
 
-  const canUsePaymentPlans = highLevelConnected || stripeConnected
+  const canUsePaymentPlans = highLevelConnected || stripeConnected || conektaConnected
   const canChoosePaymentMode = canUsePaymentPlans && (chargeType === 'direct' || Boolean(selectedProduct && selectedPrice))
   const activePaymentMode: PaymentMode = canChoosePaymentMode ? paymentMode : 'single'
   const subtotalAmount = useMemo(() => (
@@ -723,11 +723,18 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const stripePlanSavedPaymentMethod = stripePlanCardSource === 'saved_card'
     ? selectedSavedPaymentMethod || savedPaymentMethods[0] || null
     : null
+  const conektaPlanSavedPaymentSource = stripePlanCardSource === 'saved_card'
+    ? selectedConektaPaymentSource || savedConektaPaymentSources[0] || null
+    : null
   const firstPaymentCanAuthorizeStripePlan = firstPaymentEnabled && firstPaymentMethod === 'card'
   const stripePlanNeedsSetupLink = stripePlanCardSource === 'new_card' && !firstPaymentCanAuthorizeStripePlan
   const stripePlanCanBeAuthorized = stripePlanCardSource === 'saved_card'
     ? Boolean(stripePlanSavedPaymentMethod)
     : firstPaymentCanAuthorizeStripePlan || stripePlanNeedsSetupLink
+  const conektaPlanNeedsSetupLink = stripePlanCardSource === 'new_card' && !firstPaymentCanAuthorizeStripePlan
+  const conektaPlanCanBeAuthorized = stripePlanCardSource === 'saved_card'
+    ? Boolean(conektaPlanSavedPaymentSource)
+    : firstPaymentCanAuthorizeStripePlan || conektaPlanNeedsSetupLink
   const remainingFrequencyOptions = REMAINING_FREQUENCY_OPTIONS
   const contactLocked = Boolean(lockInitialContact && initialContact?.id)
   const isEmbedded = variant === 'embedded'
@@ -1643,7 +1650,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     channels
   })
 
-  const buildStripePaymentPlanPayload = (payload: Record<string, any>, summary: InvoiceSummary) => ({
+  const buildGatewayPaymentPlanPayload = (payload: Record<string, any>, summary: InvoiceSummary, provider: 'stripe' | 'conekta') => ({
     contact: {
       id: selectedContact?.id || '',
       name: summary.contactName || selectedContact?.name || '',
@@ -1671,9 +1678,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       dueDate: installment.dueDate,
       frequency: remainingFrequency
     })),
-    paymentMethodId: stripePlanSavedPaymentMethod?.stripePaymentMethodId || '',
+    paymentMethodId: provider === 'conekta'
+      ? conektaPlanSavedPaymentSource?.conektaPaymentSourceId || ''
+      : stripePlanSavedPaymentMethod?.stripePaymentMethodId || '',
     cardSetupAmount,
-    source: 'record_payment_modal_stripe_plan'
+    source: provider === 'conekta' ? 'record_payment_modal_conekta_plan' : 'record_payment_modal_stripe_plan'
   })
 
   const submitPartialFlow = async (
@@ -2091,7 +2100,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       try {
         const result = await stripePaymentsService.createPaymentPlan(
-          buildStripePaymentPlanPayload(invoicePayload, invoiceSummary)
+          buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'stripe')
         )
 
         if (result.cardSetupLink) {
@@ -2146,6 +2155,76 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         onClose()
       } catch (stripePlanError: any) {
         showToast('error', 'No se pudo crear el plan con Stripe', stripePlanError.message || 'Revisa la tarjeta guardada o manda primer pago por link.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
+    if (paymentOption === 'conekta' && activePaymentMode === 'partial') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await conektaPaymentsService.createPaymentPlan(
+          buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'conekta')
+        )
+
+        if (result.cardSetupLink) {
+          const setupAmount = result.cardSetupAmount || cardSetupAmount
+          const manualFirstPaymentRegistered = firstPaymentEnabled && isOfflineFirstPaymentMethod(firstPaymentMethod)
+          showPaymentLinkReady({
+            kind: 'card_setup',
+            title: 'Enlace de domiciliación listo',
+            description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.`,
+            paymentUrl: result.cardSetupLink,
+            amount: setupAmount,
+            currency: invoiceSummary.currency,
+            contact: selectedContact,
+            paymentId: result.cardSetupPaymentId
+          })
+          showToast(
+            'success',
+            'Plan de Conekta creado',
+            `${manualFirstPaymentRegistered ? 'El primer pago quedó registrado. ' : ''}El enlace de domiciliación por ${formatCurrency(setupAmount, invoiceSummary.currency)} está listo para compartir.`
+          )
+          onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+          return
+        } else if (result.firstPaymentLink) {
+          showPaymentLinkReady({
+            kind: 'first_payment',
+            title: 'Primer pago listo',
+            description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.',
+            paymentUrl: result.firstPaymentLink,
+            amount: firstPaymentAmount,
+            currency: invoiceSummary.currency,
+            contact: selectedContact,
+            paymentId: result.firstPaymentPaymentId
+          })
+          showToast(
+            'success',
+            'Plan de Conekta creado',
+            'El enlace del primer pago está listo para compartir.'
+          )
+          onSuccess?.(LINK_READY_SUCCESS_CONTEXT)
+          return
+        } else {
+          showToast(
+            'success',
+            'Plan de Conekta creado',
+            `${result.scheduledPayments.length} cobros quedaron programados con tarjeta guardada.`
+          )
+        }
+
+        onSuccess?.()
+        onClose()
+      } catch (conektaPlanError: any) {
+        showToast('error', 'No se pudo crear el plan con Conekta', conektaPlanError.message || 'Revisa la tarjeta guardada o manda primer pago por link.')
         setStep('options')
       } finally {
         setLoading(false)
@@ -3396,8 +3475,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const stripeAuthorizationLabel = stripePlanCardSource === 'saved_card'
         ? stripeSavedCardLabel
         : stripeNewCardLabel
+      const conektaSavedCardLabel = conektaPlanSavedPaymentSource
+        ? `Conekta usará ${getSavedConektaCardDescription(conektaPlanSavedPaymentSource)} para los cobros programados.`
+        : 'Selecciona una tarjeta guardada para programar este plan.'
+      const conektaNewCardLabel = firstPaymentEnabled && firstPaymentMethod === 'card'
+          ? 'Conekta enviará el primer link; cuando se pague, guardará la tarjeta y activará los cobros futuros.'
+          : `Conekta enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}; al pagarse, guardará la tarjeta y activará el plan.`
+      const conektaAuthorizationLabel = stripePlanCardSource === 'saved_card'
+        ? conektaSavedCardLabel
+        : conektaNewCardLabel
       const authorizationLabel = paymentOption === 'stripe'
         ? stripeAuthorizationLabel
+        : paymentOption === 'conekta'
+          ? conektaAuthorizationLabel
         : partialNeedsCardAuthorization
           ? `GoHighLevel usará tarjeta guardada si existe; si no, enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}.`
           : 'El primer pago con tarjeta funcionará como autorización.'
@@ -3490,6 +3580,68 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                           value={selectedSavedPaymentMethodId}
                           onValueChange={setSelectedSavedPaymentMethodId}
                           options={savedPaymentMethodOptions}
+                          portal
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </button>
+            )}
+
+            {conektaConnected && (
+              <button
+                type="button"
+                className={`${styles.optionButton} ${paymentOption === 'conekta' && stripePlanCardSource === 'new_card' ? styles.optionButtonActive : ''}`}
+                onClick={() => {
+                  setPaymentOption('conekta')
+                  setStripePlanCardSource('new_card')
+                }}
+              >
+                <div className={styles.optionInfo}>
+                  <div className={styles.optionIcon}>
+                    <PaymentPlatformLogo platform="conekta" size="md" decorative />
+                  </div>
+                  <div>
+                    <p>Conekta con nueva tarjeta</p>
+                    <span>{conektaNewCardLabel}</span>
+                  </div>
+                </div>
+
+                {paymentOption === 'conekta' && stripePlanCardSource === 'new_card' && (
+                  <Check size={18} className={styles.optionCheck} />
+                )}
+              </button>
+            )}
+
+            {conektaConnected && savedConektaPaymentSources.length > 0 && (
+              <button
+                type="button"
+                className={`${styles.optionButton} ${paymentOption === 'conekta' && stripePlanCardSource === 'saved_card' ? styles.optionButtonActive : ''}`}
+                onClick={() => {
+                  setPaymentOption('conekta')
+                  setStripePlanCardSource('saved_card')
+                }}
+              >
+                <div className={styles.optionInfo}>
+                  <div className={styles.optionIcon}>
+                    <PaymentPlatformLogo platform="conekta" size="md" decorative />
+                  </div>
+                  <div>
+                    <p>Conekta con tarjeta guardada</p>
+                    <span>{conektaSavedCardLabel}</span>
+                  </div>
+                </div>
+
+                {paymentOption === 'conekta' && stripePlanCardSource === 'saved_card' && (
+                  <div className={styles.optionAction}>
+                    <Check size={18} className={styles.optionCheck} />
+                    {savedConektaPaymentSources.length > 1 && (
+                      <div className={styles.savedCardSelector} onClick={(e) => e.stopPropagation()}>
+                        <CustomSelect
+                          value={selectedConektaPaymentSourceId}
+                          onValueChange={setSelectedConektaPaymentSourceId}
+                          options={savedConektaPaymentSourceOptions}
                           portal
                         />
                       </div>
@@ -4043,12 +4195,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const lacksStripePlanAuthorization = paymentOption === 'stripe' &&
         activePaymentMode === 'partial' &&
         !stripePlanCanBeAuthorized
+      const lacksConektaPlanSavedCard = paymentOption === 'conekta' &&
+        activePaymentMode === 'partial' &&
+        stripePlanCardSource === 'saved_card' &&
+        !conektaPlanSavedPaymentSource
+      const lacksConektaPlanAuthorization = paymentOption === 'conekta' &&
+        activePaymentMode === 'partial' &&
+        !conektaPlanCanBeAuthorized
       const stripePlanWillRegisterOfflineFirstPayment = firstPaymentEnabled && isOfflineFirstPaymentMethod(firstPaymentMethod)
       const confirmLabel = needsGatewayChoice
         ? 'Elegir pasarela'
         : paymentOption === 'stripe_saved_card' || paymentOption === 'conekta_saved_card'
         ? 'Cobrar tarjeta'
-        : paymentOption === 'stripe' && activePaymentMode === 'partial'
+        : (paymentOption === 'stripe' || paymentOption === 'conekta') && activePaymentMode === 'partial'
           ? stripePlanCardSource === 'saved_card'
             ? 'Programar con tarjeta'
             : stripePlanWillRegisterOfflineFirstPayment
@@ -4096,7 +4255,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 lacksDeliveryChannel ||
                 lacksSavedCard ||
                 lacksStripePlanSavedCard ||
-                lacksStripePlanAuthorization
+                lacksStripePlanAuthorization ||
+                lacksConektaPlanSavedCard ||
+                lacksConektaPlanAuthorization
               }
               title={
                 lacksDeliveryChannel
@@ -4106,6 +4267,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   : lacksStripePlanSavedCard
                     ? 'Selecciona una tarjeta guardada para el plan'
                   : lacksStripePlanAuthorization
+                    ? 'Usa una tarjeta guardada o marca el primer pago como tarjeta/link'
+                  : lacksConektaPlanSavedCard
+                    ? 'Selecciona una tarjeta guardada para el plan'
+                  : lacksConektaPlanAuthorization
                     ? 'Usa una tarjeta guardada o marca el primer pago como tarjeta/link'
                   : undefined
               }
@@ -4139,6 +4304,18 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </div>
             )}
             {lacksStripePlanAuthorization && (
+              <div className={styles.tooltipInfo}>
+                <AlertCircle size={14} />
+                <span>Usa tarjeta guardada o primer pago con tarjeta/link</span>
+              </div>
+            )}
+            {lacksConektaPlanSavedCard && (
+              <div className={styles.tooltipInfo}>
+                <AlertCircle size={14} />
+                <span>Selecciona una tarjeta guardada para programar</span>
+              </div>
+            )}
+            {lacksConektaPlanAuthorization && (
               <div className={styles.tooltipInfo}>
                 <AlertCircle size={14} />
                 <span>Usa tarjeta guardada o primer pago con tarjeta/link</span>

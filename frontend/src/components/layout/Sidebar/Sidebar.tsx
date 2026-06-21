@@ -587,11 +587,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       .then((status) => {
         if (cancelled) return
         const stripe = Boolean(status?.stripe?.connected)
+        const conekta = Boolean(status?.conekta?.connected)
         const mercadoPago = Boolean(status?.mercadopago?.connected)
         const highlevel = Boolean(status?.highlevel?.connected)
         setPaymentCapabilities({
-          paymentPlans: stripe || highlevel,
-          subscriptions: stripe || mercadoPago
+          paymentPlans: stripe || conekta || highlevel,
+          subscriptions: stripe || conekta || mercadoPago
         })
       })
       .catch(() => {

@@ -16,6 +16,7 @@ import { startContactBulkActionsCron } from './jobs/contactBulkActions.cron.js'
 import { startAppointmentRemindersCron } from './jobs/appointmentReminders.cron.js'
 import { startWhatsAppQrWatchdogCron } from './jobs/whatsappQrWatchdog.cron.js'
 import { startStripePaymentPlansCron } from './jobs/stripePaymentPlans.cron.js'
+import { startConektaPaymentPlansCron } from './jobs/conektaPaymentPlans.cron.js'
 import { startPaymentAutomationsCron } from './jobs/paymentAutomations.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
@@ -287,6 +288,7 @@ async function startRuntimeServices() {
   startAppointmentRemindersCron()  // Envía recordatorios y confirmaciones de citas
   startWhatsAppQrWatchdogCron()    // Reabre sesiones de WhatsApp Web al arrancar y las mantiene vivas
   startStripePaymentPlansCron()    // Cobra parcialidades Stripe vencidas con tarjetas guardadas
+  startConektaPaymentPlansCron()   // Cobra parcialidades Conekta vencidas con tarjetas guardadas
   startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
   startupState.ready = true
   logger.success('App lista para recibir tráfico')

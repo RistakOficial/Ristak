@@ -134,6 +134,60 @@ export interface ConektaSavedCardPaymentPayload {
   lineItems?: Array<Record<string, unknown>>
 }
 
+export interface ConektaPaymentPlanPayload {
+  contact: {
+    id: string
+    name?: string
+    email?: string
+    phone?: string
+  }
+  totalAmount: number
+  currency: string
+  description?: string
+  title?: string
+  invoicePayload?: Record<string, unknown>
+  firstPayment: {
+    enabled: boolean
+    amount: number
+    date?: string
+    method?: string
+  }
+  remainingFrequency?: string
+  remainingPayments: Array<{
+    sequence: number
+    type?: string
+    value?: number
+    amount: number
+    percentage?: number | null
+    dueDate: string
+    frequency?: string
+  }>
+  paymentMethodId?: string
+  cardSetupAmount?: number
+  source?: string
+}
+
+export interface ConektaPaymentPlanResponse {
+  flowId: string
+  currentState: string
+  paymentMode: 'test' | 'live'
+  firstPaymentLink?: string | null
+  firstPaymentPaymentId?: string | null
+  cardSetupLink?: string | null
+  cardSetupPaymentId?: string | null
+  cardSetupAmount?: number
+  savedPaymentSource?: ConektaSavedPaymentSource | null
+  scheduledPayments: Array<{
+    installmentId: string
+    paymentId: string
+    sequence: number
+    amount: number
+    currency: string
+    dueDate: string
+    status: string
+  }>
+}
+
 async function parseApiResponse<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}))
   if (!response.ok || data?.success === false) {
@@ -201,6 +255,18 @@ export const conektaPaymentsService = {
       body: JSON.stringify(payload)
     })
     return parseApiResponse(response)
+  },
+
+  async createPaymentPlan(payload: ConektaPaymentPlanPayload): Promise<ConektaPaymentPlanResponse> {
+    const response = await fetch(apiUrl('/api/conekta/payment-plans'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify(payload)
+    })
+    return parseApiResponse<ConektaPaymentPlanResponse>(response)
   },
 
   async getPublicPayment(publicPaymentId: string): Promise<PublicConektaPayment> {

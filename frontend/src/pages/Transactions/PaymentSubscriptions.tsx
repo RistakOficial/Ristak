@@ -52,7 +52,7 @@ import {
 import styles from './PaymentSubscriptions.module.css'
 
 type SubscriptionFormMode = 'create' | 'edit' | null
-type PaymentGatewayProvider = 'stripe' | 'mercadopago'
+type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago'
 
 interface SubscriptionFormState {
   name: string
@@ -104,6 +104,7 @@ const STATUS_OPTIONS: Array<{ value: SubscriptionStatus; label: string }> = [
 const PAYMENT_METHOD_OPTIONS: Array<{ value: string; label: string; provider: PaymentGatewayProvider }> = [
   { value: 'stripe_saved_card', label: 'Stripe - tarjeta guardada', provider: 'stripe' },
   { value: 'stripe_link', label: 'Stripe - enlace de pago', provider: 'stripe' },
+  { value: 'conekta_subscription', label: 'Conekta - tarjeta guardada', provider: 'conekta' },
   { value: 'mercadopago_subscription', label: 'Mercado Pago - suscripción', provider: 'mercadopago' }
 ]
 
@@ -137,6 +138,13 @@ function createEmptyForm(): SubscriptionFormState {
 
 function createEmptyFormForProvider(provider: PaymentGatewayProvider | null): SubscriptionFormState {
   const form = createEmptyForm()
+  if (provider === 'conekta') {
+    return {
+      ...form,
+      paymentMethod: 'conekta_subscription',
+      paymentProvider: 'conekta'
+    }
+  }
   if (provider === 'mercadopago') {
     return {
       ...form,
@@ -200,6 +208,7 @@ function getPaymentMethodLabel(value?: string | null) {
   const normalized = String(value || '').toLowerCase()
   if (normalized === 'stripe_saved_card') return 'Tarjeta guardada'
   if (normalized === 'stripe_link') return 'Link de Stripe'
+  if (normalized === 'conekta_subscription') return 'Conekta domiciliado'
   if (normalized === 'mercadopago_subscription') return 'Suscripción Mercado Pago'
   if (normalized === 'manual') return 'Manual'
   return value || 'Sin método'
@@ -207,6 +216,7 @@ function getPaymentMethodLabel(value?: string | null) {
 
 function getSourceLabel(subscription: PaymentSubscription) {
   if (subscription.mercadoPagoPreapprovalId || subscription.paymentProvider === 'mercadopago') return 'Mercado Pago'
+  if (subscription.conektaSubscriptionId || subscription.paymentProvider === 'conekta') return 'Conekta'
   if (subscription.stripeSubscriptionId || subscription.paymentProvider === 'stripe') return 'Stripe'
   if (subscription.source === 'ghl') return 'HighLevel'
   return 'Ristak'
@@ -214,6 +224,7 @@ function getSourceLabel(subscription: PaymentSubscription) {
 
 function getSubscriptionProviderLogo(subscription: PaymentSubscription): PaymentPlatformLogoId | null {
   if (subscription.mercadoPagoPreapprovalId || subscription.paymentProvider === 'mercadopago') return 'mercadopago'
+  if (subscription.conektaSubscriptionId || subscription.paymentProvider === 'conekta') return 'conekta'
   if (subscription.stripeSubscriptionId || subscription.paymentProvider === 'stripe') return 'stripe'
   return null
 }
@@ -264,6 +275,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [form, setForm] = useState<SubscriptionFormState>(() => createEmptyForm())
   const [stripeConnected, setStripeConnected] = useState(false)
+  const [conektaConnected, setConektaConnected] = useState(false)
   const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
   const [integrationsLoading, setIntegrationsLoading] = useState(true)
 
@@ -294,11 +306,13 @@ export const PaymentSubscriptions: React.FC = () => {
       .then((data) => {
         if (cancelled) return
         setStripeConnected(Boolean(data?.stripe?.connected))
+        setConektaConnected(Boolean(data?.conekta?.connected))
         setMercadoPagoConnected(Boolean(data?.mercadopago?.connected))
       })
       .catch(() => {
         if (cancelled) return
         setStripeConnected(false)
+        setConektaConnected(false)
         setMercadoPagoConnected(false)
       })
       .finally(() => {
@@ -312,18 +326,19 @@ export const PaymentSubscriptions: React.FC = () => {
 
   const availablePaymentMethodOptions = useMemo(() => (
     PAYMENT_METHOD_OPTIONS.filter((option) => (
-      option.provider === 'stripe' ? stripeConnected : mercadoPagoConnected
+      option.provider === 'stripe' ? stripeConnected : option.provider === 'conekta' ? conektaConnected : mercadoPagoConnected
     ))
-  ), [mercadoPagoConnected, stripeConnected])
+  ), [conektaConnected, mercadoPagoConnected, stripeConnected])
 
-  const defaultProvider = stripeConnected ? 'stripe' : mercadoPagoConnected ? 'mercadopago' : null
+  const defaultProvider = stripeConnected ? 'stripe' : conektaConnected ? 'conekta' : mercadoPagoConnected ? 'mercadopago' : null
   const hasSubscriptionGateway = Boolean(defaultProvider)
   const isMercadoPagoSelected = form.paymentProvider === 'mercadopago' || form.paymentMethod === 'mercadopago_subscription'
+  const isConektaSelected = form.paymentProvider === 'conekta' || form.paymentMethod === 'conekta_subscription'
 
   useEffect(() => {
     if (integrationsLoading || hasSubscriptionGateway) return
 
-    showToast('warning', 'Suscripciones no disponibles', 'Conecta Stripe o Mercado Pago para crear suscripciones automáticas.')
+    showToast('warning', 'Suscripciones no disponibles', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones automáticas.')
     navigate('/transactions', { replace: true })
   }, [hasSubscriptionGateway, integrationsLoading, navigate, showToast])
 
@@ -334,7 +349,7 @@ export const PaymentSubscriptions: React.FC = () => {
 
   const openCreateSubscription = () => {
     if (!hasSubscriptionGateway) {
-      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe o Mercado Pago para crear suscripciones automáticas.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones automáticas.')
       return
     }
 
@@ -409,16 +424,31 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
-    const provider = form.paymentMethod === 'mercadopago_subscription' ? 'mercadopago' : form.paymentProvider
+    const provider = form.paymentMethod === 'mercadopago_subscription'
+      ? 'mercadopago'
+      : form.paymentMethod === 'conekta_subscription'
+        ? 'conekta'
+        : form.paymentProvider
     const contactEmail = selectedContact?.email || editingSubscription?.contactEmail || null
+    const contactId = selectedContact?.id || editingSubscription?.contactId || null
 
     if (provider === 'mercadopago' && !contactEmail) {
       showToast('warning', 'Falta el email', 'Mercado Pago necesita email para que el cliente autorice la suscripción.')
       return null
     }
 
+    if ((provider === 'stripe' || provider === 'conekta') && !contactId) {
+      showToast('warning', 'Falta el contacto', `${provider === 'conekta' ? 'Conekta' : 'Stripe'} necesita un contacto con tarjeta guardada para activar la suscripción.`)
+      return null
+    }
+
+    if (provider === 'conekta' && form.intervalType === 'daily') {
+      showToast('warning', 'Frecuencia no soportada', 'Conekta no acepta suscripciones diarias. Usa semanal, mensual o anual.')
+      return null
+    }
+
     return {
-      contactId: selectedContact?.id || null,
+      contactId,
       contactName: selectedContact?.name || editingSubscription?.contactName || null,
       contactEmail,
       contactPhone: selectedContact?.phone || editingSubscription?.contactPhone || null,
@@ -433,6 +463,7 @@ export const PaymentSubscriptions: React.FC = () => {
       nextRunAt: provider === 'mercadopago' ? null : form.nextRunAt || null,
       paymentMethod: form.paymentMethod,
       paymentProvider: provider,
+      conektaPaymentSourceId: provider === 'conekta' ? editingSubscription?.conektaPaymentSourceId || null : undefined,
       source: editingSubscription?.source || 'ristak'
     }
   }
@@ -540,7 +571,7 @@ export const PaymentSubscriptions: React.FC = () => {
           {item.description && <small>{item.description}</small>}
         </button>
       ),
-      searchValue: (_value, item) => [item.name, item.description, item.stripeSubscriptionId, item.mercadoPagoPreapprovalId],
+      searchValue: (_value, item) => [item.name, item.description, item.stripeSubscriptionId, item.conektaSubscriptionId, item.mercadoPagoPreapprovalId],
       sortable: true
     },
     {
@@ -607,7 +638,7 @@ export const PaymentSubscriptions: React.FC = () => {
           </div>
         )
       },
-      searchValue: (_value, item) => [item.paymentMethod, item.paymentProvider, item.source, item.stripeCustomerId, item.mercadoPagoPreapprovalId],
+      searchValue: (_value, item) => [item.paymentMethod, item.paymentProvider, item.source, item.stripeCustomerId, item.conektaCustomerId, item.mercadoPagoPreapprovalId],
       sortable: true
     },
     {
@@ -710,7 +741,7 @@ export const PaymentSubscriptions: React.FC = () => {
                 onClick={openCreateSubscription}
                 leftIcon={<Plus size={16} />}
                 disabled={integrationsLoading || !hasSubscriptionGateway}
-                title={!hasSubscriptionGateway ? 'Conecta Stripe o Mercado Pago para crear suscripciones' : undefined}
+                title={!hasSubscriptionGateway ? 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones' : undefined}
               >
                 Nueva suscripción
               </Button>
@@ -891,10 +922,12 @@ export const PaymentSubscriptions: React.FC = () => {
               </div>
 
               <div className={`${styles.providerHint} ${styles.fullWidth}`}>
-                <PaymentPlatformLogo platform={isMercadoPagoSelected ? 'mercadopago' : 'stripe'} size="sm" decorative />
+                <PaymentPlatformLogo platform={isMercadoPagoSelected ? 'mercadopago' : isConektaSelected ? 'conekta' : 'stripe'} size="sm" decorative />
                 <p className={styles.formHint}>
                   {isMercadoPagoSelected
                     ? 'Mercado Pago creará una autorización de suscripción. Copia el link y envíalo al cliente; los cobros se activan cuando acepte el método de pago.'
+                    : isConektaSelected
+                      ? 'Para cobros automáticos con Conekta, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'
                     : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto y guardará los datos técnicos por debajo.'}
                 </p>
               </div>

@@ -1,5 +1,6 @@
 import {
   createConektaPaymentLink,
+  createConektaPaymentPlan,
   createConektaSavedCardPayment,
   createPublicConektaCardPayment,
   deleteConektaPaymentConfig,
@@ -83,6 +84,18 @@ export async function createConektaPaymentLinkView(req, res) {
   } catch (error) {
     logger.error(`Error creando link de pago Conekta: ${error.message}`)
     sendConektaError(res, error, 'No se pudo crear el link de pago con Conekta')
+  }
+}
+
+export async function createConektaPaymentPlanView(req, res) {
+  try {
+    const result = await createConektaPaymentPlan(req.body || {}, {
+      baseUrl: getRequestBaseUrl(req)
+    })
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error creando plan de pagos Conekta: ${error.message}`)
+    sendConektaError(res, error, 'No se pudo crear el plan de pagos con Conekta')
   }
 }
 

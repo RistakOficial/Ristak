@@ -977,6 +977,14 @@ const SUBSCRIPTION_MERCADOPAGO_COLUMNS = [
   ['mercadopago_next_payment_date', 'DATETIME']
 ]
 
+const SUBSCRIPTION_CONEKTA_COLUMNS = [
+  ['conekta_customer_id', 'TEXT'],
+  ['conekta_plan_id', 'TEXT'],
+  ['conekta_subscription_id', 'TEXT'],
+  ['conekta_payment_source_id', 'TEXT'],
+  ['conekta_next_billing_at', 'DATETIME']
+]
+
 function isExistingColumnError(err) {
   const message = String(err?.message || '')
   return message.includes('duplicate column') || message.includes('already exists')
@@ -2277,6 +2285,11 @@ async function initTables() {
         mercadopago_card_id TEXT,
         mercadopago_payment_method_id TEXT,
         mercadopago_next_payment_date DATETIME,
+        conekta_customer_id TEXT,
+        conekta_plan_id TEXT,
+        conekta_subscription_id TEXT UNIQUE,
+        conekta_payment_source_id TEXT,
+        conekta_next_billing_at DATETIME,
         metadata_json TEXT,
         raw_json TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -2290,7 +2303,10 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_next_run ON subscriptions(next_run_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions(stripe_customer_id)')
     await ensureTableColumns('subscriptions', SUBSCRIPTION_MERCADOPAGO_COLUMNS)
+    await ensureTableColumns('subscriptions', SUBSCRIPTION_CONEKTA_COLUMNS)
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_mercadopago_preapproval ON subscriptions(mercadopago_preapproval_id)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_conekta_subscription ON subscriptions(conekta_subscription_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_conekta_customer ON subscriptions(conekta_customer_id)')
 
     // Tabla de citas
     await db.run(`
@@ -3215,6 +3231,9 @@ async function initTables() {
         stripe_customer_id TEXT,
         stripe_payment_method_id TEXT,
         stripe_payment_method_label TEXT,
+        conekta_customer_id TEXT,
+        conekta_payment_source_id TEXT,
+        conekta_payment_source_label TEXT,
         mercadopago_user_id TEXT,
         mercadopago_preapproval_id TEXT,
         current_state TEXT NOT NULL,
@@ -3252,6 +3271,8 @@ async function initTables() {
         stripe_payment_intent_id TEXT,
         mercadopago_payment_id TEXT,
         mercadopago_preference_id TEXT,
+        conekta_order_id TEXT,
+        conekta_charge_id TEXT,
         notes TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -3666,6 +3687,9 @@ async function initTables() {
         ['stripe_customer_id', 'TEXT'],
         ['stripe_payment_method_id', 'TEXT'],
         ['stripe_payment_method_label', 'TEXT'],
+        ['conekta_customer_id', 'TEXT'],
+        ['conekta_payment_source_id', 'TEXT'],
+        ['conekta_payment_source_label', 'TEXT'],
         ['mercadopago_user_id', 'TEXT'],
         ['mercadopago_preapproval_id', 'TEXT']
       ]
@@ -3681,9 +3705,12 @@ async function initTables() {
       }
 
       await ensureTableColumns('subscriptions', SUBSCRIPTION_MERCADOPAGO_COLUMNS)
+      await ensureTableColumns('subscriptions', SUBSCRIPTION_CONEKTA_COLUMNS)
 
       try {
         await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_mercadopago_preapproval ON subscriptions(mercadopago_preapproval_id)')
+        await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_conekta_subscription ON subscriptions(conekta_subscription_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_conekta_customer ON subscriptions(conekta_customer_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err
@@ -3716,6 +3743,7 @@ async function initTables() {
 
       try {
         await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_stripe_method ON payment_flows(stripe_payment_method_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_conekta_source ON payment_flows(conekta_payment_source_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_mercadopago_user ON payment_flows(mercadopago_user_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
@@ -3772,6 +3800,22 @@ async function initTables() {
       }
 
       try {
+        await db.run('ALTER TABLE installment_payments ADD COLUMN conekta_order_id TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
+        await db.run('ALTER TABLE installment_payments ADD COLUMN conekta_charge_id TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
         await db.run('ALTER TABLE installment_payments ADD COLUMN notes TEXT')
       } catch (err) {
         if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
@@ -3791,6 +3835,7 @@ async function initTables() {
         await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_stripe_intent ON installment_payments(stripe_payment_intent_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_mercadopago_payment ON installment_payments(mercadopago_payment_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_mercadopago_preference ON installment_payments(mercadopago_preference_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_conekta_order ON installment_payments(conekta_order_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err

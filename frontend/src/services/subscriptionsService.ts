@@ -39,6 +39,11 @@ export interface PaymentSubscription {
   mercadoPagoCardId?: string | null
   mercadoPagoPaymentMethodId?: string | null
   mercadoPagoNextPaymentDate?: string | null
+  conektaCustomerId?: string | null
+  conektaPlanId?: string | null
+  conektaSubscriptionId?: string | null
+  conektaPaymentSourceId?: string | null
+  conektaNextBillingAt?: string | null
   metadata?: Record<string, unknown> | null
   raw?: Record<string, unknown> | null
   createdAt?: string | null
@@ -90,6 +95,11 @@ export interface SubscriptionPayload {
   mercadoPagoCardId?: string | null
   mercadoPagoPaymentMethodId?: string | null
   mercadoPagoNextPaymentDate?: string | null
+  conektaCustomerId?: string | null
+  conektaPlanId?: string | null
+  conektaSubscriptionId?: string | null
+  conektaPaymentSourceId?: string | null
+  conektaNextBillingAt?: string | null
   metadata?: Record<string, unknown> | null
 }
 
