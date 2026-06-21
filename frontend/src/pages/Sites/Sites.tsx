@@ -5104,8 +5104,38 @@ const calendarEmbedNumberQuerySettings = [
   { key: 'calendarFieldRadius', param: 'fieldRadius', fallback: 8, min: 0, max: 32 }
 ] as const
 
+const calendarEmbedDesignModeOptions = [
+  { value: 'original', label: 'Modo original del calendario' },
+  { value: 'custom', label: 'Personalizar para sitio' }
+] as const
+
+const calendarEmbedLayoutOptions = [
+  { value: 'classic', label: 'Clásico' },
+  { value: 'compact', label: 'Compacto' },
+  { value: 'stacked', label: 'Vertical' }
+] as const
+
+const getCalendarEmbedDesignMode = (settings: Record<string, unknown>) => (
+  getSettingString(settings, 'calendarDesignMode') === 'original' ? 'original' : 'custom'
+)
+
+const getCalendarEmbedLayout = (settings: Record<string, unknown>) => {
+  const value = getSettingString(settings, 'calendarLayout')
+  if (value === 'compact' || value === 'stacked') return value
+  return 'classic'
+}
+
 const getCalendarEmbedStyleParams = (settings: Record<string, unknown>) => {
   const params: Record<string, string> = {}
+  const designMode = getCalendarEmbedDesignMode(settings)
+
+  params.designMode = designMode
+  params.layout = getCalendarEmbedLayout(settings)
+
+  const coverImage = getSettingString(settings, 'calendarCoverImage')
+  if (coverImage) params.coverImage = coverImage
+
+  if (designMode !== 'custom') return params
 
   calendarEmbedColorQuerySettings.forEach(({ key, param }) => {
     if (settings[key] === undefined) return
@@ -5826,6 +5856,9 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
         calendarId: '',
         calendarSlug: '',
         calendarName: '',
+        calendarDesignMode: 'original',
+        calendarLayout: 'classic',
+        calendarCoverImage: '',
         blockBg: 'transparent',
         blockPaddingTop: 0,
         blockPaddingRight: 0,
@@ -28750,10 +28783,24 @@ const CalendarBlockDesignControls: React.FC<{
   const defaultText = paintFallbackColor(getPageTextPaint(site), isSiteDark(site) ? '#ffffff' : '#111827')
   const defaultMuted = isSiteDark(site) ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
   const defaultLine = isSiteDark(site) ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
+  const designMode = getCalendarEmbedDesignMode(settings)
+  const customDesign = designMode === 'custom'
 
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
       <div className={styles.panelSubheader}>Diseño del calendario</div>
+      <label className={styles.field}>
+        <span>Modo</span>
+        <CustomSelect
+          value={designMode}
+          onChange={(event) => onPatchSettings({ calendarDesignMode: event.target.value })}
+          onBlur={onSave}
+        >
+          {calendarEmbedDesignModeOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
       <AlignmentControl
         label="Alineación"
         value={getHorizontalAlign(settings, 'mediaAlign', 'center')}
@@ -28780,6 +28827,35 @@ const CalendarBlockDesignControls: React.FC<{
           onCommit={onSave}
         />
       </div>
+      <label className={styles.field}>
+        <span>Layout</span>
+        <CustomSelect
+          value={getCalendarEmbedLayout(settings)}
+          onChange={(event) => onPatchSettings({ calendarLayout: event.target.value })}
+          onBlur={onSave}
+        >
+          {calendarEmbedLayoutOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+      </label>
+      <MediaUploadControl
+        kind="image"
+        label="Elegir imagen"
+        moduleEntityId={site.id}
+        currentUrl={getSettingString(settings, 'calendarCoverImage') || calendar?.calendarCoverImage || ''}
+        onUploaded={(url) => onPatchSettings({ calendarCoverImage: url })}
+        onCommit={onSave}
+      />
+      <label className={styles.field}>
+        <span>URL de imagen</span>
+        <input
+          value={getSettingString(settings, 'calendarCoverImage')}
+          placeholder={calendar?.calendarCoverImage || 'https://...'}
+          onChange={(event) => onPatchSettings({ calendarCoverImage: event.target.value })}
+          onBlur={onSave}
+        />
+      </label>
       <div className={styles.twoColumn}>
         <DimensionField
           label="Radio"
@@ -28806,125 +28882,129 @@ const CalendarBlockDesignControls: React.FC<{
         onCommit={onSave}
       />
 
-      <div className={styles.panelSubheader}>Colores internos</div>
-      <div className={styles.twoColumn}>
-        <ColorField
-          label="Acento"
-          value={getSettingHex(settings, 'calendarAccentColor', defaultAccent)}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarAccentColor: value })}
-          onCommit={onSave}
-        />
-        <ColorField
-          label="Texto"
-          value={getSettingHex(settings, 'calendarTextColor', defaultText)}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarTextColor: value })}
-          onCommit={onSave}
-        />
-      </div>
-      <div className={styles.twoColumn}>
-        <ColorField
-          label="Texto secundario"
-          value={getSettingHex(settings, 'calendarMutedColor', defaultMuted)}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarMutedColor: value })}
-          onCommit={onSave}
-        />
-        <ColorField
-          label="Lineas"
-          value={getSettingHex(settings, 'calendarLineColor', defaultLine)}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarLineColor: value })}
-          onCommit={onSave}
-        />
-      </div>
+      {customDesign && (
+        <>
+          <div className={styles.panelSubheader}>Colores internos</div>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Acento"
+              value={getSettingHex(settings, 'calendarAccentColor', defaultAccent)}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarAccentColor: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Texto"
+              value={getSettingHex(settings, 'calendarTextColor', defaultText)}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarTextColor: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Texto secundario"
+              value={getSettingHex(settings, 'calendarMutedColor', defaultMuted)}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarMutedColor: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Lineas"
+              value={getSettingHex(settings, 'calendarLineColor', defaultLine)}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarLineColor: value })}
+              onCommit={onSave}
+            />
+          </div>
 
-      <div className={styles.panelSubheader}>Dias y horarios</div>
-      <div className={styles.twoColumn}>
-        <ColorField
-          label="Fondo controles"
-          value={getSettingHex(settings, 'calendarControlBg', 'transparent')}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarControlBg: value })}
-          onCommit={onSave}
-        />
-        <ColorField
-          label="Fondo horario"
-          value={getSettingHex(settings, 'calendarSlotBg', 'transparent')}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarSlotBg: value })}
-          onCommit={onSave}
-        />
-      </div>
-      <div className={styles.twoColumn}>
-        <ColorField
-          label="Texto horario"
-          value={getSettingHex(settings, 'calendarSlotText', defaultAccent)}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarSlotText: value })}
-          onCommit={onSave}
-        />
-        <ColorField
-          label="Texto activo"
-          value={getSettingHex(settings, 'calendarSelectedText', onAccentFor(defaultAccent))}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarSelectedText: value })}
-          onCommit={onSave}
-        />
-      </div>
-      <div className={styles.twoColumn}>
-        <DimensionField
-          label="Radio horarios"
-          value={getSettingNumber(settings, 'calendarSlotRadius', 8, 0, 32)}
-          min={0}
-          max={32}
-          onChange={(value) => onPatchSettings({ calendarSlotRadius: value })}
-          onCommit={onSave}
-        />
-      </div>
+          <div className={styles.panelSubheader}>Dias y horarios</div>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Fondo controles"
+              value={getSettingHex(settings, 'calendarControlBg', 'transparent')}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarControlBg: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Fondo horario"
+              value={getSettingHex(settings, 'calendarSlotBg', 'transparent')}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarSlotBg: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Texto horario"
+              value={getSettingHex(settings, 'calendarSlotText', defaultAccent)}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarSlotText: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Texto activo"
+              value={getSettingHex(settings, 'calendarSelectedText', onAccentFor(defaultAccent))}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarSelectedText: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Radio horarios"
+              value={getSettingNumber(settings, 'calendarSlotRadius', 8, 0, 32)}
+              min={0}
+              max={32}
+              onChange={(value) => onPatchSettings({ calendarSlotRadius: value })}
+              onCommit={onSave}
+            />
+          </div>
 
-      <div className={styles.panelSubheader}>Campos de datos</div>
-      <div className={styles.twoColumn}>
-        <ColorField
-          label="Fondo campo"
-          value={getSettingHex(settings, 'calendarFieldBg', 'transparent')}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarFieldBg: value })}
-          onCommit={onSave}
-        />
-        <ColorField
-          label="Texto campo"
-          value={getSettingHex(settings, 'calendarFieldText', defaultText)}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarFieldText: value })}
-          onCommit={onSave}
-        />
-      </div>
-      <div className={styles.twoColumn}>
-        <ColorField
-          label="Borde campo"
-          value={getSettingHex(settings, 'calendarFieldBorder', defaultLine)}
-          allowGradient={false}
-          onChange={(value) => onPatchSettings({ calendarFieldBorder: value })}
-          onCommit={onSave}
-        />
-        <DimensionField
-          label="Radio campos"
-          value={getSettingNumber(settings, 'calendarFieldRadius', 8, 0, 32)}
-          min={0}
-          max={32}
-          onChange={(value) => onPatchSettings({ calendarFieldRadius: value })}
-          onCommit={onSave}
-        />
-      </div>
-      <ColorField
-        label="Texto boton"
-        value={getSettingHex(settings, 'calendarButtonText', onAccentFor(defaultAccent))}
-        allowGradient={false}
-        onChange={(value) => onPatchSettings({ calendarButtonText: value })}
-        onCommit={onSave}
-      />
+          <div className={styles.panelSubheader}>Campos de datos</div>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Fondo campo"
+              value={getSettingHex(settings, 'calendarFieldBg', 'transparent')}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarFieldBg: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Texto campo"
+              value={getSettingHex(settings, 'calendarFieldText', defaultText)}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarFieldText: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Borde campo"
+              value={getSettingHex(settings, 'calendarFieldBorder', defaultLine)}
+              allowGradient={false}
+              onChange={(value) => onPatchSettings({ calendarFieldBorder: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Radio campos"
+              value={getSettingNumber(settings, 'calendarFieldRadius', 8, 0, 32)}
+              min={0}
+              max={32}
+              onChange={(value) => onPatchSettings({ calendarFieldRadius: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <ColorField
+            label="Texto boton"
+            value={getSettingHex(settings, 'calendarButtonText', onAccentFor(defaultAccent))}
+            allowGradient={false}
+            onChange={(value) => onPatchSettings({ calendarButtonText: value })}
+            onCommit={onSave}
+          />
+        </>
+      )}
     </div>
   )
 }
@@ -30024,6 +30104,40 @@ const BunnyStreamStoragePreview: React.FC<{
   )
 }
 
+const CalendarEmbedPreviewFrame: React.FC<{
+  calendarSlug: string
+  calendarName: string
+  settings: Record<string, unknown>
+  selected?: boolean
+}> = ({ calendarSlug, calendarName, settings, selected = false }) => {
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const src = useMemo(() => sitesService.getCalendarPreviewUrl(calendarSlug), [calendarSlug])
+  const styleParams = useMemo(() => getCalendarEmbedStyleParams(settings), [settings])
+
+  const postStyleParams = useCallback(() => {
+    iframeRef.current?.contentWindow?.postMessage({
+      type: 'ristak:calendar-embed-style',
+      style: styleParams
+    }, '*')
+  }, [styleParams])
+
+  useEffect(() => {
+    postStyleParams()
+  }, [postStyleParams])
+
+  return (
+    <iframe
+      ref={iframeRef}
+      className={`rstk-embed rstk-calendar-embed ${selected ? 'rstk-calendar-embed-selected' : ''}`}
+      src={src}
+      title={calendarName || `Calendario /${calendarSlug}`}
+      loading="lazy"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+      onLoad={postStyleParams}
+    />
+  )
+}
+
 const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   block,
   site,
@@ -30445,12 +30559,11 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const hasSelectedCalendarOption = calendars.some(calendar => calendar.id === selectedCalendarId)
     if (calendarSlug) {
       return (
-        <iframe
-          className="rstk-embed rstk-calendar-embed"
-          src={sitesService.getCalendarPreviewUrl(calendarSlug, getCalendarEmbedStyleParams(settings))}
-          title={calendarName || `Calendario /${calendarSlug}`}
-          loading="lazy"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        <CalendarEmbedPreviewFrame
+          calendarSlug={calendarSlug}
+          calendarName={calendarName}
+          settings={settings}
+          selected={selected}
         />
       )
     }

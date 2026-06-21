@@ -70,6 +70,23 @@ function safeCssNumber(value, fallback, min, max) {
   return Math.min(max, Math.max(min, parsed))
 }
 
+function normalizeCalendarEmbedLayout(value) {
+  const raw = cleanString(value).toLowerCase()
+  return ['classic', 'compact', 'stacked'].includes(raw) ? raw : 'classic'
+}
+
+function safeCalendarImageUrl(value, fallback = '') {
+  const raw = cleanString(value || fallback)
+  if (!raw) return ''
+  if (/^\/(?!\/)/.test(raw)) return raw
+  try {
+    const parsed = new URL(raw)
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
 function toInt(value, fallback = 0) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -1225,25 +1242,30 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
   }
 }
 
-export function renderPublicCalendarHtml(calendar, { host = '', embedded = false, style = {}, bookingForm = null } = {}) {
+export function renderPublicCalendarHtml(calendar, { host = '', embedded = false, style = {}, bookingForm = null, preview = false } = {}) {
   const slug = publicCalendarSlug(calendar)
   const duration = Math.max(1, toInt(calendar.slotDuration, 60))
   const title = calendar.eventTitle || calendar.name || 'Cita'
-  const accent = safeCssColor(style.accent, safeCssColor(calendar.eventColor, DEFAULT_EVENT_COLOR))
-  const textColor = safeCssColor(style.text, '#111827')
-  const mutedColor = safeCssColor(style.muted, '#6b7280')
-  const lineColor = safeCssColor(style.line, '#e5e7eb')
+  const designMode = cleanString(style.designMode).toLowerCase() === 'original' ? 'original' : 'custom'
+  const useCustomStyle = designMode === 'custom'
+  const accent = useCustomStyle ? safeCssColor(style.accent, safeCssColor(calendar.eventColor, DEFAULT_EVENT_COLOR)) : safeCssColor(calendar.eventColor, DEFAULT_EVENT_COLOR)
+  const textColor = useCustomStyle ? safeCssColor(style.text, '#111827') : '#111827'
+  const mutedColor = useCustomStyle ? safeCssColor(style.muted, '#6b7280') : '#6b7280'
+  const lineColor = useCustomStyle ? safeCssColor(style.line, '#e5e7eb') : '#e5e7eb'
   const embeddedControlBg = 'rgba(255, 255, 255, 0)'
-  const controlBg = safeCssColor(style.controlBg, embedded ? embeddedControlBg : '#ffffff')
-  const slotBg = safeCssColor(style.slotBg, embedded ? embeddedControlBg : '#ffffff')
-  const slotText = safeCssColor(style.slotText, accent)
-  const selectedText = safeCssColor(style.selectedText, '#ffffff')
-  const fieldBg = safeCssColor(style.fieldBg, embedded ? embeddedControlBg : '#ffffff')
-  const fieldText = safeCssColor(style.fieldText, '#1f2937')
-  const fieldBorder = safeCssColor(style.fieldBorder, lineColor)
-  const buttonText = safeCssColor(style.buttonText, selectedText)
-  const slotRadius = safeCssNumber(style.slotRadius, 8, 0, 32)
-  const fieldRadius = safeCssNumber(style.fieldRadius, 8, 0, 32)
+  const defaultControlBg = embedded ? embeddedControlBg : '#ffffff'
+  const controlBg = useCustomStyle ? safeCssColor(style.controlBg, defaultControlBg) : defaultControlBg
+  const slotBg = useCustomStyle ? safeCssColor(style.slotBg, defaultControlBg) : defaultControlBg
+  const slotText = useCustomStyle ? safeCssColor(style.slotText, accent) : accent
+  const selectedText = useCustomStyle ? safeCssColor(style.selectedText, '#ffffff') : '#ffffff'
+  const fieldBg = useCustomStyle ? safeCssColor(style.fieldBg, defaultControlBg) : defaultControlBg
+  const fieldText = useCustomStyle ? safeCssColor(style.fieldText, '#1f2937') : '#1f2937'
+  const fieldBorder = useCustomStyle ? safeCssColor(style.fieldBorder, lineColor) : lineColor
+  const buttonText = useCustomStyle ? safeCssColor(style.buttonText, selectedText) : selectedText
+  const slotRadius = useCustomStyle ? safeCssNumber(style.slotRadius, 8, 0, 32) : 8
+  const fieldRadius = useCustomStyle ? safeCssNumber(style.fieldRadius, 8, 0, 32) : 8
+  const layout = normalizeCalendarEmbedLayout(style.layout)
+  const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
   const payload = {
     slug,
     name: calendar.name || 'Calendario',
@@ -1252,6 +1274,27 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     duration,
     color: accent,
     host,
+    preview: Boolean(preview),
+    layout,
+    coverImage,
+    styleDefaults: {
+      accent,
+      text: textColor,
+      muted: mutedColor,
+      line: lineColor,
+      controlBg,
+      slotBg,
+      slotText,
+      selectedText,
+      fieldBg,
+      fieldText,
+      fieldBorder,
+      buttonText,
+      slotRadius,
+      fieldRadius,
+      layout,
+      coverImage
+    },
     bookingForm: bookingForm || {
       mode: 'default',
       formId: CALENDAR_DEFAULT_FORM_SITE_ID,
@@ -1278,13 +1321,24 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     body.rstk-calendar-embedded .page{width:100%;padding:0;place-items:stretch}
     .shell{width:100%;min-height:min(760px,calc(100vh - 80px));display:grid;grid-template-columns:340px minmax(390px,1fr) minmax(260px,300px);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 32px 90px -60px rgba(15,23,42,.45);overflow:hidden}
     body.rstk-calendar-embedded .shell{min-height:100vh;border:0;border-radius:0;box-shadow:none}
+    .shell.layout-compact{grid-template-columns:minmax(390px,1fr) minmax(260px,320px)}
+    .shell.layout-compact .intro{grid-column:1/-1;grid-template-columns:auto minmax(0,1fr);align-items:center;border-right:0;border-bottom:1px solid var(--line);padding:26px 30px}
+    .shell.layout-compact .avatar{width:78px;height:78px;font-size:2.2rem}
+    .shell.layout-stacked{max-width:760px;margin:0 auto;grid-template-columns:1fr}
+    body.rstk-calendar-embedded .shell.layout-stacked{max-width:none}
+    .shell.layout-stacked .intro,.shell.layout-stacked .calendarPane,.shell.layout-stacked .timesPane{border-right:0;border-left:0}
+    .shell.layout-stacked .calendarPane,.shell.layout-stacked .timesPane{border-top:1px solid var(--line)}
     .shell.bookingActive{grid-template-columns:340px minmax(320px,520px);justify-content:center}
+    .shell.layout-compact.bookingActive{grid-template-columns:minmax(320px,520px)}
+    .shell.layout-stacked.bookingActive{grid-template-columns:1fr}
     .shell.bookingActive .calendarPane{display:none}
     .shell.bookingActive .timesPane{border-left:1px solid var(--line);max-width:520px;width:100%}
+    .shell.layout-compact.bookingActive .intro,.shell.layout-compact.bookingActive .timesPane,.shell.layout-stacked.bookingActive .timesPane{border-left:0}
     .shell.bookingActive .slotList{display:none}
     .intro{position:relative;padding:38px 34px;border-right:1px solid var(--line);display:grid;align-content:start;gap:20px}
     .back{width:42px;height:42px;border:1px solid var(--line);border-radius:999px;background:var(--control-bg);color:var(--accent);display:grid;place-items:center;cursor:pointer}
-    .avatar{width:104px;height:104px;border-radius:4px;background:linear-gradient(135deg,var(--accent-soft),var(--control-bg));border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-size:3rem;font-weight:850}
+    .avatar{width:104px;height:104px;border-radius:4px;background:linear-gradient(135deg,var(--accent-soft),var(--control-bg));border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-size:3rem;font-weight:850;overflow:hidden}
+    .avatar img{width:100%;height:100%;display:block;object-fit:cover}
     .host{margin:8px 0 0;color:var(--muted);font-size:.95rem;font-weight:750}
     h1{margin:0;color:var(--heading);font-size:clamp(1.75rem,3vw,2.35rem);line-height:1.08;letter-spacing:0;font-weight:850}
     h2{margin:0;color:var(--heading);font-size:1.45rem;line-height:1.2;font-weight:800}
@@ -1345,19 +1399,20 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .message{min-height:20px;font-size:.88rem;font-weight:750;color:var(--muted)}
     .message.error{color:var(--danger)}
     .message.ok{color:var(--ok)}
+    .message.preview{color:var(--muted)}
     .loading{opacity:.62;pointer-events:none}
     @media (max-width:1020px){.shell,.shell.bookingActive{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}.shell.bookingActive .timesPane{border-left:0;max-width:none}}
     @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell,.shell.bookingActive{grid-template-columns:1fr;min-height:0;border-radius:14px}.shell.bookingActive .timesPane{grid-column:auto}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
   </style>
 </head>
-<body class="${embedded ? 'rstk-calendar-embedded' : ''}">
+<body class="${[embedded ? 'rstk-calendar-embedded' : '', preview ? 'rstk-calendar-preview' : ''].filter(Boolean).join(' ')}">
   <main class="page">
-    <div class="shell">
+    <div class="shell layout-${escapeHtml(layout)}">
       <section class="intro">
         <button class="back" type="button" onclick="history.length > 1 ? history.back() : null" aria-label="Regresar">
           <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><path d="M15 18 9 12l6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
-        <div class="avatar" aria-hidden="true">${escapeHtml((calendar.name || 'R').trim()[0] || 'R')}</div>
+        <div class="avatar" aria-hidden="true" data-calendar-avatar>${coverImage ? `<img src="${escapeHtml(coverImage)}" alt="">` : `<span data-calendar-initial>${escapeHtml((calendar.name || 'R').trim()[0] || 'R')}</span>`}</div>
         <p class="host">${escapeHtml(calendar.eventTitle || 'Evento')}</p>
         <h1>${escapeHtml(calendar.name || 'Agenda tu cita')}</h1>
         <p class="description">${escapeHtml(calendar.description || 'Selecciona una fecha y horario disponible para confirmar tu cita.')}</p>
@@ -1408,6 +1463,76 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     (() => {
       const calendar = ${jsonForInlineScript(payload)};
       const shell = document.querySelector('.shell');
+      const rootStyle = document.documentElement.style;
+      const avatar = document.querySelector('[data-calendar-avatar]');
+      const styleDefaults = calendar.styleDefaults || {};
+      const styleVarMap = {
+        accent: '--accent',
+        text: '--heading',
+        muted: '--muted',
+        line: '--line',
+        controlBg: '--control-bg',
+        slotBg: '--slot-bg',
+        slotText: '--slot-text',
+        selectedText: '--selected-text',
+        fieldBg: '--field-bg',
+        fieldText: '--field-text',
+        fieldBorder: '--field-border',
+        buttonText: '--button-text'
+      };
+      const styleLayouts = ['classic', 'compact', 'stacked'];
+      const cleanStyleValue = (value) => {
+        const text = String(value || '').trim();
+        return text && text.length < 180 && !/[;{}<>]/.test(text) ? text : '';
+      };
+      const cleanLayout = (value) => {
+        const text = String(value || '').trim().toLowerCase();
+        return styleLayouts.includes(text) ? text : 'classic';
+      };
+      const cleanImageUrl = (value) => {
+        const text = String(value || '').trim();
+        if (!text || text.length > 1200 || /[<>"']/g.test(text)) return '';
+        if (/^\\/(?!\\/)/.test(text)) return text;
+        try {
+          const parsed = new URL(text);
+          return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
+        } catch {
+          return '';
+        }
+      };
+      const setAvatarImage = (value) => {
+        if (!avatar) return;
+        const imageUrl = cleanImageUrl(value);
+        avatar.textContent = '';
+        if (imageUrl) {
+          const image = document.createElement('img');
+          image.alt = '';
+          image.src = imageUrl;
+          avatar.appendChild(image);
+          return;
+        }
+        const initial = document.createElement('span');
+        initial.dataset.calendarInitial = 'true';
+        initial.textContent = String(calendar.name || 'R').trim()[0] || 'R';
+        avatar.appendChild(initial);
+      };
+      const applyEmbedStyle = (style = {}) => {
+        const designMode = style.designMode === 'original' ? 'original' : 'custom';
+        Object.entries(styleVarMap).forEach(([key, variable]) => {
+          const fallback = cleanStyleValue(styleDefaults[key]);
+          const value = designMode === 'custom' ? cleanStyleValue(style[key]) || fallback : fallback;
+          if (value) rootStyle.setProperty(variable, value);
+        });
+        const slotRadius = designMode === 'custom' ? Number(style.slotRadius || styleDefaults.slotRadius || 8) : Number(styleDefaults.slotRadius || 8);
+        const fieldRadius = designMode === 'custom' ? Number(style.fieldRadius || styleDefaults.fieldRadius || 8) : Number(styleDefaults.fieldRadius || 8);
+        rootStyle.setProperty('--slot-radius', Math.min(32, Math.max(0, Number.isFinite(slotRadius) ? slotRadius : 8)) + 'px');
+        rootStyle.setProperty('--field-radius', Math.min(32, Math.max(0, Number.isFinite(fieldRadius) ? fieldRadius : 8)) + 'px');
+        const layout = cleanLayout(style.layout || styleDefaults.layout || calendar.layout);
+        if (shell) {
+          styleLayouts.forEach(name => shell.classList.toggle('layout-' + name, name === layout));
+        }
+        setAvatarImage(style.coverImage || styleDefaults.coverImage || calendar.coverImage);
+      };
       const calendarPane = document.querySelector('[data-calendar-pane]');
       const daysEl = document.querySelector('[data-days]');
       const slotsEl = document.querySelector('[data-slots]');
@@ -1644,6 +1769,13 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         timezoneLabel.textContent = timezone;
       };
 
+      window.addEventListener('message', (event) => {
+        const data = event.data || {};
+        if (!data || data.type !== 'ristak:calendar-embed-style') return;
+        applyEmbedStyle(data.style || {});
+      });
+      applyEmbedStyle(styleDefaults);
+
       slotsEl.addEventListener('click', (event) => {
         const button = event.target.closest('[data-slot]');
         if (!button) return;
@@ -1655,7 +1787,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         formPageIndex = 0;
         renderFormPage();
         submit.disabled = false;
-        submit.textContent = 'Agendar cita';
+        submit.textContent = calendar.preview ? 'Vista previa sin agendar' : 'Agendar cita';
         selectedTitle.textContent = 'Confirma tu cita';
         selectedSubtitle.textContent = formatDay(selectedSlot) + ' a las ' + formatTime(selectedSlot);
         setMessage('');
@@ -1742,6 +1874,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         if (!getPageFields(formPages.length - 1).every(validateField)) return;
         const responses = collectResponses();
         const formData = new FormData(form);
+
+        if (calendar.preview) {
+          setMessage('Vista previa del sitio: no se creo ninguna cita.', 'preview');
+          submit.disabled = false;
+          submit.textContent = 'Vista previa sin agendar';
+          return;
+        }
+
         submit.disabled = true;
         submit.textContent = 'Agendando...';
         setMessage('');

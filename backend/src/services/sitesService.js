@@ -15528,27 +15528,39 @@ const calendarEmbedNumberQuerySettings = [
   ['calendarFieldRadius', 'fieldRadius', 0, 32]
 ]
 
-function appendCalendarEmbedParams(value, settings = {}) {
+const calendarEmbedLayouts = new Set(['classic', 'compact', 'stacked'])
+
+function appendCalendarEmbedParams(value, settings = {}, options = {}) {
   const raw = cleanString(value)
   if (!raw) return raw
 
   try {
     const absolute = /^https?:\/\//i.test(raw)
     const parsed = new URL(raw, 'https://rstk.local')
+    const designMode = cleanString(settings.calendarDesignMode || settings.calendar_design_mode).toLowerCase() === 'original' ? 'original' : 'custom'
+    const layout = cleanString(settings.calendarLayout || settings.calendar_layout).toLowerCase()
+    const coverImage = cleanString(settings.calendarCoverImage || settings.calendar_cover_image)
+
     parsed.searchParams.set('test', '1')
     parsed.searchParams.set('embed', '1')
+    parsed.searchParams.set('designMode', designMode)
+    if (options.preview) parsed.searchParams.set('editor_preview', '1')
+    if (calendarEmbedLayouts.has(layout)) parsed.searchParams.set('layout', layout)
+    if (coverImage) parsed.searchParams.set('coverImage', coverImage)
 
-    calendarEmbedColorQuerySettings.forEach(([settingKey, paramKey]) => {
-      if (settings[settingKey] === undefined) return
-      const color = blockSettingColor(settings, settingKey)
-      if (color) parsed.searchParams.set(paramKey, color)
-    })
+    if (designMode === 'custom') {
+      calendarEmbedColorQuerySettings.forEach(([settingKey, paramKey]) => {
+        if (settings[settingKey] === undefined) return
+        const color = blockSettingColor(settings, settingKey)
+        if (color) parsed.searchParams.set(paramKey, color)
+      })
 
-    calendarEmbedNumberQuerySettings.forEach(([settingKey, paramKey, min, max]) => {
-      if (settings[settingKey] === undefined) return
-      const valueNumber = blockSettingNumber(settings, settingKey, min, max)
-      if (valueNumber !== null) parsed.searchParams.set(paramKey, String(valueNumber))
-    })
+      calendarEmbedNumberQuerySettings.forEach(([settingKey, paramKey, min, max]) => {
+        if (settings[settingKey] === undefined) return
+        const valueNumber = blockSettingNumber(settings, settingKey, min, max)
+        if (valueNumber !== null) parsed.searchParams.set(paramKey, String(valueNumber))
+      })
+    }
 
     return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
   } catch {
@@ -16543,7 +16555,9 @@ function renderContentBlock(block, context = {}) {
     }
 
     const calendarName = cleanString(settings.calendarName || settings.calendar_name || block.label || 'Calendario')
-    const baseCalendarSrc = appendCalendarEmbedParams(`/calendar/${encodeURIComponent(calendarSlug)}?test=1`, settings)
+    const baseCalendarSrc = appendCalendarEmbedParams(`/calendar/${encodeURIComponent(calendarSlug)}?test=1`, settings, {
+      preview: context.preview
+    })
     const calendarSrc = context.noTrack ? appendNoTrackParam(baseCalendarSrc) : baseCalendarSrc
     return `<iframe class="rstk-embed rstk-calendar-embed" src="${escapeHtml(calendarSrc)}" title="${escapeHtml(calendarName)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
   }

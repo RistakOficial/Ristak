@@ -580,7 +580,8 @@ export async function previewCalendarHandler(req, res) {
       host: getRequestHost(req) || '',
       embedded: req.query?.embed === '1' || req.query?.test === '1',
       style: req.query || {},
-      bookingForm
+      bookingForm,
+      preview: req.query?.editor_preview === '1' || req.query?.preview === '1'
     }))
   } catch (error) {
     logger.error(`Error previsualizando calendario de site: ${error.message}`)
@@ -872,7 +873,8 @@ export async function publicSiteHostMiddleware(req, res, next) {
         host,
         embedded: req.query?.embed === '1' || req.query?.test === '1',
         style: req.query || {},
-        bookingForm
+        bookingForm,
+        preview: req.query?.editor_preview === '1' || req.query?.preview === '1'
       }))
     }
 

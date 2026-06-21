@@ -1131,7 +1131,8 @@ export const sitesService = {
     const searchParams = new URLSearchParams({
       test: '1',
       no_track: '1',
-      embed: '1'
+      embed: '1',
+      editor_preview: '1'
     })
     Object.entries(params).forEach(([key, value]) => {
       if (value === undefined || value === '') return
