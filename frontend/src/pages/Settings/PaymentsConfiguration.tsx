@@ -2691,7 +2691,7 @@ export const PaymentsConfiguration: React.FC = () => {
     const showingSavedGigstackToken = Boolean(!taxes.gigstackApiToken && taxes.hasGigstackApiToken && gigstackTokenInputValue)
 
     return (
-      <div className={styles.twoColumnLayout}>
+      <div className={styles.taxSettingsLayout}>
         <Card className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
             <div>
@@ -2781,16 +2781,17 @@ export const PaymentsConfiguration: React.FC = () => {
 
         <Card className={styles.gigstackCard}>
           <div className={styles.gigstackHeader}>
-            <PaymentPlatformLogo platform="gigstack" size="lg" decorative />
+            <div>
+              <h3>Facturas del SAT en automático</h3>
+              <p>Gigstack es el servicio que timbra CFDI ante el SAT. Si lo conectas, Ristak manda los pagos con impuesto para que no estés facturando a mano.</p>
+            </div>
             <Badge variant={taxes.gigstackEnabled ? (taxes.hasGigstackApiToken ? 'success' : 'warning') : 'neutral'}>
-              Gigstack
+              {taxes.gigstackEnabled ? (taxes.hasGigstackApiToken ? 'Listo para facturar' : 'Falta conectar') : 'Opcional para facturar'}
             </Badge>
           </div>
-          <h3>Timbrado automático</h3>
-          <p>Gigstack permite registrar el pago y dejar que su API genere el CFDI con validación fiscal y timbrado ante el SAT.</p>
-          {renderSwitchRow('Activar Gigstack', 'Al registrar un pago con impuestos, Ristak intentará enviarlo a Gigstack para timbrarlo automáticamente.', taxes.gigstackEnabled, (next) => setTaxValue('gigstackEnabled', next))}
+          {renderSwitchRow('Quiero facturar automático', 'Cuando entra un pago con impuestos, Ristak intenta mandarlo a Gigstack para generar la factura sin capturarla a mano.', taxes.gigstackEnabled, (next) => setTaxValue('gigstackEnabled', next))}
           {renderField(
-            'Token API de Gigstack',
+            'Token para conectar Gigstack',
             <input
               type="password"
               value={gigstackTokenInputValue}
@@ -2801,7 +2802,7 @@ export const PaymentsConfiguration: React.FC = () => {
               placeholder="Pega el token JWT"
               autoComplete="off"
             />,
-            taxes.hasGigstackApiToken ? 'La key guardada se muestra enmascarada. Selecciona el campo y pega una nueva para reemplazarla.' : 'Se obtiene desde app.gigstack.pro/settings?subtab=api.'
+            taxes.hasGigstackApiToken ? 'Ya hay un token guardado. Selecciona el campo y pega uno nuevo si quieres cambiarlo.' : 'Lo sacas de Gigstack, en la sección de API, y lo pegas aquí para dejarlo conectado.'
           )}
           {taxes.hasGigstackApiToken && (
             <div className={styles.gigstackTokenActions}>
@@ -2844,24 +2845,26 @@ export const PaymentsConfiguration: React.FC = () => {
               'Ristak detecta tarjeta, transferencia o efectivo; esto cubre casos desconocidos.'
             )}
           </div>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => navigate('/transactions/products')}
-          >
-            <PackageCheck size={15} />
-            Mapear productos
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => window.open(GIGSTACK_API_URL, '_blank', 'noopener,noreferrer')}
-          >
-            <ExternalLink size={15} />
-            Ver API de facturación
-          </Button>
+          <div className={styles.gigstackActions}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => navigate('/transactions/products')}
+            >
+              <PackageCheck size={15} />
+              Elegir claves por producto
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => window.open(GIGSTACK_API_URL, '_blank', 'noopener,noreferrer')}
+            >
+              <ExternalLink size={15} />
+              Abrir Gigstack
+            </Button>
+          </div>
           <div className={styles.taxPreview}>
             <div>
               <span>Subtotal</span>
