@@ -19569,13 +19569,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  min-width: 54px;
+  gap: 4px;
+  min-width: 46px;
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, currentColor 14%, transparent);
   font-size: 0.66rem;
   font-weight: 650;
-  padding: 4px 8px;
+  padding: 4px 7px;
 }
 
 .videoElementBarSpeed small {

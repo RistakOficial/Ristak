@@ -16099,6 +16099,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const showCustomVolume = settings.videoControlVolume !== false
   const showCustomSpeed = settings.videoControlSpeed !== false
   const showCustomSettings = settings.videoControlSettings !== false
+  const showCustomTime = settings.videoControlTime !== false
   const soundHint = settings.videoSoundHint !== false
   const soundNoticeText = getVideoSoundNoticeText(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
@@ -16194,6 +16195,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
         <div class="rstk-video-control-bar" data-rstk-video-control-bar data-rstk-video-control-bar-start-visible="${showControlBarInitially ? 'true' : 'false'}"${controlBarLockedAtStart ? ' aria-hidden="true"' : ''}>
           ${showCustomPlayControl ? `<button type="button" class="rstk-video-control-button" data-rstk-video-toggle${controlBarTabIndex} aria-label="Reproducir video"><span class="rstk-video-control-play">${RSTK_ICONS.play}</span><span class="rstk-video-control-pause">${RSTK_ICONS.pause}</span></button>` : ''}
           <div class="rstk-video-progress" data-rstk-video-progress-track role="slider" tabindex="${progressTabIndex}" aria-label="Progreso del video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-rstk-video-progress></span></div>
+          ${showCustomTime ? `<span class="rstk-video-timecode" data-rstk-video-timecode aria-label="Tiempo del video 0:00, queda 0:00"><span data-rstk-video-time-elapsed>0:00</span><span data-rstk-video-time-remaining>-0:00</span></span>` : ''}
           ${showCustomVolume ? `<button type="button" class="rstk-video-control-button" data-rstk-video-mute${controlBarTabIndex} aria-label="Silenciar video"><span class="rstk-video-control-volume">${RSTK_ICONS.volume}</span><span class="rstk-video-control-muted">${RSTK_ICONS.volumeMuted}</span></button>` : ''}
           ${showCustomSpeed ? `<label class="rstk-video-speed-control ${showCustomSettings ? 'rstk-video-speed-has-settings' : 'rstk-video-speed-no-settings'}" aria-label="Velocidad de reproducción">${showCustomSettings ? `<span class="rstk-video-settings-icon" data-rstk-video-settings-icon aria-hidden="true">${RSTK_ICONS.settings}</span>` : ''}<select data-rstk-video-speed-select${controlBarTabIndex}>${renderVideoSpeedOptions(String(speed))}</select></label>` : ''}
         </div>
@@ -17591,6 +17593,8 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-progress::before{content:"";position:absolute;inset:50% 0 auto;height:5px;border-radius:inherit;background:rgba(255,255,255,.2);transform:translateY(-50%)}
 	  .rstk-video-progress span{position:absolute;left:0;top:50%;display:block;width:0;height:5px;border-radius:inherit;background:currentColor;transform:translateY(-50%)}
 	  .rstk-video-progress:focus-visible{outline:2px solid currentColor;outline-offset:3px}
+	  .rstk-video-timecode{flex:0 0 auto;min-width:98px;height:30px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.1);color:inherit;padding:0 10px;font-size:.72rem;font-variant-numeric:tabular-nums;font-weight:700;line-height:1;white-space:nowrap}
+	  .rstk-video-timecode span + span{opacity:.68}
 	  .rstk-video-speed-control{flex:0 0 auto;position:relative;min-width:66px;height:30px;display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;padding:0 20px 0 8px}
 	  .rstk-video-speed-no-settings{min-width:48px;padding-left:10px}
 	  .rstk-video-settings-icon{display:grid;place-items:center;flex:0 0 auto}
@@ -17637,7 +17641,7 @@ const RSTK_BASE_CSS = `
 	  @container (max-width:460px){.rstk-video-form-gate{padding:8px}.rstk-video-form-gate-panel{gap:8px;padding:10px;border-radius:12px}.rstk-video-form-actions{justify-content:stretch}.rstk-video-form-actions button{flex:1 1 0;min-width:0;padding-inline:10px}.rstk-video-form-gate .rstk-phone-input{grid-template-columns:1fr}}
 		  @media (max-width:760px){.rstk-video-form-gate-fit-expanded,.rstk-video-gate-active.rstk-video-form-gate-fit-expanded{width:min(100%,var(--rstk-video-form-gate-fit-width,100%));margin-inline:auto}}
 		  @supports not (height:1svh){.rstk-video-form-gate-fit-expanded,.rstk-video-gate-active.rstk-video-form-gate-fit-expanded{min-height:var(--rstk-video-form-gate-fit-height,min(760px,max(520px,86vh)))}}
-	  @supports (width:1cqw){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(104px,min(22cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))))}.rstk-video-control-bar{left:max(6px,min(12px,2cqw));right:max(6px,min(12px,2cqw));bottom:max(6px,min(12px,2cqw));gap:max(4px,min(8px,1.4cqw));padding:max(5px,min(7px,1.2cqw))}.rstk-video-control-button{width:max(24px,min(30px,5cqw));height:max(24px,min(30px,5cqw))}.rstk-video-speed-control{min-width:max(54px,min(66px,11cqw));height:max(24px,min(30px,5cqw));padding-inline:max(6px,min(8px,1.5cqw)) max(18px,min(20px,3cqw))}@media (max-width:760px){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(88px,min(18cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))))}}}
+	  @supports (width:1cqw){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(104px,min(22cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))))}.rstk-video-control-bar{left:max(6px,min(12px,2cqw));right:max(6px,min(12px,2cqw));bottom:max(6px,min(12px,2cqw));gap:max(4px,min(8px,1.4cqw));padding:max(5px,min(7px,1.2cqw))}.rstk-video-control-button{width:max(24px,min(30px,5cqw));height:max(24px,min(30px,5cqw))}.rstk-video-timecode{min-width:max(76px,min(98px,16cqw));height:max(24px,min(30px,5cqw));gap:max(3px,min(5px,1cqw));padding-inline:max(7px,min(10px,1.7cqw));font-size:max(.62rem,min(.72rem,1.4cqw))}.rstk-video-speed-control{min-width:max(54px,min(66px,11cqw));height:max(24px,min(30px,5cqw));padding-inline:max(6px,min(8px,1.5cqw)) max(18px,min(20px,3cqw))}@media (max-width:760px){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(88px,min(18cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))))}}}
 	  @media (max-width:760px){.rstk-block-style .rstk-video-portrait{width:100%;margin-left:auto;margin-right:auto}}
 		  @keyframes rstkVideoSoundNotice{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}10%,18%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}28%,70%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0) scale(1)}86%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0) scale(1)}100%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}}
 		  @keyframes rstkVideoSoundNoticeOpen{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px) scale(.94)}45%{opacity:1;transform:translateY(0) scale(1)}100%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0) scale(1)}}
@@ -18927,6 +18931,8 @@ const IMPORTED_VIDEO_PLAYER_CSS = `
   .rstk-video-progress{flex:1 1 44px;min-width:44px;position:relative;height:18px;border-radius:999px;background:transparent;cursor:pointer;touch-action:none}
   .rstk-video-progress::before{content:"";position:absolute;inset:50% 0 auto;height:5px;border-radius:inherit;background:rgba(255,255,255,.2);transform:translateY(-50%)}
   .rstk-video-progress span{position:absolute;left:0;top:50%;display:block;width:0;height:5px;border-radius:inherit;background:currentColor;transform:translateY(-50%)}
+  .rstk-video-timecode{flex:0 0 auto;min-width:98px;height:30px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.1);color:inherit;padding:0 10px;font-size:.72rem;font-variant-numeric:tabular-nums;font-weight:700;line-height:1;white-space:nowrap}
+  .rstk-video-timecode span + span{opacity:.68}
   .rstk-video-speed-control{position:relative;min-width:66px;height:30px;display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:rgba(255,255,255,.12);color:inherit;padding:0 20px 0 8px}
   .rstk-video-speed-control select{appearance:none;width:34px;height:100%;border:0!important;background:transparent!important;color:inherit;cursor:pointer;font:inherit;font-size:.76rem;font-weight:750;outline:0}
   .rstk-video-speed-control option{color:#111827}
@@ -18982,6 +18988,9 @@ function buildImportedVideoPlayerRuntimeScript() {
         }
         const progress = host.querySelector('[data-rstk-video-progress]');
         const progressTrack = host.querySelector('[data-rstk-video-progress-track]');
+        const timecode = host.querySelector('[data-rstk-video-timecode]');
+        const timeElapsed = host.querySelector('[data-rstk-video-time-elapsed]');
+        const timeRemaining = host.querySelector('[data-rstk-video-time-remaining]');
         const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
         const overlay = host.querySelector('[data-rstk-video-overlay]');
         const toggles = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
@@ -19007,11 +19016,29 @@ function buildImportedVideoPlayerRuntimeScript() {
           syncControlBarAccess();
           return true;
         };
+        const formatTimecode = value => {
+          const totalSeconds = Math.max(0, Math.floor(Number.isFinite(Number(value)) ? Number(value) : 0));
+          const minutes = Math.floor(totalSeconds / 60);
+          const seconds = totalSeconds % 60;
+          return minutes + ':' + String(seconds).padStart(2, '0');
+        };
+        const syncTimecode = duration => {
+          if (!timecode && !timeElapsed && !timeRemaining) return;
+          const safeDuration = Math.max(0, Number.isFinite(duration) ? duration : 0);
+          const elapsed = Math.min(safeDuration || Infinity, Math.max(0, Number.isFinite(video.currentTime) ? video.currentTime : 0));
+          const remaining = Math.max(0, safeDuration - elapsed);
+          const elapsedLabel = formatTimecode(elapsed);
+          const remainingLabel = formatTimecode(remaining);
+          if (timeElapsed) timeElapsed.textContent = elapsedLabel;
+          if (timeRemaining) timeRemaining.textContent = '-' + remainingLabel;
+          if (timecode) timecode.setAttribute('aria-label', 'Tiempo del video ' + elapsedLabel + ', queda ' + remainingLabel);
+        };
         const sync = () => {
           const duration = Number.isFinite(video.duration) ? video.duration : 0;
           const ratio = duration > 0 ? Math.max(0, Math.min(1, video.currentTime / duration)) : 0;
           if (progress) progress.style.width = (ratio * 100).toFixed(3) + '%';
           if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
+          syncTimecode(duration);
           host.classList.toggle('rstk-video-is-playing', !video.paused);
           host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
           toggles.forEach(button => button.setAttribute('aria-label', video.paused ? 'Reproducir video' : 'Pausar video'));
@@ -19664,6 +19691,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	        video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
 	        const progress = host.querySelector('[data-rstk-video-progress]');
 	        const progressTrack = host.querySelector('[data-rstk-video-progress-track]');
+	        const timecode = host.querySelector('[data-rstk-video-timecode]');
+	        const timeElapsed = host.querySelector('[data-rstk-video-time-elapsed]');
+	        const timeRemaining = host.querySelector('[data-rstk-video-time-remaining]');
 	        const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
 	        const toggleButtons = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
 	        const muteButtons = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
@@ -19688,9 +19718,28 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	          if (progress) progress.style.width = formatProgressPercent(safeRatio);
 	          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(safeRatio * 100)));
 	        };
+	        const formatTimecode = value => {
+	          const totalSeconds = Math.max(0, Math.floor(Number.isFinite(Number(value)) ? Number(value) : 0));
+	          const minutes = Math.floor(totalSeconds / 60);
+	          const seconds = totalSeconds % 60;
+	          return minutes + ':' + String(seconds).padStart(2, '0');
+	        };
+	        const syncTimecode = duration => {
+	          if (!timecode && !timeElapsed && !timeRemaining) return;
+	          const safeDuration = Math.max(0, Number.isFinite(duration) ? duration : 0);
+	          const rawElapsed = previewing && !hasUserPlayed ? 0 : video.currentTime;
+	          const elapsed = Math.min(safeDuration || Infinity, Math.max(0, Number.isFinite(rawElapsed) ? rawElapsed : 0));
+	          const remaining = Math.max(0, safeDuration - elapsed);
+	          const elapsedLabel = formatTimecode(elapsed);
+	          const remainingLabel = formatTimecode(remaining);
+	          if (timeElapsed) timeElapsed.textContent = elapsedLabel;
+	          if (timeRemaining) timeRemaining.textContent = '-' + remainingLabel;
+	          if (timecode) timecode.setAttribute('aria-label', 'Tiempo del video ' + elapsedLabel + ', queda ' + remainingLabel);
+	        };
 	        const syncProgress = () => {
 	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
 	          setProgressRatio(duration > 0 ? video.currentTime / duration : 0);
+	          syncTimecode(duration);
 	        };
 	        const stopProgressFrame = () => {
 	          if (!progressFrame) return;

@@ -78,6 +78,7 @@ const getVideoPlayerVisualSignature = (html) => {
     hasVolumeControl: /class="rstk-video-control-button" data-rstk-video-mute/.test(source),
     hasSpeedControl: /<select data-rstk-video-speed-select/.test(source),
     hasSettingsControl: /<span class="rstk-video-settings-icon" data-rstk-video-settings-icon/.test(source),
+    hasTimecodeControl: /<span class="rstk-video-timecode" data-rstk-video-timecode/.test(source),
     selectedSpeed: source.match(/<option value="([^"]+)" selected>/)?.[1] || '',
     nativeControls: hasHtmlBooleanAttribute(videoAttrs, 'controls'),
     muted: hasHtmlBooleanAttribute(videoAttrs, 'muted'),
@@ -138,6 +139,9 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /\.rstk-video-control-bar\{[^}]*box-shadow:none/)
   assert.match(html, /data-rstk-video-toggle/)
   assert.match(html, /data-rstk-video-settings-icon/)
+  assert.match(html, /data-rstk-video-timecode/)
+  assert.match(html, /data-rstk-video-time-elapsed>0:00/)
+  assert.match(html, /data-rstk-video-time-remaining>-0:00/)
   assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="-1"/)
   assert.match(html, /aria-label="Progreso del video"/)
   assert.match(html, /\.rstk-video-control-button svg\{[^}]*width:15px[^}]*height:15px/)
@@ -145,8 +149,11 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /\.rstk-video-progress::before\{[^}]*height:5px/)
   assert.match(html, /requestAnimationFrame/)
   assert.match(html, /formatProgressPercent/)
+  assert.match(html, /formatTimecode/)
+  assert.match(html, /syncTimecode\(duration\)/)
   assert.doesNotMatch(html, /progress\.style\.width = Math\.round/)
   assert.match(html, /\.rstk-video-controls-hidden \.rstk-video-control-bar\{[^}]*opacity:0/)
+  assert.match(html, /\.rstk-video-timecode\{[^}]*font-variant-numeric:tabular-nums/)
   assert.match(html, /\.rstk-video-player\{container-type:inline-size/)
   assert.match(html, /15cqw/)
   assert.match(html, /22cqw/)
@@ -209,6 +216,7 @@ test('video player custom bar can hide individual controls and keep editable pan
     videoControlVolume: false,
     videoControlSpeed: true,
     videoControlSettings: false,
+    videoControlTime: false,
     videoControlPanelRadius: 6,
     videoDefaultSpeed: 1.5
   }), {
@@ -223,6 +231,7 @@ test('video player custom bar can hide individual controls and keep editable pan
   assert.equal(signature.hasVolumeControl, false)
   assert.equal(signature.hasSpeedControl, true)
   assert.equal(signature.hasSettingsControl, false)
+  assert.equal(signature.hasTimecodeControl, false)
   assert.equal(signature.selectedSpeed, '1.5')
   assert.match(signature.style, /--rstk-video-control-radius:6px/)
   assert.match(html, /class="rstk-video-speed-control rstk-video-speed-no-settings"/)
@@ -1077,6 +1086,7 @@ test('live render keeps the custom player style when a storage video is synced t
 
     assert.match(liveHtml, /rstk-video-player/)
     assert.match(liveHtml, /rstk-video-custom-controls/)
+    assert.match(liveHtml, /data-rstk-video-timecode/)
     assert.match(liveHtml, new RegExp(`src="${escapedStorageUrl}"`))
     assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
     assert.match(liveHtml, /data-rstk-video-track="true"/)

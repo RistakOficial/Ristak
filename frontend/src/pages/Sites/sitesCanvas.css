@@ -815,20 +815,20 @@
 .rstkCanvas .rstk-video-speed-control {
   flex: 0 0 auto;
   position: relative;
-  min-width: 88px;
+  min-width: 66px;
   height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   border-radius: 999px;
   background: rgba(255,255,255,.12);
   color: inherit;
-  padding: 0 23px 0 10px;
+  padding: 0 20px 0 8px;
 }
 .rstkCanvas .rstk-video-speed-no-settings {
-  min-width: 64px;
-  padding-left: 12px;
+  min-width: 48px;
+  padding-left: 10px;
 }
 .rstkCanvas .rstk-video-settings-icon {
   display: grid;
@@ -855,7 +855,7 @@
 .rstkCanvas .rstk-video-speed-control select {
   -webkit-appearance: none;
   appearance: none;
-  width: 42px;
+  width: 34px;
   min-width: 0;
   height: 100%;
   margin: 0;
@@ -924,9 +924,9 @@
   }
 
   .rstkCanvas .rstk-video-speed-control {
-    min-width: max(70px, min(88px, 14cqw));
+    min-width: max(54px, min(66px, 11cqw));
     height: max(24px, min(30px, 5cqw));
-    padding-inline: max(8px, min(10px, 1.6cqw)) max(20px, min(23px, 3.2cqw));
+    padding-inline: max(6px, min(8px, 1.5cqw)) max(18px, min(20px, 3cqw));
   }
 
   .rstkCanvas .rstk-video-timecode {

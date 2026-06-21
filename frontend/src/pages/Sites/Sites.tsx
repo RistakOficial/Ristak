@@ -11788,6 +11788,30 @@ export const Sites: React.FC = () => {
   const patchEditorToolbarSettingsSite = updateSelectedSite
   const patchEditorToolbarSettingsTheme = patchSiteTheme
   const saveEditorToolbarSettingsSite = () => handleSaveSite(undefined, { silent: true })
+  const editorHistoryControls = (
+    <div className={styles.editorHistoryControls} role="group" aria-label="Historial del editor">
+      <button
+        type="button"
+        className={styles.editorHistoryButton}
+        onClick={() => { void handleEditorUndo() }}
+        disabled={editorAIGenerating || editorHistoryState.busy || editorHistoryState.undo === 0}
+        aria-label="Deshacer cambio"
+        title="Deshacer"
+      >
+        <Undo2 size={15} />
+      </button>
+      <button
+        type="button"
+        className={styles.editorHistoryButton}
+        onClick={() => { void handleEditorRedo() }}
+        disabled={editorAIGenerating || editorHistoryState.busy || editorHistoryState.redo === 0}
+        aria-label="Rehacer cambio"
+        title="Rehacer"
+      >
+        <Redo2 size={15} />
+      </button>
+    </div>
+  )
 
   if (loading) {
     return <Loading page="sites" />
@@ -11832,6 +11856,7 @@ export const Sites: React.FC = () => {
                         {editorPageSelector}
                       </div>
                     )}
+                    {formEditMode && editorHistoryControls}
                   </div>
                   {!formEditMode && editorToolbarSettingsSite && (
                     <div className={styles.editorToolbarTools} aria-label="Herramientas de edición">
@@ -11840,6 +11865,7 @@ export const Sites: React.FC = () => {
                           {editorPageSelector}
                         </div>
                       )}
+                      {editorHistoryControls}
                       {canConfigurePopup && (
                         <button
                           type="button"
@@ -11881,28 +11907,6 @@ export const Sites: React.FC = () => {
                         <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
                       </div>
                     )}
-                    <div className={styles.editorHistoryControls} role="group" aria-label="Historial del editor">
-                      <button
-                        type="button"
-                        className={styles.editorHistoryButton}
-                        onClick={() => { void handleEditorUndo() }}
-                        disabled={editorAIGenerating || editorHistoryState.busy || editorHistoryState.undo === 0}
-                        aria-label="Deshacer cambio"
-                        title="Deshacer"
-                      >
-                        <Undo2 size={15} />
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.editorHistoryButton}
-                        onClick={() => { void handleEditorRedo() }}
-                        disabled={editorAIGenerating || editorHistoryState.busy || editorHistoryState.redo === 0}
-                        aria-label="Rehacer cambio"
-                        title="Rehacer"
-                      >
-                        <Redo2 size={15} />
-                      </button>
-                    </div>
                     <span className={`${styles.editorSaveStatus} ${styles.editorSaveStatusBeforeDevice} ${editorSaveStatusClass}`} aria-live="polite">
                       {editorSaveStatus.icon}
                       <span>{editorSaveStatus.label}</span>
