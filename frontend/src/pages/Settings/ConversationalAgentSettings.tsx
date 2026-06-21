@@ -1274,7 +1274,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     ? (selectedSalesProduct.prices || []).find((price) => getPriceId(price) === goalWorkflow.sales.priceId) || getPrimaryPrice(selectedSalesProduct)
     : null
   const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig || detectedLocaleDefaults.currency)
-  const salesCurrency = accountCurrency
   const depositCurrency = accountCurrency
   const salesPaymentMode = getWorkflowSalesPaymentMode(goalWorkflow)
   const depositEnabledForForm = agent.objective === 'ventas' ? salesPaymentMode === 'deposit' : deposit.enabled

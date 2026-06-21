@@ -2076,12 +2076,6 @@ const getMediaAssetDisplayName = (asset: MediaAsset) => (
     .trim() || 'Video'
 )
 
-const getSiteStatusLabel = (status: PublicSite['status']) => {
-  if (status === 'published') return 'Publicado'
-  if (status === 'archived') return 'Archivado'
-  return 'Borrador'
-}
-
 const getSiteAnalyticsVideoLabel = (asset: MediaAsset, sitesById: Map<string, PublicSite>) => {
   const siteName = sitesById.get(getMediaSourceSiteId(asset))?.name
   const videoName = shortenSitesText(getMediaAssetDisplayName(asset), siteName ? 34 : 54)
@@ -2188,10 +2182,6 @@ const normalizeRouteInput = (value: string) => value
   .replace(/^-+|-+$/g, '')
 
 const getRoutePath = (site?: PublicSite | null) => `/${normalizeRouteInput(site?.slug || '')}`
-const getTrackingSafeRoutePath = (site: PublicSite) => `${getRoutePath(site).replace(/\/$/, '')}/test`
-
-const buildPublicUrl = (site: PublicSite, domainConfig: SitesDomainConfig) =>
-  domainConfig.domain ? `https://${domainConfig.domain}${getTrackingSafeRoutePath(site)}` : ''
 
 const buildLivePublicUrl = (site: PublicSite, domainConfig: SitesDomainConfig) =>
   domainConfig.domain ? `https://${domainConfig.domain}${getRoutePath(site)}` : ''
@@ -2375,8 +2365,6 @@ const resolveTemplateId = (site?: PublicSite | null): SiteTemplateId => {
   if (site?.siteType === 'landing_page') return 'ristak'
   return 'ristak'
 }
-
-const isDarkTemplate = (id: SiteTemplateId) => id === 'tiktok' || id === 'vsl' || id === 'interactive' || id === 'premium'
 
 const isHex6 = (value?: string) => !!value && /^#[0-9a-f]{6}$/i.test(value)
 
@@ -3163,18 +3151,6 @@ const getPopupCloseIconText = (value?: SiteTheme['popupCloseIcon']) => {
   if (icon === 'none') return ''
   return '×'
 }
-
-const hasThemePopupConfig = (theme?: SiteTheme | null) => Boolean(
-  theme?.popupEnabled ||
-  getPopupTrigger(theme) !== 'never' ||
-  getThemeString(theme || undefined, 'popupTitle').trim() ||
-  getThemeString(theme || undefined, 'popupBody').trim() ||
-  getThemeString(theme || undefined, 'popupButtonText').trim() ||
-  getThemeString(theme || undefined, 'popupButtonUrl').trim() ||
-  getThemeString(theme || undefined, 'popupBackgroundColor').trim() ||
-  getThemeString(theme || undefined, 'popupBackdropColor').trim() ||
-  getThemeString(theme || undefined, 'importedPopupHtml').trim()
-)
 
 const getThemeBackgroundVideo = (theme: SiteTheme | undefined) => {
   const mediaType = getThemeString(theme, 'backgroundMediaType')
@@ -4414,12 +4390,6 @@ const getHeaderScope = (block?: SiteBlock | null): HeaderScope => (
 
 const isGlobalHeaderBlock = (block?: SiteBlock | null) => (
   Boolean(block && block.blockType === HEADER_PANEL_BLOCK_TYPE && getHeaderScope(block) === HEADER_SCOPE_GLOBAL)
-)
-
-const isPageHeaderBlock = (block: SiteBlock, pages: SitePage[], pageId?: string | null) => (
-  block.blockType === HEADER_PANEL_BLOCK_TYPE &&
-  !isGlobalHeaderBlock(block) &&
-  Boolean(pageId && getBlockPageId(block, pages) === pageId)
 )
 
 const isSectionBlock = (block?: SiteBlock | null) => block?.blockType === SECTION_BLOCK_TYPE
@@ -5780,7 +5750,6 @@ const withUniqueBlockIdentity = (
 
 const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | string, siteType?: SiteType) => {
   const site = typeof siteOrId === 'string' ? null : siteOrId
-  const siteId = typeof siteOrId === 'string' ? siteOrId : siteOrId.id
   const resolvedSiteType = site?.siteType || siteType
   const isField = fieldBlockTypes.has(blockType)
   const label = blockLabels[blockType]
@@ -6481,7 +6450,6 @@ function FormEmbedEditorPanel({
   activePageId,
   sitePages,
   activeSitePageId,
-  onPatchBlock,
   onPatchSettings,
   onPatchTheme,
   onPatchField,
@@ -7367,14 +7335,6 @@ export const Sites: React.FC = () => {
     () => buildVideoActionHiddenNotes([...canvasBlocks, ...popupBlocks]),
     [canvasBlocks, popupBlocks]
   )
-  const globalHeaderBlock = useMemo(
-    () => blocks.find(isGlobalHeaderBlock) || null,
-    [blocks]
-  )
-  const activePageHeaderBlock = useMemo(
-    () => activePage ? blocks.find(block => isPageHeaderBlock(block, pages, activePage.id)) || null : null,
-    [activePage, blocks, pages]
-  )
   const selectedBlock = [...canvasBlocks, ...popupBlocks].find(block => block.id === selectedBlockId) || null
   const editorSite = section === 'landings'
     ? (isLanding(selectedSite) ? selectedSite : null)
@@ -7408,12 +7368,6 @@ export const Sites: React.FC = () => {
   )
   const videoFormGateEditBlock = selectedBlock?.blockType === 'video' && selectedBlock.id === videoFormGatePreviewBlockId ? selectedBlock : null
   const videoFormGateEditMode = Boolean(editorSite && videoFormGateEditBlock)
-  const videoFormGateSourceId = videoFormGateEditBlock ? getVideoFormGateSourceId(videoFormGateEditBlock) : ''
-  const videoFormGateSourceSite = useMemo(
-    () => videoFormGateSourceId ? forms.find(form => form.id === videoFormGateSourceId) || null : null,
-    [videoFormGateSourceId, forms]
-  )
-  const videoFormGatePanelSite = videoFormGateSourceSite || editorSite
   const videoFormGateEditBlocks = useMemo(
     () => editorSite && videoFormGateEditBlock ? getEditableVideoFormGateBlocks(videoFormGateEditBlock, forms) : [],
     [editorSite, forms, videoFormGateEditBlock]
@@ -7685,7 +7639,7 @@ export const Sites: React.FC = () => {
     return siteBlocks.filter(block => !isPopupBlock(block)).sort((a, b) => a.sortOrder - b.sortOrder)
   }
 
-  function applyBlockOrderLocal(site: PublicSite, orderedIds: string[], pageId?: string) {
+  function applyBlockOrderLocal(site: PublicSite, orderedIds: string[]) {
     const orderById = new Map(orderedIds.map((id, index) => [id, index]))
     return {
       ...site,
@@ -7975,21 +7929,6 @@ export const Sites: React.FC = () => {
     return nextSite
   }
 
-  function addBlocksLocal(nextBlocks: SiteBlock[], selectBlockId?: string, orderPageId?: string) {
-    const current = selectedSiteRef.current || selectedSite
-    if (!current) return
-    const next = {
-      ...current,
-      blocks: [...(current.blocks || []), ...nextBlocks]
-    }
-    selectedSiteRef.current = next
-    setSelectedSite(next)
-    markBlocksCreatedLocal(nextBlocks)
-    if (orderPageId !== undefined) markBlockOrderDirty(orderPageId)
-    setHasUnsavedChanges(true)
-    if (selectBlockId) selectEditorBlock(selectBlockId)
-  }
-
   async function flushPendingEditorSaves(options: PendingEditorSaveOptions = {}) {
     let siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave || savingPendingEditorRef.current) return false
@@ -8167,13 +8106,6 @@ export const Sites: React.FC = () => {
 
     pendingImportedCodeDraftsRef.current.set(normalizedPath, content)
     setHasUnsavedChanges(true)
-  }, [])
-
-  const markEditorSaved = useCallback(() => {
-    resetPendingEditorSaveQueue()
-    setImportedCodeDrafts({})
-    setHasUnsavedChanges(false)
-    setLastSavedAt(Date.now())
   }, [])
 
   useEffect(() => {
@@ -8942,7 +8874,7 @@ export const Sites: React.FC = () => {
       let targetSelectedBlockId = direction === 'undo' ? entry.selectedBefore : entry.selectedAfter
 
       if (entry.action === 'reorder') {
-        site = applyBlockOrderLocal(siteToEdit, direction === 'undo' ? entry.beforeBlockIds : entry.afterBlockIds, entry.pageId)
+        site = applyBlockOrderLocal(siteToEdit, direction === 'undo' ? entry.beforeBlockIds : entry.afterBlockIds)
         markBlockOrderDirty(entry.pageId)
       } else if (entry.action === 'delete') {
         const deletedBlocks = entry.deletedBlocks || []
@@ -8967,7 +8899,7 @@ export const Sites: React.FC = () => {
             }
           }
           if (entry.beforeBlockIds.length) {
-            site = applyBlockOrderLocal(site, entry.beforeBlockIds, entry.pageId)
+            site = applyBlockOrderLocal(site, entry.beforeBlockIds)
           }
           markBlockOrderDirty(entry.pageId)
         } else if (entry.deletedRootBlockId && deletedIds.length) {
@@ -8977,7 +8909,7 @@ export const Sites: React.FC = () => {
           }
           markBlocksDeletedLocal(deletedIds)
           if (entry.afterBlockIds.length) {
-            site = applyBlockOrderLocal(site, entry.afterBlockIds, entry.pageId)
+            site = applyBlockOrderLocal(site, entry.afterBlockIds)
           }
           markBlockOrderDirty(entry.pageId)
         }
@@ -8993,7 +8925,7 @@ export const Sites: React.FC = () => {
           }
           markBlocksDeletedLocal(createdIds)
           if (entry.beforeBlockIds.length) {
-            site = applyBlockOrderLocal(site, entry.beforeBlockIds, entry.pageId)
+            site = applyBlockOrderLocal(site, entry.beforeBlockIds)
           }
         } else {
           const existingIds = new Set((siteToEdit.blocks || []).map(block => block.id))
@@ -9010,7 +8942,7 @@ export const Sites: React.FC = () => {
           for (const blockId of createdIds) pendingDeletedBlockIdsRef.current.delete(blockId)
           markBlocksCreatedLocal(createdBlocks)
           if (entry.afterBlockIds.length) {
-            site = applyBlockOrderLocal(site, entry.afterBlockIds, entry.pageId)
+            site = applyBlockOrderLocal(site, entry.afterBlockIds)
           }
         }
         markBlockOrderDirty(entry.pageId)
@@ -9182,20 +9114,6 @@ export const Sites: React.FC = () => {
         ...(sourceForm.theme || {}),
         ...patch
       }
-    })
-  }
-
-  const saveSiteTheme = async (site: PublicSite, theme: SiteTheme) => {
-    return sitesService.updateSite(site.id, {
-      name: site.name,
-      slug: normalizeRouteInput(site.slug) || normalizeRouteInput(site.name) || getDefaultRoutePrefix(site.siteType),
-      siteType: site.siteType,
-      status: site.status,
-      title: getPublicTitleForSave(site),
-      description: site.description,
-      theme,
-      metaCapiEnabled: site.metaCapiEnabled,
-      metaEventName: site.metaEventName
     })
   }
 
@@ -10175,260 +10093,6 @@ export const Sites: React.FC = () => {
     showToast('warning', duplicateMessage.title, duplicateMessage.message)
   }
 
-  const handleAddBlock = async (blockType: SiteBlockType, addOptions: AddBlockOptions | number = {}) => {
-    if (!selectedSite) return
-    try {
-      const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
-      const previousBlockIds = new Set((selectedSite.blocks || []).map(block => block.id))
-      const initialSettings = options.initialSettings || {}
-      const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, selectedSite), initialSettings)
-      const duplicateSystemPreset = isFormSite(selectedSite)
-        ? getDuplicateSystemFormFieldPreset(payload, selectedSite.blocks || [])
-        : null
-      if (duplicateSystemPreset) {
-        warnDuplicateSystemFormField(duplicateSystemPreset)
-        return
-      }
-      let blockIdsBeforeContent = previousBlockIds
-      let autoCreatedSection: SiteBlock | null = null
-      if (popupSurfaceSelected) {
-        if (!isPopupEditableBlockType(blockType)) {
-          showToast('error', 'Bloque no disponible', 'Ese panel no se puede usar dentro del pop up.')
-          return
-        }
-
-        // The popup follows the same rule as the page: content always lives
-        // inside a franja; if there is none yet, one is created automatically.
-        const popupSectionIds = new Set(popupBlocks.filter(isSectionBlock).map(block => block.id))
-        if (blockType === SECTION_BLOCK_TYPE) {
-          const columns = getSettingNumber(initialSettings, 'sectionColumns', 1, 1, 3)
-          payload.label = getSectionColumnLabel(columns)
-          payload.content = ''
-          payload.settings = getPopupBlockSettings({
-            ...(payload.settings || {}),
-            ...initialSettings,
-            sectionColumns: columns,
-            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
-          })
-        } else {
-          const selectedTarget = selectedBlock && isPopupBlock(selectedBlock)
-            ? isSectionBlock(selectedBlock)
-              ? { sectionId: selectedBlock.id, sectionColumn: 0 }
-              : getBlockSectionId(selectedBlock) && popupSectionIds.has(getBlockSectionId(selectedBlock))
-                ? { sectionId: getBlockSectionId(selectedBlock), sectionColumn: getBlockSectionColumn(selectedBlock) }
-                : null
-            : null
-          const singleSectionTarget = popupSectionIds.size === 1
-            ? { sectionId: [...popupSectionIds][0], sectionColumn: 0 }
-            : null
-          let targetSectionId = options.sectionId && popupSectionIds.has(options.sectionId)
-            ? options.sectionId
-            : selectedTarget?.sectionId || singleSectionTarget?.sectionId || ''
-          let targetColumn = Number.isFinite(Number(options.sectionColumn))
-            ? Math.min(2, Math.max(0, Math.round(Number(options.sectionColumn))))
-            : selectedTarget?.sectionColumn || singleSectionTarget?.sectionColumn || 0
-
-          if (!targetSectionId) {
-            const sectionPayload = defaultBlockPayload(SECTION_BLOCK_TYPE, selectedSite)
-            sectionPayload.label = getSectionColumnLabel(1)
-            sectionPayload.content = ''
-            sectionPayload.settings = getPopupBlockSettings({
-              ...(sectionPayload.settings || {}),
-              sectionColumns: 1,
-              sectionGap: DEFAULT_SECTION_GAP
-            })
-
-            const uniqueSectionPayload = withUniqueBlockIdentity(sectionPayload, SECTION_BLOCK_TYPE, selectedSite.blocks || [])
-            const siteWithSection = await sitesService.createBlock(selectedSite.id, uniqueSectionPayload)
-            autoCreatedSection = [...(siteWithSection.blocks || [])]
-              .filter(block => !previousBlockIds.has(block.id))
-              .find(block => isSectionBlock(block) && isPopupBlock(block)) || null
-
-            if (!autoCreatedSection) {
-              throw new Error('No se pudo crear la franja para este contenido')
-            }
-
-            targetSectionId = autoCreatedSection.id
-            targetColumn = 0
-            blockIdsBeforeContent = new Set((siteWithSection.blocks || []).map(block => block.id))
-            syncSelectedSite(siteWithSection)
-          }
-
-          payload.settings = getPopupBlockSettings({
-            ...(payload.settings || {}),
-            ...initialSettings,
-            sectionId: targetSectionId,
-            sectionColumn: targetColumn
-          })
-        }
-
-        const payloadForCreate = withUniqueBlockIdentity(payload, blockType, (selectedSiteRef.current || selectedSite).blocks || [])
-        let site = await sitesService.createBlock(selectedSite.id, payloadForCreate)
-        syncSelectedSite(site)
-        const added = [...(site.blocks || [])]
-          .filter(block => !blockIdsBeforeContent.has(block.id))
-          .find(isPopupBlock)
-
-        if (added && Number.isFinite(options.insertIndex)) {
-          const popupSiteBlocks = [...(site.blocks || [])]
-            .filter(isPopupBlock)
-            .sort((a, b) => a.sortOrder - b.sortOrder)
-          const insertedBlocks = autoCreatedSection ? [autoCreatedSection, added] : [added]
-          const insertedIds = new Set(insertedBlocks.map(block => block.id))
-          const withoutInserted = popupSiteBlocks.filter(block => !insertedIds.has(block.id))
-          const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutInserted.length))
-          const orderedBlocks = [
-            ...withoutInserted.slice(0, boundedIndex),
-            ...insertedBlocks,
-            ...withoutInserted.slice(boundedIndex)
-          ]
-
-          site = await sitesService.reorderBlocks(
-            selectedSite.id,
-            orderedBlocks.map(block => block.id),
-            POPUP_SELECTED_ID
-          )
-          syncSelectedSite(site)
-        }
-
-        if (added) selectEditorBlock(added.id)
-        return
-      }
-      if (isLanding(selectedSite) && activePage) {
-        const pageSectionIds = new Set(canvasBlocks.filter(isSectionBlock).map(block => block.id))
-        const isSection = blockType === SECTION_BLOCK_TYPE
-        const isPanel = PANEL_BLOCK_TYPES.has(blockType)
-        const selectedTarget = selectedBlock
-          ? isSectionBlock(selectedBlock)
-            ? { sectionId: selectedBlock.id, sectionColumn: 0 }
-            : getBlockSectionId(selectedBlock) && pageSectionIds.has(getBlockSectionId(selectedBlock))
-              ? { sectionId: getBlockSectionId(selectedBlock), sectionColumn: getBlockSectionColumn(selectedBlock) }
-              : null
-          : null
-        const singleSectionTarget = pageSectionIds.size === 1
-          ? { sectionId: [...pageSectionIds][0], sectionColumn: 0 }
-          : null
-        let targetSectionId = options.sectionId && pageSectionIds.has(options.sectionId)
-          ? options.sectionId
-          : selectedTarget?.sectionId || singleSectionTarget?.sectionId || ''
-        let targetColumn = Number.isFinite(Number(options.sectionColumn))
-          ? Math.min(2, Math.max(0, Math.round(Number(options.sectionColumn))))
-          : selectedTarget?.sectionColumn || singleSectionTarget?.sectionColumn || 0
-        if (isSection) {
-          const columns = getSettingNumber(initialSettings, 'sectionColumns', 1, 1, 3)
-          payload.label = getSectionColumnLabel(columns)
-          payload.content = ''
-          payload.settings = {
-            ...(payload.settings || {}),
-            ...initialSettings,
-            sectionColumns: columns,
-            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
-          }
-        } else if (!isPanel) {
-          if (!targetSectionId) {
-            const sectionPayload = defaultBlockPayload(SECTION_BLOCK_TYPE, selectedSite)
-            const columns = 1
-            sectionPayload.label = getSectionColumnLabel(columns)
-            sectionPayload.content = ''
-            sectionPayload.settings = {
-              ...(sectionPayload.settings || {}),
-              sectionColumns: columns,
-              sectionGap: DEFAULT_SECTION_GAP,
-              pageId: activePage.id
-            }
-
-            const uniqueSectionPayload = withUniqueBlockIdentity(sectionPayload, SECTION_BLOCK_TYPE, selectedSite.blocks || [])
-            const siteWithSection = await sitesService.createBlock(selectedSite.id, uniqueSectionPayload)
-            const sectionPages = normalizeFunnelPages(siteWithSection)
-            autoCreatedSection = [...(siteWithSection.blocks || [])]
-              .filter(block => !previousBlockIds.has(block.id))
-              .find(block => isSectionBlock(block) && getBlockPageId(block, sectionPages) === activePage.id) || null
-
-            if (!autoCreatedSection) {
-              throw new Error('No se pudo crear la franja para este contenido')
-            }
-
-            targetSectionId = autoCreatedSection.id
-            targetColumn = 0
-            blockIdsBeforeContent = new Set((siteWithSection.blocks || []).map(block => block.id))
-            syncSelectedSite(siteWithSection)
-          }
-
-          payload.settings = {
-            ...(payload.settings || {}),
-            ...initialSettings,
-            sectionId: targetSectionId,
-            sectionColumn: targetColumn
-          }
-        } else {
-          payload.settings = {
-            ...(payload.settings || {}),
-            ...initialSettings
-          }
-        }
-
-        payload.settings = {
-          ...(payload.settings || {}),
-          pageId: activePage.id
-        }
-        if (blockType === HEADER_PANEL_BLOCK_TYPE && !getSettingString(payload.settings || {}, 'headerScope')) {
-          payload.settings = {
-            ...(payload.settings || {}),
-            headerScope: HEADER_SCOPE_PAGE
-          }
-        }
-      } else if (hasEditablePages(selectedSite) && activePage) {
-        payload.settings = {
-          ...(payload.settings || {}),
-          ...initialSettings,
-          pageId: activePage.id
-        }
-        if (blockType === HEADER_PANEL_BLOCK_TYPE && !getSettingString(payload.settings || {}, 'headerScope')) {
-          payload.settings = {
-            ...(payload.settings || {}),
-            headerScope: HEADER_SCOPE_PAGE
-          }
-        }
-      } else if (Object.keys(initialSettings).length > 0) {
-        payload.settings = {
-          ...(payload.settings || {}),
-          ...initialSettings
-        }
-      }
-      const payloadForCreate = withUniqueBlockIdentity(payload, blockType, (selectedSiteRef.current || selectedSite).blocks || [])
-      let site = await sitesService.createBlock(selectedSite.id, payloadForCreate)
-      const sitePages = normalizeFunnelPages(site)
-      const activePageForAdd = activePage?.id || DEFAULT_FUNNEL_PAGE_ID
-      syncSelectedSite(site)
-      const added = [...(site.blocks || [])]
-        .filter(block => !blockIdsBeforeContent.has(block.id))
-        .find(block => !hasEditablePages(site) || getBlockPageId(block, sitePages) === activePageForAdd)
-      if (added && Number.isFinite(options.insertIndex)) {
-        const pageBlocks = [...(site.blocks || [])]
-          .filter(block => !hasEditablePages(site) || getBlockPageId(block, sitePages) === activePageForAdd)
-          .sort((a, b) => a.sortOrder - b.sortOrder)
-        const insertedBlocks = autoCreatedSection ? [autoCreatedSection, added] : [added]
-        const insertedIds = new Set(insertedBlocks.map(block => block.id))
-        const withoutInserted = pageBlocks.filter(block => !insertedIds.has(block.id))
-        const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutInserted.length))
-        const orderedBlocks = [
-          ...withoutInserted.slice(0, boundedIndex),
-          ...insertedBlocks,
-          ...withoutInserted.slice(boundedIndex)
-        ]
-        site = await sitesService.reorderBlocks(
-          selectedSite.id,
-          orderedBlocks.map(block => block.id),
-          hasEditablePages(site) ? activePage?.id : undefined
-        )
-        syncSelectedSite(site)
-      }
-      if (added) selectEditorBlock(added.id)
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo agregar el bloque')
-    }
-  }
-
   const handleAddBlockManually = async (blockType: SiteBlockType, addOptions: AddBlockOptions | number = {}) => {
     const siteForAdd = selectedSiteRef.current || selectedSite
     if (!siteForAdd) return
@@ -10620,7 +10284,7 @@ export const Sites: React.FC = () => {
           ...blocksToAdd.map(block => block.id),
           ...withoutInserted.slice(boundedIndex).map(block => block.id)
         ]
-        nextSite = applyBlockOrderLocal(nextSite, orderedIds, orderPageId)
+        nextSite = applyBlockOrderLocal(nextSite, orderedIds)
       }
 
       selectedSiteRef.current = nextSite
@@ -10632,52 +10296,6 @@ export const Sites: React.FC = () => {
       selectEditorBlock(added.id)
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo agregar el bloque')
-    }
-  }
-
-  const handleCreateHeaderBlock = async (scope: HeaderScope) => {
-    const site = selectedSiteRef.current || selectedSite
-    if (!site || !isLanding(site)) return
-    if (scope === HEADER_SCOPE_GLOBAL && globalHeaderBlock) {
-      selectEditorBlock(globalHeaderBlock.id)
-      return
-    }
-    if (scope === HEADER_SCOPE_PAGE && activePageHeaderBlock) {
-      selectEditorBlock(activePageHeaderBlock.id)
-      return
-    }
-    if (scope === HEADER_SCOPE_PAGE && !activePage) return
-
-    const payload = defaultBlockPayload(HEADER_PANEL_BLOCK_TYPE, site) as Partial<SiteBlock> & { blockType: SiteBlockType }
-    const settings: Record<string, unknown> = {
-      ...(payload.settings || {}),
-      headerScope: scope
-    }
-    if (scope === HEADER_SCOPE_PAGE && activePage) {
-      settings.pageId = activePage.id
-      payload.label = 'Header de página'
-    } else {
-      delete settings.pageId
-      payload.label = 'Header global'
-    }
-    payload.settings = settings
-
-    try {
-      const added = createLocalBlockFromPayload(site, payload, (site.blocks || []).length)
-      const nextSite = {
-        ...site,
-        blocks: [...(site.blocks || []), added]
-      }
-      selectedSiteRef.current = nextSite
-      setSelectedSite(nextSite)
-      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
-      markBlocksCreatedLocal([added])
-      markBlockOrderDirty(scope === HEADER_SCOPE_PAGE && activePage ? activePage.id : undefined)
-      setHasUnsavedChanges(true)
-      selectEditorBlock(added.id)
-      showToast('success', scope === HEADER_SCOPE_GLOBAL ? 'Header global creado' : 'Header de página creado', 'Ya puedes editarlo desde Header. Guarda para conservarlo.')
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo crear el header')
     }
   }
 
@@ -17134,7 +16752,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   site,
   pages,
   activePageId,
-  domainConfig,
   device,
   saving,
   aiAgentAvailable,
@@ -17145,18 +16762,13 @@ const ImportedHtmlEditorPanel: React.FC<{
   codeDrafts,
   popupCodeActive,
   loadingImportData,
-  onSelectPage,
   onCodeDraftChange,
-  onPreview,
-  onPublish,
   onEditFields,
   onPreviewContextChange,
   onContentUpdated,
   onImportMappingUpdated,
-  onUpdateRoute,
   onPatchSite,
   onSaveSite,
-  onDelete
 }) => {
   const { showToast } = useNotification()
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
@@ -17170,9 +16782,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   const previewVisualContextRef = useRef<SitesAIPreviewVisualContext | null>(null)
   const inlineImageFileInputRef = useRef<HTMLInputElement | null>(null)
   const codeAssistantAttachmentInputRef = useRef<HTMLInputElement | null>(null)
-  const [routeEditing, setRouteEditing] = useState(false)
-  const [routeDraft, setRouteDraft] = useState(getRouteEditorValue(site))
-  const [routeSaving, setRouteSaving] = useState(false)
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(true)
   const [previewError, setPreviewError] = useState('')
@@ -17281,18 +16890,6 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
   }, [customFields.length])
 
-  const mappingStats = useMemo(() => {
-    const formMappings = Array.isArray(importData?.formMappings) ? importData.formMappings : []
-    const fields = formMappings.flatMap(form => Array.isArray(form.fields) ? form.fields : [])
-    return {
-      forms: formMappings.length,
-      fields: fields.length,
-      routed: fields.filter(field => !field.ignored && field.destinationType !== 'ignored').length,
-      standard: fields.filter(field => !field.ignored && field.destinationType === 'standard').length,
-      custom: fields.filter(field => !field.ignored && ['custom', 'new_custom'].includes(field.destinationType)).length,
-      ignored: fields.filter(field => field.ignored || field.destinationType === 'ignored').length
-    }
-  }, [importData])
   const activeImportedCustomFields = useMemo(() => getImportedActiveCustomFields(importedEditorCustomFields), [importedEditorCustomFields])
   const selectedFieldRouteContext = useMemo<ImportedSelectedFieldRouteContext | null>(() => {
     if (fieldEditor) {
@@ -17464,10 +17061,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   useEffect(() => () => {
     stopCodeAssistantProgress()
   }, [stopCodeAssistantProgress])
-
-  useEffect(() => {
-    if (!routeEditing) setRouteDraft(getRouteEditorValue(site))
-  }, [routeEditing, site.id, site.slug])
 
   const loadInlinePreview = useCallback(async () => {
     setPreviewLoading(true)
@@ -18945,25 +18538,6 @@ const ImportedHtmlEditorPanel: React.FC<{
       cleanupDocument()
     }
   }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, editorPreviewHtml, getElementPopoverPosition, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, openVideoEditorForElement, previewLoading, previewVersion, saveEditableContent, site.id, site.name, site.title])
-
-  const routeValue = getRouteEditorValue(site)
-  const saveRoute = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const nextRoute = normalizeRouteEditorInput(routeDraft, domainConfig) || getDefaultRoutePrefix(site.siteType)
-    if (nextRoute === routeValue) {
-      setRouteDraft(routeValue)
-      setRouteEditing(false)
-      return
-    }
-
-    setRouteSaving(true)
-    try {
-      await onUpdateRoute(site, nextRoute)
-      setRouteEditing(false)
-    } finally {
-      setRouteSaving(false)
-    }
-  }
 
   const saveInlineEditor = async () => {
     if (!inlineEditor || inlineEditor.selection.editType === 'section') return
@@ -25094,77 +24668,6 @@ const SeoOptimizationModal: React.FC<{
   )
 }
 
-const HeaderBlockControls: React.FC<{
-  scope: HeaderScope
-  block: SiteBlock | null
-  saving: boolean
-  emptyTitle: string
-  emptyDescription: string
-  createLabel: string
-  onCreateHeader: (scope: HeaderScope) => void | Promise<void>
-  onPatchBlock: (block: SiteBlock, patch: Partial<SiteBlock>) => void
-  onPatchSettings: (block: SiteBlock, patch: Record<string, unknown>) => void
-  onSaveBlock: (blockId: string) => void | Promise<void>
-  onSelectBlock: (blockId: string) => void
-}> = ({
-  scope,
-  block,
-  saving,
-  emptyTitle,
-  emptyDescription,
-  createLabel,
-  onCreateHeader,
-  onPatchBlock,
-  onPatchSettings,
-  onSaveBlock,
-  onSelectBlock
-}) => {
-  if (!block) {
-    return (
-      <div className={styles.headerModalEmpty}>
-        <div>
-          <strong>{emptyTitle}</strong>
-          <p>{emptyDescription}</p>
-        </div>
-        <Button variant="secondary" size="lg" onClick={() => onCreateHeader(scope)} disabled={saving}>
-          <Plus size={15} />
-          {createLabel}
-        </Button>
-      </div>
-    )
-  }
-
-  return (
-    <div className={styles.headerModalControls}>
-      <label className={styles.seoField}>
-        <span>Texto del header</span>
-        <input
-          value={block.content || ''}
-          placeholder="Nombre que verá la gente"
-          onChange={(event) => onPatchBlock(block, { content: event.target.value })}
-          onBlur={() => onSaveBlock(block.id)}
-        />
-      </label>
-      <label className={styles.seoField}>
-        <span>Enlaces</span>
-        <textarea
-          rows={3}
-          value={stringifyPanelLinks(block.settings || {})}
-          placeholder="Nombre del enlace | https://..."
-          onChange={(event) => onPatchSettings(block, { panelLinks: parsePanelLinks(event.target.value) })}
-          onBlur={() => onSaveBlock(block.id)}
-        />
-      </label>
-      <div className={styles.headerModalInlineActions}>
-        <button type="button" onClick={() => onSelectBlock(block.id)}>
-          <MousePointerClick size={14} />
-          Ver en canvas
-        </button>
-      </div>
-    </div>
-  )
-}
-
 const MetaEventParametersEditor: React.FC<{
   eventName: string
   parameters?: SiteMetaEventParameters
@@ -25276,142 +24779,6 @@ const MetaEventParametersEditor: React.FC<{
           )
         })}
       </div>
-    </div>
-  )
-}
-
-const MetaPageConversionToolbar: React.FC<{
-  site: PublicSite
-  pages: SitePage[]
-  activePage: SitePage
-  disabled?: boolean
-  onPatchSite: (patch: Partial<PublicSite>) => void
-  onPatchTheme: (patch: Partial<SiteTheme>) => void
-  onSaveSite: () => void | Promise<void>
-}> = ({
-  site,
-  pages,
-  activePage,
-  disabled,
-  onPatchSite,
-  onPatchTheme,
-  onSaveSite
-}) => {
-  const [paramsOpen, setParamsOpen] = useState(false)
-  const metaEnabled = Boolean(site.metaCapiEnabled)
-  const activePageEventName = activePage.metaCapiEnabled
-    ? normalizeMetaEventName(activePage.metaEventName, 'none')
-    : 'none'
-  const activePageHasConversion = activePageEventName !== 'none'
-  const activePageHasParameters = hasMetaEventParameters(activePage.metaEventParameters)
-
-  useEffect(() => {
-    if (!metaEnabled || !activePageHasConversion) {
-      setParamsOpen(false)
-    }
-  }, [activePageHasConversion, metaEnabled])
-
-  const saveSoon = () => {
-    window.setTimeout(() => { void onSaveSite() }, 0)
-  }
-
-  const patchActivePage = (patch: Partial<SitePage>) => {
-    onPatchTheme({
-      pages: normalizePagesForSave(pages.map(page => (
-        page.id === activePage.id ? { ...page, ...patch } : page
-      )))
-    })
-  }
-
-  return (
-    <div
-      className={`${styles.metaConversionToolbar} ${metaEnabled && activePageHasConversion ? styles.metaConversionToolbarActive : ''}`}
-      title={metaEnabled ? 'Conversión de Meta para esta página' : 'Activa Meta para configurar conversiones'}
-    >
-      <span className={styles.metaMark} aria-hidden="true">∞</span>
-      <label className={styles.metaSwitch}>
-        <input
-          type="checkbox"
-          checked={metaEnabled}
-          disabled={disabled}
-          aria-label="Activar medición de Meta"
-          onChange={(event) => {
-            onPatchSite({ metaCapiEnabled: event.target.checked })
-            saveSoon()
-          }}
-        />
-        <span className={styles.metaSwitchTrack} />
-      </label>
-      <label className={styles.metaConversionField}>
-        <span>Cuando</span>
-        <CustomSelect
-          className={styles.metaConversionSelect}
-          value={normalizeMetaTrigger(activePage.metaTrigger)}
-          disabled={disabled || !metaEnabled || !activePageHasConversion}
-          portal
-          onChange={(event) => {
-            patchActivePage({ metaTrigger: event.target.value as SiteMetaTrigger })
-            saveSoon()
-          }}
-        >
-          {metaTriggerOptions.map(option => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </CustomSelect>
-      </label>
-      <label className={`${styles.metaConversionField} ${styles.metaConversionEventField}`}>
-        <span>Evento</span>
-        <CustomSelect
-          className={styles.metaConversionSelect}
-          value={activePageEventName}
-          disabled={disabled || !metaEnabled}
-          portal
-          onChange={(event) => {
-            const metaEventName = event.target.value
-            patchActivePage({
-              metaEventName,
-              metaCapiEnabled: metaEventName !== 'none',
-              metaEventParameters: pruneMetaEventParametersForEvent(activePage.metaEventParameters, metaEventName)
-            })
-            saveSoon()
-          }}
-        >
-          {metaEventOptions.map(option => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </CustomSelect>
-      </label>
-      <button
-        type="button"
-        className={[
-          styles.metaParametersToggle,
-          paramsOpen ? styles.metaParametersToggleActive : '',
-          activePageHasParameters ? styles.metaParametersToggleFilled : ''
-        ].filter(Boolean).join(' ')}
-        disabled={disabled || !metaEnabled || !activePageHasConversion}
-        aria-expanded={paramsOpen}
-        title="Parámetros opcionales de Meta"
-        onClick={() => setParamsOpen(open => !open)}
-      >
-        <Settings2 size={14} />
-        <span>Params</span>
-        <ChevronDown size={13} />
-      </button>
-      {paramsOpen && metaEnabled && activePageHasConversion && (
-        <div className={styles.metaParametersPopover}>
-          <div className={styles.metaParametersHeader}>
-            <strong>Parámetros Meta</strong>
-            <span>{activePageEventName}</span>
-          </div>
-          <MetaEventParametersEditor
-            eventName={activePageEventName}
-            parameters={activePage.metaEventParameters}
-            disabled={disabled}
-            onChange={(metaEventParameters) => patchActivePage({ metaEventParameters })}
-            onCommit={saveSoon}
-          />
-        </div>
-      )}
     </div>
   )
 }
@@ -28087,18 +27454,6 @@ const PaletteInsertPreview: React.FC<{
   </div>
 )
 
-const InlineButtonRouting: React.FC<{
-  settings: Record<string, unknown>
-  pages: SitePage[]
-  activePageId: string
-  onPatchSettings: (patch: Record<string, unknown>) => void
-  onSave: () => void
-}> = ({ settings, pages, activePageId, onPatchSettings, onSave }) => (
-  <div className={styles.inlineBlockTools} onClick={(event) => event.stopPropagation()}>
-    <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
-  </div>
-)
-
 type TypographyTarget = 'text' | 'button'
 type TextDecorationToken = 'underline' | 'line-through'
 type InlineBlockStyleControlsMode = 'all' | 'typography' | 'design'
@@ -30367,11 +29722,8 @@ const CalendarEmbedStaticPreview: React.FC<{
 const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   block,
   site,
-  blocks = [],
   forms,
   calendars,
-  pages = [],
-  activePageId = DEFAULT_FUNNEL_PAGE_ID,
   selected = false,
   showVideoFormGatePreview = false,
   embeddedFormEditor,
@@ -33203,8 +32555,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onSaveSite,
   onPatchBlock,
   onPatchSettings,
-  onPatchCategorySettings,
-  onSaveCategory,
   onCustomFieldCreated,
   onVideoActionTargetHover,
   onVideoFormGatePreviewChange,

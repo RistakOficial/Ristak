@@ -4,7 +4,6 @@ import { Button, Icon, Modal, CustomSelect, PageHeader, Switch } from '@/compone
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, Pencil, Power, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useTheme } from '@/contexts/ThemeContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import styles from './MetaAdsIntegration.module.css'
@@ -140,7 +139,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
 
   const { showToast } = useNotification()
-  const { theme } = useTheme()
   const isRenderDomain = useIsRenderDomain()
   const [includeMetaPixel, setIncludeMetaPixel, savingPixelPref] = useAppConfig('include_meta_pixel', true)
   const [whatsappScheduleEventEnabled, setWhatsappScheduleEventEnabled, savingWhatsappScheduleEvent] = useAppConfig('meta_whatsapp_schedule_enabled', false)
@@ -508,7 +506,7 @@ export const MetaAdsIntegration: React.FC = () => {
     setCredentials(prev => ({ ...prev, [field]: value }))
   }
 
-  const focusSecretInput = (field: SecretTokenField) => {
+  const focusSecretInput = () => {
     const focusAndSelect = () => {
       const input = accessTokenInputRef.current
 
@@ -550,7 +548,7 @@ export const MetaAdsIntegration: React.FC = () => {
     setRealAccessToken(revealedToken)
 
     setCredentials(prev => ({ ...prev, [field]: revealedToken }))
-    focusSecretInput(field)
+    focusSecretInput()
   }
 
   const handleSecretChipKeyDown = (
@@ -1040,7 +1038,6 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   ]
   const completedMetaSetupSteps = metaSetupSteps.filter(step => step.done).length
-  const hasRailActions = Boolean((credentials.pixelId && !isRenderDomain) || (credentials.accessToken && credentials.adAccountId))
   const shouldShowStepActions = activeStep > 0 || (
     activeStep === 0 &&
     hasAccessToken &&

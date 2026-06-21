@@ -268,11 +268,6 @@ const isAbsoluteIso = (value: string): boolean => /(?:Z|[+-]\d{2}:?\d{2})$/i.tes
 
 const padTwo = (value: number) => String(value).padStart(2, '0');
 
-const localTodayInput = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${padTwo(now.getMonth() + 1)}-${padTwo(now.getDate())}`;
-};
-
 /**
  * Convierte el valor del formulario a un ISO listo para guardar.
  * - Si ya es un instante absoluto (Z u offset, ej: slots de GHL o salida del

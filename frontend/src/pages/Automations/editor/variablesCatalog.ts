@@ -9,7 +9,6 @@ import type {
 } from '@/services/automationsService'
 import {
   getNodeDefinition,
-  START_NODE_TYPE,
   type NodeVariableOutput,
   type VariableSchemaField,
   type VariableValueType

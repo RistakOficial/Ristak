@@ -24,8 +24,6 @@ import { contactsService } from '@/services/contactsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import type { Contact } from '@/types'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
-import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
-import { convertLocalToUTC } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -262,7 +260,7 @@ function normalizeCalendarEvent(event: any, fallbackId: string): CalendarEvent {
 export const PhoneCalendar: React.FC = () => {
   const { locationId, accessToken } = useAuth()
   const { showToast } = useNotification()
-  const { timezone, formatLocalDateShort } = useTimezone()
+  const { timezone } = useTimezone()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
@@ -273,15 +271,12 @@ export const PhoneCalendar: React.FC = () => {
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [selectedCalendar, setSelectedCalendar] = useState<Calendar | null>(null)
   const [events, setEvents] = useState<CalendarEvent[]>([])
-  const [futureEvents, setFutureEvents] = useState<CalendarEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [cacheRefreshing, setCacheRefreshing] = useState(false)
-  const [refreshKey, setRefreshKey] = useState(0)
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [selectedDate, setSelectedDate] = useState(() => new Date())
   const [calendarView, setCalendarView] = useState<CalendarView>('month')
   const [sheetView, setSheetView] = useState<SheetView>(null)
-  const [searchQuery, setSearchQuery] = useState('')
   const [appointmentContactQuery, setAppointmentContactQuery] = useState('')
   const [appointmentContacts, setAppointmentContacts] = useState<Contact[]>([])
   const [appointmentContactsLoading, setAppointmentContactsLoading] = useState(false)
@@ -289,12 +284,12 @@ export const PhoneCalendar: React.FC = () => {
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [isEventModalOpen, setIsEventModalOpen] = useState(false)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
-  const [createDefaults, setCreateDefaults] = useState({
+  const createDefaults = useMemo(() => ({
     start: '',
     end: '',
     timeZone: timezone,
     title: ''
-  })
+  }), [timezone])
   const stripRef = useRef<HTMLElement | null>(null)
   const timelineScrollRef = useRef<HTMLElement | null>(null)
   const handledOpenAppointmentRef = useRef<string | null>(null)
@@ -375,35 +370,6 @@ export const PhoneCalendar: React.FC = () => {
     selectCalendar(selected)
   }, [defaultCalendarId, selectCalendar])
 
-  const buildCreateDefaultTimes = useCallback((baseDate: Date, hourOffset = 0) => {
-    const zonedNow = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
-    const isToday = isSameDay(baseDate, zonedNow)
-    const hour = isToday ? Math.min(23, zonedNow.getHours() + hourOffset) : 9
-    const localWall = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), hour, 0, 0, 0)
-    const startUTC = convertLocalToUTC(localWall, timezone)
-    return {
-      start: startUTC.toISOString(),
-      end: new Date(startUTC.getTime() + 60 * 60 * 1000).toISOString()
-    }
-  }, [timezone])
-
-  const openCreateModal = useCallback((baseDate = selectedDate) => {
-    if (!selectedCalendar) {
-      showToast('warning', 'Elige un calendario', 'Selecciona dónde quieres guardar la cita.')
-      return
-    }
-
-    const zonedNow = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
-    const { start, end } = buildCreateDefaultTimes(baseDate, isSameDay(baseDate, zonedNow) ? 1 : 0)
-    setCreateDefaults({
-      start,
-      end,
-      timeZone: timezone,
-      title: selectedCalendar.eventTitle || ''
-    })
-    setIsCreateModalOpen(true)
-  }, [buildCreateDefaultTimes, selectedCalendar, selectedDate, showToast, timezone])
-
   const openAppointmentContactPicker = useCallback(() => {
     setAppointmentContactQuery('')
     setAppointmentContactsError('')
@@ -471,7 +437,6 @@ export const PhoneCalendar: React.FC = () => {
   const loadEvents = useCallback(async () => {
     if (!selectedCalendar) {
       setEvents([])
-      setFutureEvents([])
       return
     }
 
@@ -484,11 +449,10 @@ export const PhoneCalendar: React.FC = () => {
       start.getTime(),
       end.getTime()
     )
-    const cachedEvents = readPhoneDailyCache<{ events: CalendarEvent[]; futureEvents: CalendarEvent[] }>(cacheKey)
+    const cachedEvents = readPhoneDailyCache<{ events: CalendarEvent[] }>(cacheKey)
 
     if (cachedEvents) {
       setEvents(Array.isArray(cachedEvents.data.events) ? cachedEvents.data.events : [])
-      setFutureEvents(Array.isArray(cachedEvents.data.futureEvents) ? cachedEvents.data.futureEvents : [])
     }
 
     const eventsData = await calendarsService.getEvents(
@@ -498,17 +462,9 @@ export const PhoneCalendar: React.FC = () => {
       accessToken || undefined,
       selectedCalendar.id
     )
-    const futureData = await calendarsService.getFutureAppointments(
-      selectedCalendar.id,
-      locationId || '',
-      accessToken || undefined
-    )
-
     const nextEvents = eventsData.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
-    const nextFutureEvents = futureData.map((event, index) => normalizeCalendarEvent(event, `future-${index}`))
     setEvents(nextEvents)
-    setFutureEvents(nextFutureEvents)
-    writePhoneDailyCache(cacheKey, { events: nextEvents, futureEvents: nextFutureEvents }, { maxEntryChars: 360_000 })
+    writePhoneDailyCache(cacheKey, { events: nextEvents }, { maxEntryChars: 240_000 })
     setCacheRefreshing(false)
   }, [accessToken, currentDate, locationId, selectedCalendar])
 
@@ -672,7 +628,7 @@ export const PhoneCalendar: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [accessState, loadCalendars, refreshKey, showToast])
+  }, [accessState, loadCalendars, showToast])
 
   useEffect(() => {
     if (accessState !== 'allowed') return
@@ -699,7 +655,7 @@ export const PhoneCalendar: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [accessState, loadEvents, refreshKey, showToast])
+  }, [accessState, loadEvents, showToast])
 
   useEffect(() => {
     if (accessState !== 'allowed' || sheetView !== 'contactPicker') return
@@ -908,35 +864,6 @@ export const PhoneCalendar: React.FC = () => {
 
     return () => window.cancelAnimationFrame(frame)
   }, [calendarView, currentTimePercent, selectedDate])
-
-  const preparedSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
-
-  const searchResults = useMemo(() => {
-    if (!preparedSearch.normalized) return []
-
-    const uniqueEvents = [...events, ...futureEvents].filter((event, index, source) => (
-      index === source.findIndex((item) => item.id === event.id)
-    ))
-
-    return uniqueEvents
-      .map((event) => {
-        const eventDate = toDateInTimeZone(event.startTime, timezone) ?? new Date(event.startTime)
-        return {
-          event,
-          searchIndex: buildSearchIndex([
-            event.title,
-            getStatusLabel(event.appointmentStatus),
-            formatLocalDateShort(event.startTime),
-            MONTH_NAMES[eventDate.getMonth()],
-            String(eventDate.getDate())
-          ])
-        }
-      })
-      .filter(({ searchIndex }) => searchIndexIncludes(searchIndex, preparedSearch))
-      .map(({ event }) => event)
-      .sort((a, b) => a.startTime.localeCompare(b.startTime))
-      .slice(0, 12)
-  }, [events, formatLocalDateShort, futureEvents, preparedSearch, timezone])
 
   const handleSelectDate = (date: Date) => {
     setSelectedDate(date)
@@ -1148,15 +1075,6 @@ export const PhoneCalendar: React.FC = () => {
     clickEvent.stopPropagation()
     setSelectedDate(date)
     setCurrentDate(date)
-    handleOpenEvent(event)
-  }
-
-  const handleSearchResult = (event: CalendarEvent) => {
-    const eventDate = toDateInTimeZone(event.startTime, timezone) ?? new Date(event.startTime)
-    setSelectedDate(eventDate)
-    setCurrentDate(eventDate)
-    calendarSheetDismiss.requestClose()
-    setSearchQuery('')
     handleOpenEvent(event)
   }
 

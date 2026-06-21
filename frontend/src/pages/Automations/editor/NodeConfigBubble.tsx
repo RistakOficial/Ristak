@@ -130,11 +130,6 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
     }
   }, [config.endpointId, config.sampleResponse, config.sampleStatus, onRefreshWebhookSample])
 
-  const insertVariable = (key: string, variable: string) => {
-    const current = str(config[key])
-    setValue(key, current ? `${current} ${variable}` : variable)
-  }
-
   // ------------------------------------------------------------------
   // Render genérico de un campo declarativo
   // ------------------------------------------------------------------

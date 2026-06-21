@@ -426,13 +426,6 @@ function createMessage(
   }
 }
 
-function formatTraceStatus(status?: string) {
-  if (status === 'completed') return 'Completado'
-  if (status === 'waiting_user') return 'Esperando respuesta'
-  if (status === 'failed') return 'Falló'
-  return 'En proceso'
-}
-
 function getRouteLabel(pathname: string) {
   const match = Object.entries(routeLabels).find(([path]) => pathname.startsWith(path))
   return match?.[1] || pathname

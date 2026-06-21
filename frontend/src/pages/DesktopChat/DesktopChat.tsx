@@ -356,12 +356,6 @@ const PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'envia
 const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CANCELED_APPOINTMENT_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'noshow', 'invalid', 'failed', 'missed', 'deleted', 'void', 'voided'])
-const HIGHLEVEL_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
-  whatsapp_api: 'WhatsApp API',
-  sms_qr: 'SMS',
-  messenger: 'Messenger',
-  instagram: 'Instagram'
-}
 const COMPOSER_CHANNEL_OPTIONS: Array<{ value: ComposerChannel; label: string }> = [
   { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'messenger', label: 'Messenger' },
@@ -1705,14 +1699,6 @@ function getTrackingData(contact?: Contact | null, journey: JourneyEvent[] = [])
   }
 }
 
-function normalizeHighLevelChannel(value?: string | null): HighLevelChatChannel {
-  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
-  if (normalized.includes('instagram')) return 'instagram'
-  if (normalized.includes('messenger') || normalized.includes('facebook')) return 'messenger'
-  if (normalized.includes('sms') || normalized.includes('qr')) return 'sms_qr'
-  return 'whatsapp_api'
-}
-
 function normalizeComposerChannel(value?: string | null): ComposerChannel {
   const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
   if (normalized.includes('instagram')) return 'instagram'
@@ -1925,7 +1911,7 @@ export const DesktopChat: React.FC = () => {
   const [voiceDraft, setVoiceDraft] = useState<VoiceDraftAttachment | null>(null)
   const [voiceRecording, setVoiceRecording] = useState(false)
   const [voiceProcessing, setVoiceProcessing] = useState(false)
-  const [voiceElapsedMs, setVoiceElapsedMs] = useState(0)
+  const [, setVoiceElapsedMs] = useState(0)
   const [playingAudioId, setPlayingAudioId] = useState('')
   const [messageAudioProgress, setMessageAudioProgress] = useState<Record<string, { currentTime: number; duration: number }>>({})
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)

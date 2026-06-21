@@ -37,7 +37,6 @@ import automationsService, {
   AUTOMATION_STATUS_LABELS,
   automationsCache,
   type AutomationFolder,
-  type AutomationStatus,
   type AutomationSummary
 } from '@/services/automationsService'
 import styles from './editor/AutomationEditor.module.css'

@@ -49,7 +49,7 @@ import {
   type PaymentTaxSettings
 } from '@/services/paymentSettingsService'
 import { mercadoPagoPaymentsService, type MercadoPagoPaymentConfig, type MercadoPagoWebhookEndpoint } from '@/services/mercadoPagoPaymentsService'
-import { stripePaymentsService, type StripePaymentConfig, type StripeWebhookEndpoint } from '@/services/stripePaymentsService'
+import { stripePaymentsService, type StripePaymentConfig } from '@/services/stripePaymentsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import {
   buildInvoiceStyleVars,
@@ -111,7 +111,6 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
 
 const sectionIds = sectionItems.map((item) => item.id)
 const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercadopago', 'clip']
-const defaultStripeMode: StripePaymentConfig['mode'] = 'live'
 const GIGSTACK_API_URL = 'https://gigstack.pro/api-facturacion'
 const stripeModeIds: StripeModeId[] = ['test', 'live']
 const emptyStripeModeCredentials: Record<StripeModeId, StripeModeCredentials> = {

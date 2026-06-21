@@ -127,39 +127,10 @@ const CALENDAR_TEMPLATE_EXTRA_VARIABLES: FlowVariable[] = [
   { fieldId: 'calendar.google_calendar', label: 'Calendario de Google ligado', category: 'calendar' },
   { fieldId: 'calendar.google_calendar_id', label: 'ID del calendario de Google', category: 'calendar' }
 ]
-const normalizeBase64 = (value: string) => {
-  const normalized = value.trim().replace(/-/g, '+').replace(/_/g, '/')
-  return normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
-}
-
 const normalizeCalendarColor = (value?: string | null) => {
   const raw = String(value || '').trim()
   if (HEX_COLOR_PATTERN.test(raw)) return raw.toLowerCase()
   return CALENDAR_DEFAULT_COLOR
-}
-
-const normalizeGoogleCalendarIdInput = (value: string) => {
-  const raw = value.trim()
-  if (!raw) return ''
-
-  try {
-    const url = new URL(raw)
-    const cid = url.searchParams.get('cid')
-    if (cid) {
-      const decoded = window.atob(normalizeBase64(cid)).trim()
-      if (decoded) return decoded
-    }
-
-    const src = url.searchParams.get('src')
-    if (src) {
-      const decoded = decodeURIComponent(src).trim()
-      if (decoded) return decoded
-    }
-  } catch {
-    // Si no es URL, el valor ya es el Calendar ID.
-  }
-
-  return raw
 }
 
 const normalizeCalendarMatchValue = (value?: string | null) => String(value || '').trim().toLowerCase()

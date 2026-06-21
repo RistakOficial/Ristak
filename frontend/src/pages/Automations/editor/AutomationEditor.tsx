@@ -21,7 +21,6 @@ import {
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import {
-  Badge,
   Button,
   Modal,
   DropdownMenu,
@@ -34,7 +33,6 @@ import { useNotification } from '@/contexts/NotificationContext'
 import automationsService, {
   AUTOMATION_REVIEW_LABEL,
   automationsCache,
-  AUTOMATION_STATUS_LABELS,
   defaultFlowSettings,
   type Automation,
   type AutomationNode,
@@ -85,13 +83,6 @@ import styles from './AutomationEditor.module.css'
 // El AppShell escucha este evento (lo usa el editor de Sitios) para ocultar el
 // header global y dar todo el alto de la pantalla al editor.
 const EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
-
-const STATUS_BADGE_VARIANT: Record<AutomationStatus, 'neutral' | 'success' | 'warning' | 'default'> = {
-  draft: 'neutral',
-  published: 'success',
-  paused: 'warning',
-  archived: 'default'
-}
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
 type PersistAutomation = (options?: { notify?: boolean }) => Promise<boolean>

@@ -6,7 +6,6 @@ import {
   asMessageBlocks,
   getNodeDefinition,
   validateNodeConfig,
-  MAX_BRANCHES,
   type MessageBlock,
   type NodeDefinition
 } from './nodeRegistry'

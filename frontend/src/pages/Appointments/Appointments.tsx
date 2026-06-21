@@ -2144,7 +2144,6 @@ export const Appointments: React.FC = () => {
                       const displayDescription =
                         rawDescription && rawDescription !== displayTitle ? rawDescription : '';
                       const statusBadge = getAppointmentStatusBadge(event.appointmentStatus);
-                      const statusLabel = statusBadge.label;
                       const tooltipText = [
                         displayTitle,
                         `${formatEventTime(event.startTime)} - ${formatEventTime(event.endTime)}`,

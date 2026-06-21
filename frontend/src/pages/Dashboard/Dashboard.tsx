@@ -490,7 +490,6 @@ export const Dashboard: React.FC = () => {
   const [funnelData, setFunnelData] = useState<{ stage: string; value: number }[]>([])
   const [funnelScope, setFunnelScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
   const [financialScope, setFinancialScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
-  const [funnelLoading, setFunnelLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [chartLoading, setChartLoading] = useState(true)
   const [selectedChartView, setSelectedChartView] = useState<ChartView>(routeChartView)
@@ -738,7 +737,6 @@ export const Dashboard: React.FC = () => {
     }
   }, [analyticsEnabled, selectedChartView, formattedFinancialData, visitorsLeadsData, leadsAppointmentsData, appointmentsAttendancesData, attendancesSalesData, labels.leads, currencyAxisFormatter, chartWindow.buckets])
 
-  const isExtendedChartView = selectedChartView !== 'revenue-spend'
   const isChartLoading = selectedChartView === 'revenue-spend'
     ? chartLoading
     : extendedChartDataLoading
@@ -1158,7 +1156,6 @@ export const Dashboard: React.FC = () => {
   // useEffect separado solo para el funnel (no recarga toda la página)
   React.useEffect(() => {
     const loadFunnelData = async () => {
-      setFunnelLoading(true)
       try {
         const funnelDataResponse = await dashboardService.getFunnelData({
           start: dateRange.start,
@@ -1168,8 +1165,6 @@ export const Dashboard: React.FC = () => {
         setFunnelData(funnelDataResponse)
       } catch (error) {
         // Error silencioso
-      } finally {
-        setFunnelLoading(false)
       }
     }
 

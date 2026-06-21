@@ -1,6 +1,4 @@
 import type {
-  ContactCustomField,
-  ContactCustomFieldDefinition,
   ContactCustomFieldValue
 } from '@/types'
 

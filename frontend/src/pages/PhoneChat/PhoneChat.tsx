@@ -3111,7 +3111,6 @@ export const PhoneChat: React.FC = () => {
   const [agentConfig, setAgentConfig] = useState<ConversationalAgentConfig | null>(() => initialAgentLiveCache?.config || null)
   const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>(() => initialAgentLiveCache?.agents || [])
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>(() => mapAgentStatesByContactId(initialAgentLiveCache?.states || []))
-  const [agentDataHydrated, setAgentDataHydrated] = useState(() => Boolean(initialAgentLiveCache))
   const [agentMenuSection, setAgentMenuSection] = useState<AgentMenuSection>('menu')
   const [selectedAgentId, setSelectedAgentId] = useState(() => initialAgentLiveCache?.agents?.[0]?.id || '')
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
@@ -3764,10 +3763,6 @@ export const PhoneChat: React.FC = () => {
   const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
   const archivedChatCount = archivedChatIds.length
   const agentEnabled = Boolean(openAIConfigured && agentConfig?.enabled)
-  const agentDefById = useMemo(
-    () => new Map(agentDefs.map((agent) => [agent.id, agent])),
-    [agentDefs]
-  )
   const agentPriorityStates = useMemo(
     () => agentEnabled
       ? Object.values(agentStates).filter((state) => Boolean(state.signal) && state.signal !== 'discarded')
@@ -3778,7 +3773,6 @@ export const PhoneChat: React.FC = () => {
     () => new Set(agentPriorityStates.map((state) => state.contactId)),
     [agentPriorityStates]
   )
-  const agentPriorityCount = agentPriorityStates.length
   const publishedAgentDefs = useMemo(() => agentDefs.filter((agent) => agent.enabled), [agentDefs])
   const publishedAgentCount = publishedAgentDefs.length
   const aiAgentHubAgentFilters = useMemo(() => {
@@ -4115,7 +4109,6 @@ export const PhoneChat: React.FC = () => {
     setAgentConfig(cache.config)
     setAgentDefs(cache.agents)
     setAgentStates(mapAgentStatesByContactId(cache.states))
-    setAgentDataHydrated(true)
   }, [openAIConfigured])
 
   const loadAgentData = useCallback(async (options: { includeDefinitions?: boolean } = {}) => {
@@ -4125,7 +4118,6 @@ export const PhoneChat: React.FC = () => {
       setAgentConfig(null)
       setAgentDefs([])
       setAgentStates({})
-      setAgentDataHydrated(true)
       return
     }
 
@@ -4148,10 +4140,6 @@ export const PhoneChat: React.FC = () => {
     } catch {
       // El agente conversacional puede no estar disponible (feature apagada);
       // el chat sigue funcionando normal sin él.
-    } finally {
-      if (agentLoadGenerationRef.current === requestGeneration) {
-        setAgentDataHydrated(true)
-      }
     }
   }, [openAIConfigured, openAILoading])
 

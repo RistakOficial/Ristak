@@ -188,11 +188,6 @@ const getConfigTheme = (value: unknown): ThemeMode | null => {
   return isThemeMode(parsedValue) ? parsedValue : null
 }
 
-const getConfigDesignPreset = (value: unknown): DesignPreset | null => {
-  const parsedValue = parseConfigValue(value)
-  return isDesignPreset(parsedValue) ? parsedValue : null
-}
-
 const getLegacyTheme = (): ThemeMode | null => {
   if (typeof window === 'undefined') {
     return null

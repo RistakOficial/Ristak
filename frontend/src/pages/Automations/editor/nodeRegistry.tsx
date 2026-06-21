@@ -1,4 +1,3 @@
-import type { LucideIcon } from 'lucide-react'
 import { WhatsAppIcon, MessengerIcon, InstagramIcon } from './BrandIcons'
 import {
   Banknote,
@@ -17,7 +16,6 @@ import {
   ListChecks,
   Mail,
   Megaphone,
-  MessageCircle,
   MessageCircleReply,
   MessageSquareText,
   MousePointerClick,
@@ -38,7 +36,6 @@ import {
   UserSearch,
   UserX,
   Webhook,
-  Zap
 } from 'lucide-react'
 import type { CatalogKind } from '@/services/automationCatalogsService'
 import { contactTagsService } from '@/services/contactTagsService'

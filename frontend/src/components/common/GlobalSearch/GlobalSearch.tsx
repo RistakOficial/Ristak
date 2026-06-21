@@ -29,7 +29,6 @@ const ICONS: Record<GlobalSearchItemType, React.ComponentType<{ size?: number; c
   ad: MousePointerClick
 }
 
-const GLOBAL_SEARCH_DELAY_MS = 60
 const GLOBAL_SEARCH_CACHE_LIMIT = 30
 
 const buildSearchParams = (item: GlobalSearchItem) => {

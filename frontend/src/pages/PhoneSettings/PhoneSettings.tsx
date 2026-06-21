@@ -29,7 +29,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability, useAppConfig, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { contactsService } from '@/services/contactsService'
-import { aiAgentService, type AIAgentConfigStatus } from '@/services/aiAgentService'
+import { aiAgentService } from '@/services/aiAgentService'
 import { mobileAppService } from '@/services/mobileAppService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
@@ -160,7 +160,6 @@ export const PhoneSettings: React.FC = () => {
   const [requestingPush, setRequestingPush] = useState(false)
   const [permission, setPermission] = useState(getNotificationPermission)
   const [backButtonCollapsed, setBackButtonCollapsed] = useState(false)
-  const [aiAgentStatus, setAiAgentStatus] = useState<AIAgentConfigStatus | null>(null)
   const [aiAgentConfigLoading, setAiAgentConfigLoading] = useState(false)
   const [businessContextDraft, setBusinessContextDraft] = useState('')
   const [savedBusinessContext, setSavedBusinessContext] = useState('')
@@ -246,7 +245,6 @@ export const PhoneSettings: React.FC = () => {
     try {
       const status = await aiAgentService.getConfig()
       const context = normalizeBusinessContextDraft(status.businessContext)
-      setAiAgentStatus(status)
       setBusinessContextDraft(context)
       setSavedBusinessContext(context)
     } catch (error: any) {
@@ -401,7 +399,6 @@ export const PhoneSettings: React.FC = () => {
     try {
       const result = await aiAgentService.saveBusinessContextAnswer('businessContext', cleanAnswer)
       const nextText = (result.text || result.status?.businessContext || cleanAnswer).trim()
-      setAiAgentStatus(result.status)
       setBusinessContextDraft(nextText)
       setSavedBusinessContext(nextText)
       setBusinessContextMessage('Guardado.')

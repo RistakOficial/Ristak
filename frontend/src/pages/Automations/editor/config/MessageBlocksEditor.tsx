@@ -28,7 +28,6 @@ import {
 import { CustomSelect } from './configPrimitives'
 import {
   MAX_BUTTONS_PER_MESSAGE,
-  MEDIA_BLOCK_TYPES,
   asMessageBlocks,
   type MessageBlock,
   type MessageBlockType,

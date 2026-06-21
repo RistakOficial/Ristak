@@ -48,7 +48,6 @@ import {
   type MessageTemplateFolder,
   type MessageTemplateHeaderType,
   type MessageTemplatePayload,
-  type MessageTemplateStatus,
   type MessageTemplateVariable,
   type MessageTemplateVariableBinding,
   type MessageTemplateVariableTarget
@@ -86,12 +85,6 @@ const languageOptions = [
   { value: 'es_MX', label: 'Español México' },
   { value: 'es', label: 'Español' },
   { value: 'en_US', label: 'Inglés Estados Unidos' }
-]
-
-const statusOptions: Array<{ value: MessageTemplateStatus; label: string }> = [
-  { value: 'draft', label: 'Borrador' },
-  { value: 'active', label: 'Lista' },
-  { value: 'archived', label: 'Archivada' }
 ]
 
 type TemplateReviewStatusFilter = 'all' | 'active' | 'pending' | 'rejected' | 'draft' | 'paused' | 'archived'
@@ -251,10 +244,6 @@ function appendMetaVariable(text: string | undefined) {
   const current = text || ''
   const variable = `{{${getNextMetaVariable(current)}}}`
   return current ? `${current} ${variable}` : variable
-}
-
-function getStatusLabel(status: MessageTemplateStatus) {
-  return statusOptions.find((option) => option.value === status)?.label || status
 }
 
 function getCategoryLabel(category: MessageTemplateCategory) {
