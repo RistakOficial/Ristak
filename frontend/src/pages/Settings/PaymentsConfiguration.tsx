@@ -3003,14 +3003,14 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.gigstackHeader}>
             <Sparkles size={22} />
             <Badge variant={taxes.gigstackEnabled ? (taxes.hasGigstackApiToken ? 'success' : 'warning') : 'neutral'}>
-              GYStack
+              Gigstack
             </Badge>
           </div>
           <h3>Timbrado automático</h3>
-          <p>GYStack permite registrar el pago y dejar que su API genere el CFDI con validación fiscal y timbrado ante el SAT.</p>
-          {renderSwitchRow('Activar GYStack', 'Al registrar un pago con impuestos, Ristak intentará enviarlo a GYStack para timbrarlo automáticamente.', taxes.gigstackEnabled, (next) => setTaxValue('gigstackEnabled', next))}
+          <p>Gigstack permite registrar el pago y dejar que su API genere el CFDI con validación fiscal y timbrado ante el SAT.</p>
+          {renderSwitchRow('Activar Gigstack', 'Al registrar un pago con impuestos, Ristak intentará enviarlo a Gigstack para timbrarlo automáticamente.', taxes.gigstackEnabled, (next) => setTaxValue('gigstackEnabled', next))}
           {renderField(
-            'Token API de GYStack',
+            'Token API de Gigstack',
             <input
               type="password"
               value={taxes.gigstackApiToken || ''}

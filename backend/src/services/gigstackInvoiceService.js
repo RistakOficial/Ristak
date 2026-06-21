@@ -170,7 +170,7 @@ export async function registerGigstackPaymentForTransaction(paymentId) {
   const data = await response.json().catch(() => ({}))
 
   if (!response.ok) {
-    const message = data?.message || data?.error || `GYStack respondió ${response.status}`
+    const message = data?.message || data?.error || `Gigstack respondió ${response.status}`
     await updateGigstackMetadata(cleanPaymentId, {
       status: 'error',
       error: message
@@ -188,12 +188,12 @@ export async function registerGigstackPaymentForTransaction(paymentId) {
     registeredAt: new Date().toISOString()
   })
 
-  logger.info(`Pago ${cleanPaymentId} registrado en GYStack para timbrado automático.`)
+  logger.info(`Pago ${cleanPaymentId} registrado en Gigstack para timbrado automático.`)
   return { registered: true, data }
 }
 
 export function registerGigstackPaymentForTransactionInBackground(paymentId) {
   registerGigstackPaymentForTransaction(paymentId).catch((error) => {
-    logger.warn(`No se pudo registrar pago ${paymentId} en GYStack: ${error.message}`)
+    logger.warn(`No se pudo registrar pago ${paymentId} en Gigstack: ${error.message}`)
   })
 }

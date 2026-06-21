@@ -139,7 +139,7 @@ function decryptSecret(value = '') {
   try {
     return decrypt(cleanValue)
   } catch (error) {
-    logger.warn(`No se pudo desencriptar el token de GYStack: ${error.message}`)
+    logger.warn(`No se pudo desencriptar el token de Gigstack: ${error.message}`)
     return ''
   }
 }
