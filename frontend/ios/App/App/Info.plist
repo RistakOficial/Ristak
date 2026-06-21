@@ -24,6 +24,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>Ristak usa la cámara para tomar fotos y enviarlas desde el chat.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

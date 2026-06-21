@@ -1,0 +1,322 @@
+# Genera builds móviles sólo bajo demanda. No corre en push para evitar subir
+# builds innecesarios a App Store Connect o Google Play.
+name: mobile-store-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Tienda/plataforma a preparar
+        required: true
+        default: ios
+        type: choice
+        options:
+          - ios
+          - android
+          - both
+      submit_for_review:
+        description: Pedir revision al terminar la subida
+        required: true
+        default: false
+        type: boolean
+      ios_version:
+        description: Version visible para App Store
+        required: true
+        default: "1.0"
+        type: string
+      android_version_name:
+        description: Version visible para Play Store
+        required: true
+        default: "1.0"
+        type: string
+      android_track:
+        description: Track de Google Play
+        required: true
+        default: internal
+        type: choice
+        options:
+          - internal
+          - closed
+          - production
+
+env:
+  APP_BUNDLE_ID: com.ristak.app
+  APPLE_TEAM_ID: Y2L8669JNL
+
+jobs:
+  ios:
+    name: iOS App Store
+    if: ${{ github.event.inputs.platform == 'ios' || github.event.inputs.platform == 'both' }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Prepare App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+        run: |
+          test -n "$ASC_KEY_ID"
+          test -n "$ASC_ISSUER_ID"
+          test -n "$ASC_KEY_P8"
+          mkdir -p "$RUNNER_TEMP/appstore"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/appstore/AuthKey_${ASC_KEY_ID}.p8"
+          cat > "$RUNNER_TEMP/appstore/api_key.json" <<JSON
+          {
+            "key_id": "$ASC_KEY_ID",
+            "issuer_id": "$ASC_ISSUER_ID",
+            "key_filepath": "$RUNNER_TEMP/appstore/AuthKey_${ASC_KEY_ID}.p8",
+            "duration": 1200,
+            "in_house": false
+          }
+          JSON
+
+      - name: Install signing certificate and provisioning profile
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_CI_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$IOS_CERTIFICATE_BASE64"
+          test -n "$IOS_CERTIFICATE_PASSWORD"
+          test -n "$IOS_PROFILE_BASE64"
+          KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-temporary-ci-keychain}"
+
+          CERT_PATH="$RUNNER_TEMP/ios_distribution.p12"
+          PROFILE_PATH="$RUNNER_TEMP/ristak_appstore.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          echo "$IOS_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/ristak_appstore.mobileprovision"
+
+      - name: Set iOS version and build number
+        run: |
+          cd frontend/ios/App
+          xcrun agvtool new-marketing-version "${{ github.event.inputs.ios_version }}"
+          xcrun agvtool new-version -all "${{ github.run_number }}"
+
+      - name: Build and sync Capacitor iOS
+        run: npm run mobile:sync:ios --prefix frontend
+
+      - name: Archive iOS app
+        run: |
+          cd frontend
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath ios/build/RistakChat.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/appstore/AuthKey_${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}.p8" \
+            -authenticationKeyID "${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" \
+            archive
+
+      - name: Export IPA
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions-AppStore-CI.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>destination</key>
+            <string>export</string>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>teamID</key>
+            <string>Y2L8669JNL</string>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          cd frontend
+          xcodebuild \
+            -exportArchive \
+            -archivePath ios/build/RistakChat.xcarchive \
+            -exportPath ios/build/AppStore-CI \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-AppStore-CI.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/appstore/AuthKey_${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}.p8" \
+            -authenticationKeyID "${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}"
+
+      - name: Upload to App Store Connect
+        env:
+          SUBMIT_FOR_REVIEW: ${{ github.event.inputs.submit_for_review }}
+        run: |
+          gem install fastlane --no-document
+          IPA_PATH="frontend/ios/build/AppStore-CI/App.ipa"
+          if [ "$SUBMIT_FOR_REVIEW" = "true" ]; then
+            fastlane deliver \
+              --api_key_path "$RUNNER_TEMP/appstore/api_key.json" \
+              --app_identifier "$APP_BUNDLE_ID" \
+              --ipa "$IPA_PATH" \
+              --skip_metadata true \
+              --skip_screenshots true \
+              --submit_for_review true \
+              --automatic_release false \
+              --force true
+          else
+            fastlane pilot upload \
+              --api_key_path "$RUNNER_TEMP/appstore/api_key.json" \
+              --app_identifier "$APP_BUNDLE_ID" \
+              --ipa "$IPA_PATH" \
+              --skip_waiting_for_build_processing true
+          fi
+
+      - name: Notify installer
+        if: always()
+        env:
+          WEBHOOK_URL: ${{ secrets.INSTALLER_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.INSTALLER_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ] || [ -z "$WEBHOOK_SECRET" ]; then
+            exit 0
+          fi
+          STATUS="${{ job.status }}"
+          jq -n \
+            --arg platform ios \
+            --arg store app_store \
+            --arg status "$STATUS" \
+            --arg version "${{ github.event.inputs.ios_version }}" \
+            --arg build_number "${{ github.run_number }}" \
+            --arg commit "${{ github.sha }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --argjson submit_for_review ${{ github.event.inputs.submit_for_review }} \
+            '{platform:$platform, store:$store, status:$status, version:$version, build_number:$build_number, commit:$commit, branch:$branch, run_url:$run_url, submit_for_review:$submit_for_review}' \
+            | curl --fail-with-body -sS -X POST "${WEBHOOK_URL%/}/api/webhooks/mobile-release" \
+              -H "x-api-key: $WEBHOOK_SECRET" \
+              -H "Content-Type: application/json" \
+              -d @-
+
+  android:
+    name: Android Play Store
+    if: ${{ github.event.inputs.platform == 'android' || github.event.inputs.platform == 'both' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Install Android signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_STORE_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > frontend/android/app/release.keystore
+          cat > frontend/android/app/keystore.properties <<PROPS
+          storeFile=release.keystore
+          storePassword=$ANDROID_STORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          PROPS
+
+      - name: Build Android App Bundle
+        run: |
+          npm run mobile:sync:android --prefix frontend
+          cd frontend/android
+          ./gradlew bundleRelease \
+            -PciVersionCode="${{ github.run_number }}" \
+            -PciVersionName="${{ github.event.inputs.android_version_name }}"
+
+      - name: Upload to Google Play
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          SUBMIT_FOR_REVIEW: ${{ github.event.inputs.submit_for_review }}
+        run: |
+          test -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"
+          printf '%s' "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/google-play-service-account.json"
+          gem install fastlane --no-document
+          RELEASE_STATUS="draft"
+          if [ "$SUBMIT_FOR_REVIEW" = "true" ]; then
+            RELEASE_STATUS="completed"
+          fi
+          fastlane supply \
+            --json_key "$RUNNER_TEMP/google-play-service-account.json" \
+            --package_name "$APP_BUNDLE_ID" \
+            --aab frontend/android/app/build/outputs/bundle/release/app-release.aab \
+            --track "${{ github.event.inputs.android_track }}" \
+            --release_status "$RELEASE_STATUS" \
+            --skip_upload_metadata true \
+            --skip_upload_changelogs true \
+            --skip_upload_images true \
+            --skip_upload_screenshots true
+
+      - name: Notify installer
+        if: always()
+        env:
+          WEBHOOK_URL: ${{ secrets.INSTALLER_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.INSTALLER_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ] || [ -z "$WEBHOOK_SECRET" ]; then
+            exit 0
+          fi
+          STATUS="${{ job.status }}"
+          jq -n \
+            --arg platform android \
+            --arg store play_store \
+            --arg status "$STATUS" \
+            --arg version "${{ github.event.inputs.android_version_name }}" \
+            --arg build_number "${{ github.run_number }}" \
+            --arg commit "${{ github.sha }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg track "${{ github.event.inputs.android_track }}" \
+            --argjson submit_for_review ${{ github.event.inputs.submit_for_review }} \
+            '{platform:$platform, store:$store, status:$status, version:$version, build_number:$build_number, commit:$commit, branch:$branch, run_url:$run_url, track:$track, submit_for_review:$submit_for_review}' \
+            | curl --fail-with-body -sS -X POST "${WEBHOOK_URL%/}/api/webhooks/mobile-release" \
+              -H "x-api-key: $WEBHOOK_SECRET" \
+              -H "Content-Type: application/json" \
+              -d @-
