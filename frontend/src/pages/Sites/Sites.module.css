@@ -7849,7 +7849,6 @@
   --video-retention-line: var(--design-chart-primary, var(--accent));
   --video-retention-fill: color-mix(in srgb, var(--video-retention-line) 42%, transparent);
   --video-retention-grid: color-mix(in srgb, var(--on-accent, var(--text)) 66%, transparent);
-  --video-retention-control-clearance: 86px;
   --video-retention-plot-top: 28px;
   --video-retention-plot-right: 0px;
   --video-retention-plot-bottom: 0px;
@@ -7875,7 +7874,8 @@
 .videoRetentionMedia {
   background: black;
   filter: brightness(0.24) saturate(0.78) contrast(1.18);
-  object-fit: contain;
+  display: block;
+  object-fit: cover;
   object-position: center center;
 }
 
@@ -7892,12 +7892,25 @@
 
 .videoRetentionShade {
   position: absolute;
-  inset: 0;
-  z-index: 1;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, black 74%, transparent), color-mix(in srgb, black 62%, transparent) 36%, color-mix(in srgb, black 76%, transparent)),
-    linear-gradient(90deg, color-mix(in srgb, black 76%, transparent), color-mix(in srgb, black 56%, transparent) 22%, color-mix(in srgb, black 56%, transparent) 78%, color-mix(in srgb, black 76%, transparent));
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  height: min(34%, 150px);
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, black 44%, transparent) 48%,
+    color-mix(in srgb, black 78%, transparent)
+  );
+  opacity: 0;
   pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.videoRetentionChart:hover .videoRetentionShade,
+.videoRetentionChart:focus-within .videoRetentionShade {
+  opacity: 1;
 }
 
 .videoRetentionPlot {
@@ -7983,17 +7996,11 @@
 .videoRetentionPlayhead {
   position: absolute;
   top: 0;
-  bottom: var(--video-retention-control-clearance);
+  bottom: 0;
   left: clamp(0%, var(--video-retention-playhead, 0%), 100%);
-  z-index: 4;
+  z-index: 3;
   width: 2px;
-  background: linear-gradient(
-    180deg,
-    transparent,
-    color-mix(in srgb, var(--on-accent, var(--text)) 90%, var(--video-retention-line) 10%) 12%,
-    color-mix(in srgb, var(--on-accent, var(--text)) 88%, var(--video-retention-line) 12%) 78%,
-    transparent
-  );
+  background: color-mix(in srgb, var(--on-accent, var(--text)) 90%, var(--video-retention-line) 10%);
   box-shadow: 0 0 10px color-mix(in srgb, var(--video-retention-line) 38%, transparent);
   pointer-events: none;
   transform: translateX(-1px);
@@ -8036,8 +8043,21 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--surface-solid, var(--surface)) 78%, transparent);
   box-shadow: var(--shadow-xs);
+  opacity: 0;
   padding: 8px 10px;
   backdrop-filter: blur(14px);
+  pointer-events: none;
+  transform: translateY(16px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.videoRetentionChart:hover .videoRetentionControls,
+.videoRetentionChart:focus-within .videoRetentionControls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 .videoRetentionControlButton[data-btn] {
@@ -20114,7 +20134,6 @@
   }
 
   .videoRetentionChart {
-    --video-retention-control-clearance: 92px;
     --video-retention-plot-top: 22px;
     --video-retention-plot-right: 0px;
     --video-retention-plot-bottom: 0px;
@@ -20150,6 +20169,18 @@
   .sitesAnalyticsHeaderActions {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (hover: none) {
+  .videoRetentionShade,
+  .videoRetentionControls {
+    opacity: 1;
+  }
+
+  .videoRetentionControls {
+    pointer-events: auto;
+    transform: translateY(0);
   }
 }
 
