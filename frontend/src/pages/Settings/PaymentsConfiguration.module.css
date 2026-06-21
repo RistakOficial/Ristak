@@ -114,7 +114,7 @@
   color: var(--text-mute);
   font: var(--label-font);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: var(--label-spacing);
   text-transform: var(--label-transform);
 }
@@ -177,7 +177,7 @@
   color: var(--text);
   font-family: var(--num-font);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .fullWidthField {
@@ -281,7 +281,7 @@
 .switchRow strong {
   color: var(--text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .switchRow span {
@@ -342,13 +342,13 @@
   border-radius: var(--radius-ctl);
   background: var(--accent);
   color: var(--on-accent);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .previewPaymentHeader strong {
   color: var(--text);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .previewPaymentHeader p {
@@ -398,7 +398,7 @@
 .taxPreview strong {
   color: var(--text);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   text-align: right;
 }
 
@@ -413,7 +413,7 @@
   background: var(--accent);
   color: var(--on-accent);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .previewTrust {
@@ -451,7 +451,7 @@
 
 .receiptFooter {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .documentPreviewHeader {
@@ -490,7 +490,7 @@
   color: var(--text-mute);
   font: var(--label-font);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: var(--label-spacing);
   text-transform: var(--label-transform);
 }
@@ -572,7 +572,7 @@
 .paletteOptionActive strong {
   color: var(--text);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .templateOption small,
@@ -703,7 +703,7 @@
   display: block;
   color: var(--invoice-ink, CanvasText);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -748,7 +748,7 @@
   color: color-mix(in srgb, var(--invoice-ink, CanvasText) 62%, transparent);
   font: var(--label-font);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: var(--label-spacing);
   text-transform: var(--label-transform);
 }
@@ -814,7 +814,7 @@
 .documentTotals strong {
   color: var(--invoice-ink, CanvasText);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -865,7 +865,7 @@
   padding-top: 12px;
   border-top: 1px solid var(--invoice-border, ButtonBorder);
   color: var(--invoice-ink, CanvasText);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .documentThemeClassic {
@@ -987,7 +987,7 @@
   color: var(--text);
   font-family: var(--font-display);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.2;
 }
 
@@ -1080,7 +1080,7 @@
 .automationQrFallback strong {
   color: var(--text);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .automationQrFallback span {
@@ -1117,7 +1117,7 @@
   display: block;
   color: var(--text);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .summaryStrip span,
@@ -1161,7 +1161,7 @@
 .gatewayItem strong {
   color: var(--text);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -1197,7 +1197,7 @@
 .modeSelector span {
   color: var(--text-mute);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .modeSelector .modeActive {
@@ -1261,7 +1261,7 @@
   color: var(--text-mute);
   font: var(--label-font);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: var(--label-spacing);
   text-transform: var(--label-transform);
 }
@@ -1269,7 +1269,7 @@
 .connectionSummary strong {
   color: var(--text);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -1294,7 +1294,7 @@
   padding: 14px 16px;
   color: var(--text);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .manualDetails[open] {
@@ -1339,7 +1339,7 @@
   display: block;
   color: var(--text);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .webhookRow span {
