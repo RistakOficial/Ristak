@@ -135,11 +135,11 @@ const stripeModeLabels: Record<StripeModeId, { title: string; description: strin
 const mercadoPagoModeLabels: Record<MercadoPagoModeId, { title: string; description: string }> = {
   test: {
     title: 'Modo prueba',
-    description: 'Conecta Checkout Pro en sandbox para validar links y suscripciones sin cobros reales.'
+    description: 'Para usarlo, abre Mercado Pago en modo incógnito con la cuenta test que brinda la plataforma.'
   },
   live: {
     title: 'Modo en vivo',
-    description: 'Conecta la cuenta real de Mercado Pago para aceptar pagos desde Ristak.'
+    description: 'Para usarlo, abre Mercado Pago en tu navegador normal con tu cuenta real.'
   }
 }
 
