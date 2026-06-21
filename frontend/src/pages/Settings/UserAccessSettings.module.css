@@ -58,10 +58,6 @@
   padding-top: 18px;
 }
 
-.section + .section {
-  border-top: 1px solid var(--border);
-}
-
 .sectionHeader {
   display: flex;
   align-items: flex-start;
@@ -554,7 +550,7 @@
   font-weight: 500;
 }
 
-.selectedSummary span {
+.selectedIdentity > div > span {
   display: block;
   margin-top: 3px;
   color: var(--text-mute);
