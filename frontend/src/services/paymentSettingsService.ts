@@ -75,6 +75,7 @@ export interface PaymentTaxSettings {
   gigstackDefaultUnitName: string
   gigstackDefaultPaymentMethod: string
   gigstackAutomateInvoiceOnComplete: boolean
+  gigstackPortalUrl?: string
   gigstackApiToken?: string
   gigstackApiTokenPreview?: string
   hasGigstackApiToken?: boolean
@@ -168,6 +169,7 @@ export const defaultPaymentSettings: PaymentSettings = {
     gigstackDefaultUnitName: 'Unidad de Servicio',
     gigstackDefaultPaymentMethod: '99',
     gigstackAutomateInvoiceOnComplete: true,
+    gigstackPortalUrl: '',
     gigstackApiToken: '',
     gigstackApiTokenPreview: '',
     hasGigstackApiToken: false,

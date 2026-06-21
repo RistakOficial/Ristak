@@ -5,6 +5,7 @@ import {
   BellRing,
   CheckCircle,
   Clock,
+  Copy,
   CreditCard,
   ExternalLink,
   FileCheck2,
@@ -697,6 +698,51 @@ export const PaymentsConfiguration: React.FC = () => {
       gigstackApiToken: value,
       clearGigstackApiToken: false
     })
+  }
+
+  const copyTextToClipboard = async (text: string) => {
+    const value = text.trim()
+    if (!value) return false
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value)
+      } else {
+        const input = document.createElement('input')
+        input.value = value
+        document.body.appendChild(input)
+        input.select()
+        document.execCommand('copy')
+        document.body.removeChild(input)
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const handleCopyGigstackPortalUrl = async () => {
+    const portalUrl = taxes.gigstackPortalUrl?.trim() || ''
+    if (!portalUrl) {
+      showToast('warning', 'Pega primero el link', 'Agrega la URL de tu portal de Gigstack para poder copiarla.')
+      return
+    }
+
+    const copied = await copyTextToClipboard(portalUrl)
+    if (copied) {
+      showToast('success', 'Link copiado', 'Ya puedes mandarlo por WhatsApp, correo o donde te convenga.')
+    } else {
+      showToast('error', 'No se pudo copiar', 'Selecciona el campo y copia el link manualmente.')
+    }
+  }
+
+  const handleOpenGigstackPortalUrl = () => {
+    const portalUrl = taxes.gigstackPortalUrl?.trim() || ''
+    if (!portalUrl) {
+      showToast('warning', 'Falta el link', 'Pega la URL de tu portal de Gigstack antes de abrirlo.')
+      return
+    }
+    window.open(portalUrl, '_blank', 'noopener,noreferrer')
   }
 
   const handleDisconnectGigstack = () => {
@@ -2817,6 +2863,41 @@ export const PaymentsConfiguration: React.FC = () => {
               </Button>
             </div>
           )}
+          <div className={styles.gigstackPortalSection}>
+            <div className={styles.gigstackPortalHeader}>
+              <div>
+                <h4>Portal para que tus clientes facturen</h4>
+                <p>Gigstack maneja un portal que puedes compartir para que el cliente genere o consulte sus facturas. Su API también genera links seguros por cliente, pero esos links necesitan cliente específico y vencen.</p>
+              </div>
+              <Badge variant="info">Copiable</Badge>
+            </div>
+            <div className={styles.copyField}>
+              <input
+                type="url"
+                value={taxes.gigstackPortalUrl || ''}
+                onChange={(event) => setTaxValue('gigstackPortalUrl', event.target.value)}
+                placeholder="https://tuempresa.gigstack.pro"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleCopyGigstackPortalUrl}
+              >
+                <Copy size={15} />
+                Copiar
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleOpenGigstackPortalUrl}
+              >
+                <ExternalLink size={15} />
+                Abrir
+              </Button>
+            </div>
+          </div>
           <div className={styles.gigstackDefaultsGrid}>
             {renderField(
               'Clave SAT por defecto',

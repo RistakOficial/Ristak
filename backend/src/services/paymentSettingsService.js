@@ -77,6 +77,7 @@ const DEFAULT_PAYMENT_SETTINGS = {
     gigstackDefaultUnitName: 'Unidad de Servicio',
     gigstackDefaultPaymentMethod: '99',
     gigstackAutomateInvoiceOnComplete: true,
+    gigstackPortalUrl: '',
     gigstackApiTokenEncrypted: ''
   }
 }
@@ -136,6 +137,19 @@ function cleanGigstackUnitKey(value, fallback = DEFAULT_PAYMENT_SETTINGS.taxes.g
 function cleanGigstackPaymentMethod(value, fallback = DEFAULT_PAYMENT_SETTINGS.taxes.gigstackDefaultPaymentMethod) {
   const digits = cleanString(value, 2).replace(/\D/g, '')
   return digits ? digits.padStart(2, '0').slice(-2) : fallback
+}
+
+function cleanUrl(value, maxLength = 1000) {
+  const rawValue = cleanString(value, maxLength)
+  if (!rawValue) return ''
+  const withProtocol = /^https?:\/\//i.test(rawValue) ? rawValue : `https://${rawValue}`
+  try {
+    const url = new URL(withProtocol)
+    if (!['http:', 'https:'].includes(url.protocol)) return ''
+    return url.toString()
+  } catch {
+    return rawValue
+  }
 }
 
 function resolveAutomaticTaxRate(country) {
@@ -295,6 +309,7 @@ export function normalizePaymentSettings(input = {}, options = {}) {
       gigstackDefaultUnitName: cleanString(taxes.gigstackDefaultUnitName || taxes.unitName, 120) || DEFAULT_PAYMENT_SETTINGS.taxes.gigstackDefaultUnitName,
       gigstackDefaultPaymentMethod: cleanGigstackPaymentMethod(taxes.gigstackDefaultPaymentMethod || taxes.paymentMethod),
       gigstackAutomateInvoiceOnComplete: cleanBoolean(taxes.gigstackAutomateInvoiceOnComplete, DEFAULT_PAYMENT_SETTINGS.taxes.gigstackAutomateInvoiceOnComplete),
+      gigstackPortalUrl: cleanUrl(taxes.gigstackPortalUrl || taxes.customerPortalUrl || taxes.portalUrl),
       gigstackApiTokenPreview: maskSecret(gigstackToken.plain),
       hasGigstackApiToken
     }
