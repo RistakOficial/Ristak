@@ -259,6 +259,26 @@ function decryptStoredMercadoPagoConnection(connection = null) {
   }
 }
 
+function summarizeMercadoPagoModeConnection(raw = {}, mode = 'test') {
+  const normalizedMode = normalizeMode(mode)
+  const connection = getMercadoPagoModeConnection(raw, normalizedMode)
+
+  return {
+    mode: normalizedMode,
+    connected: Boolean(cleanString(connection?.userId) && cleanString(connection?.accessToken)),
+    accountLabel: cleanString(connection?.accountLabel),
+    userId: cleanString(connection?.userId),
+    publicKey: cleanString(connection?.publicKey),
+    livemode: normalizeBoolean(connection?.livemode, normalizedMode === 'live'),
+    hasAccessToken: Boolean(cleanString(connection?.accessToken)),
+    hasRefreshToken: Boolean(cleanString(connection?.refreshToken)),
+    hasWebhookSecret: Boolean(cleanString(connection?.webhookSecret)),
+    webhookUrl: cleanString(connection?.webhookUrl),
+    connectedAt: cleanString(connection?.connectedAt),
+    managedByPortal: normalizeBoolean(connection?.managedByPortal, false)
+  }
+}
+
 async function saveMercadoPagoModeConnection(mode, connection) {
   const raw = await readRawConfig()
   const connections = readMercadoPagoModeConnections(raw)
@@ -326,6 +346,10 @@ function mapConfig(raw = {}, { includeSecrets = false } = {}) {
     managedByPortal: normalizeBoolean(selectedConnection?.managedByPortal ?? raw[CONFIG_KEYS.managedByPortal], false) || isLicenseEnforced(),
     hasAccessToken: Boolean(accessToken),
     hasRefreshToken: Boolean(refreshToken),
+    modeConnections: {
+      test: summarizeMercadoPagoModeConnection(raw, 'test'),
+      live: summarizeMercadoPagoModeConnection(raw, 'live')
+    },
     ...(includeSecrets ? { accessToken, refreshToken, webhookSecret } : {})
   }
 }

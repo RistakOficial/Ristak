@@ -5,7 +5,6 @@ import {
   BellRing,
   CheckCircle,
   Clock,
-  Copy,
   CreditCard,
   ExternalLink,
   FileCheck2,
@@ -48,7 +47,7 @@ import {
   type PaymentSettings,
   type PaymentTaxSettings
 } from '@/services/paymentSettingsService'
-import { mercadoPagoPaymentsService, type MercadoPagoPaymentConfig, type MercadoPagoWebhookEndpoint } from '@/services/mercadoPagoPaymentsService'
+import { mercadoPagoPaymentsService, type MercadoPagoPaymentConfig } from '@/services/mercadoPagoPaymentsService'
 import { stripePaymentsService, type StripePaymentConfig } from '@/services/stripePaymentsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import {
@@ -81,6 +80,7 @@ type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercadopago' | 'clip'
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 type PaymentAutomationTemplateKind = 'reminder' | 'receipt' | 'failed'
 type StripeModeId = 'test' | 'live'
+type MercadoPagoModeId = 'test' | 'live'
 
 interface StripeModeCredentials {
   publishableKey: string
@@ -113,6 +113,7 @@ const sectionIds = sectionItems.map((item) => item.id)
 const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'mercadopago', 'clip']
 const GIGSTACK_API_URL = 'https://gigstack.pro/api-facturacion'
 const stripeModeIds: StripeModeId[] = ['test', 'live']
+const mercadoPagoModeIds: MercadoPagoModeId[] = ['test', 'live']
 const emptyStripeModeCredentials: Record<StripeModeId, StripeModeCredentials> = {
   test: { publishableKey: '', secretKey: '', webhookSecret: '' },
   live: { publishableKey: '', secretKey: '', webhookSecret: '' }
@@ -131,23 +132,22 @@ const stripeModeLabels: Record<StripeModeId, { title: string; description: strin
     secretPlaceholder: 'sk_live_...'
   }
 }
+const mercadoPagoModeLabels: Record<MercadoPagoModeId, { title: string; description: string }> = {
+  test: {
+    title: 'Modo prueba',
+    description: 'Conecta Checkout Pro en sandbox para validar links y suscripciones sin cobros reales.'
+  },
+  live: {
+    title: 'Modo en vivo',
+    description: 'Conecta la cuenta real de Mercado Pago para aceptar pagos desde Ristak.'
+  }
+}
 
 const taxCountryOptions = [
   { value: 'MX', label: 'México · IVA 16%' },
   { value: 'CO', label: 'Colombia · IVA 19%' },
   { value: 'CL', label: 'Chile · IVA 19%' },
   { value: 'US', label: 'Estados Unidos · automático 0%' }
-]
-
-const MERCADOPAGO_WEBHOOK_EVENTS = [
-  {
-    name: 'payment',
-    description: 'Cuando un pago cambia de estado en Mercado Pago.'
-  },
-  {
-    name: 'mp-connect',
-    description: 'Cuando la conexión OAuth de Mercado Pago cambia.'
-  }
 ]
 
 const isPaymentsSectionId = (value?: string): value is PaymentsSectionId =>
@@ -172,32 +172,6 @@ const getInitialSection = (pathname: string): PaymentsSectionId => {
 const getInitialGateway = (pathname: string): PaymentGatewayId => {
   const segment = getPaymentRouteSegment(pathname)
   return isPaymentGatewayId(segment) ? segment : 'stripe'
-}
-
-async function copyTextToClipboard(text: string) {
-  if (!text) return false
-
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch {
-      // Continúa con fallback por selección.
-    }
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.top = '0'
-  textarea.style.left = '-9999px'
-  document.body.appendChild(textarea)
-  textarea.select()
-
-  const copied = document.execCommand('copy')
-  textarea.remove()
-  return copied
 }
 
 const RECEIPT_PREVIEW_LOADING_HTML = `<!doctype html>
@@ -400,11 +374,10 @@ export const PaymentsConfiguration: React.FC = () => {
   const [stripeConnectionFailed, setStripeConnectionFailed] = useState(false)
   const [disconnectingStripeMode, setDisconnectingStripeMode] = useState<StripeModeId | null>(null)
   const [mercadoPagoConfig, setMercadoPagoConfig] = useState<MercadoPagoPaymentConfig | null>(null)
-  const [mercadoPagoMode, setMercadoPagoMode] = useState<'test' | 'live'>('live')
+  const [mercadoPagoMode, setMercadoPagoMode] = useState<MercadoPagoModeId>('live')
   const [loadingMercadoPagoConfig, setLoadingMercadoPagoConfig] = useState(false)
   const [connectingMercadoPago, setConnectingMercadoPago] = useState(false)
   const [switchingMercadoPagoMode, setSwitchingMercadoPagoMode] = useState(false)
-  const [testingMercadoPagoConfig, setTestingMercadoPagoConfig] = useState(false)
   const [disconnectingMercadoPago, setDisconnectingMercadoPago] = useState(false)
   const [uploadingReceiptLogo, setUploadingReceiptLogo] = useState(false)
   const [receiptLogoUploadProgress, setReceiptLogoUploadProgress] = useState(0)
@@ -526,8 +499,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const stripeWebhookEndpoints = stripeConfig?.webhookEndpoints || []
   const stripeConnected = Boolean(stripeConfig?.configured)
   const mercadoPagoConnected = Boolean(mercadoPagoConfig?.configured)
-  const mercadoPagoWebhookReady = Boolean(mercadoPagoConfig?.hasWebhookSecret)
-  const mercadoPagoWebhookEndpoints = mercadoPagoConfig?.webhookEndpoints || []
+  const mercadoPagoActiveMode = mercadoPagoConfig?.mode || mercadoPagoMode
   const stripeConfigurationStatus = stripeConnectionFailed
     ? 'connection_failed'
     : stripeConfig?.configurationStatus || (stripeConnected ? 'configured_manually' : 'not_configured')
@@ -544,6 +516,10 @@ export const PaymentsConfiguration: React.FC = () => {
   }
   const stripeModeIsSaved = (mode: StripeModeId) => Boolean(stripeConfig?.manualModes?.[mode]?.configured)
   const stripeModeCanSave = (mode: StripeModeId) => stripeModeIsComplete(mode)
+  const mercadoPagoModeIsConnected = (mode: MercadoPagoModeId) => Boolean(
+    mercadoPagoConfig?.modeConnections?.[mode]?.connected ||
+    (mercadoPagoConnected && mercadoPagoConfig?.mode === mode)
+  )
   const isLoadingPage = loadingSettings || loadingHighLevelConnection || loadingStripeConfig || loadingMercadoPagoConfig
   const paymentWhatsappTemplateOptions = useMemo(() => {
     const options = Object.values(paymentAutomationTemplateDefaults).map((template) => ({
@@ -980,11 +956,13 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
-  const handleConnectMercadoPago = async () => {
+  const handleConnectMercadoPago = async (mode: MercadoPagoModeId = mercadoPagoMode) => {
+    const requestedMode = mode
+    setMercadoPagoMode(requestedMode)
     setConnectingMercadoPago(true)
     try {
       const response = await mercadoPagoPaymentsService.createConnectUrl({
-        mode: mercadoPagoMode,
+        mode: requestedMode,
         returnPath: '/settings/payments/mercadopago',
         appUrl: window.location.origin
       })
@@ -995,8 +973,7 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
-  const handleMercadoPagoModeChange = async (nextLive: boolean) => {
-    const nextMode: 'test' | 'live' = nextLive ? 'live' : 'test'
+  const handleActivateMercadoPagoMode = async (nextMode: MercadoPagoModeId) => {
     const previousMode = mercadoPagoMode
     if (nextMode === previousMode) return
 
@@ -1020,18 +997,6 @@ export const PaymentsConfiguration: React.FC = () => {
     }
   }
 
-  const handleTestMercadoPagoConfig = async () => {
-    setTestingMercadoPagoConfig(true)
-    try {
-      await mercadoPagoPaymentsService.testConfig()
-      showToast('success', 'Mercado Pago respondió bien', 'Ristak puede consultar la cuenta conectada.')
-    } catch (error: any) {
-      showToast('error', 'Mercado Pago no respondió', error.message || 'Revisa la conexión OAuth.')
-    } finally {
-      setTestingMercadoPagoConfig(false)
-    }
-  }
-
   const handleDisconnectMercadoPago = async () => {
     setDisconnectingMercadoPago(true)
     try {
@@ -1044,26 +1009,6 @@ export const PaymentsConfiguration: React.FC = () => {
     } finally {
       setDisconnectingMercadoPago(false)
     }
-  }
-
-  const handleCopyMercadoPagoWebhookEndpoint = async (endpoint: MercadoPagoWebhookEndpoint) => {
-    const copied = await copyTextToClipboard(endpoint.url)
-    if (copied) {
-      showToast('success', 'Endpoint copiado', `Copiaste el webhook de ${endpoint.label}.`)
-      return
-    }
-
-    showToast('error', 'No se pudo copiar', endpoint.url)
-  }
-
-  const handleCopyMercadoPagoWebhookEvents = async () => {
-    const copied = await copyTextToClipboard(MERCADOPAGO_WEBHOOK_EVENTS.map((event) => event.name).join('\n'))
-    if (copied) {
-      showToast('success', 'Eventos copiados', 'Copiaste los eventos que debes seleccionar en Mercado Pago.')
-      return
-    }
-
-    showToast('error', 'No se pudieron copiar', 'Selecciona los eventos manualmente en Mercado Pago.')
   }
 
   const handleSectionChange = (sectionId: string) => {
@@ -2338,134 +2283,109 @@ export const PaymentsConfiguration: React.FC = () => {
           </div>
 
           <div className={styles.stripePanel}>
-            <div className={styles.modeSelector}>
-              <span className={mercadoPagoMode === 'test' ? styles.modeActive : ''}>Prueba</span>
-              <Switch
-                checked={mercadoPagoMode === 'live'}
-                onChange={handleMercadoPagoModeChange}
-                disabled={connectingMercadoPago || switchingMercadoPagoMode || testingMercadoPagoConfig}
-                aria-label="Cambiar modo de Mercado Pago"
-              />
-              <span className={mercadoPagoMode === 'live' ? styles.modeActive : ''}>En vivo</span>
-              {switchingMercadoPagoMode && <Loader2 size={14} className={styles.spinIcon} />}
-            </div>
+            <div className={styles.stripeModeGrid}>
+              {mercadoPagoModeIds.map((mode) => {
+                const modeCopy = mercadoPagoModeLabels[mode]
+                const modeConnection = mercadoPagoConfig?.modeConnections?.[mode]
+                const modeConnected = mercadoPagoModeIsConnected(mode)
+                const modeIsActive = mercadoPagoConnected && mercadoPagoActiveMode === mode
+                const modeIsConnecting = connectingMercadoPago && mercadoPagoMode === mode
+                const modeIsSwitching = switchingMercadoPagoMode && mercadoPagoMode === mode
+                const accountLabel = modeConnection?.accountLabel || (modeIsActive ? mercadoPagoConfig?.accountLabel : '') || 'Mercado Pago'
+                const userId = modeConnection?.userId || (modeIsActive ? mercadoPagoConfig?.userId : '') || 'Cuenta conectada'
+                const tokenLabel = (modeConnection?.hasRefreshToken ?? (modeIsActive ? mercadoPagoConfig?.hasRefreshToken : false)) ? 'Renovable' : 'Conectado'
 
-            <div className={styles.stripeConnectBox}>
-              <div>
-                <h3>{mercadoPagoConnected ? mercadoPagoConfig?.accountLabel || 'Mercado Pago conectado' : 'Conectar con Mercado Pago'}</h3>
-                <p>
-                  {mercadoPagoConnected
-                    ? `Ristak crea links de Mercado Pago en modo ${mercadoPagoConfig?.mode === 'live' ? 'en vivo' : 'prueba'} y escucha cambios por webhook.`
-                    : 'Al hacer clic se abrirá Mercado Pago para autorizar la cuenta. Los tokens quedan cifrados en esta instalación.'}
-                </p>
-              </div>
-              <div className={styles.actionsRow}>
-                <Button
-                  type="button"
-                  onClick={handleConnectMercadoPago}
-                  disabled={connectingMercadoPago || disconnectingMercadoPago}
-                >
-                  {connectingMercadoPago ? (
-                    <>
-                      <Loader2 size={18} className={styles.spinIcon} />
-                      Abriendo...
-                    </>
-                  ) : (
-                    <>
-                      <ExternalLink size={18} />
-                      {mercadoPagoConnected ? 'Reconectar Mercado Pago' : 'Conectar Mercado Pago'}
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-
-            {mercadoPagoConnected && (
-              <div className={styles.connectionSummary}>
-                <div>
-                  <span>Cuenta</span>
-                  <strong>{mercadoPagoConfig?.userId || 'Mercado Pago'}</strong>
-                </div>
-                <div>
-                  <span>Modo activo</span>
-                  <strong>{mercadoPagoConfig?.mode === 'live' ? 'En vivo' : 'Prueba'}</strong>
-                </div>
-                <div>
-                  <span>Token OAuth</span>
-                  <strong>{mercadoPagoConfig?.hasRefreshToken ? 'Renovable' : 'Sin refresh'}</strong>
-                </div>
-              </div>
-            )}
-
-            {mercadoPagoConnected && !mercadoPagoWebhookReady && (
-              <div className={styles.inlineWarning}>
-                <AlertTriangle size={16} />
-                <span>Mercado Pago está conectado, pero falta que esta instalación reciba el Webhook Secret para verificar firmas.</span>
-              </div>
-            )}
-
-            {mercadoPagoWebhookEndpoints.length > 0 && (
-              <div className={styles.webhookList}>
-                <h3>Endpoints para webhooks</h3>
-                {mercadoPagoWebhookEndpoints.map((endpoint) => (
-                  <div key={endpoint.url} className={styles.webhookRow}>
-                    <div>
-                      <strong>{endpoint.label}</strong>
-                      <span>{endpoint.description}</span>
+                return (
+                  <div key={mode} className={styles.stripeModePanel}>
+                    <div className={styles.stripeModeHeader}>
+                      <div>
+                        <h3>{modeCopy.title}</h3>
+                        <p>{modeCopy.description}</p>
+                      </div>
+                      <Badge variant={modeConnected ? 'success' : 'neutral'}>
+                        {modeConnected ? (modeIsActive ? 'Activo' : 'Listo') : 'Pendiente'}
+                      </Badge>
                     </div>
-                    <Button type="button" variant="secondary" size="sm" onClick={() => handleCopyMercadoPagoWebhookEndpoint(endpoint)}>
-                      <Copy size={15} />
-                      Copiar
-                    </Button>
-                  </div>
-                ))}
-                <div className={styles.actionsRow}>
-                  <Button type="button" variant="secondary" onClick={handleCopyMercadoPagoWebhookEvents}>
-                    <Copy size={16} />
-                    Copiar eventos
-                  </Button>
-                </div>
-              </div>
-            )}
 
-            <div className={styles.actionsRow}>
-              {mercadoPagoConnected && (
-                <>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={handleTestMercadoPagoConfig}
-                    disabled={testingMercadoPagoConfig}
-                  >
-                    {testingMercadoPagoConfig ? (
-                      <>
-                        <Loader2 size={18} className={styles.spinIcon} />
-                        Probando...
-                      </>
-                    ) : (
-                      'Probar conexión'
+                    {modeConnected && (
+                      <div className={styles.connectionSummary}>
+                        <div>
+                          <span>Cuenta</span>
+                          <strong>{accountLabel}</strong>
+                        </div>
+                        <div>
+                          <span>Usuario</span>
+                          <strong>{userId}</strong>
+                        </div>
+                        <div>
+                          <span>Token OAuth</span>
+                          <strong>{tokenLabel}</strong>
+                        </div>
+                      </div>
                     )}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={handleDisconnectMercadoPago}
-                    disabled={disconnectingMercadoPago || connectingMercadoPago}
-                  >
-                    {disconnectingMercadoPago ? (
-                      <>
-                        <Loader2 size={18} className={styles.spinIcon} />
-                        Desconectando...
-                      </>
-                    ) : (
-                      <>
-                        <Unplug size={18} />
-                        Desconectar
-                      </>
-                    )}
-                  </Button>
-                </>
-              )}
+
+                    <div className={styles.stripeModeActions}>
+                      {modeConnected && !modeIsActive && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleActivateMercadoPagoMode(mode)}
+                          disabled={modeIsSwitching || connectingMercadoPago || disconnectingMercadoPago}
+                        >
+                          {modeIsSwitching ? (
+                            <>
+                              <Loader2 size={15} className={styles.spinIcon} />
+                              Activando...
+                            </>
+                          ) : (
+                            'Usar este modo'
+                          )}
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleConnectMercadoPago(mode)}
+                        disabled={modeIsConnecting || connectingMercadoPago || switchingMercadoPagoMode || disconnectingMercadoPago}
+                      >
+                        {modeIsConnecting ? (
+                          <>
+                            <Loader2 size={15} className={styles.spinIcon} />
+                            Abriendo...
+                          </>
+                        ) : (
+                          <>
+                            <ExternalLink size={15} />
+                            {modeConnected ? 'Reconectar' : 'Conectar'}
+                          </>
+                        )}
+                      </Button>
+                      {modeIsActive && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleDisconnectMercadoPago}
+                          disabled={disconnectingMercadoPago || connectingMercadoPago || switchingMercadoPagoMode}
+                        >
+                          {disconnectingMercadoPago ? (
+                            <>
+                              <Loader2 size={15} className={styles.spinIcon} />
+                              Desconectando...
+                            </>
+                          ) : (
+                            <>
+                              <Unplug size={15} />
+                              Desconectar
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
         </Card>

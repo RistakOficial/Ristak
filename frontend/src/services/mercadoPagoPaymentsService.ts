@@ -8,6 +8,21 @@ export interface MercadoPagoWebhookEndpoint {
   url: string
 }
 
+export interface MercadoPagoModeConnectionStatus {
+  mode: 'test' | 'live'
+  connected: boolean
+  accountLabel?: string
+  userId?: string
+  publicKey?: string
+  livemode?: boolean
+  hasAccessToken?: boolean
+  hasRefreshToken?: boolean
+  hasWebhookSecret?: boolean
+  webhookUrl?: string
+  connectedAt?: string | null
+  managedByPortal?: boolean
+}
+
 export interface MercadoPagoPaymentConfig {
   enabled: boolean
   configured: boolean
@@ -26,6 +41,7 @@ export interface MercadoPagoPaymentConfig {
   managedByPortal?: boolean
   hasAccessToken?: boolean
   hasRefreshToken?: boolean
+  modeConnections?: Record<'test' | 'live', MercadoPagoModeConnectionStatus>
   webhookEndpointPath?: string
   webhookEndpoints?: MercadoPagoWebhookEndpoint[]
 }

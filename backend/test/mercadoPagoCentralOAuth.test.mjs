@@ -157,6 +157,11 @@ test('Mercado Pago central manda modo prueba y el cliente guarda secretos desde 
       assert.equal(config.hasAccessToken, true)
       assert.equal(config.hasRefreshToken, true)
       assert.equal(config.hasWebhookSecret, true)
+      assert.equal(config.modeConnections.test.connected, true)
+      assert.equal(config.modeConnections.test.accountLabel, 'Mercado Pago Sandbox')
+      assert.equal(config.modeConnections.test.hasRefreshToken, true)
+      assert.equal(config.modeConnections.test.hasWebhookSecret, true)
+      assert.equal(config.modeConnections.live.connected, false)
 
       const secrets = await getMercadoPagoPaymentConfig({ includeSecrets: true })
       assert.equal(secrets.accessToken, 'APP_USR-sandbox-access-token')
