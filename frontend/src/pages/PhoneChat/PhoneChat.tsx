@@ -142,6 +142,8 @@ const CHAT_READ_STATE_KEY = 'ristak_phone_chat_read_state_v1'
 const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
 const CHAT_MUTED_STATE_KEY = 'ristak_phone_chat_muted_state_v1'
 const CHAT_STARRED_MESSAGES_KEY = 'ristak_phone_chat_starred_messages_v1'
+const CHAT_FAST_START_INBOX_KEY = 'ristak_phone_chat_fast_start_inbox_v1'
+const CHAT_FAST_START_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -754,6 +756,12 @@ interface ChatContact extends Contact {
   profile_picture_url?: string | null
 }
 
+interface ChatFastStartInboxSnapshot {
+  selectedChatPhoneId: string
+  savedAt: number
+  chats: ChatContact[]
+}
+
 interface ChatReadStateItem {
   lastMessageDate: string
   messageCount: number
@@ -848,6 +856,44 @@ function readStoredChatIds(key: string) {
 function writeStoredChatIds(key: string, ids: string[]) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(key, JSON.stringify(Array.from(new Set(ids))))
+}
+
+function readChatFastStartInbox(selectedChatPhoneId: string): ChatFastStartInboxSnapshot | null {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CHAT_FAST_START_INBOX_KEY) || 'null') as Partial<ChatFastStartInboxSnapshot> | null
+    if (!parsed || typeof parsed !== 'object') return null
+    if (parsed.selectedChatPhoneId !== selectedChatPhoneId) return null
+    if (typeof parsed.savedAt !== 'number' || Date.now() - parsed.savedAt > CHAT_FAST_START_MAX_AGE_MS) {
+      window.localStorage.removeItem(CHAT_FAST_START_INBOX_KEY)
+      return null
+    }
+    if (!Array.isArray(parsed.chats)) return null
+
+    return {
+      selectedChatPhoneId,
+      savedAt: parsed.savedAt,
+      chats: parsed.chats.filter((chat): chat is ChatContact => Boolean(chat?.id)).slice(0, 80)
+    }
+  } catch {
+    window.localStorage.removeItem(CHAT_FAST_START_INBOX_KEY)
+    return null
+  }
+}
+
+function writeChatFastStartInbox(selectedChatPhoneId: string, chats: ChatContact[]) {
+  if (typeof window === 'undefined' || chats.length === 0) return
+
+  try {
+    window.localStorage.setItem(CHAT_FAST_START_INBOX_KEY, JSON.stringify({
+      selectedChatPhoneId,
+      savedAt: Date.now(),
+      chats: chats.slice(0, 80)
+    }))
+  } catch {
+    // El cache diario y la API siguen siendo fuente de verdad.
+  }
 }
 
 function createAIAgentMobileMessage(role: AIAgentMessage['role'], content: string): AIAgentMessage {
@@ -3165,8 +3211,9 @@ export const PhoneChat: React.FC = () => {
   const [wideAppointmentDefaults, setWideAppointmentDefaults] = useState<PhoneCalendarCreateRequest | null>(null)
   const [wideAppointmentContact, setWideAppointmentContact] = useState<Contact | null>(null)
   const activeRailSection = isWideChatDevice ? wideRailSection : 'chat'
-  const [chats, setChats] = useState<ChatContact[]>([])
-  const [chatsLoading, setChatsLoading] = useState(true)
+  const [initialFastStartInbox] = useState(() => readChatFastStartInbox(selectedChatPhoneId))
+  const [chats, setChats] = useState<ChatContact[]>(() => initialFastStartInbox?.chats || [])
+  const [chatsLoading, setChatsLoading] = useState(() => !initialFastStartInbox?.chats.length)
   const [chatsRefreshing, setChatsRefreshing] = useState(false)
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
@@ -3554,7 +3601,8 @@ export const PhoneChat: React.FC = () => {
   }, [])
 
   const aiAgentConversationOpen = activeContactId === AI_AGENT_CHAT_ID
-  const openAIConfigured = aiAvailability.configured
+  const agentFastStartReady = Boolean(initialAgentLiveCache?.config)
+  const openAIConfigured = aiAvailability.configured || (aiAvailability.loading && agentFastStartReady)
   const openAILoading = aiAvailability.loading
   const openAIUnavailableMessage = aiAvailability.needsReconnect
     ? 'Reconecta OpenAI para usar el agente de inteligencia artificial.'
@@ -4339,10 +4387,13 @@ export const PhoneChat: React.FC = () => {
       phoneFilterParams.businessPhone || 'all'
     )
     const cachedChats = cacheEnabled && useCache ? readPhoneDailyCache<ChatContact[]>(cacheKey) : null
-    const showedCachedChats = Boolean(cachedChats)
+    const fastStartInbox = cacheEnabled && useCache && !cachedChats ? readChatFastStartInbox(selectedChatPhoneId) : null
+    const showedCachedChats = Boolean(cachedChats || fastStartInbox)
 
-    if (cachedChats) {
-      const cachedList = Array.isArray(cachedChats.data) ? cachedChats.data : []
+    if (cachedChats || fastStartInbox) {
+      const cachedList = cachedChats
+        ? Array.isArray(cachedChats.data) ? cachedChats.data : []
+        : fastStartInbox?.chats || []
       const cachedRequestedContact = requestedContactParam
         ? cachedList.find((contact) => contact.id === requestedContactParam) || null
         : null
@@ -4379,6 +4430,7 @@ export const PhoneChat: React.FC = () => {
       const displayedChats = applyLoadedChats(nextChats, requestedContact)
       if (cacheEnabled) {
         writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
+        writeChatFastStartInbox(selectedChatPhoneId, displayedChats.slice(0, 80))
       }
     } catch {
       if (!showedCachedChats && !silentRefresh) {
@@ -4396,15 +4448,16 @@ export const PhoneChat: React.FC = () => {
     effectiveSelectedChatPhoneId,
     locationId,
     requestedContactParam,
-    selectedChatPhoneFilterActive
+    selectedChatPhoneFilterActive,
+    selectedChatPhoneId
   ])
 
   const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
-    if (!openAIConfigured || !cache) return
+    if (!cache || (!openAIConfigured && !openAILoading)) return
     setAgentConfig(cache.config)
     setAgentDefs(cache.agents)
     setAgentStates(mapAgentStatesByContactId(cache.states))
-  }, [openAIConfigured])
+  }, [openAIConfigured, openAILoading])
 
   const loadAgentData = useCallback(async (options: { includeDefinitions?: boolean } = {}) => {
     if (openAILoading) return
