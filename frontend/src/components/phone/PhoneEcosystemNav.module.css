@@ -98,11 +98,15 @@
   pointer-events: none;
 }
 
+.dock svg {
+  stroke-width: 1.9;
+}
+
 .dock span {
   max-width: 100%;
   overflow: hidden;
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: 560;
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -139,7 +143,7 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--phone-chat-surface, #ffffff) 92%, transparent);
   font-size: 11px;
   font-style: normal;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1;
 }
 

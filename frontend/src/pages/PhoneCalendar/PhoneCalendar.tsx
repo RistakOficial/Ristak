@@ -257,7 +257,11 @@ function normalizeCalendarEvent(event: any, fallbackId: string): CalendarEvent {
   }
 }
 
-export const PhoneCalendar: React.FC = () => {
+interface PhoneCalendarProps {
+  embedded?: boolean
+}
+
+export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }) => {
   const { locationId, accessToken } = useAuth()
   const { showToast } = useNotification()
   const { timezone } = useTimezone()
@@ -265,8 +269,8 @@ export const PhoneCalendar: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
 
-  const [accessState, setAccessState] = useState<AccessState>(getAccessState)
-  usePhoneElasticScroll({ enabled: accessState === 'allowed' })
+  const [accessState, setAccessState] = useState<AccessState>(() => embedded ? 'allowed' : getAccessState())
+  usePhoneElasticScroll({ enabled: !embedded && accessState === 'allowed' })
 
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [selectedCalendar, setSelectedCalendar] = useState<Calendar | null>(null)
@@ -469,10 +473,16 @@ export const PhoneCalendar: React.FC = () => {
   }, [accessToken, currentDate, locationId, selectedCalendar])
 
   useEffect(() => {
+    if (embedded) return
     document.title = 'Calendario móvil | Ristak'
-  }, [])
+  }, [embedded])
 
   useEffect(() => {
+    if (embedded) {
+      setAccessState('allowed')
+      return
+    }
+
     const updateAccess = () => setAccessState(getAccessState())
     const portableMedia = window.matchMedia(PORTABLE_WIDTH_QUERY)
     const phoneMedia = window.matchMedia(PHONE_WIDTH_QUERY)
@@ -494,10 +504,10 @@ export const PhoneCalendar: React.FC = () => {
       window.removeEventListener('orientationchange', updateAccess)
       window.visualViewport?.removeEventListener('resize', updateAccess)
     }
-  }, [])
+  }, [embedded])
 
   useEffect(() => {
-    if (accessState !== 'allowed') return
+    if (embedded || accessState !== 'allowed') return
 
     const html = document.documentElement
     const body = document.body
@@ -601,7 +611,7 @@ export const PhoneCalendar: React.FC = () => {
       body.style.overscrollBehavior = previousBodyOverscroll
       body.style.background = previousBodyBackground
     }
-  }, [accessState])
+  }, [accessState, embedded])
 
   useEffect(() => {
     if (accessState !== 'allowed') return
@@ -1197,7 +1207,12 @@ export const PhoneCalendar: React.FC = () => {
   }
 
   return (
-    <main className={styles.phonePage} data-calendar-view={calendarView} aria-label="Calendario móvil de Ristak">
+    <main
+      className={styles.phonePage}
+      data-calendar-view={calendarView}
+      data-calendar-embedded={embedded ? 'true' : undefined}
+      aria-label="Calendario móvil de Ristak"
+    >
       <PhonePageTransition active="calendar" className={styles.phoneFrame}>
         <header className={styles.header}>
           <div className={styles.headerToolbar}>
@@ -1489,7 +1504,7 @@ export const PhoneCalendar: React.FC = () => {
 	        )}
       </PhonePageTransition>
 
-      <PhoneEcosystemNav active="calendar" style={calendarNavStyle} />
+      {!embedded && <PhoneEcosystemNav active="calendar" style={calendarNavStyle} />}
 
       {sheetView && (
         <div

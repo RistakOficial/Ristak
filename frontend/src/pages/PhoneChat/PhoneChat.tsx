@@ -11795,7 +11795,7 @@ export const PhoneChat: React.FC = () => {
     const attachmentActions = [
       { label: 'Plantillas', Icon: FileText, className: styles.actionTemplate, onClick: handleOpenTemplatesSheet },
       { label: 'Fotos', Icon: ImageIcon, className: styles.actionBlue, onClick: () => handlePickPhoto('photos') },
-      { label: 'Cámara', Icon: Camera, className: styles.actionDark, onClick: () => handlePickPhoto('camera') },
+      ...(isWideChatDevice ? [] : [{ label: 'Cámara', Icon: Camera, className: styles.actionDark, onClick: () => handlePickPhoto('camera') }]),
       { label: 'Documentos', Icon: FileText, className: styles.actionSky, onClick: handlePickDocument },
       { label: 'Ubicación', Icon: MapPin, className: styles.actionGreen, onClick: () => handleUnavailableAttachment('Ubicación') },
       { label: 'CLABE', Icon: Banknote, className: styles.actionClabe, onClick: handleOpenClabeSheet }
@@ -13309,7 +13309,7 @@ export const PhoneChat: React.FC = () => {
     if (activeRailSection === 'calendar') {
       return (
         <section className={styles.wideSectionPanel} data-wide-rail-section="calendar" aria-label="Calendario">
-          <PhoneCalendar />
+          <PhoneCalendar embedded />
         </section>
       )
     }
@@ -13336,7 +13336,7 @@ export const PhoneChat: React.FC = () => {
           <div>
             <p>Pagos</p>
             <h2>Registrar pago</h2>
-            <span>{initialContact?.name ? `Para ${initialContact.name}` : 'Elige o busca el contacto dentro del formulario.'}</span>
+            <span>Busca o asigna el contacto antes de cobrar.</span>
           </div>
         </header>
 
@@ -13361,12 +13361,12 @@ export const PhoneChat: React.FC = () => {
 
         <div className={styles.widePaymentForm}>
           <RecordPaymentModal
-            key={`wide-${activePhonePaymentMode}-${initialContact?.id || 'empty'}`}
+            key={`wide-${activePhonePaymentMode}-assign-contact`}
             variant="embedded"
             isOpen
             initialPaymentMode={activePhonePaymentMode}
-            initialContact={initialContact}
-            lockInitialContact={Boolean(initialContact?.id)}
+            initialContact={null}
+            lockInitialContact={false}
             onClose={() => setWideRailSection('chat')}
             onSuccess={(context) => {
               if (context?.keepOpen) return
@@ -13700,18 +13700,20 @@ export const PhoneChat: React.FC = () => {
                               </button>
                             )}
                           </div>
-                          <div className={styles.composerTrailingActions}>
-                            <button
-                              type="button"
-                              className={`${styles.composerIconButton} ${styles.composerCameraButton}`}
-                              onClick={() => handlePickPhoto('camera')}
-                              disabled={hasComposerContent}
-                              tabIndex={hasComposerContent ? -1 : undefined}
-                              aria-hidden={hasComposerContent}
-                              aria-label="Cámara"
-                            >
-                              <Camera size={20} />
-                            </button>
+                          <div className={`${styles.composerTrailingActions} ${isWideChatDevice ? styles.composerTrailingActionsNoCamera : ''}`}>
+                            {!isWideChatDevice && (
+                              <button
+                                type="button"
+                                className={`${styles.composerIconButton} ${styles.composerCameraButton}`}
+                                onClick={() => handlePickPhoto('camera')}
+                                disabled={hasComposerContent}
+                                tabIndex={hasComposerContent ? -1 : undefined}
+                                aria-hidden={hasComposerContent}
+                                aria-label="Cámara"
+                              >
+                                <Camera size={20} />
+                              </button>
+                            )}
                             <button
                               type="button"
                               className={`${styles.composerIconButton} ${canSendMessage ? styles.composerSendButton : ''} ${voiceRecording ? styles.composerMicRecording : ''}`}

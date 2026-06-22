@@ -5013,7 +5013,7 @@
 .composerPlus svg {
   width: 31px;
   height: 31px;
-  stroke-width: 2.25;
+  stroke-width: 2;
 }
 
 .messageInputWrap {
@@ -5117,7 +5117,7 @@
 .composerIconButton svg {
   width: 29px;
   height: 29px;
-  stroke-width: 2.35;
+  stroke-width: 2;
 }
 
 .composerIconButton:disabled {
@@ -5137,9 +5137,19 @@
     gap 220ms ease;
 }
 
+.composerTrailingActionsNoCamera {
+  grid-template-columns: var(--phone-chat-composer-action);
+  min-width: var(--phone-chat-composer-action);
+}
+
 .composerHasContent .composerTrailingActions {
   grid-template-columns: 0 var(--phone-chat-composer-action);
   gap: 0;
+  min-width: var(--phone-chat-composer-action);
+}
+
+.composerHasContent .composerTrailingActionsNoCamera {
+  grid-template-columns: var(--phone-chat-composer-action);
   min-width: var(--phone-chat-composer-action);
 }
 
@@ -5180,50 +5190,66 @@
 
 .composerVoiceMode {
   grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
-  min-height: calc(112px + env(safe-area-inset-bottom));
-  padding: 8px 12px max(9px, env(safe-area-inset-bottom));
+  align-items: center;
+  min-height: calc(56px + env(safe-area-inset-bottom));
+  padding: 4px 7px max(6px, env(safe-area-inset-bottom));
 }
 
 :global(html[data-phone-chat-keyboard="true"]) .composerVoiceMode {
-  min-height: 108px;
-  padding-bottom: 8px;
+  min-height: 54px;
+  padding-bottom: 5px;
 }
 
 .voiceComposerPanel {
   display: grid;
-  grid-template-rows: auto minmax(48px, auto);
+  grid-template-columns: 34px auto minmax(92px, 1fr) 34px 42px;
+  align-items: center;
   gap: 9px;
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
+  min-height: 48px;
+  padding: 4px 5px 4px 8px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
   color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface) 96%, transparent);
+  box-shadow: 0 10px 26px rgba(var(--phone-chat-primary-rgb), 0.1);
 }
 
 .voiceComposerTrack {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  min-height: 34px;
+  display: contents;
 }
 
 .voiceComposerTime {
+  grid-column: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: var(--phone-chat-text);
-  font-size: 28px;
-  font-weight: 420;
+  font-size: 17px;
+  font-weight: 480;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   line-height: 1;
   white-space: nowrap;
 }
 
+.voiceComposerTime::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--neg, var(--color-status-error, #dc2626));
+}
+
 .voiceComposerWaveform {
   position: relative;
+  grid-column: 3;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
+  justify-content: center;
+  gap: 2.5px;
   min-width: 0;
   height: 34px;
   overflow: hidden;
@@ -5236,7 +5262,7 @@
   right: 0;
   left: 0;
   height: 1px;
-  border-top: 2px dotted rgba(97, 97, 102, 0.34);
+  border-top: 2px dotted color-mix(in srgb, var(--phone-chat-muted) 42%, transparent);
   transform: translateY(-50%);
 }
 
@@ -5244,22 +5270,22 @@
   position: relative;
   z-index: 1;
   display: block;
-  flex: 1 0 3px;
-  min-width: 3px;
-  max-width: 5px;
+  flex: 1 0 2.5px;
+  min-width: 2.5px;
+  max-width: 4px;
   height: var(--voice-bar-height);
   min-height: 4px;
   border-radius: 999px;
-  background: rgba(92, 92, 97, 0.9);
+  background: color-mix(in srgb, var(--phone-chat-muted) 86%, var(--phone-chat-text) 14%);
   transition: height 90ms linear, background-color 180ms ease, opacity 180ms ease;
 }
 
 .voiceComposerWaveformRecording .voiceComposerWaveBar {
-  background: rgba(74, 74, 79, 0.95);
+  background: color-mix(in srgb, var(--phone-chat-muted) 84%, var(--phone-chat-text) 16%);
 }
 
 .voiceComposerWaveformPlaying .voiceComposerWaveBar {
-  background: #00a884;
+  background: var(--phone-chat-accent);
 }
 
 .voiceComposerPanelProcessing .voiceComposerWaveBar {
@@ -5267,11 +5293,7 @@
 }
 
 .voiceComposerActions {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 56px;
-  align-items: center;
-  min-width: 0;
-  min-height: 52px;
+  display: contents;
 }
 
 .voiceComposerButton {
@@ -5290,41 +5312,49 @@
 }
 
 .voiceDeleteButton {
+  grid-column: 1;
   justify-self: start;
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 40px;
   color: var(--phone-chat-text);
 }
 
 .voiceDeleteButton svg {
-  stroke-width: 2.35;
+  width: 21px;
+  height: 21px;
+  stroke-width: 2;
 }
 
 .voicePauseButton {
+  grid-column: 4;
   justify-self: center;
-  width: 48px;
-  height: 48px;
-  border: 3px solid #e91149;
-  color: #e91149;
+  width: 32px;
+  height: 40px;
+  color: var(--neg, var(--color-status-error, #dc2626));
   background: transparent;
 }
 
 .voicePauseButton svg {
   fill: currentColor;
-  stroke-width: 2.6;
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.4;
 }
 
 .voiceSendAudioButton {
+  grid-column: 5;
   justify-self: end;
-  width: 52px;
-  height: 52px;
-  color: #ffffff;
-  background: #20bf6b;
-  box-shadow: 0 8px 18px rgba(32, 191, 107, 0.22);
+  width: 42px;
+  height: 42px;
+  color: var(--phone-chat-surface);
+  background: var(--phone-chat-text);
+  box-shadow: 0 8px 18px rgba(var(--phone-chat-primary-rgb), 0.18);
 }
 
 .voiceSendAudioButton svg {
   fill: currentColor;
+  width: 18px;
+  height: 18px;
   stroke-width: 2.8;
   transform: translateX(1px);
 }
@@ -5335,20 +5365,14 @@
 
 @media (max-width: 380px) {
   .composerVoiceMode {
-    padding-right: 10px;
-    padding-left: 10px;
+    padding-right: 6px;
+    padding-left: 6px;
   }
 
-  .voiceComposerTrack {
-    gap: 9px;
-  }
-
-  .voiceComposerTime {
-    font-size: 26px;
-  }
-
-  .voiceComposerWaveform {
-    gap: 2px;
+  .voiceComposerPanel {
+    grid-template-columns: 31px auto minmax(56px, 1fr) 30px 40px;
+    gap: 6px;
+    padding-left: 6px;
   }
 
   .voiceComposerWaveBar {
@@ -5356,23 +5380,17 @@
     min-width: 2px;
   }
 
-  .voiceComposerActions {
-    grid-template-columns: 50px minmax(0, 1fr) 50px;
-  }
-
   .voiceDeleteButton {
-    width: 42px;
-    height: 42px;
+    width: 30px;
   }
 
   .voicePauseButton {
-    width: 46px;
-    height: 46px;
+    width: 30px;
   }
 
   .voiceSendAudioButton {
-    width: 50px;
-    height: 50px;
+    width: 40px;
+    height: 40px;
   }
 }
 
@@ -5928,6 +5946,10 @@
   background: var(--phone-chat-accent);
 }
 
+.attachmentGrid button span svg {
+  stroke-width: 1.9;
+}
+
 .chatMoreList {
   display: grid;
   gap: 8px;
@@ -6355,7 +6377,7 @@
   max-width: 100%;
   overflow: hidden;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 560;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7991,6 +8013,8 @@
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop {
   align-items: flex-end;
   justify-content: flex-start;
+  box-sizing: border-box;
+  padding: 0 calc(clamp(18px, 3vw, 42px) + 10px) calc(76px + env(safe-area-inset-bottom));
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop::before {
@@ -8000,7 +8024,7 @@
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop .attachmentsSheet {
   width: min(360px, calc(100% - 28px));
   max-height: min(360px, calc(100% - 92px));
-  margin: 0 0 calc(68px + env(safe-area-inset-bottom)) 14px;
+  margin: 0;
   border: 1px solid var(--phone-chat-border);
   border-radius: 24px;
   box-shadow: 0 22px 54px rgba(var(--phone-chat-primary-rgb), 0.18);
@@ -8120,6 +8144,42 @@
   border: 1px solid var(--phone-chat-border);
   border-radius: 999px;
   background: color-mix(in srgb, var(--phone-chat-surface) 94%, transparent);
+  box-shadow:
+    0 18px 46px rgba(var(--phone-chat-primary-rgb), 0.12),
+    0 1px 0 color-mix(in srgb, var(--phone-chat-surface) 82%, transparent);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messageInputWrap {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerHasContent .messageInputWrap {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerInput {
+  min-height: 38px;
+  padding: 8px 4px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerVoiceMode {
+  min-height: 56px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .voiceComposerPanel {
+  min-height: 56px;
+  padding: 5px 6px 5px 10px;
   box-shadow:
     0 18px 46px rgba(var(--phone-chat-primary-rgb), 0.12),
     0 1px 0 color-mix(in srgb, var(--phone-chat-surface) 82%, transparent);
