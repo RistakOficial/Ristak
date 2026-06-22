@@ -27019,12 +27019,67 @@ const sortableTransition = {
   easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 }
 
+type BlockToolbarEdge = 'top' | 'bottom'
+
+const BLOCK_TOOLBAR_VIEWPORT_GAP = 44
+
 const sortableAnimateLayoutChanges: AnimateLayoutChanges = (args) => {
   if (args.isSorting || args.wasDragging) {
     return defaultAnimateLayoutChanges(args)
   }
 
   return false
+}
+
+const getBlockToolbarEdge = (element: HTMLElement | null): BlockToolbarEdge => {
+  if (!element || typeof window === 'undefined') return 'top'
+
+  const rect = element.getBoundingClientRect()
+  const viewport = element.closest('.canvasViewport') as HTMLElement | null
+  const viewportRect = viewport?.getBoundingClientRect()
+  const visibleTop = Math.max(0, viewportRect?.top ?? 0)
+  const visibleBottom = Math.min(window.innerHeight, viewportRect?.bottom ?? window.innerHeight)
+  const topRoom = rect.top - visibleTop
+  const bottomRoom = visibleBottom - rect.bottom
+
+  if (topRoom < BLOCK_TOOLBAR_VIEWPORT_GAP && bottomRoom > topRoom) return 'bottom'
+  return 'top'
+}
+
+const useBlockToolbarEdge = <T extends HTMLElement>(
+  elementRef: React.RefObject<T | null>,
+  active: boolean
+) => {
+  const [toolbarEdge, setToolbarEdge] = useState<BlockToolbarEdge>('top')
+
+  const updateToolbarEdge = useCallback(() => {
+    const nextEdge = getBlockToolbarEdge(elementRef.current)
+    setToolbarEdge(current => current === nextEdge ? current : nextEdge)
+  }, [elementRef])
+
+  useLayoutEffect(() => {
+    if (!active) return
+
+    updateToolbarEdge()
+
+    const element = elementRef.current
+    const viewport = element?.closest('.canvasViewport') as HTMLElement | null
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateToolbarEdge)
+
+    if (element) observer?.observe(element)
+    if (viewport) observer?.observe(viewport)
+
+    window.addEventListener('resize', updateToolbarEdge)
+    window.addEventListener('scroll', updateToolbarEdge, true)
+
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', updateToolbarEdge)
+      window.removeEventListener('scroll', updateToolbarEdge, true)
+    }
+  }, [active, elementRef, updateToolbarEdge])
+
+  return [toolbarEdge, updateToolbarEdge] as const
 }
 
 const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
@@ -27053,15 +27108,21 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   onSave
 }) => {
   const videoActionHiddenNote = videoActionHiddenNotes?.get(block.id) || ''
+  const blockRef = useRef<HTMLDivElement | null>(null)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: block.id,
     animateLayoutChanges: sortableAnimateLayoutChanges,
     transition: sortableTransition
   })
+  const [toolbarEdge, updateToolbarEdge] = useBlockToolbarEdge(blockRef, selected)
+  const setBlockNodeRef = useCallback((node: HTMLDivElement | null) => {
+    blockRef.current = node
+    setNodeRef(node)
+  }, [setNodeRef])
 
   return (
 	    <div
-	      ref={setNodeRef}
+	      ref={setBlockNodeRef}
 	      data-rstk-block-id={block.id}
 	      data-rstk-block-index={index}
 	      data-rstk-page-block={isPanelBlock(block) ? 'true' : undefined}
@@ -27072,7 +27133,9 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         zIndex: isDragging ? 8 : undefined,
         ...getBlockCanvasStyle(block)
       }}
-      className={getBlockStyleClassName(block, `rstkSel ${selected ? 'rstkSelActive' : ''} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === block.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`)}
+      className={getBlockStyleClassName(block, `rstkSel ${selected ? 'rstkSelActive' : ''} ${toolbarEdge === 'bottom' ? 'rstkBlockToolsBelow' : ''} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === block.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`)}
+      onPointerEnter={updateToolbarEdge}
+      onPointerDown={updateToolbarEdge}
       onClick={(event) => {
         event.stopPropagation()
         onSelect()
@@ -27674,7 +27737,8 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
   const settings = section.settings || {}
   const selected = selectedBlockId === section.id
   const videoActionHiddenNote = videoActionHiddenNotes?.get(section.id) || ''
-  const [toolbarEdge, setToolbarEdge] = useState<'top' | 'bottom'>('top')
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const [toolbarEdge, updateToolbarEdge] = useBlockToolbarEdge(sectionRef, selected)
   const moveState = getBlockMoveState(section)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: section.id,
@@ -27682,23 +27746,20 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
     transition: sortableTransition
   })
   const hasHeading = Boolean(section.content || getSettingString(settings, 'subtitle'))
-  const updateToolbarEdge = useCallback((event: React.PointerEvent<HTMLElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    const distanceToTop = Math.abs(event.clientY - rect.top)
-    const distanceToBottom = Math.abs(rect.bottom - event.clientY)
-    const nextEdge = distanceToBottom < distanceToTop ? 'bottom' : 'top'
-    setToolbarEdge(current => current === nextEdge ? current : nextEdge)
-  }, [])
+  const setSectionNodeRef = useCallback((node: HTMLElement | null) => {
+    sectionRef.current = node
+    setNodeRef(node)
+  }, [setNodeRef])
 
   return (
 	    <section
-	      ref={setNodeRef}
+	      ref={setSectionNodeRef}
 	      data-rstk-block-id={section.id}
 	      data-rstk-block-index={blockIndexById.get(section.id) ?? 0}
 	      data-rstk-page-block="true"
 	      data-rstk-section-index={blockIndexById.get(section.id) ?? 0}
       data-rstk-section-id={section.id}
-      className={getBlockStyleClassName(section, `rstk-section-lane rstkSel ${selected ? 'rstkSelActive' : ''} ${toolbarEdge === 'bottom' ? 'rstkSectionToolsBottom' : ''} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === section.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`)}
+      className={getBlockStyleClassName(section, `rstk-section-lane rstkSel ${selected ? 'rstkSelActive' : ''} ${toolbarEdge === 'bottom' ? 'rstkBlockToolsBelow' : ''} ${isDragging ? 'rstkSelDragging' : ''} ${videoActionHoverTargetId === section.id ? 'rstkVideoActionHover' : ''} ${videoActionHiddenNote ? 'rstkVideoActionGhost' : ''}`)}
       style={{
         transform: CSS.Transform.toString(transform),
 	        transition: transition || 'transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1)',
@@ -27706,9 +27767,8 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
         zIndex: isDragging ? 8 : undefined,
         ...getBlockCanvasStyle(section)
       }}
-      onPointerEnter={updateToolbarEdge}
-      onPointerMove={updateToolbarEdge}
       onPointerDown={updateToolbarEdge}
+      onPointerEnter={updateToolbarEdge}
       onClick={(event) => {
         event.stopPropagation()
         onSelectBlock(section.id)
