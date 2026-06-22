@@ -17615,6 +17615,7 @@
   --sites-editor-border-strong: var(--design-control-border-hover, rgba(148, 163, 184, 0.58));
   --sites-editor-section-border: var(--design-section-border, rgba(203, 213, 225, 0.68));
   --sites-editor-focus-shadow: var(--design-control-focus-shadow, 0 0 0 3px rgba(var(--color-primary-rgb), 0.12));
+  --sites-inspector-panel-bg: var(--design-sidebar-bg, var(--color-background-secondary));
 }
 
 .pageFrame .containerFocused .sitesShellFocused .propertiesPanel {
@@ -17622,8 +17623,13 @@
 }
 
 .pageFrame .containerFocused .sitesShellFocused .inspectorStickyTop {
-  border-bottom: 0;
-  background: transparent;
+  z-index: 12;
+  border-bottom: 1px solid var(--sites-editor-section-border);
+  background: var(--sites-inspector-panel-bg);
+}
+
+.pageFrame .containerFocused .sitesShellFocused .inspectorStickyTop :global([data-ristak-tablist]) {
+  background: var(--sites-editor-control-bg);
 }
 
 .pageFrame .containerFocused .sitesShellFocused .inspectorStickyTop .panelHeader span {

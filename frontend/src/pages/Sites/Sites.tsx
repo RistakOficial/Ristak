@@ -2968,25 +2968,6 @@ const getVideoOrientationFromDimensions = (width?: unknown, height?: unknown): E
   return numericHeight > numericWidth ? 'portrait' : 'landscape'
 }
 
-const getVideoOrientationFromAsset = (asset?: MediaAsset | null): Exclude<VideoOrientation, 'auto'> | '' => {
-  if (!asset) return ''
-  const directOrientation = getVideoOrientationFromDimensions(asset.width, asset.height)
-  if (directOrientation) return directOrientation
-
-  const stream = asset.metadata?.stream
-  if (stream && typeof stream === 'object') {
-    const video = (stream as { video?: unknown }).video
-    if (video && typeof video === 'object') {
-      return getVideoOrientationFromDimensions(
-        (video as { width?: unknown }).width,
-        (video as { height?: unknown }).height
-      )
-    }
-  }
-
-  return ''
-}
-
 const getVideoOrientation = (settings: Record<string, unknown> = {}): VideoOrientation => {
   const value = getSettingString(settings, 'videoOrientation')
   return isVideoOrientation(value) ? value : DEFAULT_VIDEO_ORIENTATION
@@ -3055,10 +3036,9 @@ const withDefaultVideoPlayerSettings = (settings: Record<string, unknown> = {}) 
 
 const withUploadedVideoSettings = (
   settings: Record<string, unknown> = {},
-  mediaUrl: string,
-  asset?: MediaAsset | null
+  mediaUrl: string
 ) => {
-  const orientation = getVideoOrientationFromAsset(asset)
+  const orientation = getVideoOrientation(settings)
   const currentMediaWidth = Number(settings.mediaWidth)
   const shouldSetPortraitWidth = orientation === 'portrait' && (!Number.isFinite(currentMediaWidth) || currentMediaWidth >= 90)
   const shouldResetLandscapeWidth = orientation === 'landscape' && isDefaultVideoPortraitMediaWidth(currentMediaWidth)
@@ -3066,7 +3046,7 @@ const withUploadedVideoSettings = (
   return {
     ...withDefaultVideoPlayerSettings(settings),
     mediaUrl,
-    ...(orientation ? { videoOrientation: orientation } : {}),
+    videoOrientation: orientation,
     ...(shouldSetPortraitWidth ? { mediaWidth: DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH } : {}),
     ...(shouldResetLandscapeWidth ? { mediaWidth: 100 } : {})
   }
@@ -6601,10 +6581,10 @@ function FormEmbedEditorPanel({
             label={mediaKind === 'image' ? 'Elegir imagen' : 'Elegir video'}
             moduleEntityId={site.id}
             currentUrl={mediaUrl}
-            onUploaded={(url, asset) => patchActiveField({
+            onUploaded={(url) => patchActiveField({
               content: url,
               settings: mediaKind === 'video'
-                ? withUploadedVideoSettings(activeFieldSettings, url, asset)
+                ? withUploadedVideoSettings(activeFieldSettings, url)
                 : { ...activeFieldSettings, mediaUrl: url }
             })}
             onCommit={onSave}
@@ -19506,13 +19486,13 @@ const ImportedHtmlEditorPanel: React.FC<{
               label="Elegir video"
               moduleEntityId={site.id}
               currentUrl={codeElementEditor.mediaUrl || codeElementEditor.value}
-              onUploaded={(url, asset) => {
+              onUploaded={(url) => {
                 setCodeElementEditor(current => current ? {
                   ...current,
                   mediaUrl: url,
                   value: url,
                   videoSettings: current.editType === 'video'
-                    ? cleanImportedVideoSettings(withUploadedVideoSettings(current.videoSettings || {}, url, asset), url)
+                    ? cleanImportedVideoSettings(withUploadedVideoSettings(current.videoSettings || {}, url), url)
                     : current.videoSettings
                 } : current)
               }}
@@ -19652,11 +19632,11 @@ const ImportedHtmlEditorPanel: React.FC<{
                   label="Elegir video"
                   moduleEntityId={site.id}
                   currentUrl={videoEditor.value}
-                  onUploaded={(url, asset) => {
+                  onUploaded={(url) => {
                     setImportedVideoEditorState(current => current ? {
                       ...current,
                       value: url,
-                      settings: cleanImportedVideoSettings(withUploadedVideoSettings(current.settings, url, asset), url)
+                      settings: cleanImportedVideoSettings(withUploadedVideoSettings(current.settings, url), url)
                     } : current)
                   }}
                 />
@@ -34769,8 +34749,8 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           label={mediaKind === 'image' ? 'Elegir imagen' : 'Elegir video'}
           moduleEntityId={site.id}
           currentUrl={getSettingString(settings, 'mediaUrl')}
-          onUploaded={(url, asset) => onPatchSettings(mediaKind === 'video'
-            ? withUploadedVideoSettings(settings, url, asset)
+          onUploaded={(url) => onPatchSettings(mediaKind === 'video'
+            ? withUploadedVideoSettings(settings, url)
             : { mediaUrl: url })}
           onCommit={onSave}
         />
