@@ -3205,6 +3205,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [resettingAgentSkipsId, setResettingAgentSkipsId] = useState<string | null>(null)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => routeAgentId || null)
   const [providerModalId, setProviderModalId] = useState<ConversationalAIProviderId | null>(null)
   const [aiProvidersExpanded, setAIProvidersExpanded] = useState(false)
@@ -3495,6 +3496,43 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     )
   }
 
+  const handleResetAgentSkippedContacts = (agent: ConversationalAgentDef) => {
+    const skippedCount = metrics?.byAgent.find((item) => item.agentId === agent.id)?.skippedConversations
+    if (skippedCount === 0) {
+      showToast('info', 'Sin omisiones', `${agent.name || 'Este agente'} no tiene contactos omitidos.`)
+      return
+    }
+
+    const resetMessage = skippedCount === undefined
+      ? 'Los contactos omitidos volverán a estar activos para que este agente pueda atenderlos otra vez.'
+      : `${skippedCount === 1 ? 'El contacto omitido volverá' : `Los ${formatMetricInteger(skippedCount)} contactos omitidos volverán`} a estar activo${skippedCount === 1 ? '' : 's'} para que este agente pueda atenderlos otra vez.`
+
+    showConfirm(
+      `Reiniciar omisiones de "${agent.name || 'Agente sin nombre'}"`,
+      resetMessage,
+      async () => {
+        setResettingAgentSkipsId(agent.id)
+        try {
+          const result = await conversationalAgentService.resetAgentSkippedContacts(agent.id)
+          void refreshMetrics()
+          showToast(
+            result.resetCount > 0 ? 'success' : 'info',
+            result.resetCount > 0 ? 'Omisiones reiniciadas' : 'Sin omisiones',
+            result.resetCount === 1
+              ? '1 contacto volvió a estar activo para este agente.'
+              : `${formatMetricInteger(result.resetCount)} contactos volvieron a estar activos para este agente.`
+          )
+        } catch (error: any) {
+          showToast('error', 'No se pudo reiniciar', error?.message || 'Inténtalo otra vez.')
+        } finally {
+          setResettingAgentSkipsId(null)
+        }
+      },
+      'Reiniciar',
+      'Cancelar'
+    )
+  }
+
   const systemStrategy = config?.systemClosingStrategy || ''
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) || null : null
   const metricsByAgentId = new Map((metrics?.byAgent || []).map((item) => [item.agentId, item]))
@@ -3762,6 +3800,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             const modelLabel = getConversationalModelLabel(agent.aiProvider, agent.model)
             const entryRules = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
             const agentMetrics = metricsByAgentId.get(agent.id)
+            const skippedCount = agentMetrics?.skippedConversations ?? 0
+            const resettingSkips = resettingAgentSkipsId === agent.id
 
             return (
               <div
@@ -3805,6 +3845,16 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
                   >
                     {agent.enabled ? <Pause size={15} /> : <Play size={15} />}
                     {agent.enabled ? 'Pausar' : 'Publicar'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => handleResetAgentSkippedContacts(agent)}
+                    loading={resettingSkips}
+                    disabled={Boolean(agentMetrics && skippedCount === 0)}
+                    title={agentMetrics && skippedCount === 0 ? 'Sin contactos omitidos' : 'Reiniciar omisiones de contactos'}
+                  >
+                    <RotateCcw size={15} />
+                    Reiniciar omisiones
                   </Button>
                   <Button variant="ghost" onClick={() => handleDeleteAgent(agent)}>
                     <Trash2 size={15} />

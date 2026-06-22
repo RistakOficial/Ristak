@@ -17,6 +17,7 @@ import {
   createConversationalAgent,
   updateConversationalAgent,
   deleteConversationalAgent,
+  resetConversationalAgentSkippedContacts,
   listAgentFilterOptions,
   completeConversationGoalLinkFromWebhook
 } from '../services/conversationalAgentService.js'
@@ -429,6 +430,22 @@ export async function deleteAgent(req, res) {
   } catch (error) {
     logger.error('Error eliminando agente conversacional:', error)
     res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al eliminar el agente' })
+  }
+}
+
+export async function resetAgentSkippedContacts(req, res) {
+  try {
+    const result = await resetConversationalAgentSkippedContacts(req.params?.agentId, { updatedBy: 'user' })
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Agente conversacional no encontrado' })
+    }
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error('Error reiniciando omisiones del agente conversacional:', error)
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'Error al reiniciar las omisiones del agente'
+    })
   }
 }
 

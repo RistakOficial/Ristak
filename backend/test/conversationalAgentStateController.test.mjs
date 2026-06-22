@@ -10,6 +10,8 @@ import {
   getConversationState,
   listConversationStates,
   listConversationalAgentEvents,
+  resetConversationalAgentSkippedContacts,
+  setConversationStatus,
   setConversationSignal
 } from '../src/services/conversationalAgentService.js'
 
@@ -229,6 +231,59 @@ test('omitir una conversación conserva el estado en la lista de omitidos', asyn
     assert.equal(skipped?.activationSource, 'manual')
   } finally {
     await cleanup(contactId)
+  }
+})
+
+test('reinicia las omisiones de contactos de un agente sin tocar otros estados', async () => {
+  const skippedContactA = `conversation_agent_reset_skipped_a_${randomUUID()}`
+  const skippedContactB = `conversation_agent_reset_skipped_b_${randomUUID()}`
+  const pausedContact = `conversation_agent_reset_paused_${randomUUID()}`
+  const otherAgentContact = `conversation_agent_reset_other_${randomUUID()}`
+  let agentId = ''
+  let otherAgentId = ''
+
+  try {
+    const agent = await createConversationalAgent({
+      name: 'Agente omisiones test',
+      enabled: false,
+      objective: 'citas'
+    })
+    const otherAgent = await createConversationalAgent({
+      name: 'Agente omisiones externo',
+      enabled: false,
+      objective: 'ventas'
+    })
+    agentId = agent.id
+    otherAgentId = otherAgent.id
+
+    await assignAgentToConversation(skippedContactA, agentId, { activationSource: 'automatic', updatedBy: 'agent' })
+    await assignAgentToConversation(skippedContactB, agentId, { activationSource: 'automatic', updatedBy: 'agent' })
+    await assignAgentToConversation(pausedContact, agentId, { activationSource: 'automatic', updatedBy: 'agent' })
+    await assignAgentToConversation(otherAgentContact, otherAgentId, { activationSource: 'automatic', updatedBy: 'agent' })
+    await setConversationStatus(skippedContactA, 'skipped', { updatedBy: 'user' })
+    await setConversationStatus(skippedContactB, 'skipped', { updatedBy: 'user' })
+    await setConversationStatus(pausedContact, 'paused', { updatedBy: 'user' })
+    await setConversationStatus(otherAgentContact, 'skipped', { updatedBy: 'user' })
+
+    const result = await resetConversationalAgentSkippedContacts(agentId, { updatedBy: 'user' })
+
+    assert.deepEqual(result, { agentId, resetCount: 2 })
+    assert.equal((await getConversationState(skippedContactA))?.status, 'active')
+    assert.equal((await getConversationState(skippedContactB))?.status, 'active')
+    assert.equal((await getConversationState(pausedContact))?.status, 'paused')
+    assert.equal((await getConversationState(otherAgentContact))?.status, 'skipped')
+
+    const events = await listConversationalAgentEvents({ contactId: skippedContactA })
+    assert.ok(events.some((event) => (
+      event.eventType === 'status_changed' &&
+      event.detail?.reason === 'agent_skips_reset' &&
+      event.detail?.agentId === agentId
+    )))
+  } finally {
+    await cleanup(skippedContactA, agentId)
+    await cleanup(skippedContactB)
+    await cleanup(pausedContact)
+    await cleanup(otherAgentContact, otherAgentId)
   }
 })
 

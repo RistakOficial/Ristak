@@ -12,6 +12,7 @@ import {
   createAgent,
   updateAgent,
   deleteAgent,
+  resetAgentSkippedContacts,
   getFilterOptions,
   listAIProviders,
   connectAIProvider,
@@ -37,6 +38,7 @@ router.get('/metrics', getMetrics)
 router.get('/filter-options', getFilterOptions)
 router.post('/agents', createAgent)
 router.put('/agents/:agentId', updateAgent)
+router.post('/agents/:agentId/reset-skipped', resetAgentSkippedContacts)
 router.delete('/agents/:agentId', deleteAgent)
 router.get('/states', listStates)
 router.get('/states/:contactId', getState)

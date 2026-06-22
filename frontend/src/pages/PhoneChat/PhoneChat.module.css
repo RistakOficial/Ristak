@@ -1959,6 +1959,7 @@
 }
 
 .aiAgentHubPowerButton,
+.aiAgentHubResetButton,
 .aiAgentHubAgentsButton {
   display: inline-flex;
   align-items: center;
@@ -1975,7 +1976,12 @@
   font-weight: 840;
 }
 
+.aiAgentHubResetButton {
+  grid-column: 1 / -1;
+}
+
 .aiAgentHubPowerButton span,
+.aiAgentHubResetButton span,
 .aiAgentHubAgentsButton span {
   min-width: 0;
   overflow: hidden;
@@ -1990,6 +1996,7 @@
 }
 
 .aiAgentHubPowerButton:disabled,
+.aiAgentHubResetButton:disabled,
 .aiAgentHubAgentsButton:disabled {
   opacity: 0.58;
 }
@@ -9763,8 +9770,10 @@
 }
 
 .agentListToggle,
+.agentListReset,
 .agentListMore,
-.agentPublishButton {
+.agentPublishButton,
+.agentDetailResetButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -9777,10 +9786,16 @@
   font-weight: 820;
 }
 
-.agentListToggle {
+.agentListToggle,
+.agentListReset,
+.agentDetailResetButton {
   border: 1px solid var(--phone-chat-border);
   color: var(--phone-chat-text);
   background: var(--phone-chat-surface-soft);
+}
+
+.agentListReset {
+  grid-column: 1 / -1;
 }
 
 .agentListMore,
@@ -9791,6 +9806,8 @@
 }
 
 .agentListToggle:disabled,
+.agentListReset:disabled,
+.agentDetailResetButton:disabled,
 .agentPublishButton:disabled {
   opacity: 0.55;
 }

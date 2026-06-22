@@ -2417,6 +2417,58 @@ export async function deleteConversationalAgent(agentId) {
   return true
 }
 
+export async function resetConversationalAgentSkippedContacts(agentId, { updatedBy = 'user' } = {}) {
+  const cleanAgentId = String(agentId || '').trim()
+  if (!cleanAgentId) {
+    throw Object.assign(new Error('Agente conversacional inválido'), { statusCode: 400 })
+  }
+
+  await ensureAgentsMigration()
+  const agent = await getConversationalAgent(cleanAgentId)
+  if (!agent) return null
+
+  const rows = await db.all(`
+    SELECT contact_id
+    FROM conversational_agent_state
+    WHERE agent_id = ?
+      AND status = 'skipped'
+  `, [cleanAgentId])
+  const contactIds = rows.map((row) => row.contact_id).filter(Boolean)
+  if (!contactIds.length) {
+    return { agentId: cleanAgentId, resetCount: 0 }
+  }
+
+  const cleanUpdatedBy = String(updatedBy || 'user').trim() || 'user'
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET status = 'active',
+        paused_until_at = NULL,
+        updated_by = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE agent_id = ?
+      AND status = 'skipped'
+  `, [cleanUpdatedBy, cleanAgentId])
+
+  await Promise.all(contactIds.map((contactId) => recordConversationalAgentEvent({
+    contactId,
+    eventType: 'status_changed',
+    detail: {
+      status: 'active',
+      previousStatus: 'skipped',
+      updatedBy: cleanUpdatedBy,
+      reason: 'agent_skips_reset',
+      agentId: cleanAgentId
+    }
+  }).catch(() => undefined)))
+
+  await recordConversationalAgentEvent({
+    eventType: 'agent_skips_reset',
+    detail: { agentId: cleanAgentId, name: agent.name, resetCount: contactIds.length, updatedBy: cleanUpdatedBy }
+  }).catch(() => undefined)
+
+  return { agentId: cleanAgentId, resetCount: contactIds.length }
+}
+
 function normalizeMatchText(value) {
   return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
 }

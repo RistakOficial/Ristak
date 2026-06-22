@@ -1306,12 +1306,13 @@
 .agentDirectoryActions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 0 14px 14px;
 }
 
 .agentDirectoryActions button {
-  flex: 1 1 0;
+  flex: 1 1 136px;
   min-width: 0;
 }
 

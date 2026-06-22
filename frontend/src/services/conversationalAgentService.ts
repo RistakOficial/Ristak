@@ -384,6 +384,11 @@ export interface ConversationalAgentMetrics {
   byAgent: ConversationalAgentMetricByAgent[]
 }
 
+export interface ResetAgentSkippedContactsResult {
+  agentId: string
+  resetCount: number
+}
+
 export interface ConversationalAgentLiveCache {
   config: ConversationalAgentConfig | null
   states: ConversationAgentState[]
@@ -886,6 +891,24 @@ export const conversationalAgentService = {
         agents: current.agents.filter((agent) => agent.id !== agentId)
       }, { notify: true })
     }
+  },
+
+  async resetAgentSkippedContacts(agentId: string): Promise<ResetAgentSkippedContactsResult> {
+    const result = await request<ResetAgentSkippedContactsResult>(`/agents/${encodeURIComponent(agentId)}/reset-skipped`, {
+      method: 'POST'
+    })
+    const current = readConversationalAgentLiveCache()
+    if (current) {
+      const updatedAt = new Date().toISOString()
+      writeConversationalAgentLiveCache({
+        states: current.states.map((state) => (
+          state.agentId === agentId && state.status === 'skipped'
+            ? { ...state, status: 'active', pausedUntilAt: null, updatedBy: 'user', updatedAt }
+            : state
+        ))
+      }, { notify: true })
+    }
+    return result
   },
 
   async listStates(params: { signal?: string; statuses?: string[] } = {}): Promise<ConversationAgentState[]> {

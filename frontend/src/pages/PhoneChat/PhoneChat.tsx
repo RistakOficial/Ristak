@@ -3261,7 +3261,7 @@ export const PhoneChat: React.FC = () => {
   const customersLabel = labels.customers?.trim() || 'Clientes'
   const leadsLabel = labels.leads?.trim() || 'Interesados'
   const customerSentenceLabel = formatSentenceLabel(customerLabel)
-  const { showToast } = useNotification()
+  const { showToast, showConfirm } = useNotification()
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
@@ -3328,6 +3328,7 @@ export const PhoneChat: React.FC = () => {
   const [agentMenuSection, setAgentMenuSection] = useState<AgentMenuSection>('menu')
   const [selectedAgentId, setSelectedAgentId] = useState(() => initialAgentLiveCache?.agents?.[0]?.id || '')
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
+  const [resettingAgentSkipsId, setResettingAgentSkipsId] = useState<string | null>(null)
   const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MUTED_STATE_KEY))
@@ -4278,6 +4279,14 @@ export const PhoneChat: React.FC = () => {
 
     return counts
   }, [agentStateLists, agentStates, aiAgentHubSourceChats, archivedChatIdSet])
+  const agentSkippedContactCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    allAgentStates.forEach((state) => {
+      if (!state.agentId || state.status !== 'skipped') return
+      counts.set(state.agentId, (counts.get(state.agentId) || 0) + 1)
+    })
+    return counts
+  }, [allAgentStates])
   const agentHubChatRows = useMemo(() => {
     const normalizedQuery = aiAgentHubQuery.trim().toLowerCase()
 
@@ -4598,25 +4607,24 @@ export const PhoneChat: React.FC = () => {
     selectedChatPhoneId
   ])
 
-	  const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
-	    if (!cache || (!openAIConfigured && !openAILoading)) return
-	    setAgentConfig(cache.config)
-	    setAgentDefs(cache.agents)
-	    setAgentStates(mapAgentStatesByContactId(cache.states))
-	    setAgentStateLists(mapAgentStateListsByContactId(cache.states))
-	  }, [openAIConfigured, openAILoading])
+  const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
+    if (!cache || (!openAIConfigured && !openAILoading)) return
+    setAgentConfig(cache.config)
+    setAgentDefs(cache.agents)
+    setAgentStates(mapAgentStatesByContactId(cache.states))
+    setAgentStateLists(mapAgentStateListsByContactId(cache.states))
+  }, [openAIConfigured, openAILoading])
 
   const loadAgentData = useCallback(async (options: { includeDefinitions?: boolean } = {}) => {
     if (openAILoading) return
 
-	    if (!openAIConfigured) {
-	    setAgentConfig(null)
-	    setAgentDefs([])
-	    setAgentStates({})
-	    setAgentStateLists({})
-	      setAgentStateLists({})
-	      return
-	    }
+    if (!openAIConfigured) {
+      setAgentConfig(null)
+      setAgentDefs([])
+      setAgentStates({})
+      setAgentStateLists({})
+      return
+    }
 
     const requestGeneration = agentLoadGenerationRef.current + 1
     agentLoadGenerationRef.current = requestGeneration
@@ -4631,10 +4639,10 @@ export const PhoneChat: React.FC = () => {
           : Promise.resolve(null)
       ])
       if (agentLoadGenerationRef.current !== requestGeneration) return
-	      setAgentConfig(config)
-	      if (defs) setAgentDefs(defs)
-	      setAgentStates(mapAgentStatesByContactId(states))
-	      setAgentStateLists(mapAgentStateListsByContactId(states))
+      setAgentConfig(config)
+      if (defs) setAgentDefs(defs)
+      setAgentStates(mapAgentStatesByContactId(states))
+      setAgentStateLists(mapAgentStateListsByContactId(states))
     } catch {
       // El agente conversacional puede no estar disponible (feature apagada);
       // el chat sigue funcionando normal sin él.
@@ -4689,27 +4697,81 @@ export const PhoneChat: React.FC = () => {
     }
   }, [showToast, updateAgentDraft])
 
-	  const handleAgentStateAction = useCallback(async (
-	    contactId: string,
-	    action: ConversationStateAction,
-	    successMessage: string,
-	    options: { agentId?: string } = {}
-	  ) => {
-	    try {
-	      const state = await conversationalAgentService.updateState(contactId, action, options)
-	      setAgentStateLists((current) => ({
-	        ...current,
-	        [contactId]: upsertAgentStateList(current[contactId] || [], state)
-	      }))
-	      setAgentStates((current) => ({
-	        ...current,
-	        [contactId]: selectPrimaryAgentState([state, current[contactId]].filter(Boolean) as ConversationAgentState[]) || state
-	      }))
-	      showToast('success', 'Agente conversacional', successMessage)
-	    } catch (error: any) {
-	      showToast('error', 'Agente conversacional', error?.message || 'No se pudo actualizar la conversación')
+  const handleAgentStateAction = useCallback(async (
+    contactId: string,
+    action: ConversationStateAction,
+    successMessage: string,
+    options: { agentId?: string } = {}
+  ) => {
+    try {
+      const state = await conversationalAgentService.updateState(contactId, action, options)
+      setAgentStateLists((current) => ({
+        ...current,
+        [contactId]: upsertAgentStateList(current[contactId] || [], state)
+      }))
+      setAgentStates((current) => ({
+        ...current,
+        [contactId]: selectPrimaryAgentState([state, current[contactId]].filter(Boolean) as ConversationAgentState[]) || state
+      }))
+      showToast('success', 'Agente conversacional', successMessage)
+    } catch (error: any) {
+      showToast('error', 'Agente conversacional', error?.message || 'No se pudo actualizar la conversación')
     }
   }, [showToast])
+
+  const handleResetAgentSkippedContacts = useCallback((agent: ConversationalAgentDef) => {
+    const skippedCount = agentSkippedContactCounts.get(agent.id) || 0
+    const agentName = agent.name || 'Agente sin nombre'
+    if (skippedCount === 0) {
+      showToast('info', 'Sin omisiones', `${agentName} no tiene contactos omitidos.`)
+      return
+    }
+
+    showConfirm(
+      'Reiniciar omisiones',
+      `${skippedCount === 1 ? 'El contacto omitido' : `Los ${skippedCount} contactos omitidos`} de ${agentName} volverá${skippedCount === 1 ? '' : 'n'} a estar activo${skippedCount === 1 ? '' : 's'} para que el agente pueda atenderlos otra vez.`,
+      async () => {
+        setResettingAgentSkipsId(agent.id)
+        try {
+          const result = await conversationalAgentService.resetAgentSkippedContacts(agent.id)
+          const updatedAt = new Date().toISOString()
+          const resetSkippedState = (state: ConversationAgentState): ConversationAgentState => (
+            state.agentId === agent.id && state.status === 'skipped'
+              ? { ...state, status: 'active', pausedUntilAt: null, updatedBy: 'user', updatedAt }
+              : state
+          )
+          setAgentStates((current) => {
+            const next: Record<string, ConversationAgentState> = {}
+            Object.entries(current).forEach(([contactId, state]) => {
+              next[contactId] = resetSkippedState(state)
+            })
+            return next
+          })
+          setAgentStateLists((current) => {
+            const next: Record<string, ConversationAgentState[]> = {}
+            Object.entries(current).forEach(([contactId, states]) => {
+              next[contactId] = states.map(resetSkippedState)
+            })
+            return next
+          })
+          await loadAgentData({ includeDefinitions: false })
+          showToast(
+            result.resetCount > 0 ? 'success' : 'info',
+            result.resetCount > 0 ? 'Omisiones reiniciadas' : 'Sin omisiones',
+            result.resetCount === 1
+              ? '1 contacto volvió a estar activo para este agente.'
+              : `${result.resetCount} contactos volvieron a estar activos para este agente.`
+          )
+        } catch (error: any) {
+          showToast('error', 'Agente conversacional', error?.message || 'No se pudieron reiniciar las omisiones.')
+        } finally {
+          setResettingAgentSkipsId(null)
+        }
+      },
+      'Reiniciar',
+      'Cancelar'
+    )
+  }, [agentSkippedContactCounts, loadAgentData, showConfirm, showToast])
 
   const acknowledgeAgentPriorityOnOpen = useCallback((contactId: string) => {
     const state = agentStates[contactId]
@@ -4726,29 +4788,29 @@ export const PhoneChat: React.FC = () => {
       updatedAt: acknowledgedAt
     })
 
-	    setAgentStates((current) => {
-	      const currentState = current[contactId]
-	      if (!currentState?.signal || currentState.signal === 'discarded') return current
-	      return { ...current, [contactId]: toAcknowledgedState(currentState) }
-	    })
-	    setAgentStateLists((current) => ({
-	      ...current,
-	      [contactId]: (current[contactId] || []).map((item) => (
-	        (item.id && state.id ? item.id === state.id : item.agentId === state.agentId) ? toAcknowledgedState(item) : item
-	      ))
-	    }))
+    setAgentStates((current) => {
+      const currentState = current[contactId]
+      if (!currentState?.signal || currentState.signal === 'discarded') return current
+      return { ...current, [contactId]: toAcknowledgedState(currentState) }
+    })
+    setAgentStateLists((current) => ({
+      ...current,
+      [contactId]: (current[contactId] || []).map((item) => (
+        (item.id && state.id ? item.id === state.id : item.agentId === state.agentId) ? toAcknowledgedState(item) : item
+      ))
+    }))
 
-	    void conversationalAgentService.updateState(contactId, 'clear_signal', { agentId: state.agentId || undefined })
-	      .then((nextState) => {
-	        setAgentStateLists((current) => ({
-	          ...current,
-	          [contactId]: upsertAgentStateList(current[contactId] || [], nextState)
-	        }))
-	        setAgentStates((current) => ({
-	          ...current,
-	          [contactId]: selectPrimaryAgentState([nextState, current[contactId]].filter(Boolean) as ConversationAgentState[]) || nextState
-	        }))
-	      })
+    void conversationalAgentService.updateState(contactId, 'clear_signal', { agentId: state.agentId || undefined })
+      .then((nextState) => {
+        setAgentStateLists((current) => ({
+          ...current,
+          [contactId]: upsertAgentStateList(current[contactId] || [], nextState)
+        }))
+        setAgentStates((current) => ({
+          ...current,
+          [contactId]: selectPrimaryAgentState([nextState, current[contactId]].filter(Boolean) as ConversationAgentState[]) || nextState
+        }))
+      })
       .catch((error: any) => {
         setAgentStates((current) => {
           const currentState = current[contactId]
@@ -9157,6 +9219,12 @@ export const PhoneChat: React.FC = () => {
       : selectedAIAgentHubActive
       ? `Apagar ${selectedAIAgentHubName}`
       : `Encender ${selectedAIAgentHubName}`
+    const selectedAIAgentHubSkippedCount = selectedAIAgentHubAgentDef
+      ? agentSkippedContactCounts.get(selectedAIAgentHubAgentDef.id) || 0
+      : 0
+    const selectedAIAgentHubResetting = Boolean(
+      selectedAIAgentHubAgentDef && resettingAgentSkipsId === selectedAIAgentHubAgentDef.id
+    )
     const selectedAIAgentHubRobot = (compact = false) => {
       const shouldRenderCrowd = selectedAIAgentHubIsGlobal && activeAIAgentHubRobotCount > 1
       if (!shouldRenderCrowd) {
@@ -9263,6 +9331,18 @@ export const PhoneChat: React.FC = () => {
                 {agentConfigSaving ? <Loader2 size={19} className={styles.spinIcon} /> : <Power size={19} />}
                 <span>{selectedAIAgentHubPowerLabel}</span>
               </button>
+              {selectedAIAgentHubAgentDef && (
+                <button
+                  type="button"
+                  className={styles.aiAgentHubResetButton}
+                  onClick={() => handleResetAgentSkippedContacts(selectedAIAgentHubAgentDef)}
+                  disabled={selectedAIAgentHubResetting || selectedAIAgentHubSkippedCount === 0}
+                  title={selectedAIAgentHubSkippedCount === 0 ? 'Sin contactos omitidos' : 'Reiniciar omisiones de contactos'}
+                >
+                  {selectedAIAgentHubResetting ? <Loader2 size={18} className={styles.spinIcon} /> : <Repeat2 size={18} />}
+                  <span>Reiniciar omisiones</span>
+                </button>
+              )}
               <button type="button" className={styles.aiAgentHubAgentsButton} onClick={openSelectedAIAgentHubConfig}>
                 <Pencil size={18} />
                 <span>Configurar</span>
@@ -13713,6 +13793,8 @@ export const PhoneChat: React.FC = () => {
                     const active = selectedAgentDef?.id === agent.id
                     const objectiveLabel = agentObjectiveOptions.find((option) => option.value === agent.objective)?.label || 'Objetivo'
                     const delivery = getPhoneAgentReplyDelivery(agent)
+                    const skippedCount = agentSkippedContactCounts.get(agent.id) || 0
+                    const resettingSkips = resettingAgentSkipsId === agent.id
 
                     return (
                       <article key={agent.id} className={`${styles.agentListCard} ${active ? styles.agentListCardSelected : ''}`}>
@@ -13746,6 +13828,16 @@ export const PhoneChat: React.FC = () => {
                           >
                             {agent.enabled ? <Pause size={15} /> : <Play size={15} />}
                             {agent.enabled ? 'Pausar' : 'Publicar'}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.agentListReset}
+                            disabled={resettingSkips || skippedCount === 0}
+                            title={skippedCount === 0 ? 'Sin contactos omitidos' : 'Reiniciar omisiones de contactos'}
+                            onClick={() => handleResetAgentSkippedContacts(agent)}
+                          >
+                            {resettingSkips ? <Loader2 size={15} className={styles.spinIcon} /> : <Repeat2 size={15} />}
+                            Reiniciar omisiones
                           </button>
                           <button
                             type="button"
@@ -13792,6 +13884,8 @@ export const PhoneChat: React.FC = () => {
           </>
         )
       }
+      const selectedAgentSkippedCount = agentSkippedContactCounts.get(selectedAgentDef.id) || 0
+      const selectedAgentResettingSkips = resettingAgentSkipsId === selectedAgentDef.id
 
       return (
         <>
@@ -13827,6 +13921,16 @@ export const PhoneChat: React.FC = () => {
               >
                 {selectedAgentDef.enabled ? <Pause size={16} /> : <Play size={16} />}
                 {selectedAgentDef.enabled ? 'Pausar agente' : 'Publicar agente'}
+              </button>
+              <button
+                type="button"
+                className={styles.agentDetailResetButton}
+                disabled={selectedAgentResettingSkips || selectedAgentSkippedCount === 0}
+                title={selectedAgentSkippedCount === 0 ? 'Sin contactos omitidos' : 'Reiniciar omisiones de contactos'}
+                onClick={() => handleResetAgentSkippedContacts(selectedAgentDef)}
+              >
+                {selectedAgentResettingSkips ? <Loader2 size={16} className={styles.spinIcon} /> : <Repeat2 size={16} />}
+                Reiniciar omisiones
               </button>
             </section>
 
