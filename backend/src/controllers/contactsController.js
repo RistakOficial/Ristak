@@ -964,7 +964,7 @@ async function refreshHighLevelConversationMessageStatuses(contactId) {
          WHERE contact_id = ?
            AND LOWER(COALESCE(direction, '')) = 'outbound'
            AND COALESCE(ycloud_message_id, wamid, '') != ''
-           AND LOWER(COALESCE(transport, '')) IN ('ghl_whatsapp', 'ghl_sms')
+           AND LOWER(COALESCE(transport, '')) IN ('ghl_whatsapp', 'ghl_sms', 'ghl_webchat')
          ORDER BY COALESCE(message_timestamp, created_at) DESC
          LIMIT ?`,
         [contactId, HIGHLEVEL_MESSAGE_REFRESH_LIMIT]

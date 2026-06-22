@@ -75,6 +75,10 @@ import {
   buildBusinessProfilePromptParameters,
   normalizeBusinessProfileExtraction
 } from '../src/services/aiAgentService.js'
+import {
+  resolveHighLevelMessageChannel,
+  upsertHighLevelConversationMessage
+} from '../src/services/highlevelConversationsSyncService.js'
 
 test('flujos IA automaticos de bajo costo usan siempre el modelo mas barato aprobado', () => {
   assert.equal(CHEAPEST_OPENAI_MODEL, 'gpt-5.4-nano')
@@ -104,6 +108,8 @@ test('normaliza aliases de canal conversacional sin forzar WhatsApp', () => {
   assert.equal(normalizeConversationalChannel('facebook'), 'messenger')
   assert.equal(normalizeConversationalChannel('sms_qr'), 'sms')
   assert.equal(normalizeConversationalChannel('ghl_whatsapp'), 'whatsapp')
+  assert.equal(normalizeConversationalChannel('ghl_webchat'), 'webchat')
+  assert.equal(normalizeConversationalChannel('website_chat'), 'webchat')
   assert.equal(normalizeConversationalChannel('correo'), 'email')
   assert.equal(normalizeConversationalChannel('no-existe'), 'whatsapp')
 })
@@ -130,6 +136,95 @@ test('responde por HighLevel cuando el WhatsApp entrante viene de GHL', () => {
     }),
     false
   )
+})
+
+test('responde por HighLevel cuando el chat entrante es webchat de GHL', () => {
+  assert.equal(
+    shouldSendConversationalReplyThroughHighLevel({
+      channel: 'webchat',
+      latest: { transport: 'ghl_webchat' }
+    }),
+    true
+  )
+})
+
+test('detecta canales conversacionales de HighLevel sin mandarlos a WhatsApp por default', () => {
+  assert.deepEqual(
+    resolveHighLevelMessageChannel({ messageType: 'TYPE_WEBCHAT' }),
+    { table: 'whatsapp', transport: 'ghl_webchat' }
+  )
+  assert.deepEqual(
+    resolveHighLevelMessageChannel({ type: 'TYPE_EMAIL' }),
+    { table: 'email', transport: 'ghl_email' }
+  )
+  assert.deepEqual(
+    resolveHighLevelMessageChannel({ messageType: 'TYPE_WHATSAPP' }),
+    { table: 'whatsapp', transport: 'ghl_whatsapp' }
+  )
+})
+
+test('webhooks conversacionales de HighLevel guardan webchat y email en su canal real', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_hl_channels_${suffix}`
+  const ghlContactId = `ghl_contact_channels_${suffix}`
+  const webchatRemoteId = `remote_webchat_${suffix}`
+  const emailRemoteId = `remote_email_${suffix}`
+  const contactEmail = `canales-${suffix}@example.test`
+
+  await db.run(`
+    INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [contactId, ghlContactId, '+526561110000', contactEmail, 'Contacto Canales'])
+
+  try {
+    const webchat = await upsertHighLevelConversationMessage({
+      message: {
+        id: webchatRemoteId,
+        contactId: ghlContactId,
+        messageType: 'TYPE_WEBCHAT',
+        body: 'Hola desde el chat del sitio',
+        direction: 'inbound',
+        createdAt: '2099-05-01T10:00:00.000Z'
+      },
+      apiToken: 'test-token',
+      locationId: 'test-location',
+      notifyNewInbound: false
+    })
+    const email = await upsertHighLevelConversationMessage({
+      message: {
+        id: emailRemoteId,
+        contactId: ghlContactId,
+        type: 'TYPE_EMAIL',
+        subject: 'Duda por correo',
+        bodyText: 'Quiero más información',
+        fromEmail: contactEmail,
+        direction: 'inbound',
+        createdAt: '2099-05-01T10:01:00.000Z'
+      },
+      apiToken: 'test-token',
+      locationId: 'test-location',
+      notifyNewInbound: false
+    })
+
+    assert.equal(webchat.skipped, false)
+    assert.equal(webchat.table, 'whatsapp')
+    assert.equal(email.skipped, false)
+    assert.equal(email.table, 'email')
+
+    const webchatRow = await db.get('SELECT transport, direction, message_text FROM whatsapp_api_messages WHERE ycloud_message_id = ?', [webchatRemoteId])
+    assert.equal(webchatRow?.transport, 'ghl_webchat')
+    assert.equal(webchatRow?.direction, 'inbound')
+    assert.equal(webchatRow?.message_text, 'Hola desde el chat del sitio')
+
+    const emailRow = await db.get('SELECT direction, from_email, subject, message_text FROM email_messages WHERE contact_id = ? AND subject = ?', [contactId, 'Duda por correo'])
+    assert.equal(emailRow?.direction, 'inbound')
+    assert.equal(emailRow?.from_email, contactEmail)
+    assert.equal(emailRow?.message_text, 'Quiero más información')
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ?', [webchatRemoteId]).catch(() => undefined)
+    await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
 })
 
 test('la condicion Canal permite chats y SMS sin confundirlos con correo', () => {

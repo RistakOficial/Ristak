@@ -372,14 +372,21 @@ function normalizeCompletionSummaryChannel(value = 'whatsapp') {
   if (['instagram', 'instagram_dm', 'ig'].includes(normalized)) return 'instagram'
   if (['messenger', 'facebook', 'facebook_messenger', 'fb'].includes(normalized)) return 'messenger'
   if (['sms', 'sms_qr', 'ghl_sms'].includes(normalized)) return 'sms'
-  if (['webchat', 'web_chat', 'chat_web'].includes(normalized)) return 'webchat'
+  if (['webchat', 'web_chat', 'chat_web', 'website_chat', 'site_chat', 'ghl_webchat'].includes(normalized)) return 'webchat'
   return 'whatsapp'
 }
 
+const COMPLETION_SMS_TRANSPORTS = ['ghl_sms', 'sms', 'sms_qr']
+const COMPLETION_WEBCHAT_TRANSPORTS = ['ghl_webchat', 'webchat', 'web_chat', 'chat_web', 'website_chat', 'site_chat']
+
 function completionPhoneTransportFilter(channel = 'whatsapp') {
-  return channel === 'sms'
-    ? "AND LOWER(COALESCE(transport, '')) IN ('ghl_sms', 'sms', 'sms_qr')"
-    : "AND LOWER(COALESCE(transport, '')) NOT IN ('ghl_sms', 'sms', 'sms_qr')"
+  if (channel === 'sms') {
+    return `AND LOWER(COALESCE(transport, '')) IN (${COMPLETION_SMS_TRANSPORTS.map((item) => `'${item}'`).join(', ')})`
+  }
+  if (channel === 'webchat') {
+    return `AND LOWER(COALESCE(transport, '')) IN (${COMPLETION_WEBCHAT_TRANSPORTS.map((item) => `'${item}'`).join(', ')})`
+  }
+  return `AND LOWER(COALESCE(transport, '')) NOT IN (${[...COMPLETION_SMS_TRANSPORTS, ...COMPLETION_WEBCHAT_TRANSPORTS].map((item) => `'${item}'`).join(', ')})`
 }
 
 async function loadCompletionSummaryMessages(contactId, channel = 'whatsapp') {

@@ -80,9 +80,11 @@ const followUpTimers = new Map()
 
 const CHAT_CONVERSATIONAL_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'sms', 'webchat'])
 const SOCIAL_CHAT_CHANNELS = new Set(['instagram', 'messenger'])
-const HIGHLEVEL_CHAT_CHANNELS = new Set(['instagram', 'messenger', 'sms'])
+const HIGHLEVEL_CHAT_CHANNELS = new Set(['instagram', 'messenger', 'sms', 'webchat'])
 const HIGHLEVEL_WHATSAPP_TRANSPORTS = new Set(['ghl_whatsapp'])
 const HIGHLEVEL_WHATSAPP_CHANNEL_ALIASES = new Set(['ghl_whatsapp'])
+const SMS_TRANSPORTS = ['ghl_sms', 'sms', 'sms_qr']
+const WEBCHAT_TRANSPORTS = ['ghl_webchat', 'webchat', 'web_chat', 'chat_web', 'website_chat', 'site_chat']
 const EMAIL_CONVERSATIONAL_CHANNEL = 'email'
 const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
   ['wa', 'whatsapp'],
@@ -96,6 +98,11 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
   ['instagram_dm', 'instagram'],
   ['sms_qr', 'sms'],
   ['ghl_sms', 'sms'],
+  ['ghl_webchat', 'webchat'],
+  ['web_chat', 'webchat'],
+  ['chat_web', 'webchat'],
+  ['website_chat', 'webchat'],
+  ['site_chat', 'webchat'],
   ['correo', 'email'],
   ['mail', 'email'],
   ['e-mail', 'email']
@@ -176,9 +183,12 @@ function formatEmailMessageText(row = {}) {
 function phoneMessageTransportFilter(channel = 'whatsapp') {
   const normalizedChannel = normalizeConversationalChannel(channel)
   if (normalizedChannel === 'sms') {
-    return "AND LOWER(COALESCE(transport, '')) IN ('ghl_sms', 'sms', 'sms_qr')"
+    return `AND LOWER(COALESCE(transport, '')) IN (${SMS_TRANSPORTS.map((item) => `'${item}'`).join(', ')})`
   }
-  return "AND LOWER(COALESCE(transport, '')) NOT IN ('ghl_sms', 'sms', 'sms_qr')"
+  if (normalizedChannel === 'webchat') {
+    return `AND LOWER(COALESCE(transport, '')) IN (${WEBCHAT_TRANSPORTS.map((item) => `'${item}'`).join(', ')})`
+  }
+  return `AND LOWER(COALESCE(transport, '')) NOT IN (${[...SMS_TRANSPORTS, ...WEBCHAT_TRANSPORTS].map((item) => `'${item}'`).join(', ')})`
 }
 
 export function shouldIncludeConversationalBinaryMedia({ runtime } = {}) {

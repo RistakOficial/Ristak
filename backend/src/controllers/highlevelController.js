@@ -82,6 +82,13 @@ const GHL_CHAT_CHANNELS = {
     transport: 'ghl_instagram',
     localTable: 'meta',
     platform: 'instagram'
+  },
+  webchat: {
+    key: 'webchat',
+    type: 'WebChat',
+    label: 'Webchat',
+    transport: 'ghl_webchat',
+    localTable: 'whatsapp'
   }
 };
 const GHL_CHAT_CHANNEL_ALIASES = {
@@ -102,7 +109,13 @@ const GHL_CHAT_CHANNEL_ALIASES = {
   ghl_messenger: 'messenger',
   ig: 'instagram',
   instagram: 'instagram',
-  ghl_instagram: 'instagram'
+  ghl_instagram: 'instagram',
+  webchat: 'webchat',
+  web_chat: 'webchat',
+  chat_web: 'webchat',
+  website_chat: 'webchat',
+  site_chat: 'webchat',
+  ghl_webchat: 'webchat'
 };
 const LOCAL_ONLY_CONTACT_PREFIXES = ['waapi_contact_', 'manual_contact_', 'meta_social_contact_', 'site_contact_', 'rstk_'];
 const GHL_WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;

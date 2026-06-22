@@ -96,6 +96,12 @@ export function resolveHighLevelMessageChannel(message = {}) {
   if (channelText.includes('INSTAGRAM') || /\bIG\b/.test(channelText)) {
     return { table: 'meta', platform: 'instagram' }
   }
+  if (channelText.includes('WEBCHAT') || channelText.includes('WEB_CHAT') || channelText.includes('LIVE_CHAT')) {
+    return { table: 'whatsapp', transport: 'ghl_webchat' }
+  }
+  if (channelText.includes('EMAIL') || channelText.includes('E-MAIL')) {
+    return { table: 'email', transport: 'ghl_email' }
+  }
 
   // Excluir tipos que contienen "SMS" pero no son chat (review requests, etc.)
   if (channelText.includes('REVIEW') || channelText.includes('NO_SHOW')) return null
@@ -135,7 +141,42 @@ function getRemoteMessageId(message = {}) {
 }
 
 function getMessageBody(message = {}) {
-  return cleanString(message.body || message.message || message.text || message.messageBody)
+  return cleanString(
+    message.body ||
+    message.message ||
+    message.text ||
+    message.content ||
+    message.messageBody ||
+    message.message_body ||
+    message.bodyText ||
+    message.body_text ||
+    message.plainText ||
+    message.plain_text ||
+    message.emailBody ||
+    message.email_body ||
+    message.htmlBody ||
+    message.html_body
+  )
+}
+
+function getEmailSubject(message = {}) {
+  return cleanString(message.subject || message.emailSubject || message.email_subject || message.title)
+}
+
+function pickEmailAddress(...values) {
+  for (const value of values) {
+    if (!value) continue
+    if (typeof value === 'string') {
+      const email = cleanString(value)
+      if (email.includes('@')) return email
+      continue
+    }
+    if (typeof value === 'object') {
+      const email = cleanString(value.email || value.address || value.emailAddress || value.email_address)
+      if (email.includes('@')) return email
+    }
+  }
+  return ''
 }
 
 function pickAttachmentUrl(item = {}) {
@@ -219,7 +260,7 @@ async function ensureLocalContact({ contactId, apiToken, locationId }) {
 
 async function triggerAutomationsForInboundMessage({ contact, channel, text, messageType, isNew, notifyNewInbound }) {
   if (!contact?.id || !isNew || !notifyNewInbound) return
-  if (!['whatsapp', 'messenger', 'instagram'].includes(channel)) return
+  if (!['whatsapp', 'messenger', 'instagram', 'sms', 'webchat', 'email'].includes(channel)) return
 
   await import('./automationEngine.js')
     .then(engine => engine.handleIncomingMessage({
@@ -236,9 +277,19 @@ async function triggerAutomationsForInboundMessage({ contact, channel, text, mes
 }
 
 function getAutomationChannel(channel = {}) {
+  if (channel.table === 'email') return 'email'
   if (channel.table === 'meta') return channel.platform
   if (channel.table === 'whatsapp' && channel.transport === 'ghl_whatsapp') return 'whatsapp'
+  if (channel.table === 'whatsapp' && channel.transport === 'ghl_sms') return 'sms'
+  if (channel.table === 'whatsapp' && channel.transport === 'ghl_webchat') return 'webchat'
   return ''
+}
+
+function getLocalChannelFromWhatsAppTransport(transport = '') {
+  const normalized = cleanString(transport).toLowerCase().replace(/[\s-]+/g, '_')
+  if (normalized === 'ghl_sms') return 'sms'
+  if (normalized === 'ghl_webchat') return 'webchat'
+  return 'whatsapp'
 }
 
 async function upsertWhatsAppRow({ message, contact, transport, direction, notifyNewInbound }) {
@@ -301,7 +352,7 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
   }
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
-    const channel = transport === 'ghl_sms' ? 'sms' : 'whatsapp'
+    const channel = getLocalChannelFromWhatsAppTransport(transport)
     sendChatMessageNotification({
       contactId: contact.id,
       contactName: contact.full_name || contact.first_name || contactPhone,
@@ -325,10 +376,11 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
   }
 
   if (saved > 0) {
+    const channel = getLocalChannelFromWhatsAppTransport(transport)
     publishChatMessageEvent({
       contactId: contact.id,
       messageId: remoteMessageId,
-      channel: transport === 'ghl_sms' ? 'sms' : 'whatsapp',
+      channel,
       provider: 'highlevel',
       transport,
       direction,
@@ -339,6 +391,102 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
   }
 
   return { saved, isNew }
+}
+
+async function upsertEmailRow({ message, contact, direction, notifyNewInbound }) {
+  const remoteMessageId = getRemoteMessageId(message)
+  if (!remoteMessageId) return { saved: 0, isNew: false }
+
+  const localMessageId = hashId('ghl_email_msg', `${remoteMessageId}:0`)
+  const existing = await db.get('SELECT id FROM email_messages WHERE id = ?', [localMessageId])
+  const isNew = !existing
+  const text = getMessageBody(message)
+  const messageTimestamp = parseTimestampToIso(
+    message.dateAdded || message.date_added || message.createdAt || message.created_at || message.dateUpdated
+  ) || new Date().toISOString()
+  const status = normalizeMessageStatus(message.status) || (direction === 'inbound' ? 'delivered' : 'sent')
+  const fromEmail = pickEmailAddress(
+    message.fromEmail,
+    message.from_email,
+    message.from,
+    message.sender,
+    direction === 'inbound' ? contact?.email : ''
+  )
+  const toEmail = pickEmailAddress(
+    message.toEmail,
+    message.to_email,
+    message.to,
+    message.recipient,
+    message.recipients?.[0],
+    direction === 'outbound' ? contact?.email : ''
+  )
+  const rawPayload = safeJsonStringify({ provider: 'highlevel', source: 'conversations_sync', message })
+
+  await db.run(`
+    INSERT INTO email_messages (
+      id, contact_id, direction, status, to_email, from_email, reply_to,
+      subject, message_text, message_timestamp, raw_payload_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      contact_id = COALESCE(excluded.contact_id, email_messages.contact_id),
+      direction = COALESCE(NULLIF(excluded.direction, ''), email_messages.direction),
+      status = COALESCE(NULLIF(excluded.status, ''), email_messages.status),
+      to_email = COALESCE(NULLIF(excluded.to_email, ''), email_messages.to_email),
+      from_email = COALESCE(NULLIF(excluded.from_email, ''), email_messages.from_email),
+      reply_to = COALESCE(NULLIF(excluded.reply_to, ''), email_messages.reply_to),
+      subject = COALESCE(NULLIF(excluded.subject, ''), email_messages.subject),
+      message_text = COALESCE(NULLIF(excluded.message_text, ''), email_messages.message_text),
+      message_timestamp = COALESCE(excluded.message_timestamp, email_messages.message_timestamp),
+      raw_payload_json = excluded.raw_payload_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    localMessageId,
+    contact.id,
+    direction,
+    status,
+    toEmail || null,
+    fromEmail || null,
+    fromEmail || null,
+    getEmailSubject(message),
+    text,
+    messageTimestamp,
+    rawPayload
+  ])
+
+  if (isNew && notifyNewInbound && direction === 'inbound') {
+    sendChatMessageNotification({
+      contactId: contact.id,
+      contactName: contact.full_name || contact.first_name || fromEmail || 'Email',
+      text: text || getEmailSubject(message) || 'Nuevo correo',
+      messageType: 'email',
+      messageId: remoteMessageId,
+      timestamp: messageTimestamp
+    }).catch(error => {
+      logger.warn(`[GHL Conversations] No se pudo notificar email ${remoteMessageId}: ${error.message}`)
+    })
+    import('../agents/conversational/runner.js')
+      .then(runner => runner.handleInboundConversationalEmailMessage({
+        contactId: contact.id,
+        messageId: localMessageId
+      }))
+      .catch(error => {
+        logger.warn(`[Agente conversacional] GHL email no atendido: ${error.message}`)
+      })
+  }
+
+  publishChatMessageEvent({
+    contactId: contact.id,
+    messageId: remoteMessageId,
+    channel: 'email',
+    provider: 'highlevel',
+    transport: 'ghl_email',
+    direction,
+    messageType: 'email',
+    messageTimestamp,
+    isNew
+  })
+
+  return { saved: 1, isNew }
 }
 
 async function upsertMetaRow({ message, contact, platform, direction, notifyNewInbound }) {
@@ -463,16 +611,18 @@ export async function upsertHighLevelConversationMessage({
   const contactId = cleanString(message.contactId || message.contact_id || message.contact?.id)
   if (!contactId) return { saved: 0, skipped: true, reason: 'missing_contact' }
 
-  if (!getMessageBody(message) && getMessageAttachments(message).length === 0) {
+  if (!getMessageBody(message) && !getEmailSubject(message) && getMessageAttachments(message).length === 0) {
     return { saved: 0, skipped: true, reason: 'empty_message' }
   }
 
   const { contact, created } = await ensureLocalContact({ contactId, apiToken, locationId })
   if (!contact) return { saved: 0, skipped: true, reason: 'contact_unavailable' }
 
-  const result = channel.table === 'meta'
-    ? await upsertMetaRow({ message, contact, platform: channel.platform, direction, notifyNewInbound })
-    : await upsertWhatsAppRow({ message, contact, transport: channel.transport, direction, notifyNewInbound })
+  const result = channel.table === 'email'
+    ? await upsertEmailRow({ message, contact, direction, notifyNewInbound })
+    : channel.table === 'meta'
+      ? await upsertMetaRow({ message, contact, platform: channel.platform, direction, notifyNewInbound })
+      : await upsertWhatsAppRow({ message, contact, transport: channel.transport, direction, notifyNewInbound })
 
   if (direction === 'inbound') {
     await triggerAutomationsForInboundMessage({
