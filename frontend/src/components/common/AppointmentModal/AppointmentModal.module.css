@@ -406,6 +406,12 @@
   gap: 0.75rem;
 }
 
+.inlineGuestsBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
 /* Responsive: En pantallas pequeñas, las columnas se apilan */
 @media (max-width: 768px) {
   .appointmentFormLayout {

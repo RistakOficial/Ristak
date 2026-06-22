@@ -1393,12 +1393,14 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   };
 
   const isRoundRobinCalendar = calendar?.calendarType === 'round_robin';
-  const shouldShowAssignmentPanel = showGuestsSection || (
+  const shouldInlineGuests = isPhoneSurface && showGuestsSection;
+  const shouldShowAssignmentPanel = (!shouldInlineGuests && showGuestsSection) || (
     showContactAssignment && (
       (isCreateMode && (isRoundRobinCalendar || loadingUsers || users.length > 0)) ||
       (!isCreateMode && Boolean(formData.assignedUserId))
     )
   );
+  const assignmentPanelTitle = !shouldInlineGuests && showGuestsSection ? 'Invitados' : 'Asignación';
 
   const renderContactField = () => {
     if (!showContactAssignment) return null;
@@ -1614,6 +1616,20 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     );
   };
 
+  const renderInlineGuestsSection = () => {
+    if (!shouldInlineGuests) return null;
+
+    return (
+      <div className={styles.inlineGuestsBlock}>
+        <h4 className={styles.columnTitle}>
+          <UserPlus size={18} />
+          Invitados
+        </h4>
+        {renderGuestsSection()}
+      </div>
+    );
+  };
+
   const renderAssignmentSection = () => {
     if (!showContactAssignment) return null;
 
@@ -1792,10 +1808,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 	          <aside className={styles.assignmentPanel}>
 	            <h4 className={styles.columnTitle}>
 	              <UserPlus size={18} />
-	              {showGuestsSection ? 'Invitados' : 'Asignación'}
+	              {assignmentPanelTitle}
 	            </h4>
 
-	            {renderGuestsSection()}
+	            {!shouldInlineGuests && renderGuestsSection()}
 	            {renderAssignmentSection()}
 	          </aside>
 	          )}
@@ -2058,6 +2074,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 placeholder="Dirección física o enlace de videollamada"
               />
             </div>
+
+            {renderInlineGuestsSection()}
 
             <div className={styles.field}>
               <label className={styles.label} htmlFor="notes">
