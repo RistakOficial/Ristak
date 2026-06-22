@@ -9045,7 +9045,7 @@
 
 .canvasChromeProfileBlock .chromeName {
   color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 92%, var(--rstk-muted) 8%);
-  gap: 4px;
+  gap: 2px;
   font-size: var(--rstk-social-name-size, 20px);
   font-weight: 700;
   line-height: 1.08;
@@ -9066,7 +9066,7 @@
   top: 0;
   width: var(--rstk-social-verified-size, 18px);
   height: var(--rstk-social-verified-size, 18px);
-  margin-left: 1px;
+  margin-left: 0;
   transform: translateY(0.04em);
 }
 
