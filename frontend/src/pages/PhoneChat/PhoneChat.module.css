@@ -342,6 +342,10 @@
   gap: 10px;
 }
 
+.tabletAgentHeroRow {
+  display: none;
+}
+
 .tabletNewChatButton {
   display: none;
   align-items: center;
@@ -1005,18 +1009,18 @@
 }
 
 .aiAgentAvatar {
-  padding: 0;
-  color: #ffffff;
-  background: #050505;
-  border: none;
+  padding: 4px;
+  color: var(--phone-chat-text);
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--phone-chat-border) 78%, transparent);
   overflow: hidden;
 }
 
 .aiAgentAvatar img {
   width: 100%;
   height: 100%;
-  border-radius: inherit;
-  object-fit: cover;
+  border-radius: 10px;
+  object-fit: contain;
 }
 
 .aiAgentChatItem {
@@ -3725,7 +3729,7 @@
 
 .agentCompletionMessage {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
+  grid-template-columns: 52px minmax(0, 1fr);
   gap: 10px;
   width: min(92%, 560px);
   padding: 0;
@@ -3740,8 +3744,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  height: 46px;
+  width: 52px;
+  height: 52px;
   border-radius: 999px;
   border: 0;
   background: transparent;
@@ -3750,8 +3754,8 @@
 }
 
 .agentCompletionMessageIcon .agentRobot {
-  width: 46px;
-  height: 46px;
+  width: 52px;
+  height: 52px;
 }
 
 .agentCompletionMessageIcon .agentBotOrbit {
@@ -7261,19 +7265,30 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListHeader {
-  gap: 10px;
-  padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
+  gap: 8px;
+  padding: calc(env(safe-area-inset-top) + 12px) 16px 10px;
+  overflow: visible;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListHeader h1 {
   font-size: 36px;
 }
 
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletAgentHeroRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 62px;
+  gap: 12px;
+  overflow: visible;
+}
+
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatTitleRow {
   align-items: center;
   justify-content: space-between;
-  min-height: 44px;
+  min-height: 40px;
   max-height: none;
+  overflow: visible;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatTitleMain {
@@ -7292,20 +7307,36 @@
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletAgentInboxButton {
   display: inline-flex;
-  width: 54px;
-  height: 54px;
-  margin-right: 2px;
+  width: 58px;
+  height: 58px;
+  margin-right: 0;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletAgentInboxButton.agentBotButtonActive,
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletAgentInboxButton.agentBotButtonIdle {
-  width: 54px;
-  height: 54px;
+  width: 58px;
+  height: 58px;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletAgentInboxButton .agentRobot {
-  width: 54px;
-  height: 54px;
+  width: 58px;
+  height: 58px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletAgentStatusBubble {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  max-width: 246px;
+  min-height: 36px;
+  padding: 5px 10px;
+  transform: none;
+  animation: tabletAgentBubbleIn 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletAgentStatusBubble .agentStatusPhrase {
+  font-size: 10.5px;
+  line-height: 1.12;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletNewChatButton svg {
@@ -7389,6 +7420,14 @@
   animation: phoneChatSidePanelIn 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .sheetPanelClosing {
+  opacity: 0;
+  transform: translate3d(100%, 0, 0) !important;
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1) !important,
+    opacity 160ms ease-out !important;
+}
+
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .sheetHandle {
   display: none;
 }
@@ -7404,6 +7443,31 @@
   max-height: calc(100% - 28px);
   margin-bottom: 14px;
   border-radius: 24px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop {
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop::before {
+  background: transparent;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop .attachmentsSheet {
+  width: min(360px, calc(100% - 28px));
+  max-height: min(360px, calc(100% - 92px));
+  margin: 0 0 calc(68px + env(safe-area-inset-bottom)) 14px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 24px;
+  box-shadow: 0 22px 54px rgba(var(--phone-chat-primary-rgb), 0.18);
+  transform-origin: bottom left;
+  animation: phoneChatAttachmentPopoverIn 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop .sheetPanelClosing {
+  opacity: 0;
+  transform: translate3d(-16px, 18px, 0) scale(0.98) !important;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatList {
@@ -7616,6 +7680,17 @@
   to {
     opacity: 1;
     transform: translateX(0);
+  }
+}
+
+@keyframes phoneChatAttachmentPopoverIn {
+  from {
+    opacity: 0;
+    transform: translate3d(-14px, 16px, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
   }
 }
 
@@ -8189,6 +8264,11 @@
 @keyframes agentBubbleIn {
   from { opacity: 0; transform: translate(-6px, -50%) scale(0.96); }
   to { opacity: 1; transform: translate(0, -50%) scale(1); }
+}
+
+@keyframes tabletAgentBubbleIn {
+  from { opacity: 0; transform: translateX(-6px) scale(0.98); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
 }
 
 @keyframes agentStatusDotPulse {

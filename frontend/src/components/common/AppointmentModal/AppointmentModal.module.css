@@ -94,9 +94,13 @@
   background: color-mix(in srgb, var(--phone-chat-conversation-bg, transparent) 18%, transparent);
 }
 
+.phonePanelBackdropClosing {
+  pointer-events: none;
+}
+
 .phonePanel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  position: relative;
+  display: block;
   width: min(520px, calc(100% - 22px));
   height: 100%;
   min-height: 0;
@@ -105,41 +109,23 @@
   box-shadow: -24px 0 56px rgba(var(--phone-chat-primary-rgb, 15, 23, 42), 0.18);
   overflow: hidden;
   animation: appointmentPhonePanelIn 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity;
 }
 
-.phonePanelHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-  min-height: 62px;
-  padding: 14px 16px 10px 20px;
-  border-bottom: 1px solid var(--appointment-mobile-border);
-  background: var(--appointment-mobile-soft);
+.phonePanelClosing {
+  opacity: 0;
+  transform: translateX(100%);
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms ease-out;
+  animation: none;
 }
 
-.phonePanelHeader > div {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.phonePanelHeader span {
-  color: var(--appointment-mobile-muted);
-  font-size: 12px;
-  font-weight: 780;
-}
-
-.phonePanelHeader h2 {
-  margin: 0;
-  color: var(--appointment-mobile-text);
-  font-size: 20px;
-  font-weight: 850;
-  line-height: 1.1;
-}
-
-.phonePanelHeader button {
+.phonePanelCloseButton {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -149,12 +135,24 @@
   border-radius: 999px;
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-surface);
+  box-shadow: 0 8px 22px rgba(var(--phone-chat-primary-rgb, 15, 23, 42), 0.08);
+  cursor: pointer;
 }
 
 .phonePanelContent {
+  display: flex;
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+  padding-top: 54px;
   overflow: hidden;
+}
+
+.phonePanelContent .mobileSheetContainer {
+  flex: 1 1 auto;
+  height: auto;
+  padding-top: 0;
 }
 
 .mobileSheetContainer {
@@ -519,6 +517,41 @@
 .mobileSheetContainer .fieldRow {
   grid-template-columns: 1fr;
   gap: 12px;
+}
+
+.phonePanel .detailSummaryGrid,
+.phonePanel .fieldRow,
+.phonePanel .guestBuilder {
+  grid-template-columns: 1fr;
+}
+
+.phonePanel .appointmentFormLayout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.phonePanel .formMain,
+.phonePanel .assignmentPanel {
+  width: 100%;
+}
+
+.phonePanel .formMain {
+  order: 1;
+}
+
+.phonePanel .assignmentPanel {
+  order: 2;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.phonePanel .guestToggleHeader {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .mobileSheetContainer .field {

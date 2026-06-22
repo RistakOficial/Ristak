@@ -7923,7 +7923,7 @@ export const PhoneChat: React.FC = () => {
 
   const renderAIAgentAvatar = () => (
     <span className={`${styles.avatar} ${styles.aiAgentAvatar}`}>
-      <img src="/ristak-chat-icon-192.png" alt="" loading="lazy" />
+      <img src="/ristak-icon-192.png" alt="" loading="lazy" />
     </span>
   )
 
@@ -12819,6 +12819,18 @@ export const PhoneChat: React.FC = () => {
     </button>
   )
 
+  const renderAgentStatusBubble = (className = '') => (
+    <div className={`${styles.agentStatusBubble} ${className}`.trim()} aria-hidden="true">
+      <span className={styles.agentStatusLabel}>
+        <span className={styles.agentStatusDot} />
+        Activo
+      </span>
+      <span key={agentStatusPhraseIndex} className={styles.agentStatusPhrase}>
+        {agentStatusPhrase}
+      </span>
+    </div>
+  )
+
   if (accessState === 'checking') {
     return <PhoneStartupLoader />
   }
@@ -12853,28 +12865,23 @@ export const PhoneChat: React.FC = () => {
                   label: 'Agente conversacional',
                   onClick: openAgentGlobalMenu
                 })}
-                {agentEnabled && (
-                  <div className={styles.agentStatusBubble} aria-hidden="true">
-                    <span className={styles.agentStatusLabel}>
-                      <span className={styles.agentStatusDot} />
-                      Activo
-                    </span>
-                    <span key={agentStatusPhraseIndex} className={styles.agentStatusPhrase}>
-                      {agentStatusPhrase}
-                    </span>
-                  </div>
-                )}
+                {agentEnabled && renderAgentStatusBubble()}
                 {renderChatHeaderActions()}
               </div>
             )}
-            <div className={styles.chatTitleRow} aria-hidden={chatSearchExpanded}>
-              <div className={styles.chatTitleMain}>
-                {isWideChatDevice && renderAgentRobotButton({
+            {isWideChatDevice && !chatSearchExpanded && (
+              <div className={styles.tabletAgentHeroRow}>
+                {renderAgentRobotButton({
                   active: agentEnabled,
                   className: styles.tabletAgentInboxButton,
                   label: agentPriorityViewOpen ? 'Ver todos los chats' : 'Ver chats del agente',
                   onClick: handleToggleAgentInboxView
                 })}
+                {agentEnabled && renderAgentStatusBubble(styles.tabletAgentStatusBubble)}
+              </div>
+            )}
+            <div className={styles.chatTitleRow} aria-hidden={chatSearchExpanded}>
+              <div className={styles.chatTitleMain}>
                 <h1>Chats</h1>
                 {isWideChatDevice && renderTabletNewChatAction()}
               </div>
@@ -13177,8 +13184,8 @@ export const PhoneChat: React.FC = () => {
       />
 
       {sheet && (
-        <div
-          className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' ? styles.darkSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
+          <div
+            className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' ? styles.darkSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
           style={actionSheetDismiss.backdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >

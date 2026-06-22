@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { TabList } from '../TabList';
@@ -15,6 +15,8 @@ import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
 import styles from './AppointmentModal.module.css';
 import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
+
+const PHONE_PANEL_CLOSE_DURATION_MS = 220;
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -1160,6 +1162,9 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const isMobileSheet = presentation === 'mobileSheet';
   const isPhonePanel = presentation === 'phonePanel';
   const isPhoneSurface = isMobileSheet || isPhonePanel;
+  const [phonePanelRendered, setPhonePanelRendered] = useState(isOpen);
+  const [phonePanelClosing, setPhonePanelClosing] = useState(false);
+  const phonePanelCloseTimerRef = useRef<number | null>(null);
   const showAppointmentSummary = !(isPhoneSurface && isCreateMode);
   const modalTitle = isPhoneSurface
     ? isCreateMode
@@ -1180,6 +1185,60 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const contactDelivery = selectedContact ? getContactDelivery(selectedContact) : '';
   const addressLabel = formData.address.trim() || 'Sin ubicación';
   const notesLabel = formData.notes.trim() || 'Sin notas';
+
+  const clearPhonePanelCloseTimer = () => {
+    if (phonePanelCloseTimerRef.current === null) return;
+    window.clearTimeout(phonePanelCloseTimerRef.current);
+    phonePanelCloseTimerRef.current = null;
+  };
+
+  useEffect(() => {
+    if (!isPhonePanel) {
+      clearPhonePanelCloseTimer();
+      setPhonePanelRendered(isOpen);
+      setPhonePanelClosing(false);
+      return;
+    }
+
+    if (isOpen) {
+      clearPhonePanelCloseTimer();
+      setPhonePanelRendered(true);
+      setPhonePanelClosing(false);
+      return;
+    }
+
+    if (!phonePanelRendered) return;
+
+    setPhonePanelClosing(true);
+    clearPhonePanelCloseTimer();
+    phonePanelCloseTimerRef.current = window.setTimeout(() => {
+      phonePanelCloseTimerRef.current = null;
+      setPhonePanelRendered(false);
+      setPhonePanelClosing(false);
+    }, PHONE_PANEL_CLOSE_DURATION_MS);
+  }, [isOpen, isPhonePanel, phonePanelRendered]);
+
+  useEffect(() => () => {
+    clearPhonePanelCloseTimer();
+  }, []);
+
+  const requestPhonePanelClose = () => {
+    if (!isPhonePanel) {
+      onClose();
+      return;
+    }
+
+    if (phonePanelClosing) return;
+    setPhonePanelClosing(true);
+    clearPhonePanelCloseTimer();
+    phonePanelCloseTimerRef.current = window.setTimeout(() => {
+      phonePanelCloseTimerRef.current = null;
+      setPhonePanelRendered(false);
+      setPhonePanelClosing(false);
+      onClose();
+    }, PHONE_PANEL_CLOSE_DURATION_MS);
+  };
+
   const calendarOptions: SelectOption[] = calendarsLoading
     ? [{ value: '', label: '...' }]
     : !calendars?.length
@@ -2043,26 +2102,20 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   return (
     <>
       {isPhonePanel ? (
-        isOpen ? (
+        phonePanelRendered ? (
           <div
-            className={styles.phonePanelBackdrop}
-            onClick={onClose}
+            className={`${styles.phonePanelBackdrop} ${phonePanelClosing ? styles.phonePanelBackdropClosing : ''}`}
+            onClick={requestPhonePanelClose}
             role="presentation"
           >
             <section
-              className={`${styles.mobileAppointmentSheet} ${styles.phonePanel}`}
+              className={`${styles.mobileAppointmentSheet} ${styles.phonePanel} ${phonePanelClosing ? styles.phonePanelClosing : ''}`}
               aria-label={modalTitle || 'Cita'}
               onClick={(event) => event.stopPropagation()}
             >
-              <header className={styles.phonePanelHeader}>
-                <div>
-                  <span>Citas</span>
-                  <h2>{modalTitle || 'Cita'}</h2>
-                </div>
-                <button type="button" onClick={onClose} aria-label="Cerrar">
-                  <X size={18} />
-                </button>
-              </header>
+              <button type="button" className={styles.phonePanelCloseButton} onClick={requestPhonePanelClose} aria-label="Cerrar">
+                <X size={18} />
+              </button>
               <div className={styles.phonePanelContent}>
                 {appointmentContent}
               </div>
