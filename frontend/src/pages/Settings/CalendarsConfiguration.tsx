@@ -2232,7 +2232,7 @@ export const CalendarsConfiguration: React.FC = () => {
                       <div>
                         <span>Antitracking</span>
                         <small>
-                          Prendido: revisa desde Ristak sin contar tu visita; reportes limpios. Recomendado dejarlo así.
+                          Esto evita que el visitar tu propia página se cuente como un visitante real.
                         </small>
                       </div>
                       <Switch
