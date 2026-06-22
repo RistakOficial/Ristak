@@ -105,9 +105,11 @@
   }
 }
 
-:global(.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])) .wrapOnWide {
+:global([data-phone-chat-device="tablet"]) .wrapOnWide,
+:global([data-phone-chat-device="desktop"]) .wrapOnWide {
   flex-wrap: wrap;
   width: 100%;
+  max-width: 100%;
   max-height: none;
   margin-inline: 0;
   padding: 0 1px 2px;
@@ -116,7 +118,8 @@
   touch-action: auto;
 }
 
-:global(.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])) .wrapOnWide .chip {
+:global([data-phone-chat-device="tablet"]) .wrapOnWide .chip,
+:global([data-phone-chat-device="desktop"]) .wrapOnWide .chip {
   flex: 0 1 auto;
   max-width: 100%;
   scroll-snap-align: none;

@@ -14291,6 +14291,7 @@ export const PhoneChat: React.FC = () => {
                 className={styles.filterChips}
                 ariaLabel="Filtros de chat"
                 hidden={sidebarSearchExpanded}
+                wrapOnWide
                 value={chatFilter}
                 options={[
                   { value: 'all', label: 'Todos' },
