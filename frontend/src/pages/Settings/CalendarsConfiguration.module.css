@@ -1105,13 +1105,24 @@
   line-height: 1.45;
 }
 
+.editorField > input:not([type='checkbox']):not([type='radio']) {
+  box-sizing: border-box;
+  height: var(--design-control-height);
+  min-height: var(--design-control-height);
+}
+
 .calendarTemplateField :global([data-automation-interactive='true']) {
+  box-sizing: border-box;
   min-height: var(--design-control-height);
   border: 1px solid var(--design-control-border);
   border-radius: var(--design-control-radius);
   background: var(--design-control-bg);
   box-shadow: var(--design-control-shadow);
   transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.calendarTemplateField :global([data-automation-interactive='true'][data-composer-mode='singleline']) {
+  height: var(--design-control-height);
 }
 
 .calendarTemplateField :global([data-automation-interactive='true']:hover) {
@@ -1134,6 +1145,8 @@
 }
 
 .calendarTemplateField :global([data-automation-interactive='true'] [aria-multiline='false']) {
+  box-sizing: border-box;
+  height: calc(var(--design-control-height) - 2px);
   min-height: calc(var(--design-control-height) - 2px);
   padding: 0 38px 0 var(--design-control-padding-x);
   line-height: calc(var(--design-control-height) - 2px);
@@ -1152,6 +1165,17 @@
 .calendarTemplateField :global([data-automation-interactive='true'] [data-variable]) {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.calendarTemplateField :global([data-automation-interactive='true'][data-composer-mode='singleline'] [data-composer-toolbar]) {
+  top: 50%;
+  right: 8px;
+  bottom: auto;
+  transform: translateY(-50%);
+}
+
+.calendarTemplateField :global([data-automation-interactive='true'][data-composer-mode='singleline'] [data-composer-tool-button]) {
+  color: var(--design-control-muted);
 }
 
 .eventSwitchRow {

@@ -537,7 +537,12 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   )
 
   return (
-    <div ref={wrapRef} className={styles.composerWrap} data-automation-interactive="true">
+    <div
+      ref={wrapRef}
+      className={styles.composerWrap}
+      data-automation-interactive="true"
+      data-composer-mode={multiline ? 'multiline' : 'singleline'}
+    >
       <div
         ref={editorRef}
         contentEditable
@@ -583,11 +588,12 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
         }}
       />
 
-      <div className={styles.composerToolbar}>
+      <div className={styles.composerToolbar} data-composer-toolbar="">
         {showVariables && (
           <button
             type="button"
             className={cn(styles.composerToolButton, pickerOpen === 'variables' && styles.composerToolButtonActive)}
+            data-composer-tool-button=""
             title="Insertar variable"
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => togglePicker('variables')}
@@ -599,6 +605,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
           <button
             type="button"
             className={cn(styles.composerToolButton, pickerOpen === 'emoji' && styles.composerToolButtonActive)}
+            data-composer-tool-button=""
             title="Insertar emoji"
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => togglePicker('emoji')}
