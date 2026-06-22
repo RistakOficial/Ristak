@@ -46,7 +46,7 @@ import {
   TabList
 } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
-import { useUrlDateRangeSync, useUrlStringState } from '@/hooks'
+import { useAppConfig, useUrlDateRangeSync, useUrlStringState } from '@/hooks'
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { useNotification } from '@/contexts/NotificationContext'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
@@ -64,6 +64,8 @@ import styles from './MediaSettings.module.css'
 
 type MediaFilter = 'all' | 'image' | 'video' | 'audio' | 'document' | 'other'
 type ViewMode = 'grid' | 'list'
+const MEDIA_VIEW_MODE_CONFIG_KEY = 'media_settings_view_mode'
+const MEDIA_DEFAULT_VIEW_MODE: ViewMode = 'list'
 const mediaFilters: MediaFilter[] = ['all', 'image', 'video', 'audio', 'document', 'other']
 const viewModes: ViewMode[] = ['grid', 'list']
 const isMediaFilter = (value?: string | null): value is MediaFilter => mediaFilters.includes(value as MediaFilter)
@@ -480,7 +482,14 @@ export const MediaSettings: React.FC = () => {
   const [error, setError] = useState('')
   const [query, setQuery] = useUrlStringState<string>('q', '', isQueryParam)
   const [activeFilter, setActiveFilter] = useUrlStringState<MediaFilter>('type', 'all', isMediaFilter)
-  const [viewMode, setViewMode] = useUrlStringState<ViewMode>('view', 'list', isViewMode)
+  const [storedViewMode, saveStoredViewMode] = useAppConfig<string>(
+    MEDIA_VIEW_MODE_CONFIG_KEY,
+    MEDIA_DEFAULT_VIEW_MODE
+  )
+  const savedViewMode = isViewMode(storedViewMode) ? storedViewMode : MEDIA_DEFAULT_VIEW_MODE
+  const [viewMode, setViewModeState] = useState<ViewMode>(savedViewMode)
+  const viewModeRef = useRef(viewMode)
+  const viewModeSaveVersionRef = useRef(0)
   const [currentPath, setCurrentPath] = useUrlStringState<string>('path', '', isQueryParam)
   const [selectedAssetParam, setSelectedAssetParam] = useUrlStringState<string>('asset', '', isQueryParam)
   const selectedAssetId = selectedAssetParam || null
@@ -496,6 +505,28 @@ export const MediaSettings: React.FC = () => {
   const [videoAnalytics, setVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
   const [videoAnalyticsLoading, setVideoAnalyticsLoading] = useState(false)
   const [videoAnalyticsError, setVideoAnalyticsError] = useState('')
+
+  useEffect(() => {
+    setViewModeState(current => current === savedViewMode ? current : savedViewMode)
+  }, [savedViewMode])
+
+  useEffect(() => {
+    viewModeRef.current = viewMode
+  }, [viewMode])
+
+  const setViewMode = useCallback((nextViewMode: ViewMode) => {
+    const normalizedViewMode = isViewMode(nextViewMode) ? nextViewMode : MEDIA_DEFAULT_VIEW_MODE
+    const previousViewMode = viewModeRef.current
+    const saveVersion = viewModeSaveVersionRef.current + 1
+    viewModeSaveVersionRef.current = saveVersion
+    setViewModeState(normalizedViewMode)
+
+    void saveStoredViewMode(normalizedViewMode).catch(() => {
+      if (viewModeSaveVersionRef.current !== saveVersion) return
+      setViewModeState(previousViewMode)
+      showToast('error', 'No se guardó la vista', 'Ristak no pudo guardar tu preferencia de Media. Inténtalo otra vez.')
+    })
+  }, [saveStoredViewMode, showToast])
 
   const loadMedia = useCallback(async (mode: 'initial' | 'refresh' = 'refresh') => {
     if (mode === 'initial') setLoading(true)

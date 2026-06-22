@@ -125,7 +125,7 @@ import {
 } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAIAgentAvailability, useUrlDateRangeSync } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig, useUrlDateRangeSync } from '@/hooks'
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { setSearchParam } from '@/utils/urlState'
 import {
@@ -199,6 +199,7 @@ type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
 type SitesAnalyticsSiteType = 'sites' | 'forms' | 'videos'
 type LibraryViewMode = 'gallery' | 'list' | 'table'
+type LibraryViewSection = 'landings' | 'forms'
 type LibraryFolderSource = 'site_embed' | 'html' | 'video_gate' | 'calendar' | 'manual'
 type LibraryFolderDefinition = SiteLibraryFolder & {
   system?: boolean
@@ -208,6 +209,9 @@ type LibraryFolderDefinition = SiteLibraryFolder & {
 const sitesAnalyticsSiteTypes: SitesAnalyticsSiteType[] = ['sites', 'forms', 'videos']
 const isSitesAnalyticsSiteType = (value?: string | null): value is SitesAnalyticsSiteType =>
   sitesAnalyticsSiteTypes.includes(value as SitesAnalyticsSiteType)
+const libraryViewModes: LibraryViewMode[] = ['gallery', 'list', 'table']
+const isLibraryViewMode = (value?: string | null): value is LibraryViewMode =>
+  libraryViewModes.includes(value as LibraryViewMode)
 const sitesAnalyticsTypeTabs = [
   { value: 'sites', label: 'Sitios', icon: <LayoutTemplate size={14} /> },
   { value: 'forms', label: 'Formularios', icon: <FormInput size={14} /> },
@@ -218,6 +222,8 @@ const SITE_FORMS_FOLDER_ID = 'system-site-forms'
 const HTML_FORMS_FOLDER_ID = 'system-html-forms'
 const VIDEO_FORMS_FOLDER_ID = 'system-video-forms'
 const CALENDAR_FORMS_FOLDER_ID = 'system-calendar-forms'
+const SITES_LANDINGS_VIEW_MODE_CONFIG_KEY = 'sites_landings_view_mode'
+const SITES_FORMS_VIEW_MODE_CONFIG_KEY = 'sites_forms_view_mode'
 const SYSTEM_FORM_FOLDERS: LibraryFolderDefinition[] = [
   {
     id: SITE_FORMS_FOLDER_ID,
@@ -2588,6 +2594,9 @@ const getLibraryEmptyMessage = (section: SitesSection) => {
 
 const getLibraryDefaultView = (section: SitesSection): LibraryViewMode =>
   section === 'forms' ? 'list' : 'gallery'
+
+const normalizeLibraryViewMode = (value: unknown, fallback: LibraryViewMode): LibraryViewMode =>
+  typeof value === 'string' && isLibraryViewMode(value) ? value : fallback
 
 const normalizeLibraryFolderId = (value: unknown) =>
   typeof value === 'string' ? value.trim() : ''
@@ -7139,13 +7148,27 @@ export const Sites: React.FC = () => {
   const routeHasBlockParam = useMemo(() => new URLSearchParams(location.search).has('block'), [location.search])
   const { configured: aiAgentConfigured } = useAIAgentAvailability()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const [storedLandingsViewMode, saveStoredLandingsViewMode] = useAppConfig<string>(
+    SITES_LANDINGS_VIEW_MODE_CONFIG_KEY,
+    getLibraryDefaultView('landings')
+  )
+  const [storedFormsViewMode, saveStoredFormsViewMode] = useAppConfig<string>(
+    SITES_FORMS_VIEW_MODE_CONFIG_KEY,
+    getLibraryDefaultView('forms')
+  )
+  const savedLibraryViewMode = useMemo<Record<LibraryViewSection, LibraryViewMode>>(() => ({
+    landings: normalizeLibraryViewMode(storedLandingsViewMode, getLibraryDefaultView('landings')),
+    forms: normalizeLibraryViewMode(storedFormsViewMode, getLibraryDefaultView('forms'))
+  }), [storedFormsViewMode, storedLandingsViewMode])
   const [section, setSection] = useState<SitesSection>(routeState.section)
   const [sites, setSites] = useState<PublicSite[]>([])
   const [siteFolders, setSiteFolders] = useState<SiteLibraryFolder[]>([])
-  const [libraryViewMode, setLibraryViewMode] = useState<Record<'landings' | 'forms', LibraryViewMode>>({
+  const [libraryViewMode, setLibraryViewMode] = useState<Record<LibraryViewSection, LibraryViewMode>>({
     landings: 'gallery',
     forms: 'list'
   })
+  const libraryViewModeRef = useRef(libraryViewMode)
+  const libraryViewModeSaveVersionRef = useRef<Record<LibraryViewSection, number>>({ landings: 0, forms: 0 })
   const [domainConfig, setDomainConfig] = useState<SitesDomainConfig>(emptySitesDomainConfig)
   const [domainInput, setDomainInput] = useState('')
   const [calendars, setCalendars] = useState<CalendarType[]>([])
@@ -7248,6 +7271,18 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     ensureSitesFontStylesheet()
   }, [])
+
+  useEffect(() => {
+    setLibraryViewMode(current => (
+      current.landings === savedLibraryViewMode.landings && current.forms === savedLibraryViewMode.forms
+        ? current
+        : savedLibraryViewMode
+    ))
+  }, [savedLibraryViewMode])
+
+  useEffect(() => {
+    libraryViewModeRef.current = libraryViewMode
+  }, [libraryViewMode])
 
   const updateSitesAnalyticsQuery = useCallback((patch: {
     type?: SitesAnalyticsSiteType
@@ -8826,11 +8861,25 @@ export const Sites: React.FC = () => {
     })
   }
 
-  const handleLibraryViewChange = (targetSection: 'landings' | 'forms', viewMode: LibraryViewMode) => {
+  const handleLibraryViewChange = (targetSection: LibraryViewSection, viewMode: LibraryViewMode) => {
+    const nextViewMode = normalizeLibraryViewMode(viewMode, getLibraryDefaultView(targetSection))
+    const previousViewMode = libraryViewModeRef.current[targetSection] || getLibraryDefaultView(targetSection)
+    const saveVersion = libraryViewModeSaveVersionRef.current[targetSection] + 1
+    libraryViewModeSaveVersionRef.current[targetSection] = saveVersion
     setLibraryViewMode(current => ({
       ...current,
-      [targetSection]: viewMode
+      [targetSection]: nextViewMode
     }))
+
+    const saveViewMode = targetSection === 'forms' ? saveStoredFormsViewMode : saveStoredLandingsViewMode
+    void saveViewMode(nextViewMode).catch(() => {
+      if (libraryViewModeSaveVersionRef.current[targetSection] !== saveVersion) return
+      setLibraryViewMode(current => ({
+        ...current,
+        [targetSection]: previousViewMode
+      }))
+      showToast('error', 'No se guardó la vista', 'Ristak no pudo guardar tu preferencia. Inténtalo otra vez.')
+    })
   }
 
   const handleCreateLibraryFolder = async (targetSection: 'landings' | 'forms', name: string) => {
