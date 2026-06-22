@@ -7465,8 +7465,9 @@ export const Sites: React.FC = () => {
       ? 'publish'
       : 'save'
     : null
-  const editorActive = Boolean(editorSite)
-  const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
+  const editorRouteLoading = loading && !editorSite && Boolean(routeState.siteId) && (routeState.section === 'landings' || routeState.section === 'forms')
+  const editorActive = Boolean(editorSite) || editorRouteLoading
+  const isFocusedSitesMode = createFlow !== 'closed' || editorActive
   const createFlowHeaderCopy = getCreateFlowHeaderCopy(createFlow)
   const canvasTheme = editorSite ? buildCanvasTheme(editorSite, device) : null
   const navigateSitesSection = useCallback((nextSection: SitesSection, options?: { replace?: boolean }) => {
@@ -11508,7 +11509,7 @@ export const Sites: React.FC = () => {
     </div>
   )
 
-  if (loading) {
+  if (loading && !editorRouteLoading) {
     return <Loading page="sites" />
   }
 
@@ -11522,7 +11523,7 @@ export const Sites: React.FC = () => {
         onChange={handleImportHtmlFile}
       />
       <div className={`${styles.container} ${isFocusedSitesMode ? styles.containerFocused : ''}`}>
-        <header className={`${styles.header} ${editorSite ? styles.editorHeader : ''}`}>
+        <header className={`${styles.header} ${editorActive ? styles.editorHeader : ''}`}>
           {editorSite ? (
             <>
               <div className={`${styles.editorUnifiedToolbar} ${formEditMode ? styles.editorUnifiedToolbarFormMode : ''}`}>
@@ -11662,6 +11663,13 @@ export const Sites: React.FC = () => {
                 </div>
               </div>
             </>
+          ) : editorRouteLoading ? (
+            <EditorRouteLoadingHeader
+              section={routeState.section}
+              device={device}
+              onBack={handleBackToLibrary}
+              onSelectDevice={selectEditorDevice}
+            />
           ) : (
             <div>
               <div className={styles.titleRow}>
@@ -11846,6 +11854,20 @@ export const Sites: React.FC = () => {
                   }))
                 }}
                 onVerifyDomain={handleVerifyDomain}
+              />
+            ) : editorRouteLoading ? (
+              <EditorRouteLoadingWorkspace
+                section={routeState.section}
+                device={device}
+                onPaletteDragStart={(payload, position) => {
+                  setActivePaletteDragPayload(payload)
+                  setPaletteDragPosition(position)
+                  setPaletteDragging(false)
+                  setPaletteInsertIndex(null)
+                  setPaletteSectionTarget(null)
+                }}
+                onPaletteDragMove={setPaletteDragPosition}
+                onPaletteDragEnd={resetPaletteDrag}
               />
             ) : (section === 'landings' || section === 'forms') && !editorSite ? (
               <SitesLibraryPanel
@@ -12296,6 +12318,154 @@ export const Sites: React.FC = () => {
       </div>
     </div>
     </div>
+  )
+}
+
+function EditorRouteLoadingHeader({
+  section,
+  device,
+  onBack,
+  onSelectDevice
+}: {
+  section: SitesSection
+  device: DeviceMode
+  onBack: () => void
+  onSelectDevice: (device: DeviceMode) => void
+}) {
+  const label = section === 'forms' ? 'Formulario' : 'Sitio web'
+
+  return (
+    <div className={styles.editorUnifiedToolbar}>
+      <div className={styles.editorToolbarTop}>
+        <div className={styles.editorToolbarContext}>
+          <button type="button" className={styles.backButton} onClick={onBack}>
+            <ArrowLeft size={15} />
+            <span>Volver</span>
+          </button>
+          <label className={`${styles.editorNameField} ${styles.editorToolbarNameField}`}>
+            <input value={label} readOnly aria-label="Editor visual" />
+          </label>
+          <Badge variant="neutral">Editor</Badge>
+        </div>
+        <div className={styles.editorToolbarPrimary}>
+          <div className={styles.editorToolbarActionsCluster}>
+            <span className={`${styles.editorSaveStatus} ${styles.editorSaveStatusBeforeDevice} ${styles.editorSaveStatusSaved}`} aria-live="polite">
+              <CheckCircle2 size={14} />
+              <span>Editor visual</span>
+            </span>
+            <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
+              <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => onSelectDevice('desktop')} title="Escritorio">
+                <Monitor size={15} />
+              </button>
+              <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => onSelectDevice('mobile')} title="Móvil">
+                <Smartphone size={15} />
+              </button>
+            </div>
+            <Button variant="secondary" size="md" className={styles.editorActionButton} disabled aria-label="Ver en vivo">
+              <ExternalLink size={15} />
+              <span className={styles.editorActionLabel}>Ver en vivo</span>
+            </Button>
+            <Button variant="secondary" size="md" className={styles.editorActionButton} disabled aria-label="Previsualizar">
+              <Eye size={15} />
+              <span className={styles.editorActionLabel}>Previsualizar</span>
+            </Button>
+            <Button variant="secondary" size="md" className={styles.editorActionButton} disabled aria-label="Guardar">
+              <Save size={15} />
+              <span className={styles.editorActionLabel}>Guardar</span>
+            </Button>
+            <Button size="md" className={styles.editorPublishButton} disabled aria-label="Publicar">
+              <Send size={15} />
+              <span className={styles.editorActionLabel}>Publicar</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EditorRouteLoadingWorkspace({
+  section,
+  device,
+  onPaletteDragStart,
+  onPaletteDragMove,
+  onPaletteDragEnd
+}: {
+  section: SitesSection
+  device: DeviceMode
+  onPaletteDragStart: (payload: PaletteDragPayload, position: PaletteDragPosition | null) => void
+  onPaletteDragMove: (position: PaletteDragPosition | null) => void
+  onPaletteDragEnd: () => void
+}) {
+  const isFormsEditor = section === 'forms'
+  const sectionLabel = isFormsEditor ? 'formulario' : 'página'
+  const blockTypes = isFormsEditor ? formBlockTypes : landingBlockTypes
+
+  return (
+    <section className={styles.builder}>
+      <div className={`${styles.builderGrid} ${isFormsEditor ? styles.builderGridForm : styles.builderGridLanding}`}>
+        <div className={styles.blocksRail}>
+          <Palette
+            blockTypes={blockTypes}
+            existingBlocks={[]}
+            systemScopeBlocks={[]}
+            elements={[]}
+            selectedElementId=""
+            onAdd={() => {}}
+            onSelectElement={() => {}}
+            onMoveElement={() => {}}
+            onToggleElementVisibility={() => {}}
+            onReorderElements={() => {}}
+            onPaletteDragStart={onPaletteDragStart}
+            onPaletteDragMove={onPaletteDragMove}
+            onPaletteDragEnd={onPaletteDragEnd}
+          />
+        </div>
+
+        <section className={styles.canvasColumn}>
+          <div className={`${styles.editorPreviewLoadingViewport} ${device === 'mobile' ? styles.editorPreviewLoadingViewportMobile : ''}`} role="status" aria-live="polite" aria-busy="true">
+            <div className={styles.editorPreviewLoadingPage}>
+              <RefreshCw size={22} className={styles.previewSpin} aria-hidden="true" />
+              <strong>Preparando preview</strong>
+              <span>La {sectionLabel} aparecerá aquí en cuanto termine de cargar.</span>
+            </div>
+          </div>
+        </section>
+
+        <EditorRouteLoadingInspector section={section} />
+      </div>
+    </section>
+  )
+}
+
+function EditorRouteLoadingInspector({ section }: { section: SitesSection }) {
+  const subtitle = section === 'forms' ? 'Formulario' : 'Sitio web'
+
+  return (
+    <InspectorTabbedPanel
+      title="Página"
+      subtitle={subtitle}
+      tabs={[
+        {
+          value: 'edit',
+          label: 'Editar',
+          icon: <Pencil size={14} />,
+          content: <InspectorEmptyState>Selecciona un elemento del preview para editar contenido.</InspectorEmptyState>
+        },
+        {
+          value: 'design',
+          label: 'Diseño',
+          icon: <Sparkles size={14} />,
+          content: <InspectorEmptyState>Los controles de diseño estarán listos al abrir el preview.</InspectorEmptyState>
+        },
+        {
+          value: 'settings',
+          label: 'Global',
+          icon: <Globe2 size={14} />,
+          content: <InspectorEmptyState>Ajustes globales de la página.</InspectorEmptyState>
+        }
+      ]}
+    />
   )
 }
 
