@@ -377,7 +377,7 @@ export function createConversationalTools(ctx) {
 
   const updateClosingContextTool = tool({
     name: 'update_closing_context',
-    description: 'Memoria interna de la estrategia de cierre avanzada de fabrica. Usala en silencio cuando el contacto revele origen, motivo, por que ahora, problema real, conciencia de magnitud del problema, impacto, consecuencia logica, resultado deseado, urgencia, objecion, senal de decision, calidad real de intencion de agenda o riesgo de solo comparar precio. No guarda campos personalizados del contacto.',
+    description: 'Memoria interna de la estrategia de cierre avanzada de fabrica. Usala en silencio cuando el contacto revele origen, motivo, por que ahora, problema real, conciencia de magnitud del problema, impacto, consecuencia logica, resultado deseado, urgencia, objecion, senal de decision, calidad real de intencion de meta, motivacion real para cumplirla o riesgo de solo comparar precio. No guarda campos personalizados del contacto.',
     parameters: z.object({
       arrivalSource: z.string().nullable().optional().describe('De donde llego si lo dijo o si el sistema lo detecto'),
       contactReason: z.string().nullable().optional().describe('Que lo hizo escribir o pedir información'),
@@ -393,7 +393,9 @@ export function createConversationalTools(ctx) {
       urgencyLevel: z.enum(['baja', 'media', 'alta', 'desconocida']).nullable().optional().describe('Urgencia detectada'),
       objection: z.string().nullable().optional().describe('Freno u objecion principal'),
       decisionSignal: z.string().nullable().optional().describe('Senal de que quiere avanzar, comparar, esperar o hablar con alguien'),
-      appointmentIntentQuality: z.string().nullable().optional().describe('Que tan real se ve la intencion de agendar: alta si pide o acepta dia/hora concreta y trae motivo/urgencia; dudosa si solo dice que agenda para sacar precio o comparar'),
+      goalIntentQuality: z.string().nullable().optional().describe('Que tan real se ve que la persona quiere cumplir la meta configurada: agendar, pagar, comprar, tocar un enlace o avanzar en una meta personalizada; registra señales concretas y si es alta, media o dudosa'),
+      goalMotivation: z.string().nullable().optional().describe('Por que quiere realmente cumplir esa meta ahora: dolor, urgencia, resultado deseado, consecuencia que quiere evitar, motivo de compra/pago o razon especifica de la meta personalizada'),
+      appointmentIntentQuality: z.string().nullable().optional().describe('Alias especifico para agenda: que tan real se ve la intencion de agendar; preferir goalIntentQuality salvo que el detalle sea solo de cita'),
       priceShoppingRisk: z.string().nullable().optional().describe('Senales de que la persona podria estar buscando solo precio o comparando sin intencion real de avanzar; registra el patron sin juzgar ni confrontar'),
       productInterest: z.string().nullable().optional().describe('Producto o servicio especifico que le interesa'),
       valueQuestion: z.string().nullable().optional().describe('Pregunta o sensibilidad sobre valor/precio'),

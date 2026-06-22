@@ -2108,7 +2108,7 @@ test('instrucciones del agente incluyen anticipo y acción final configurados', 
   assert.match(instructions, /asigna el contacto a Ana Ventas/)
 })
 
-test('instrucciones de agenda por IA distinguen urgencia real de falso avance por precio', () => {
+test('instrucciones de agenda por IA usan calidad real de intencion de meta', () => {
   const instructions = buildConversationalInstructions({
     config: {
       objective: 'citas',
@@ -2140,9 +2140,9 @@ test('instrucciones de agenda por IA distinguen urgencia real de falso avance po
   assert.match(instructions, /Flujo de agenda configurado/)
   assert.match(instructions, /Este agente debe intentar agendar por IA/)
   assert.match(instructions, /Si la persona está claramente urgida y pide agendar con motivo real/)
-  assert.match(instructions, /registra appointmentIntentQuality\/priceShoppingRisk/)
+  assert.match(instructions, /registra goalIntentQuality\/goalMotivation\/priceShoppingRisk/)
   assert.match(instructions, /no ejecutes book_appointment hasta que confirme un horario real/)
-  assert.match(instructions, /Urgencia real para agendar vs falso avance/)
+  assert.match(instructions, /Intención real para cumplir la meta vs falso avance/)
 })
 
 test('instrucciones de venta completa no piden comprobante aunque exista deposito legacy', () => {
@@ -2184,6 +2184,8 @@ test('instrucciones de venta completa no piden comprobante aunque exista deposit
 
   assert.match(instructions, /Flujo de cobro configurado/)
   assert.match(instructions, /Curso Intensivo · 1200 USD/)
+  assert.match(instructions, /Si la persona confirma producto, monto\/canal y motivo real de compra o pago/)
+  assert.match(instructions, /registra goalIntentQuality\/goalMotivation\/priceShoppingRisk/)
   assert.doesNotMatch(instructions, /Pago solicitado antes de concretar la venta/)
   assert.doesNotMatch(instructions, /comprobanteValidado=true/)
 })
@@ -2215,6 +2217,8 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
       contactReason: 'pierde leads por responder tarde',
       realProblem: 'sus conversaciones se enfrían antes de que el equipo conteste',
       problemMagnitudeAwareness: 'ya entiende que cada hora de espera enfria la intencion de compra',
+      goalIntentQuality: 'alta: pidio avanzar hoy con una llamada de diagnostico',
+      goalMotivation: 'quiere dejar de perder leads sin contratar otra persona',
       appointmentIntentQuality: 'alta: pidio hablar hoy y acepto avanzar con horario concreto',
       priceShoppingRisk: 'bajo: pregunto valor despues de explicar el problema',
       desiredOutcome: 'responder más rápido sin contratar otra persona'
@@ -2240,11 +2244,13 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   assert.match(instructions, /Puntos aprendidos de esta conversación/)
   assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
   assert.match(instructions, /Conciencia de magnitud del problema: ya entiende que cada hora/)
+  assert.match(instructions, /Calidad de intencion de meta: alta/)
+  assert.match(instructions, /Motivacion real de meta: quiere dejar de perder leads/)
   assert.match(instructions, /Calidad de intencion de agenda: alta/)
   assert.match(instructions, /Riesgo de solo comparar precio: bajo/)
-  assert.match(instructions, /Urgencia real para agendar vs falso avance/)
-  assert.match(instructions, /no la hagas pasar por interrogatorio/)
-  assert.match(instructions, /falso positivo de avance/)
+  assert.match(instructions, /Intención real para cumplir la meta vs falso avance/)
+  assert.match(instructions, /Evalúa siempre qué tanto la persona realmente quiere cumplir ESA meta/)
+  assert.match(instructions, /Falso avance = dice/)
   assert.match(instructions, /update_closing_context/)
   assert.match(instructions, /Parámetros del negocio para el guión de fábrica/)
   assert.match(instructions, /El guión de fábrica manda completo/)
@@ -2291,6 +2297,8 @@ test('memoria de cierre avanzado solo acepta parametros del contrato', () => {
     {
       whyNow: 'tiene una fecha encima',
       problemMagnitudeAwareness: 'todavia cree que puede esperar aunque perderia la fecha',
+      goalIntentQuality: 'dudosa: dice que compra pero evita confirmar producto y canal',
+      goalMotivation: 'busca comparar valor antes de decidir',
       appointmentIntentQuality: 'dudosa: dice que agenda pero no confirma dia ni hora',
       priceShoppingRisk: 'alto: insiste en precio y evita contar contexto',
       urgencyLevel: 'alta',
@@ -2299,10 +2307,12 @@ test('memoria de cierre avanzado solo acepta parametros del contrato', () => {
     { updatedBy: 'agent', nowIso: '2026-06-13T10:00:00.000Z' }
   )
 
-  assert.deepEqual(result.changedKeys.sort(), ['appointmentIntentQuality', 'priceShoppingRisk', 'problemMagnitudeAwareness', 'urgencyLevel', 'whyNow'])
+  assert.deepEqual(result.changedKeys.sort(), ['appointmentIntentQuality', 'goalIntentQuality', 'goalMotivation', 'priceShoppingRisk', 'problemMagnitudeAwareness', 'urgencyLevel', 'whyNow'])
   assert.equal(result.context.contactReason, 'quiere saber precios')
   assert.equal(result.context.whyNow, 'tiene una fecha encima')
   assert.equal(result.context.problemMagnitudeAwareness, 'todavia cree que puede esperar aunque perderia la fecha')
+  assert.equal(result.context.goalIntentQuality, 'dudosa: dice que compra pero evita confirmar producto y canal')
+  assert.equal(result.context.goalMotivation, 'busca comparar valor antes de decidir')
   assert.equal(result.context.appointmentIntentQuality, 'dudosa: dice que agenda pero no confirma dia ni hora')
   assert.equal(result.context.priceShoppingRisk, 'alto: insiste en precio y evita contar contexto')
   assert.equal(result.context.urgencyLevel, 'alta')

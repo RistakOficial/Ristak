@@ -1100,13 +1100,15 @@ Actívala (en silencio, sin anunciarlo, sin texto artificial de cierre) cuando l
 
 NO la actives si solo saludó, solo preguntó el precio sin dar contexto, está comparando, está confundida, o tiene una objeción importante sin resolver.
 
-## Urgencia real para agendar vs falso avance
+## Intención real para cumplir la meta vs falso avance
 
-Si la persona ya se ve genuinamente urgida por agendar, no la hagas pasar por interrogatorio. Intención real de agenda = ya dijo qué le pasa o qué busca, ya mostró urgencia o consecuencia, y acepta/pide día, hora, disponibilidad o "lo antes posible". En ese caso avanza a horarios reales y confirma el slot exacto. No sigas sacando contexto por deporte.
+La meta puede ser agendar, pagar, comprar, tocar un enlace, enviar datos, reservar, inscribirse o cualquier decisión personalizada configurada por el negocio. Evalúa siempre qué tanto la persona realmente quiere cumplir ESA meta y por qué.
 
-Pero no confundas "sí sí agendo" con decisión real cuando viene de alguien que sólo empuja por precio, evita dar contexto, pide menú completo, compara de forma seca o dice que agenda sólo para que le sueltes el valor. Eso es un falso positivo de avance. No lo confrontes ni lo llames mentira: registra priceShoppingRisk y appointmentIntentQuality en update_closing_context, da sólo el dato de valor que aplique si ya toca, y regresa a una pregunta decisiva o al problema real.
+Intención real alta = ya dijo qué le pasa o qué busca, ya mostró urgencia/consecuencia/motivo, y acepta el siguiente paso concreto: día/hora, link de pago, canal de cobro, producto, monto, enlace, comprobante, datos o acción específica de la meta. En ese caso no la hagas pasar por interrogatorio: avanza a la acción real y confirma lo mínimo necesario.
 
-Regla práctica: si la persona confirma horario exacto o pide agenda inmediata con motivo claro, agenda. Si sólo usa "agendo" como palanca para obtener precio y no acepta concretar día/hora, todavía no actives la herramienta de avance.
+Falso avance = dice "sí compro", "sí pago", "sí agendo", "sí me interesa" o "mándame eso" sólo para obtener precio, descuento, información, menú completo o comparar, pero evita concretar la decisión específica. No lo confrontes ni lo llames mentira: registra goalIntentQuality, goalMotivation y priceShoppingRisk si aplica, da sólo el dato de valor que corresponda si ya toca, y regresa a una pregunta decisiva o al problema real.
+
+Regla práctica: si confirma la acción específica de la meta y el porqué ya está claro, ejecuta el avance. Si usa la supuesta decisión como palanca para sacar información y no concreta el siguiente paso, todavía no actives la herramienta de avance.
 
 Si ya aceptó, no sigas vendiendo. Cierra y avanza.
 
@@ -1235,6 +1237,8 @@ const ADVANCED_CLOSING_CONTEXT_LABELS = {
   urgencyLevel: 'Urgencia detectada',
   objection: 'Objecion principal',
   decisionSignal: 'Senal de decision',
+  goalIntentQuality: 'Calidad de intencion de meta',
+  goalMotivation: 'Motivacion real de meta',
   appointmentIntentQuality: 'Calidad de intencion de agenda',
   priceShoppingRisk: 'Riesgo de solo comparar precio',
   productInterest: 'Producto o servicio de interes',
@@ -1427,7 +1431,9 @@ export function buildClosingStrategyTemplateParameters({
     RESULTADO_DESEADO: firstClosingText(learnedContext.desiredOutcome, 'el resultado que la persona diga que busca'),
     OBJECION_PRINCIPAL: firstClosingText(learnedContext.objection, 'ninguna objecion clara todavia'),
     URGENCIA_DETECTADA: firstClosingText(learnedContext.urgencyLevel, 'desconocida'),
-    CALIDAD_INTENCION_AGENDA: firstClosingText(learnedContext.appointmentIntentQuality, 'pendiente de validar si la intencion de agenda es real'),
+    CALIDAD_INTENCION_META: firstClosingText(learnedContext.goalIntentQuality, learnedContext.appointmentIntentQuality, 'pendiente de validar si la intencion de cumplir la meta es real'),
+    MOTIVACION_REAL_META: firstClosingText(learnedContext.goalMotivation, learnedContext.desiredOutcome, learnedContext.contactReason, 'pendiente de descubrir por que quiere cumplir la meta'),
+    CALIDAD_INTENCION_AGENDA: firstClosingText(learnedContext.appointmentIntentQuality, learnedContext.goalIntentQuality, 'pendiente de validar si la intencion de agenda es real'),
     RIESGO_COMPARADOR_DE_PRECIO: firstClosingText(learnedContext.priceShoppingRisk, 'sin senales claras de que solo compare precio'),
     CAMINO_1_CONSECUENCIA: firstClosingText(learnedContext.consequenceIfNoAction, 'seguir igual con el problema que ya conto'),
     CAMINO_2_RESULTADO_DESEADO: firstClosingText(learnedContext.desiredOutcome, 'tomar accion hacia el resultado que busca'),
@@ -1500,7 +1506,7 @@ export function buildAdvancedClosingContextSection(context = {}) {
     systemLines.length ? ['Datos que el sistema ya sabe:', ...systemLines].join('\n') : '',
     learnedLines.length ? ['Puntos aprendidos de esta conversación:', ...learnedLines].join('\n') : 'Puntos aprendidos de esta conversación: aun no hay suficientes datos.',
     missingLines.length ? ['Si la conversación lo permite, descubre de forma natural:', ...missingLines].join('\n') : '',
-    'Cuando el contacto revele alguno de estos puntos, ejecuta update_closing_context en silencio. Hazlo solo con información dicha por la persona o datos reales del sistema; nunca inventes conciencia del problema, consecuencias, urgencia, intencion de agenda ni objeciones.',
+    'Cuando el contacto revele alguno de estos puntos, ejecuta update_closing_context en silencio. Hazlo solo con información dicha por la persona o datos reales del sistema; nunca inventes conciencia del problema, consecuencias, urgencia, intencion de meta ni objeciones.',
     'Usa estos puntos para decidir la siguiente pregunta, mostrar contraste y activar la herramienta interna de avance cuando ya exista intencion real.'
   ].filter(Boolean).join('\n')
 }
@@ -1683,7 +1689,7 @@ function buildGoalWorkflowSection(config = {}, accountLocale = {}) {
 - ${overlapInstruction}
 - Antes de crear la cita, confirma día y hora exactos con la persona.
 - Si la persona está claramente urgida y pide agendar con motivo real, no la sigas interrogando: consulta horarios, ofrece opciones concretas y cierra el slot.
-- Si dice que agenda sólo para presionar por precio pero evita concretar día/hora o contexto mínimo, trátalo como intención dudosa: registra appointmentIntentQuality/priceShoppingRisk y no ejecutes book_appointment hasta que confirme un horario real.
+- Si dice que agenda sólo para presionar por precio pero evita concretar día/hora o contexto mínimo, trátalo como intención dudosa: registra goalIntentQuality/goalMotivation/priceShoppingRisk y no ejecutes book_appointment hasta que confirme un horario real.
 - Usa book_appointment sólo con un horario real devuelto por get_free_slots.`)
     } else {
       sections.push(`## Flujo de agenda configurado
@@ -1714,6 +1720,8 @@ function buildGoalWorkflowSection(config = {}, accountLocale = {}) {
 - ${productLine}
 - Verifica el valor real con list_products antes de confirmar precio.
 - Pide confirmación explícita del cobro y canal; luego ejecuta create_payment_link.
+- Si la persona confirma producto, monto/canal y motivo real de compra o pago, no sigas interrogando: avanza al link de pago.
+- Si dice que compra o paga sólo para pedir descuento, menú completo o más precio sin confirmar producto/canal/monto, registra goalIntentQuality/goalMotivation/priceShoppingRisk y no ejecutes create_payment_link todavía.
 - En venta completa, mandar el link NO concreta la venta. La venta sólo queda concretada cuando Ristak confirme el pago real del invoice o el equipo valide un comprobante correcto.`)
     } else {
       sections.push(`## Flujo de cobro configurado
@@ -1877,7 +1885,7 @@ ${config.requiredData}`)
 - No pidas datos innecesarios ni repitas preguntas ya respondidas en el historial.
 - Si recibes un mensaje que empieza con "[Contexto interno de Ristak:", úsalo sólo para saber qué mensajes entrantes siguen sin respuesta completa. No lo menciones, no lo cites y no expliques que existe.
 - Si hay varios mensajes pendientes, responde tomando en cuenta todos como una sola vuelta de conversación. Prioriza la información más nueva si corrige o cambia lo anterior.
-- Si la estrategia de fabrica esta activa y el contacto revela origen, motivo, urgencia, problema real, conciencia de magnitud del problema, impacto, objecion, consecuencia logica, resultado deseado, calidad real de intencion de agenda o riesgo de solo comparar precio, actualiza la memoria con update_closing_context sin decirlo.
+- Si la estrategia de fabrica esta activa y el contacto revela origen, motivo, urgencia, problema real, conciencia de magnitud del problema, impacto, objecion, consecuencia logica, resultado deseado, calidad real de intencion de meta, motivacion real de meta o riesgo de solo comparar precio, actualiza la memoria con update_closing_context sin decirlo.
 - Si el último mensaje no necesita respuesta (confirmación, sticker, "ok" de cierre), puedes responder mínimo${followUpContext ? '.' : ' o ejecutar stay_silent para no responder.'}`)
 
   if (config.extraInstructions) {
