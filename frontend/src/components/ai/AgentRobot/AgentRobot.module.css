@@ -90,14 +90,13 @@
 }
 
 .agentRobotSvg .rkRotorBlade,
-.agentRobotSvg .rkRotorDisc,
+.agentRobotSvg .rkRotorBlur,
 .agentRobotSvg .rkRotorHub,
 .agentRobotSvg .rkAntennaStem {
   filter: drop-shadow(0 0 4px rgba(120, 225, 255, 0.58));
 }
 
-.agentRobotSvg .rkSoundMouth,
-.agentRobotSvg .rkEq {
+.agentRobotSvg .rkSoundMouth {
   filter: drop-shadow(0 0 3px rgba(120, 225, 255, 0.85));
 }
 
@@ -111,10 +110,6 @@
 .agentRobotSvg .rkKeyLine,
 .agentRobotSvg .rkAnalyzerBeam {
   filter: drop-shadow(0 0 3px rgba(120, 225, 255, 0.8));
-}
-
-.agentRobotSvg .rkEqBar {
-  transform-origin: 50% 100%;
 }
 
 .agentRobotSvg .rkHandWave {
@@ -135,7 +130,6 @@
 .agentRobotSvg .rkHappy,
 .agentRobotSvg .rkFocusEyes,
 .agentRobotSvg .rkStarEyes,
-.agentRobotSvg .rkEq,
 .agentRobotSvg .rkIdea,
 .agentRobotSvg .rkReader,
 .agentRobotSvg .rkAnalyzer,
@@ -163,17 +157,8 @@
   animation: rkShadow 3s ease-in-out infinite;
 }
 
-.agentRobotSvg .rkRotor {
-  animation: rkRotorSpin 0.42s linear infinite;
-}
-
 .agentRobotSvg[data-active="false"] .rkRotor {
-  animation-duration: 0.86s;
   opacity: 0.66;
-}
-
-.agentRobotSvg .rkRotorDisc {
-  animation: rkRotorDisc 1.6s ease-in-out infinite;
 }
 
 .agentRobotSvg .rkFace3d {
@@ -218,30 +203,6 @@
 
 .agentRobotSvg .rkSoundWave:nth-child(2) {
   animation-delay: 0.18s;
-}
-
-.agentRobotSvg .rkEq {
-  animation: rkEqShow 11s ease-in-out infinite;
-}
-
-.agentRobotSvg .rkEqBar {
-  animation: rkEqBar 0.4s ease-in-out infinite;
-}
-
-.agentRobotSvg .rkEqBar:nth-child(2) {
-  animation-delay: 0.1s;
-}
-
-.agentRobotSvg .rkEqBar:nth-child(3) {
-  animation-delay: 0.22s;
-}
-
-.agentRobotSvg .rkEqBar:nth-child(4) {
-  animation-delay: 0.32s;
-}
-
-.agentRobotSvg .rkEqBar:nth-child(5) {
-  animation-delay: 0.05s;
 }
 
 .sceneExpanded.active .agentRobot .rkZoom {
@@ -387,24 +348,6 @@
   74% {
     opacity: 0.65;
     transform: rotate(72deg) translateX(10px) scale(0.72);
-  }
-}
-
-@keyframes rkRotorSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes rkRotorDisc {
-  0%,
-  100% {
-    opacity: 0.16;
-    transform: scaleX(0.92);
-  }
-  50% {
-    opacity: 0.42;
-    transform: scaleX(1.08);
   }
 }
 
@@ -691,29 +634,6 @@
   }
 }
 
-@keyframes rkEqShow {
-  0%,
-  62%,
-  88%,
-  100% {
-    opacity: 0;
-  }
-  66%,
-  84% {
-    opacity: 1;
-  }
-}
-
-@keyframes rkEqBar {
-  0%,
-  100% {
-    transform: scaleY(0.3);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-
 @keyframes rkSceneGaze {
   0%,
   18% {
@@ -983,8 +903,6 @@
 
   .agentRobot .rkZoom,
   .agentRobot .rkShadow,
-  .agentRobotSvg .rkRotor,
-  .agentRobotSvg .rkRotorDisc,
   .agentRobotSvg .rkGloss,
   .agentRobotSvg .rkFace3d,
   .agentRobotSvg .rkEyes,
@@ -993,8 +911,6 @@
   .agentRobotSvg .rkStarEyes,
   .agentRobotSvg .rkSoundMouth,
   .agentRobotSvg .rkSoundWave,
-  .agentRobotSvg .rkEq,
-  .agentRobotSvg .rkEqBar,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkIdea,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkIdeaDot,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkBulb,

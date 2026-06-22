@@ -126,14 +126,22 @@ export const AgentRobot: React.FC<AgentRobotProps> = ({
                 </defs>
 
                 <g className={styles.rkRotorRig}>
-                  <path className={styles.rkAntennaStem} d="M120 87 C119 76 119 65 120 53" stroke="#9bf0ff" strokeWidth="3.2" strokeLinecap="round" />
-                  <circle className={styles.rkRotorHub} cx="120" cy="50" r="6.4" fill="#d6fbff" />
+                  <path className={styles.rkAntennaStem} d="M120 88 C120 79 120 70 120 62" stroke="#9bf0ff" strokeWidth="3.2" strokeLinecap="round" />
+                  <ellipse className={styles.rkRotorBlur} cx="120" cy="62" rx="36" ry="7" fill="#7fdcff" opacity="0.12" />
                   <g className={styles.rkRotor}>
-                    <ellipse className={styles.rkRotorBlade} cx="120" cy="50" rx="58" ry="5.5" fill="#9bf0ff" opacity="0.58" />
-                    <ellipse className={styles.rkRotorBlade} cx="120" cy="50" rx="52" ry="4.2" fill="#5bd3f4" opacity="0.24" transform="rotate(90 120 50)" />
-                    <path className={styles.rkRotorFlash} d="M72 48 C90 38 150 38 168 48" fill="none" stroke="#ffffff" strokeOpacity="0.58" strokeWidth="2.4" strokeLinecap="round" />
+                    <animateTransform
+                      attributeName="transform"
+                      attributeType="XML"
+                      type="rotate"
+                      from="0 120 62"
+                      to="360 120 62"
+                      dur={active ? '0.34s' : '0.86s'}
+                      repeatCount="indefinite"
+                    />
+                    <rect className={styles.rkRotorBlade} x="88" y="59.7" width="64" height="4.6" rx="2.3" fill="#9bf0ff" opacity="0.72" />
+                    <rect className={styles.rkRotorBlade} x="95" y="60.3" width="50" height="3.4" rx="1.7" fill="#5bd3f4" opacity="0.26" transform="rotate(90 120 62)" />
                   </g>
-                  <ellipse className={styles.rkRotorDisc} cx="120" cy="50" rx="66" ry="12" fill="none" stroke="#7fdcff" strokeOpacity="0.2" strokeWidth="2" />
+                  <circle className={styles.rkRotorHub} cx="120" cy="62" r="5.5" fill="#d6fbff" />
                 </g>
 
                 <g className={styles.rkProps}>
@@ -204,15 +212,8 @@ export const AgentRobot: React.FC<AgentRobotProps> = ({
                     </g>
                   </g>
                     <g className={styles.rkSoundMouth}>
-                      <path className={styles.rkSoundWave} d="M96 176 C101 168 106 184 111 176 S121 168 126 176 S136 184 141 176" fill="none" stroke="#9bf0ff" strokeWidth="4" strokeLinecap="round" />
-                      <path className={styles.rkSoundWave} d="M101 184 C105 179 109 189 113 184 S121 179 125 184 S133 189 137 184" fill="none" stroke="#5bd3f4" strokeWidth="2.8" strokeLinecap="round" />
-                    </g>
-                    <g className={styles.rkEq}>
-                      <rect className={styles.rkEqBar} x="105" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
-                      <rect className={styles.rkEqBar} x="112" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
-                      <rect className={styles.rkEqBar} x="119" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
-                      <rect className={styles.rkEqBar} x="126" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
-                      <rect className={styles.rkEqBar} x="133" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
+                      <path className={styles.rkSoundWave} d="M98 180 C101 171 105 171 108 180 C111 189 115 189 118 180 C121 171 125 171 128 180 C131 189 135 189 138 180 C141 171 145 171 148 180" fill="none" stroke="#9bf0ff" strokeWidth="3.8" strokeLinecap="round" />
+                      <path className={styles.rkSoundWave} d="M104 189 C107 184 111 184 114 189 C117 194 121 194 124 189 C127 184 131 184 134 189" fill="none" stroke="#5bd3f4" strokeWidth="2.7" strokeLinecap="round" opacity="0.72" />
                     </g>
                   </g>
                 </g>
