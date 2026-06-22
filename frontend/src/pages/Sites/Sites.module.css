@@ -10358,8 +10358,8 @@
 
 .inspectorTabListScrollable {
   min-width: 0;
-  justify-content: flex-start;
-  overflow-x: auto;
+  justify-content: stretch;
+  overflow: visible;
   scrollbar-width: none;
 }
 
@@ -10368,8 +10368,9 @@
 }
 
 .inspectorTabListScrollable :global([data-ristak-tablist-tab]) {
-  flex: 0 0 auto;
-  width: auto;
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
 }
 
 .inspectorTabBody {
