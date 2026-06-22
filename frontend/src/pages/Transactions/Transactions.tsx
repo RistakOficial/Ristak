@@ -3475,7 +3475,7 @@ export const Transactions: React.FC = () => {
       <RecordPaymentModal
         isOpen={showRecordPaymentModal}
         initialPaymentMode={recordPaymentInitialMode}
-        lockPaymentMode={recordPaymentInitialMode === 'partial'}
+        lockPaymentMode
         onClose={() => {
           const targetPath = recordPaymentInitialMode === 'partial'
             ? buildPaymentPlansPath()
