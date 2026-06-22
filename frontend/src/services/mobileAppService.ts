@@ -3,7 +3,6 @@ import { Camera, CameraDirection, EncodingType, MediaTypeSelection, type MediaRe
 import { Capacitor } from '@capacitor/core'
 import { Device } from '@capacitor/device'
 import { Filesystem } from '@capacitor/filesystem'
-import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Keyboard, KeyboardResize } from '@capacitor/keyboard'
 import { PushNotifications, type ActionPerformed, type Token } from '@capacitor/push-notifications'
 import { SplashScreen } from '@capacitor/splash-screen'
@@ -21,9 +20,6 @@ export const MOBILE_APP_NOTIFICATION_EVENT = 'ristak:mobile-notification'
 const IOS_PHONE_CHAT_HOME_PATH = '/phone/chat'
 const IOS_PHONE_CHAT_LOGIN_PATH = '/phone/login'
 const IOS_PHONE_TENANT_PATH = '/phone/tenant'
-const MOBILE_HAPTICS_ENABLED_STORAGE_KEY = 'ristak_mobile_haptics_enabled'
-const MOBILE_KEYBOARD_FEEDBACK_STORAGE_KEY = 'ristak_mobile_keyboard_feedback_enabled'
-const MOBILE_KEYBOARD_FEEDBACK_INTERVAL_MS = 55
 const IOS_PHONE_CHAT_ALLOWED_PATHS = new Set([
   IOS_PHONE_CHAT_HOME_PATH,
   IOS_PHONE_CHAT_LOGIN_PATH,
@@ -65,20 +61,9 @@ export type MobileChatAttachment = MobilePhotoAttachment | MobileDocumentAttachm
 
 let shellConfigured = false
 let notificationListenersConfigured = false
-let lastKeyboardFeedbackAt = 0
-let keyboardClickAudioContext: AudioContext | null = null
 
 function getPlatform(): NativePlatform {
   return Capacitor.getPlatform() as NativePlatform
-}
-
-function getAudioContextConstructor() {
-  if (typeof window === 'undefined') return null
-
-  const audioWindow = window as Window & typeof globalThis & {
-    webkitAudioContext?: typeof AudioContext
-  }
-  return audioWindow.AudioContext || audioWindow.webkitAudioContext || null
 }
 
 function isIosPhoneChatShell() {
@@ -190,34 +175,6 @@ function normalizeImageFormat(format = '') {
   return 'jpeg'
 }
 
-function readStoredBoolean(key: string, fallback: boolean) {
-  if (typeof window === 'undefined') return fallback
-  try {
-    const raw = window.localStorage.getItem(key)
-    if (raw === null) return fallback
-    return raw === '1' || raw === 'true'
-  } catch {
-    return fallback
-  }
-}
-
-function writeStoredBoolean(key: string, value: boolean) {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(key, value ? '1' : '0')
-  } catch {
-    // local settings are best-effort only
-  }
-}
-
-function mobileHapticsEnabled() {
-  return readStoredBoolean(MOBILE_HAPTICS_ENABLED_STORAGE_KEY, true)
-}
-
-function mobileKeyboardFeedbackEnabled() {
-  return readStoredBoolean(MOBILE_KEYBOARD_FEEDBACK_STORAGE_KEY, true)
-}
-
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -275,7 +232,6 @@ async function configureNativeNotificationListeners() {
   notificationListenersConfigured = true
 
   await PushNotifications.addListener('pushNotificationReceived', (notification) => {
-    void triggerLightHapticFeedback()
     dispatchMobileNotificationEvent(notification, 'received')
   }).catch(() => undefined)
 
@@ -385,95 +341,6 @@ function waitForNativePushToken(calendarIds: string[] = []): Promise<PushSubscri
   })
 }
 
-/**
- * Vibración ligera para gestos (long-press, confirmaciones).
- * En la app nativa usa el motor háptico real (Capacitor); en web cae a
- * navigator.vibrate (Android); en iOS web no hay soporte y no hace nada.
- */
-export async function triggerLightHapticFeedback() {
-  if (!mobileHapticsEnabled()) return
-
-  if (Capacitor.isNativePlatform()) {
-    try {
-      await Haptics.impact({ style: ImpactStyle.Light })
-      return
-    } catch {
-      // sin soporte háptico nativo, probar vibración web
-    }
-  }
-
-  try {
-    navigator.vibrate?.(14)
-  } catch {
-    // intentionally ignore
-  }
-}
-
-export async function triggerKeyboardClickFeedback() {
-  if (!mobileHapticsEnabled() || !mobileKeyboardFeedbackEnabled()) return
-
-  const now = Date.now()
-  if (now - lastKeyboardFeedbackAt < MOBILE_KEYBOARD_FEEDBACK_INTERVAL_MS) return
-  lastKeyboardFeedbackAt = now
-
-  await Promise.all([
-    triggerLightHapticFeedback(),
-    playKeyboardClickSound()
-  ])
-}
-
-async function playKeyboardClickSound() {
-  if (!Capacitor.isNativePlatform()) return
-
-  const AudioContextConstructor = getAudioContextConstructor()
-  if (!AudioContextConstructor) return
-
-  try {
-    const context = keyboardClickAudioContext && keyboardClickAudioContext.state !== 'closed'
-      ? keyboardClickAudioContext
-      : new AudioContextConstructor()
-    keyboardClickAudioContext = context
-
-    if (context.state === 'suspended') {
-      await context.resume()
-    }
-
-    const startAt = context.currentTime
-    const oscillator = context.createOscillator()
-    const gain = context.createGain()
-    oscillator.type = 'triangle'
-    oscillator.frequency.setValueAtTime(1700, startAt)
-    gain.gain.setValueAtTime(0.0001, startAt)
-    gain.gain.exponentialRampToValueAtTime(0.018, startAt + 0.004)
-    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.026)
-    oscillator.connect(gain)
-    gain.connect(context.destination)
-    oscillator.start(startAt)
-    oscillator.stop(startAt + 0.03)
-    oscillator.onended = () => {
-      oscillator.disconnect()
-      gain.disconnect()
-    }
-  } catch {
-    // Audio feedback is best-effort; haptics still cover the interaction.
-  }
-}
-
-export function setMobileFeedbackPreferences({
-  hapticsEnabled,
-  keyboardFeedbackEnabled
-}: {
-  hapticsEnabled?: boolean
-  keyboardFeedbackEnabled?: boolean
-}) {
-  if (typeof hapticsEnabled === 'boolean') {
-    writeStoredBoolean(MOBILE_HAPTICS_ENABLED_STORAGE_KEY, hapticsEnabled)
-  }
-  if (typeof keyboardFeedbackEnabled === 'boolean') {
-    writeStoredBoolean(MOBILE_KEYBOARD_FEEDBACK_STORAGE_KEY, keyboardFeedbackEnabled)
-  }
-}
-
 export const mobileAppService = {
   isNative() {
     return Capacitor.isNativePlatform()
@@ -484,8 +351,6 @@ export const mobileAppService = {
   isIosPhoneChatShell,
 
   getIosPhoneChatRedirectPath,
-
-  setFeedbackPreferences: setMobileFeedbackPreferences,
 
   async configureShell() {
     if (shellConfigured || !Capacitor.isNativePlatform()) return
@@ -579,7 +444,6 @@ export const mobileAppService = {
 
     if (!result) return null
 
-    await Haptics.impact({ style: ImpactStyle.Light }).catch(() => undefined)
     return readMediaAsDataUrl(result, source)
   }
 }

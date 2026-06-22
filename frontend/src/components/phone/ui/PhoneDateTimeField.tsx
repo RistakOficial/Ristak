@@ -42,13 +42,6 @@ function parseTime(value: string): { hour: number; minute: number } | null {
   return { hour, minute }
 }
 
-/** Tick háptico corto, tipo carrete de tragamonedas (donde el navegador lo soporte). */
-function hapticTick() {
-  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-    navigator.vibrate(8)
-  }
-}
-
 interface PickerOption {
   value: number
   label: string
@@ -70,8 +63,6 @@ const PickerColumn: React.FC<{
   onSelect: (value: number) => void
 }> = ({ label, options, value, onSelect }) => {
   const listRef = useRef<HTMLDivElement>(null)
-  const lastTickIndexRef = useRef<number | null>(null)
-
   useEffect(() => {
     const list = listRef.current
     const selected = list?.querySelector<HTMLElement>('[data-selected="true"]')
@@ -82,23 +73,6 @@ const PickerColumn: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Cada vez que una fila cruza el centro de la columna, suelta un tick háptico
-  // (sensación de carrete: sube o baja un valor → vibra).
-  const handleScroll = () => {
-    const list = listRef.current
-    const first = list?.firstElementChild as HTMLElement | null
-    if (!list || !first || !first.offsetHeight) return
-    const index = Math.round((list.scrollTop + list.clientHeight / 2) / first.offsetHeight)
-    if (lastTickIndexRef.current === null) {
-      lastTickIndexRef.current = index
-      return
-    }
-    if (index !== lastTickIndexRef.current) {
-      lastTickIndexRef.current = index
-      hapticTick()
-    }
-  }
-
   return (
     <div className={styles.column}>
       <div
@@ -107,7 +81,6 @@ const PickerColumn: React.FC<{
         role="listbox"
         aria-label={label}
         data-phone-scrollable="true"
-        onScroll={handleScroll}
       >
         {options.map((option) => {
           const selected = option.value === value
@@ -119,10 +92,7 @@ const PickerColumn: React.FC<{
               aria-selected={selected}
               data-selected={selected ? 'true' : undefined}
               className={`${styles.columnOption} ${selected ? styles.columnOptionSelected : ''}`.trim()}
-              onClick={() => {
-                hapticTick()
-                onSelect(option.value)
-              }}
+              onClick={() => onSelect(option.value)}
             >
               {option.label}
             </button>

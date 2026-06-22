@@ -141,8 +141,6 @@ export const PhoneSettings: React.FC = () => {
   const [paymentPushEnabled, setPaymentPushEnabled] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
   const [notificationSoundEnabled, setNotificationSoundEnabled] = useAppConfig<boolean>('push_notification_sound_enabled', true)
   const [notificationVibrationEnabled, setNotificationVibrationEnabled] = useAppConfig<boolean>('push_notification_vibration_enabled', true)
-  const [mobileHapticsEnabled, setMobileHapticsEnabled] = useAppConfig<boolean>('mobile_haptics_enabled', true)
-  const [mobileKeyboardFeedbackEnabled, setMobileKeyboardFeedbackEnabled] = useAppConfig<boolean>('mobile_keyboard_feedback_enabled', true)
   const [pushCalendarIds, setPushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
   const {
     safePreference,
@@ -177,13 +175,6 @@ export const PhoneSettings: React.FC = () => {
   const lastSettingsScrollTopRef = useRef(0)
 
   usePhoneElasticScroll()
-
-  useEffect(() => {
-    mobileAppService.setFeedbackPreferences({
-      hapticsEnabled: mobileHapticsEnabled,
-      keyboardFeedbackEnabled: mobileKeyboardFeedbackEnabled
-    })
-  }, [mobileHapticsEnabled, mobileKeyboardFeedbackEnabled])
 
   const refreshPermission = useCallback(() => {
     if (mobileAppService.isNative()) {
@@ -919,17 +910,6 @@ export const PhoneSettings: React.FC = () => {
         </div>
         {renderToggle('Timbre de notificación', 'Hace sonar el celular cuando llegue una alerta.', notificationSoundEnabled, (checked) => saveConfigPreference(setNotificationSoundEnabled, checked))}
         {renderToggle('Vibración de notificación', 'Vibra cuando entren mensajes, citas, confirmaciones o pagos.', notificationVibrationEnabled, (checked) => saveConfigPreference(setNotificationVibrationEnabled, checked))}
-      </section>
-      <section className={styles.settingsSection}>
-        <div className={styles.sectionTitle}>
-          <Smartphone size={18} />
-          <span>
-            <strong>Sensación de celular</strong>
-            <small>Microvibraciones al tocar, deslizar, dejar picado o escribir.</small>
-          </span>
-        </div>
-        {renderToggle('Toques y gestos', 'Vibra suave en menús, swipes, botones y acciones rápidas.', mobileHapticsEnabled, (checked) => saveConfigPreference(setMobileHapticsEnabled, checked))}
-        {renderToggle('Clics al escribir', 'Da un toque ligero mientras escribes en el chat.', mobileKeyboardFeedbackEnabled, (checked) => saveConfigPreference(setMobileKeyboardFeedbackEnabled, checked), !mobileHapticsEnabled)}
       </section>
     </>
   )

@@ -113,8 +113,6 @@ import {
 import {
   MOBILE_APP_NOTIFICATION_EVENT,
   mobileAppService,
-  triggerKeyboardClickFeedback,
-  triggerLightHapticFeedback,
   type MobileAppNotificationDetail,
   type MobileChatAttachment,
   type MobileDocumentAttachment,
@@ -1936,11 +1934,6 @@ function getMessageActionText(message: ChatMessage) {
   return getMessageAttachmentActionLabel(message) || 'Mensaje'
 }
 
-function triggerMessageActionHapticFeedback() {
-  // Háptico nativo en la app instalada, vibración web como respaldo.
-  void triggerLightHapticFeedback()
-}
-
 async function copyTextToClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text)
@@ -3105,8 +3098,6 @@ export const PhoneChat: React.FC = () => {
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
   const [showUnreadIndicators, setShowUnreadIndicators] = useAppConfig<boolean>('mobile_chat_show_unread_indicators', true)
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
-  const [mobileHapticsEnabled, setMobileHapticsEnabled] = useAppConfig<boolean>('mobile_haptics_enabled', true)
-  const [mobileKeyboardFeedbackEnabled, setMobileKeyboardFeedbackEnabled] = useAppConfig<boolean>('mobile_keyboard_feedback_enabled', true)
   const [bankClabes, setBankClabes, savingBankClabes] = useAppConfig<BankClabeAccount[]>(PAYMENT_BANK_CLABES_CONFIG_KEY, [])
   const [enabledContactInfoCustomFieldIds] = useAppConfig<string[]>(CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY, [])
   const paymentCapabilities = usePaymentGatewayCapabilities()
@@ -3120,13 +3111,6 @@ export const PhoneChat: React.FC = () => {
     systemThemeAvailable,
     deviceLabel: phoneThemeDeviceLabel
   } = usePhoneTheme({ active: false })
-
-  useEffect(() => {
-    mobileAppService.setFeedbackPreferences({
-      hapticsEnabled: mobileHapticsEnabled,
-      keyboardFeedbackEnabled: mobileKeyboardFeedbackEnabled
-    })
-  }, [mobileHapticsEnabled, mobileKeyboardFeedbackEnabled])
 
   const [deviceMode, setDeviceMode] = useState<PhoneChatDeviceMode>(getPhoneChatDeviceMode)
   const [accessState, setAccessState] = useState<AccessState>(() => getAccessState(deviceMode))
@@ -4641,7 +4625,6 @@ export const PhoneChat: React.FC = () => {
     if (conversationVisible || chatsLoading || chatsRefreshing) return
 
     suppressNextChatClick(520)
-    triggerLightHapticFeedback()
     refreshChatInboxNow({ showIndicator: true }).catch(() => undefined)
   }, [chatsLoading, chatsRefreshing, conversationVisible, refreshChatInboxNow, suppressNextChatClick])
 
@@ -6106,7 +6089,6 @@ export const PhoneChat: React.FC = () => {
   }
 
   const openAttachmentsSheet = () => {
-    triggerMessageActionHapticFeedback()
     if (isWideChatDevice) {
       const rect = composerPlusRef.current?.getBoundingClientRect()
       setAttachmentSheetAnchor(rect ? {
@@ -6516,7 +6498,6 @@ export const PhoneChat: React.FC = () => {
 
   const openChatQuickActions = (contact: ChatContact) => {
     if (contact.id === AI_AGENT_CHAT_ID) return
-    triggerMessageActionHapticFeedback()
     clearChatLongPress()
     chatSwipeGestureRef.current = null
     setDraggingSwipe(null)
@@ -6531,7 +6512,6 @@ export const PhoneChat: React.FC = () => {
     setChatQuickActionsContact(null)
     if (!contact) return
 
-    triggerMessageActionHapticFeedback()
     if (action === 'appointment') {
       handleOpenAppointmentForm(contact)
     } else if (action === 'payment') {
@@ -6644,7 +6624,6 @@ export const PhoneChat: React.FC = () => {
       const openThreshold = gesture.startOffset > 0 ? CHAT_SWIPE_CLOSE_THRESHOLD : CHAT_SWIPE_OPEN_THRESHOLD
       const shouldOpenSwipe = gesture.offset >= openThreshold
       if (shouldOpenSwipe) {
-        triggerMessageActionHapticFeedback()
         clearClosingSwipeActions(gesture.contactId)
         setOpenSwipeChatId(gesture.contactId)
       } else {
@@ -6757,9 +6736,6 @@ export const PhoneChat: React.FC = () => {
     clearMessageActionPress()
     const element = event.currentTarget
     const timerId = window.setTimeout(() => {
-      if (event.pointerType !== 'mouse') {
-        triggerMessageActionHapticFeedback()
-      }
       openMessageActionMenu(message, element)
     }, MESSAGE_ACTION_LONG_PRESS_MS)
 
@@ -6801,7 +6777,6 @@ export const PhoneChat: React.FC = () => {
   )
 
   const handleReplyMessage = (message: ChatMessage) => {
-    triggerMessageActionHapticFeedback()
     setReplyingToMessageId(message.id)
     closeMessageActionMenu()
     requestAnimationFrame(() => composerInputRef.current?.focus())
@@ -6809,13 +6784,11 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleForwardMessage = () => {
-    triggerMessageActionHapticFeedback()
     closeMessageActionMenu()
     showToast('info', 'Reenviar aún no está activo', 'Ya dejamos la opción lista para conectarla después.')
   }
 
   const handleCopyMessage = async (message: ChatMessage) => {
-    triggerMessageActionHapticFeedback()
     const text = getMessageActionText(message)
     if (!text) {
       showToast('warning', 'Nada para copiar', 'Este mensaje no tiene texto disponible.')
@@ -6832,7 +6805,6 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleToggleStarMessage = (message: ChatMessage) => {
-    triggerMessageActionHapticFeedback()
     setStarredMessageIds((current) => {
       const exists = current.includes(message.id)
       const next = exists ? current.filter((id) => id !== message.id) : [message.id, ...current]
@@ -6903,7 +6875,6 @@ export const PhoneChat: React.FC = () => {
 
   const openMessageInfo = useCallback((message: ChatMessage) => {
     if (message.direction === 'system') return
-    triggerMessageActionHapticFeedback()
     messageInfoSwipeGestureRef.current = null
     setDraggingMessageInfoSwipe(null)
     setMessageInfoMessageId(message.id)
@@ -7208,7 +7179,6 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    triggerMessageActionHapticFeedback()
     const sentAt = new Date().toISOString()
     setCameraShareSending(true)
 
@@ -7499,7 +7469,6 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    triggerMessageActionHapticFeedback()
     setScheduleDraft(createDefaultScheduleDraft())
     setScheduleError('')
     setScheduleEditingMessageId(null)
@@ -7545,7 +7514,6 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    triggerMessageActionHapticFeedback()
     let provider: 'highlevel' | 'whatsapp_api' = 'whatsapp_api'
     let channel: HighLevelChatChannel | undefined
     let transport: 'api' | 'qr' = 'api'
@@ -7790,7 +7758,6 @@ export const PhoneChat: React.FC = () => {
     const attachmentsToSend = hasTextOverride ? [] : draftAttachments
     const voiceToSend = hasTextOverride ? null : voiceDraft
     if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
-    triggerMessageActionHapticFeedback()
 
     if (sendingThroughHighLevel) {
       const requestedChannel = activeHighLevelChatChannel
@@ -8270,7 +8237,6 @@ export const PhoneChat: React.FC = () => {
       event.currentTarget.setPointerCapture(event.pointerId)
     }
 
-    triggerMessageActionHapticFeedback()
     handleStartVoiceRecording()
   }
 
@@ -8312,7 +8278,6 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (voiceRecording) {
-      triggerMessageActionHapticFeedback()
       handleStopVoiceRecording()
       return
     }
@@ -8322,7 +8287,6 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    triggerMessageActionHapticFeedback()
     handleStartVoiceRecording()
   }
 
@@ -8961,7 +8925,6 @@ export const PhoneChat: React.FC = () => {
                 autoCapitalize="sentences"
                 onInput={(event) => {
                   syncCameraShareCaption(event.currentTarget)
-                  void triggerKeyboardClickFeedback()
                 }}
                 onPaste={handleCameraShareCaptionPaste}
                 onKeyDown={(event) => {
@@ -11679,29 +11642,6 @@ export const PhoneChat: React.FC = () => {
               onChange={(event) => saveConfigPreference(setNotificationVibrationEnabled, event.target.checked)}
             />
           </label>
-          <label className={styles.toggleRow}>
-            <span>
-              <strong>Toques y gestos</strong>
-              <small>Vibra suave al dejar picado, deslizar, abrir menús o enviar.</small>
-            </span>
-            <input
-              type="checkbox"
-              checked={mobileHapticsEnabled}
-              onChange={(event) => saveConfigPreference(setMobileHapticsEnabled, event.target.checked)}
-            />
-          </label>
-          <label className={`${styles.toggleRow} ${!mobileHapticsEnabled ? styles.toggleRowDisabled : ''}`}>
-            <span>
-              <strong>Clics al escribir</strong>
-              <small>Da un toque ligero mientras escribes en el chat.</small>
-            </span>
-            <input
-              type="checkbox"
-              checked={mobileKeyboardFeedbackEnabled}
-              disabled={!mobileHapticsEnabled}
-              onChange={(event) => saveConfigPreference(setMobileKeyboardFeedbackEnabled, event.target.checked)}
-            />
-          </label>
         </>
       ))
     }
@@ -14333,7 +14273,6 @@ export const PhoneChat: React.FC = () => {
                               autoCapitalize="sentences"
                               onInput={(event) => {
                                 syncComposerText(event.currentTarget)
-                                void triggerKeyboardClickFeedback()
                               }}
                               onPaste={handleComposerPaste}
                               onKeyDown={(event) => {

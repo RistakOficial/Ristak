@@ -227,8 +227,6 @@ export const NotificationSettings: React.FC = () => {
   const [paymentPushEnabled, setPaymentPushEnabled, savingPaymentPush] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
   const [notificationSoundEnabled, setNotificationSoundEnabled, savingNotificationSound] = useAppConfig<boolean>('push_notification_sound_enabled', true)
   const [notificationVibrationEnabled, setNotificationVibrationEnabled, savingNotificationVibration] = useAppConfig<boolean>('push_notification_vibration_enabled', true)
-  const [mobileHapticsEnabled, setMobileHapticsEnabled, savingMobileHaptics] = useAppConfig<boolean>('mobile_haptics_enabled', true)
-  const [mobileKeyboardFeedbackEnabled, setMobileKeyboardFeedbackEnabled, savingMobileKeyboardFeedback] = useAppConfig<boolean>('mobile_keyboard_feedback_enabled', true)
   const [pushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
@@ -318,7 +316,7 @@ export const NotificationSettings: React.FC = () => {
   const preferencesChanged = savedRowsKey !== draftRowsKey
   const activeCellCount = countActiveCells(preferencesDraft)
   const activePushEventCount = NOTIFICATION_EVENTS.filter((event) => eventHasPush(preferencesDraft, event.key)).length
-  const savingExperience = savingNotificationSound || savingNotificationVibration || savingMobileHaptics || savingMobileKeyboardFeedback
+  const savingExperience = savingNotificationSound || savingNotificationVibration
   const busy = savingPreferences || syncingPreferences || savingCalendarPush || savingAppointmentConfirmationPush || savingChatPush || savingPaymentPush || loadingUsers || savingExperience
 
   const handleChannelChange = (recipientId: string, eventKey: NotificationEventKey, channel: NotificationChannel) => {
@@ -489,7 +487,7 @@ export const NotificationSettings: React.FC = () => {
           <div>
             <h3 className={styles.sectionTitle}>Experiencia en celular</h3>
             <p className={styles.sectionDescription}>
-              Define si las push suenan, vibran y si la app da microvibraciones al tocar o escribir.
+              Define si las push suenan y vibran cuando lleguen al celular.
             </p>
           </div>
         </div>
@@ -509,23 +507,6 @@ export const NotificationSettings: React.FC = () => {
             notificationVibrationEnabled,
             setNotificationVibrationEnabled,
             Vibrate
-          )}
-          {renderExperienceToggle(
-            'mobile-haptics-enabled',
-            'Toques y gestos',
-            'Vibra suave al abrir acciones, dejar picado, deslizar o enviar.',
-            mobileHapticsEnabled,
-            setMobileHapticsEnabled,
-            Smartphone
-          )}
-          {renderExperienceToggle(
-            'mobile-keyboard-feedback-enabled',
-            'Clics al escribir',
-            'Da un toque ligero mientras se escribe en el chat móvil.',
-            mobileKeyboardFeedbackEnabled,
-            setMobileKeyboardFeedbackEnabled,
-            MessageCircle,
-            !mobileHapticsEnabled
           )}
         </div>
       </Card>
