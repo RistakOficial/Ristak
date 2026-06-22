@@ -2,10 +2,10 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button, Icon, Modal, CustomSelect, PageHeader, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
-import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, Pencil, Power, RefreshCw, Trash2, XCircle } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, FlaskConical, Pencil, Power, RefreshCw, Save, Send, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
-import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
+import { campaignsService, type ConnectedSocialProfile, type MetaTestEventResponse } from '@/services/campaignsService'
 import styles from './MetaAdsIntegration.module.css'
 
 interface MetaCredentials {
@@ -135,6 +135,11 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isEditingMetaConfig, setIsEditingMetaConfig] = useState(false)
   const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false)
   const [isDisconnectingMeta, setIsDisconnectingMeta] = useState(false)
+  const [isMetaTestModalOpen, setIsMetaTestModalOpen] = useState(false)
+  const [metaTestDraftCode, setMetaTestDraftCode] = useState('')
+  const [metaTestEventName, setMetaTestEventName] = useState('LeadSubmitted')
+  const [isSendingMetaTestEvent, setIsSendingMetaTestEvent] = useState(false)
+  const [metaTestResult, setMetaTestResult] = useState<MetaTestEventResponse | null>(null)
   const [activeStep, setActiveStep] = useState(routeStep)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
 
@@ -145,6 +150,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [whatsappPurchaseEventEnabled, setWhatsappPurchaseEventEnabled, savingWhatsappPurchaseEvent] = useAppConfig('meta_whatsapp_purchase_enabled', false)
   const [messengerMessagingEnabled, setMessengerMessagingEnabled, savingMessengerMessaging] = useAppConfig('meta_messenger_messaging_enabled', false)
   const [instagramMessagingEnabled, setInstagramMessagingEnabled, savingInstagramMessaging] = useAppConfig('meta_instagram_messaging_enabled', false)
+  const [metaTestEventCode, setMetaTestEventCode, savingMetaTestEventCode] = useAppConfig('meta_test_event_code', '')
 
   useEffect(() => {
     loadCredentials()
@@ -153,6 +159,12 @@ export const MetaAdsIntegration: React.FC = () => {
   useEffect(() => {
     setActiveStep(current => current === routeStep ? current : routeStep)
   }, [routeStep])
+
+  useEffect(() => {
+    if (!isMetaTestModalOpen) return
+    setMetaTestDraftCode(metaTestEventCode || '')
+    setMetaTestResult(null)
+  }, [isMetaTestModalOpen, metaTestEventCode])
 
   const goToMetaStep = (stepIndex: number, options?: { replace?: boolean }) => {
     const nextStep = Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))
@@ -868,6 +880,94 @@ export const MetaAdsIntegration: React.FC = () => {
       showToast('error', 'Error', 'No se pudo actualizar el snippet')
     } finally {
       setIsSyncingSnippet(false)
+    }
+  }
+
+  const normalizeMetaTestCode = (value = '') => value.trim().replace(/\s+/g, '')
+  const normalizeMetaTestEventName = (value = '') => value.trim() || 'LeadSubmitted'
+
+  const handleOpenMetaTestModal = () => {
+    setMetaTestDraftCode(metaTestEventCode || '')
+    setMetaTestEventName(current => current.trim() || 'LeadSubmitted')
+    setMetaTestResult(null)
+    setIsMetaTestModalOpen(true)
+  }
+
+  const handleSaveMetaTestEventCode = async () => {
+    const nextCode = normalizeMetaTestCode(metaTestDraftCode)
+
+    if (!nextCode) {
+      showToast('warning', 'Código requerido', 'Pega el código TEST de Events Manager')
+      return false
+    }
+
+    try {
+      await setMetaTestEventCode(nextCode)
+      setMetaTestDraftCode(nextCode)
+      showToast('success', 'Código guardado', 'Los eventos CAPI usarán este código de prueba')
+      return true
+    } catch {
+      showToast('error', 'Error', 'No se pudo guardar el código de prueba')
+      return false
+    }
+  }
+
+  const handleClearMetaTestEventCode = async () => {
+    try {
+      await setMetaTestEventCode('')
+      setMetaTestDraftCode('')
+      setMetaTestResult(null)
+      showToast('success', 'Código limpiado', 'Los eventos CAPI vuelven a tráfico real')
+    } catch {
+      showToast('error', 'Error', 'No se pudo limpiar el código de prueba')
+    }
+  }
+
+  const handleSendMetaTestEvent = async () => {
+    if (!hasPixel) {
+      showToast('warning', 'Pixel requerido', 'Configura un Meta Pixel antes de enviar una prueba')
+      return
+    }
+
+    const testEventCode = normalizeMetaTestCode(metaTestDraftCode)
+    const eventName = normalizeMetaTestEventName(metaTestEventName)
+
+    if (!testEventCode) {
+      showToast('warning', 'Código requerido', 'Pega el código TEST de Events Manager')
+      return
+    }
+
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(eventName)) {
+      showToast('warning', 'Evento inválido', 'Usa letras, números y guion bajo; por ejemplo LeadSubmitted')
+      return
+    }
+
+    setIsSendingMetaTestEvent(true)
+    setMetaTestResult(null)
+
+    try {
+      if (testEventCode !== normalizeMetaTestCode(metaTestEventCode)) {
+        await setMetaTestEventCode(testEventCode)
+      }
+
+      const result = await campaignsService.sendMetaTestEvent({
+        testEventCode,
+        eventName
+      })
+
+      setMetaTestDraftCode(testEventCode)
+      setMetaTestResult(result)
+      showToast(
+        'success',
+        'Prueba enviada',
+        result.eventId ? `Busca ${result.eventId} en Test Events` : 'Meta recibió el evento de prueba'
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo enviar la prueba'
+      setMetaTestResult({ success: false, error: message })
+      showToast('error', 'Error al probar', message)
+    } finally {
+      setIsSendingMetaTestEvent(false)
     }
   }
 
@@ -1776,6 +1876,30 @@ export const MetaAdsIntegration: React.FC = () => {
                       Sincronizando snippet...
                     </div>
                   )}
+
+                  <div className={styles.connectedExtraRow}>
+                    <div className={styles.metaTestRowCopy}>
+                      <span className={styles.railSwitchLabel}>Probar eventos CAPI</span>
+                      <span className={styles.railSecondaryValue}>Guarda el código TEST de Meta y manda una prueba desde ajustes.</span>
+                      <span className={styles.metaTestRowMeta}>
+                        <Badge variant={metaTestEventCode ? 'warning' : 'neutral'}>
+                          {metaTestEventCode ? 'Test activo' : 'Sin código'}
+                        </Badge>
+                        {metaTestEventCode && (
+                          <span className={styles.metaTestSavedCode}>{metaTestEventCode}</span>
+                        )}
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={handleOpenMetaTestModal}
+                      disabled={!hasPixel}
+                    >
+                      <FlaskConical size={16} />
+                      Abrir pruebas
+                    </Button>
+                  </div>
                 </div>
               </section>
             )}
@@ -1851,6 +1975,99 @@ export const MetaAdsIntegration: React.FC = () => {
           void handleDisconnectMetaConfig()
         }}
       />
+
+      <Modal
+        isOpen={isMetaTestModalOpen}
+        onClose={() => {
+          if (!isSendingMetaTestEvent && !savingMetaTestEventCode) {
+            setIsMetaTestModalOpen(false)
+          }
+        }}
+        title="Pruebas de eventos Meta"
+        type="custom"
+        size="md"
+      >
+        <div className={styles.metaTestPanel}>
+          <p className={styles.metaTestHelp}>
+            Pega el código de la pestaña Test Events. Mientras esté guardado, los eventos CAPI se mandan como prueba.
+          </p>
+
+          <div className={styles.metaTestGrid}>
+            <label className={styles.formGroup}>
+              <span className={styles.formLabel}>Código de test</span>
+              <input
+                className={styles.formInput}
+                value={metaTestDraftCode}
+                onChange={(event) => setMetaTestDraftCode(event.target.value)}
+                placeholder="TEST12345"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+            <label className={styles.formGroup}>
+              <span className={styles.formLabel}>Evento</span>
+              <input
+                className={styles.formInput}
+                value={metaTestEventName}
+                onChange={(event) => setMetaTestEventName(event.target.value)}
+                placeholder="LeadSubmitted"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          </div>
+
+          {metaTestResult && (
+            <div
+              className={styles.metaTestResult}
+              data-status={metaTestResult.success ? 'success' : 'error'}
+              role="status"
+            >
+              <strong>{metaTestResult.success ? 'Evento enviado' : 'No se pudo enviar'}</strong>
+              {metaTestResult.eventId && (
+                <span className={styles.metaTestResultCode}>{metaTestResult.eventId}</span>
+              )}
+              {metaTestResult.error && (
+                <span>{metaTestResult.error}</span>
+              )}
+            </div>
+          )}
+
+          <div className={styles.metaTestActions}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => void handleClearMetaTestEventCode()}
+              disabled={savingMetaTestEventCode || isSendingMetaTestEvent || !metaTestEventCode}
+            >
+              <Trash2 size={16} />
+              Limpiar
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void handleSaveMetaTestEventCode()}
+              disabled={savingMetaTestEventCode || isSendingMetaTestEvent}
+            >
+              <Save size={16} />
+              {savingMetaTestEventCode ? 'Guardando' : 'Guardar código'}
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => void handleSendMetaTestEvent()}
+              disabled={savingMetaTestEventCode || isSendingMetaTestEvent}
+            >
+              {isSendingMetaTestEvent ? (
+                <RefreshCw size={16} className={styles.spinning} />
+              ) : (
+                <Send size={16} />
+              )}
+              {isSendingMetaTestEvent ? 'Enviando' : 'Enviar prueba'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

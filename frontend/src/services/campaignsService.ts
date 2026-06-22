@@ -166,6 +166,16 @@ interface AdCreativeMediaResponse {
   >
 }
 
+export interface MetaTestEventResponse {
+  success: boolean
+  message?: string
+  eventId?: string
+  eventName?: string
+  testEventCode?: string
+  responsePayload?: unknown
+  error?: string
+}
+
 class CampaignsService {
   async getCampaigns(startDate: string, endDate: string): Promise<Campaign[]> {
     try {
@@ -238,6 +248,14 @@ class CampaignsService {
 
   async startSync(): Promise<void> {
     await apiClient.post('/meta/sync', {})
+  }
+
+  async sendMetaTestEvent(payload: {
+    testEventCode: string
+    eventName?: string
+    eventSourceUrl?: string
+  }): Promise<MetaTestEventResponse> {
+    return apiClient.post<MetaTestEventResponse>('/meta/test-event', payload)
   }
 
   async getSpendOverTime(startDate: string, endDate: string): Promise<{ label: string; value: number; value2: number }[]> {

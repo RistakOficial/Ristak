@@ -353,6 +353,93 @@
   background: var(--color-background);
 }
 
+.metaTestRowCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.metaTestRowMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.metaTestSavedCode {
+  overflow: hidden;
+  max-width: min(260px, 100%);
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metaTestPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.metaTestHelp {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.metaTestGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(180px, 0.58fr);
+  gap: 12px;
+}
+
+.metaTestResult {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  color: var(--text-dim);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.metaTestResult[data-status='success'] {
+  border-color: var(--pos);
+  background: var(--pos-soft);
+}
+
+.metaTestResult[data-status='error'] {
+  border-color: var(--neg);
+  background: var(--neg-soft);
+}
+
+.metaTestResult strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.metaTestResultCode {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.metaTestActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .sectionHeader {
   display: flex;
   align-items: flex-start;
@@ -1141,6 +1228,10 @@
   .scopeList {
     justify-content: flex-start;
   }
+
+  .metaTestGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1162,6 +1253,7 @@
 
   .inputActionRow,
   .stepActions,
+  .metaTestActions,
   .connectedPageCard,
   .connectedExtraRow {
     grid-template-columns: 1fr;
@@ -1176,6 +1268,7 @@
 
   .inputActionRow button,
   .stepActions button,
+  .metaTestActions button,
   .connectedActions button {
     width: 100%;
   }

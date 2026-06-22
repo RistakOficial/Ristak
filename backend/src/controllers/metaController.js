@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { db, getAppConfig, setAppConfig } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { isEncrypted } from '../utils/encryption.js';
@@ -60,6 +61,25 @@ function isMaskedSecret(value) {
 function maskSecret(value) {
   const cleanValue = cleanString(value);
   return cleanValue ? `${MASKED_SECRET_PREFIX}${cleanValue.slice(-8)}` : '';
+}
+
+function hashMetaTestValue(value) {
+  const cleanValue = cleanString(value).toLowerCase();
+  if (!cleanValue) return null;
+  return crypto.createHash('sha256').update(cleanValue).digest('hex');
+}
+
+function normalizeMetaTestEventName(value) {
+  const eventName = cleanString(value) || 'LeadSubmitted';
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(eventName)) {
+    return '';
+  }
+  return eventName;
+}
+
+function getRequestIp(req) {
+  const forwardedFor = cleanString(req.headers?.['x-forwarded-for']).split(',').map(item => item.trim()).filter(Boolean)[0];
+  return forwardedFor || cleanString(req.ip) || cleanString(req.socket?.remoteAddress);
 }
 
 function normalizeMetaAdAccountId(value) {
@@ -409,6 +429,101 @@ export const getConfig = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener la configuración de Meta'
+    });
+  }
+};
+
+/**
+ * Envía un evento CAPI controlado para validar el Test Event Code de Meta.
+ */
+export const sendMetaTestEvent = async (req, res) => {
+  try {
+    const metaConfig = await getMetaConfig();
+    const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID);
+    const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token);
+    const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE).replace(/\s+/g, '');
+    const eventName = normalizeMetaTestEventName(req.body?.eventName || req.body?.event_name);
+
+    if (!datasetId || !accessToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Configura Meta Pixel y Pixel API Token antes de enviar una prueba'
+      });
+    }
+
+    if (!testEventCode) {
+      return res.status(400).json({
+        success: false,
+        error: 'Pega el código de Test Events de Meta'
+      });
+    }
+
+    if (!eventName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Usa un nombre de evento válido, por ejemplo LeadSubmitted'
+      });
+    }
+
+    const eventId = `ristak_meta_test_${Date.now()}_${crypto.randomUUID()}`;
+    const eventSourceUrl = cleanString(req.body?.eventSourceUrl || req.body?.event_source_url) || `${getPublicBaseUrl(req)}/settings/meta-ads`;
+    const payload = {
+      test_event_code: testEventCode,
+      data: [
+        {
+          event_name: eventName,
+          event_time: Math.floor(Date.now() / 1000),
+          action_source: 'website',
+          event_source_url: eventSourceUrl,
+          event_id: eventId,
+          user_data: {
+            client_ip_address: getRequestIp(req) || undefined,
+            client_user_agent: cleanString(req.headers?.['user-agent']) || 'Ristak Meta CAPI Test',
+            external_id: hashMetaTestValue(`ristak_meta_test_${datasetId}`)
+          },
+          custom_data: {
+            source: 'ristak_settings',
+            conversion_type: 'settings_test_event',
+            content_name: 'Ristak Meta CAPI test'
+          }
+        }
+      ]
+    };
+
+    Object.keys(payload.data[0].user_data).forEach(key => {
+      if (!payload.data[0].user_data[key]) delete payload.data[0].user_data[key];
+    });
+
+    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const responsePayload = await response.json().catch(() => ({}));
+
+    if (!response.ok || responsePayload?.error) {
+      return res.status(response.ok ? 400 : response.status).json({
+        success: false,
+        error: responsePayload?.error?.message || `Meta CAPI ${response.status}`,
+        eventId,
+        eventName,
+        responsePayload
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Evento de prueba enviado a Meta',
+      eventId,
+      eventName,
+      testEventCode,
+      responsePayload
+    });
+  } catch (error) {
+    logger.error(`Error en sendMetaTestEvent: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al enviar evento de prueba a Meta'
     });
   }
 };
