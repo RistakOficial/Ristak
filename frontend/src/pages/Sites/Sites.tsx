@@ -25491,8 +25491,8 @@ const SiteSettingsPanelContent: React.FC<{
             <strong>Antitracking</strong>
             <small>
               {antiTrackingEnabled
-                ? 'Prendido: tus vueltas desde Ristak no ensucian la atribución.'
-                : 'Apagado: tus pruebas en vivo sí cuentan. Úsalo solo para experimentos.'}
+                ? 'Prendido: revisa desde Ristak sin contar tu visita; reportes limpios.'
+                : 'Apagado: tus pruebas sí cuentan como visitas; úsalo solo para medir tracking.'}
             </small>
           </div>
           <Switch

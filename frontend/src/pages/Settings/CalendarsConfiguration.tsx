@@ -2232,7 +2232,7 @@ export const CalendarsConfiguration: React.FC = () => {
                       <div>
                         <span>Antitracking</span>
                         <small>
-                          Prendido: si abres este calendario desde Ristak, tu visita no ensucia la atribución. Te recomiendo dejarlo así; apágalo solo para experimentos.
+                          Prendido: revisa desde Ristak sin contar tu visita; reportes limpios. Recomendado dejarlo así.
                         </small>
                       </div>
                       <Switch
