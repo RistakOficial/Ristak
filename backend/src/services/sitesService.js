@@ -13342,11 +13342,15 @@ function getImportedPopupHtmlFragment(html = '') {
 }
 
 function siteHasPopupOpenAction(site) {
-  return (Array.isArray(site?.blocks) ? site.blocks : []).some(block => {
+  const hasOpenActionInBlocks = blocks => (Array.isArray(blocks) ? blocks : []).some(block => {
     const settings = block?.settings || {}
-    return ['hero', 'button', 'cta'].includes(block.blockType) &&
+    const buttonOpensPopup = ['hero', 'button', 'cta'].includes(block.blockType) &&
       cleanString(settings.buttonAction || settings.button_action) === 'open_popup'
+    const videoOpensPopup = block?.blockType === 'video' &&
+      getVideoActionRulesFromSettings(settings).some(rule => rule.action === 'show_popup')
+    return buttonOpensPopup || videoOpensPopup || hasOpenActionInBlocks(settings.embeddedBlocks)
   })
+  return hasOpenActionInBlocks(site?.blocks)
 }
 
 function renderSitePopup(site, context = {}) {

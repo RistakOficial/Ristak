@@ -473,6 +473,32 @@ test('video actions render public target state and runtime', async () => {
   assert.match(html, /eventScope: 'video_action'/)
 })
 
+test('video popup action renders manual popup surface when automatic trigger is never', async () => {
+  const site = baseSite({
+    videoActions: [
+      {
+        id: 'popup-at-10',
+        timeSeconds: 10,
+        action: 'show_popup',
+        before: 'hidden'
+      }
+    ]
+  })
+  site.theme.popupTrigger = 'never'
+
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+
+  assert.match(html, /data-rstk-site-popup/)
+  assert.match(html, /data-trigger="never"/)
+  assert.match(html, /window\.ristakOpenSitePopup = \(\) => show\(\{ manual: true \}\)/)
+  assert.match(html, /&quot;action&quot;:&quot;show_popup&quot;/)
+  assert.match(html, /ristakVideoActionsRuntimeLoaded/)
+})
+
 test('page view meta event endpoint enriches browser match data', async () => {
   const previousMetaEnv = {
     pixelId: process.env.META_PIXEL_ID,

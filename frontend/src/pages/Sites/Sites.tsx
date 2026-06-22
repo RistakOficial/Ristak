@@ -1297,7 +1297,7 @@ const VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS = 600
 const VIDEO_ACTION_TIMELINE_PADDING_SECONDS = 60
 const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event']
 const videoActionBeforeStates: VideoActionBeforeState[] = ['hidden', 'visible', 'unchanged']
-const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'scroll_to', 'meta_event']
+const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'meta_event']
 const videoActionTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 const videoActionMultiTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form'])
 
@@ -4686,7 +4686,15 @@ const buildVideoActionTargetOptions = (
 ): VideoActionTargetOption[] => {
   const seen = new Set<string>()
   const options: VideoActionTargetOption[] = []
-  const popupAvailable = importedPopupDetected || popupBlocks.length > 0 || getPopupTrigger(site.theme) !== 'never'
+  const theme = site.theme || {}
+  const popupHasConfiguredContent = [
+    theme.popupTitle,
+    theme.popupBody,
+    theme.popupButtonText,
+    theme.popupButtonUrl,
+    theme.importedPopupHtml
+  ].some(value => String(value || '').trim())
+  const popupAvailable = importedPopupDetected || popupBlocks.length > 0 || popupHasConfiguredContent || getPopupTrigger(theme) !== 'never'
 
   if (popupAvailable) {
     seen.add(POPUP_SURFACE_ID)
