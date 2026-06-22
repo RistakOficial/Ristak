@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ChevronDown, CircleSlash, FileText, Image as ImageIcon, KeyRound, Pause, PauseCircle, Play, Plus, RotateCcw, Target, Trash2, UserCheck, Users, Video, X } from 'lucide-react'
-import { AgentRobot } from '@/components/ai'
-import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, TagPicker } from '@/components/common'
+import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
   PhoneChatPreviewAttachmentMenu,
@@ -3595,69 +3594,71 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
 
   return (
     <div className={directoryClassName}>
-      <div className={styles.conversationalDirectoryHeader}>
-        <div className={styles.conversationalDirectoryTitleGroup}>
-          <AgentRobot size={48} active label="Agente conversacional" />
-          <h2>Agente conversacional</h2>
-          <Button
-            onClick={handleCreateAgent}
-            loading={creating}
-            disabled={loading || creating || !businessPromptReady}
-            title={!businessPromptReady ? promptBlockerText : undefined}
-          >
-            <Plus size={16} />
-            Nuevo agente
-          </Button>
-        </div>
-        <div className={styles.aiProviderDropdown}>
-          <Button
-            variant="secondary"
-            size="sm"
-            className={styles.aiProviderManagerToggle}
-            onClick={() => setAIProvidersExpanded((current) => !current)}
-            aria-expanded={aiProvidersExpanded}
-            aria-controls="conversational-ai-provider-list"
-            aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
-          >
-            Modelos de IA disponibles
-            <ChevronDown
-              size={15}
-              className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
-            />
-          </Button>
-          {aiProvidersExpanded && (
-            <div id="conversational-ai-provider-list" className={`${styles.aiProviderManagerList} ${styles.aiProviderDropdownMenu}`}>
-              {conversationalAIProviderOptions.map((provider) => {
-                const status = getProviderStatus(aiProviders, provider.id)
-                const connected = Boolean(status?.connected)
-                const canDelete = Boolean(status?.canDelete && connected)
-                return (
-                  <div key={provider.id} className={styles.aiProviderManagerRow}>
-                    <div className={styles.aiProviderManagerCopy}>
-                      <strong>{provider.label}</strong>
-                      <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
-                    </div>
-                    <Badge variant={connected ? 'success' : 'neutral'}>
-                      {connected ? 'Conectado' : 'Toca para conectar'}
-                    </Badge>
-                    {canDelete ? (
-                      <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
-                        <Trash2 size={15} />
-                        Eliminar
-                      </Button>
-                    ) : (
-                      <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
-                        <KeyRound size={15} />
-                        {connected ? 'Administrar' : 'Conectar'}
-                      </Button>
-                    )}
-                  </div>
-                )
-              })}
+      <PageHeader
+        title="Agente conversacional"
+        subtitle="Supervisa los agentes que atienden conversaciones, cumplen metas y escalan chats cuando necesitan ayuda humana."
+        actions={(
+          <>
+            <div className={styles.aiProviderDropdown}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className={styles.aiProviderManagerToggle}
+                onClick={() => setAIProvidersExpanded((current) => !current)}
+                aria-expanded={aiProvidersExpanded}
+                aria-controls="conversational-ai-provider-list"
+                aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
+              >
+                Modelos de IA disponibles
+                <ChevronDown
+                  size={15}
+                  className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
+                />
+              </Button>
+              {aiProvidersExpanded && (
+                <div id="conversational-ai-provider-list" className={`${styles.aiProviderManagerList} ${styles.aiProviderDropdownMenu}`}>
+                  {conversationalAIProviderOptions.map((provider) => {
+                    const status = getProviderStatus(aiProviders, provider.id)
+                    const connected = Boolean(status?.connected)
+                    const canDelete = Boolean(status?.canDelete && connected)
+                    return (
+                      <div key={provider.id} className={styles.aiProviderManagerRow}>
+                        <div className={styles.aiProviderManagerCopy}>
+                          <strong>{provider.label}</strong>
+                          <span>{connected ? (status?.tokenPreview || 'Conectado') : provider.description}</span>
+                        </div>
+                        <Badge variant={connected ? 'success' : 'neutral'}>
+                          {connected ? 'Conectado' : 'Toca para conectar'}
+                        </Badge>
+                        {canDelete ? (
+                          <Button variant="ghost" onClick={() => handleDeleteProvider(provider.id)}>
+                            <Trash2 size={15} />
+                            Eliminar
+                          </Button>
+                        ) : (
+                          <Button variant={connected ? 'secondary' : 'primary'} onClick={() => openProviderModal(provider.id)}>
+                            <KeyRound size={15} />
+                            {connected ? 'Administrar' : 'Conectar'}
+                          </Button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+            <Button
+              onClick={handleCreateAgent}
+              loading={creating}
+              disabled={loading || creating || !businessPromptReady}
+              title={!businessPromptReady ? promptBlockerText : undefined}
+            >
+              <Plus size={16} />
+              Nuevo agente
+            </Button>
+          </>
+        )}
+      />
 
       <div data-conversational-agent-kpi-grid className="grid grid-cols-2 gap-[var(--app-grid-gap,1rem)] sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard

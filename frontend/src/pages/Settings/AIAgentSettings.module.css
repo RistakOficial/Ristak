@@ -1198,35 +1198,6 @@
   gap: 20px;
 }
 
-.conversationalDirectoryHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.conversationalDirectoryTitleGroup {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.conversationalDirectoryHeader h2 {
-  margin: 0;
-  color: var(--text);
-  font-size: clamp(24px, 2.2vw, 32px);
-  font-weight: 650;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
-}
-
-.conversationalDirectoryTitleGroup > button {
-  flex: 0 0 auto;
-}
-
 .agentDirectoryGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1774,25 +1745,6 @@
 }
 
 @media (max-width: 640px) {
-  .conversationalDirectoryHeader {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 14px;
-    padding-bottom: 16px;
-  }
-
-  .conversationalDirectoryHeader h2 {
-    font-size: 24px;
-  }
-
-  .conversationalDirectoryTitleGroup {
-    flex-wrap: wrap;
-  }
-
-  .conversationalDirectoryTitleGroup > button {
-    width: 100%;
-  }
-
   .agentDirectoryGrid {
     grid-template-columns: 1fr;
   }
