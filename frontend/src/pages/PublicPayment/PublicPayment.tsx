@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe, type StripeElementsOptions } from '@stripe/stripe-js'
 import { AlertCircle, CheckCircle2, CreditCard, Download, ExternalLink, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Badge, Button, type BadgeVariant } from '@/components/common'
 import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '@/components/common/PaymentPlatformLogo'
+import { useTheme } from '@/contexts/ThemeContext'
 import {
   mercadoPagoPaymentsService,
   type MercadoPagoCardPaymentPayload,
@@ -29,6 +30,7 @@ import styles from './PublicPayment.module.css'
 
 type StripePromise = ReturnType<typeof loadStripe>
 type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment | PublicConektaPayment
+type DocumentThemeMode = 'light' | 'dark'
 type MercadoPagoBrickController = { unmount?: () => void }
 type MercadoPagoBrickBuilder = {
   create: (
@@ -87,6 +89,7 @@ let conektaCheckoutSdkPromise: Promise<void> | null = null
 const STRIPE_SPANISH_COUNTRIES = new Set([
   'AR', 'BO', 'CL', 'CO', 'CR', 'CU', 'DO', 'EC', 'ES', 'GT', 'HN', 'MX', 'NI', 'PA', 'PE', 'PR', 'PY', 'SV', 'UY', 'VE'
 ])
+const PUBLIC_PAYMENT_LIGHT_MODE_FLAG = 'publicPaymentLightMode'
 
 const printTemplateClassById: Record<PaymentInvoiceTemplateId, string> = {
   classic: 'printThemeClassic',
@@ -124,6 +127,18 @@ function readToken(name: string) {
   if (typeof window === 'undefined') return ''
   const value = getComputedStyle(document.body).getPropertyValue(name).trim()
   return value || ''
+}
+
+function applyDocumentThemeMode(mode: DocumentThemeMode) {
+  if (typeof document === 'undefined') return
+  const root = document.documentElement
+  const body = document.body
+  body.classList.remove('light', 'dark')
+  body.classList.add(mode)
+  root.dataset.theme = mode
+  body.dataset.theme = mode
+  root.dataset.mode = mode
+  body.dataset.mode = mode
 }
 
 function buildStripeAppearance() {
@@ -786,12 +801,47 @@ const ConektaCardTokenizerForm: React.FC<{
 export const PublicPayment: React.FC = () => {
   const { publicPaymentId = '' } = useParams()
   const [searchParams] = useSearchParams()
+  const { theme } = useTheme()
+  const restoreThemeRef = useRef<DocumentThemeMode>(theme)
   const autoReceiptPrintRef = useRef('')
   const [payment, setPayment] = useState<PublicPaymentData | null>(null)
   const [intent, setIntent] = useState<StripePaymentIntentResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [startingPayment, setStartingPayment] = useState(false)
   const [error, setError] = useState('')
+
+  restoreThemeRef.current = theme
+
+  useLayoutEffect(() => {
+    if (typeof document === 'undefined') return undefined
+
+    const root = document.documentElement
+    const body = document.body
+    const applyPublicPaymentLightMode = () => {
+      body.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG] = 'true'
+      root.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG] = 'true'
+      applyDocumentThemeMode('light')
+    }
+
+    applyPublicPaymentLightMode()
+
+    const observer = typeof MutationObserver !== 'undefined'
+      ? new MutationObserver(() => {
+          const alreadyLight = body.dataset.mode === 'light' && root.dataset.mode === 'light' && !body.classList.contains('dark')
+          if (!alreadyLight) applyPublicPaymentLightMode()
+        })
+      : null
+
+    observer?.observe(body, { attributes: true, attributeFilter: ['class', 'data-theme', 'data-mode'] })
+    observer?.observe(root, { attributes: true, attributeFilter: ['data-theme', 'data-mode'] })
+
+    return () => {
+      observer?.disconnect()
+      delete body.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG]
+      delete root.dataset[PUBLIC_PAYMENT_LIGHT_MODE_FLAG]
+      applyDocumentThemeMode(restoreThemeRef.current)
+    }
+  }, [])
 
   const status = getStatusCopy(payment?.status || '')
   const isPaid = Boolean(payment && ['paid', 'succeeded', 'completed'].includes(payment.status.toLowerCase()))
