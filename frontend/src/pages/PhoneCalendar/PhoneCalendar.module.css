@@ -625,6 +625,10 @@
   background: #ffffff;
 }
 
+.timelineScroller[data-calendar-timeline-view="week"] {
+  overflow-x: auto;
+}
+
 .weekStrip {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -632,6 +636,50 @@
   min-height: 88px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+}
+
+.weekTimelinePanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 940px;
+  background: #ffffff;
+}
+
+.weekTimelineHeader {
+  position: sticky;
+  top: 0;
+  z-index: 7;
+  display: grid;
+  grid-template-columns: 64px repeat(7, minmax(0, 1fr));
+  min-height: 78px;
+  border-bottom: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.weekTimelineHeader > span:first-child {
+  border-right: 1px solid var(--line);
+  background: #f7f6f2;
+}
+
+.weekTimelineHeader .weekDay {
+  min-height: 78px;
+  border-right: 1px solid var(--soft-line);
+}
+
+.weekTimelineBody {
+  display: grid;
+  grid-template-columns: 64px repeat(7, minmax(0, 1fr));
+  min-height: 1392px;
+}
+
+.weekTimelineBody .timelineHourColumn {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+}
+
+.weekTimelineBody .timelineGrid {
+  border-right: 1px solid var(--soft-line);
 }
 
 .weekDay {
@@ -709,6 +757,7 @@
   grid-template-rows: repeat(24, 58px);
   min-width: 0;
   background: #ffffff;
+  touch-action: none;
 }
 
 .timelineGrid > span {
@@ -717,6 +766,7 @@
 
 .timelineEvent {
   position: absolute;
+  z-index: 5;
   left: 8px;
   right: 10px;
   display: grid;
@@ -748,6 +798,17 @@
 .timelineEvent span {
   font-size: 12px;
   font-weight: 740;
+}
+
+.timelineSelectionOverlay {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  z-index: 3;
+  border: 1px solid color-mix(in srgb, var(--chat-green) 48%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--chat-green) 18%, transparent);
+  pointer-events: none;
 }
 
 .nowLine {
@@ -1972,6 +2033,19 @@
   }
 
   .timelineWrap {
+    min-height: 1728px;
+  }
+
+  .weekTimelinePanel {
+    min-width: 980px;
+  }
+
+  .weekTimelineHeader {
+    grid-template-columns: 92px repeat(7, minmax(0, 1fr));
+  }
+
+  .weekTimelineBody {
+    grid-template-columns: 92px repeat(7, minmax(0, 1fr));
     min-height: 1728px;
   }
 

@@ -1512,6 +1512,15 @@
   transform: translateX(0);
 }
 
+.aiAgentHubScreenClosing {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(100%);
+  transition:
+    transform 520ms cubic-bezier(0.2, 0.86, 0.2, 1),
+    opacity 360ms ease;
+}
+
 .agentPickerScreen.contactInfoScreenOpen {
   opacity: 1;
   pointer-events: auto;
@@ -5203,6 +5212,7 @@
 .voiceComposerPanel {
   display: grid;
   grid-template-columns: 34px auto minmax(92px, 1fr) 34px 42px;
+  grid-template-rows: minmax(40px, auto);
   align-items: center;
   gap: 9px;
   box-sizing: border-box;
@@ -5223,6 +5233,7 @@
 
 .voiceComposerTime {
   grid-column: 2;
+  grid-row: 1;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -5246,9 +5257,10 @@
 .voiceComposerWaveform {
   position: relative;
   grid-column: 3;
+  grid-row: 1;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: stretch;
   gap: 2.5px;
   min-width: 0;
   height: 34px;
@@ -5270,9 +5282,9 @@
   position: relative;
   z-index: 1;
   display: block;
-  flex: 1 0 2.5px;
+  flex: 1 1 0;
   min-width: 2.5px;
-  max-width: 4px;
+  max-width: none;
   height: var(--voice-bar-height);
   min-height: 4px;
   border-radius: 999px;
@@ -5313,6 +5325,7 @@
 
 .voiceDeleteButton {
   grid-column: 1;
+  grid-row: 1;
   justify-self: start;
   width: 32px;
   height: 40px;
@@ -5327,6 +5340,7 @@
 
 .voicePauseButton {
   grid-column: 4;
+  grid-row: 1;
   justify-self: center;
   width: 32px;
   height: 40px;
@@ -5343,6 +5357,7 @@
 
 .voiceSendAudioButton {
   grid-column: 5;
+  grid-row: 1;
   justify-self: end;
   width: 42px;
   height: 42px;
@@ -7768,7 +7783,11 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubScreenOpen {
-  animation: wideAiAgentHubIn 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: wideAiAgentHubIn 420ms cubic-bezier(0.2, 0.86, 0.2, 1) both;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubScreenClosing {
+  animation: wideAiAgentHubOut 520ms cubic-bezier(0.2, 0.86, 0.2, 1) both;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubContent {
@@ -7791,7 +7810,11 @@
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubRobot {
   width: 118px;
   height: 118px;
-  animation: wideAiAgentRobotCenterIn 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: wideAiAgentRobotCenterIn 680ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubScreenClosing .aiAgentHubRobot {
+  animation: wideAiAgentRobotCenterOut 520ms cubic-bezier(0.2, 0.86, 0.2, 1) both;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubRobot .agentRobot {
@@ -8014,7 +8037,10 @@
   align-items: flex-end;
   justify-content: flex-start;
   box-sizing: border-box;
-  padding: 0 calc(clamp(18px, 3vw, 42px) + 10px) calc(76px + env(safe-area-inset-bottom));
+  padding:
+    0
+    max(calc((100% - 1280px) / 2 + clamp(18px, 3vw, 42px) + 10px), calc(clamp(18px, 3vw, 42px) + 10px))
+    calc(76px + env(safe-area-inset-bottom));
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop::before {
@@ -8959,6 +8985,17 @@
   }
 }
 
+@keyframes wideAiAgentHubOut {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, -26px, 0);
+  }
+}
+
 @keyframes wideAiAgentRobotCenterIn {
   0% {
     opacity: 0;
@@ -8971,6 +9008,17 @@
   100% {
     opacity: 1;
     transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes wideAiAgentRobotCenterOut {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-70px, -82px, 0) scale(0.62);
   }
 }
 

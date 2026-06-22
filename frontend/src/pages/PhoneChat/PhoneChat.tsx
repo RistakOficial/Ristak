@@ -3123,6 +3123,7 @@ export const PhoneChat: React.FC = () => {
   const [archivedViewOpen, setArchivedViewOpen] = useState(false)
   const [agentPriorityViewOpen, setAgentPriorityViewOpen] = useState(false)
   const [aiAgentHubOpen, setAiAgentHubOpen] = useState(false)
+  const [aiAgentHubClosing, setAiAgentHubClosing] = useState(false)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [aiAgentHubQuery, setAiAgentHubQuery] = useState('')
   const [aiAgentHubAgentFilter, setAiAgentHubAgentFilter] = useState('all')
@@ -3320,6 +3321,7 @@ export const PhoneChat: React.FC = () => {
   const voiceSuppressNextClickRef = useRef(false)
   const voiceStartPendingRef = useRef(false)
   const voiceStopAfterStartRef = useRef(false)
+  const aiAgentHubCloseTimerRef = useRef<number | null>(null)
 
   useLayoutEffect(() => {
     activeContactIdRef.current = activeContactId
@@ -4686,12 +4688,20 @@ export const PhoneChat: React.FC = () => {
   }, [showToast])
 
   useEffect(() => {
-    document.title = aiAgentHubOpen
+    document.title = aiAgentHubOpen || aiAgentHubClosing
       ? 'Inteligencia artificial | Ristak'
       : aiAgentConversationOpen
       ? 'Agente de IA | Ristak'
       : activeContact ? `${getContactName(activeContact)} | Ristak` : 'Ristak'
-  }, [activeContact, aiAgentConversationOpen, aiAgentHubOpen])
+  }, [activeContact, aiAgentConversationOpen, aiAgentHubClosing, aiAgentHubOpen])
+
+  useEffect(() => {
+    return () => {
+      if (aiAgentHubCloseTimerRef.current !== null) {
+        window.clearTimeout(aiAgentHubCloseTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     writeAIAgentMobileMessages(aiMessages)
@@ -5738,6 +5748,11 @@ export const PhoneChat: React.FC = () => {
     setScheduleEditingMessageId(null)
     setConversationReturnTarget('chats')
     if (shouldReturnToAiAgentHub) {
+      if (aiAgentHubCloseTimerRef.current !== null) {
+        window.clearTimeout(aiAgentHubCloseTimerRef.current)
+        aiAgentHubCloseTimerRef.current = null
+      }
+      setAiAgentHubClosing(false)
       setAiAgentHubOpen(true)
       setAgentPickerOpen(false)
       setAgentMenuSection('menu')
@@ -6159,6 +6174,11 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    if (aiAgentHubCloseTimerRef.current !== null) {
+      window.clearTimeout(aiAgentHubCloseTimerRef.current)
+      aiAgentHubCloseTimerRef.current = null
+    }
+    setAiAgentHubClosing(false)
     setAiAgentHubOpen(true)
     setAgentPickerOpen(false)
     setAgentMenuSection('menu')
@@ -7949,6 +7969,28 @@ export const PhoneChat: React.FC = () => {
     }
   }
 
+  useEffect(() => {
+    if (!voicePanelActive) return
+
+    const handleVoiceKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        handleCancelVoiceDraft()
+        return
+      }
+
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        handleSendVoiceFromPanel()
+      }
+    }
+
+    window.addEventListener('keydown', handleVoiceKeyboard, true)
+    return () => window.removeEventListener('keydown', handleVoiceKeyboard, true)
+  }, [voicePanelActive, voiceDraft, voiceProcessing, voiceRecording])
+
   const handleVoiceButtonPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (canSendMessage || voiceRecording || voiceProcessing || voiceDraft) return
 
@@ -8396,8 +8438,24 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const closeAIAgentHubWithMotion = () => {
+    if (!aiAgentHubOpen) return
+
+    if (aiAgentHubCloseTimerRef.current !== null) {
+      window.clearTimeout(aiAgentHubCloseTimerRef.current)
+    }
+
+    setAgentPickerOpen(false)
+    setAiAgentHubClosing(true)
+    aiAgentHubCloseTimerRef.current = window.setTimeout(() => {
+      setAiAgentHubOpen(false)
+      setAiAgentHubClosing(false)
+      aiAgentHubCloseTimerRef.current = null
+    }, 520)
+  }
+
   const renderAIAgentHubScreen = () => {
-    if (!aiAgentHubOpen) return null
+    if (!aiAgentHubOpen && !aiAgentHubClosing) return null
 
     const activeLabel = agentEnabled ? 'Encendida' : 'Apagada'
     const agentCountLabel = publishedAgentCount === 1
@@ -8405,16 +8463,16 @@ export const PhoneChat: React.FC = () => {
       : `${publishedAgentCount} agentes publicados`
 
     return (
-      <section className={`${styles.aiAgentHubScreen} ${styles.aiAgentHubScreenOpen}`} aria-label="Inteligencia artificial">
+      <section
+        className={`${styles.aiAgentHubScreen} ${aiAgentHubOpen ? styles.aiAgentHubScreenOpen : ''} ${aiAgentHubClosing ? styles.aiAgentHubScreenClosing : ''}`}
+        aria-label="Inteligencia artificial"
+      >
         <div className={styles.aiAgentHubContent} data-phone-chat-scrollable="true">
           <section className={styles.aiAgentHubHero} aria-label="Control de inteligencia artificial">
             <button
               type="button"
               className={styles.aiAgentHubHeroBack}
-              onClick={() => {
-                setAiAgentHubOpen(false)
-                setAgentPickerOpen(false)
-              }}
+              onClick={closeAIAgentHubWithMotion}
               aria-label="Volver a chats"
             >
               <ChevronLeft size={26} />
@@ -13746,7 +13804,7 @@ export const PhoneChat: React.FC = () => {
 
       {renderMessageActionMenu()}
 
-      {!isWideChatDevice && !conversationOpen && !cameraSharePhoto && !aiAgentHubOpen && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
+      {!isWideChatDevice && !conversationOpen && !cameraSharePhoto && !aiAgentHubOpen && !aiAgentHubClosing && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
 
       <input
         ref={cameraInputRef}

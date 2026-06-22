@@ -24,6 +24,7 @@ import { contactsService } from '@/services/contactsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import type { Contact } from '@/types'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
+import { convertLocalToUTC } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -63,6 +64,7 @@ type AccessState = 'checking' | 'allowed' | 'blocked'
 type SheetView = 'calendar' | 'contactPicker' | null
 type CalendarView = 'month' | 'week' | 'day' | 'year' | 'years'
 type SwitchableCalendarView = Exclude<CalendarView, 'years'>
+type TimelineSelectionPoint = { date: Date; minutes: number }
 
 const TABLET_VIEW_OPTIONS: Array<{ view: SwitchableCalendarView; label: string }> = [
   { view: 'day', label: 'Día' },
@@ -288,13 +290,17 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [isEventModalOpen, setIsEventModalOpen] = useState(false)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
-  const createDefaults = useMemo(() => ({
+  const [createDefaults, setCreateDefaults] = useState(() => ({
     start: '',
     end: '',
     timeZone: timezone,
     title: ''
-  }), [timezone])
-  const stripRef = useRef<HTMLElement | null>(null)
+  }))
+  const [timelineSelection, setTimelineSelection] = useState<{
+    start: TimelineSelectionPoint
+    end: TimelineSelectionPoint
+    pointerId: number
+  } | null>(null)
   const timelineScrollRef = useRef<HTMLElement | null>(null)
   const handledOpenAppointmentRef = useRef<string | null>(null)
   const calendarTouchStartRef = useRef<{ x: number; y: number } | null>(null)
@@ -320,6 +326,13 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }
       transition: calendarSheetDismiss.dragging ? 'none' : undefined
     }
   }, [calendarSheetDismiss.closing, calendarSheetDismiss.dragOffset, calendarSheetDismiss.dragging, sheetView])
+
+  useEffect(() => {
+    setCreateDefaults((current) => current.timeZone === timezone ? current : {
+      ...current,
+      timeZone: timezone
+    })
+  }, [timezone])
 
   const formatEventTime = useCallback((value?: string | null) => {
     const date = toDateInTimeZone(value, timezone)
@@ -678,11 +691,6 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }
   }, [accessState, appointmentContactQuery, loadAppointmentContacts, sheetView])
 
   useEffect(() => {
-    const selectedButton = stripRef.current?.querySelector<HTMLButtonElement>('[data-selected-day="true"]')
-    selectedButton?.scrollIntoView({ block: 'nearest', inline: 'center' })
-  }, [selectedDate])
-
-  useEffect(() => {
     const openType = searchParams.get('open')
     const appointmentId = searchParams.get('id')
 
@@ -825,12 +833,13 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }
     ))
   }, [])
 
-  const timelineEvents = useMemo(() => {
+  const getTimelineEntriesForDate = useCallback((date: Date) => {
+    const dayEvents = eventsByDate[formatDateKey(date)] || []
     const totalMinutes = TIMELINE_TOTAL_MINUTES
 
-    return selectedDayEvents
+    return dayEvents
       .map((event) => {
-        const start = getEventDate(event, selectedDate)
+        const start = getEventDate(event, date)
         const end = getEventEndDate(event, start)
         const startMinutes = start.getHours() * 60 + start.getMinutes()
         const endMinutes = Math.max(startMinutes + 30, end.getHours() * 60 + end.getMinutes())
@@ -844,18 +853,129 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }
         return { event, top, height, isVisible }
       })
       .filter(({ top, isVisible }) => isVisible && top <= 100)
-  }, [getEventDate, getEventEndDate, selectedDate, selectedDayEvents])
+  }, [eventsByDate, getEventDate, getEventEndDate])
 
-  const currentTimePercent = useMemo(() => {
+  const timelineEvents = useMemo(() => getTimelineEntriesForDate(selectedDate), [getTimelineEntriesForDate, selectedDate])
+
+  const getCurrentTimePercentForDate = useCallback((date: Date) => {
     const now = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
-    if (!isSameDay(now, selectedDate)) return null
+    if (!isSameDay(now, date)) return null
 
     const totalMinutes = TIMELINE_TOTAL_MINUTES
     const currentMinutes = now.getHours() * 60 + now.getMinutes()
     if (currentMinutes < TIMELINE_START_HOUR * 60 || currentMinutes > (TIMELINE_END_HOUR + 1) * 60) return null
 
     return ((currentMinutes - TIMELINE_START_HOUR * 60) / totalMinutes) * 100
-  }, [selectedDate, timezone])
+  }, [timezone])
+
+  const currentTimePercent = useMemo(() => {
+    return getCurrentTimePercentForDate(selectedDate)
+  }, [getCurrentTimePercentForDate, selectedDate])
+
+  const openCreateAppointmentRange = useCallback((date: Date, startMinutes: number, endMinutes: number) => {
+    if (!selectedCalendar) {
+      showToast('warning', 'Selecciona un calendario', 'Elige un calendario activo antes de agendar una cita.')
+      return
+    }
+
+    const normalizedStartMinutes = Math.max(0, Math.min(24 * 60 - 15, Math.min(startMinutes, endMinutes)))
+    const normalizedEndMinutes = Math.max(normalizedStartMinutes + 15, Math.min(24 * 60, Math.max(startMinutes, endMinutes)))
+    const startWall = new Date(date)
+    startWall.setHours(Math.floor(normalizedStartMinutes / 60), normalizedStartMinutes % 60, 0, 0)
+    const endWall = new Date(date)
+    endWall.setHours(Math.floor(normalizedEndMinutes / 60), normalizedEndMinutes % 60, 0, 0)
+
+    const startUTC = convertLocalToUTC(startWall, timezone)
+    let endUTC = convertLocalToUTC(endWall, timezone)
+    if (endUTC.getTime() - startUTC.getTime() < 15 * 60 * 1000) {
+      endUTC = new Date(startUTC.getTime() + 15 * 60 * 1000)
+    }
+
+    setCreateDefaults({
+      start: startUTC.toISOString(),
+      end: endUTC.toISOString(),
+      timeZone: timezone,
+      title: selectedCalendar.eventTitle || ''
+    })
+    setIsCreateModalOpen(true)
+  }, [selectedCalendar, showToast, timezone])
+
+  const openCreateAppointmentForDate = useCallback((date: Date) => {
+    const zonedNow = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
+    const isToday = isSameDay(date, zonedNow)
+    const startHour = isToday ? Math.min(23, zonedNow.getHours() + 1) : 9
+    openCreateAppointmentRange(date, startHour * 60, (startHour + 1) * 60)
+  }, [openCreateAppointmentRange, timezone])
+
+  const getTimelineMinutesFromPointer = (event: React.PointerEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top))
+    const rawMinutes = (y / rect.height) * TIMELINE_TOTAL_MINUTES
+    const roundedMinutes = Math.round(rawMinutes / 15) * 15
+    return Math.max(0, Math.min(24 * 60 - 15, roundedMinutes))
+  }
+
+  const handleTimelinePointerDown = (date: Date) => (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return
+    if (event.target instanceof Element && event.target.closest('[data-phone-calendar-event="true"]')) return
+    if (!selectedCalendar) {
+      showToast('warning', 'Selecciona un calendario', 'Elige un calendario activo antes de agendar una cita.')
+      return
+    }
+
+    const minutes = getTimelineMinutesFromPointer(event)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
+    setTimelineSelection({
+      start: { date, minutes },
+      end: { date, minutes },
+      pointerId: event.pointerId
+    })
+  }
+
+  const handleTimelinePointerMove = (date: Date) => (event: React.PointerEvent<HTMLElement>) => {
+    if (!timelineSelection || timelineSelection.pointerId !== event.pointerId) return
+    const minutes = getTimelineMinutesFromPointer(event)
+    setTimelineSelection((current) => current ? {
+      ...current,
+      end: { date, minutes }
+    } : current)
+  }
+
+  const finishTimelineSelection = useCallback(() => {
+    if (!timelineSelection) return
+
+    const { start, end } = timelineSelection
+    setTimelineSelection(null)
+    if (!isSameDay(start.date, end.date)) return
+
+    const sameSlot = start.minutes === end.minutes
+    const endMinutes = sameSlot ? start.minutes + 60 : end.minutes + 15
+    openCreateAppointmentRange(start.date, start.minutes, endMinutes)
+  }, [openCreateAppointmentRange, timelineSelection])
+
+  const handleTimelinePointerUp = (event: React.PointerEvent<HTMLElement>) => {
+    if (!timelineSelection || timelineSelection.pointerId !== event.pointerId) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    finishTimelineSelection()
+  }
+
+  const renderTimelineSelectionOverlay = (date: Date) => {
+    if (!timelineSelection || !isSameDay(timelineSelection.start.date, date)) return null
+
+    const startMinutes = timelineSelection.start.minutes
+    const endMinutes = timelineSelection.start.minutes === timelineSelection.end.minutes
+      ? timelineSelection.end.minutes + 60
+      : timelineSelection.end.minutes + 15
+    const minMinutes = Math.max(0, Math.min(startMinutes, endMinutes))
+    const maxMinutes = Math.min(24 * 60, Math.max(startMinutes, endMinutes))
+    const top = (minMinutes / TIMELINE_TOTAL_MINUTES) * 100
+    const height = Math.max(1, ((maxMinutes - minMinutes) / TIMELINE_TOTAL_MINUTES) * 100)
+
+    return <span className={styles.timelineSelectionOverlay} style={{ top: `${top}%`, height: `${height}%` }} aria-hidden="true" />
+  }
 
   useEffect(() => {
     if (calendarView !== 'day' && calendarView !== 'week') return
@@ -1166,7 +1286,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }
     : calendarView === 'years'
       ? 'Ir al año actual'
       : 'Ir a hoy'
-  const showCalendarSurface = calendarView !== 'day'
+  const showCalendarSurface = calendarView === 'month' || calendarView === 'year' || calendarView === 'years'
   const showAgenda = calendarView === 'month'
   const nowInCalendar = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
   const handleSelectCalendarView = (view: SwitchableCalendarView) => {
@@ -1295,6 +1415,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }
 		                          type="button"
 		                          className={styles.monthDaySelectButton}
 		                          onClick={() => handleSelectDate(cell.date)}
+		                          onDoubleClick={() => openCreateAppointmentForDate(cell.date)}
 		                          aria-label={`Ver citas del ${cell.date.getDate()} de ${MONTH_NAMES[cell.date.getMonth()]}`}
 		                        >
 		                          <span>{cell.date.getDate()}</span>
@@ -1395,79 +1516,136 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }
 	              </div>
 	            )}
 
-	            {calendarView === 'week' && (
-	              <section
-	                ref={stripRef}
-	                className={styles.weekStrip}
-	                aria-label="Semana"
-	                data-phone-nav-scrollable="true"
-	              >
-	                {weekDays.map(({ date, events: dayEvents }) => {
-	                  const isSelected = isSameDay(date, selectedDate)
-	                  const isToday = isSameDay(date, nowInCalendar)
-	                  return (
-	                    <button
-	                      key={formatDateKey(date)}
-	                      type="button"
-	                      data-selected-day={isSelected || undefined}
-	                      className={`${styles.weekDay} ${isSelected ? styles.weekDaySelected : ''} ${isToday ? styles.weekDayToday : ''}`}
-	                      onClick={() => handleSelectDate(date)}
-	                    >
-	                      <span>{DAYS_COMPACT[date.getDay()]}</span>
-	                      <strong>{date.getDate()}</strong>
-	                      {dayEvents.length > 0 && <i>{dayEvents.length}</i>}
-	                    </button>
-	                  )
-	                })}
-	              </section>
-	            )}
-	          </section>
-	        )}
+		          </section>
+		        )}
 
 	        {(calendarView === 'week' || calendarView === 'day') && (
 	          <section
 	            ref={timelineScrollRef}
 	            className={styles.timelineScroller}
+	            data-calendar-timeline-view={calendarView}
 	            data-phone-scrollable="true"
-	            aria-label="Horario del día"
+	            aria-label={calendarView === 'week' ? 'Horario semanal' : 'Horario del día'}
 	            onTouchStart={handleCalendarTouchStart}
 	            onTouchEnd={handleCalendarTouchEnd}
 	          >
 	            <div className={styles.timelineWrap}>
-	              <section className={styles.timelinePanel} aria-label="Horario del día">
-	                <div className={styles.timelineHourColumn}>
-	                  {timelineHours.map((hour) => (
-	                    <span key={hour}>{formatTimelineHour(hour)}</span>
-	                  ))}
-	                </div>
-	                <div className={styles.timelineGrid}>
-	                  {timelineHours.map((hour) => <span key={hour} />)}
-	                  {currentTimePercent !== null && (
-	                    <div className={styles.nowLine} style={{ top: `${currentTimePercent}%` }}>
-	                      <strong>{formatEventTime(new Date().toISOString())}</strong>
+	              {calendarView === 'week' ? (
+	                <section className={styles.weekTimelinePanel} aria-label="Horario semanal">
+	                  <div className={styles.weekTimelineHeader}>
+	                    <span aria-hidden="true" />
+	                    {weekDays.map(({ date, events: dayEvents }) => {
+	                      const isSelected = isSameDay(date, selectedDate)
+	                      const isToday = isSameDay(date, nowInCalendar)
+	                      return (
+	                        <button
+	                          key={formatDateKey(date)}
+	                          type="button"
+	                          data-selected-day={isSelected || undefined}
+	                          className={`${styles.weekDay} ${isSelected ? styles.weekDaySelected : ''} ${isToday ? styles.weekDayToday : ''}`}
+	                          onClick={() => handleSelectDate(date)}
+	                          onDoubleClick={() => openCreateAppointmentForDate(date)}
+	                        >
+	                          <span>{DAYS_COMPACT[date.getDay()]}</span>
+	                          <strong>{date.getDate()}</strong>
+	                          {dayEvents.length > 0 && <i>{dayEvents.length}</i>}
+	                        </button>
+	                      )
+	                    })}
+	                  </div>
+	                  <div className={styles.weekTimelineBody}>
+	                    <div className={styles.timelineHourColumn}>
+	                      {timelineHours.map((hour) => (
+	                        <span key={hour}>{formatTimelineHour(hour)}</span>
+	                      ))}
 	                    </div>
-	                  )}
-	                  {timelineEvents.map(({ event, top, height }) => {
-	                    const eventColor = getEventColor(event)
-	                    return (
-	                      <button
-	                        key={event.id}
-	                        type="button"
-	                        className={styles.timelineEvent}
-	                        style={{
-	                          top: `${top}%`,
-	                          height: `${height}%`,
-	                          '--event-color': eventColor
-	                        } as React.CSSProperties}
-	                        onClick={() => handleOpenEvent(event)}
-	                      >
-	                        <strong>{event.title || 'Sin título'}</strong>
-	                        <span>{formatEventTime(event.startTime)} - {formatEventTime(event.endTime)}</span>
-	                      </button>
-	                    )
-	                  })}
-	                </div>
-	              </section>
+	                    {weekDays.map(({ date }) => {
+	                      const nowPercent = getCurrentTimePercentForDate(date)
+	                      return (
+	                        <div
+	                          key={formatDateKey(date)}
+	                          className={styles.timelineGrid}
+	                          onPointerDown={handleTimelinePointerDown(date)}
+	                          onPointerMove={handleTimelinePointerMove(date)}
+	                          onPointerUp={handleTimelinePointerUp}
+	                          onPointerCancel={() => setTimelineSelection(null)}
+	                        >
+	                          {timelineHours.map((hour) => <span key={hour} />)}
+	                          {renderTimelineSelectionOverlay(date)}
+	                          {nowPercent !== null && (
+	                            <div className={styles.nowLine} style={{ top: `${nowPercent}%` }}>
+	                              <strong>{formatEventTime(new Date().toISOString())}</strong>
+	                            </div>
+	                          )}
+	                          {getTimelineEntriesForDate(date).map(({ event, top, height }) => {
+	                            const eventColor = getEventColor(event)
+	                            return (
+	                              <button
+	                                key={event.id}
+	                                type="button"
+	                                data-phone-calendar-event="true"
+	                                className={styles.timelineEvent}
+	                                style={{
+	                                  top: `${top}%`,
+	                                  height: `${height}%`,
+	                                  '--event-color': eventColor
+	                                } as React.CSSProperties}
+	                                onClick={() => handleOpenEvent(event)}
+	                              >
+	                                <strong>{event.title || 'Sin título'}</strong>
+	                                <span>{formatEventTime(event.startTime)} - {formatEventTime(event.endTime)}</span>
+	                              </button>
+	                            )
+	                          })}
+	                        </div>
+	                      )
+	                    })}
+	                  </div>
+	                </section>
+	              ) : (
+	                <section className={styles.timelinePanel} aria-label="Horario del día">
+	                  <div className={styles.timelineHourColumn}>
+	                    {timelineHours.map((hour) => (
+	                      <span key={hour}>{formatTimelineHour(hour)}</span>
+	                    ))}
+	                  </div>
+	                  <div
+	                    className={styles.timelineGrid}
+	                    onPointerDown={handleTimelinePointerDown(selectedDate)}
+	                    onPointerMove={handleTimelinePointerMove(selectedDate)}
+	                    onPointerUp={handleTimelinePointerUp}
+	                    onPointerCancel={() => setTimelineSelection(null)}
+	                  >
+	                    {timelineHours.map((hour) => <span key={hour} />)}
+	                    {renderTimelineSelectionOverlay(selectedDate)}
+	                    {currentTimePercent !== null && (
+	                      <div className={styles.nowLine} style={{ top: `${currentTimePercent}%` }}>
+	                        <strong>{formatEventTime(new Date().toISOString())}</strong>
+	                      </div>
+	                    )}
+	                    {timelineEvents.map(({ event, top, height }) => {
+	                      const eventColor = getEventColor(event)
+	                      return (
+	                        <button
+	                          key={event.id}
+	                          type="button"
+	                          data-phone-calendar-event="true"
+	                          className={styles.timelineEvent}
+	                          style={{
+	                            top: `${top}%`,
+	                            height: `${height}%`,
+	                            '--event-color': eventColor
+	                          } as React.CSSProperties}
+	                          onClick={() => handleOpenEvent(event)}
+	                        >
+	                          <strong>{event.title || 'Sin título'}</strong>
+	                          <span>{formatEventTime(event.startTime)} - {formatEventTime(event.endTime)}</span>
+	                        </button>
+	                      )
+	                    })}
+	                  </div>
+	                </section>
+	              )}
 	            </div>
 	          </section>
 	        )}
