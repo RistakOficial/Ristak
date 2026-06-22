@@ -1324,7 +1324,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const completion = goalWorkflow.completion
   const goalExecutionOptions = getGoalExecutionOptions(agent.objective)
   const selectedGoalExecutionInfo = getSelectedGoalExecutionInfo(agent.successAction, agent.objective, goalWorkflow)
+  const selectedGoalExecutionAction = selectedGoalExecutionInfo.value
   const paymentRequirementConfigAvailable = objectiveCanConfigurePaymentRequirement(agent.objective)
+  const showAiAppointmentSettings = agent.objective === 'citas' && selectedGoalExecutionAction === 'book_appointment'
+  const showAiSalesSettings = agent.objective === 'ventas' && selectedGoalExecutionAction === 'ready_to_buy'
+  const showPaymentRequirementSettings = paymentRequirementConfigAvailable && (showAiAppointmentSettings || showAiSalesSettings)
+  const showGoalUrlSettings = selectedGoalExecutionAction === 'send_goal_url' && (agent.objective === 'citas' || agent.objective === 'ventas')
+  const showTriggerLinkSettings = selectedGoalExecutionAction === 'send_trigger_link'
   const completionMode = completion.mode === 'assign_user' ? 'assign_user' : 'notify_only'
   const selectedCompletionUser = teamUsers.find((user) => user.id === completion.userId) || null
   const teamUserOptions = [
@@ -1529,14 +1535,20 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         ? goalWorkflow.appointments.calendarId || agent.defaultCalendarId || calendars[0]?.id || null
         : goalWorkflow.appointments.calendarId
       nextGoalWorkflow = mergeGoalWorkflow(goalWorkflow, {
-        appointments: { ...goalWorkflow.appointments, owner, calendarId }
+        appointments: { ...goalWorkflow.appointments, owner, calendarId },
+        ...(owner === 'ai' ? {} : { deposit: { ...goalWorkflow.deposit, enabled: false } })
       })
       if (owner === 'ai') patch.defaultCalendarId = calendarId
     }
     if (objective === 'ventas') {
       const owner = successAction === 'ready_to_buy' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
       nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
-        sales: { ...goalWorkflow.sales, owner }
+        sales: {
+          ...goalWorkflow.sales,
+          owner,
+          paymentMode: owner === 'ai' ? goalWorkflow.sales.paymentMode : 'full_payment'
+        },
+        ...(owner === 'ai' ? {} : { deposit: { ...goalWorkflow.deposit, enabled: false } })
       })
     }
     if (successAction === 'send_trigger_link') {
@@ -2079,6 +2091,306 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     void clearTestMediaCache().catch(() => undefined)
   }
 
+  const appointmentSchedulingSettings = showAiAppointmentSettings ? (
+    <>
+      <div className={styles.field}>
+        <label className={styles.label}>Calendario</label>
+        <CustomSelect
+          value={agent.defaultCalendarId || ''}
+          onChange={(event) => {
+            const calendarId = event.target.value || null
+            onChange({
+              defaultCalendarId: calendarId,
+              goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
+                appointments: { ...goalWorkflow.appointments, owner: 'ai', calendarId }
+              })
+            })
+          }}
+          portal
+        >
+          <option value="">Que elija entre calendarios activos</option>
+          {calendars.map((calendar) => (
+            <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
+          ))}
+        </CustomSelect>
+        <p className={styles.helper}>Sólo agenda con horarios reales.</p>
+      </div>
+
+      <div className={styles.field}>
+        <label className={styles.label}>Empalme de citas</label>
+        <CustomSelect
+          value={goalWorkflow.appointments.allowOverlappingAppointments ? 'yes' : 'no'}
+          onChange={(event) => {
+            updateGoalWorkflow({
+              appointments: {
+                ...goalWorkflow.appointments,
+                owner: 'ai',
+                allowOverlappingAppointments: event.target.value === 'yes'
+              }
+            })
+          }}
+          portal
+        >
+          {appointmentOverlapOptions.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+        <p className={styles.helper}>
+          Si está apagado, la IA sólo ofrece horarios sin otra cita. Si está prendido, puede agendar varias personas en el mismo horario.
+        </p>
+      </div>
+    </>
+  ) : null
+
+  const paymentRequirementSettings = showPaymentRequirementSettings ? (
+    <div className={styles.depositConfigBlock}>
+      <div className={styles.inlineFields}>
+        {agent.objective === 'ventas' ? (
+          <div className={styles.field}>
+            <label className={styles.label}>Tipo de venta</label>
+            <CustomSelect
+              value={salesPaymentMode}
+              onChange={(event) => updateSalesPaymentMode(event.target.value as AgentSalesPaymentMode)}
+              portal
+            >
+              {salesPaymentModeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </div>
+        ) : (
+          <div className={styles.field}>
+            <label className={styles.label}>Pedir anticipo</label>
+            <CustomSelect
+              value={deposit.enabled ? 'yes' : 'no'}
+              onChange={(event) => updateDeposit({ enabled: event.target.value === 'yes' })}
+              portal
+            >
+              {binaryChoiceOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </div>
+        )}
+
+        {depositEnabledForForm && (
+          <div className={styles.field}>
+            <label className={styles.label}>Tipo de valor</label>
+            <CustomSelect
+              value={deposit.mode}
+              onChange={(event) => updateDeposit({ mode: event.target.value as AgentDepositMode })}
+              portal
+            >
+              {depositModeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </div>
+        )}
+      </div>
+
+      {depositEnabledForForm && (
+        <>
+          <div className={styles.depositAmountFields}>
+            {deposit.mode === 'range' ? (
+              <>
+                <div className={styles.field}>
+                  <label className={styles.label}>Desde</label>
+                  <div className={styles.moneyInputWrap}>
+                    <span className={styles.moneyPrefix}>$</span>
+                    <NumberInput
+                      className={`${styles.input} ${styles.moneyInput}`}
+                      min={0}
+                      step={50}
+                      value={deposit.minAmount ?? ''}
+                      onValueChange={(value) => updateDeposit({ minAmount: value })}
+                    />
+                  </div>
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.label}>Hasta</label>
+                  <div className={styles.moneyInputWrap}>
+                    <span className={styles.moneyPrefix}>$</span>
+                    <NumberInput
+                      className={`${styles.input} ${styles.moneyInput}`}
+                      min={0}
+                      step={50}
+                      value={deposit.maxAmount ?? ''}
+                      onValueChange={(value) => updateDeposit({ maxAmount: value })}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className={styles.field}>
+                <label className={styles.label}>Monto</label>
+                <div className={styles.moneyInputWrap}>
+                  <span className={styles.moneyPrefix}>$</span>
+                  <NumberInput
+                    className={`${styles.input} ${styles.moneyInput}`}
+                    min={0}
+                    step={50}
+                    value={deposit.amount ?? ''}
+                    onValueChange={(value) => updateDeposit({ amount: value })}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          <p className={styles.helper}>
+            {depositHelper}
+          </p>
+        </>
+      )}
+    </div>
+  ) : null
+
+  const goalUrlSettings = showGoalUrlSettings ? (
+    <>
+      {agent.objective === 'citas' && (
+        <div className={styles.field}>
+          <label className={styles.label}>Calendario del enlace</label>
+          <CustomSelect
+            value={selectedGoalCalendarId}
+            onChange={(event) => {
+              const calendarId = event.target.value || null
+              onChange({
+                defaultCalendarId: calendarId,
+                goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
+                  appointments: { ...goalWorkflow.appointments, owner: 'url', calendarId }
+                })
+              })
+            }}
+            portal
+          >
+            <option value="">Elegir calendario activo</option>
+            {calendars.map((calendar) => (
+              <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
+            ))}
+          </CustomSelect>
+          <p className={styles.helper}>El enlace queda ligado a este calendario.</p>
+        </div>
+      )}
+
+      {agent.objective === 'ventas' && (
+        <>
+          <div className={styles.field}>
+            <label className={styles.label}>Producto del pedido</label>
+            <CustomSelect
+              value={goalWorkflow.sales.productId}
+              onChange={(event) => updateSalesProduct(event.target.value)}
+              portal
+              disabled={productsLoading || products.length === 0}
+            >
+              {productOptions.map((option) => (
+                <option key={option.value || 'empty-product'} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+            <p className={styles.helper}>Ejemplo: si vendes un curso, aquí eliges ese curso.</p>
+          </div>
+
+          {selectedSalesProduct && (
+            <div className={styles.field}>
+              <label className={styles.label}>Precio del pedido</label>
+              <CustomSelect
+                value={goalWorkflow.sales.priceId}
+                onChange={(event) => updateSalesPrice(event.target.value)}
+                portal
+              >
+                {priceOptions.map((option) => (
+                  <option key={option.value || 'base-price'} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+              {selectedSalesPrice && (
+                <p className={styles.helper}>
+                  {selectedSalesProduct.name} · {formatCurrency(getPriceAmount(selectedSalesPrice), accountCurrency)}
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      <div className={styles.fieldWide}>
+        <label className={styles.label}>{goalUrlLabel}</label>
+        <input
+          className={styles.input}
+          value={goalUrlConfig.url}
+          placeholder={goalUrlPlaceholder}
+          onChange={(event) => updateGoalUrl({ url: event.target.value })}
+        />
+        <p className={styles.helper}>
+          {agent.objective === 'ventas'
+            ? 'Ejemplo: manda este link para que la persona compre el producto.'
+            : 'Ejemplo: manda este link para que la persona elija día y hora.'}
+        </p>
+      </div>
+
+      <div className={styles.field}>
+        <label className={styles.label}>Código para reconocer el enlace</label>
+        <input
+          className={styles.input}
+          value={goalUrlConfig.trackingParam ?? ''}
+          placeholder={DEFAULT_GOAL_TRACKING_PARAM}
+          onChange={(event) => updateGoalUrl({ trackingParam: event.target.value })}
+          onBlur={() => {
+            if (!goalUrlConfig.trackingParam?.trim()) updateGoalUrl({ trackingParam: DEFAULT_GOAL_TRACKING_PARAM })
+          }}
+        />
+        <p className={styles.helper}>
+          Ejemplo: ayuda a saber quién tocó el link.
+        </p>
+      </div>
+
+      <div className={styles.fieldWide}>
+        <label className={styles.label}>Cómo sabe que ya pasó</label>
+        <p className={styles.helper}>
+          {agent.objective === 'ventas'
+            ? 'Ejemplo: marca la meta como lista cuando se confirma la compra.'
+            : 'Ejemplo: marca la meta como lista cuando se confirma la cita.'}
+        </p>
+      </div>
+    </>
+  ) : null
+
+  const triggerLinkSettings = showTriggerLinkSettings ? (
+    <>
+      <div className={styles.field}>
+        <label className={styles.label}>Enlace que va a mandar</label>
+        <CustomSelect
+          value={goalWorkflow.triggerLink.triggerLinkId}
+          onChange={(event) => updateTriggerLinkGoal(event.target.value)}
+          portal
+          disabled={triggerLinksLoading || triggerLinks.length === 0}
+        >
+          {triggerLinkOptions.map((option) => (
+            <option key={option.value || 'empty-trigger-link'} value={option.value}>{option.label}</option>
+          ))}
+        </CustomSelect>
+        <p className={styles.helper}>
+          Ejemplo: manda un link y deja de contestar cuando la persona lo abre.
+        </p>
+      </div>
+
+      <div className={styles.fieldWide}>
+        <label className={styles.label}>Qué pasa al tocarlo</label>
+        <p className={styles.helper}>
+          {selectedTriggerLink
+            ? `Ejemplo: si toca "${selectedTriggerLink.name}", el chat pasa al equipo.`
+            : 'Ejemplo: elige un link para saber cuándo la persona lo abrió.'}
+        </p>
+      </div>
+    </>
+  ) : null
+
+  const goalExecutionSettings = appointmentSchedulingSettings || goalUrlSettings || triggerLinkSettings ? (
+    <div className={styles.agentOpsGrid}>
+      {appointmentSchedulingSettings}
+      {goalUrlSettings}
+      {triggerLinkSettings}
+    </div>
+  ) : null
+
   return (
     <div className={styles.agentDetailLayout}>
       <Card padding="md" className={styles.conversationAgentCard}>
@@ -2321,110 +2633,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 options={objectiveOptions.map((option) => ({ value: option.value, label: option.label }))}
                 selectLabel="Objetivo del agente"
                 onChange={(objective) => handleObjectiveChange(objective as ConversationalObjective)}
-              >
-                {paymentRequirementConfigAvailable && (
-                  <div className={styles.depositConfigBlock}>
-                    <div className={styles.inlineFields}>
-                      {agent.objective === 'ventas' ? (
-                        <div className={styles.field}>
-                          <label className={styles.label}>Tipo de venta</label>
-                          <CustomSelect
-                            value={salesPaymentMode}
-                            onChange={(event) => updateSalesPaymentMode(event.target.value as AgentSalesPaymentMode)}
-                            portal
-                          >
-                            {salesPaymentModeOptions.map((option) => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </CustomSelect>
-                        </div>
-                      ) : (
-                        <div className={styles.field}>
-                          <label className={styles.label}>Pedir anticipo</label>
-                          <CustomSelect
-                            value={deposit.enabled ? 'yes' : 'no'}
-                            onChange={(event) => updateDeposit({ enabled: event.target.value === 'yes' })}
-                            portal
-                          >
-                            {binaryChoiceOptions.map((option) => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </CustomSelect>
-                        </div>
-                      )}
-
-                      {depositEnabledForForm && (
-                        <div className={styles.field}>
-                          <label className={styles.label}>Tipo de valor</label>
-                          <CustomSelect
-                            value={deposit.mode}
-                            onChange={(event) => updateDeposit({ mode: event.target.value as AgentDepositMode })}
-                            portal
-                          >
-                            {depositModeOptions.map((option) => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </CustomSelect>
-                        </div>
-                      )}
-                    </div>
-
-                    {depositEnabledForForm && (
-                      <>
-                        <div className={styles.depositAmountFields}>
-                          {deposit.mode === 'range' ? (
-                            <>
-                              <div className={styles.field}>
-                                <label className={styles.label}>Desde</label>
-                                <div className={styles.moneyInputWrap}>
-                                  <span className={styles.moneyPrefix}>$</span>
-                                  <NumberInput
-                                    className={`${styles.input} ${styles.moneyInput}`}
-                                    min={0}
-                                    step={50}
-                                    value={deposit.minAmount ?? ''}
-                                    onValueChange={(value) => updateDeposit({ minAmount: value })}
-                                  />
-                                </div>
-                              </div>
-                              <div className={styles.field}>
-                                <label className={styles.label}>Hasta</label>
-                                <div className={styles.moneyInputWrap}>
-                                  <span className={styles.moneyPrefix}>$</span>
-                                  <NumberInput
-                                    className={`${styles.input} ${styles.moneyInput}`}
-                                    min={0}
-                                    step={50}
-                                    value={deposit.maxAmount ?? ''}
-                                    onValueChange={(value) => updateDeposit({ maxAmount: value })}
-                                  />
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <div className={styles.field}>
-                              <label className={styles.label}>Monto</label>
-                              <div className={styles.moneyInputWrap}>
-                                <span className={styles.moneyPrefix}>$</span>
-                                <NumberInput
-                                  className={`${styles.input} ${styles.moneyInput}`}
-                                  min={0}
-                                  step={50}
-                                  value={deposit.amount ?? ''}
-                                  onValueChange={(value) => updateDeposit({ amount: value })}
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        <p className={styles.helper}>
-                          {depositHelper}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                )}
-              </QuestionSelectRow>
+              />
 
               <QuestionSelectRow
                 question={getGoalExecutionQuestion(agent.objective)}
@@ -2433,7 +2642,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 options={goalExecutionOptions.map((option) => ({ value: option.value, label: option.label }))}
                 selectLabel="Quién cumple la meta"
                 onChange={(action) => handleGoalExecutionChange(action as ConversationalSuccessAction)}
-              />
+              >
+                {goalExecutionSettings}
+                {paymentRequirementSettings}
+              </QuestionSelectRow>
 
               <QuestionSelectRow
                 question="Al momento de cumplir el objetivo, ¿qué quieres que suceda?"
@@ -2486,198 +2698,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   </div>
                 )}
               </QuestionSelectRow>
-            </div>
-
-            <div className={styles.agentOpsGrid}>
-
-              {agent.successAction === 'book_appointment' && (
-                <>
-                  <div className={styles.field}>
-                    <label className={styles.label}>Calendario</label>
-                    <CustomSelect
-                      value={agent.defaultCalendarId || ''}
-                      onChange={(event) => {
-                        const calendarId = event.target.value || null
-                        onChange({
-                          defaultCalendarId: calendarId,
-                          goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
-                            appointments: { ...goalWorkflow.appointments, owner: 'ai', calendarId }
-                          })
-                        })
-                      }}
-                      portal
-                    >
-                      <option value="">Que elija entre calendarios activos</option>
-                      {calendars.map((calendar) => (
-                        <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
-                      ))}
-                    </CustomSelect>
-                    <p className={styles.helper}>Sólo agenda con horarios reales.</p>
-                  </div>
-
-                  <div className={styles.field}>
-                    <label className={styles.label}>Empalme de citas</label>
-                    <CustomSelect
-                      value={goalWorkflow.appointments.allowOverlappingAppointments ? 'yes' : 'no'}
-                      onChange={(event) => {
-                        updateGoalWorkflow({
-                          appointments: {
-                            ...goalWorkflow.appointments,
-                            owner: 'ai',
-                            allowOverlappingAppointments: event.target.value === 'yes'
-                          }
-                        })
-                      }}
-                      portal
-                    >
-                      {appointmentOverlapOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </CustomSelect>
-                    <p className={styles.helper}>
-                      Si está apagado, la IA sólo ofrece horarios sin otra cita. Si está prendido, puede agendar varias personas en el mismo horario.
-                    </p>
-                  </div>
-                </>
-              )}
-
-              {agent.successAction === 'send_goal_url' && (agent.objective === 'citas' || agent.objective === 'ventas') && (
-                <>
-                  {agent.objective === 'citas' && (
-                    <div className={styles.field}>
-                      <label className={styles.label}>Calendario del enlace</label>
-                      <CustomSelect
-                        value={selectedGoalCalendarId}
-                        onChange={(event) => {
-                          const calendarId = event.target.value || null
-                          onChange({
-                            defaultCalendarId: calendarId,
-                            goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
-                              appointments: { ...goalWorkflow.appointments, owner: 'url', calendarId }
-                            })
-                          })
-                        }}
-                        portal
-                      >
-                        <option value="">Elegir calendario activo</option>
-                        {calendars.map((calendar) => (
-                          <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
-                        ))}
-                      </CustomSelect>
-                      <p className={styles.helper}>El enlace queda ligado a este calendario.</p>
-                    </div>
-                  )}
-
-                  {agent.objective === 'ventas' && (
-                    <>
-                      <div className={styles.field}>
-                        <label className={styles.label}>Producto del pedido</label>
-                        <CustomSelect
-                          value={goalWorkflow.sales.productId}
-                          onChange={(event) => updateSalesProduct(event.target.value)}
-                          portal
-                          disabled={productsLoading || products.length === 0}
-                        >
-                          {productOptions.map((option) => (
-                            <option key={option.value || 'empty-product'} value={option.value}>{option.label}</option>
-                          ))}
-                        </CustomSelect>
-                        <p className={styles.helper}>Ejemplo: si vendes un curso, aquí eliges ese curso.</p>
-                      </div>
-
-                      {selectedSalesProduct && (
-                        <div className={styles.field}>
-                          <label className={styles.label}>Precio del pedido</label>
-                          <CustomSelect
-                            value={goalWorkflow.sales.priceId}
-                            onChange={(event) => updateSalesPrice(event.target.value)}
-                            portal
-                          >
-                            {priceOptions.map((option) => (
-                              <option key={option.value || 'base-price'} value={option.value}>{option.label}</option>
-                            ))}
-                          </CustomSelect>
-                          {selectedSalesPrice && (
-                            <p className={styles.helper}>
-                              {selectedSalesProduct.name} · {formatCurrency(getPriceAmount(selectedSalesPrice), accountCurrency)}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  <div className={styles.fieldWide}>
-                    <label className={styles.label}>{goalUrlLabel}</label>
-                    <input
-                      className={styles.input}
-                      value={goalUrlConfig.url}
-                      placeholder={goalUrlPlaceholder}
-                      onChange={(event) => updateGoalUrl({ url: event.target.value })}
-                    />
-                    <p className={styles.helper}>
-                      {agent.objective === 'ventas'
-                        ? 'Ejemplo: manda este link para que la persona compre el producto.'
-                        : 'Ejemplo: manda este link para que la persona elija día y hora.'}
-                    </p>
-                  </div>
-
-                  <div className={styles.field}>
-                    <label className={styles.label}>Código para reconocer el enlace</label>
-                    <input
-                      className={styles.input}
-                      value={goalUrlConfig.trackingParam ?? ''}
-                      placeholder={DEFAULT_GOAL_TRACKING_PARAM}
-                      onChange={(event) => updateGoalUrl({ trackingParam: event.target.value })}
-                      onBlur={() => {
-                        if (!goalUrlConfig.trackingParam?.trim()) updateGoalUrl({ trackingParam: DEFAULT_GOAL_TRACKING_PARAM })
-                      }}
-                    />
-                    <p className={styles.helper}>
-                      Ejemplo: ayuda a saber quién tocó el link.
-                    </p>
-                  </div>
-
-                  <div className={styles.fieldWide}>
-                    <label className={styles.label}>Cómo sabe que ya pasó</label>
-                    <p className={styles.helper}>
-                      {agent.objective === 'ventas'
-                        ? 'Ejemplo: marca la meta como lista cuando se confirma la compra.'
-                        : 'Ejemplo: marca la meta como lista cuando se confirma la cita.'}
-                    </p>
-                  </div>
-                </>
-              )}
-
-              {agent.successAction === 'send_trigger_link' && (
-                <>
-                  <div className={styles.field}>
-                    <label className={styles.label}>Enlace que va a mandar</label>
-                    <CustomSelect
-                      value={goalWorkflow.triggerLink.triggerLinkId}
-                      onChange={(event) => updateTriggerLinkGoal(event.target.value)}
-                      portal
-                      disabled={triggerLinksLoading || triggerLinks.length === 0}
-                    >
-                      {triggerLinkOptions.map((option) => (
-                        <option key={option.value || 'empty-trigger-link'} value={option.value}>{option.label}</option>
-                      ))}
-                    </CustomSelect>
-                    <p className={styles.helper}>
-                      Ejemplo: manda un link y deja de contestar cuando la persona lo abre.
-                    </p>
-                  </div>
-
-                  <div className={styles.fieldWide}>
-                    <label className={styles.label}>Qué pasa al tocarlo</label>
-                    <p className={styles.helper}>
-                      {selectedTriggerLink
-                        ? `Ejemplo: si toca "${selectedTriggerLink.name}", el chat pasa al equipo.`
-                        : 'Ejemplo: elige un link para saber cuándo la persona lo abrió.'}
-                    </p>
-                  </div>
-                </>
-              )}
             </div>
 
             {agent.objective === 'custom' && (
