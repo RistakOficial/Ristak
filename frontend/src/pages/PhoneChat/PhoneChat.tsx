@@ -3210,6 +3210,8 @@ export const PhoneChat: React.FC = () => {
   const [restoringNumber, setRestoringNumber] = useState(false)
   const dismissedRestoreIdsRef = useRef<Set<string>>(new Set())
   const composerPlusRef = useRef<HTMLButtonElement | null>(null)
+  const composerScheduleRef = useRef<HTMLButtonElement | null>(null)
+  const [scheduleSheetAnchor, setScheduleSheetAnchor] = useState<{ right: number; bottom: number } | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
@@ -5338,6 +5340,9 @@ export const PhoneChat: React.FC = () => {
     }
     if (sheet !== 'attachments') {
       setAttachmentSheetAnchor(null)
+    }
+    if (sheet !== 'schedule') {
+      setScheduleSheetAnchor(null)
     }
   }, [sheet])
 
@@ -7475,6 +7480,15 @@ export const PhoneChat: React.FC = () => {
     setScheduleDraft(createDefaultScheduleDraft())
     setScheduleError('')
     setScheduleEditingMessageId(null)
+    if (isWideChatDevice) {
+      const rect = composerScheduleRef.current?.getBoundingClientRect()
+      setScheduleSheetAnchor(rect ? {
+        right: Math.max(12, window.innerWidth - rect.right),
+        bottom: Math.max(0, window.innerHeight - rect.top)
+      } : null)
+    } else {
+      setScheduleSheetAnchor(null)
+    }
     setSheet('schedule')
   }
 
@@ -13880,13 +13894,21 @@ export const PhoneChat: React.FC = () => {
     : wideSidebarMode === 'newChat'
       ? 'Buscar contacto para nuevo chat'
       : 'Buscar chats o contactos'
-  const sheetBackdropStyle = sheet === 'attachments' && attachmentSheetAnchor
-    ? {
-        ...actionSheetDismiss.backdropStyle,
-        '--attachment-sheet-left': `${attachmentSheetAnchor.left}px`,
-        '--attachment-sheet-bottom': `${attachmentSheetAnchor.bottom}px`
-      } as React.CSSProperties
-    : actionSheetDismiss.backdropStyle
+  const sheetBackdropStyle = {
+    ...actionSheetDismiss.backdropStyle,
+    ...(sheet === 'attachments' && attachmentSheetAnchor
+      ? {
+          '--attachment-sheet-left': `${attachmentSheetAnchor.left}px`,
+          '--attachment-sheet-bottom': `${attachmentSheetAnchor.bottom}px`
+        }
+      : {}),
+    ...(sheet === 'schedule' && scheduleSheetAnchor
+      ? {
+          '--schedule-sheet-right': `${scheduleSheetAnchor.right}px`,
+          '--schedule-sheet-bottom': `${scheduleSheetAnchor.bottom}px`
+        }
+      : {})
+  } as React.CSSProperties
 
   return (
     <main
@@ -14200,7 +14222,7 @@ export const PhoneChat: React.FC = () => {
                       </button>
                     </div>
                   ) : (
-                    <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
+                    <div className={`${styles.composer} ${hasComposerContent ? styles.composerHasContent : ''} ${canOpenScheduleSheet ? styles.composerWithSchedule : ''} ${voicePanelActive ? styles.composerVoiceMode : ''}`}>
                       {voicePanelActive ? (
                         renderVoiceComposerPanel()
                       ) : (
@@ -14208,7 +14230,7 @@ export const PhoneChat: React.FC = () => {
                           <button type="button" ref={composerPlusRef} className={styles.composerPlus} onClick={openAttachmentsSheet} aria-label="Abrir adjuntos">
                             <Plus size={24} />
                           </button>
-                          <div className={`${styles.messageInputWrap} ${canOpenScheduleSheet ? styles.messageInputWrapWithSchedule : ''}`}>
+                          <div className={styles.messageInputWrap}>
                             <div
                               ref={composerInputRef}
                               className={styles.composerInput}
@@ -14232,18 +14254,19 @@ export const PhoneChat: React.FC = () => {
                                 }
                               }}
                             />
-                            {canOpenScheduleSheet && (
-                              <button
-                                type="button"
-                                className={styles.composerScheduleButton}
-                                onClick={handleOpenScheduleSheet}
-                                aria-label="Programar mensaje"
-                                title="Programar mensaje"
-                              >
-                                <Clock size={12} />
-                              </button>
-                            )}
                           </div>
+                          {canOpenScheduleSheet && (
+                            <button
+                              type="button"
+                              ref={composerScheduleRef}
+                              className={styles.composerScheduleButton}
+                              onClick={handleOpenScheduleSheet}
+                              aria-label="Programar mensaje"
+                              title="Programar mensaje"
+                            >
+                              <Clock size={22} />
+                            </button>
+                          )}
                           <div className={`${styles.composerTrailingActions} ${isWideChatDevice ? styles.composerTrailingActionsNoCamera : ''}`}>
                             {!isWideChatDevice && (
                               <button
@@ -14317,7 +14340,7 @@ export const PhoneChat: React.FC = () => {
 
       {sheet && (
           <div
-            className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' ? styles.darkSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
+            className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' ? styles.darkSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'schedule' ? styles.scheduleSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
           style={sheetBackdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
