@@ -566,6 +566,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
 	    '--rstk-submit-radius': `${themeNumber(theme, 'submitRadius', Number.parseInt(v.btnRadius, 10) || 12, 0, 80)}px`,
 	    '--rstk-submit-height': `${themeNumber(theme, 'submitHeight', 50, 34, 96)}px`,
 	    '--rstk-submit-pad-x': `${themeNumber(theme, 'submitPaddingX', 22, 8, 72)}px`,
+	    '--rstk-submit-pad-y': `${themeNumber(theme, 'submitPaddingY', 9, 6, 36)}px`,
 	    '--rstk-submit-size': `${themeNumber(theme, 'submitFontSize', 16, 11, 32)}px`,
 	    '--rstk-submit-border-width': `${themeNumber(theme, 'submitBorderWidth', 1, 0, 8)}px`,
 	    '--rstk-submit-justify': justifyForButtonAlign(normalizeButtonAlign(theme.submitAlign)),

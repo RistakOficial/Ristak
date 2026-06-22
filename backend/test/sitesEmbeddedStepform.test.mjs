@@ -298,6 +298,9 @@ test('landing form embeds proxy linked form source instead of stale embedded cop
     assert.match(html, /Correo fuente/)
     assert.match(html, /<button type="button" data-embedded-next>Siguiente desde fuente<\/button>/)
     assert.match(html, /data-submit-label="Enviar fuente"/)
+    assert.match(html, /rstk-embedded-form-source-frame/)
+    assert.match(html, /rstk-kind-form/)
+    assert.match(html, /--rstk-page-bg:#112233;/)
     assert.match(html, /--rstk-block-bg:#112233;/)
     assert.doesNotMatch(html, /Campo viejo/)
     assert.doesNotMatch(html, /Boton viejo/)
@@ -305,4 +308,95 @@ test('landing form embeds proxy linked form source instead of stale embedded cop
   } finally {
     if (formSite?.id) await deleteSite(formSite.id).catch(() => undefined)
   }
+})
+
+test('landing form embeds inherit source completion rules or target a specific page', async () => {
+  const embeddedBlocks = [
+    {
+      id: 'completion-email',
+      siteId: 'landing_completion_embed',
+      blockType: 'email',
+      label: 'Correo',
+      content: '',
+      placeholder: 'correo@example.test',
+      required: true,
+      options: [],
+      sortOrder: 0,
+      settings: { pageId: 'form-step' }
+    }
+  ]
+  const baseLanding = {
+    id: 'landing_completion_embed',
+    name: 'Landing completion',
+    title: 'Landing completion',
+    description: '',
+    slug: 'landing-completion',
+    siteType: 'landing_page',
+    status: 'published',
+    theme: {
+      template: 'ristak',
+      pages: [
+        { id: 'page-1', title: 'Pagina 1', sortOrder: 0 },
+        { id: 'page-2', title: 'Pagina 2', sortOrder: 1 }
+      ]
+    },
+    blocks: [
+      {
+        id: 'embed-form-completion',
+        siteId: 'landing_completion_embed',
+        blockType: 'form_embed',
+        label: 'Formulario',
+        content: '',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 0,
+        settings: {
+          pageId: 'page-1',
+          completionAction: 'form_default',
+          embeddedTheme: {
+            template: 'ristak',
+            formCompletionAction: 'redirect_qualified',
+            formQualifiedRedirectUrl: 'https://example.test/califica',
+            formDisqualifiedCompletionAction: 'redirect_url',
+            formDisqualifiedRedirectUrl: 'https://example.test/no-califica'
+          },
+          embeddedPages: [{ id: 'form-step', title: 'Formulario', sortOrder: 0, buttonText: 'Enviar' }],
+          embeddedBlocks
+        },
+        createdAt: '',
+        updatedAt: ''
+      }
+    ]
+  }
+
+  const inheritedHtml = await renderPublicSiteHtml(baseLanding, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(inheritedHtml, /const completionAction = "redirect_qualified";/)
+  assert.match(inheritedHtml, /const qualifiedRedirectUrl = "https:\/\/example\.test\/califica";/)
+  assert.match(inheritedHtml, /const disqualifiedCompletionAction = "redirect_url";/)
+  assert.match(inheritedHtml, /const disqualifiedRedirectUrl = "https:\/\/example\.test\/no-califica";/)
+
+  const specificPageHtml = await renderPublicSiteHtml({
+    ...baseLanding,
+    blocks: baseLanding.blocks.map(block => ({
+      ...block,
+      settings: {
+        ...block.settings,
+        completionAction: 'specific_page',
+        completionPageId: 'page-2'
+      }
+    }))
+  }, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(specificPageHtml, /const completionAction = "specific_page";/)
+  assert.match(specificPageHtml, /const completionTargetPageUrl = "\?page=page-2";/)
 })

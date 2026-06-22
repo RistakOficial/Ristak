@@ -763,7 +763,12 @@ function mergeSiteMetaCustomData(base = {}, configured = {}) {
 
 function normalizeFormCompletionAction(value, fallback = 'form_default') {
   const action = cleanString(value)
-  return ['form_default', 'next_page', 'next_page_if_qualified', 'redirect_qualified'].includes(action) ? action : fallback
+  return ['form_default', 'next_page', 'specific_page', 'next_page_if_qualified', 'redirect_qualified'].includes(action) ? action : fallback
+}
+
+function normalizeFormDisqualifiedCompletionAction(value, fallback = 'disqualified_page') {
+  const action = cleanString(value)
+  return ['disqualified_page', 'redirect_url'].includes(action) ? action : fallback
 }
 
 function normalizeSubmitIncompleteOnExit(theme = {}) {
@@ -14288,6 +14293,87 @@ function getFormCompletionAction(blocks = []) {
   return normalizeFormCompletionAction(action, 'form_default')
 }
 
+function getFormEmbedBlock(blocks = []) {
+  return (Array.isArray(blocks) ? blocks : []).find(block => block?.blockType === 'form_embed') || null
+}
+
+function getLandingCompletionTargetPage(site, settings = {}, activePageId = '') {
+  const pages = normalizeSitePages(site)
+  const configuredPageId = cleanString(
+    settings.completionPageId ||
+    settings.completion_page_id ||
+    settings.formCompletionPageId ||
+    settings.form_completion_page_id
+  )
+  if (configuredPageId) {
+    const configuredPage = pages.find(page => page.id === configuredPageId)
+    if (configuredPage) return configuredPage
+  }
+
+  return getNextPage(site, activePageId) || pages.find(page => page.id !== activePageId) || null
+}
+
+function getFormCompletionConfig(site, blocks = [], context = {}) {
+  const formBlock = getFormEmbedBlock(blocks)
+  const settings = formBlock?.settings || {}
+  const embeddedTheme = isPlainObject(settings.embeddedTheme) ? settings.embeddedTheme : {}
+  const configuredAction = normalizeFormCompletionAction(
+    settings.completionAction || settings.completion_action,
+    'form_default'
+  )
+  const sourceAction = normalizeFormCompletionAction(
+    embeddedTheme.formCompletionAction || embeddedTheme.form_completion_action,
+    'form_default'
+  )
+  const completionAction = configuredAction === 'form_default' ? sourceAction : configuredAction
+  const completionTargetPage = completionAction === 'specific_page'
+    ? getLandingCompletionTargetPage(site, {
+      ...embeddedTheme,
+      ...settings
+    }, context.pageId)
+    : null
+  const qualifiedRedirectUrl = safeHref(
+    settings.completionRedirectUrl ||
+    settings.completion_redirect_url ||
+    embeddedTheme.formQualifiedRedirectUrl ||
+    embeddedTheme.form_qualified_redirect_url ||
+    '',
+    ''
+  )
+  const disqualifiedCompletionAction = normalizeFormDisqualifiedCompletionAction(
+    embeddedTheme.formDisqualifiedCompletionAction || embeddedTheme.form_disqualified_completion_action,
+    'disqualified_page'
+  )
+  const disqualifiedRedirectUrl = safeHref(
+    embeddedTheme.formDisqualifiedRedirectUrl || embeddedTheme.form_disqualified_redirect_url || '',
+    ''
+  )
+
+  return {
+    completionAction,
+    completionTargetPageUrl: completionTargetPage ? buildPageHref(completionTargetPage.id, context) : '',
+    qualifiedRedirectUrl,
+    disqualifiedCompletionAction,
+    disqualifiedRedirectUrl
+  }
+}
+
+function getLandingEmbeddedFormSubmissionContext(site, blocks = []) {
+  if (!site || site.siteType !== 'landing_page') return null
+  const formBlock = getFormEmbedBlock(blocks)
+  if (!formBlock) return null
+
+  const settings = formBlock.settings || {}
+  const formTheme = isPlainObject(settings.embeddedTheme) ? settings.embeddedTheme : null
+  if (!formTheme) return null
+
+  return {
+    formSiteId: cleanString(settings.embeddedSiteId || settings.formSiteId || settings.form_site_id) || `${site.id}:form_embed:${formBlock.id}`,
+    formSiteName: cleanString(settings.embeddedSiteName || settings.formSiteName || settings.form_site_name) || cleanString(formBlock.label) || `Formulario de ${site.name}`,
+    formTheme
+  }
+}
+
 function getNativeFormContext(site, blocks = []) {
   if (!site || site.siteType !== 'landing_page') {
     return {
@@ -14296,7 +14382,7 @@ function getNativeFormContext(site, blocks = []) {
     }
   }
 
-  const formBlock = blocks.find(block => block.blockType === 'form_embed')
+  const formBlock = getFormEmbedBlock(blocks)
   if (!formBlock) {
     return {
       formSiteId: null,
@@ -16321,6 +16407,101 @@ function buildEmbeddedFormProxyStyle(theme = {}, formStyleContext = null) {
   `
 }
 
+function buildEmbeddedFormSourceTheme(site = {}) {
+  const theme = { ...DEFAULT_THEME, ...(site?.theme || {}) }
+  const template = resolveTemplate({ ...site, theme })
+  const isLandingType = site?.siteType === 'landing_page'
+  const renderOverrides = resolveRenderOverrides(template, theme, isLandingType)
+  const v = { ...template.vars, ...(renderOverrides.vars || {}) }
+  const accent = renderOverrides.accent || v.accent
+  const accentStrong = renderOverrides.accent ? `color-mix(in srgb, ${renderOverrides.accent} 86%, #000)` : v.accentStrong
+  const ring = renderOverrides.accent ? `color-mix(in srgb, ${renderOverrides.accent} 22%, transparent)` : v.ring
+  const baseFont = template.font
+  const display = `'Inter Tight', ${template.font}`
+  const storedPageMaxWidth = Number(theme?.pageMaxWidth)
+  const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
+    ? 1440
+    : themeNumber(theme, 'pageMaxWidth', isLandingType ? 1440 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
+  const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 36 : 22, 0, 120)
+  const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
+  const pageBorderPaint = themePaint(theme, 'pageBorderColor')
+  const pageBorder = pageBorderPaint ? paintFallbackColor(pageBorderPaint, 'transparent') : 'transparent'
+  const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 12)
+  const backgroundMediaType = cleanString(theme.backgroundMediaType) === 'video' ? 'video' : 'image'
+  const rawBackgroundPaint = normalizeCssPaint(theme.backgroundColor, '')
+  const backgroundPaint = rawBackgroundPaint.toLowerCase() === String(DEFAULT_THEME.backgroundColor).toLowerCase() ? '' : rawBackgroundPaint
+  const pageImage = backgroundMediaType === 'video' ? 'none' : (cssImageUrl(theme.backgroundImage) || v.pageImage)
+  const pageVideo = backgroundMediaType === 'video' ? cssMediaUrl(theme.backgroundImage) : ''
+  const pageOverlay = backgroundPaint ? paintLayer(backgroundPaint) : 'none'
+  const pageBg = backgroundPaint && isCssColor(backgroundPaint) ? normalizeCssColor(backgroundPaint, v.pageBg) : v.pageBg
+  const rawTextPaint = normalizeCssPaint(theme.textColor, '')
+  const textPaint = rawTextPaint && (theme.textColorCustom || rawTextPaint.toLowerCase() !== String(DEFAULT_THEME.textColor).toLowerCase()) ? rawTextPaint : ''
+  const ink = textPaint ? paintFallbackColor(textPaint, v.ink) : v.ink
+  const muted = textPaint && isCssColor(textPaint) ? `color-mix(in srgb, ${ink} 60%, ${pageBg})` : v.muted
+  const formVars = buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }).replace(/\s+/g, ' ').trim()
+  const bodyClass = [
+    `rstk-tpl-${template.id}`,
+    `rstk-${template.mode}`,
+    `rstk-kind-${isLandingType ? 'landing' : 'form'}`,
+    template.centered ? 'rstk-centered' : '',
+    textPaint && isCssGradient(textPaint) ? 'rstkPageTextGradient' : '',
+    site?.siteType === 'interactive_form' ? 'rstk-interactive' : '',
+    `rstk-choice-${normalizeFormChoiceStyle(theme.formChoiceStyle)}`,
+    `rstk-select-${normalizeFormSelectStyle(theme.formSelectStyle)}`
+  ].filter(Boolean).join(' ')
+
+  const vars = [
+    `--rstk-font:${baseFont}`,
+    `--rstk-display:${display}`,
+    '--rstk-ease:cubic-bezier(.16,.84,.44,1)',
+    `--rstk-page-bg:${pageBg}`,
+    backgroundPaint ? `--rstk-block-bg:${backgroundPaint}` : '',
+    `--rstk-page-image:${pageImage}`,
+    `--rstk-page-overlay:${pageOverlay}`,
+    `--rstk-page-video:${pageVideo}`,
+    `--rstk-page-image-size:${pageImage === 'none' ? 'auto' : backgroundFitValue(theme.backgroundFit)}`,
+    `--rstk-page-image-position:${backgroundPositionValue(theme.backgroundPosition)}`,
+    `--rstk-page-image-repeat:${backgroundRepeatValue(theme.backgroundRepeat)}`,
+    `--rstk-page-image-attachment:${backgroundAttachmentValue(theme.backgroundAttachment)}`,
+    `--rstk-page-video-fit:${backgroundFitValue(theme.backgroundFit)}`,
+    `--rstk-ink:${ink}`,
+    `--rstk-muted:${muted}`,
+    textPaint && isCssGradient(textPaint) ? `--rstk-page-text-paint:${textPaint}` : '',
+    `--rstk-surface:${v.surface}`,
+    `--rstk-surface2:${v.surface2}`,
+    `--rstk-border:${v.border}`,
+    `--rstk-accent:${accent}`,
+    `--rstk-accent-strong:${accentStrong}`,
+    `--rstk-on-accent:${v.onAccent}`,
+    `--rstk-ring:${ring}`,
+    `--rstk-input-bg:${v.inputBg}`,
+    `--rstk-input-ink:${v.inputInk}`,
+    `--rstk-input-border:${v.inputBorder}`,
+    `--rstk-radius:${v.radius}`,
+    `--rstk-radius-lg:${v.radiusLg}`,
+    `--rstk-shadow:${v.shadow}`,
+    `--rstk-heading-weight:${v.headingWeight}`,
+    `--rstk-btn-radius:${v.btnRadius}`,
+    `--rstk-btn-weight:${v.btnWeight}`,
+    `--rstk-max:${pageMaxWidth}px`,
+    `--rstk-frame-pad:${pagePadding}px`,
+    `--rstk-page-border:${pageBorder}`,
+    `--rstk-page-border-width:${pageBorderWidth}px`,
+    `--rstk-page-radius:${pageRadius}px`,
+    '--rstk-pad:clamp(18px,4vw,30px)',
+    '--rstk-gap:clamp(16px,3vw,22px)',
+    formVars,
+    template.gradient ? `--rstk-gradient:${template.gradient}` : '',
+    template.cyan ? `--rstk-cyan:${template.cyan}` : ''
+  ].filter(Boolean).join(';')
+
+  return {
+    bodyClass,
+    style: vars,
+    pageVideo
+  }
+}
+
 function splitCountdownSeconds(totalSeconds) {
   const safe = Math.max(0, Math.floor(Number.isFinite(Number(totalSeconds)) ? Number(totalSeconds) : 0))
   const days = Math.floor(safe / 86400)
@@ -16618,12 +16799,15 @@ function renderContentBlock(block, context = {}) {
         </div>
       `
     }
-    const embeddedStyle = buildEmbeddedFormProxyStyle(embeddedTheme, context.formStyleContext).replace(/\s+/g, ' ').trim()
+    const embeddedSourceTheme = buildEmbeddedFormSourceTheme(embeddedSiteForCopy, context.formStyleContext)
+    const embeddedStyle = embeddedSourceTheme.style.replace(/\s+/g, ' ').trim()
     const embeddedThemeClass = [
       'rstk-embedded-form-theme',
+      'rstk-embedded-form-source-frame',
+      embeddedSourceTheme.bodyClass,
       `rstk-choice-${normalizeFormChoiceStyle(embeddedTheme.formChoiceStyle)}`,
       `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`
-    ].join(' ')
+    ].filter(Boolean).join(' ')
     const embeddedSection = `
       <section class="rstk-embedded-form" id="form">
         ${renderEmbeddedItems()}
@@ -16637,8 +16821,18 @@ function renderContentBlock(block, context = {}) {
         ` : ''}
       </section>
     `
+    const embeddedFrame = `
+      <div class="${embeddedThemeClass}" style="${escapeHtml(embeddedStyle)}">
+        ${embeddedSourceTheme.pageVideo ? `<video class="rstk-bg-video" src="${escapeHtml(embeddedSourceTheme.pageVideo)}" autoplay muted loop playsinline aria-hidden="true"></video>` : ''}
+        <div class="rstk-page">
+          <div class="rstk-shell">
+            ${embeddedSection}
+          </div>
+        </div>
+      </div>
+    `
     return embeddedStyle
-      ? `<div class="${embeddedThemeClass}" style="${escapeHtml(embeddedStyle)}">${embeddedSection}</div>`
+      ? embeddedFrame
       : embeddedSection
   }
 
@@ -17804,7 +17998,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
 	  .rstk-actions [data-submit],.rstk-actions [data-next]{flex:1 1 auto}
 	  .rstk-kind-form .rstk-actions,.rstk-embedded-form .rstk-actions{justify-content:var(--rstk-submit-justify,center)}
-	  .rstk-kind-form .rstk-actions [data-submit],.rstk-embedded-form .rstk-actions [data-submit]{min-height:var(--rstk-submit-height,var(--rstk-button-height,50px));border-width:var(--rstk-submit-border-width,var(--rstk-button-border-width,1px));border-color:var(--rstk-submit-border,var(--rstk-button-border,var(--rstk-accent)));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));flex-direction:column;gap:2px;font-size:var(--rstk-submit-size,var(--rstk-button-size,1.02rem));padding-left:var(--rstk-submit-pad-x,var(--rstk-button-pad-x,22px));padding-right:var(--rstk-submit-pad-x,var(--rstk-button-pad-x,22px));flex:0 1 var(--rstk-submit-width,fit-content);width:var(--rstk-submit-width,fit-content)}
+	  .rstk-kind-form .rstk-actions [data-submit],.rstk-embedded-form .rstk-actions [data-submit]{min-height:var(--rstk-submit-height,var(--rstk-button-height,50px));border-width:var(--rstk-submit-border-width,var(--rstk-button-border-width,1px));border-color:var(--rstk-submit-border,var(--rstk-button-border,var(--rstk-accent)));border-radius:var(--rstk-submit-radius,var(--rstk-btn-radius));background:var(--rstk-submit-bg,var(--rstk-accent));color:var(--rstk-submit-text,var(--rstk-on-accent));flex-direction:column;gap:2px;font-size:var(--rstk-submit-size,var(--rstk-button-size,1.02rem));padding:var(--rstk-submit-pad-y,var(--rstk-button-pad-y,8px)) var(--rstk-submit-pad-x,var(--rstk-button-pad-x,22px));flex:0 1 var(--rstk-submit-width,fit-content);width:var(--rstk-submit-width,fit-content)}
 	  .rstk-actions [data-back]{flex:0 0 auto;min-width:120px}
   .rstk-error{margin:2px 0 0;color:#dc2626;font-size:.85rem;font-weight:650}
   .rstk-submit-message{margin:0;color:var(--rstk-muted);font-weight:650;text-align:center}
@@ -17902,6 +18096,12 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-video{border-radius:var(--rstk-video-radius,var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px))));box-shadow:none}
   .rstk-kind-landing .rstk-calendar-embed{border-radius:var(--rstk-media-radius,0)}
   .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);background:var(--rstk-block-bg,transparent);width:100%;margin-inline:auto}
+  .rstk-embedded-form-source-frame{position:relative;isolation:isolate;min-height:auto;width:100%;margin:0;padding:var(--rstk-frame-pad,22px) 16px;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:hidden}
+  .rstk-embedded-form-source-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
+  .rstk-embedded-form-source-frame>.rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
+  .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0)}
+  .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-surface);border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:hidden}
+  .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent}
   @media (max-width:760px){.rstk-section-columns{grid-template-columns:1fr}}
   .rstkFontOverride .rstk-headline,.rstkFontOverride .rstk-subheading,.rstkFontOverride .rstk-text,.rstkFontOverride h2,.rstkFontOverride label,.rstkFontOverride .rstk-help,.rstkFontOverride .rstk-list-grid strong,.rstkFontOverride .rstk-list-grid p,.rstkFontOverride .rstk-check-body strong,.rstkFontOverride .rstk-check-body span{font-family:var(--rstk-block-font,inherit)}
   .rstkSizeOverride .rstk-headline,.rstkSizeOverride .rstk-subheading,.rstkSizeOverride .rstk-text,.rstkSizeOverride h2,.rstkSizeOverride label,.rstkSizeOverride .rstk-help,.rstkSizeOverride .rstk-list-grid strong,.rstkSizeOverride .rstk-list-grid p,.rstkSizeOverride .rstk-list-grid small,.rstkSizeOverride .rstk-check-body strong,.rstkSizeOverride .rstk-check-body span{font-size:var(--rstk-block-size)}
@@ -19486,16 +19686,18 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const nativeFormContext = getNativeFormContext(site, blocks)
   const hasForm = fieldBlocks.length > 0
   const hasFormActions = hasForm || (isInteractive && interactivePageCount > 1) || isStandardFormContentPage
-  const completionAction = isLandingType
-    ? getFormCompletionAction(blocks)
+  const landingCompletionConfig = isLandingType ? getFormCompletionConfig(site, blocks, { site, pageId: activePage?.id, linkStyle }) : null
+  const completionAction = landingCompletionConfig
+    ? landingCompletionConfig.completionAction
     : isStandardFormType
       ? 'next_page_if_qualified'
       : 'form_default'
   const nextPage = (isLandingType || isStandardFormType) ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? buildPageHref(nextPage.id, { site, linkStyle }) : ''
-  const qualifiedRedirectUrl = ''
-  const disqualifiedCompletionAction = 'disqualified_page'
-  const disqualifiedRedirectUrl = ''
+  const completionTargetPageUrl = landingCompletionConfig?.completionTargetPageUrl || ''
+  const qualifiedRedirectUrl = landingCompletionConfig?.qualifiedRedirectUrl || ''
+  const disqualifiedCompletionAction = landingCompletionConfig?.disqualifiedCompletionAction || 'disqualified_page'
+  const disqualifiedRedirectUrl = landingCompletionConfig?.disqualifiedRedirectUrl || ''
   const submitIncompleteOnExit = !isStandardFormType || normalizeSubmitIncompleteOnExit(theme)
   const standardFormNextPageUrl = standardFormNextPage ? pageHref(standardFormNextPage.id) : ''
 	  const disqualifiedPage = isStandardFormType ? pages.find(page => page.id === FORM_DISQUALIFIED_PAGE_ID) : null
@@ -20145,6 +20347,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       const continueText = ${scriptJson(continueText)};
       const nextText = ${scriptJson(nextText)};
       const nextPageUrl = ${JSON.stringify(nextPageUrl)};
+      const completionTargetPageUrl = ${JSON.stringify(completionTargetPageUrl)};
       const qualifiedRedirectUrl = ${JSON.stringify(qualifiedRedirectUrl)};
       const disqualifiedCompletionAction = ${JSON.stringify(disqualifiedCompletionAction)};
       const disqualifiedRedirectUrl = ${JSON.stringify(disqualifiedRedirectUrl)};
@@ -20728,6 +20931,10 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
           }
           if (qualifies && completionAction === 'redirect_qualified' && qualifiedRedirectUrl) {
             window.location.href = preserveUrl(qualifiedRedirectUrl);
+            return;
+          }
+          if (qualifies && completionAction === 'specific_page' && completionTargetPageUrl) {
+            window.location.href = preserveUrl(completionTargetPageUrl);
             return;
           }
           if (nextPageUrl && (completionAction === 'next_page' || ((completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified') && qualifies))) {
@@ -22584,6 +22791,9 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       ? getPageBlocks(siteWithBlocks, submittedPageId)
       : orderedSubmissionBlocks
   const submissionBlocks = videoFormGateContext ? videoFormGateContext.blocks : defaultSubmissionBlocks
+  const landingEmbeddedFormContext = videoFormGateContext
+    ? null
+    : getLandingEmbeddedFormSubmissionContext(siteWithBlocks, defaultSubmissionBlocks)
   const effectiveSubmittedPageId = submittedPageId || (videoFormGateContext ? DEFAULT_FUNNEL_PAGE_ID : '')
   if (
     site.siteType === 'standard_form' &&
@@ -22668,8 +22878,9 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   }
   const nativeLayers = buildNativeSubmissionLayers({ site, blocks: submissionBlocks, responses })
   const inferredContact = inferContactFromResponses(collectFieldBlocks(submissionBlocks), responses)
-  const finalMessageSite = videoFormGateContext?.formTheme
-    ? { ...site, theme: { ...(site.theme || {}), ...videoFormGateContext.formTheme } }
+  const finalMessageTheme = videoFormGateContext?.formTheme || landingEmbeddedFormContext?.formTheme || null
+  const finalMessageSite = finalMessageTheme
+    ? { ...site, theme: { ...(site.theme || {}), ...finalMessageTheme } }
     : site
   if (shouldSkipTracking({ req, body, meta, previewContext })) {
     return {

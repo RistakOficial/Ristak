@@ -1787,8 +1787,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   flex-direction: column;
   gap: 2px;
   font-size: var(--rstk-submit-size, var(--rstk-button-size, 1.02rem));
-  padding-left: var(--rstk-submit-pad-x, var(--rstk-button-pad-x, 22px));
-  padding-right: var(--rstk-submit-pad-x, var(--rstk-button-pad-x, 22px));
+  padding: var(--rstk-submit-pad-y, var(--rstk-button-pad-y, 8px)) var(--rstk-submit-pad-x, var(--rstk-button-pad-x, 22px));
   flex: 0 1 var(--rstk-submit-width, fit-content);
   width: var(--rstk-submit-width, fit-content);
 }
@@ -1855,6 +1854,64 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 .rstkCanvas.rstk-kind-landing .rstk-video { border-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, clamp(16px, 2vw, 22px)))); box-shadow: none; }
 .rstkCanvas.rstk-kind-landing .rstk-calendar-embed { border-radius: var(--rstk-media-radius, 0); }
 .rstkCanvas.rstk-kind-landing .rstk-embedded-form { padding: clamp(24px, 3vw, 40px); border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent); border-radius: var(--rstk-block-radius, 0); background: var(--rstk-block-bg, transparent); width: 100%; margin-inline: auto; }
+
+.rstkCanvas .rstkEmbeddedFormSourceRoot {
+  width: 100%;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame {
+  position: relative;
+  isolation: isolate;
+  min-height: auto;
+  width: 100%;
+  margin: 0;
+  padding: var(--rstk-frame-pad, 22px) 16px;
+  background-color: var(--rstk-page-bg);
+  background-image: var(--rstk-page-image);
+  background-position: var(--rstk-page-image-position, center top);
+  background-repeat: var(--rstk-page-image-repeat, no-repeat);
+  background-size: var(--rstk-page-image-size, auto);
+  background-attachment: var(--rstk-page-image-attachment, scroll);
+  border-radius: var(--rstk-page-radius, 0);
+  overflow: hidden;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--rstk-page-overlay, none);
+  pointer-events: none;
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame > .rstk-page {
+  position: relative;
+  z-index: 2;
+  max-width: var(--rstk-max);
+  margin: 0 auto;
+  border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, transparent);
+  border-radius: var(--rstk-page-radius, 0);
+}
+
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell {
+  gap: var(--rstk-gap);
+  padding: var(--rstk-pad);
+  background: var(--rstk-surface);
+  border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
+  border-radius: var(--rstk-radius-lg);
+  overflow: hidden;
+}
+
+.rstkCanvas.rstk-kind-landing .rstkEmbeddedFormSourceFrame .rstk-embedded-form,
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-embedded-form {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
 
 @media (max-width: 760px) {
   .rstkCanvas .rstk-section-columns { grid-template-columns: 1fr; }

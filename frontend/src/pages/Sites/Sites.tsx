@@ -1733,7 +1733,7 @@ type LandingBlockOrderGroup = {
 type PaletteViewMode = 'blocks' | 'elements'
 
 type ButtonAction = 'url' | 'next_page' | 'specific_page' | 'open_popup' | 'close_popup'
-type FormCompletionAction = 'form_default' | 'next_page' | 'next_page_if_qualified' | 'redirect_qualified'
+type FormCompletionAction = 'form_default' | 'next_page' | 'specific_page' | 'next_page_if_qualified' | 'redirect_qualified'
 type PopupTrigger = NonNullable<SiteTheme['popupTrigger']>
 type PopupCloseDisplay = NonNullable<SiteTheme['popupCloseDisplay']>
 type PopupCloseIcon = NonNullable<SiteTheme['popupCloseIcon']>
@@ -4981,7 +4981,7 @@ const getButtonAction = (settings: Record<string, unknown>): ButtonAction => {
 }
 
 const isFormCompletionAction = (value: unknown): value is FormCompletionAction =>
-  value === 'form_default' || value === 'next_page' || value === 'next_page_if_qualified' || value === 'redirect_qualified'
+  value === 'form_default' || value === 'next_page' || value === 'specific_page' || value === 'next_page_if_qualified' || value === 'redirect_qualified'
 
 const getFormCompletionAction = (settings: Record<string, unknown>): FormCompletionAction => {
   const action = getSettingString(settings, 'completionAction') as FormCompletionAction
@@ -6817,6 +6817,8 @@ function FormEmbedEditorPanel({
         site={site}
         settings={settings}
         embedded
+        completionPages={sitePages}
+        activePageId={activeSitePageId}
         onPatchTheme={onPatchTheme}
         onPatchSettings={onPatchSettings}
         onSaveSite={onSaveSite}
@@ -29972,8 +29974,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const sourceThemeVars = sourceCanvasTheme
       ? ({
           ...sourceCanvasVars,
-          width: '100%',
-          ['--rstk-block-bg' as string]: sourceCanvasVars?.['--rstk-page-bg'] || 'transparent'
+          width: '100%'
         } as React.CSSProperties)
       : undefined
     const embeddedFormPreview = (
@@ -30015,8 +30016,15 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     )
 
     return sourceCanvasTheme ? (
-      <div className={`rstkCanvas ${sourceCanvasTheme.bodyClass}`} style={sourceThemeVars}>
-        {embeddedFormPreview}
+      <div className={`rstkCanvas ${sourceCanvasTheme.bodyClass} rstkEmbeddedFormSourceRoot`} style={sourceThemeVars}>
+        <div className="rstk-frame rstkEmbeddedFormSourceFrame">
+          <CanvasBackgroundVideo theme={form?.theme} />
+          <main className="rstk-page">
+            <div className="rstk-shell rstkEmbeddedFormSourceShell">
+              {embeddedFormPreview}
+            </div>
+          </main>
+        </div>
       </div>
     ) : embeddedFormPreview
   }
@@ -30560,16 +30568,97 @@ const FormOptionGlobalStyleControls: React.FC<{
   )
 }
 
+const getDefaultCompletionPageId = (pages: SitePage[] = [], activePageId = '') => (
+  pages.find(page => page.id && page.id !== activePageId)?.id || pages[0]?.id || ''
+)
+
+const getCompletionTargetPageId = (
+  settings: Record<string, unknown> = {},
+  pages: SitePage[] = [],
+  activePageId = ''
+) => {
+  const configured = getSettingString(settings, 'completionPageId') || getSettingString(settings, 'completion_page_id')
+  if (configured && pages.some(page => page.id === configured)) return configured
+  return getDefaultCompletionPageId(pages, activePageId)
+}
+
+const FormCompletionSettingsControls: React.FC<{
+  settings?: Record<string, unknown>
+  pages?: SitePage[]
+  activePageId?: string
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ settings = {}, pages = [], activePageId = '', onPatchSettings, onSave }) => {
+  const completionAction = getFormCompletionAction(settings)
+  const completionTargetPageId = getCompletionTargetPageId(settings, pages, activePageId)
+
+  return (
+    <>
+      <label className={styles.field}>
+        <span>Al enviar</span>
+        <CustomSelect
+          value={completionAction}
+          onChange={(event) => {
+            const action = event.target.value as FormCompletionAction
+            const patch: Record<string, unknown> = { completionAction: action }
+            if (action === 'specific_page' && !getSettingString(settings, 'completionPageId')) {
+              patch.completionPageId = completionTargetPageId
+            }
+            onPatchSettings(patch)
+          }}
+          onBlur={onSave}
+        >
+          <option value="form_default">Usar reglas del formulario</option>
+          <option value="next_page">Ir a la siguiente página/fase</option>
+          <option value="specific_page">Ir a una página específica</option>
+          <option value="next_page_if_qualified">Siguiente página solo si califica</option>
+          <option value="redirect_qualified">Redirigir solo si califica</option>
+        </CustomSelect>
+      </label>
+
+      {completionAction === 'specific_page' && pages.length > 0 && (
+        <label className={styles.field}>
+          <span>Página destino</span>
+          <CustomSelect
+            value={completionTargetPageId}
+            onChange={(event) => onPatchSettings({ completionPageId: event.target.value })}
+            onBlur={onSave}
+          >
+            {pages.map(page => (
+              <option key={page.id} value={page.id}>{page.title || 'Página'}</option>
+            ))}
+          </CustomSelect>
+        </label>
+      )}
+
+      {completionAction === 'redirect_qualified' && (
+        <label className={styles.field}>
+          <span>URL destino</span>
+          <input
+            value={getSettingString(settings, 'completionRedirectUrl') || getSettingString(settings, 'formQualifiedRedirectUrl')}
+            placeholder="https://..."
+            onChange={(event) => onPatchSettings({ completionRedirectUrl: event.target.value })}
+            onBlur={onSave}
+          />
+        </label>
+      )}
+    </>
+  )
+}
+
 const FormSubmitContentControls: React.FC<{
   site: PublicSite
   settings?: Record<string, unknown>
   embedded?: boolean
+  completionPages?: SitePage[]
+  activePageId?: string
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onPatchSettings?: (patch: Record<string, unknown>) => void
   onSaveSite: () => void
   onSaveSettings?: () => void
-}> = ({ site, settings = {}, embedded = false, onPatchTheme, onPatchSettings, onSaveSite, onSaveSettings }) => {
+}> = ({ site, settings = {}, embedded = false, completionPages = [], activePageId = '', onPatchTheme, onPatchSettings, onSaveSite, onSaveSettings }) => {
   const theme = site.theme || {}
+  const saveSettings = onSaveSettings || onSaveSite
   return (
     <>
       <div className={styles.panelSubheader}>Contenido del botón</div>
@@ -30602,14 +30691,13 @@ const FormSubmitContentControls: React.FC<{
         </label>
       )}
       {embedded && onPatchSettings && (
-        <label className={styles.field}>
-          <span>Al enviar</span>
-          <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSaveSettings || onSaveSite}>
-            <option value="next_page">Ir a la siguiente página</option>
-            <option value="next_page_if_qualified">Siguiente página solo si califica</option>
-            <option value="form_default">Mostrar mensaje del formulario</option>
-          </CustomSelect>
-        </label>
+        <FormCompletionSettingsControls
+          settings={settings}
+          pages={completionPages}
+          activePageId={activePageId}
+          onPatchSettings={onPatchSettings}
+          onSave={saveSettings}
+        />
       )}
     </>
   )
@@ -34388,14 +34476,13 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
             ))}
           </CustomSelect>
         </label>
-        <label className={styles.field}>
-          <span>Al terminar el formulario</span>
-          <CustomSelect value={getFormCompletionAction(settings)} onChange={(event) => onPatchSettings({ completionAction: event.target.value })} onBlur={onSave}>
-            <option value="next_page">Ir a la siguiente página al terminar</option>
-            <option value="next_page_if_qualified">Ir a la siguiente página solo si califica</option>
-            <option value="form_default">Mantener la configuración actual del formulario</option>
-          </CustomSelect>
-        </label>
+        <FormCompletionSettingsControls
+          settings={settings}
+          pages={pages}
+          activePageId={activePageId}
+          onPatchSettings={onPatchSettings}
+          onSave={onSave}
+        />
         <button
           type="button"
           className={styles.inlineCreateButton}
