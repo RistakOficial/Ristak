@@ -553,15 +553,17 @@ export function createConversationalTools(ctx) {
       }))
 
       if (toolResult.ok) {
+        const technicalSummary = `${finalTitle} · ${start.toISOString()}`
         await setConversationSignal(ctx.contactId, 'appointment_booked', {
           reason: 'Cita agendada por el agente',
-          summary: `${finalTitle} · ${start.toISOString()}`,
+          actionSummarySource: technicalSummary,
+          originalSummary: technicalSummary,
           status: 'completed'
         })
         await applyAgentCompletionAction(config, ctx.contactId)
         await notifyHumanPriority(ctx, {
           reason: 'Cita agendada por el agente',
-          summary: `${finalTitle} · ${start.toISOString()}`,
+          summary: technicalSummary,
           signal: 'appointment_booked'
         })
         await recordConversationalAgentEvent({
@@ -597,13 +599,13 @@ export function createConversationalTools(ctx) {
       if (signal) {
         await setConversationSignal(ctx.contactId, signal, {
           reason: `${intencionDetectada} (urgencia ${urgencia})`,
-          summary: [resumen, siguientePaso ? `Siguiente paso: ${siguientePaso}` : ''].filter(Boolean).join(' · '),
+          summary: resumen,
           status: 'completed'
         })
         await applyAgentCompletionAction(config, ctx.contactId)
         await notifyHumanPriority(ctx, {
           reason: intencionDetectada,
-          summary: [resumen, siguientePaso ? `Siguiente paso: ${siguientePaso}` : ''].filter(Boolean).join(' · '),
+          summary: resumen,
           signal
         })
       } else {
@@ -808,6 +810,20 @@ export function createConversationalTools(ctx) {
         triggerLinkId: link.id,
         triggerLinkPublicId: link.publicId || null
       })
+      if (!ctx.dryRun) {
+        await recordConversationalAgentEvent({
+          contactId: ctx.contactId,
+          eventType: 'trigger_link_sent',
+          detail: {
+            agentId: config.id || ctx.agentId || null,
+            intencionDetectada,
+            resumen,
+            triggerLinkId: link.id,
+            triggerLinkPublicId: link.publicId || null,
+            triggerLinkName: link.name
+          }
+        })
+      }
 
       return {
         ok: true,

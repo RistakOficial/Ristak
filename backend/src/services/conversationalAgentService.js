@@ -1,9 +1,12 @@
 import { randomUUID } from 'crypto'
+import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { db } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
+import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
 import { getAccountTimezone } from '../utils/dateUtils.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
+import { getOpenAIApiKey } from './aiAgentService.js'
 import {
   DEFAULT_CONVERSATIONAL_AI_PROVIDER,
   getDefaultConversationalModelForProvider,
@@ -48,6 +51,7 @@ const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
 const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed', 'discarded'])
 const DEFAULT_CONVERSATIONAL_AGENT_MODEL = getDefaultConversationalModelForProvider(DEFAULT_CONVERSATIONAL_AI_PROVIDER)
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
+const COMPLETION_SUMMARY_MODEL = CHEAPEST_OPENAI_MODEL
 const RESPONSE_DELAY_MODES = new Set(['none', 'fixed', 'random'])
 const RESPONSE_DELAY_UNITS = new Set(['seconds', 'minutes'])
 const MAX_RESPONSE_DELAY_SECONDS = 60 * 60
@@ -118,6 +122,12 @@ export const ADVANCED_CLOSING_CONTEXT_FIELDS = [
 ]
 const ADVANCED_CLOSING_CONTEXT_KEYS = new Set(ADVANCED_CLOSING_CONTEXT_FIELDS.map((field) => field.key))
 const ADVANCED_CLOSING_URGENCY_LEVELS = new Set(['baja', 'media', 'alta', 'desconocida'])
+
+let completionSummaryGeneratorForTest = null
+
+export function setConversationalCompletionSummaryGeneratorForTest(generator) {
+  completionSummaryGeneratorForTest = typeof generator === 'function' ? generator : null
+}
 
 function toBoolean(value) {
   return [true, 1, '1', 'true'].includes(value)
@@ -316,6 +326,138 @@ function hasAdvancedClosingContext(context = {}) {
   return ADVANCED_CLOSING_CONTEXT_FIELDS.some((field) => Boolean(context?.[field.key]))
 }
 
+function cleanCompletionDisplayText(value = '') {
+  if (value === null || value === undefined) return ''
+  const raw = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  return raw.replace(/\s+/g, ' ').trim()
+}
+
+function cleanCompletionTranscriptText(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function getCompletionMessageSpeaker(direction = '') {
+  const clean = String(direction || '').trim().toLowerCase()
+  if (clean === 'outbound' || clean === 'business_echo') return 'Agente'
+  if (clean === 'inbound') return 'Contacto'
+  return 'Mensaje'
+}
+
+function getCompletionMessageText(row = {}) {
+  const text = cleanCompletionTranscriptText(row.message_text)
+  if (text) return text
+  const type = cleanCompletionTranscriptText(row.message_type || 'archivo')
+  return `[${type || 'archivo'} sin texto]`
+}
+
+async function loadCompletionSummaryMessages(contactId) {
+  const cleanContactId = String(contactId || '').trim()
+  if (!cleanContactId) return []
+
+  const rows = await db.all(`
+    SELECT id, direction, message_type, message_text, message_timestamp, created_at
+    FROM whatsapp_api_messages
+    WHERE contact_id = ?
+    ORDER BY COALESCE(message_timestamp, created_at) ASC
+  `, [cleanContactId]).catch(() => [])
+
+  return rows.map((row) => ({
+    id: row.id,
+    speaker: getCompletionMessageSpeaker(row.direction),
+    direction: row.direction || '',
+    text: getCompletionMessageText(row),
+    timestamp: row.message_timestamp || row.created_at || null
+  })).filter((message) => message.text)
+}
+
+function formatCompletionSummaryTranscript(messages = []) {
+  return messages.map((message, index) => {
+    const speaker = message.speaker || `Mensaje ${index + 1}`
+    const timestamp = message.timestamp ? ` (${message.timestamp})` : ''
+    return `${index + 1}. ${speaker}${timestamp}: ${message.text}`
+  }).join('\n')
+}
+
+function extractCompletionSummaryFromOutput(output = '') {
+  const text = String(output || '').trim()
+  if (!text) return ''
+
+  const jsonMatch = text.match(/\{[\s\S]*?\}/)
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0])
+      return cleanCompletionDisplayText(parsed.summary || parsed.resumen || '')
+    } catch {
+      return ''
+    }
+  }
+
+  return cleanCompletionDisplayText(text)
+}
+
+async function generateCompletionSummaryWithInternalAgent({ contactId, signal, reason = '', actionSummary = '', fallbackSummary = '' } = {}) {
+  const messages = await loadCompletionSummaryMessages(contactId)
+  if (!messages.length) return ''
+
+  if (completionSummaryGeneratorForTest) {
+    return cleanCompletionDisplayText(await completionSummaryGeneratorForTest({
+      contactId,
+      signal,
+      reason,
+      actionSummary,
+      fallbackSummary,
+      messages
+    }))
+  }
+
+  const apiKey = await getOpenAIApiKey().catch(() => null)
+  if (!apiKey) return ''
+
+  const transcript = formatCompletionSummaryTranscript(messages)
+  const instructions = `Eres el creador interno de resúmenes de Ristak. No hablas con el cliente y no continúas la conversación.
+
+Tu única tarea es leer la conversación completa y resumir por qué se concretó la meta.
+
+Reglas:
+- Máximo 35 palabras.
+- Una sola frase completa.
+- Sin listas, sin etiquetas, sin IDs técnicos y sin puntos suspensivos.
+- No repitas la cita, el pago o la acción si ya aparece en "Acción mostrada"; enfócate en situación, motivo, molestias, motivaciones, creencias, objeciones o razón de compra.
+- Si la conversación no trae contexto útil, usa una frase breve con lo poco disponible.
+
+Responde únicamente JSON válido:
+{"summary":"texto"}`
+
+  const prompt = `Señal concretada: ${signal || 'desconocida'}
+Acción mostrada por Ristak: ${actionSummary || 'sin accion'}
+Motivo técnico: ${reason || 'sin motivo'}
+Resumen de respaldo, si existe: ${fallbackSummary || 'sin respaldo'}
+
+Conversación completa:
+${transcript}`
+
+  const agent = new Agent({
+    name: 'Ristak · Creador de resumen de meta',
+    model: COMPLETION_SUMMARY_MODEL,
+    instructions
+  })
+
+  try {
+    const runner = new Runner({
+      modelProvider: new OpenAIProvider({ apiKey }),
+      tracingDisabled: true
+    })
+    const result = await runner.run(agent, [{ role: 'user', content: prompt }], {
+      maxTurns: 3,
+      context: { category: 'conversational_completion_summary', contactId }
+    })
+    return extractCompletionSummaryFromOutput(result.finalOutput)
+  } catch (error) {
+    logger.warn(`[Agente conversacional] Resumidor interno de cierre falló: ${error.message}`)
+    return ''
+  }
+}
+
 function conciseCompletionPhrase(value, maxLength = 130) {
   const clean = cleanAdvancedClosingContextValue(value, 700)
   if (!clean || clean.length <= maxLength) return clean
@@ -334,44 +476,6 @@ function conciseCompletionPhrase(value, maxLength = 130) {
     output = next
   }
   return (output || clean.slice(0, maxLength)).trim().replace(/[.,;:!?-]+$/g, '')
-}
-
-function normalizeCompletionSummaryPart(value = '') {
-  return String(value || '').trim().replace(/[.!?]+$/g, '')
-}
-
-function getSummaryTokens(value = '') {
-  return new Set(
-    String(value || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .split(/[^a-z0-9]+/i)
-      .filter((word) => word.length >= 5)
-  )
-}
-
-function isRedundantCompletionPart(candidate, existingParts = []) {
-  const candidateTokens = getSummaryTokens(candidate)
-  if (candidateTokens.size < 3) return false
-
-  for (const existing of existingParts) {
-    const existingTokens = getSummaryTokens(existing)
-    if (!existingTokens.size) continue
-    let shared = 0
-    for (const token of candidateTokens) {
-      if (existingTokens.has(token)) shared += 1
-    }
-    if (shared / candidateTokens.size >= 0.55) return true
-  }
-  return false
-}
-
-function joinCompletionSummaryParts(parts = []) {
-  return parts
-    .map(normalizeCompletionSummaryPart)
-    .filter(Boolean)
-    .join('. ')
 }
 
 function formatHumanDateTimeFromSummary(summary, timezone = 'America/Mexico_City') {
@@ -446,55 +550,24 @@ function buildCompletionActionSummary({ signal, summary = '', reason = '', closi
   return baseSummary || baseReason || 'Objetivo concretado'
 }
 
-function buildCompactContextSummary({ reason = '', closingContext = {} } = {}) {
+async function buildCompletionSummaryFromClosingContext({ contactId = '', signal, summary = '', reason = '', actionSummarySource = '', closingContext = {}, timezone = 'America/Mexico_City' } = {}) {
+  const cleanSignal = String(signal || '').trim()
+  const baseSummary = cleanCompletionDisplayText(summary)
+  const baseReason = cleanCompletionDisplayText(reason)
+  const actionSource = cleanCompletionDisplayText(actionSummarySource) || baseSummary
   const normalizedContext = normalizeStoredAdvancedClosingContext(closingContext)
-  const parts = []
-  const main = normalizedContext.contactReason || normalizedContext.surfaceProblem || normalizedContext.realProblem || reason
-  const mainPart = conciseCompletionPhrase(main, 130)
-  if (mainPart) parts.push(mainPart)
-
-  const detailCandidates = [
-    normalizedContext.attemptedBefore ? `Ya había intentado ${conciseCompletionPhrase(normalizedContext.attemptedBefore, 90)}` : '',
-    normalizedContext.objection ? `El freno era ${conciseCompletionPhrase(normalizedContext.objection, 90)}` : '',
-    !normalizedContext.objection && normalizedContext.impact ? `Le afectaba ${conciseCompletionPhrase(normalizedContext.impact, 90)}` : '',
-    normalizedContext.desiredOutcome ? `Buscaba ${conciseCompletionPhrase(normalizedContext.desiredOutcome, 90)}` : ''
-  ]
-
-  for (const candidate of detailCandidates) {
-    const clean = normalizeCompletionSummaryPart(candidate)
-    if (!clean || isRedundantCompletionPart(clean, parts)) continue
-    parts.push(clean)
-    if (parts.length >= 2) break
-  }
-
-  return joinCompletionSummaryParts(parts)
-}
-
-function buildCompletionSummaryFromClosingContext({ signal, summary = '', reason = '', closingContext = {}, timezone = 'America/Mexico_City' } = {}) {
-  const baseSummary = cleanAdvancedClosingContextValue(summary, 500)
-  const baseReason = cleanAdvancedClosingContextValue(reason, 420)
-  const normalizedContext = normalizeStoredAdvancedClosingContext(closingContext)
-  const actionSummary = buildCompletionActionSummary({ signal, summary: baseSummary, reason: baseReason, closingContext: normalizedContext, timezone })
-
-  if (!CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(String(signal || '').trim()) || !hasAdvancedClosingContext(normalizedContext)) {
-    const cleanSignal = String(signal || '').trim()
-    const hidesTechnicalSummary = ['appointment_booked', 'purchase_completed'].includes(cleanSignal)
-    const fallbackSummary = hidesTechnicalSummary
-      ? actionSummary || baseReason || baseSummary
-      : baseSummary || baseReason || actionSummary
-    const stateSummary = [
-      actionSummary || fallbackSummary,
-      fallbackSummary && fallbackSummary !== actionSummary ? `Resumen: ${fallbackSummary}` : ''
-    ].filter(Boolean).join('\n')
-    return {
-      actionSummary: actionSummary || fallbackSummary,
-      summary: fallbackSummary,
-      stateSummary: stateSummary || fallbackSummary
-    }
-  }
-
-  const contextSummary = buildCompactContextSummary({ reason: baseReason, closingContext: normalizedContext })
-  const summaryText = contextSummary || baseReason || actionSummary || baseSummary
+  const actionSummary = buildCompletionActionSummary({ signal, summary: actionSource, reason: baseReason, closingContext: normalizedContext, timezone })
+  const hidesMissingSummary = ['appointment_booked', 'purchase_completed'].includes(cleanSignal)
+  const generatedSummary = CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(cleanSignal)
+    ? await generateCompletionSummaryWithInternalAgent({
+      contactId,
+      signal: cleanSignal,
+      reason: baseReason,
+      actionSummary,
+      fallbackSummary: baseSummary
+    })
+    : ''
+  const summaryText = generatedSummary || baseSummary || (hidesMissingSummary ? '' : baseReason)
   const stateSummary = [
     actionSummary,
     summaryText && summaryText !== actionSummary ? `Resumen: ${summaryText}` : ''
@@ -503,7 +576,8 @@ function buildCompletionSummaryFromClosingContext({ signal, summary = '', reason
   return {
     actionSummary,
     summary: summaryText,
-    stateSummary
+    summarySource: generatedSummary ? 'internal_summary_agent' : (baseSummary ? 'tool_fallback' : (summaryText ? 'reason_fallback' : 'empty')),
+    stateSummary: stateSummary || actionSummary || summaryText
   }
 }
 
@@ -1299,13 +1373,16 @@ export async function completeConversationGoalLink(goalId, {
     cleanGoalId
   ])
 
-  const summary = cleanExternalObjectId
+  const technicalSummary = cleanExternalObjectId
     ? `ID de ${mapped.objectLabel}: ${cleanExternalObjectId}`
     : `Confirmación recibida para ${mapped.objectLabel}`
+  const conversationSummary = cleanCompletionDisplayText(previousMetadata.resumen || previousMetadata.summary || '')
 
   await setConversationSignal(row.contact_id, mapped.signal, {
     reason: mapped.reason,
-    summary,
+    summary: conversationSummary,
+    actionSummarySource: technicalSummary,
+    originalSummary: technicalSummary,
     status: 'completed'
   })
 
@@ -1320,7 +1397,7 @@ export async function completeConversationGoalLink(goalId, {
   await notifyConversationalCompletion({
     contactId: row.contact_id,
     reason: mapped.reason,
-    summary,
+    summary: conversationSummary || technicalSummary,
     signal: mapped.signal
   })
 
@@ -1478,14 +1555,17 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
   const cleanCurrency = String(currency || matchedDetail.currency || '').trim().toUpperCase()
   const paidAmount = Number(amount ?? matchedDetail.amount)
   const cleanInvoiceId = invoiceCandidates[0]
-  const summary = Number.isFinite(paidAmount) && paidAmount > 0
+  const technicalSummary = Number.isFinite(paidAmount) && paidAmount > 0
     ? `Invoice ${cleanInvoiceId} · ${paidAmount} ${cleanCurrency || ''}`.trim()
     : `Invoice ${cleanInvoiceId}`
+  const conversationSummary = cleanCompletionDisplayText(matchedDetail.resumen || matchedDetail.summary || '')
   const reason = 'Pago confirmado del link enviado por el agente'
 
   await setConversationSignal(cleanContactId, 'purchase_completed', {
     reason,
-    summary,
+    summary: conversationSummary,
+    actionSummarySource: technicalSummary,
+    originalSummary: technicalSummary,
     status: 'completed'
   })
 
@@ -1497,7 +1577,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
   await notifyConversationalCompletion({
     contactId: cleanContactId,
     reason,
-    summary,
+    summary: conversationSummary || technicalSummary,
     signal: 'purchase_completed'
   })
 
@@ -2976,16 +3056,16 @@ export async function setConversationStatus(contactId, status, { updatedBy = 'sy
   return getConversationState(contactId)
 }
 
-export async function setConversationSignal(contactId, signal, { reason = '', summary = '', status = 'completed' } = {}) {
+export async function setConversationSignal(contactId, signal, { reason = '', summary = '', status = 'completed', actionSummarySource = '', originalSummary = '' } = {}) {
   await ensureConversationState(contactId)
   const currentState = await db.get('SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null)
   const closingContext = normalizeStoredAdvancedClosingContext(currentState?.closing_context_json || '{}')
   const timezone = await getAccountTimezone().catch(() => 'America/Mexico_City')
-  const completionSummary = buildCompletionSummaryFromClosingContext({ signal, summary, reason, closingContext, timezone })
-  const cleanReason = String(reason || '').slice(0, 600)
-  const cleanActionSummary = String(completionSummary.actionSummary || '').slice(0, 360)
-  const cleanSummary = String(completionSummary.summary || '').slice(0, 700)
-  const cleanStateSummary = String(completionSummary.stateSummary || cleanSummary || cleanActionSummary).slice(0, 1200)
+  const completionSummary = await buildCompletionSummaryFromClosingContext({ contactId, signal, summary, reason, actionSummarySource, closingContext, timezone })
+  const cleanReason = cleanCompletionDisplayText(reason)
+  const cleanActionSummary = cleanCompletionDisplayText(completionSummary.actionSummary)
+  const cleanSummary = cleanCompletionDisplayText(completionSummary.summary)
+  const cleanStateSummary = cleanCompletionDisplayText(completionSummary.stateSummary || cleanSummary || cleanActionSummary)
   await db.run(`
     UPDATE conversational_agent_state
     SET signal = ?, signal_reason = ?, signal_summary = ?, signal_at = CURRENT_TIMESTAMP,
@@ -2993,13 +3073,10 @@ export async function setConversationSignal(contactId, signal, { reason = '', su
     WHERE contact_id = ?
   `, [signal, cleanReason, cleanStateSummary, status, contactId])
 
-  const originalSummary = cleanAdvancedClosingContextValue(summary, 1200)
-  const detail = { signal, reason: cleanReason, summary: cleanSummary, actionSummary: cleanActionSummary, status }
-  if (originalSummary && ![cleanSummary, cleanActionSummary, cleanStateSummary].includes(originalSummary)) {
-    detail.originalSummary = originalSummary
-  }
-  if (hasAdvancedClosingContext(closingContext)) {
-    detail.closingContextUsed = true
+  const cleanOriginalSummary = cleanCompletionDisplayText(originalSummary || actionSummarySource)
+  const detail = { signal, reason: cleanReason, summary: cleanSummary, actionSummary: cleanActionSummary, status, summarySource: completionSummary.summarySource }
+  if (cleanOriginalSummary && ![cleanSummary, cleanActionSummary, cleanStateSummary].includes(cleanOriginalSummary)) {
+    detail.originalSummary = cleanOriginalSummary
   }
 
   await recordConversationalAgentEvent({
@@ -3089,9 +3166,21 @@ export async function handleConversationalAgentTriggerLinkClick(payload = {}) {
   }
 
   const triggerLinkName = configured.triggerLinkName || payload.triggerLinkName || 'Enlace de disparo'
+  const triggerSentEvent = await db.get(
+    "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'trigger_link_sent' ORDER BY created_at DESC LIMIT 1",
+    [contactId]
+  ).catch(() => null)
+  const triggerSentDetail = triggerSentEvent?.detail_json ? safeParse(triggerSentEvent.detail_json) : null
+  const sentTriggerId = String(triggerSentDetail?.triggerLinkId || '').trim()
+  const sentTriggerPublicId = String(triggerSentDetail?.triggerLinkPublicId || '').trim()
+  const matchesSentTrigger = (!sentTriggerId || !configured.triggerLinkId || sentTriggerId === configured.triggerLinkId)
+    && (!sentTriggerPublicId || !configured.triggerLinkPublicId || sentTriggerPublicId === configured.triggerLinkPublicId)
+  const conversationSummary = matchesSentTrigger
+    ? cleanCompletionDisplayText(triggerSentDetail?.resumen || triggerSentDetail?.summary || '')
+    : ''
   const nextState = await setConversationSignal(contactId, 'ready_for_human', {
     reason: `Tocó el enlace de disparo: ${triggerLinkName}`,
-    summary: `El contacto tocó el enlace de disparo "${triggerLinkName}". El equipo debe continuar la conversación.`,
+    summary: conversationSummary,
     status: 'completed'
   })
   await applyAgentCompletionAction(agent, contactId)
@@ -3099,7 +3188,7 @@ export async function handleConversationalAgentTriggerLinkClick(payload = {}) {
   await notifyConversationalCompletion({
     contactId,
     reason: `Tocó el enlace de disparo: ${triggerLinkName}`,
-    summary: `El contacto tocó el enlace de disparo "${triggerLinkName}". El equipo debe continuar la conversación.`,
+    summary: conversationSummary || `Tocó el enlace de disparo: ${triggerLinkName}`,
     signal: 'ready_for_human'
   })
   await recordConversationalAgentEvent({
@@ -3162,10 +3251,12 @@ export async function listConversationStates({ signal = null, statuses = null } 
 
 export async function recordConversationalAgentEvent({ contactId = null, eventType, detail = null }) {
   try {
+    const detailJson = detail ? JSON.stringify(detail) : null
+    const storedDetailJson = eventType === 'signal_set' ? detailJson : detailJson?.slice(0, 4000)
     await db.run(`
       INSERT INTO conversational_agent_events (id, contact_id, event_type, detail_json)
       VALUES (?, ?, ?, ?)
-    `, [`cae_${randomUUID()}`, contactId, eventType, detail ? JSON.stringify(detail).slice(0, 4000) : null])
+    `, [`cae_${randomUUID()}`, contactId, eventType, storedDetailJson || null])
   } catch (error) {
     logger.warn(`[Agente conversacional] No se pudo registrar evento ${eventType}: ${error.message}`)
   }

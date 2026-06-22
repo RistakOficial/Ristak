@@ -596,22 +596,6 @@ const LEGACY_COMPLETION_LABELS = [
   'Resumen'
 ]
 
-function compactCompletionText(value = '', maxLength = 260) {
-  const clean = String(value || '').replace(/\s+/g, ' ').trim()
-  if (!clean || clean.length <= maxLength) return clean
-  const scope = clean.slice(0, maxLength + 1)
-  const boundaries = [
-    scope.lastIndexOf('. '),
-    scope.lastIndexOf('? '),
-    scope.lastIndexOf('! '),
-    scope.lastIndexOf('; '),
-    scope.lastIndexOf(' - ')
-  ].filter((index) => index >= 40)
-  const boundary = boundaries.length ? Math.max(...boundaries) + 1 : -1
-  const truncated = boundary > 0 ? scope.slice(0, boundary) : scope.slice(0, maxLength)
-  return truncated.trim().replace(/[.,;:!?-]+$/g, '')
-}
-
 function getLegacyCompletionValue(text: string, label: string) {
   const marker = `${label}:`
   const start = text.indexOf(marker)
@@ -679,25 +663,7 @@ function buildLegacyActionSummary(signal: Exclude<ConversationSignal, 'discarded
   }
   if (signal === 'ready_to_buy') return 'Quedó listo para pagar'
   if (signal === 'ready_to_schedule') return 'Quedó listo para agendar'
-  return compactCompletionText(reason || result || 'Objetivo concretado', 160)
-}
-
-function buildLegacyContextSummary(summary: string, reason: string) {
-  const motivo = getLegacyCompletionValue(summary, 'Motivo')
-  const situacion = getLegacyCompletionValue(summary, 'Situacion') || getLegacyCompletionValue(summary, 'Situación')
-  const intento = getLegacyCompletionValue(summary, 'Ya intento') || getLegacyCompletionValue(summary, 'Ya intentó')
-  const freno = getLegacyCompletionValue(summary, 'Freno')
-  const logro = getLegacyCompletionValue(summary, 'Quiere lograr')
-  const resumen = getLegacyCompletionValue(summary, 'Resumen')
-  const main = compactCompletionText(resumen || motivo || situacion || reason, 140)
-  const detail = intento
-    ? `Ya había intentado ${compactCompletionText(intento, 90)}`
-    : freno
-      ? `El freno era ${compactCompletionText(freno, 90)}`
-      : logro
-        ? `Buscaba ${compactCompletionText(logro, 90)}`
-        : ''
-  return [main, detail].filter(Boolean).join('. ')
+  return reason || result || 'Objetivo concretado'
 }
 
 function normalizeCompletionEvent(event: ConversationalAgentEvent): ConversationalAgentCompletionEvent | null {
@@ -710,9 +676,9 @@ function normalizeCompletionEvent(event: ConversationalAgentEvent): Conversation
   const rawSummary = getRecordString(detail, 'summary')
   const reason = getRecordString(detail, 'reason')
   const actionSummary = getRecordString(detail, 'actionSummary') || buildLegacyActionSummary(signal, rawSummary, reason)
-  const summary = getRecordString(detail, 'actionSummary')
-    ? compactCompletionText(rawSummary || reason || actionSummary, 220)
-    : buildLegacyContextSummary(rawSummary, reason)
+  const summary = Object.prototype.hasOwnProperty.call(detail, 'summary')
+    ? rawSummary
+    : reason
   return {
     id: event.id,
     contactId: event.contactId,
@@ -720,7 +686,7 @@ function normalizeCompletionEvent(event: ConversationalAgentEvent): Conversation
     icon: meta.icon,
     title: meta.label,
     actionSummary: actionSummary || meta.label,
-    summary: summary || reason || 'El agente concretó una meta en esta conversación.',
+    summary,
     reason,
     status: getRecordString(detail, 'status') || 'completed',
     createdAt: event.createdAt,

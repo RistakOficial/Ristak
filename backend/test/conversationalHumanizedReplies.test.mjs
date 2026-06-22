@@ -27,6 +27,7 @@ import {
   normalizeConversationalSuccessAction,
   recordConversationalAgentEvent,
   setConversationSignal,
+  setConversationalCompletionSummaryGeneratorForTest,
   shouldMigrateLegacyConversationalAgentConfig,
   updateConversationalAgent
 } from '../src/services/conversationalAgentService.js'
@@ -609,11 +610,12 @@ test('acción final del agente asigna el contacto al usuario configurado', async
   }
 })
 
-test('resumen de meta concretada usa el contexto de cierre aprendido', async () => {
+test('resumen de meta concretada lo genera un resumidor interno con el historial completo', async () => {
   const contactId = 'test_completion_closing_context_summary'
 
   await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
 
   try {
@@ -635,19 +637,36 @@ test('resumen de meta concretada usa el contexto de cierre aprendido', async () 
         timingPreference: 'Jueves 25 de junio a las 11:00 AM'
       })]
     )
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (id, contact_id, direction, message_type, message_text, message_timestamp, created_at)
+      VALUES
+        (?, ?, 'inbound', 'text', ?, '2026-06-21T16:00:00.000Z', '2026-06-21T16:00:00.000Z'),
+        (?, ?, 'outbound', 'text', ?, '2026-06-21T16:01:00.000Z', '2026-06-21T16:01:00.000Z'),
+        (?, ?, 'inbound', 'text', ?, '2026-06-21T16:02:00.000Z', '2026-06-21T16:02:00.000Z')
+    `, [
+      `${contactId}_msg_1`, contactId, 'Me duele la rodilla derecha desde hace semanas y con hielo e ibuprofeno no se me quita.',
+      `${contactId}_msg_2`, contactId, 'Va, revisemos horarios para una valoración.',
+      `${contactId}_msg_3`, contactId, 'Sí agéndame el jueves, me preocupa lesionarme más cuando entreno.'
+    ])
+    setConversationalCompletionSummaryGeneratorForTest(async ({ messages, actionSummary, fallbackSummary }) => {
+      assert.ok(messages.some((message) => message.text.includes('rodilla derecha')))
+      assert.match(actionSummary, /Agendó cita/)
+      assert.equal(fallbackSummary, '')
+      return 'Dolor de rodilla derecha sin mejorar con hielo e ibuprofeno; quiere valoración porque teme lesionarse al entrenar.'
+    })
 
     await setConversationSignal(contactId, 'appointment_booked', {
       reason: 'Cita agendada por el agente',
-      summary: 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z',
+      actionSummarySource: 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z',
+      originalSummary: 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z',
       status: 'completed'
     })
 
     const state = await getConversationState(contactId)
     assert.match(state.signalSummary, /Agendó cita para el jueves 25 de junio a las 11 a\.m\./)
-    assert.match(state.signalSummary, /Resumen: Dolor en rodilla derecha/)
-    assert.match(state.signalSummary, /Ya había intentado Rodillera, hielo e ibuprofeno/)
+    assert.match(state.signalSummary, /Resumen: Dolor de rodilla derecha sin mejorar con hielo e ibuprofeno/)
+    assert.doesNotMatch(state.signalSummary, /Rodillera/)
     assert.doesNotMatch(state.signalSummary, /Volver a entrenar sin miedo/)
-    assert.ok(state.signalSummary.length < 300)
 
     const event = await db.get(
       "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'signal_set' ORDER BY created_at DESC LIMIT 1",
@@ -655,15 +674,16 @@ test('resumen de meta concretada usa el contexto de cierre aprendido', async () 
     )
     const detail = JSON.parse(event.detail_json)
     assert.equal(detail.signal, 'appointment_booked')
-    assert.equal(detail.closingContextUsed, true)
     assert.match(detail.actionSummary, /Agendó cita para el jueves 25 de junio a las 11 a\.m\./)
-    assert.match(detail.summary, /Ya había intentado Rodillera, hielo e ibuprofeno/)
+    assert.equal(detail.summary, 'Dolor de rodilla derecha sin mejorar con hielo e ibuprofeno; quiere valoración porque teme lesionarse al entrenar.')
+    assert.equal(detail.summarySource, 'internal_summary_agent')
     assert.doesNotMatch(detail.summary, /preocupaba el gasto/)
-    assert.ok(detail.summary.length < 220)
     assert.equal(detail.originalSummary, 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z')
   } finally {
+    setConversationalCompletionSummaryGeneratorForTest(null)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })
@@ -720,6 +740,16 @@ test('click del enlace de disparo cumple objetivo personalizado y detiene la IA'
     assert.equal(state.status, 'active')
     assert.equal(state.signal, null)
 
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'trigger_link_sent',
+      detail: {
+        triggerLinkId: triggerLink.id,
+        triggerLinkPublicId: triggerLink.publicId,
+        resumen: 'Quiere diagnóstico express para saber si su dolor requiere atención inmediata.'
+      }
+    })
+
     const completed = await handleConversationalAgentTriggerLinkClick({
       contactId,
       triggerLinkId: triggerLink.id,
@@ -733,7 +763,7 @@ test('click del enlace de disparo cumple objetivo personalizado y detiene la IA'
     assert.equal(state.status, 'completed')
     assert.equal(state.signal, 'ready_for_human')
     assert.match(state.signalReason, /Diagnóstico express/)
-    assert.match(state.signalSummary, /equipo debe continuar/)
+    assert.match(state.signalSummary, /Resumen: Quiere diagnóstico express/)
 
     const event = await db.get(
       "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'trigger_link_goal_completed' ORDER BY created_at DESC LIMIT 1",
