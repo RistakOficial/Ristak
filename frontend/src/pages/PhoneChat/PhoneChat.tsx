@@ -620,6 +620,17 @@ const GHL_CHAT_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
   messenger: 'Messenger',
   instagram: 'Instagram'
 }
+type ComposerMessageChannelValue = HighLevelChatChannel | 'email'
+const COMPOSER_MESSAGE_CHANNEL_OPTIONS: Array<{
+  value: ComposerMessageChannelValue
+  label: string
+  description: string
+}> = [
+  { value: 'whatsapp_api', label: 'WhatsApp', description: 'Mensaje por WhatsApp conectado.' },
+  { value: 'email', label: 'Correo electrónico', description: 'Disponible desde la vista completa de chats.' },
+  { value: 'messenger', label: 'Messenger', description: 'Responde por Facebook Messenger.' },
+  { value: 'instagram', label: 'Instagram DM', description: 'Responde por Instagram Direct.' }
+]
 type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms'
 type ContactChannelBadge = {
   kind: ContactChannelBadgeKind
@@ -3219,6 +3230,7 @@ export const PhoneChat: React.FC = () => {
   const [tagActionContactId, setTagActionContactId] = useState<string | null>(null)
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
   const [conversationAgentDropdownOpen, setConversationAgentDropdownOpen] = useState(false)
+  const [composerChannelPickerOpen, setComposerChannelPickerOpen] = useState(false)
   const [chatTags, setChatTags] = useState<ContactTag[]>([])
   const [chatTagsLoading, setChatTagsLoading] = useState(false)
   const [chatTagSearch, setChatTagSearch] = useState('')
@@ -3281,6 +3293,7 @@ export const PhoneChat: React.FC = () => {
   const conversationSearchInputRef = useRef<HTMLInputElement | null>(null)
   const tagDropdownRef = useRef<HTMLDivElement | null>(null)
   const conversationAgentDropdownRef = useRef<HTMLDivElement | null>(null)
+  const composerChannelPickerRef = useRef<HTMLDivElement | null>(null)
   const tagSearchInputRef = useRef<HTMLInputElement | null>(null)
   const messageTextRef = useRef('')
   const messagesPaneNearBottomRef = useRef(true)
@@ -3381,12 +3394,38 @@ export const PhoneChat: React.FC = () => {
     setChatMoreMode('default')
   }, [])
 
+  const closeComposerChannelPicker = useCallback(() => {
+    setComposerChannelPickerOpen(false)
+  }, [])
+
   useEffect(() => {
     if (isWideChatDevice) return
     setWideRailSection('chat')
     setTagDropdownOpen(false)
     setConversationAgentDropdownOpen(false)
+    setComposerChannelPickerOpen(false)
   }, [isWideChatDevice])
+
+  useEffect(() => {
+    if (!composerChannelPickerOpen) return undefined
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const node = composerChannelPickerRef.current
+      if (!node || node.contains(event.target as Node)) return
+      closeComposerChannelPicker()
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      closeComposerChannelPicker()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [closeComposerChannelPicker, composerChannelPickerOpen])
 
   useEffect(() => {
     if (!tagDropdownOpen) return undefined
@@ -5755,6 +5794,7 @@ export const PhoneChat: React.FC = () => {
       setWideAppointmentDefaults(null)
       setWideAppointmentContact(null)
     }
+    closeComposerChannelPicker()
     setTagDropdownOpen(false)
     setTagActionContactId(null)
     actionSheetDismiss.requestClose()
@@ -5794,6 +5834,7 @@ export const PhoneChat: React.FC = () => {
       setWideAppointmentDefaults(null)
       setWideAppointmentContact(null)
     }
+    closeComposerChannelPicker()
     setTagDropdownOpen(false)
     setTagActionContactId(null)
     actionSheetDismiss.requestClose()
@@ -5821,6 +5862,7 @@ export const PhoneChat: React.FC = () => {
     handleCancelVoiceDraft()
     clearMessageActionPress()
     setConversationOpen(false)
+    closeComposerChannelPicker()
     setTagDropdownOpen(false)
     setTagActionContactId(null)
     actionSheetDismiss.requestClose()
@@ -6038,6 +6080,7 @@ export const PhoneChat: React.FC = () => {
     setChatQuickActionsContact(null)
     setTagDropdownOpen(false)
     closeConversationAgentDropdown()
+    closeComposerChannelPicker()
 
     if (section === 'payments') {
       setPaymentMode('single')
@@ -6086,6 +6129,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const openAttachmentsSheet = () => {
+    closeComposerChannelPicker()
     if (isWideChatDevice) {
       const rect = composerPlusRef.current?.getBoundingClientRect()
       setAttachmentSheetAnchor(rect ? {
@@ -6117,6 +6161,7 @@ export const PhoneChat: React.FC = () => {
   const openConversationSearch = () => {
     if (!activeContact) return
     actionSheetDismiss.requestClose()
+    closeComposerChannelPicker()
     setTagDropdownOpen(false)
     closeConversationAgentDropdown()
     setMessageInfoOpen(false)
@@ -6179,6 +6224,7 @@ export const PhoneChat: React.FC = () => {
     setChatActionContactId(null)
     setChatTagSearch('')
     setConversationAgentDropdownOpen(false)
+    closeComposerChannelPicker()
     closeConversationSearch()
     if (isWideChatDevice) {
       actionSheetDismiss.requestClose()
@@ -6333,6 +6379,7 @@ export const PhoneChat: React.FC = () => {
     setChatActionContactId(contact.id)
     setChatMoreMode('default')
     setConversationAgentDropdownOpen(false)
+    closeComposerChannelPicker()
     closeConversationSearch()
     setSheet('chatMore')
     setContactInfoOpen(false)
@@ -6354,6 +6401,7 @@ export const PhoneChat: React.FC = () => {
     setAgentPickerOpen(false)
     setAgentMenuSection('menu')
     setSheet(null)
+    closeComposerChannelPicker()
     setContactInfoOpen(false)
     setMessageInfoOpen(false)
     setCameraSharePhoto(null)
@@ -6385,6 +6433,7 @@ export const PhoneChat: React.FC = () => {
     setChatQuickActionsContact(null)
     setAgentMenuSection('menu')
     setTagDropdownOpen(false)
+    closeComposerChannelPicker()
     closeConversationSearch()
     if (isWideChatDevice) {
       actionSheetDismiss.requestClose()
@@ -6407,6 +6456,7 @@ export const PhoneChat: React.FC = () => {
     }
     setChatActionContactId(null)
     setConversationAgentDropdownOpen(false)
+    closeComposerChannelPicker()
     closeConversationSearch()
     setContactInfoOpen(false)
     if (isWideChatDevice) {
@@ -7466,6 +7516,7 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    closeComposerChannelPicker()
     setScheduleDraft(createDefaultScheduleDraft())
     setScheduleError('')
     setScheduleEditingMessageId(null)
@@ -10208,6 +10259,114 @@ export const PhoneChat: React.FC = () => {
           ))}
         </select>
       </label>
+    )
+  }
+
+  const renderComposerMessageChannelIcon = (value: ComposerMessageChannelValue) => {
+    if (value === 'email') return <Mail size={20} aria-hidden="true" />
+    if (value === 'messenger') return <Icon name="facebook" size={18} />
+    if (value === 'instagram') return <Icon name="instagram" size={18} />
+    if (value === 'sms_qr') return <MessageCircle size={20} aria-hidden="true" />
+    return <Icon name="whatsapp" size={21} className={styles.composerChannelWhatsappGlyph} />
+  }
+
+  const getComposerMessageChannelDisabledReason = (value: ComposerMessageChannelValue) => {
+    if (!activeContact) return 'Abre un chat para elegir canal.'
+    if (value === 'email') return 'El correo electrónico se envía desde la vista completa de chats.'
+    if (value === 'whatsapp_api') {
+      if (!activeContact.phone) return 'Este contacto no tiene teléfono guardado.'
+      if (!sendingThroughHighLevel && !whatsappConnected && !selectedQrReady) return 'Conecta WhatsApp API o QR para responder.'
+      return ''
+    }
+    if (value === 'sms_qr') {
+      if (!highLevelConnected) return 'Conecta HighLevel para usar SMS.'
+      if (!activeContact.phone) return 'Este contacto no tiene teléfono guardado.'
+      return ''
+    }
+    if (!highLevelConnected) return 'Conecta HighLevel para responder por este canal.'
+    return ''
+  }
+
+  const handleComposerMessageChannelSelect = (value: ComposerMessageChannelValue) => {
+    if (value === 'email') {
+      showToast('info', 'Correo electrónico', 'Para enviar correos usa la vista completa de chats.')
+      return
+    }
+
+    if (!activeContact?.id) return
+    const disabledReason = getComposerMessageChannelDisabledReason(value)
+    if (disabledReason) {
+      showToast('warning', 'Canal no disponible', disabledReason)
+      return
+    }
+
+    setContactHighLevelChannelOverrides((current) => ({
+      ...current,
+      [activeContact.id]: value
+    }))
+    saveConfigPreference(setSelectedHighLevelChatChannel, value)
+    setComposerChannelPickerOpen(false)
+  }
+
+  const renderComposerChannelPicker = () => {
+    if (!activeContact || aiAgentConversationOpen) return null
+
+    const activeValue: ComposerMessageChannelValue = sendingThroughHighLevel ? activeHighLevelChatChannel : 'whatsapp_api'
+    const activeLabel = activeValue === 'sms_qr'
+      ? 'SMS'
+      : COMPOSER_MESSAGE_CHANNEL_OPTIONS.find((option) => option.value === activeValue)?.label || 'WhatsApp'
+
+    return (
+      <div className={styles.composerChannelHost} ref={composerChannelPickerRef}>
+        <button
+          type="button"
+          className={`${styles.composerChannelButton} ${composerChannelPickerOpen ? styles.composerChannelButtonOpen : ''}`}
+          data-channel={activeValue}
+          onClick={() => {
+            actionSheetDismiss.requestClose()
+            closeConversationSearch()
+            setTagDropdownOpen(false)
+            closeConversationAgentDropdown()
+            setComposerChannelPickerOpen((current) => !current)
+          }}
+          aria-label={`Canal de envío: ${activeLabel}`}
+          aria-expanded={composerChannelPickerOpen}
+          title={`Canal de envío: ${activeLabel}`}
+        >
+          {renderComposerMessageChannelIcon(activeValue)}
+        </button>
+
+        {composerChannelPickerOpen && (
+          <div className={styles.composerChannelDropdown} role="menu" aria-label="Elegir canal de envío">
+            {COMPOSER_MESSAGE_CHANNEL_OPTIONS.map((option) => {
+              const disabledReason = getComposerMessageChannelDisabledReason(option.value)
+              const disabled = Boolean(disabledReason)
+              const active = option.value === activeValue
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`${styles.composerChannelOption} ${active ? styles.composerChannelOptionActive : ''}`}
+                  onClick={() => handleComposerMessageChannelSelect(option.value)}
+                  disabled={disabled}
+                  role="menuitem"
+                  title={disabledReason || option.description}
+                >
+                  <span className={styles.composerChannelOptionIcon} data-channel={option.value}>
+                    {renderComposerMessageChannelIcon(option.value)}
+                  </span>
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{disabledReason || option.description}</small>
+                  </span>
+                  {active && <Check size={16} aria-hidden="true" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
     )
   }
 
@@ -13779,6 +13938,7 @@ export const PhoneChat: React.FC = () => {
         }
       : {})
   } as React.CSSProperties
+  const popoverSheetUsesCssClose = isWideChatDevice && (sheet === 'attachments' || sheet === 'schedule')
 
   return (
     <main
@@ -14100,6 +14260,7 @@ export const PhoneChat: React.FC = () => {
                         renderVoiceComposerPanel()
                       ) : (
                         <>
+                          {renderComposerChannelPicker()}
                           <button type="button" ref={composerPlusRef} className={styles.composerPlus} onClick={openAttachmentsSheet} aria-label="Abrir adjuntos">
                             <Plus size={24} />
                           </button>
@@ -14221,7 +14382,7 @@ export const PhoneChat: React.FC = () => {
         >
           <section
             className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${sheet === 'tag' ? styles.tagSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
-            style={actionSheetDismiss.sheetStyle}
+            style={popoverSheetUsesCssClose ? undefined : actionSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
             {...actionSheetDismiss.sheetDragProps}
