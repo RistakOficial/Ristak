@@ -724,6 +724,58 @@
   background: color-mix(in srgb, var(--phone-chat-accent-soft) 56%, transparent);
 }
 
+.chatItemSelecting {
+  grid-template-columns: 34px 52px minmax(0, 1fr) auto;
+  padding-left: 10px;
+}
+
+.chatItemSelecting::after {
+  left: 112px;
+}
+
+.chatSelectionCheck,
+.chatSelectionMiniCheck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--phone-chat-muted) 32%, var(--phone-chat-border) 68%);
+  border-radius: 999px;
+  color: var(--phone-chat-text-on-primary);
+  background: color-mix(in srgb, var(--phone-chat-surface) 86%, transparent);
+}
+
+.chatSelectionCheck {
+  justify-self: center;
+  width: 25px;
+  height: 25px;
+}
+
+.chatSelectionMiniCheck {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+}
+
+.chatSelectionCheckActive,
+.chatSelectionMiniCheckActive {
+  border-color: var(--phone-chat-accent);
+  background: var(--phone-chat-accent);
+}
+
+.chatItemSelected,
+.chatItemSelected.chatItemUnread,
+.chatItemSelected.chatItemAgentAction {
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 86%, var(--phone-chat-bg) 14%);
+}
+
+.chatItemSelected::after {
+  background: color-mix(in srgb, var(--phone-chat-accent) 34%, var(--phone-chat-border));
+}
+
+.chatSwipeRowSelected {
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 52%, transparent);
+}
+
 .chatItemUnread {
   background: color-mix(in srgb, var(--phone-chat-accent-soft) 78%, var(--phone-chat-bg) 22%);
 }
@@ -782,6 +834,191 @@
 
 .phoneChatPage[data-phone-chat-tone="dark"] .chatItemAgentAction .chatMain strong {
   color: #fecaca;
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemSelected,
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemSelected.chatItemUnread,
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemSelected.chatItemAgentAction {
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 82%, var(--phone-chat-bg) 18%);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatSwipeContent {
+  background: var(--phone-chat-surface);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemUnread.chatSwipeContent {
+  background:
+    linear-gradient(0deg, var(--phone-chat-accent-soft), var(--phone-chat-accent-soft)),
+    var(--phone-chat-surface);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemAgentAction.chatSwipeContent {
+  background:
+    linear-gradient(0deg, color-mix(in srgb, var(--neg) 19%, transparent), color-mix(in srgb, var(--neg) 19%, transparent)),
+    var(--phone-chat-surface);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemSelected.chatSwipeContent,
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemSelected.chatItemUnread.chatSwipeContent,
+.phoneChatPage[data-phone-chat-tone="dark"] .chatItemSelected.chatItemAgentAction.chatSwipeContent {
+  background:
+    linear-gradient(0deg, var(--phone-chat-accent-soft), var(--phone-chat-accent-soft)),
+    var(--phone-chat-surface);
+}
+
+.chatSelectionPanel {
+  display: grid;
+  gap: 9px;
+  margin: 8px 12px 10px;
+  padding: 10px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 20px;
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface) 88%, var(--phone-chat-bg) 12%);
+  box-shadow: 0 14px 34px rgba(var(--phone-chat-primary-rgb), 0.1);
+}
+
+.chatSelectionPanelTop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.chatSelectionPanelTop strong {
+  min-width: 0;
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.chatSelectionSelectAll,
+.chatSelectionClearButton,
+.chatSelectionMoreButton {
+  appearance: none;
+  border: 1px solid var(--phone-chat-border);
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 82%, transparent);
+  font: inherit;
+}
+
+.chatSelectionSelectAll {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.chatSelectionClearButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.chatSelectionMoreButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  border-radius: 999px;
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-accent);
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.chatSelectionActionsMenu {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--phone-chat-surface) 94%, var(--phone-chat-bg) 6%);
+}
+
+.chatSelectionActionsMenu > button,
+.chatSelectionAgentGroup > button {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+.chatSelectionActionsMenu > button + button,
+.chatSelectionAgentGroup > button {
+  border-top: 1px solid var(--phone-chat-border);
+}
+
+.chatSelectionActionsMenu svg,
+.chatSelectionAgentGroup svg {
+  justify-self: center;
+  color: var(--phone-chat-accent);
+}
+
+.chatSelectionActionsMenu span,
+.chatSelectionAgentGroup span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.chatSelectionActionsMenu strong,
+.chatSelectionAgentGroup strong {
+  overflow: hidden;
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 790;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chatSelectionActionsMenu small,
+.chatSelectionAgentGroup small {
+  overflow: hidden;
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 540;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chatSelectionAgentGroup {
+  display: grid;
+  border-top: 1px solid var(--phone-chat-border);
+}
+
+.chatSelectionAgentGroup p {
+  margin: 0;
+  padding: 10px 12px 5px;
+  color: var(--phone-chat-muted);
+  font-size: 11px;
+  font-weight: 780;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.chatSelectionActionsMenu button:disabled {
+  opacity: 0.62;
 }
 
 .avatar {
@@ -1373,6 +1610,13 @@
   justify-content: flex-end;
   gap: 6px;
   min-width: 0;
+}
+
+.conversationHeaderActionCommerce,
+.conversationHeaderActionTag,
+.conversationHeaderActionAgent,
+.conversationHeaderActionSearch {
+  flex: 0 0 auto;
 }
 
 .conversationTagDropdownHost,
@@ -2558,57 +2802,6 @@
   font-size: 22px;
   font-weight: 860;
   letter-spacing: 0.4px;
-}
-
-/* Menú de acciones rápidas al dejar picado un chat de la lista */
-.chatQuickActions {
-  display: grid;
-}
-
-.chatQuickActions button {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 20px;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-height: 58px;
-  padding: 8px 2px;
-  border: 0;
-  border-top: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
-  color: var(--phone-chat-text, #111111);
-  background: transparent;
-  font: inherit;
-  font-size: 16px;
-  font-weight: 780;
-  text-align: left;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.chatQuickActions button:first-child {
-  border-top: 0;
-}
-
-.chatQuickActions button > svg {
-  justify-self: end;
-  color: var(--phone-chat-muted, #737373);
-}
-
-.chatQuickActionIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 14px;
-  color: var(--phone-chat-accent, #25d366);
-  background: var(--phone-chat-accent-soft, rgba(37, 211, 102, 0.14));
-}
-
-.chatQuickActionLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Lista de números nuestros para elegir desde dónde contactar */
@@ -5143,6 +5336,14 @@
   grid-template-columns: var(--phone-chat-composer-channel) var(--phone-chat-composer-plus) minmax(0, 1fr) var(--phone-chat-composer-side-action) auto;
 }
 
+.aiAgentUnifiedComposer {
+  grid-template-columns: var(--phone-chat-composer-plus) minmax(0, 1fr) auto;
+}
+
+.aiAgentUnifiedComposer.composerVoiceMode {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .composerHasContent {
   gap: 5px;
 }
@@ -6090,6 +6291,17 @@
   touch-action: pan-y;
   animation: phoneChatSheetRise 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
   will-change: transform;
+}
+
+.sheetPanel :global([data-phone-scrollable="true"]),
+.sheetPanel :global([data-phone-chat-scrollable="true"]),
+.sheetPanel :global([data-bottom-sheet-scrollable="true"]) {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .sheetPanelClosing {
@@ -7322,18 +7534,22 @@
 
 .paymentChoiceList {
   display: grid;
-  gap: 8px;
+  align-content: start;
+  gap: 10px;
   min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .paymentChoiceList button {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 12px;
+  width: 100%;
   min-width: 0;
-  min-height: 70px;
-  padding: 10px 4px;
+  padding: 14px 4px;
   border: 0;
   border-radius: 0;
   color: var(--phone-chat-text);
@@ -7347,12 +7563,15 @@
 }
 
 .paymentChoiceList button:active {
-  opacity: 0.72;
+  opacity: 0.62;
+  transform: scale(0.995);
 }
 
 .paymentChoiceList button > span:nth-child(2) {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -7365,16 +7584,16 @@
 
 .paymentChoiceList strong {
   color: var(--phone-chat-text);
-  font-size: 15px;
-  font-weight: 830;
-  white-space: nowrap;
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1.15;
 }
 
 .paymentChoiceList small {
   color: var(--phone-chat-muted);
   font-size: 13px;
   font-weight: 560;
-  line-height: 1.25;
+  line-height: 1.4;
 }
 
 .paymentChoiceList svg:last-child {
@@ -7385,27 +7604,34 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 999px;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 0;
 }
 
 .paymentChoiceSingle {
-  color: var(--phone-chat-text-on-primary);
-  background: var(--phone-chat-accent);
+  color: var(--phone-chat-accent);
+  background: transparent;
 }
 
 .paymentChoicePlan,
 .paymentChoiceSubscription {
-  color: var(--phone-chat-primary);
-  background: color-mix(in srgb, var(--phone-chat-primary) 12%, var(--phone-chat-surface) 88%);
+  color: var(--phone-chat-text);
+  background: transparent;
 }
 
 .embeddedActionForm {
   min-height: 0;
-  overflow: hidden;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
   margin-right: -2px;
   margin-left: -2px;
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
 }
 
 .embeddedActionForm > * {
@@ -8026,7 +8252,7 @@
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) {
   --tablet-side-rail-width: 62px;
-  --tablet-chat-list-width: clamp(520px, 32vw, 660px);
+  --tablet-chat-list-width: clamp(520px, 48vw, 1280px);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .phoneFrame {
@@ -8630,6 +8856,22 @@
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationContactButton {
   padding-inline: 0;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationHeaderActionCommerce {
+  order: 1;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationHeaderActionTag {
+  order: 2;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationHeaderActionAgent {
+  order: 3;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationHeaderActionSearch {
+  order: 4;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messagesPane {

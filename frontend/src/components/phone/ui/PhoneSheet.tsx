@@ -147,6 +147,7 @@ export const PhoneSheet: React.FC<PhoneSheetProps> = ({
         )}
         <div
           className={`${scrollable ? styles.contentScrollable : styles.content} ${contentClassName}`.trim()}
+          data-bottom-sheet-no-drag={scrollable ? 'true' : undefined}
           data-bottom-sheet-scrollable={scrollable ? 'true' : undefined}
           data-phone-scrollable={scrollable ? 'true' : undefined}
         >

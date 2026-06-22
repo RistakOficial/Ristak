@@ -16,7 +16,7 @@ const AIAgentFeatureRoute: React.FC<{ featureKeys: readonly string[]; children: 
   return <>{children}</>
 }
 
-// Agente AI vive como sección principal del producto. Las pantallas reutilizan
+// Ristak AI vive como sección principal del producto. Las pantallas reutilizan
 // los paneles existentes, pero ya no se montan dentro de Configuración.
 export const AIAgent: React.FC = () => {
   const { user } = useAuth()

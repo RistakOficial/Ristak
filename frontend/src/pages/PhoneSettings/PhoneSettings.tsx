@@ -581,7 +581,7 @@ export const PhoneSettings: React.FC = () => {
     }> = [
       { id: 'numbers', title: 'Números de WhatsApp', description: 'Cómo se muestran tus líneas.', meta: whatsappNumberMode === 'merged' ? 'Juntos' : 'Separados', Icon: Smartphone, tone: 'green' },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText, tone: 'black' },
-      { id: 'agent', title: 'Agente IA', mobileTitle: 'Agente de inteligencia artificial', description: 'Chat fijo y sugerencias.', meta: aiAvailability.configured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
+      { id: 'agent', title: 'Ristak AI', mobileTitle: 'Ristak AI', description: 'Chat fijo y sugerencias.', meta: aiAvailability.configured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: enabledCustomFieldCount ? `${enabledCustomFieldCount} activo${enabledCustomFieldCount === 1 ? '' : 's'}` : 'Elegir', Icon: ListChecks, tone: 'gold' },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: themeMeta, Icon: Sun, tone: 'blue' },
@@ -711,7 +711,7 @@ export const PhoneSettings: React.FC = () => {
             <textarea
               value={businessContextDraft}
               placeholder="Ejemplo: Somos una clínica dental en Ciudad Juárez, atendemos familias, vendemos tratamientos de ortodoncia y queremos responder con tono cercano..."
-              aria-label="Descripción del negocio para el agente de inteligencia artificial"
+              aria-label="Descripción del negocio para Ristak AI"
               disabled={busyDescription || recording}
               onChange={(event) => {
                 setBusinessContextDraft(event.target.value)
@@ -917,7 +917,7 @@ export const PhoneSettings: React.FC = () => {
   const sectionTitle = useMemo(() => {
     if (activeSection === 'numbers') return 'Números de WhatsApp'
     if (activeSection === 'templates') return 'Plantillas'
-    if (activeSection === 'agent') return 'Agente IA'
+    if (activeSection === 'agent') return 'Ristak AI'
     if (activeSection === 'chats') return 'Lista de chats'
     if (activeSection === 'custom-fields') return 'Campos personalizados'
     if (activeSection === 'appearance') return 'Apariencia'
@@ -926,7 +926,7 @@ export const PhoneSettings: React.FC = () => {
   }, [activeSection])
 
   const mobileSectionTitle = useMemo(() => {
-    if (activeSection === 'agent') return 'Agente de inteligencia artificial'
+    if (activeSection === 'agent') return 'Ristak AI'
     if (activeSection === 'chats') return 'Lista de chat'
     return sectionTitle
   }, [activeSection, sectionTitle])

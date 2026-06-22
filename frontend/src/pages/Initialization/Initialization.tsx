@@ -92,7 +92,7 @@ const STEP_META: Record<InitStepId, StepMeta> = {
   },
   openai: {
     title: 'Conecta OpenAI',
-    description: 'Agrega tu clave de OpenAI para activar el agente de inteligencia artificial.',
+    description: 'Agrega tu clave de OpenAI para activar Ristak AI.',
     icon: Bot,
     to: '/ai-agent/general'
   },

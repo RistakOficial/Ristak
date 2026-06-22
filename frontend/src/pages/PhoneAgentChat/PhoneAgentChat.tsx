@@ -159,7 +159,7 @@ export const PhoneAgentChat: React.FC = () => {
             <p className={styles.eyebrow}>Ruta bloqueada</p>
             <h1 id="phone-agent-blocked-title">Solo en móvil o tablet</h1>
             <p>
-              Esta pantalla del agente AI está cerrada para computadora. Ábrela desde un teléfono o una tablet para usar el chat en modo portátil.
+              Esta pantalla de Ristak AI está cerrada para computadora. Ábrela desde un teléfono o una tablet para usar el chat en modo portátil.
             </p>
           </div>
           <Link className={styles.dashboardLink} to="/dashboard">
@@ -171,15 +171,15 @@ export const PhoneAgentChat: React.FC = () => {
   }
 
   return (
-    <main className={styles.mobilePage} aria-label="Chat móvil y tablet del agente AI">
+    <main className={styles.mobilePage} aria-label="Chat móvil y tablet de Ristak AI">
       <div className={styles.agentWorkspace}>
-        <nav className={styles.agentModeTabs} aria-label="Modo del agente AI">
+        <nav className={styles.agentModeTabs} aria-label="Modo de Ristak AI">
           <NavLink
             to={generalPath}
             className={({ isActive }) => `${styles.agentModeTab} ${isActive || location.pathname === basePath ? styles.agentModeTabActive : ''}`}
           >
             <MessageCircle size={17} />
-            Chat AI
+            Ristak AI
           </NavLink>
           <NavLink
             to={conversationalPath}

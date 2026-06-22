@@ -1103,7 +1103,7 @@ function getBusinessPromptBlockerText(status?: ConversationalBusinessPromptStatu
   if (status?.ready) return ''
   if (status?.extractionError) return status.extractionError
   if (!status || status.status === 'empty') {
-    return 'Antes de publicar agentes, describe el negocio en Agente AI para que Ristak parametrice el guión de fábrica.'
+    return 'Antes de publicar agentes, describe el negocio en Ristak AI para que Ristak parametrice el guión de fábrica.'
   }
   if (status.status === 'needs_more_context') {
     return 'Agrega más detalle del negocio: qué vende, a quién atiende, cómo opera y qué debe evitar.'

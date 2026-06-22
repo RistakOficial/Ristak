@@ -3,6 +3,11 @@
   min-width: 0;
 }
 
+.hostInline {
+  position: relative;
+  z-index: 14;
+}
+
 .trigger {
   display: inline-flex;
   align-items: center;
@@ -54,6 +59,38 @@
   font-size: 14px;
   font-weight: 840;
   -webkit-tap-highlight-color: transparent;
+}
+
+.popoverPanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 90;
+  width: min(340px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.1));
+  border-radius: 16px;
+  background: var(--phone-chat-surface, #ffffff);
+  box-shadow: var(--shadow-pop, 0 18px 42px color-mix(in srgb, var(--phone-chat-text, #111111) 16%, transparent));
+}
+
+.popoverHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 0 10px;
+}
+
+.popoverHeader strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--phone-chat-text, #111111);
+  font-size: 14px;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .monthRow {

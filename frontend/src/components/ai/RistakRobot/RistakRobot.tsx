@@ -24,7 +24,7 @@ export const RistakRobot: React.FC<RistakRobotProps> = ({
   size,
   thinking = false,
   className,
-  label = 'Agente AI de Ristak',
+  label = 'Ristak AI',
 }) => {
   const uid = useId().replace(/:/g, '')
   const headGrad = `rk-head-${uid}`

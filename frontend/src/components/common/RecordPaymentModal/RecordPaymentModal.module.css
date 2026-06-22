@@ -1994,6 +1994,37 @@ body.dark .tooltipInfo {
   background: var(--record-payment-embedded-bg);
 }
 
+.embeddedRoot[data-payment-mode="partial"] .content,
+.embeddedRoot[data-payment-mode="partial"] .optionsContent,
+.embeddedRoot[data-payment-mode="partial"] .paymentLinkReady,
+.embeddedRoot[data-payment-mode="partial"] .embeddedActions {
+  width: min(100%, 920px);
+}
+
+.embeddedRoot[data-payment-mode="partial"] .content {
+  container-type: inline-size;
+}
+
+@media (min-width: 768px) {
+  .embeddedRoot[data-payment-layout="wide"] .content,
+  .embeddedRoot[data-payment-layout="wide"] .optionsContent,
+  .embeddedRoot[data-payment-layout="wide"] .paymentLinkReady,
+  .embeddedRoot[data-payment-layout="wide"] .embeddedActions {
+    width: min(100%, 1040px);
+  }
+
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .content,
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .optionsContent,
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .paymentLinkReady,
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .embeddedActions {
+    width: min(100%, 1120px);
+  }
+
+  .embeddedRoot[data-payment-layout="wide"] .content {
+    padding-inline: clamp(24px, 4vw, 42px);
+  }
+}
+
 .embeddedRoot .content::-webkit-scrollbar,
 .embeddedRoot .optionsContent::-webkit-scrollbar,
 .embeddedRoot .paymentLinkReady::-webkit-scrollbar {
@@ -2147,6 +2178,10 @@ body.dark .tooltipInfo {
   gap: 8px;
 }
 
+.contactPickerField {
+  position: relative;
+}
+
 .contactPickerTrigger {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) auto;
@@ -2264,10 +2299,44 @@ body.dark .tooltipInfo {
   background: var(--record-payment-embedded-panel);
 }
 
-:global(body[data-payment-contact-picker="open"]) nav[aria-label="Secciones de Ristak"] {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(12px);
+@media (min-width: 768px) {
+  .embeddedRoot .contactPickerField .embeddedSheetOverlay {
+    position: absolute;
+    inset: calc(100% + 8px) auto auto 0;
+    z-index: 70;
+    display: block;
+    width: min(100%, 440px);
+    padding: 0;
+    background: transparent;
+  }
+
+  .embeddedRoot .contactPickerField .embeddedSheet {
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
+    width: 100%;
+    min-height: 0;
+    max-height: min(390px, 48vh);
+    padding: 10px;
+    border-radius: 16px;
+    background: var(--record-payment-embedded-bg);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.22);
+  }
+
+  .embeddedRoot .contactPickerField .embeddedSheetHeader {
+    display: none;
+  }
+
+  .embeddedRoot .contactPickerField .embeddedSheet .contactList {
+    max-height: 294px;
+  }
+}
+
+@media (max-width: 767px) {
+  :global(body[data-payment-contact-picker="open"]) nav[aria-label="Secciones de Ristak"] {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(12px);
+  }
 }
 
 .inlineSpinner {
@@ -2364,6 +2433,123 @@ body.dark .tooltipInfo {
 .embeddedRoot .manualGrid {
   gap: 18px;
   grid-template-columns: 1fr;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .planStepBody {
+  container-type: inline-size;
+}
+
+@media (min-width: 768px) {
+  .embeddedRoot[data-payment-mode="partial"] .fieldGrid,
+  .embeddedRoot[data-payment-mode="partial"] .manualGrid {
+    grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  }
+
+  .embeddedRoot[data-payment-mode="partial"] .planSection {
+    padding: 20px;
+  }
+
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planSection {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+    align-items: start;
+    gap: 20px;
+    padding: clamp(20px, 3vw, 28px);
+  }
+
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planIntro {
+    grid-column: 1 / -1;
+  }
+
+  .embeddedRoot[data-payment-layout="wide"][data-payment-mode="partial"] .planStep {
+    min-width: 0;
+  }
+}
+
+.embeddedRoot[data-payment-mode="partial"] .installmentHead {
+  display: none;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .installmentRow {
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--record-payment-embedded-border);
+  border-radius: 12px;
+  background: var(--record-payment-embedded-panel);
+  align-items: end;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .installmentSeq {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .cellLabel {
+  display: block;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .installmentDate {
+  grid-column: 1 / -1;
+}
+
+.embeddedRoot[data-payment-mode="partial"] .installmentMonto {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  padding-top: 8px;
+  border-top: 1px dashed var(--record-payment-embedded-border);
+}
+
+.embeddedRoot[data-payment-mode="partial"] .installmentDelete {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+@container (min-width: 680px) {
+  .embeddedRoot[data-payment-mode="partial"] .installmentHead {
+    display: grid;
+  }
+
+  .embeddedRoot[data-payment-mode="partial"] .installmentRow,
+  .embeddedRoot[data-payment-mode="partial"] .installmentHead {
+    grid-template-columns: 34px minmax(112px, 0.8fr) minmax(170px, 1fr) minmax(92px, auto) 36px;
+  }
+
+  .embeddedRoot[data-payment-mode="partial"] .installmentRow {
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    align-items: center;
+  }
+
+  .embeddedRoot[data-payment-mode="partial"] .installmentSeq,
+  .embeddedRoot[data-payment-mode="partial"] .installmentDate,
+  .embeddedRoot[data-payment-mode="partial"] .installmentMonto,
+  .embeddedRoot[data-payment-mode="partial"] .installmentDelete {
+    grid-column: auto;
+  }
+
+  .embeddedRoot[data-payment-mode="partial"] .cellLabel {
+    display: none;
+  }
+
+  .embeddedRoot[data-payment-mode="partial"] .installmentMonto {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    text-align: right;
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .embeddedRoot[data-payment-mode="partial"] .installmentDelete {
+    width: 36px;
+  }
 }
 
 .embeddedRoot .optionsContent {

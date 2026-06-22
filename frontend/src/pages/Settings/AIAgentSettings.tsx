@@ -196,7 +196,7 @@ export const AIAgentSettings: React.FC = () => {
       setSaveState('saved')
       setSaveError('')
     } catch (error: any) {
-      showToast('error', 'Error', error?.message || 'No se pudo cargar el estado del agente AI')
+      showToast('error', 'Error', error?.message || 'No se pudo cargar el estado de Ristak AI')
     } finally {
       setLoading(false)
       hydratedRef.current = true
@@ -352,7 +352,7 @@ export const AIAgentSettings: React.FC = () => {
       setShowApiKey(false)
       setIsEditingApiKey(false)
       setSaveState('saved')
-      showToast('success', 'Token actualizado', 'El agente AI ya quedó usando el token nuevo.')
+      showToast('success', 'Token actualizado', 'Ristak AI ya quedó usando el token nuevo.')
     } catch (error: any) {
       if (activeSaveIdRef.current !== saveId) return
 
@@ -393,7 +393,7 @@ export const AIAgentSettings: React.FC = () => {
       emitConfigChange(nextStatus)
       lastSavedSignatureRef.current = getConfigSignature(nextForm)
       setSaveState('saved')
-      showToast('success', 'Token eliminado', 'El agente AI dejó de usar el token guardado. Tu contexto del negocio se conserva.')
+      showToast('success', 'Token eliminado', 'Ristak AI dejó de usar el token guardado. Tu contexto del negocio se conserva.')
     } catch (error: any) {
       if (activeSaveIdRef.current !== saveId) return
 
@@ -427,7 +427,7 @@ export const AIAgentSettings: React.FC = () => {
               <Bot size={22} />
             </div>
             <div>
-              <h2 className={styles.title}>Agente AI</h2>
+              <h2 className={styles.title}>Ristak AI</h2>
               <p className={styles.description}>
                 Token, modelo y contexto del negocio. Todo se guarda solo.
               </p>

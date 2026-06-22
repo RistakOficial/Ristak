@@ -1281,6 +1281,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         placeholder={placeholder || title}
         disabled={disabled}
         buttonClassName={styles.mobilePhoneSelectButton}
+        inlineOnWide={presentation === 'embedded'}
       />
     ) : (
       <CustomSelect

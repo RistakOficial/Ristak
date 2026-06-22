@@ -3748,7 +3748,7 @@ export const DesktopChat: React.FC = () => {
   ) => {
     if (!activeContact?.id || conversationAgentBusy) return
     if (!conversationAgentEnabled) {
-      showToast('warning', 'Agente conversacional apagado', 'Actívalo en Agente AI para usarlo en los chats.')
+      showToast('warning', 'Agente conversacional apagado', 'Actívalo en Ristak AI para usarlo en los chats.')
       return
     }
 
@@ -4022,7 +4022,7 @@ export const DesktopChat: React.FC = () => {
   ) => {
     if (selectedChatContacts.length === 0 || bulkAgentActionBusy) return
     if (!conversationAgentEnabled) {
-      showToast('warning', 'Agente conversacional apagado', 'Actívalo en Agente AI para usarlo en los chats.')
+      showToast('warning', 'Agente conversacional apagado', 'Actívalo en Ristak AI para usarlo en los chats.')
       return
     }
 
@@ -4746,7 +4746,7 @@ export const DesktopChat: React.FC = () => {
               ))}
             </div>
           ) : (
-            <p className={styles.agentComposerHint}>No hay agentes publicados. Créalo en Agente AI → Agente conversacional.</p>
+            <p className={styles.agentComposerHint}>No hay agentes publicados. Créalo en Ristak AI → Agente conversacional.</p>
           )}
           {disabledByGlobalConfig ? (
             <p className={styles.agentComposerHint}>Activa la configuración general del agente antes de asignarlo a un chat.</p>
@@ -5482,7 +5482,7 @@ export const DesktopChat: React.FC = () => {
                                 <Bot size={15} />
                                 <span>
                                   <span className={styles.chatSelectionMenuItemTitle}>Agente conversacional apagado</span>
-                                  <small>Actívalo en Agente AI para usarlo aquí.</small>
+                                  <small>Actívalo en Ristak AI para usarlo aquí.</small>
                                 </span>
                               </DropdownMenuItem>
                             ) : availableAgentDefs.length > 0 ? (
@@ -5505,7 +5505,7 @@ export const DesktopChat: React.FC = () => {
                                 <Bot size={15} />
                                 <span>
                                   <span className={styles.chatSelectionMenuItemTitle}>Sin agentes activos</span>
-                                  <small>Crea o activa un agente en Agente AI.</small>
+                                  <small>Crea o activa un agente en Ristak AI.</small>
                                 </span>
                               </DropdownMenuItem>
                             )}

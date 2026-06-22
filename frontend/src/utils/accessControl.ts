@@ -80,7 +80,7 @@ export const ACCESS_MODULES = [
   },
   {
     key: 'ai_agent',
-    label: 'Agente AI',
+    label: 'Ristak AI',
     description: 'Configuración y uso de agentes internos.',
     group: 'Operación',
     path: '/ai-agent/general'

@@ -251,14 +251,14 @@ const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({
           if (!open) onToggle()
           onRequestExpand?.()
         }}
-        aria-label="Agente AI"
-        title="Agente AI"
+        aria-label="Ristak AI"
+        title="Ristak AI"
         data-ristak-sidebar-nav-item
         data-active={isAIAgentRoute ? 'true' : undefined}
         className={cn(getNavLinkClasses(isAIAgentRoute, 'w-full', true))}
       >
         <BotMessageSquare className="h-5 w-5 flex-shrink-0" />
-        <span className="sr-only">Agente AI</span>
+        <span className="sr-only">Ristak AI</span>
       </button>
     )
   }
@@ -274,7 +274,7 @@ const AIAgentNavGroup: React.FC<AIAgentNavGroupProps> = ({
         className={cn(getNavLinkClasses(isAIAgentRoute && !open, 'w-full'))}
       >
         <BotMessageSquare className="h-5 w-5 flex-shrink-0" />
-        <span className="flex-1 text-left">Agente AI</span>
+        <span className="flex-1 text-left">Ristak AI</span>
         <ChevronDown
           className={cn(
             'h-4 w-4 flex-shrink-0 text-[var(--text-mute)] transition-transform',

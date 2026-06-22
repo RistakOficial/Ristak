@@ -3,6 +3,11 @@
   min-width: 0;
 }
 
+.hostInline {
+  position: relative;
+  z-index: 12;
+}
+
 .trigger {
   display: inline-flex;
   align-items: center;
@@ -51,6 +56,34 @@
 
 .options {
   min-height: 0;
+}
+
+.popoverPanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  left: 0;
+  z-index: 80;
+  max-height: min(320px, 48vh);
+  min-width: 100%;
+  box-sizing: border-box;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.1));
+  border-radius: 16px;
+  background: var(--phone-chat-surface, #ffffff);
+  box-shadow: var(--shadow-pop, 0 18px 42px color-mix(in srgb, var(--phone-chat-text, #111111) 16%, transparent));
+}
+
+.popoverPanel .option {
+  min-height: 48px;
+  padding: 10px;
+  border-top: 0;
+  border-radius: 12px;
+}
+
+.popoverPanel .option + .option {
+  margin-top: 2px;
 }
 
 .option {

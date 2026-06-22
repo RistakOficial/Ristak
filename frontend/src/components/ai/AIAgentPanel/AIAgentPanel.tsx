@@ -104,7 +104,7 @@ const routeLabels: Record<string, string> = {
   '/appointments': 'Citas',
   '/analytics': 'Analíticas',
   '/ai-agent/conversational': 'Agente conversacional',
-  '/ai-agent': 'Agente AI',
+  '/ai-agent': 'Ristak AI',
   '/settings': 'Configuración',
   '/sites': 'Sitios'
 }
@@ -873,7 +873,7 @@ function buildChatTranscript(
   ]
 
   messages.forEach((message, index) => {
-    const roleLabel = message.role === 'user' ? 'Usuario' : 'Agente AI'
+    const roleLabel = message.role === 'user' ? 'Usuario' : 'Ristak AI'
     const timestamp = formatTranscriptTimestamp(message.createdAt)
     const rawContent = getDisplayMessageContent(message).trim()
     const content = rawContent || '[Mensaje vacío]'
@@ -2123,7 +2123,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
         ...current,
         createMessage(
           'assistant',
-          `No pude responder ahorita. ${error?.message || 'Revisa la configuración del Agente AI.'}`,
+          `No pude responder ahorita. ${error?.message || 'Revisa la configuración de Ristak AI.'}`,
           undefined,
           undefined,
           undefined,
@@ -2460,8 +2460,8 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
 
   const floatingButtonClassName = `${styles.floatingButton} ${unreadReplies ? styles.floatingButtonUnread : ''}`
   const closedButtonLabel = unreadReplies
-    ? `Abrir agente AI, ${unreadReplies} respuesta nueva`
-    : 'Abrir agente AI'
+    ? `Abrir Ristak AI, ${unreadReplies} respuesta nueva`
+    : 'Abrir Ristak AI'
   const rootClassName = embedded ? styles.embeddedRoot : docked ? styles.dockedRoot : styles.floatingRoot
   const windowClassName = embedded
     ? `${styles.window} ${styles.embeddedWindow}`
@@ -2471,7 +2471,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const textComposerClassName = attachments.length
     ? `${styles.textComposer} ${styles.textComposerWithAttachments}`
     : styles.textComposer
-  const panelTitle = sitesCreationMode ? 'Creador HTML con IA' : embedded ? 'Ristak AI' : 'Agente AI'
+  const panelTitle = sitesCreationMode ? 'Creador HTML con IA' : 'Ristak AI'
   const needsReconnect = Boolean(status.needsReconnect)
   const activeAgentLabel = selectedAgentCategory
     ? agentCategories.find((c) => c.id === selectedAgentCategory)?.label || null

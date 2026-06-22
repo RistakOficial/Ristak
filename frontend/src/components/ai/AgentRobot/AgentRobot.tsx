@@ -12,7 +12,7 @@ export interface AgentRobotProps {
 export const AgentRobot: React.FC<AgentRobotProps> = ({
   active = true,
   className = '',
-  label = 'Agente AI de Ristak',
+  label = 'Ristak AI',
   scene = 'compact',
   size
 }) => {

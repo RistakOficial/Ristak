@@ -1731,7 +1731,7 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
   background-color: #8b5cf6;
 }
 
-/* Compact settings refresh: align all settings tabs with Agente AI */
+/* Compact settings refresh: align all settings tabs with Ristak AI */
 .integrationContainer {
   display: flex;
   flex-direction: column;

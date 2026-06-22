@@ -183,6 +183,7 @@ interface RecordPaymentModalProps {
    * página propia (por ejemplo la versión móvil de registro de pagos).
    */
   variant?: 'modal' | 'embedded'
+  layout?: 'phone' | 'wide'
 }
 
 interface Contact {
@@ -521,7 +522,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   initialContact = null,
   lockInitialContact = false,
   showEmbeddedBackButton = true,
-  variant = 'modal'
+  variant = 'modal',
+  layout = 'phone'
 }) => {
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<RecordPaymentStep>('form')
@@ -643,6 +645,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         placeholder={placeholder || title}
         invalid={invalid}
         buttonClassName={styles.phoneSelectButton}
+        inlineOnWide
       />
     ) : (
       <CustomSelect
@@ -2676,31 +2679,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const taxRate = getConfiguredTaxRate(paymentTaxes)
 
     const renderPaymentModeField = () => {
-      // Las parcialidades necesitan una pasarela conectada. En modo local solo hay pago único.
-      if (!canUsePaymentPlans || lockPaymentMode) return null
-
-      return (
-      <div className={styles.field}>
-        <label className={styles.label}>Tipo de pago</label>
-        <div className={styles.segmentedTabsField}>
-          {renderPaymentSegmentedTabs({
-            ariaLabel: 'Tipo de pago',
-            options: [
-              { value: 'single', label: 'Único' },
-              { value: 'partial', label: 'Parcialidades' }
-            ],
-            value: paymentMode,
-            onChange: (value) => {
-              const nextPaymentMode = value as PaymentMode
-              if (nextPaymentMode === 'partial' && paymentMode !== 'partial') {
-                setFirstPaymentMethod('')
-              }
-              setPaymentMode(nextPaymentMode)
-            }
-          })}
-        </div>
-      </div>
-      )
+      // El tipo de flujo se decide desde la entrada: pago unico o plan de pagos.
+      // Aqui no se muestra selector para evitar cambiar de modo dentro del formulario.
+      return null
     }
 
     const renderEmbeddedContactPicker = () => {
@@ -2780,7 +2761,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     return (
       <div className={styles.content} data-modal-panel="">
         {!contactLocked && (
-          <div className={styles.field}>
+          <div className={`${styles.field} ${isEmbedded ? styles.contactPickerField : ''}`}>
             <label className={styles.label}>Cliente</label>
 
             {isEmbedded ? (
@@ -3195,6 +3176,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                           onChange={setFirstPaymentDate}
                           title="Fecha límite"
                           buttonClassName={styles.phoneDateButton}
+                          inlineOnWide
                         />
                       </div>
                     </div>
@@ -3314,6 +3296,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                             title={`Fecha de parcialidad ${installment.sequence}`}
                             ariaLabel={`Fecha de parcialidad ${installment.sequence}`}
                             buttonClassName={styles.phoneDateButton}
+                            inlineOnWide
                           />
                         </label>
                         <div className={styles.installmentMonto}>
@@ -3987,6 +3970,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   onChange={(value) => setManualPaymentData({ ...manualPaymentData, paymentDate: value })}
                   title="Fecha de pago"
                   buttonClassName={styles.phoneDateButton}
+                  inlineOnWide
                 />
               </div>
               <div className={styles.manualField}>
@@ -4364,7 +4348,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (!isOpen) return null
 
     return (
-      <div className={`${styles.embeddedRoot} ${showEmbeddedBackButton ? '' : styles.embeddedRootNoBack}`}>
+      <div
+        className={`${styles.embeddedRoot} ${showEmbeddedBackButton ? '' : styles.embeddedRootNoBack}`}
+        data-payment-mode={activePaymentMode}
+        data-payment-layout={layout}
+      >
         {showEmbeddedBackButton && step !== 'processing' && (
           <button
             type="button"
@@ -4412,7 +4400,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             : 'Elige cómo cobrar'
           : activePaymentMode === 'partial' ? 'Registrar cobro parcial' : 'Registrar nuevo cobro'
       }
-      size="md"
+      size={activePaymentMode === 'partial' ? 'lg' : 'md'}
       type="custom"
       flushContent
       showCloseButton={step !== 'processing'}
