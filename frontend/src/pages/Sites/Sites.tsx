@@ -10519,6 +10519,24 @@ export const Sites: React.FC = () => {
     patchEmbeddedFormFieldsLocal(nextFields, fieldId)
   }
 
+  const reorderEmbeddedFormFields = (orderedFields: SiteBlock[]) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context) return
+    const pageId = context.activePageId
+    const orderedIds = new Set(orderedFields.map(field => field.id))
+    const replacements = [...orderedFields]
+    const nextFields = context.fields.map(field => (
+      getBlockPageId(field, context.pages) === pageId && orderedIds.has(field.id)
+        ? (replacements.shift() || field)
+        : field
+    ))
+    patchEmbeddedFormFieldsLocal(nextFields, activeEmbeddedFormFieldId)
+  }
+
+  const toggleEmbeddedFormFieldVisibility = (field: SiteBlock) => {
+    patchEmbeddedFormFieldSettings(field, { hidden: !isBlockHidden(field) })
+  }
+
   const getCurrentVideoFormGateContext = () => {
     const currentSite = selectedSiteRef.current || editorSite
     const currentBlock = videoFormGateEditBlock
@@ -11897,13 +11915,32 @@ export const Sites: React.FC = () => {
                 />
               ) : (
               <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm} ${formSurfaceEditMode ? styles.builderGridFormMode : ''}`}>
-                <div className={`${styles.blocksRail} ${formEditMode ? styles.formModeRail : ''}`}>
+                <div className={`${styles.blocksRail} ${formSurfaceEditMode ? styles.formModeRail : ''}`}>
                   {formEditMode ? (
-                    <FormModePalette
-                      fieldsCount={formEditVisibleFields.length}
-                      activePageTitle={activeEmbeddedFormPage?.title || 'Formulario'}
+                    <Palette
+                      title="Formulario"
+                      blockTypes={embeddedFormBlockTypes}
+                      existingBlocks={formEditFields}
                       systemScopeBlocks={formEditFields}
-                      onAddField={(blockType, initialSettings) => handleAddEmbeddedFormField(blockType, undefined, initialSettings || {})}
+                      elements={formEditVisibleFields}
+                      selectedElementId={activeEmbeddedFormSubmitSelected ? '' : activeEmbeddedFormFieldId}
+                      onAdd={(blockType, options) => handleAddEmbeddedFormField(blockType, undefined, options?.initialSettings || {})}
+                      onSelectElement={(blockId) => {
+                        const nextField = formEditFields.find(field => field.id === blockId)
+                        setActiveEmbeddedFormSubmitSelected(false)
+                        setActiveEmbeddedFormFieldId(blockId)
+                        if (nextField) setActiveEmbeddedFormPageId(getBlockPageId(nextField, formEditPages))
+                      }}
+                      onMoveElement={moveEmbeddedFormField}
+                      onToggleElementVisibility={toggleEmbeddedFormFieldVisibility}
+                      onReorderElements={reorderEmbeddedFormFields}
+                      getMoveState={(block) => {
+                        const index = formEditVisibleFields.findIndex(item => item.id === block.id)
+                        return {
+                          canMoveUp: index > 0,
+                          canMoveDown: index >= 0 && index < formEditVisibleFields.length - 1
+                        }
+                      }}
                       onPaletteDragStart={(payload, position) => {
                         setActivePaletteDragPayload(payload)
                         setPaletteDragPosition(position)
@@ -11917,6 +11954,7 @@ export const Sites: React.FC = () => {
                     />
                   ) : videoFormGateEditMode ? (
                     <Palette
+                      title="Formulario de video"
                       blockTypes={videoFormGateBlockTypes}
                       existingBlocks={videoFormGateEditBlocks}
                       systemScopeBlocks={videoFormGateEditBlocks}
@@ -26056,6 +26094,7 @@ const EditablePageTitle: React.FC<{
 }
 
 const Palette: React.FC<{
+  title?: string
   blockTypes: SiteBlockType[]
   existingBlocks?: SiteBlock[]
   systemScopeBlocks?: SiteBlock[]
@@ -26071,6 +26110,7 @@ const Palette: React.FC<{
   onPaletteDragMove: (position: PaletteDragPosition | null) => void
   onPaletteDragEnd: () => void
 }> = ({
+  title,
   blockTypes,
   existingBlocks = [],
   systemScopeBlocks,
@@ -26113,7 +26153,7 @@ const Palette: React.FC<{
   return (
     <aside className={styles.palette}>
       <div className={styles.panelHeader}>
-        <strong>{viewMode === 'elements' ? 'Elementos' : 'Bloques'}</strong>
+        <strong>{title || (viewMode === 'elements' ? 'Elementos' : 'Bloques')}</strong>
         <button
           type="button"
           className={styles.paletteHeaderToggle}
