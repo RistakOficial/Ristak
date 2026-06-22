@@ -147,38 +147,66 @@ const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_f
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
 const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
 const AGENT_STATUS_PHRASE_ROTATION_MS = 4400
-const AGENT_STATUS_PHRASES = [
-  'Modo chamba: leyendo chats.',
-  'Ando cazando mensajes nuevos.',
-  'Checando el chisme del cliente.',
-  'Aquí atento como compa de guardia.',
-  'Leyendo y armando respuesta.',
-  'Si preguntan, aquí estoy.',
-  'Revisando tono y urgencia.',
-  'Atento al chat, sin drama.',
-  'Sacando la respuesta fina.',
-  'No se me va ni un mensaje.',
-  'En vivo y con café digital.',
-  'Este chat ya lo traigo.',
-  'Buscando la mejor jugada.',
-  'Leyendo entre líneas, jefe.',
-  'Ojo puesto en prospectos.',
-  'Midiendo si quiere comprar.',
-  'Listo para entrar al quite.',
-  'Afinando respuesta con flow.',
-  'Aquí, chambeando bonito.',
-  'Escaneando mensajes pendientes.',
-  'Si se pone bueno, aviso.',
-  'Traigo radar de citas prendido.',
-  'Viendo quién necesita ayuda.',
-  'Procesando el cotorreo.',
-  'Poniéndome trucha con este chat.',
-  'Revisando señales de compra.',
-  'No descanso, nomás cargo pila.',
-  'Cuidando la bandeja, compa.',
-  'Leyendo rápido y sin hacer show.',
-  'Listo para responder como pro.'
-]
+type AgentStatusPhraseLabels = {
+  customers: string
+  leads: string
+}
+
+const AI_AGENT_WELCOME_PREFIX = 'Hola, soy tu agente de inteligencia artificial. Puedes preguntarme por tus '
+const AI_AGENT_WELCOME_SUFFIX = ', pagos, citas, campañas o pedir ayuda para responder mejor.'
+
+function formatSentenceLabel(label: string) {
+  const trimmed = label.trim()
+  if (!trimmed) return trimmed
+  if (trimmed === trimmed.toLocaleUpperCase('es-MX')) return trimmed
+  return trimmed.charAt(0).toLocaleLowerCase('es-MX') + trimmed.slice(1)
+}
+
+function buildAgentStatusPhrases({ customers, leads }: AgentStatusPhraseLabels) {
+  const customersName = formatSentenceLabel(customers)
+  const leadsName = formatSentenceLabel(leads)
+
+  return [
+    'Modo chamba: leyendo chats.',
+    'Ando cazando mensajes nuevos.',
+    `Checando señales de ${customersName}.`,
+    'Aquí atento como compa de guardia.',
+    'Leyendo y armando respuesta.',
+    'Si preguntan, aquí estoy.',
+    'Revisando tono y urgencia.',
+    'Atento al chat, sin drama.',
+    'Sacando la respuesta fina.',
+    'No se me va ni un mensaje.',
+    'En vivo y con café digital.',
+    'Este chat ya lo traigo.',
+    'Buscando la mejor jugada.',
+    'Leyendo entre líneas, jefe.',
+    `Ojo puesto en ${leadsName}.`,
+    `Midiendo intención en ${leadsName}.`,
+    'Listo para entrar al quite.',
+    'Afinando respuesta con flow.',
+    'Aquí, chambeando bonito.',
+    'Escaneando mensajes pendientes.',
+    'Si se pone bueno, aviso.',
+    'Traigo radar de citas prendido.',
+    `Viendo qué ${leadsName} necesitan ayuda.`,
+    'Procesando el cotorreo.',
+    'Poniéndome trucha con este chat.',
+    `Revisando señales de compra en ${leadsName}.`,
+    'No descanso, nomás cargo pila.',
+    `Cuidando la bandeja de ${customersName}.`,
+    'Leyendo rápido y sin hacer show.',
+    `Listo para responderle a ${customersName}.`
+  ]
+}
+
+function buildAIAgentWelcomeContent(customersLabel: string) {
+  return `${AI_AGENT_WELCOME_PREFIX}${formatSentenceLabel(customersLabel)}${AI_AGENT_WELCOME_SUFFIX}`
+}
+
+function isAIAgentWelcomeContent(content: string) {
+  return content.startsWith(AI_AGENT_WELCOME_PREFIX) && content.endsWith(AI_AGENT_WELCOME_SUFFIX)
+}
 const CHAT_SWIPE_ACTION_WIDTH = 184
 const CHAT_SWIPE_TRANSITION_MS = 260
 const CHAT_SWIPE_OPEN_THRESHOLD = 44
@@ -831,10 +859,10 @@ function createAIAgentMobileMessage(role: AIAgentMessage['role'], content: strin
   }
 }
 
-function createAIAgentWelcomeMessage() {
+function createAIAgentWelcomeMessage(customersLabel: string) {
   return createAIAgentMobileMessage(
     'assistant',
-    'Hola, soy tu agente de inteligencia artificial. Puedes preguntarme por tus clientes, pagos, citas, campañas o pedir ayuda para responder mejor.'
+    buildAIAgentWelcomeContent(customersLabel)
   )
 }
 
@@ -3089,6 +3117,11 @@ export const PhoneChat: React.FC = () => {
   const requestedActionParam = searchParams.get('action')
   const { locationId, accessToken } = useAuth()
   const { labels } = useLabels()
+  const customerLabel = labels.customer?.trim() || 'Cliente'
+  const leadLabel = labels.lead?.trim() || 'Interesado'
+  const customersLabel = labels.customers?.trim() || 'Clientes'
+  const leadsLabel = labels.leads?.trim() || 'Interesados'
+  const customerSentenceLabel = formatSentenceLabel(customerLabel)
   const { showToast } = useNotification()
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
@@ -3281,7 +3314,7 @@ export const PhoneChat: React.FC = () => {
   const [sendingClabeId, setSendingClabeId] = useState<string | null>(null)
   const [aiMessages, setAiMessages] = useState<AIAgentMessage[]>(() => {
     const storedMessages = readAIAgentMobileMessages()
-    return storedMessages.length > 0 ? storedMessages : [createAIAgentWelcomeMessage()]
+    return storedMessages.length > 0 ? storedMessages : [createAIAgentWelcomeMessage(customersLabel)]
   })
   const [aiMessageText, setAiMessageText] = useState('')
   const [aiSending, setAiSending] = useState(false)
@@ -4106,6 +4139,10 @@ export const PhoneChat: React.FC = () => {
         .map((state) => state.contactId)
     )
   }, [agentEnabled, agentStates])
+  const agentStatusPhrases = useMemo(() => buildAgentStatusPhrases({
+    customers: customersLabel,
+    leads: leadsLabel
+  }), [customersLabel, leadsLabel])
   useEffect(() => {
     if (!agentEnabled) {
       setAgentStatusPhraseIndex(0)
@@ -4113,12 +4150,12 @@ export const PhoneChat: React.FC = () => {
     }
 
     const intervalId = window.setInterval(() => {
-      setAgentStatusPhraseIndex((current) => (current + 1) % AGENT_STATUS_PHRASES.length)
+      setAgentStatusPhraseIndex((current) => (current + 1) % agentStatusPhrases.length)
     }, AGENT_STATUS_PHRASE_ROTATION_MS)
 
     return () => window.clearInterval(intervalId)
-  }, [agentEnabled])
-  const agentStatusPhrase = AGENT_STATUS_PHRASES[agentStatusPhraseIndex % AGENT_STATUS_PHRASES.length]
+  }, [agentEnabled, agentStatusPhrases.length])
+  const agentStatusPhrase = agentStatusPhrases[agentStatusPhraseIndex % agentStatusPhrases.length]
   const activeConversationAgentState = activeContact?.id ? agentStates[activeContact.id] || null : null
   const activeConversationAgentStatus = activeConversationAgentState?.status || 'active'
   const activeConversationAgentActive = Boolean(agentEnabled && activeContact && activeConversationAgentStatus === 'active')
@@ -4160,10 +4197,6 @@ export const PhoneChat: React.FC = () => {
     }),
     [agentPriorityChatIdSet, agentPriorityViewOpen, archivedChatIdSet, archivedViewOpen, chats]
   )
-  const customerLabel = labels.customer?.trim() || 'Cliente'
-  const leadLabel = labels.lead?.trim() || 'Interesado'
-  const customersLabel = labels.customers?.trim() || 'Clientes'
-  const leadsLabel = labels.leads?.trim() || 'Interesados'
   const isCustomerContact = useCallback((contact: ChatContact) => contact.status === 'customer' || Number(contact.purchases || 0) > 0, [])
   const isAppointmentContact = useCallback((contact: ChatContact) => contact.status === 'appointment' || Boolean(contact.hasAppointments), [])
   const isLeadContact = useCallback((contact: ChatContact) => {
@@ -4788,6 +4821,17 @@ export const PhoneChat: React.FC = () => {
       }
     }
   }, [])
+
+  useEffect(() => {
+    setAiMessages((current) => {
+      if (current.length !== 1) return current
+      const [message] = current
+      if (message.role !== 'assistant' || !isAIAgentWelcomeContent(message.content)) return current
+      const nextContent = buildAIAgentWelcomeContent(customersLabel)
+      if (message.content === nextContent) return current
+      return [{ ...message, content: nextContent }]
+    })
+  }, [customersLabel])
 
   useEffect(() => {
     writeAIAgentMobileMessages(aiMessages)
@@ -7452,7 +7496,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (!bodyText) {
-      showToast('warning', 'Falta el mensaje', 'Escribe el texto que quieres mandar al cliente.')
+      showToast('warning', 'Falta el mensaje', `Escribe el texto que quieres mandar a este ${customerSentenceLabel}.`)
       return
     }
 
@@ -7706,7 +7750,7 @@ export const PhoneChat: React.FC = () => {
         preferred_whatsapp_phone_number_id: targetPhone.id
       } as Partial<Contact>)
       setOurNumberSheetOpen(false)
-      showToast('success', 'Número cambiado', `Ahora contactas a este cliente desde ${targetLabel}.`)
+      showToast('success', 'Número cambiado', `Ahora contactas a este ${customerSentenceLabel} desde ${targetLabel}.`)
     } catch (error: any) {
       showToast('error', 'No se pudo cambiar', getErrorMessage(error, 'Intenta otra vez.'))
     } finally {
@@ -10698,7 +10742,7 @@ export const PhoneChat: React.FC = () => {
           ? 'Citas'
           : contactInfoDetailPanel === 'agent_history'
             ? 'Historial del agente'
-            : 'Viaje del cliente'
+            : `Viaje de ${customerSentenceLabel}`
       const selectedPayment = contactInfoDetailPanel === 'payments' && contactInfoRecordDetail?.type === 'payment'
         ? contactInfoPayments.find((payment) => payment.id === contactInfoRecordDetail.id) || null
         : null
@@ -11195,13 +11239,13 @@ export const PhoneChat: React.FC = () => {
                 setContactInfoRecordDetail(null)
                 setContactInfoDetailPanel('journey')
               }}
-              aria-label="Ver viaje del cliente"
+              aria-label={`Ver viaje de ${customerSentenceLabel}`}
             >
               <span className={styles.contactInfoArchiveSummaryIcon}>
                 <MousePointerClick size={18} />
               </span>
               <span className={styles.contactInfoArchiveSummaryText}>
-                <strong>Viaje del cliente</strong>
+                <strong>Viaje de {customerSentenceLabel}</strong>
                 <small>
                   {contactInfoJourneyEvents.length > 0
                     ? `${contactInfoJourneyEvents.length} evento${contactInfoJourneyEvents.length === 1 ? '' : 's'} · De más nuevo a más viejo`
@@ -11754,7 +11798,7 @@ export const PhoneChat: React.FC = () => {
           <label className={styles.toggleRow}>
             <span>
               <strong>Citas confirmadas</strong>
-              <small>Avísame cuando un cliente confirme que sí asistirá.</small>
+              <small>Avísame cuando confirmen que sí asistirán.</small>
             </span>
             <input
               type="checkbox"
@@ -12282,7 +12326,7 @@ export const PhoneChat: React.FC = () => {
         <div className={styles.clabeEmpty}>
           <Banknote size={27} />
           <strong>No hay CLABEs guardadas</strong>
-          <span>Agrega una CLABE para enviarla rápido cuando un cliente quiera pagar por transferencia.</span>
+          <span>Agrega una CLABE para enviarla rápido cuando quieran pagar por transferencia.</span>
           {!clabeFormOpen && (
             <button type="button" onClick={() => setClabeFormOpen(true)}>
               <Plus size={16} />
