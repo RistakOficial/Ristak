@@ -2906,7 +2906,7 @@ const Analytics: React.FC = () => {
             </div>
 
             <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
-              {loading && !hasLoadedAnalytics ? (
+              {analyticsRefreshing ? (
                 <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando tráfico del sitio">
                   {[62, 44, 76, 54, 82, 66].map((height, index) => (
                     <span
@@ -2957,7 +2957,7 @@ const Analytics: React.FC = () => {
             </div>
 
             <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
-              {loading && !hasLoadedAnalytics ? (
+              {analyticsRefreshing ? (
                 <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando mensajes">
                   {[48, 70, 58, 84, 62, 74].map((height, index) => (
                     <span
@@ -3027,7 +3027,7 @@ const Analytics: React.FC = () => {
               </div>
             </div>
             <div className="relative w-full flex-1 min-h-[340px]">
-              {loading && !hasLoadedAnalytics ? (
+              {analyticsRefreshing ? (
                 <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando datos">
                   {[48, 70, 58, 84, 62, 74].map((height, index) => (
                     <span

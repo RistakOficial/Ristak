@@ -2741,7 +2741,7 @@ export const Transactions: React.FC = () => {
             data={filteredTransactions}
             keyExtractor={(item) => item.id}
             emptyMessage="No hay pagos disponibles"
-            loading={loading && !hasLoadedTransactions}
+            loading={transactionsRefreshing}
             searchable={true}
             searchPlaceholder="Buscar pagos..."
             paginated={true}

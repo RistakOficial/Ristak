@@ -2439,7 +2439,18 @@ export const Campaigns: React.FC = () => {
               </div>
             </div>
             <div style={{ height: 340 }}>
-              {selectedConfig.data && selectedConfig.data.length > 0 ? (
+              {campaignsRefreshing ? (
+                <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando campañas">
+                  {[52, 76, 58, 86, 64, 72, 48].map((height, index) => (
+                    <span
+                      key={`campaigns-chart-skeleton-${index}`}
+                      className="min-w-0 flex-1 animate-pulse rounded-t-lg bg-[var(--app-skeleton-base)]"
+                      style={{ height: `${height}%` }}
+                      aria-hidden="true"
+                    />
+                  ))}
+                </div>
+              ) : selectedConfig.data && selectedConfig.data.length > 0 ? (
                 <AreaChart
                   data={selectedConfig.data}
                   height={340}
@@ -2487,7 +2498,7 @@ export const Campaigns: React.FC = () => {
               data={winnersActiveData}
               keyExtractor={(item) => `winner_${winnersCategory}_${item.id}`}
               emptyMessage="Aún no hay ganadores para este período"
-              loading={loading && !hasLoadedCampaigns}
+              loading={campaignsRefreshing}
               searchable={true}
               searchPlaceholder={`Buscar ${winnersCategory === 'campaigns' ? 'campañas' : winnersCategory === 'adsets' ? 'conjuntos' : 'anuncios'}...`}
               paginated={true}
@@ -2504,7 +2515,7 @@ export const Campaigns: React.FC = () => {
             data={campaignTableData}
             keyExtractor={getCampaignTableRowKey}
             emptyMessage={campaignTableEmptyMessage}
-            loading={loading && !hasLoadedCampaigns}
+            loading={campaignsRefreshing}
             searchable={true}
             searchPlaceholder={campaignTableSearchPlaceholder}
             paginated={true}

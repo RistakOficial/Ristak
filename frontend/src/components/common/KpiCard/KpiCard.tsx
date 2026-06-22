@@ -26,6 +26,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   loading = false
 }) => {
   const formattedDelta = delta !== undefined ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%` : null
+  const showDeltaSkeleton = delta !== undefined || Boolean(deltaLabel)
   const trendColor = delta === undefined
     ? 'text-[var(--color-text-tertiary)]'
     : delta >= 0
@@ -63,24 +64,32 @@ export const KpiCard: React.FC<KpiCardProps> = ({
           <p className="mb-1 text-[length:var(--app-kpi-title-size,0.875rem)] text-[var(--color-text-tertiary)]">
             {title}
           </p>
-          <p className={cn(
-            'mb-1 text-[length:var(--app-kpi-value-size,1.5rem)] font-bold text-[var(--color-text-primary)] truncate transition-opacity duration-150',
-            loading && 'invisible'
-          )}>
-            {value}
-          </p>
-          {formattedDelta && (
+          {loading ? (
+            <span
+              className="mb-2 block h-[var(--app-kpi-value-skeleton-height,1.7rem)] w-[min(11rem,84%)] animate-pulse rounded-[var(--radius-ctl)] bg-[var(--app-skeleton-base)]"
+              aria-hidden="true"
+            />
+          ) : (
+            <p className="mb-1 truncate text-[length:var(--app-kpi-value-size,1.5rem)] font-bold text-[var(--color-text-primary)]">
+              {value}
+            </p>
+          )}
+          {loading && showDeltaSkeleton ? (
+            <span
+              className="block h-[var(--app-kpi-delta-skeleton-height,1rem)] w-[min(9rem,68%)] animate-pulse rounded-[var(--radius-pill)] bg-[var(--app-skeleton-muted)]"
+              aria-hidden="true"
+            />
+          ) : formattedDelta ? (
             <div className={cn(
-              'flex items-center gap-2 text-[length:var(--app-kpi-delta-size,0.75rem)] transition-opacity duration-150',
-              trendColor,
-              loading && 'invisible'
+              'flex items-center gap-2 text-[length:var(--app-kpi-delta-size,0.75rem)]',
+              trendColor
             )}>
               <span className="font-medium">{formattedDelta}</span>
               {deltaLabel && (
                 <span className="text-[var(--color-text-tertiary)]">{deltaLabel}</span>
               )}
             </div>
-          )}
+          ) : null}
         </div>
         {icon && (
           <div className={cn('flex-shrink-0', iconColorClassName)}>{renderIcon()}</div>

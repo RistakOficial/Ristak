@@ -498,10 +498,53 @@ export function Table<T extends Record<string, any>>({
   ) : null
 
   if (loading) {
+    const skeletonColumnCount = Math.max(3, Math.min(totalVisibleColumns || visibleColumns.length || 4, 8))
+    const skeletonRows = Array.from({ length: 7 })
+    const skeletonCells = Array.from({ length: skeletonColumnCount })
+    const skeletonStyle = { '--skeleton-columns': skeletonColumnCount } as React.CSSProperties
+
     return (
-      <div className={styles.loadingContainer} role="status" aria-live="polite" aria-label="Cargando tabla">
-        <div className={styles.spinner}></div>
-        <p className={styles.loadingText}>Cargando</p>
+      <div
+        className={styles.container}
+        data-ristak-table
+        role="status"
+        aria-live="polite"
+        aria-label="Cargando tabla"
+        aria-busy="true"
+      >
+        <div className={styles.tableHeader}>
+          <div className={styles.leftControls}>
+            {searchable && <div className={`${styles.skeletonBlock} ${styles.skeletonSearch}`} />}
+            {filters && onFilterChange && <div className={`${styles.skeletonBlock} ${styles.skeletonFilters}`} />}
+          </div>
+          <div className={styles.tableActions}>
+            <div className={`${styles.skeletonBlock} ${styles.skeletonAction}`} />
+          </div>
+        </div>
+
+        <div className={styles.skeletonTableWrapper}>
+          <div className={styles.skeletonTable} style={skeletonStyle}>
+            <div className={`${styles.skeletonRow} ${styles.skeletonHeaderRow}`}>
+              {skeletonCells.map((_, index) => (
+                <span
+                  key={`table-skeleton-header-${index}`}
+                  className={`${styles.skeletonBlock} ${styles.skeletonHeaderCell}`}
+                />
+              ))}
+            </div>
+
+            {skeletonRows.map((_, rowIndex) => (
+              <div className={styles.skeletonRow} key={`table-skeleton-row-${rowIndex}`}>
+                {skeletonCells.map((_, cellIndex) => (
+                  <span
+                    key={`table-skeleton-cell-${rowIndex}-${cellIndex}`}
+                    className={`${styles.skeletonBlock} ${styles.skeletonCell}`}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     )
   }

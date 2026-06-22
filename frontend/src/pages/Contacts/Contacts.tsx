@@ -2095,7 +2095,7 @@ const ContactsTable: React.FC = () => {
           data={filteredContacts}
           keyExtractor={(item) => item.id}
           emptyMessage="No hay contactos disponibles"
-          loading={(loading && !hasLoadedContacts) || loadingEvents}
+          loading={contactsRefreshing || loadingEvents}
           searchable={true}
           searchPlaceholder="Buscar contactos..."
           paginated={true}

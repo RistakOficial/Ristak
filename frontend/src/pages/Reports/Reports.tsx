@@ -1982,8 +1982,6 @@ export const Reports: React.FC = () => {
     const fetchMetrics = async () => {
       try {
         setLoadingMetrics(true)
-        setHasLoadedMetrics(false)
-        setMetricsState({ rows: [], viewType: requestedViewType })
         const result = await reportsService.getMetrics({
           from: apiRange.from,
           to: apiRange.to,
@@ -2959,6 +2957,7 @@ export const Reports: React.FC = () => {
   const closeModal = () => setModalState(prev => ({ ...prev, open: false }))
 
   const hasLoadedReports = hasLoadedMetrics && hasLoadedSummary
+  const metricsRefreshing = loadingMetrics && hasLoadedMetrics
   const summaryRefreshing = loadingSummary && hasLoadedSummary
 
   if ((loadingMetrics || loadingSummary) && !hasLoadedReports) {
@@ -3091,7 +3090,7 @@ export const Reports: React.FC = () => {
             initialColumns={initialColumns}
             data={tableData}
             keyExtractor={(item) => item.id}
-            loading={loadingMetrics && !hasLoadedMetrics}
+            loading={metricsRefreshing}
             paginated
             pageSize={25}
             searchable
@@ -3103,7 +3102,7 @@ export const Reports: React.FC = () => {
       ) : (
         <MetricsGrid
           metrics={currentMetrics}
-          loading={loadingMetrics && !hasLoadedMetrics}
+          loading={metricsRefreshing}
           reportType={reportType}
           showVisitors={analyticsEnabled}
           viewType={viewType}
