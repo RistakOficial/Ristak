@@ -12,19 +12,23 @@
   --phone-payments-accent: var(--phone-chat-accent, #25d366);
   --phone-frame-bg: var(--phone-chat-bg, color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%));
   position: fixed;
-  inset: 0;
+  top: var(--phone-visual-viewport-top, 0);
+  right: 0;
+  bottom: auto;
+  left: 0;
   isolation: isolate;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   width: 100vw;
   max-width: 100%;
-  height: 100dvh;
-  min-height: 100dvh;
-  max-height: 100dvh;
+  height: var(--phone-visual-viewport-height, 100dvh);
+  min-height: var(--phone-visual-viewport-height, 100dvh);
+  max-height: var(--phone-visual-viewport-height, 100dvh);
   color: var(--phone-payments-text);
   background: var(--phone-frame-bg);
   overflow: hidden;
   overscroll-behavior: none;
+  touch-action: pan-y;
 }
 
 .phoneFrame {
@@ -35,10 +39,13 @@
   grid-template-rows: minmax(0, 1fr);
   width: 100%;
   max-width: none;
+  height: 100%;
   min-height: 0;
+  max-height: 100%;
   background: var(--phone-frame-bg);
   box-shadow: none;
   overflow: hidden;
+  touch-action: pan-y;
 }
 
 /* Header content sits in the safe area without painting a separate top panel. */
@@ -186,12 +193,24 @@
 .selectStack {
   grid-row: 1 / -1;
   min-height: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  height: 100%;
+  max-height: 100%;
   padding: calc(env(safe-area-inset-top, 0px) + 24px) 16px calc(env(safe-area-inset-bottom, 0px) + 96px);
-  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  overscroll-behavior-y: contain;
+  scroll-padding-bottom: calc(136px + env(safe-area-inset-bottom, 0px));
+  scrollbar-width: none;
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
+}
+
+.selectStack::-webkit-scrollbar {
+  display: none;
 }
 
 .selectTitle {
@@ -218,14 +237,6 @@
   box-shadow: none;
   transition: opacity 160ms ease, transform 160ms ease;
   -webkit-tap-highlight-color: transparent;
-}
-
-.choiceCard + .choiceCard {
-  border-top: 1px solid var(--phone-payments-border);
-}
-
-.choiceCard.choiceCardNoDivider {
-  border-top: 0;
 }
 
 .choiceCard:active {
@@ -506,12 +517,19 @@
 .productsHost {
   grid-row: 1;
   min-height: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  height: 100%;
+  max-height: 100%;
   padding: calc(env(safe-area-inset-top, 0px) + 76px) 16px calc(132px + env(safe-area-inset-bottom, 0px));
   background: var(--phone-payments-surface);
-  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  overscroll-behavior-y: contain;
+  scroll-padding-bottom: calc(168px + env(safe-area-inset-bottom, 0px));
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
 }
 

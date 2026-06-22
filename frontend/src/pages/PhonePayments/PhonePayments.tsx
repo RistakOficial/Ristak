@@ -19,6 +19,7 @@ const PHONE_WIDTH_QUERY = '(max-width: 900px)'
 const COARSE_POINTER_QUERY = '(pointer: coarse)'
 const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|Opera Mini|Mobile|Tablet/i
 const SCROLLABLE_PHONE_SELECTOR = '[data-phone-scrollable="true"], [data-phone-chat-scrollable="true"]'
+const ACTIVE_PAYMENTS_SCROLL_SELECTOR = '[data-phone-payments-scroll-root="true"]'
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
 type PaymentView = 'select' | 'single' | 'partial' | 'subscription' | 'products'
@@ -386,7 +387,9 @@ export const PhonePayments: React.FC = () => {
     const previousBodyOverscroll = body.style.overscrollBehavior
     const previousBodyBackground = body.style.background
     const phoneFrameBackground = 'color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%)'
+    let startX = 0
     let startY = 0
+    let startScrollTop = 0
 
     if (viewportMeta && !previousViewportContent.includes('viewport-fit=cover')) {
       viewportMeta.setAttribute('content', `${previousViewportContent}, viewport-fit=cover`)
@@ -407,23 +410,44 @@ export const PhonePayments: React.FC = () => {
       return scrollable instanceof HTMLElement ? scrollable : null
     }
 
+    const getActivePaymentsScrollRoot = () => {
+      const scrollRoot = document.querySelector(ACTIVE_PAYMENTS_SCROLL_SELECTOR)
+      return scrollRoot instanceof HTMLElement ? scrollRoot : null
+    }
+
     const handleTouchStart = (event: TouchEvent) => {
-      startY = event.touches[0]?.clientY || 0
+      const firstTouch = event.touches[0]
+      startX = firstTouch?.clientX || 0
+      startY = firstTouch?.clientY || 0
+      const scrollable = getScrollableElement(event.target) || getActivePaymentsScrollRoot()
+      startScrollTop = scrollable?.scrollTop || 0
     }
 
     const handleTouchMove = (event: TouchEvent) => {
-      const scrollable = getScrollableElement(event.target)
+      const targetScrollable = getScrollableElement(event.target)
+      const fallbackScrollable = targetScrollable ? null : getActivePaymentsScrollRoot()
+      const scrollable = targetScrollable || fallbackScrollable
 
       if (!scrollable) {
         event.preventDefault()
         return
       }
 
+      const currentX = event.touches[0]?.clientX || startX
       const currentY = event.touches[0]?.clientY || startY
+      const deltaX = currentX - startX
       const deltaY = currentY - startY
       const canScroll = scrollable.scrollHeight > scrollable.clientHeight + 1
       const atTop = scrollable.scrollTop <= 0
       const atBottom = scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1
+
+      if (fallbackScrollable && Math.abs(deltaX) > Math.abs(deltaY)) return
+
+      if (fallbackScrollable && canScroll) {
+        event.preventDefault()
+        scrollable.scrollTop = startScrollTop - deltaY
+        return
+      }
 
       if (!canScroll || (atTop && deltaY > 0) || (atBottom && deltaY < 0)) {
         event.preventDefault()
@@ -528,7 +552,12 @@ export const PhonePayments: React.FC = () => {
   }, [accessState, view])
 
   const renderProductsView = () => (
-    <section className={styles.productsHost} data-phone-scrollable="true" aria-label="Precios Guardados disponibles">
+    <section
+      className={styles.productsHost}
+      data-phone-scrollable="true"
+      data-phone-payments-scroll-root="true"
+      aria-label="Precios Guardados disponibles"
+    >
       <div className={styles.productsToolbar}>
         <div className={styles.productsToolbarCopy}>
           <strong>Precios Guardados</strong>
@@ -764,7 +793,12 @@ export const PhonePayments: React.FC = () => {
         ) : view === 'products' ? (
           renderProductsView()
         ) : (
-          <section className={styles.selectStack} aria-label="Elige el tipo de pago" data-phone-scrollable="true">
+          <section
+            className={styles.selectStack}
+            aria-label="Elige el tipo de pago"
+            data-phone-scrollable="true"
+            data-phone-payments-scroll-root="true"
+          >
             <h1 className={styles.selectTitle}>Elige cómo quieres pagar</h1>
 
             <button
@@ -818,7 +852,7 @@ export const PhonePayments: React.FC = () => {
 
             <button
               type="button"
-              className={`${styles.choiceCard} ${styles.choiceCardNoDivider}`}
+              className={styles.choiceCard}
               onClick={() => setView('products')}
             >
               <span className={`${styles.choiceIcon} ${styles.choiceIconBlue}`}>
