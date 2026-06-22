@@ -613,13 +613,6 @@
   background: color-mix(in srgb, var(--neg-soft) 82%, var(--surface-hover) 18%);
 }
 
-.agentPriorityDivider {
-  height: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--neg) 32%, var(--chat-border));
-  border-bottom: 1px solid var(--chat-border);
-  background: color-mix(in srgb, var(--neg-soft) 28%, transparent);
-}
-
 .chatRowAgentAssigned {
   border-bottom-color: color-mix(in srgb, var(--accent) 22%, var(--chat-border));
   background: var(--chat-agent-row);

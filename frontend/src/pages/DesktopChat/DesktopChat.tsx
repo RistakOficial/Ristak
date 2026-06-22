@@ -5611,9 +5611,6 @@ export const DesktopChat: React.FC = () => {
                     </div>
                   )
                 })}
-                {agentPriorityChatRows.length > 0 && filteredChats.length > 0 ? (
-                  <div className={styles.agentPriorityDivider} aria-hidden="true" />
-                ) : null}
                 {filteredChats.map((contact) => {
                   const active = contact.id === activeContactId
                   const unread = Number(contact.unreadCount || 0)

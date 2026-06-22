@@ -9976,7 +9976,6 @@ export const PhoneChat: React.FC = () => {
           </div>
         )}
         {showAIAgentListItem && renderAIAgentChatButton()}
-        {agentPriorityChatRows.map((contact) => renderContactButton(contact, 'chat'))}
         {archivedViewOpen && (
           <button
             type="button"
@@ -10004,6 +10003,7 @@ export const PhoneChat: React.FC = () => {
             <span>{archivedChatCount}</span>
           </button>
         )}
+        {agentPriorityChatRows.map((contact) => renderContactButton(contact, 'chat'))}
         {filteredChats.length + agentPriorityChatRows.length > 0 ? (
           filteredChats.map((contact) => renderContactButton(contact, 'chat'))
         ) : (
