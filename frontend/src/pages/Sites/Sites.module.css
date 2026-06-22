@@ -20604,11 +20604,19 @@
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
-  grid-template-columns: minmax(240px, 0.74fr) minmax(0, max-content) minmax(720px, 1.42fr);
+  grid-template-columns: minmax(300px, 1fr) minmax(0, min(820px, 48vw)) minmax(520px, 1fr);
 }
 
-.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools {
-  justify-content: flex-start;
+.pageFrame .containerFocused:has(.builder) .editorToolbarFormControls {
+  justify-content: center;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorToolbarFormControls::-webkit-scrollbar {
+  display: none;
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools .editorPageSelectorSlot {
@@ -20616,16 +20624,17 @@
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarPrimary {
-  justify-content: flex-start;
-  overflow-x: auto;
+  justify-content: flex-end;
+  overflow: visible;
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  max-width: 190px;
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formEmbedToolbarControls {
-  flex: 0 1 470px;
+  flex: 0 1 440px;
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarActionsCluster {
@@ -20634,7 +20643,7 @@
 
 @media (max-width: 1680px), (max-height: 900px) {
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
-    grid-template-columns: minmax(176px, 0.68fr) minmax(210px, max-content) minmax(0, 1.36fr);
+    grid-template-columns: minmax(230px, 0.82fr) minmax(0, min(700px, 44vw)) minmax(460px, 1fr);
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools .editorPageSelectorSlot {
@@ -20646,7 +20655,7 @@
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formEmbedToolbarControls {
-    flex-basis: 398px;
+    flex-basis: 380px;
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formSourceToolbarField {
@@ -20664,7 +20673,7 @@
 
 @media (max-width: 1540px), (max-height: 820px) {
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
-    grid-template-columns: minmax(150px, 0.62fr) minmax(194px, max-content) minmax(0, 1.42fr);
+    grid-template-columns: minmax(190px, 0.72fr) minmax(0, min(600px, 42vw)) minmax(390px, 1fr);
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools .editorPageSelectorSlot {
@@ -20680,7 +20689,7 @@
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formEmbedToolbarControls {
-    flex-basis: 326px;
+    flex-basis: 318px;
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formToolbarField {
@@ -20695,6 +20704,24 @@
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formToolbarField select,
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formToolbarField :global([data-ristak-dropdown-trigger]) {
     min-width: 112px;
+  }
+}
+
+@media (max-width: 1320px) {
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "context"
+      "tools"
+      "primary";
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarFormControls,
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarPrimary {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
 }
 

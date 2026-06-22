@@ -6096,6 +6096,11 @@ const getEmbeddedFormSourceId = (block?: SiteBlock | null) => {
   )
 }
 
+const getEmbeddedFormThemeOverride = (block?: SiteBlock | null): Partial<SiteTheme> | null => {
+  const theme = block?.settings?.embeddedTheme
+  return theme && typeof theme === 'object' && !Array.isArray(theme) ? theme as Partial<SiteTheme> : null
+}
+
 const getEditableEmbeddedFormPages = (block: SiteBlock, forms: PublicSite[]): SitePage[] => {
   const settings = block.settings || {}
   const linkedFormId = getEmbeddedFormSourceId(block)
@@ -6924,8 +6929,11 @@ function FormEmbedEditorPanel({
     </>
   )
 
-  const designContent = (
+  const formDesignContent = (
     <>
+      <div className={styles.settingsGroup}>
+        <FormSurfaceStyleControls site={site} embedded onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      </div>
       <div className={styles.settingsGroup}>
         {isSubmitSelected ? (
           <FormSubmitGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
@@ -6950,11 +6958,14 @@ function FormEmbedEditorPanel({
           <InspectorEmptyState>Selecciona un elemento, campo o el botón de envío dentro del formulario.</InspectorEmptyState>
         )}
       </div>
-      <div className={styles.settingsGroup}>
-        <div className={styles.panelSubheader}>Contenedor del formulario</div>
-        <InlineBlockStyleControls site={site} block={block} blocks={[block]} surfaceOnly onPatchSettings={onPatchSettings} onSave={onSave} />
-      </div>
     </>
+  )
+
+  const blockDesignContent = (
+    <div className={styles.settingsGroup}>
+      <div className={styles.panelSubheader}>Bloque contenedor</div>
+      <InlineBlockStyleControls site={site} block={block} blocks={[block]} surfaceOnly onPatchSettings={onPatchSettings} onSave={onSave} />
+    </div>
   )
 
   return (
@@ -6975,7 +6986,8 @@ function FormEmbedEditorPanel({
       tabs={[
         { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
         { value: 'settings', label: 'Páginas', icon: <FileText size={14} />, content: pagesContent },
-        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent }
+        { value: 'formDesign', label: 'Formulario', icon: <Sparkles size={14} />, content: formDesignContent },
+        { value: 'blockDesign', label: 'Bloque', icon: <LayoutTemplate size={14} />, content: blockDesignContent }
       ]}
     />
   )
@@ -7363,7 +7375,26 @@ export const Sites: React.FC = () => {
     () => formEditSourceId ? forms.find(form => form.id === formEditSourceId) || null : null,
     [formEditSourceId, forms]
   )
-  const formEditPanelSite = formEditSourceSite || editorSite
+  const formEditPanelSite = useMemo(() => {
+    if (!editorSite || !formEditBlock) return formEditSourceSite || editorSite
+    const settings = formEditBlock.settings || {}
+    const pages = getEditableEmbeddedFormPages(formEditBlock, forms)
+    const baseSite = formEditSourceSite || {
+      ...editorSite,
+      siteType: 'standard_form' as SiteType,
+      theme: buildEmbeddedFormSourceTheme(editorSite, settings, pages)
+    }
+    const overrideTheme = getEmbeddedFormThemeOverride(formEditBlock)
+    if (!overrideTheme) return baseSite
+    return {
+      ...baseSite,
+      siteType: 'standard_form' as SiteType,
+      theme: {
+        ...(baseSite.theme || {}),
+        ...overrideTheme
+      }
+    }
+  }, [editorSite, formEditBlock, formEditSourceSite, forms])
   const formEditFields = useMemo(
     () => editorSite && formEditBlock ? getEditableEmbeddedFormBlocks(formEditBlock, forms) : [],
     [editorSite, formEditBlock, forms]
@@ -9117,19 +9148,30 @@ export const Sites: React.FC = () => {
   }
 
   const patchEmbeddedFormSourceTheme = (patch: Partial<SiteTheme>) => {
-    if (!formEditSourceSite) {
+    const current = selectedSiteRef.current
+    const currentBlock = formEditBlock
+      ? (current?.blocks || []).find(block => block.id === formEditBlock.id) || formEditBlock
+      : null
+    if (!current || !currentBlock) {
       patchSiteTheme(patch)
       return
     }
-    const sourceForm = pendingEmbeddedFormSourceDraftsRef.current.get(formEditSourceSite.id) || formEditSourceSite
-    const currentTheme = (sourceForm.theme || {}) as Record<string, unknown>
+    const sourceFormId = getEmbeddedFormSourceId(currentBlock)
+    const sourceForm = sourceFormId
+      ? pendingEmbeddedFormSourceDraftsRef.current.get(sourceFormId) || forms.find(form => form.id === sourceFormId) || formEditSourceSite
+      : null
+    const settings = currentBlock.settings || {}
+    const overrideTheme = getEmbeddedFormThemeOverride(currentBlock) || {}
+    const baseTheme = sourceForm?.theme || buildEmbeddedFormSourceTheme(current, settings, getEditableEmbeddedFormPages(currentBlock, forms))
+    const currentTheme = { ...(baseTheme || {}), ...overrideTheme } as Record<string, unknown>
     if (!editorPatchHasChanges(currentTheme, patch as Record<string, unknown>)) return
-    syncEmbeddedFormSourceDraft({
-      ...sourceForm,
-      theme: {
-        ...(sourceForm.theme || {}),
+    patchBlockSettingsLocal(currentBlock, {
+      embeddedTheme: {
+        ...overrideTheme,
         ...patch
-      }
+      },
+      embeddedSiteType: sourceForm?.siteType || settings.embeddedSiteType || 'standard_form',
+      embeddedSiteName: getSettingString(settings, 'embeddedSiteName') || sourceForm?.name || getSettingString(settings, 'formSiteName') || ''
     })
   }
 
@@ -11571,13 +11613,34 @@ export const Sites: React.FC = () => {
                     {editorSite.status !== 'draft' && !formEditMode && (
                       <Badge variant={getStatusVariant(editorSite, domainConfig)}>{getStatusLabel(editorSite, domainConfig)}</Badge>
                     )}
-                    {formEditMode && editorPageSelector && (
-                      <div className={styles.editorPageSelectorSlot}>
-                        {editorPageSelector}
-                      </div>
-                    )}
-                    {formEditMode && editorHistoryControls}
                   </div>
+                  {formEditMode && (
+                    <div className={`${styles.editorToolbarTools} ${styles.editorToolbarFormControls}`} aria-label="Herramientas de formulario">
+                      {editorPageSelector && (
+                        <div className={styles.editorPageSelectorSlot}>
+                          {editorPageSelector}
+                        </div>
+                      )}
+                      {editorHistoryControls}
+                      <div className={styles.formModeStatus}>
+                        <span aria-hidden="true" />
+                        <FormInput size={15} />
+                        <strong>Editando formulario</strong>
+                        <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
+                      </div>
+                      {formEditBlock && (
+                        <FormEmbedToolbarControls
+                          site={editorSite}
+                          block={formEditBlock}
+                          forms={forms}
+                          pages={pages}
+                          activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                          onPatchSettings={(patch) => patchBlockSettingsLocal(formEditBlock, patch)}
+                          onSave={() => { void handleSaveBlock(formEditBlock.id) }}
+                        />
+                      )}
+                    </div>
+                  )}
                   {!formEditMode && editorToolbarSettingsSite && (
                     <div className={styles.editorToolbarTools} aria-label="Herramientas de edición">
                       {editorPageSelector && (
@@ -11619,25 +11682,6 @@ export const Sites: React.FC = () => {
                     </div>
                   )}
                   <div className={styles.editorToolbarPrimary}>
-                    {formEditMode && (
-                      <div className={styles.formModeStatus}>
-                        <span aria-hidden="true" />
-                        <FormInput size={15} />
-                        <strong>Editando formulario</strong>
-                        <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
-                      </div>
-                    )}
-                    {formEditMode && formEditBlock && (
-                      <FormEmbedToolbarControls
-                        site={editorSite}
-                        block={formEditBlock}
-                        forms={forms}
-                        pages={pages}
-                        activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                        onPatchSettings={(patch) => patchBlockSettingsLocal(formEditBlock, patch)}
-                        onSave={() => { void handleSaveBlock(formEditBlock.id) }}
-                      />
-                    )}
                     <div className={styles.editorToolbarActionsCluster}>
                       <span className={`${styles.editorSaveStatus} ${styles.editorSaveStatusBeforeDevice} ${editorSaveStatusClass}`} aria-live="polite">
                         {editorSaveStatus.icon}
@@ -30210,16 +30254,35 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       : []
     const resolvedItems = hasLinkedForm ? selectedFormBlocks : embeddedBlocks.length ? embeddedBlocks : selectedFormBlocks
     const resolvedPages = embeddedFormEditor?.pages || (hasLinkedForm ? selectedFormPages : embeddedBlocks.length ? normalizeEmbeddedFormPages(settings.embeddedPages) : selectedFormPages)
+    const embeddedThemeOverride = getEmbeddedFormThemeOverride(block)
+    const draftFormForPreview: PublicSite | null = !form && hasDraftForm && site
+      ? {
+          ...site,
+          siteType: 'standard_form' as SiteType,
+          theme: buildEmbeddedFormSourceTheme(site, settings, resolvedPages)
+        }
+      : null
+    const sourceFormForPreview: PublicSite | null = form || draftFormForPreview
+    const previewForm: PublicSite | null = sourceFormForPreview
+      ? {
+          ...sourceFormForPreview,
+          siteType: 'standard_form' as SiteType,
+          theme: {
+            ...(sourceFormForPreview.theme || {}),
+            ...(embeddedThemeOverride || {})
+          }
+        }
+      : null
     const activeEmbeddedPageId = embeddedFormEditor?.activePageId || resolvedPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
     const visibleEditorItems = embeddedFormEditor
       ? getEmbeddedFormPageFields(resolvedItems, resolvedPages, activeEmbeddedPageId)
       : resolvedPages.length > 1
         ? getEmbeddedFormPageFields(resolvedItems, resolvedPages, activeEmbeddedPageId)
-      : resolvedItems
-    const buttonCopySite = form || site
+        : resolvedItems
+    const buttonCopySite = previewForm || site
     const embeddedButtonLabel = getFormPageActionLabel(buttonCopySite, resolvedPages, activeEmbeddedPageId)
     const embeddedButtonSubtitle = getFormPageActionSubtitle(buttonCopySite, resolvedPages, activeEmbeddedPageId)
-    const sourceCanvasTheme = form ? buildCanvasTheme(form, 'desktop') : null
+    const sourceCanvasTheme = previewForm ? buildCanvasTheme(previewForm, 'desktop') : null
     const sourceCanvasVars = sourceCanvasTheme?.vars as (React.CSSProperties & Record<string, string | number>) | undefined
     const sourceThemeVars = sourceCanvasTheme
       ? ({
@@ -30271,13 +30334,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     return sourceCanvasTheme ? (
       <div className={`rstkCanvas ${sourceCanvasTheme.bodyClass} rstkEmbeddedFormSourceRoot`} style={sourceThemeVars}>
         <div className="rstk-frame rstkEmbeddedFormSourceFrame">
-          <CanvasBackgroundVideo theme={form?.theme} />
+          <CanvasBackgroundVideo theme={previewForm?.theme} />
           <main className="rstk-page">
             <div className="rstk-shell rstkEmbeddedFormSourceShell">
-              {sourceChromePlatform && form ? (
+              {sourceChromePlatform && previewForm ? (
                 <CanvasChrome
                   platform={sourceChromePlatform}
-                  site={form}
+                  site={previewForm}
                   embedded
                   sourceEmbedded
                   onPatchTheme={() => {}}
@@ -31096,6 +31159,44 @@ const FormSubmitGlobalStyleControls: React.FC<{
   )
 }
 
+const FormSurfaceStyleControls: React.FC<{
+  site: PublicSite
+  embedded?: boolean
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, embedded = false, onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>{embedded ? 'Fondo del formulario' : 'Colores del formulario'}</div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Fondo"
+          value={getThemePaint(theme, 'backgroundColor', userBgColor(site) || resolvedPageBg(site))}
+          allowGradient
+          onChange={(value) => onPatchTheme({ backgroundColor: value })}
+          onCommit={onSaveSite}
+        />
+        <ColorField
+          label="Texto"
+          value={getThemePaint(theme, 'textColor', isSiteDark(site) ? '#ffffff' : '#111827')}
+          allowGradient
+          onChange={(value) => onPatchTheme({ textColor: value, textColorCustom: true })}
+          onCommit={onSaveSite}
+        />
+      </div>
+      <ColorField
+        label="Acento"
+        value={getThemePaint(theme, 'accentColor', userAccentColor(site) || (isSiteDark(site) ? '#ffffff' : '#111827'))}
+        allowGradient
+        onChange={(value) => onPatchTheme({ accentColor: value })}
+        onCommit={onSaveSite}
+      />
+    </>
+  )
+}
+
 const FormGlobalStyleControls: React.FC<{
   site: PublicSite
   embedded?: boolean
@@ -31124,6 +31225,7 @@ const FormGlobalStyleControls: React.FC<{
   return (
     <div className={styles.formGlobalControls}>
       <div className={styles.panelSubheader}>{embedded ? 'Diseño del formulario' : 'Formulario global'}</div>
+      <FormSurfaceStyleControls site={site} embedded={embedded} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       <div className={styles.textFormatPanel}>
         <div className={styles.textToolbar}>
           <label className={styles.textFontSelect}>
@@ -31378,7 +31480,7 @@ const PopupInspector: React.FC<{
   )
 }
 
-type InspectorTabId = 'edit' | 'design' | 'settings' | 'videoActions'
+type InspectorTabId = 'edit' | 'design' | 'settings' | 'videoActions' | 'formDesign' | 'blockDesign'
 
 interface InspectorTab {
   value: InspectorTabId
