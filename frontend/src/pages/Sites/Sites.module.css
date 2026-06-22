@@ -9008,6 +9008,66 @@
   text-decoration: var(--rstk-block-text-decoration, none);
 }
 
+.canvasChromeProfileBlock {
+  width: max-content;
+  min-width: max-content;
+  max-width: 100%;
+  gap: var(--rstk-social-gap, 12px);
+}
+
+.canvasChromeProfileBlock .chromeMeta {
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+
+.canvasChromeProfileBlock .chromeAvatar {
+  width: var(--rstk-social-avatar-size, 70px);
+  height: var(--rstk-social-avatar-size, 70px);
+  font-size: var(--rstk-social-avatar-font-size, 22px);
+}
+
+.canvasChromeProfileBlock .socialPlatformBadge {
+  right: -2px;
+  bottom: -1px;
+  width: var(--rstk-social-badge-size, 25px);
+  height: var(--rstk-social-badge-size, 25px);
+  padding: 1px;
+}
+
+.canvasChromeProfileBlock .socialPlatformBadge svg {
+  width: var(--rstk-social-badge-icon-size, 14px);
+  height: var(--rstk-social-badge-icon-size, 14px);
+}
+
+.canvasChromeProfileBlock .socialPlatformThreadsGlyph {
+  font-size: var(--rstk-social-badge-icon-size, 14px);
+}
+
+.canvasChromeProfileBlock .chromeName {
+  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 92%, var(--rstk-muted) 8%);
+  gap: 4px;
+  font-size: var(--rstk-social-name-size, 20px);
+  font-weight: 700;
+  line-height: 1.08;
+  white-space: nowrap;
+}
+
+.canvasChromeProfileBlock .chromeSub {
+  margin-top: 1px;
+  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 50%, var(--rstk-muted) 50%);
+  font-size: var(--rstk-social-followers-size, 16px);
+  font-weight: 500;
+  line-height: 1.18;
+  white-space: nowrap;
+}
+
+.canvasChromeProfileBlock .chromeVerified {
+  top: 0;
+  width: var(--rstk-social-verified-size, 15px);
+  height: var(--rstk-social-verified-size, 15px);
+  transform: translateY(-0.02em);
+}
+
 .canvasChromeSourceForm .chromeName {
   color: var(--rstk-ink);
   font-family: var(--rstk-font);

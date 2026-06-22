@@ -3564,6 +3564,10 @@ const socialPlatformOptions: Array<{ value: SocialPlatform; label: string }> = [
   { value: 'threads', label: 'Threads' }
 ]
 
+const SOCIAL_PROFILE_SCALE_MIN = 80
+const SOCIAL_PROFILE_SCALE_MAX = 150
+const DEFAULT_SOCIAL_PROFILE_SCALE = 110
+
 const normalizeFormChoiceStyle = (value: unknown): FormChoiceStyle => {
   const raw = String(value || '').trim()
   return formChoiceStyleOptions.some(option => option.value === raw) ? raw as FormChoiceStyle : 'native'
@@ -3636,6 +3640,7 @@ const socialProfileDefaultsForSite = (site?: PublicSite | null): Record<string, 
     brandSubtitle: theme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
     brandAvatar: theme.brandAvatar || '',
     followers: theme.followers || '',
+    socialProfileScale: getSettingNumber(theme as Record<string, unknown>, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX),
     brandVerified: theme.brandVerified === undefined ? true : theme.brandVerified !== false,
     socialAutoSync: theme.socialAutoSync,
     socialSourceProfileId: theme.socialSourceProfileId || '',
@@ -3990,6 +3995,24 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (!isCalendarEmbed && isCssPaint(blockBorder)) style['--rstk-block-border'] = paintFallbackColor(normalizeCssPaint(blockBorder, '#dbe3ef'), '#dbe3ef')
   if (settings.fontWeight === 'bold') style['--rstk-block-weight'] = '850'
   if (settings.fontWeight === 'normal') style['--rstk-block-weight'] = '400'
+  if (block.blockType === 'social_profile') {
+    const profileScale = getSettingNumber(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX) / 100
+    const socialFontSize = getSettingNumber(settings, 'fontSize', 18, 12, 96)
+    const socialPx = (value: number) => `${Number(value.toFixed(3))}px`
+
+    style['--rstk-social-profile-scale'] = String(Number(profileScale.toFixed(3)))
+    style['--rstk-social-avatar-size'] = socialPx(64 * profileScale)
+    style['--rstk-social-avatar-font-size'] = socialPx(20 * profileScale)
+    style['--rstk-social-badge-size'] = socialPx(23 * profileScale)
+    style['--rstk-social-badge-icon-size'] = socialPx(13 * profileScale)
+    style['--rstk-social-gap'] = socialPx(11 * profileScale)
+    style['--rstk-social-name-size'] = socialPx(socialFontSize * profileScale)
+    style['--rstk-social-followers-size'] = socialPx(Math.max(11, socialFontSize * profileScale * 0.82))
+    style['--rstk-social-verified-size'] = socialPx(14 * profileScale)
+    style.width = 'max-content'
+    style.minWidth = 'max-content'
+    style.maxWidth = '100%'
+  }
 
   if (settings.textAlign !== undefined) {
     const align = getHorizontalAlign(settings, 'textAlign', 'left')
@@ -4096,6 +4119,7 @@ const getBlockStyleClassName = (block: SiteBlock, extra = '') => {
     block.blockType === HEADER_PANEL_BLOCK_TYPE ? 'rstkHeaderPanelBlock' : '',
     block.blockType === FOOTER_PANEL_BLOCK_TYPE ? 'rstkFooterPanelBlock' : '',
     block.blockType === 'calendar_embed' ? 'rstkCalendarBlock' : '',
+    block.blockType === 'social_profile' ? 'rstkSocialProfileBlock' : '',
     getSettingString(settings, 'blockText') ? 'rstkBlockTextOverride' : '',
     isCssGradient(getSettingString(settings, 'blockText')) ? 'rstkTextGradient' : '',
     isCssGradient(getSettingString(settings, 'buttonTextColor')) ? 'rstkButtonTextGradient' : '',
@@ -24585,9 +24609,10 @@ const CanvasChrome: React.FC<{
   site: PublicSite
   embedded?: boolean
   sourceEmbedded?: boolean
+  profileBlock?: boolean
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSave: () => void
-}> = ({ platform, site, embedded = false, sourceEmbedded = false }) => {
+}> = ({ platform, site, embedded = false, sourceEmbedded = false, profileBlock = false }) => {
   const theme = site.theme || {}
   const name = theme.brandName || site.title || site.name || 'Tu marca'
   const subtitle = theme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado')
@@ -24604,6 +24629,7 @@ const CanvasChrome: React.FC<{
     styles.canvasChrome,
     embedded ? styles.canvasChromeEmbedded : '',
     sourceEmbedded ? styles.canvasChromeSourceForm : '',
+    profileBlock ? styles.canvasChromeProfileBlock : '',
     platformClass
   ].filter(Boolean).join(' ')
 
@@ -24617,7 +24643,7 @@ const CanvasChrome: React.FC<{
         <div className={styles.chromeName}>
           {name}
           {theme.brandVerified !== false && (
-            <svg viewBox="0 0 24 24" width="14" height="14" className={styles.chromeVerified}><path fill="#1877f2" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7L3.95 14.3l.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z"/><path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            <svg viewBox="0 0 24 24" width="14" height="14" className={styles.chromeVerified} aria-hidden="true" focusable="false"><path fill="#1877f2" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7L3.95 14.3l.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z"/><path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
           )}
         </div>
         <div className={styles.chromeSub}>{secondary}</div>
@@ -30037,11 +30063,12 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         brandSubtitle: getSettingString(settings, 'brandSubtitle') || fallbackTheme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
         brandAvatar: getSettingString(settings, 'brandAvatar') || fallbackTheme.brandAvatar || '',
         followers: getSettingString(settings, 'followers') || fallbackTheme.followers || '',
+        socialProfileScale: getSettingNumber(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX),
         brandVerified: settings.brandVerified === undefined ? fallbackTheme.brandVerified : settings.brandVerified !== false
       }
     } as PublicSite
 
-    return <CanvasChrome platform={platform} site={socialSite} embedded onPatchTheme={() => {}} onSave={() => {}} />
+    return <CanvasChrome platform={platform} site={socialSite} embedded profileBlock onPatchTheme={() => {}} onSave={() => {}} />
   }
 
   if (block.blockType === HEADER_PANEL_BLOCK_TYPE || block.blockType === FOOTER_PANEL_BLOCK_TYPE) {
@@ -33874,7 +33901,58 @@ const SocialProfileSettings: React.FC<{
           <span>Mostrar verificado</span>
         </label>
       </div>
+      <SocialProfileScaleField
+        value={getSettingNumber(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX)}
+        onChange={(value) => onPatchSettings({ socialProfileScale: value })}
+        onCommit={onSave}
+      />
     </div>
+  )
+}
+
+const SocialProfileScaleField: React.FC<{
+  value: number
+  onChange: (value: number) => void
+  onCommit: () => void
+}> = ({ value, onChange, onCommit }) => {
+  const set = (raw: number) => onChange(clampNumber(raw, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX))
+  const commitFromKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+      window.setTimeout(onCommit, 0)
+    }
+  }
+
+  return (
+    <label className={styles.dimensionField}>
+      <span>Tamaño del perfil</span>
+      <div className={styles.videoDimensionRow}>
+        <input
+          className={styles.videoDimensionSlider}
+          type="range"
+          min={SOCIAL_PROFILE_SCALE_MIN}
+          max={SOCIAL_PROFILE_SCALE_MAX}
+          step={1}
+          value={value}
+          onChange={(event) => set(Number(event.target.value))}
+          onPointerUp={onCommit}
+          onTouchEnd={onCommit}
+          onKeyUp={commitFromKey}
+          onBlur={onCommit}
+          aria-label="Tamaño del perfil"
+        />
+        <div className={styles.dimensionBox} data-ristak-unstyled>
+          <NumberInput
+            min={SOCIAL_PROFILE_SCALE_MIN}
+            max={SOCIAL_PROFILE_SCALE_MAX}
+            step={1}
+            value={value}
+            onValueChange={set}
+            onBlur={onCommit}
+          />
+          <small>%</small>
+        </div>
+      </div>
+    </label>
   )
 }
 

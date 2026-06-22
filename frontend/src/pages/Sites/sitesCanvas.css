@@ -165,6 +165,11 @@
   border: 0;
   padding: 0;
 }
+.rstkCanvas .rstkSocialProfileBlock.rstk-block-style {
+  width: max-content;
+  min-width: max-content;
+  max-width: 100%;
+}
 .rstkCanvas .rstkHasBgVideo {
   isolation: isolate;
   overflow: hidden;
@@ -195,13 +200,13 @@
 .rstkCanvas .rstk-block-style .rstk-headline,
 .rstkCanvas .rstk-block-style h2,
 .rstkCanvas .rstk-block-style label,
-.rstkCanvas .rstk-block-style strong,
-.rstkCanvas .rstk-block-style .rstk-social-name { color: var(--rstk-block-text, var(--rstk-ink)); }
+.rstkCanvas .rstk-block-style strong { color: var(--rstk-block-text, var(--rstk-ink)); }
+.rstkCanvas .rstk-block-style .rstk-social-name { color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 92%, var(--rstk-muted) 8%); }
 .rstkCanvas .rstk-block-style .rstk-subheading,
 .rstkCanvas .rstk-block-style .rstk-text,
 .rstkCanvas .rstk-block-style .rstk-help,
 .rstkCanvas .rstk-block-style p,
-.rstkCanvas .rstk-block-style .rstk-social-followers { color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 68%, var(--rstk-muted) 32%); }
+.rstkCanvas .rstk-block-style .rstk-social-followers { color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 50%, var(--rstk-muted) 50%); }
 .rstkCanvas .rstk-block-style .rstk-social-name,
 .rstkCanvas .rstk-block-style .rstk-social-followers {
   font-family: var(--rstk-block-font, var(--rstk-font));
@@ -209,8 +214,12 @@
   text-decoration: var(--rstk-block-text-decoration, none);
 }
 .rstkCanvas .rstk-block-style .rstk-social-name {
-  font-size: var(--rstk-block-size, 18px);
-  font-weight: var(--rstk-block-weight, 800);
+  font-size: var(--rstk-social-name-size, var(--rstk-block-size, 18px));
+  font-weight: 700;
+}
+.rstkCanvas .rstk-block-style .rstk-social-followers {
+  font-size: var(--rstk-social-followers-size, 14px);
+  font-weight: 500;
 }
 .rstkCanvas .rstk-block-style .rstk-button-link,
 .rstkCanvas .rstk-block-style button[data-rstk-edit-type="button"],

@@ -168,6 +168,7 @@ export interface SiteTheme {
   brandSubtitle?: string
   brandAvatar?: string
   followers?: string
+  socialProfileScale?: number
   brandVerified?: boolean
   socialAutoSync?: boolean
   socialSourceProfileId?: string

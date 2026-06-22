@@ -109,6 +109,9 @@ const EMBEDDED_FORM_DEFAULT_THEME = {
   pageBorderWidth: 20,
   pageBorderColor: 'transparent'
 }
+const SOCIAL_PROFILE_SCALE_MIN = 80
+const SOCIAL_PROFILE_SCALE_MAX = 150
+const DEFAULT_SOCIAL_PROFILE_SCALE = 110
 const FORM_PAGE_BORDER_WIDTH_MAX = 80
 const CALENDAR_FORMS_FOLDER_ID = 'system-calendar-forms'
 const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
@@ -3313,6 +3316,13 @@ function isSocialTemplate(value) {
 function getSocialProfileDefaults(site = {}, platform = 'facebook') {
   const theme = site.theme || {}
   const normalizedPlatform = isSocialTemplate(platform) ? platform : 'facebook'
+  const socialProfileScale = blockSettingNumberWithFallback(
+    theme,
+    'socialProfileScale',
+    DEFAULT_SOCIAL_PROFILE_SCALE,
+    SOCIAL_PROFILE_SCALE_MIN,
+    SOCIAL_PROFILE_SCALE_MAX
+  )
 
   return {
     platform: normalizedPlatform,
@@ -3320,6 +3330,7 @@ function getSocialProfileDefaults(site = {}, platform = 'facebook') {
     brandSubtitle: cleanString(theme.brandSubtitle) || (normalizedPlatform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
     brandAvatar: cleanString(theme.brandAvatar),
     followers: cleanString(theme.followers),
+    socialProfileScale,
     brandVerified: theme.brandVerified === undefined ? true : theme.brandVerified !== false
   }
 }
@@ -16260,6 +16271,24 @@ function renderBlockStyleVars(block) {
   if (textStrokeColor) vars.push(`--rstk-text-stroke-color:${paintFallbackColor(textStrokeColor, '#111827')}`)
   if (settings.fontWeight === 'bold') vars.push('--rstk-block-weight:850')
   if (settings.fontWeight === 'normal') vars.push('--rstk-block-weight:400')
+  if (block.blockType === 'social_profile') {
+    const profileScale = blockSettingNumberWithFallback(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX) / 100
+    const socialFontSize = blockSettingNumberWithFallback(settings, 'fontSize', 18, 12, 96)
+    const socialPx = (value) => `${Number(value.toFixed(3))}px`
+
+    vars.push(`--rstk-social-profile-scale:${Number(profileScale.toFixed(3))}`)
+    vars.push(`--rstk-social-avatar-size:${socialPx(64 * profileScale)}`)
+    vars.push(`--rstk-social-avatar-font-size:${socialPx(20 * profileScale)}`)
+    vars.push(`--rstk-social-badge-size:${socialPx(23 * profileScale)}`)
+    vars.push(`--rstk-social-badge-icon-size:${socialPx(13 * profileScale)}`)
+    vars.push(`--rstk-social-gap:${socialPx(11 * profileScale)}`)
+    vars.push(`--rstk-social-name-size:${socialPx(socialFontSize * profileScale)}`)
+    vars.push(`--rstk-social-followers-size:${socialPx(Math.max(11, socialFontSize * profileScale * 0.82))}`)
+    vars.push(`--rstk-social-verified-size:${socialPx(14 * profileScale)}`)
+    vars.push('width:max-content')
+    vars.push('min-width:max-content')
+    vars.push('max-width:100%')
+  }
   if (settings.textAlign !== undefined) {
     const align = blockHorizontalAlign(settings, 'textAlign', 'left')
     const margins = marginForAlign(align)
@@ -16347,6 +16376,7 @@ function renderBlockStyleClassName(block) {
     block.blockType === 'header_panel' ? 'rstkHeaderPanelBlock' : '',
     block.blockType === 'footer_panel' ? 'rstkFooterPanelBlock' : '',
     block.blockType === 'calendar_embed' ? 'rstkCalendarBlock' : '',
+    block.blockType === 'social_profile' ? 'rstkSocialProfileBlock' : '',
     cleanString(settings.blockText) ? 'rstkBlockTextOverride' : '',
     isCssGradient(settings.blockText) ? 'rstkTextGradient' : '',
     isCssGradient(settings.buttonTextColor) ? 'rstkButtonTextGradient' : '',
@@ -17989,6 +18019,7 @@ const RSTK_BASE_CSS = `
     padding:var(--rstk-block-pad,0);
   }
   .rstkCalendarBlock.rstk-block-style{background:transparent;border:0;padding:0}
+  .rstkSocialProfileBlock.rstk-block-style{width:max-content;min-width:max-content;max-width:100%}
   .rstkHasBgVideo{isolation:isolate;overflow:hidden}
   .rstk-block-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-block-bg-size,cover);pointer-events:none}
   .rstkHasBgVideo > :not(.rstk-block-bg-video){position:relative;z-index:1}
@@ -18005,16 +18036,17 @@ const RSTK_BASE_CSS = `
   .rstk-block-style .rstk-headline,
   .rstk-block-style h2,
   .rstk-block-style label,
-  .rstk-block-style strong,
-  .rstk-block-style .rstk-social-name{color:var(--rstk-block-text,var(--rstk-ink))}
+  .rstk-block-style strong{color:var(--rstk-block-text,var(--rstk-ink))}
+  .rstk-block-style .rstk-social-name{color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 92%,var(--rstk-muted) 8%)}
   .rstk-block-style .rstk-subheading,
   .rstk-block-style .rstk-text,
   .rstk-block-style .rstk-help,
   .rstk-block-style p,
-  .rstk-block-style .rstk-social-followers{color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 68%,var(--rstk-muted) 32%)}
+  .rstk-block-style .rstk-social-followers{color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 50%,var(--rstk-muted) 50%)}
   .rstk-block-style .rstk-social-name,
   .rstk-block-style .rstk-social-followers{font-family:var(--rstk-block-font,var(--rstk-font));font-style:var(--rstk-block-font-style,normal);text-decoration:var(--rstk-block-text-decoration,none)}
-  .rstk-block-style .rstk-social-name{font-size:var(--rstk-block-size,18px);font-weight:var(--rstk-block-weight,800)}
+  .rstk-block-style .rstk-social-name{font-size:var(--rstk-social-name-size,var(--rstk-block-size,18px));font-weight:700}
+  .rstk-block-style .rstk-social-followers{font-size:var(--rstk-social-followers-size,14px);font-weight:500}
   .rstk-block-style .rstk-button-link,
   .rstk-block-style button[data-rstk-edit-type="button"],
   .rstk-block-style .rstk-actions button{border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius))}
@@ -18286,20 +18318,22 @@ const RSTK_BASE_CSS = `
   .rstk-chrome .rstk-avatar{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:var(--rstk-accent);color:#fff;font-weight:800;font-size:1.15rem;flex:0 0 auto}
   .rstk-chrome .rstk-avatar img{width:100%;height:100%;object-fit:cover}
 	  .rstk-social-profile{margin:calc(-1 * var(--rstk-pad)) calc(-1 * var(--rstk-pad)) 0;padding:20px var(--rstk-pad) 14px;display:flex;align-items:center;gap:8px;background:transparent;border:0}
-	  .rstk-social-profile-block{width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent;gap:12px}
+	  .rstk-social-profile-block{width:max-content;min-width:max-content;max-width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent;gap:var(--rstk-social-gap,12px)}
 	  .rstk-social-image{position:relative;display:inline-block;flex:0 0 auto}
 	  .rstk-social-profile .rstk-avatar{width:64px;height:64px;font-size:1.35rem}
-	  .rstk-social-profile-block .rstk-avatar{width:56px;height:56px;font-size:1.2rem}
-  .rstk-social-platform{position:absolute;right:-1px;bottom:-1px;z-index:2;width:28px;height:28px;border-radius:50%;border:2px solid #fff;background:#fff;display:grid;place-items:center;padding:2px;color:#fff;overflow:hidden}
+	  .rstk-social-profile-block .rstk-avatar{width:var(--rstk-social-avatar-size,70px);height:var(--rstk-social-avatar-size,70px);font-size:var(--rstk-social-avatar-font-size,22px)}
+  .rstk-social-platform{position:absolute;right:-2px;bottom:-1px;z-index:2;width:var(--rstk-social-badge-size,25px);height:var(--rstk-social-badge-size,25px);border-radius:50%;border:2px solid #fff;background:#fff;display:grid;place-items:center;padding:1px;color:#fff;overflow:hidden}
   .rstk-social-platform-facebook{background:#fff url('https://storage.googleapis.com/msgsndr/cAEl3p2eZROgv2GFvMZM/media/67b7bb9d7c922f0d2f3b2adf.svg') center/contain no-repeat}
   .rstk-social-platform-instagram{background:var(--rstk-gradient)}
   .rstk-social-platform-tiktok{background:#050505;box-shadow:inset 1px 0 var(--rstk-cyan),inset -1px 0 var(--rstk-accent)}
-  .rstk-social-platform-threads{background:#050505;font-size:16px;font-weight:900;line-height:1}
-  .rstk-social-platform svg{width:16px;height:16px}
+  .rstk-social-platform-threads{background:#050505;font-size:var(--rstk-social-badge-icon-size,14px);font-weight:900;line-height:1}
+  .rstk-social-platform svg{width:var(--rstk-social-badge-icon-size,14px);height:var(--rstk-social-badge-icon-size,14px)}
   .rstk-social-details{display:flex;flex-direction:column;min-width:0}
-  .rstk-social-name{display:flex;align-items:center;gap:4px;min-width:0;font-size:18px;line-height:1.18;font-weight:800;color:var(--rstk-ink)}
-  .rstk-social-name .rstk-verified{width:14px;height:14px;margin-left:0;color:#1877f2;flex:0 0 auto;position:relative;top:1px}
-  .rstk-social-followers{margin-top:2px;color:var(--rstk-muted);font-size:14px;line-height:1.25;font-weight:600}
+  .rstk-social-profile-block .rstk-social-details{flex:0 0 auto;min-width:max-content}
+  .rstk-social-name{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--rstk-social-name-size,20px);line-height:1.08;font-weight:700;color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 92%,var(--rstk-muted) 8%)}
+  .rstk-social-profile-block .rstk-social-name,.rstk-social-profile-block .rstk-social-followers{white-space:nowrap}
+  .rstk-social-name .rstk-verified{width:var(--rstk-social-verified-size,15px);height:var(--rstk-social-verified-size,15px);margin-left:0;color:#1877f2;flex:0 0 auto;position:relative;top:0;transform:translateY(-0.02em)}
+  .rstk-social-followers{margin-top:1px;color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 50%,var(--rstk-muted) 50%);font-size:var(--rstk-social-followers-size,16px);line-height:1.18;font-weight:500}
   @media (max-width:480px){
     .rstk-social-profile{padding:15px var(--rstk-pad) 12px}
     .rstk-social-profile .rstk-avatar{width:60px;height:60px}
