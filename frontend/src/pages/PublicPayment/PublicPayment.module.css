@@ -467,6 +467,7 @@
   --conekta-frame-source-height: 430px;
   --conekta-frame-crop-top: 72px;
   --conekta-frame-bleed-x: 14px;
+  --conekta-frame-bottom-mask-height: 28px;
   min-height: var(--conekta-frame-visible-height);
 }
 
@@ -479,6 +480,17 @@
   background: var(--surface-solid, var(--surface));
   box-shadow: none;
   color: var(--text);
+}
+
+.conektaTokenizerViewport::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--conekta-frame-bottom-mask-height);
+  pointer-events: none;
+  background: var(--surface-solid, var(--surface));
 }
 
 .conektaTokenizerFrame {
