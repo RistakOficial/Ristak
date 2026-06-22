@@ -45,7 +45,8 @@ export function useMediaUploadQueue() {
     const nextProgress = Math.max(0, Math.min(100, progress))
     updateTask(taskId, {
       progress: nextProgress,
-      status: nextProgress >= 100 ? 'processing' : 'uploading'
+      status: nextProgress >= 100 ? 'processing' : 'uploading',
+      message: nextProgress >= 100 ? 'Procesando archivo...' : undefined
     })
   }, [updateTask])
 

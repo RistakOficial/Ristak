@@ -134,7 +134,8 @@ async function uploadInputFromRequest(req) {
     userId: body.userId || body.user_id || req.user?.userId || req.user?.id || null,
     module: body.module || 'other',
     moduleEntityId: body.moduleEntityId || body.module_entity_id || null,
-    isPublic: parseBoolean(body.isPublic ?? body.is_public, true)
+    isPublic: parseBoolean(body.isPublic ?? body.is_public, true),
+    deferStreamSync: parseBoolean(body.deferStreamSync ?? body.defer_stream_sync ?? req.query?.deferStreamSync ?? req.query?.defer_stream_sync, true)
   }
 
   if (req.file?.path) {

@@ -62,6 +62,16 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload))
 }
 
+async function waitForValue(fn, { timeoutMs = 2000, intervalMs = 25, label = 'condition' } = {}) {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const value = await fn()
+    if (value) return value
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
+  assert.fail(`Timed out waiting for ${label}`)
+}
+
 async function createBunnyMockServer() {
   const requests = []
   let baseUrl = ''
@@ -536,6 +546,67 @@ test('videos de Sites se copian a Bunny Stream y guardan metadata del video', as
     assert.ok(bunny.requests.some(request => request.kind === 'stream-heatmap'))
     assert.ok(bunny.requests.filter(request => request.kind === 'stream-get-video').length >= 2)
     assert.ok(bunny.requests.every(request => !request.accessKey || request.accessKey === 'stream-secret' || request.accessKey === 'storage-secret'))
+  } finally {
+    if (mediaAssetId) {
+      const { softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')
+      await softDeleteMediaAsset(mediaAssetId).catch(() => undefined)
+    }
+    if (db && mediaAssetId) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+    }
+    bunny.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('videos de Sites pueden diferir Bunny Stream sin bloquear la subida', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+  let db = null
+  let mediaAssetId = ''
+
+  try {
+    configureBunnyEnv(bunny.baseUrl)
+
+    const [mediaStorageService, database] = await Promise.all([
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    const created = await mediaStorageService.uploadMediaAsset({
+      buffer: Buffer.from('fake mp4 bytes for deferred bunny stream'),
+      filename: 'deferred-video.mp4',
+      mimeType: 'video/mp4',
+      module: 'sites',
+      moduleEntityId: 'site_deferred',
+      businessId: 'default',
+      clientAccountId: 'loc_deferred',
+      isPublic: true,
+      skipCompression: true,
+      deferStreamSync: true
+    })
+    mediaAssetId = created.id
+
+    assert.equal(created.mediaType, 'video')
+    assert.equal(created.storageProvider, 'bunny')
+    assert.equal(created.metadata.stream.syncStatus, 'pending')
+    assert.equal(created.metadata.stream.provider, 'bunny_stream')
+    assert.equal(created.metadata.stream.source.mediaAssetId, created.id)
+    assert.equal(created.metadata.stream.source.clientAccountId, 'loc_deferred')
+    assert.equal(created.metadata.stream.videoId, undefined)
+    assert.equal(bunny.requests.some(request => request.kind === 'stream-upload-video'), false)
+
+    const synced = await waitForValue(async () => {
+      const asset = await mediaStorageService.getMediaAsset(created.id)
+      return asset.metadata?.stream?.syncStatus === 'uploaded' ? asset : null
+    }, { label: 'deferred Bunny Stream sync' })
+
+    assert.equal(synced.metadata.stream.videoId, 'stream-video-1')
+    assert.equal(synced.metadata.stream.clientAccount.id, 'loc_deferred')
+    assert.ok(bunny.requests.some(request => request.kind === 'stream-create-video'))
+    assert.ok(bunny.requests.some(request => request.kind === 'stream-upload-video'))
   } finally {
     if (mediaAssetId) {
       const { softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')

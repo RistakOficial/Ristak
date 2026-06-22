@@ -87,6 +87,7 @@ export interface UploadMediaFileInput {
   module?: string
   moduleEntityId?: string
   isPublic?: boolean
+  deferStreamSync?: boolean
   onProgress?: (progress: MediaUploadProgress) => void
   signal?: AbortSignal
 }
@@ -319,6 +320,17 @@ function extractApiErrorMessage(payload: unknown, status: number, statusText: st
   return `API Error: ${status} ${statusText}`
 }
 
+function buildCompletedUploadProgress(lastProgress: MediaUploadProgress | null): MediaUploadProgress {
+  const total = lastProgress?.total && lastProgress.total > 0
+    ? lastProgress.total
+    : lastProgress?.loaded || 0
+  return {
+    loaded: total,
+    total,
+    percent: 100
+  }
+}
+
 function postFormWithProgress<T>(
   endpoint: string,
   body: FormData,
@@ -346,13 +358,20 @@ function postFormWithProgress<T>(
       xhr.setRequestHeader(key, value)
     })
 
+    let lastProgress: MediaUploadProgress | null = null
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable || event.total <= 0) return
-      onProgress({
+      lastProgress = {
         loaded: event.loaded,
         total: event.total,
         percent: Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)))
-      })
+      }
+      onProgress(lastProgress)
+    }
+
+    xhr.upload.onload = () => {
+      lastProgress = buildCompletedUploadProgress(lastProgress)
+      onProgress(lastProgress)
     }
 
     xhr.onload = () => {
@@ -398,6 +417,7 @@ export const mediaService = {
     formData.append('file', input.file)
     formData.append('module', input.module || 'other')
     formData.append('isPublic', String(input.isPublic ?? true))
+    formData.append('deferStreamSync', String(input.deferStreamSync ?? true))
     if (input.moduleEntityId) formData.append('moduleEntityId', input.moduleEntityId)
     return postFormWithProgress<MediaAsset>('/media/upload', formData, input.onProgress, input.signal)
   },

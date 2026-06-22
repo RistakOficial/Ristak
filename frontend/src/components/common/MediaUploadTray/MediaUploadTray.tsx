@@ -55,10 +55,14 @@ export function MediaUploadTray({
 }: MediaUploadTrayProps) {
   if (!tasks.length) return null
 
-  const activeCount = tasks.filter((task) => task.status === 'uploading' || task.status === 'processing').length
+  const uploadingCount = tasks.filter((task) => task.status === 'uploading').length
+  const processingCount = tasks.filter((task) => task.status === 'processing').length
+  const activeCount = uploadingCount + processingCount
   const finishedCount = tasks.length - activeCount
-  const title = activeCount
+  const title = uploadingCount
     ? `Subiendo ${activeCount} archivo${activeCount === 1 ? '' : 's'}`
+    : processingCount
+      ? `Procesando ${processingCount} archivo${processingCount === 1 ? '' : 's'}`
     : 'Subidas completas'
 
   return (

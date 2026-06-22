@@ -969,6 +969,43 @@ function buildSkippedBunnyStreamMetadata(config, reason, clientAccount = {}) {
   }
 }
 
+function buildPendingBunnyStreamMetadata(config, {
+  id,
+  businessId,
+  module,
+  moduleEntityId,
+  originalFilename,
+  objectPath,
+  publicUrl,
+  mimeType,
+  clientAccount
+} = {}) {
+  const account = normalizeClientAccountContext(clientAccount || { id: businessId })
+  return {
+    provider: 'bunny_stream',
+    enabled: config.bunnyStreamEnabled,
+    providerReady: config.bunnyStreamConfigured,
+    syncStatus: 'pending',
+    libraryId: config.bunnyStreamLibraryId || null,
+    collectionId: config.bunnyStreamCollectionId || null,
+    collectionName: buildBunnyStreamCollectionName(config, account),
+    title: buildBunnyStreamTitle({ originalFilename, module, moduleEntityId, id }),
+    clientAccount: account,
+    source: {
+      mediaAssetId: id,
+      businessId,
+      clientAccountId: account.id,
+      accountRootPath: account.rootPath,
+      module,
+      moduleEntityId,
+      storagePath: objectPath,
+      storagePublicUrl: publicUrl,
+      mimeType
+    },
+    queuedAt: nowIso()
+  }
+}
+
 async function createBunnyStreamVideo(config, { title, collectionId }) {
   return await bunnyStreamRequest(
     config,
@@ -1139,6 +1176,21 @@ function dimensionsFromStreamMetadata(stream = {}) {
     height: optionalNumberValue(video.height),
     duration: optionalNumberValue(video.length)
   }
+}
+
+function scheduleDeferredBunnyStreamSync(syncInput) {
+  setImmediate(() => {
+    syncVideoToBunnyStream(syncInput)
+      .then(async (stream) => {
+        const asset = await getMediaAsset(syncInput.id).catch(() => null)
+        if (!asset || asset.status === 'deleted') return
+        await updateMediaAssetStream({ asset, stream })
+        logger.info(`[MediaStorage] Bunny Stream sync diferida completada: ${syncInput.id}`)
+      })
+      .catch((error) => {
+        logger.warn(`[MediaStorage] Bunny Stream sync diferida falló para ${syncInput.id}: ${error.message}`)
+      })
+  })
 }
 
 async function updateMediaAssetStream({ asset, stream }) {
@@ -1568,6 +1620,7 @@ export async function uploadMediaAsset(input = {}) {
 
   let storageProvider = 'local'
   let publicUrl = buildAppPublicUrl(`/media/assets/${id}/file`)
+  let deferredStreamSync = null
   let metadata = {
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
     mimeDetection: detected.source,
@@ -1610,7 +1663,7 @@ export async function uploadMediaAsset(input = {}) {
   }
 
   if (isBunnyStreamEligibleVideo({ mediaType: finalMediaType, module })) {
-    metadata.stream = await syncVideoToBunnyStream({
+    const streamSyncInput = {
       config,
       id,
       businessId,
@@ -1622,7 +1675,13 @@ export async function uploadMediaAsset(input = {}) {
       mimeType: finalMimeType,
       buffer: processed.buffer,
       clientAccount
-    })
+    }
+    if (boolValue(input.deferStreamSync) && config.bunnyStreamEnabled && config.bunnyStreamConfigured) {
+      metadata.stream = buildPendingBunnyStreamMetadata(config, streamSyncInput)
+      deferredStreamSync = streamSyncInput
+    } else {
+      metadata.stream = await syncVideoToBunnyStream(streamSyncInput)
+    }
   }
 
   const streamDimensions = dimensionsFromStreamMetadata(metadata.stream)
@@ -1656,6 +1715,9 @@ export async function uploadMediaAsset(input = {}) {
   })
 
   await refreshQuotaUsage(businessId)
+  if (deferredStreamSync) {
+    scheduleDeferredBunnyStreamSync(deferredStreamSync)
+  }
   logger.info(`[MediaStorage] Archivo listo: ${id} (${finalMediaType}, ${quotaSize} bytes)`)
 
   return await getMediaAsset(id)
