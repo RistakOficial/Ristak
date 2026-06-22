@@ -563,7 +563,8 @@ export function createConversationalTools(ctx) {
           reason: 'Cita agendada por el agente',
           actionSummarySource: technicalSummary,
           originalSummary: technicalSummary,
-          status: 'completed'
+          status: 'completed',
+          agentId: config.id || ''
         })
         await applyAgentCompletionAction(config, ctx.contactId)
         await notifyHumanPriority(ctx, {
@@ -605,7 +606,8 @@ export function createConversationalTools(ctx) {
         await setConversationSignal(ctx.contactId, signal, {
           reason: `${intencionDetectada} (urgencia ${urgencia})`,
           summary: resumen,
-          status: 'completed'
+          status: 'completed',
+          agentId: config.id || ''
         })
         await applyAgentCompletionAction(config, ctx.contactId)
         await notifyHumanPriority(ctx, {
@@ -856,7 +858,8 @@ export function createConversationalTools(ctx) {
       await setConversationSignal(ctx.contactId, 'ready_for_human', {
         reason: motivo,
         summary: resumen,
-        status: 'human'
+        status: 'human',
+        agentId: config.id || ''
       })
       await notifyHumanPriority(ctx, { reason: motivo, summary: resumen, signal: 'ready_for_human' })
       return { ok: true, signal: 'ready_for_human', note: 'Un humano seguirá la conversación. Si hace falta, cierra con una frase breve y natural (ej. que en un momento le confirmas).' }
@@ -879,7 +882,8 @@ export function createConversationalTools(ctx) {
       await setConversationSignal(ctx.contactId, 'discarded', {
         reason: `${motivo} (riesgo ${nivelDeRiesgo})`,
         summary: resumen,
-        status: 'discarded'
+        status: 'discarded',
+        agentId: config.id || ''
       })
       return { ok: true, signal: 'discarded', note: 'Conversación descartada. No respondas nada más.' }
     }

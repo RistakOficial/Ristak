@@ -630,7 +630,17 @@ function buildCompletionActionSummary({ signal, summary = '', reason = '', closi
   return baseSummary || baseReason || 'Objetivo concretado'
 }
 
-async function buildCompletionSummaryFromClosingContext({ contactId = '', signal, summary = '', reason = '', actionSummarySource = '', closingContext = {}, timezone = 'America/Mexico_City', channel = 'whatsapp' } = {}) {
+async function buildCompletionSummaryFromClosingContext({
+  contactId = '',
+  signal,
+  summary = '',
+  reason = '',
+  actionSummarySource = '',
+  closingContext = {},
+  timezone = 'America/Mexico_City',
+  channel = 'whatsapp',
+  allowInternalSummary = false
+} = {}) {
   const cleanSignal = String(signal || '').trim()
   const baseSummary = cleanCompletionDisplayText(summary)
   const baseReason = cleanCompletionDisplayText(reason)
@@ -638,7 +648,7 @@ async function buildCompletionSummaryFromClosingContext({ contactId = '', signal
   const normalizedContext = normalizeStoredAdvancedClosingContext(closingContext)
   const actionSummary = buildCompletionActionSummary({ signal, summary: actionSource, reason: baseReason, closingContext: normalizedContext, timezone })
   const hidesMissingSummary = ['appointment_booked', 'purchase_completed'].includes(cleanSignal)
-  const generatedSummary = CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(cleanSignal)
+  const generatedSummary = allowInternalSummary && CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(cleanSignal)
     ? await generateCompletionSummaryWithInternalAgent({
       contactId,
       signal: cleanSignal,
@@ -1465,7 +1475,8 @@ export async function completeConversationGoalLink(goalId, {
     summary: conversationSummary,
     actionSummarySource: technicalSummary,
     originalSummary: technicalSummary,
-    status: 'completed'
+    status: 'completed',
+    agentId: row.agent_id || ''
   })
 
   if (row.agent_id) {
@@ -1648,7 +1659,8 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     summary: conversationSummary,
     actionSummarySource: technicalSummary,
     originalSummary: technicalSummary,
-    status: 'completed'
+    status: 'completed',
+    agentId: agentId || ''
   })
 
   if (agent) {
@@ -3319,10 +3331,20 @@ export async function setConversationStatus(contactId, status, {
   return getConversationState(contactId)
 }
 
-export async function setConversationSignal(contactId, signal, { reason = '', summary = '', status = 'completed', actionSummarySource = '', originalSummary = '' } = {}) {
+export async function setConversationSignal(contactId, signal, {
+  reason = '',
+  summary = '',
+  status = 'completed',
+  actionSummarySource = '',
+  originalSummary = '',
+  agentId = ''
+} = {}) {
   await ensureConversationState(contactId)
-  const currentState = await db.get('SELECT closing_context_json, channel FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null)
+  const currentState = await db.get('SELECT closing_context_json, channel, agent_id FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null)
   const closingContext = normalizeStoredAdvancedClosingContext(currentState?.closing_context_json || '{}')
+  const cleanStatus = String(status || 'completed').trim() || 'completed'
+  const effectiveAgentId = String(agentId || currentState?.agent_id || '').trim() || null
+  const objectiveCompleted = cleanStatus === 'completed' && Boolean(effectiveAgentId)
   const timezone = await getAccountTimezone().catch(() => 'America/Mexico_City')
   const completionSummary = await buildCompletionSummaryFromClosingContext({
     contactId,
@@ -3332,7 +3354,8 @@ export async function setConversationSignal(contactId, signal, { reason = '', su
     actionSummarySource,
     closingContext,
     timezone,
-    channel: currentState?.channel || 'whatsapp'
+    channel: currentState?.channel || 'whatsapp',
+    allowInternalSummary: objectiveCompleted
   })
   const cleanReason = cleanCompletionDisplayText(reason)
   const cleanActionSummary = cleanCompletionDisplayText(completionSummary.actionSummary)
@@ -3347,10 +3370,19 @@ export async function setConversationSignal(contactId, signal, { reason = '', su
         activated_by = COALESCE(activated_by, 'agent'),
         updated_at = CURRENT_TIMESTAMP
     WHERE contact_id = ?
-  `, [signal, cleanReason, cleanStateSummary, status, contactId])
+  `, [signal, cleanReason, cleanStateSummary, cleanStatus, contactId])
 
   const cleanOriginalSummary = cleanCompletionDisplayText(originalSummary || actionSummarySource)
-  const detail = { signal, reason: cleanReason, summary: cleanSummary, actionSummary: cleanActionSummary, status, summarySource: completionSummary.summarySource }
+  const detail = {
+    signal,
+    reason: cleanReason,
+    summary: cleanSummary,
+    actionSummary: cleanActionSummary,
+    status: cleanStatus,
+    summarySource: completionSummary.summarySource,
+    agentId: effectiveAgentId,
+    objectiveCompleted
+  }
   if (cleanOriginalSummary && ![cleanSummary, cleanActionSummary, cleanStateSummary].includes(cleanOriginalSummary)) {
     detail.originalSummary = cleanOriginalSummary
   }
@@ -3457,7 +3489,8 @@ export async function handleConversationalAgentTriggerLinkClick(payload = {}) {
   const nextState = await setConversationSignal(contactId, 'ready_for_human', {
     reason: `Tocó el enlace de disparo: ${triggerLinkName}`,
     summary: conversationSummary,
-    status: 'completed'
+    status: 'completed',
+    agentId: state.agentId || ''
   })
   await applyAgentCompletionAction(agent, contactId)
   await applyAgentSuccessExtras(agent, contactId)
@@ -3553,7 +3586,12 @@ function isCompletionSignalEvent(row) {
   const detail = row.detail_json ? safeParse(row.detail_json) : null
   if (!detail || typeof detail !== 'object') return false
   const signal = String(detail.signal || '').trim()
-  return CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(signal)
+  if (!CONVERSATIONAL_AGENT_COMPLETION_SIGNALS.has(signal)) return false
+
+  const status = String(detail.status || '').trim()
+  const agentId = String(detail.agentId || detail.agent_id || '').trim()
+  const objectiveCompleted = detail.objectiveCompleted === true
+  return status === 'completed' && Boolean(agentId) && objectiveCompleted
 }
 
 function mapConversationalAgentEventRow(row) {

@@ -343,6 +343,7 @@ export interface ConversationalAgentCompletionEvent {
   status: string
   createdAt: string
   agentId: string | null
+  objectiveCompleted: boolean
 }
 
 export interface ConversationalAgentMetricByAgent {
@@ -676,6 +677,11 @@ function normalizeCompletionEvent(event: ConversationalAgentEvent): Conversation
   const signal = getRecordString(detail, 'signal') as Exclude<ConversationSignal, 'discarded'>
   if (!COMPLETION_SIGNAL_SET.has(signal)) return null
 
+  const status = getRecordString(detail, 'status')
+  const agentId = getRecordString(detail, 'agentId') || null
+  const objectiveCompleted = detail.objectiveCompleted === true
+  if (status !== 'completed' || !agentId || !objectiveCompleted) return null
+
   const meta = COMPLETION_SIGNAL_META[signal]
   const rawSummary = getRecordString(detail, 'summary')
   const reason = getRecordString(detail, 'reason')
@@ -692,9 +698,10 @@ function normalizeCompletionEvent(event: ConversationalAgentEvent): Conversation
     actionSummary: actionSummary || meta.label,
     summary,
     reason,
-    status: getRecordString(detail, 'status') || 'completed',
+    status,
     createdAt: event.createdAt,
-    agentId: getRecordString(detail, 'agentId') || null
+    agentId,
+    objectiveCompleted
   }
 }
 

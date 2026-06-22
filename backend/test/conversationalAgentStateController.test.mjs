@@ -8,7 +8,9 @@ import {
   assignAgentToConversation,
   createConversationalAgent,
   getConversationState,
-  listConversationStates
+  listConversationStates,
+  listConversationalAgentEvents,
+  setConversationSignal
 } from '../src/services/conversationalAgentService.js'
 
 const READY_BUSINESS_PROFILE = {
@@ -227,6 +229,66 @@ test('omitir una conversación conserva el estado en la lista de omitidos', asyn
     assert.equal(skipped?.activationSource, 'manual')
   } finally {
     await cleanup(contactId)
+  }
+})
+
+test('los resúmenes de cierre solo salen cuando el agente asignado completa el objetivo', async () => {
+  const assignedContactId = `conversation_agent_completed_${randomUUID()}`
+  const unassignedContactId = `conversation_agent_unassigned_completion_${randomUUID()}`
+  const humanContactId = `conversation_agent_human_signal_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    const agent = await createConversationalAgent({
+      name: 'Agente resumen test',
+      enabled: true,
+      objective: 'citas'
+    })
+    agentId = agent.id
+
+    await assignAgentToConversation(assignedContactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent'
+    })
+    await setConversationSignal(assignedContactId, 'ready_to_schedule', {
+      reason: 'Quiere agendar esta semana',
+      summary: 'El contacto quiere una cita esta semana.',
+      status: 'completed',
+      agentId
+    })
+
+    await setConversationSignal(unassignedContactId, 'ready_to_schedule', {
+      reason: 'Señal sin agente asignado',
+      summary: 'No debe contar como cierre del agente.',
+      status: 'completed'
+    })
+
+    await assignAgentToConversation(humanContactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent'
+    })
+    await setConversationSignal(humanContactId, 'ready_for_human', {
+      reason: 'Necesita humano',
+      summary: 'El contacto pidió hablar con una persona.',
+      status: 'human',
+      agentId
+    })
+
+    const completedEvents = await listConversationalAgentEvents({ contactId: assignedContactId, kind: 'completion' })
+    assert.equal(completedEvents.length, 1)
+    assert.equal(completedEvents[0].detail?.status, 'completed')
+    assert.equal(completedEvents[0].detail?.agentId, agentId)
+    assert.equal(completedEvents[0].detail?.objectiveCompleted, true)
+
+    const unassignedEvents = await listConversationalAgentEvents({ contactId: unassignedContactId, kind: 'completion' })
+    assert.equal(unassignedEvents.length, 0)
+
+    const humanEvents = await listConversationalAgentEvents({ contactId: humanContactId, kind: 'completion' })
+    assert.equal(humanEvents.length, 0)
+  } finally {
+    await cleanup(assignedContactId, agentId)
+    await cleanup(unassignedContactId)
+    await cleanup(humanContactId)
   }
 })
 

@@ -902,7 +902,8 @@ test('resumen de meta concretada lo genera un resumidor interno con el historial
       reason: 'Cita agendada por el agente',
       actionSummarySource: 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z',
       originalSummary: 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z',
-      status: 'completed'
+      status: 'completed',
+      agentId: 'agent_summary_test'
     })
 
     const state = await getConversationState(contactId)
@@ -967,7 +968,8 @@ test('resumen de meta concretada usa el historial del canal real', async () => {
     await setConversationSignal(contactId, 'appointment_booked', {
       reason: 'Cita agendada por Instagram',
       actionSummarySource: 'Cita - Instagram Canal · 2026-06-25T17:00:00.000Z',
-      status: 'completed'
+      status: 'completed',
+      agentId: 'agent_summary_instagram_test'
     })
 
     const state = await getConversationState(contactId)
