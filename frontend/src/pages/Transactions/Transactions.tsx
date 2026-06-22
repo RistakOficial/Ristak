@@ -345,6 +345,7 @@ const TRANSACTION_STATUS_ORDER = [
 ]
 
 const REFUNDABLE_TRANSACTION_STATUSES = ['paid']
+const VOIDABLE_HIGHLEVEL_TRANSACTION_STATUSES = new Set(['draft', 'sent', 'pending', 'overdue', 'partial'])
 
 const PAYMENT_PLAN_STATUS_ORDER = [
   'active',
@@ -363,6 +364,25 @@ const PAYMENT_PLAN_PAID_STATUSES = new Set(['paid', 'succeeded', 'completed', 'c
 const PAYMENT_PLAN_IGNORED_PAYMENT_STATUSES = new Set(['cancelled', 'canceled', 'deleted', 'void'])
 
 const DELETE_CONFIRMATION_WORD = 'ELIMINAR'
+
+const isHighLevelTransaction = (transaction: Transaction) => {
+  const provider = String(transaction.paymentProvider || '').toLowerCase()
+  const method = String(transaction.method || '').toLowerCase()
+
+  return Boolean(
+    transaction.invoiceId ||
+    provider === 'highlevel' ||
+    provider === 'gohighlevel' ||
+    provider === 'ghl' ||
+    method.startsWith('highlevel') ||
+    method.startsWith('ghl')
+  )
+}
+
+const canVoidHighLevelTransaction = (transaction: Transaction) => (
+  isHighLevelTransaction(transaction) &&
+  VOIDABLE_HIGHLEVEL_TRANSACTION_STATUSES.has(String(transaction.status || '').toLowerCase())
+)
 
 const getDayOfWeekCode = (date: Date) => {
   const codes = ['su', 'mo', 'tu', 'we', 'th', 'fr', 'sa']
@@ -1868,6 +1888,7 @@ export const Transactions: React.FC = () => {
         const isStripeTransaction = provider === 'stripe' || method.startsWith('stripe') || Boolean(item.publicPaymentId || item.paymentUrl || item.stripePaymentIntentId)
         const isMercadoPagoTransaction = provider === 'mercadopago' || method.startsWith('mercadopago')
         const isGatewayTransaction = isStripeTransaction || isMercadoPagoTransaction
+        const canVoidPayment = canVoidHighLevelTransaction(item)
         const hasPaymentLink = Boolean(item.paymentUrl || item.publicPaymentId || item.invoiceId)
 
         // Copiar enlace - disponible para draft, sent, pending, overdue
@@ -1900,13 +1921,14 @@ export const Transactions: React.FC = () => {
           actions.push('refund')
         }
 
-        // Anular - para draft, sent, pending, overdue (no para paid, void, refunded)
-        if (['draft', 'sent', 'pending', 'overdue', 'partial'].includes(item.status)) {
+        // Anular solo aplica a invoices de GoHighLevel que todavía aceptan void.
+        if (canVoidPayment) {
           actions.push('void')
         }
 
-        // Eliminar siempre disponible
-        actions.push('delete')
+        if (!canVoidPayment) {
+          actions.push('delete')
+        }
 
         // Si solo hay una acción (eliminar), mostrar botón directo
         if (actions.length === 1 && actions[0] === 'delete') {
