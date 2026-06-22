@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, FileText, Image as ImageIcon, KeyRound, Pause, Play, Plus, RotateCcw, Trash2, Video, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ChevronDown, CircleSlash, FileText, Image as ImageIcon, KeyRound, Pause, PauseCircle, Play, Plus, RotateCcw, Target, Trash2, UserCheck, Users, Video, X } from 'lucide-react'
 import { AgentRobot } from '@/components/ai'
-import { Badge, Button, Card, CustomSelect, Modal, NumberInput, TagPicker } from '@/components/common'
+import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
   PhoneChatPreviewAttachmentMenu,
@@ -407,6 +407,37 @@ function getSuccessActionInfo(
     }
   }
   return successActionLabels.send_goal_url
+}
+
+function toMetricNumber(value: unknown) {
+  const nextValue = Number(value)
+  return Number.isFinite(nextValue) ? nextValue : 0
+}
+
+function formatMetricInteger(value: unknown) {
+  return Math.max(0, Math.round(toMetricNumber(value))).toLocaleString('es-MX')
+}
+
+function formatMetricPercent(value: unknown) {
+  const percent = Math.max(0, Math.min(100, Math.round(toMetricNumber(value))))
+  return `${percent}%`
+}
+
+function getConversationalDashboardMetrics(
+  metrics: ConversationalAgentMetrics | null,
+  agents: ConversationalAgentDef[]
+) {
+  return {
+    totalAgents: agents.length,
+    activeAgents: agents.filter((agent) => agent.enabled).length,
+    agentsWithAssignedConversations: metrics?.agentsWithAssignedConversations ?? 0,
+    assignedConversations: metrics?.assignedConversations ?? 0,
+    completedConversations: metrics?.completedConversations ?? 0,
+    successRate: metrics?.successRate ?? 0,
+    errorEvents: metrics?.errorEvents ?? 0,
+    skippedConversations: metrics?.skippedConversations ?? 0,
+    pausedConversations: metrics?.pausedConversations ?? 0
+  }
 }
 
 function objectiveCanConfigurePaymentRequirement(objective: ConversationalObjective) {
@@ -3448,6 +3479,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const systemStrategy = config?.systemClosingStrategy || ''
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) || null : null
   const metricsByAgentId = new Map((metrics?.byAgent || []).map((item) => [item.agentId, item]))
+  const dashboardMetrics = getConversationalDashboardMetrics(metrics, agents)
   const providerModalOption = providerModalId ? getConversationalAIProviderOption(providerModalId) : null
   const rootClassName = [styles.container, className].filter(Boolean).join(' ')
   const directoryClassName = [styles.container, styles.conversationalDirectoryPage, className].filter(Boolean).join(' ')
@@ -3625,6 +3657,57 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             </div>
           )}
         </div>
+      </div>
+
+      <div data-conversational-agent-kpi-grid className="grid grid-cols-2 gap-[var(--app-grid-gap,1rem)] sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard
+          title="Agentes publicados"
+          value={`${formatMetricInteger(dashboardMetrics.activeAgents)}/${formatMetricInteger(dashboardMetrics.totalAgents)}`}
+          loading={loading}
+          icon={<Bot className="w-5 h-5" />}
+        />
+        <KpiCard
+          title="Agentes asignados"
+          value={formatMetricInteger(dashboardMetrics.agentsWithAssignedConversations)}
+          loading={loading}
+          icon={<UserCheck className="w-5 h-5" />}
+        />
+        <KpiCard
+          title="Chats atendiendo"
+          value={formatMetricInteger(dashboardMetrics.assignedConversations)}
+          loading={loading}
+          icon={<Users className="w-5 h-5" />}
+        />
+        <KpiCard
+          title="Metas cumplidas"
+          value={formatMetricInteger(dashboardMetrics.completedConversations)}
+          loading={loading}
+          icon={<CheckCircle2 className="w-5 h-5" />}
+        />
+        <KpiCard
+          title="Tasa de éxito"
+          value={formatMetricPercent(dashboardMetrics.successRate)}
+          loading={loading}
+          icon={<Target className="w-5 h-5" />}
+        />
+        <KpiCard
+          title="Errores detectados"
+          value={formatMetricInteger(dashboardMetrics.errorEvents)}
+          loading={loading}
+          icon={<AlertTriangle className="w-5 h-5" />}
+        />
+        <KpiCard
+          title="Omitidos"
+          value={formatMetricInteger(dashboardMetrics.skippedConversations)}
+          loading={loading}
+          icon={<CircleSlash className="w-5 h-5" />}
+        />
+        <KpiCard
+          title="Pausados"
+          value={formatMetricInteger(dashboardMetrics.pausedConversations)}
+          loading={loading}
+          icon={<PauseCircle className="w-5 h-5" />}
+        />
       </div>
 
       {loading && (
