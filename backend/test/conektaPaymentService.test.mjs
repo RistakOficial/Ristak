@@ -56,6 +56,15 @@ function jsonResponse(payload, status = 200) {
   }
 }
 
+function todayConektaDateOnly() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date())
+}
+
 test('Conekta manual: guarda llaves por modo cifradas y conserva privadas enmascaradas', async () => {
   await initializeMasterKey()
 
@@ -275,7 +284,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     const contact = await db.get('SELECT conekta_customer_id FROM contacts WHERE id = ?', [contactId])
     assert.equal(contact.conekta_customer_id, 'cus_test_123')
 
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayConektaDateOnly()
     const planResult = await createConektaPaymentPlan({
       contact: {
         id: contactId,
