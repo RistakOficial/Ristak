@@ -115,22 +115,45 @@ jobs:
           CREDS="$RUNNER_TEMP/mobile-ios-credentials.json"
           IOS_CERTIFICATE_BASE64="$(jq -r '.credentials.ios_distribution_certificate_base64' "$CREDS")"
           IOS_CERTIFICATE_PASSWORD="$(jq -r '.credentials.ios_distribution_certificate_password' "$CREDS")"
-          IOS_PROFILE_BASE64="$(jq -r '.credentials.ios_appstore_provisioning_profile_base64' "$CREDS")"
           KEYCHAIN_PASSWORD="$(jq -r '.credentials.ios_ci_keychain_password // empty' "$CREDS")"
           test -n "$IOS_CERTIFICATE_BASE64"
           test -n "$IOS_CERTIFICATE_PASSWORD"
-          test -n "$IOS_PROFILE_BASE64"
           KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-temporary-ci-keychain}"
 
           CERT_PATH="$RUNNER_TEMP/ios_distribution.p12"
-          PROFILE_PATH="$RUNNER_TEMP/ristak_appstore.mobileprovision"
+          PROFILE_DIR="$RUNNER_TEMP/profiles"
+          PROFILE_PATH="$PROFILE_DIR/RistakAppStoreCI.mobileprovision"
           PROFILE_PLIST="$RUNNER_TEMP/ristak_appstore.plist"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
 
           echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
-          echo "$IOS_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
-          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
 
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -Eq '"(Apple|iOS) Distribution:'; then
+            echo "No Apple Distribution signing identity with private key was imported from the .p12 certificate."
+            exit 1
+          fi
+
+          gem install fastlane --no-document
+          mkdir -p "$PROFILE_DIR"
+          fastlane sigh \
+            --api_key_path "$RUNNER_TEMP/appstore/api_key.json" \
+            --app_identifier "$APP_BUNDLE_ID" \
+            --team_id "$APPLE_TEAM_ID" \
+            --platform ios \
+            --provisioning_name "Ristak App Store CI" \
+            --output_path "$PROFILE_DIR" \
+            --filename "RistakAppStoreCI.mobileprovision" \
+            --skip_certificate_verification true \
+            --force
+
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
           IOS_PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")"
           IOS_PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print Name' "$PROFILE_PLIST")"
           IOS_PROFILE_TEAM_ID="$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$PROFILE_PLIST")"
@@ -149,18 +172,6 @@ jobs:
           fi
           if [ "$IOS_PROFILE_GET_TASK_ALLOW" = "true" ]; then
             echo "Provisioning profile is a development profile; App Store builds require a distribution profile."
-            exit 1
-          fi
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -Eq '"(Apple|iOS) Distribution:'; then
-            echo "No Apple Distribution signing identity with private key was imported from the .p12 certificate."
             exit 1
           fi
 
@@ -196,7 +207,6 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            CODE_SIGN_STYLE=Automatic \
             OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
             archive
 
@@ -234,7 +244,6 @@ jobs:
         env:
           SUBMIT_FOR_REVIEW: ${{ github.event.inputs.submit_for_review }}
         run: |
-          gem install fastlane --no-document
           IPA_PATH="frontend/ios/build/AppStore-CI/App.ipa"
           if [ "$SUBMIT_FOR_REVIEW" = "true" ]; then
             fastlane deliver \
