@@ -1218,6 +1218,7 @@ const ADVANCED_CLOSING_CONTEXT_LABELS = {
   whyNow: 'Por que ahora',
   surfaceProblem: 'Problema superficial',
   realProblem: 'Problema real',
+  problemMagnitudeAwareness: 'Conciencia de magnitud del problema',
   attemptedBefore: 'Que intento antes',
   impact: 'Como le afecta',
   consequenceIfNoAction: 'Consecuencia si no hace nada',
@@ -1408,6 +1409,9 @@ export function buildClosingStrategyTemplateParameters({
     POR_QUE_AHORA: firstClosingText(learnedContext.whyNow, 'pendiente de descubrir con una pregunta natural'),
     PROBLEMA_SUPERFICIAL: firstClosingText(learnedContext.surfaceProblem, 'lo primero que la persona menciono'),
     PROBLEMA_REAL: firstClosingText(learnedContext.realProblem, learnedContext.surfaceProblem, 'el problema real que se confirme en la conversación'),
+    CONCIENCIA_DEL_PROBLEMA: firstClosingText(learnedContext.problemMagnitudeAwareness, 'pendiente de descubrir si la persona dimensiona la magnitud de su problema'),
+    MAGNITUD_DEL_PROBLEMA: firstClosingText(learnedContext.problemMagnitudeAwareness, 'pendiente de descubrir la magnitud que la persona ya reconoce'),
+    RIESGO_DE_POSTERGAR: firstClosingText(learnedContext.problemMagnitudeAwareness, learnedContext.consequenceIfNoAction, 'pendiente de descubrir si entiende el riesgo de dejarlo para despues'),
     CONSECUENCIA: firstClosingText(learnedContext.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
     CONSECUENCIA_LOGICA: firstClosingText(learnedContext.consequenceIfNoAction, 'la consecuencia logica segun lo que la persona ya dijo'),
     RESULTADO_DESEADO: firstClosingText(learnedContext.desiredOutcome, 'el resultado que la persona diga que busca'),
@@ -1484,7 +1488,7 @@ export function buildAdvancedClosingContextSection(context = {}) {
     systemLines.length ? ['Datos que el sistema ya sabe:', ...systemLines].join('\n') : '',
     learnedLines.length ? ['Puntos aprendidos de esta conversación:', ...learnedLines].join('\n') : 'Puntos aprendidos de esta conversación: aun no hay suficientes datos.',
     missingLines.length ? ['Si la conversación lo permite, descubre de forma natural:', ...missingLines].join('\n') : '',
-    'Cuando el contacto revele alguno de estos puntos, ejecuta update_closing_context en silencio. Hazlo solo con información dicha por la persona o datos reales del sistema; nunca inventes consecuencias, urgencia ni objeciones.',
+    'Cuando el contacto revele alguno de estos puntos, ejecuta update_closing_context en silencio. Hazlo solo con información dicha por la persona o datos reales del sistema; nunca inventes conciencia del problema, consecuencias, urgencia ni objeciones.',
     'Usa estos puntos para decidir la siguiente pregunta, mostrar contraste y activar la herramienta interna de avance cuando ya exista intencion real.'
   ].filter(Boolean).join('\n')
 }
@@ -1859,7 +1863,7 @@ ${config.requiredData}`)
 - No pidas datos innecesarios ni repitas preguntas ya respondidas en el historial.
 - Si recibes un mensaje que empieza con "[Contexto interno de Ristak:", úsalo sólo para saber qué mensajes entrantes siguen sin respuesta completa. No lo menciones, no lo cites y no expliques que existe.
 - Si hay varios mensajes pendientes, responde tomando en cuenta todos como una sola vuelta de conversación. Prioriza la información más nueva si corrige o cambia lo anterior.
-- Si la estrategia de fabrica esta activa y el contacto revela origen, motivo, urgencia, problema real, impacto, objecion, consecuencia logica o resultado deseado, actualiza la memoria con update_closing_context sin decirlo.
+- Si la estrategia de fabrica esta activa y el contacto revela origen, motivo, urgencia, problema real, conciencia de magnitud del problema, impacto, objecion, consecuencia logica o resultado deseado, actualiza la memoria con update_closing_context sin decirlo.
 - Si el último mensaje no necesita respuesta (confirmación, sticker, "ok" de cierre), puedes responder mínimo${followUpContext ? '.' : ' o ejecutar stay_silent para no responder.'}`)
 
   if (config.extraInstructions) {

@@ -377,13 +377,14 @@ export function createConversationalTools(ctx) {
 
   const updateClosingContextTool = tool({
     name: 'update_closing_context',
-    description: 'Memoria interna de la estrategia de cierre avanzada de fabrica. Usala en silencio cuando el contacto revele origen, motivo, por que ahora, problema real, impacto, consecuencia logica, resultado deseado, urgencia, objecion o senal de decision. No guarda campos personalizados del contacto.',
+    description: 'Memoria interna de la estrategia de cierre avanzada de fabrica. Usala en silencio cuando el contacto revele origen, motivo, por que ahora, problema real, conciencia de magnitud del problema, impacto, consecuencia logica, resultado deseado, urgencia, objecion o senal de decision. No guarda campos personalizados del contacto.',
     parameters: z.object({
       arrivalSource: z.string().nullable().optional().describe('De donde llego si lo dijo o si el sistema lo detecto'),
       contactReason: z.string().nullable().optional().describe('Que lo hizo escribir o pedir información'),
       whyNow: z.string().nullable().optional().describe('Que cambio ahora o cual fue el detonante'),
       surfaceProblem: z.string().nullable().optional().describe('Problema inicial expresado de forma simple'),
       realProblem: z.string().nullable().optional().describe('Problema de fondo, solo si esta sustentado por la conversación'),
+      problemMagnitudeAwareness: z.string().nullable().optional().describe('Que tanto la persona ya dimensiona la magnitud, gravedad o riesgo de postergar su problema; registra si lo minimiza, duda o ya entiende la consecuencia de no resolverlo ahora'),
       attemptedBefore: z.string().nullable().optional().describe('Que intento antes o que no le funciono'),
       impact: z.string().nullable().optional().describe('Como le afecta en su dia, negocio, dinero, tiempo o proceso'),
       consequenceIfNoAction: z.string().nullable().optional().describe('Consecuencia logica de quedarse igual, sin inventar miedo'),

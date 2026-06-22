@@ -106,6 +106,7 @@ export const ADVANCED_CLOSING_CONTEXT_FIELDS = [
   { key: 'whyNow', label: 'Por que ahora' },
   { key: 'surfaceProblem', label: 'Problema superficial' },
   { key: 'realProblem', label: 'Problema real' },
+  { key: 'problemMagnitudeAwareness', label: 'Conciencia de magnitud del problema' },
   { key: 'attemptedBefore', label: 'Que intento antes' },
   { key: 'impact', label: 'Como le afecta' },
   { key: 'consequenceIfNoAction', label: 'Consecuencia si no hace nada' },

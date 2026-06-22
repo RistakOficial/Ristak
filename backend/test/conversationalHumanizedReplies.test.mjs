@@ -630,6 +630,7 @@ test('resumen de meta concretada lo genera un resumidor interno con el historial
         contactReason: 'Dolor en rodilla derecha al subir escaleras y caminar',
         whyNow: 'Lleva tres semanas sin mejorar y ya no quiere dejarlo pasar',
         realProblem: 'Teme una lesion de menisco por correr y jugar futbol',
+        problemMagnitudeAwareness: 'Ya entiende que seguir entrenando con dolor puede empeorar la lesion',
         attemptedBefore: 'Rodillera, hielo e ibuprofeno con alivio minimo',
         impact: 'Trabaja de pie y no puede entrenar con confianza',
         objection: 'Pensaba que se iba a quitar solo y le preocupaba el gasto',
@@ -1828,16 +1829,37 @@ test('demo convierte miniatura de video a analisis textual para proveedores sin 
 
 test('rellena parametros de la estrategia de cierre de fabrica', () => {
   const rendered = renderClosingStrategyTemplate(
-    'Agente de [NOMBRE_DEL_NEGOCIO] por [CANAL_DE_CONVERSACION]; problema: [PROBLEMA_REAL]; avance: [HERRAMIENTA_INTERNA_DE_AVANCE]',
-    {
-      NOMBRE_DEL_NEGOCIO: 'Clínica Norte',
-      CANAL_DE_CONVERSACION: 'WhatsApp',
-      PROBLEMA_REAL: 'dolor que ya afecta su rutina',
-      HERRAMIENTA_INTERNA_DE_AVANCE: 'mark_ready_to_advance'
-    }
+    'Agente de [NOMBRE_DEL_NEGOCIO] por [CANAL_DE_CONVERSACION]; problema: [PROBLEMA_REAL]; conciencia: [CONCIENCIA_DEL_PROBLEMA]; avance: [HERRAMIENTA_INTERNA_DE_AVANCE]',
+    buildClosingStrategyTemplateParameters({
+      learned: {
+        realProblem: 'dolor que ya afecta su rutina',
+        problemMagnitudeAwareness: 'ya entiende que postergarlo puede limitarle más la movilidad'
+      },
+      profileParameters: {
+        NOMBRE_DEL_NEGOCIO: 'Clínica Norte'
+      },
+      channelLabel: 'WhatsApp',
+      advanceToolName: 'mark_ready_to_advance'
+    })
   )
 
-  assert.equal(rendered, 'Agente de Clínica Norte por WhatsApp; problema: dolor que ya afecta su rutina; avance: mark_ready_to_advance')
+  assert.equal(rendered, 'Agente de Clínica Norte por WhatsApp; problema: dolor que ya afecta su rutina; conciencia: ya entiende que postergarlo puede limitarle más la movilidad; avance: mark_ready_to_advance')
+
+  const renderedFallback = renderClosingStrategyTemplate(
+    'Agente de [NOMBRE_DEL_NEGOCIO] por [CANAL_DE_CONVERSACION]; problema: [PROBLEMA_REAL]; avance: [HERRAMIENTA_INTERNA_DE_AVANCE]',
+    buildClosingStrategyTemplateParameters({
+      profileParameters: {
+        NOMBRE_DEL_NEGOCIO: 'Clínica Norte'
+      },
+      channelLabel: 'WhatsApp',
+      learned: {
+        realProblem: 'dolor que ya afecta su rutina'
+      },
+      advanceToolName: 'mark_ready_to_advance'
+    })
+  )
+
+  assert.equal(renderedFallback, 'Agente de Clínica Norte por WhatsApp; problema: dolor que ya afecta su rutina; avance: mark_ready_to_advance')
 })
 
 test('convierte el perfil estructurado del negocio en parametros del prompt', () => {
@@ -2155,6 +2177,7 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
     learned: {
       contactReason: 'pierde leads por responder tarde',
       realProblem: 'sus conversaciones se enfrían antes de que el equipo conteste',
+      problemMagnitudeAwareness: 'ya entiende que cada hora de espera enfria la intencion de compra',
       desiredOutcome: 'responder más rápido sin contratar otra persona'
     },
     missingFields: ['whyNow', 'consequenceIfNoAction']
@@ -2177,6 +2200,7 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   assert.match(instructions, /Parámetros internos de cierre avanzado/)
   assert.match(instructions, /Puntos aprendidos de esta conversación/)
   assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
+  assert.match(instructions, /Conciencia de magnitud del problema: ya entiende que cada hora/)
   assert.match(instructions, /update_closing_context/)
   assert.match(instructions, /Parámetros del negocio para el guión de fábrica/)
   assert.match(instructions, /El guión de fábrica manda completo/)
@@ -2222,15 +2246,17 @@ test('memoria de cierre avanzado solo acepta parametros del contrato', () => {
     { contactReason: 'quiere saber precios' },
     {
       whyNow: 'tiene una fecha encima',
+      problemMagnitudeAwareness: 'todavia cree que puede esperar aunque perderia la fecha',
       urgencyLevel: 'alta',
       campoInventado: 'no debe guardarse'
     },
     { updatedBy: 'agent', nowIso: '2026-06-13T10:00:00.000Z' }
   )
 
-  assert.deepEqual(result.changedKeys.sort(), ['urgencyLevel', 'whyNow'])
+  assert.deepEqual(result.changedKeys.sort(), ['problemMagnitudeAwareness', 'urgencyLevel', 'whyNow'])
   assert.equal(result.context.contactReason, 'quiere saber precios')
   assert.equal(result.context.whyNow, 'tiene una fecha encima')
+  assert.equal(result.context.problemMagnitudeAwareness, 'todavia cree que puede esperar aunque perderia la fecha')
   assert.equal(result.context.urgencyLevel, 'alta')
   assert.equal(result.context.campoInventado, undefined)
   assert.equal(result.context.updatedBy, 'agent')
