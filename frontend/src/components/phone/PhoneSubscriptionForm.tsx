@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { CalendarDays, Copy, ExternalLink, Repeat2 } from 'lucide-react'
+import { ChevronRight, Copy, ExternalLink, Loader2, Repeat2, Search, User, X } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import type { PaymentGatewayProvider } from '@/hooks'
 import { contactsService } from '@/services/contactsService'
@@ -9,6 +9,7 @@ import {
   type SubscriptionInterval
 } from '@/services/subscriptionsService'
 import type { Contact } from '@/types'
+import { PhonePaymentFormShell } from './PhonePaymentFormShell'
 import {
   PhoneButton,
   PhoneDateField,
@@ -76,6 +77,32 @@ function normalizeAmount(value: string) {
   return Number.isFinite(amount) ? amount : 0
 }
 
+function formatCurrency(value: number, currency = 'MXN') {
+  return new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 2
+  }).format(value || 0)
+}
+
+function getIntervalSummary(intervalType: SubscriptionInterval, intervalCountValue: string) {
+  const count = Math.max(1, Number(intervalCountValue) || 1)
+  const singular: Record<SubscriptionInterval, string> = {
+    daily: 'día',
+    weekly: 'semana',
+    monthly: 'mes',
+    yearly: 'año'
+  }
+  const plural: Record<SubscriptionInterval, string> = {
+    daily: 'días',
+    weekly: 'semanas',
+    monthly: 'meses',
+    yearly: 'años'
+  }
+
+  return count === 1 ? `Cada ${singular[intervalType]}` : `Cada ${count} ${plural[intervalType]}`
+}
+
 function getMercadoPagoAuthorizationLink(subscription: PaymentSubscription) {
   if (subscription.paymentMode === 'test') {
     return subscription.mercadoPagoSandboxInitPoint || subscription.mercadoPagoInitPoint || ''
@@ -108,6 +135,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     }))
   ), [providers])
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
+  const [contactPickerOpen, setContactPickerOpen] = useState(false)
   const [contactQuery, setContactQuery] = useState('')
   const [contactResults, setContactResults] = useState<Contact[]>([])
   const [contactSearching, setContactSearching] = useState(false)
@@ -125,6 +153,13 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   const resolvedContactPhone = resolvedContact?.phone || ''
   const providerNeedsStoredContact = provider === 'stripe' || provider === 'conekta'
   const amount = normalizeAmount(draft.amount)
+  const providerLabel = PROVIDER_LABELS[provider] || 'Pasarela'
+  const intervalSummary = getIntervalSummary(draft.intervalType, draft.intervalCount)
+  const formSummary = {
+    label: 'Cobro recurrente',
+    detail: `${providerLabel} · ${intervalSummary}`,
+    amount: formatCurrency(amount, currency)
+  }
 
   useEffect(() => {
     if (providers.length > 0 && !providers.includes(provider)) {
@@ -139,7 +174,22 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   }, [draft.intervalType, provider])
 
   useEffect(() => {
-    if (lockInitialContact || selectedContact) {
+    if (!contactPickerOpen || typeof document === 'undefined') return
+
+    const previousValue = document.body.getAttribute('data-payment-contact-picker')
+    document.body.setAttribute('data-payment-contact-picker', 'open')
+
+    return () => {
+      if (previousValue) {
+        document.body.setAttribute('data-payment-contact-picker', previousValue)
+      } else {
+        document.body.removeAttribute('data-payment-contact-picker')
+      }
+    }
+  }, [contactPickerOpen])
+
+  useEffect(() => {
+    if (!contactPickerOpen || lockInitialContact || selectedContact) {
       setContactResults([])
       setContactSearching(false)
       return
@@ -167,10 +217,23 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [contactQuery, lockInitialContact, selectedContact])
+  }, [contactPickerOpen, contactQuery, lockInitialContact, selectedContact])
 
   const updateDraft = <Key extends keyof SubscriptionDraft>(key: Key, value: SubscriptionDraft[Key]) => {
     setDraft((current) => ({ ...current, [key]: value }))
+  }
+
+  const selectContact = (contact: Contact) => {
+    setSelectedContact(contact)
+    setContactQuery('')
+    setContactResults([])
+    setContactPickerOpen(false)
+  }
+
+  const clearSelectedContact = () => {
+    setSelectedContact(null)
+    setContactQuery('')
+    setContactResults([])
   }
 
   const handleCopyAuthorizationLink = async () => {
@@ -181,6 +244,10 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     } catch {
       showToast('error', 'No se pudo copiar', 'Copia el enlace manualmente.')
     }
+  }
+
+  const finishSavedSubscription = () => {
+    if (savedSubscription) onSaved?.(savedSubscription)
   }
 
   const handleSubmit = async () => {
@@ -251,107 +318,193 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     }
   }
 
+  const renderContactPicker = () => {
+    if (lockInitialContact) {
+      return (
+        <div className={styles.fieldGroup}>
+          <span className={styles.fieldLabel}>Cliente</span>
+          <div className={`${styles.contactPickerTrigger} ${styles.lockedContact}`}>
+            <span className={styles.contactPickerIcon}>
+              <User size={22} aria-hidden="true" />
+            </span>
+            <span className={styles.contactPickerCopy}>
+              <strong>{resolvedContactName}</strong>
+              <small>{getContactDetail(resolvedContact)}</small>
+            </span>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.fieldGroup}>
+        <span className={styles.fieldLabel}>Cliente</span>
+        <div className={styles.contactPickerControl}>
+          <button
+            type="button"
+            className={styles.contactPickerTrigger}
+            onClick={() => setContactPickerOpen(true)}
+          >
+            <span className={styles.contactPickerIcon}>
+              {selectedContact ? <User size={22} aria-hidden="true" /> : <Search size={22} aria-hidden="true" />}
+            </span>
+            <span className={styles.contactPickerCopy}>
+              <strong>{selectedContact ? getContactName(selectedContact) : 'Seleccionar contacto'}</strong>
+              <small>{selectedContact ? getContactDetail(selectedContact) : 'Busca por nombre, teléfono o correo'}</small>
+            </span>
+            <ChevronRight size={20} className={styles.contactPickerChevron} aria-hidden="true" />
+          </button>
+          {selectedContact && (
+            <button
+              type="button"
+              className={styles.contactPickerClear}
+              onClick={clearSelectedContact}
+              aria-label="Quitar contacto seleccionado"
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+        {providerNeedsStoredContact && !resolvedContactId && (
+          <small className={styles.hint}>{PROVIDER_LABELS[provider]} necesita un contacto guardado.</small>
+        )}
+      </div>
+    )
+  }
+
+  const renderContactSheet = () => {
+    if (!contactPickerOpen || lockInitialContact) return null
+
+    return (
+      <div
+        className={styles.sheetOverlay}
+        role="presentation"
+        onClick={() => setContactPickerOpen(false)}
+      >
+        <section
+          className={styles.sheet}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Seleccionar contacto"
+          data-phone-payments-sheet="true"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <header className={styles.sheetHeader}>
+            <div>
+              <span>Cliente</span>
+              <strong>Seleccionar contacto</strong>
+            </div>
+            <button
+              type="button"
+              onClick={() => setContactPickerOpen(false)}
+              aria-label="Cerrar selector de contacto"
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
+          </header>
+
+          <PhoneTextField
+            type="search"
+            value={contactQuery}
+            onChange={setContactQuery}
+            placeholder="Buscar contacto guardado..."
+            leading={<Search size={18} aria-hidden="true" />}
+            autoFocus
+            className={styles.sheetSearch}
+            ariaLabel="Buscar contacto guardado"
+          />
+
+          <div
+            className={styles.contactResults}
+            role="listbox"
+            aria-label="Resultados de contacto"
+            data-phone-scrollable="true"
+          >
+            {contactSearching ? (
+              <span className={styles.resultsState}>
+                <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
+                Buscando...
+              </span>
+            ) : contactResults.length > 0 ? (
+              contactResults.map((contact) => (
+                <button
+                  key={contact.id}
+                  type="button"
+                  role="option"
+                  onClick={() => selectContact(contact)}
+                >
+                  <span className={styles.resultIcon}>
+                    <User size={18} aria-hidden="true" />
+                  </span>
+                  <span>
+                    <strong>{getContactName(contact)}</strong>
+                    <small>{getContactDetail(contact)}</small>
+                  </span>
+                </button>
+              ))
+            ) : contactQuery.trim().length >= 2 ? (
+              <span className={styles.resultsState}>No encontramos contactos guardados con esa búsqueda.</span>
+            ) : (
+              <span className={styles.resultsState}>Busca por nombre, email o teléfono.</span>
+            )}
+          </div>
+        </section>
+      </div>
+    )
+  }
+
   if (authorizationLink && savedSubscription) {
     return (
-      <section className={styles.successPanel} aria-label="Autorización de suscripción lista">
-        <span className={styles.successIcon}>
-          <Repeat2 size={22} />
-        </span>
+      <PhonePaymentFormShell
+        title="Suscripción lista"
+        subtitle="Envíale el link al cliente para que active los cobros recurrentes."
+        icon={<Repeat2 size={22} aria-hidden="true" />}
+        ariaLabel="Autorización de suscripción lista"
+        onBack={finishSavedSubscription}
+        summary={formSummary}
+        footer={(
+          <PhoneButton size="lg" fullWidth onClick={finishSavedSubscription}>
+            Listo
+          </PhoneButton>
+        )}
+      >
         <div className={styles.successCopy}>
-          <strong>Suscripción lista para autorizar</strong>
-          <span>Envíale este link al cliente para que active los cobros recurrentes.</span>
+          <strong>Autorización pendiente</strong>
+          <span>Cuando el cliente complete el enlace, la suscripción quedará activa para sus cobros recurrentes.</span>
         </div>
         <div className={styles.authorizationLink}>{authorizationLink}</div>
-        <div className={styles.actions}>
-          <PhoneButton variant="secondary" icon={<Copy size={17} />} onClick={handleCopyAuthorizationLink}>
+        <div className={styles.linkActions}>
+          <PhoneButton variant="secondary" icon={<Copy size={17} />} onClick={handleCopyAuthorizationLink} fullWidth>
             Copiar link
           </PhoneButton>
           <PhoneButton
             variant="secondary"
             icon={<ExternalLink size={17} />}
             onClick={() => window.open(authorizationLink, '_blank', 'noopener,noreferrer')}
+            fullWidth
           >
             Abrir
           </PhoneButton>
         </div>
-        <PhoneButton fullWidth onClick={() => onSaved?.(savedSubscription)}>
-          Listo
-        </PhoneButton>
-      </section>
+      </PhonePaymentFormShell>
     )
   }
 
   return (
-    <section className={styles.form} aria-label="Crear suscripción">
-      <div className={styles.intro}>
-        <span className={styles.introIcon}>
-          <Repeat2 size={22} />
-        </span>
-        <div>
-          <strong>Nueva suscripción</strong>
-          <span>Configura el cobro recurrente desde el celular.</span>
-        </div>
-      </div>
-
-      {lockInitialContact ? (
-        <div className={styles.lockedContact}>
-          <span>Contacto</span>
-          <strong>{resolvedContactName}</strong>
-          <small>{getContactDetail(resolvedContact)}</small>
-        </div>
-      ) : (
-        <div className={styles.contactPicker}>
-          {selectedContact ? (
-            <div className={styles.selectedContact}>
-              <span>Contacto</span>
-              <strong>{getContactName(selectedContact)}</strong>
-              <small>{getContactDetail(selectedContact)}</small>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedContact(null)
-                  setContactQuery('')
-                }}
-              >
-                Cambiar
-              </button>
-            </div>
-          ) : (
-            <>
-              <PhoneTextField
-                label="Contacto"
-                value={contactQuery}
-                onChange={setContactQuery}
-                placeholder="Buscar contacto guardado..."
-                hint={providerNeedsStoredContact ? `${PROVIDER_LABELS[provider]} necesita un contacto guardado.` : 'Busca por nombre, email o teléfono.'}
-              />
-              {(contactSearching || contactResults.length > 0 || contactQuery.trim().length >= 2) && (
-                <div className={styles.contactResults} role="listbox" aria-label="Resultados de contacto">
-                  {contactSearching ? (
-                    <span>Buscando...</span>
-                  ) : contactResults.length > 0 ? (
-                    contactResults.map((contact) => (
-                      <button
-                        key={contact.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedContact(contact)
-                          setContactResults([])
-                        }}
-                      >
-                        <strong>{getContactName(contact)}</strong>
-                        <small>{getContactDetail(contact)}</small>
-                      </button>
-                    ))
-                  ) : (
-                    <span>No encontramos contactos guardados con esa búsqueda.</span>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
+    <PhonePaymentFormShell
+      title="Nueva suscripción"
+      subtitle="Configura el cobro recurrente desde el celular."
+      icon={<Repeat2 size={22} aria-hidden="true" />}
+      ariaLabel="Crear suscripción"
+      onBack={onCancel}
+      summary={formSummary}
+      footer={(
+        <PhoneButton size="lg" loading={saving} onClick={handleSubmit} fullWidth>
+          Crear suscripción
+        </PhoneButton>
       )}
+    >
+      {renderContactPicker()}
 
       <label className={styles.selectField}>
         <span>Pasarela</span>
@@ -362,6 +515,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
           title="Pasarela de suscripción"
           placeholder="Selecciona pasarela"
           disabled={providerOptions.length <= 1}
+          buttonClassName={styles.controlButton}
         />
       </label>
 
@@ -370,13 +524,17 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
         value={draft.name}
         onChange={(value) => updateDraft('name', value)}
         placeholder="Ej. Membresía mensual"
+        className={styles.textField}
       />
+
       <PhoneTextField
         label={`Monto (${currency})`}
         value={draft.amount}
         onChange={(value) => updateDraft('amount', value)}
         type="number"
         placeholder="0.00"
+        leading={<span aria-hidden="true">$</span>}
+        className={styles.textField}
       />
 
       <div className={styles.formGrid}>
@@ -390,6 +548,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
               disabled: provider === 'conekta' && option.value === 'daily'
             }))}
             title="Frecuencia"
+            buttonClassName={styles.controlButton}
           />
         </label>
         <PhoneTextField
@@ -398,6 +557,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
           onChange={(value) => updateDraft('intervalCount', value)}
           type="number"
           placeholder="1"
+          className={styles.textField}
         />
       </div>
 
@@ -409,6 +569,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
           min={getTodayInputValue()}
           title="Fecha de inicio"
           ariaLabel="Fecha de inicio de la suscripción"
+          buttonClassName={styles.controlButton}
         />
       </label>
 
@@ -418,18 +579,10 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
         onChange={(value) => updateDraft('description', value)}
         placeholder="Notas internas de esta suscripción."
         rows={3}
+        className={`${styles.textField} ${styles.textArea}`}
       />
 
-      <div className={styles.actions}>
-        {onCancel && (
-          <PhoneButton variant="secondary" onClick={onCancel}>
-            Atrás
-          </PhoneButton>
-        )}
-        <PhoneButton loading={saving} onClick={handleSubmit} fullWidth={!onCancel}>
-          Crear suscripción
-        </PhoneButton>
-      </div>
-    </section>
+      {renderContactSheet()}
+    </PhonePaymentFormShell>
   )
 }

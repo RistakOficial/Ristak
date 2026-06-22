@@ -20,6 +20,7 @@ const COARSE_POINTER_QUERY = '(pointer: coarse)'
 const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|Opera Mini|Mobile|Tablet/i
 const SCROLLABLE_PHONE_SELECTOR = '[data-phone-scrollable="true"], [data-phone-chat-scrollable="true"]'
 const ACTIVE_PAYMENTS_SCROLL_SELECTOR = '[data-phone-payments-scroll-root="true"]'
+const PAYMENTS_SHEET_SELECTOR = '[data-phone-payments-sheet="true"]'
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
 type PaymentView = 'select' | 'single' | 'partial' | 'subscription' | 'products'
@@ -404,15 +405,29 @@ export const PhonePayments: React.FC = () => {
     body.style.overscrollBehavior = 'none'
     body.style.background = phoneFrameBackground
 
-    const getScrollableElement = (target: EventTarget | null) => {
+    const isScrollableElement = (element: HTMLElement) => {
+      const styles = window.getComputedStyle(element)
+      const canOverflow = styles.overflowY === 'auto' || styles.overflowY === 'scroll' || styles.overflowY === 'overlay'
+      return canOverflow && element.scrollHeight > element.clientHeight + 1
+    }
+
+    const getScrollableElement = (target: EventTarget | null): HTMLElement | null => {
       if (!(target instanceof Element)) return null
-      const scrollable = target.closest(SCROLLABLE_PHONE_SELECTOR)
-      return scrollable instanceof HTMLElement ? scrollable : null
+
+      let current: Element | null = target
+      while (current) {
+        const scrollable: Element | null = current.closest(SCROLLABLE_PHONE_SELECTOR)
+        if (!scrollable) return null
+        if (scrollable instanceof HTMLElement && isScrollableElement(scrollable)) return scrollable
+        current = scrollable.parentElement
+      }
+
+      return null
     }
 
     const getActivePaymentsScrollRoot = () => {
       const scrollRoot = document.querySelector(ACTIVE_PAYMENTS_SCROLL_SELECTOR)
-      return scrollRoot instanceof HTMLElement ? scrollRoot : null
+      return scrollRoot instanceof HTMLElement && isScrollableElement(scrollRoot) ? scrollRoot : null
     }
 
     const handleTouchStart = (event: TouchEvent) => {
@@ -425,7 +440,8 @@ export const PhonePayments: React.FC = () => {
 
     const handleTouchMove = (event: TouchEvent) => {
       const targetScrollable = getScrollableElement(event.target)
-      const fallbackScrollable = targetScrollable ? null : getActivePaymentsScrollRoot()
+      const insidePaymentsSheet = event.target instanceof Element && Boolean(event.target.closest(PAYMENTS_SHEET_SELECTOR))
+      const fallbackScrollable = targetScrollable || insidePaymentsSheet ? null : getActivePaymentsScrollRoot()
       const scrollable = targetScrollable || fallbackScrollable
 
       if (!scrollable) {
@@ -437,20 +453,12 @@ export const PhonePayments: React.FC = () => {
       const currentY = event.touches[0]?.clientY || startY
       const deltaX = currentX - startX
       const deltaY = currentY - startY
-      const canScroll = scrollable.scrollHeight > scrollable.clientHeight + 1
-      const atTop = scrollable.scrollTop <= 0
-      const atBottom = scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1
 
       if (fallbackScrollable && Math.abs(deltaX) > Math.abs(deltaY)) return
 
-      if (fallbackScrollable && canScroll) {
+      if (fallbackScrollable) {
         event.preventDefault()
         scrollable.scrollTop = startScrollTop - deltaY
-        return
-      }
-
-      if (!canScroll || (atTop && deltaY > 0) || (atBottom && deltaY < 0)) {
-        event.preventDefault()
       }
     }
 
@@ -768,7 +776,7 @@ export const PhonePayments: React.FC = () => {
         )}
 
         {isPaymentForm ? (
-          <div className={styles.formHost} data-phone-scrollable="true">
+          <div className={styles.formHost}>
             <RecordPaymentModal
               key={formMode}
               variant="embedded"
@@ -782,7 +790,7 @@ export const PhonePayments: React.FC = () => {
             />
           </div>
         ) : view === 'subscription' ? (
-          <div className={styles.formHost} data-phone-scrollable="true">
+          <div className={styles.formHost}>
             <PhoneSubscriptionForm
               providers={paymentCapabilities.subscriptionProviders}
               currency={accountCurrency}

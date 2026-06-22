@@ -1,0 +1,185 @@
+.root {
+  --phone-payment-form-bg: var(--phone-chat-surface, var(--bg));
+  --phone-payment-form-panel: var(--phone-chat-panel, var(--surface));
+  --phone-payment-form-soft: var(--phone-chat-surface-soft, var(--surface));
+  --phone-payment-form-text: var(--phone-chat-text, var(--text));
+  --phone-payment-form-muted: var(--phone-chat-muted, var(--text-mute));
+  --phone-payment-form-border: var(--phone-chat-border, var(--border));
+  --phone-payment-form-accent: var(--phone-chat-accent, var(--accent));
+  --phone-payment-form-on-accent: var(--phone-chat-text-on-primary, var(--on-accent));
+  --phone-payment-form-control-border: color-mix(in srgb, var(--phone-payment-form-text) 14%, var(--phone-payment-form-border) 86%);
+  --phone-payment-form-tablist-bg: color-mix(in srgb, var(--phone-payment-form-text) 9%, var(--phone-payment-form-bg) 91%);
+  --phone-payment-form-tablist-border: color-mix(in srgb, var(--phone-payment-form-text) 24%, var(--phone-payment-form-border) 76%);
+  --phone-payment-form-tab-active-bg: color-mix(in srgb, var(--phone-payment-form-text) 18%, var(--phone-payment-form-bg) 82%);
+  --phone-payment-form-top-padding: calc(env(safe-area-inset-top, 0px) + 72px);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--phone-payment-form-text);
+  background: var(--phone-payment-form-bg);
+}
+
+.rootNoBack {
+  --phone-payment-form-top-padding: 8px;
+}
+
+.backButton {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  left: max(14px, env(safe-area-inset-left, 0px));
+  z-index: 18;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 13px 0 10px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-payment-form-text);
+  background: var(--phone-payment-form-soft);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.backButton:active {
+  transform: scale(0.98);
+}
+
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overscroll-behavior-x: none;
+  scroll-padding-bottom: calc(136px + env(safe-area-inset-bottom, 0px));
+  scrollbar-width: none;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll > * {
+  max-width: 100%;
+}
+
+.content {
+  display: grid;
+  gap: 18px;
+  box-sizing: border-box;
+  width: min(100%, 430px);
+  margin: 0 auto;
+  padding: var(--phone-payment-form-top-padding) clamp(18px, 5vw, 24px) 18px;
+  background: var(--phone-payment-form-bg);
+}
+
+.header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 18px;
+  color: var(--phone-payment-form-on-accent);
+  background: var(--phone-payment-form-accent);
+}
+
+.header h1 {
+  margin: 0;
+  color: var(--phone-payment-form-text);
+  font-size: 24px;
+  font-weight: 850;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.header p {
+  margin: 5px 0 0;
+  color: var(--phone-payment-form-muted);
+  font-size: 15px;
+  font-weight: 560;
+  line-height: 1.32;
+}
+
+.body {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.actions {
+  display: grid;
+  gap: 12px;
+  box-sizing: border-box;
+  width: min(100%, 430px);
+  margin: 0 auto;
+  padding: 0 clamp(18px, 5vw, 24px) calc(112px + env(safe-area-inset-bottom, 0px));
+  background: transparent;
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.summary > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--phone-payment-form-text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.summary small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--phone-payment-form-muted);
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary strong {
+  flex: 0 0 auto;
+  color: var(--phone-payment-form-accent);
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+@media (max-width: 360px) {
+  .content,
+  .actions {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .header h1 {
+    font-size: 22px;
+  }
+}

@@ -1,156 +1,96 @@
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  width: 100%;
-  color: var(--phone-chat-text, var(--text));
+.fieldGroup,
+.selectField,
+.dateField,
+.textField {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
 }
 
-.intro,
-.lockedContact,
-.successPanel {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.introIcon,
-.successIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
-  border-radius: 16px;
-  color: var(--phone-chat-text-on-primary, var(--on-accent));
-  background: var(--phone-chat-accent, var(--accent));
-}
-
-.intro strong,
-.successCopy strong {
-  display: block;
-  color: var(--phone-chat-text, var(--text));
-  font-size: 18px;
-  font-weight: 850;
-  line-height: 1.1;
-}
-
-.intro span,
-.successCopy span,
-.lockedContact small {
-  display: block;
-  margin-top: 4px;
-  color: var(--phone-chat-muted, var(--text-mute));
+.fieldLabel,
+.selectField > span,
+.dateField > span,
+.textField > span:first-child {
+  color: var(--phone-payment-form-muted);
   font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.hint,
+.successCopy span {
+  color: var(--phone-payment-form-muted);
+  font-size: 12px;
   font-weight: 560;
   line-height: 1.35;
 }
 
-.lockedContact {
+.contactPickerControl {
   display: grid;
-  gap: 3px;
-  padding: 12px 0;
-  border-top: 1px solid var(--phone-chat-border, var(--border));
-  border-bottom: 1px solid var(--phone-chat-border, var(--border));
-}
-
-.lockedContact span,
-.selectField > span,
-.dateField > span {
-  color: var(--phone-chat-muted, var(--text-mute));
-  font-size: 12px;
-  font-weight: 760;
-}
-
-.lockedContact strong {
-  color: var(--phone-chat-text, var(--text));
-  font-size: 16px;
-  font-weight: 820;
-}
-
-.contactPicker {
-  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 8px;
-  min-width: 0;
 }
 
-.selectedContact {
-  position: relative;
+.contactPickerTrigger {
   display: grid;
-  gap: 3px;
-  min-width: 0;
-  padding: 12px 96px 12px 0;
-  border-top: 1px solid var(--phone-chat-border, var(--border));
-  border-bottom: 1px solid var(--phone-chat-border, var(--border));
-}
-
-.selectedContact span,
-.selectedContact small,
-.contactResults > span {
-  color: var(--phone-chat-muted, var(--text-mute));
-  font-size: 12px;
-  font-weight: 620;
-}
-
-.selectedContact strong {
-  min-width: 0;
-  color: var(--phone-chat-text, var(--text));
-  font-size: 16px;
-  font-weight: 820;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.selectedContact button {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  min-height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--phone-chat-border, var(--border));
-  border-radius: 999px;
-  color: var(--phone-chat-text, var(--text));
-  background: var(--phone-chat-panel, var(--surface));
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 58px;
+  box-sizing: border-box;
+  padding: 7px 10px 7px 7px;
+  border: 1px solid var(--phone-payment-form-control-border);
+  border-radius: 12px;
+  color: var(--phone-payment-form-text);
+  background: var(--phone-payment-form-panel);
   font: inherit;
-  font-size: 13px;
-  font-weight: 780;
-  transform: translateY(-50%);
-}
-
-.contactResults {
-  display: grid;
-  gap: 0;
-  min-width: 0;
-  border-top: 1px solid var(--phone-chat-border, var(--border));
-  border-bottom: 1px solid var(--phone-chat-border, var(--border));
-}
-
-.contactResults > span {
-  padding: 12px 0;
-}
-
-.contactResults button {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  padding: 12px 0;
-  border: 0;
-  border-radius: 0;
-  color: var(--phone-chat-text, var(--text));
-  background: transparent;
   text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.contactResults button + button {
-  border-top: 1px solid var(--phone-chat-border, var(--border));
+.contactPickerTrigger:active {
+  transform: scale(0.995);
 }
 
-.contactResults button:active {
-  opacity: 0.72;
+.lockedContact {
+  cursor: default;
 }
 
+.lockedContact:active {
+  transform: none;
+}
+
+.contactPickerIcon,
+.resultIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--phone-payment-form-muted);
+  background: var(--phone-payment-form-soft);
+}
+
+.contactPickerIcon {
+  width: 44px;
+  height: 44px;
+}
+
+.resultIcon {
+  width: 38px;
+  height: 38px;
+}
+
+.contactPickerCopy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.contactPickerCopy strong,
+.contactPickerCopy small,
 .contactResults strong,
 .contactResults small {
   min-width: 0;
@@ -159,50 +99,102 @@
   white-space: nowrap;
 }
 
-.contactResults strong {
-  color: var(--phone-chat-text, var(--text));
-  font-size: 15px;
-  font-weight: 780;
+.contactPickerCopy strong {
+  color: var(--phone-payment-form-text);
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1.1;
 }
 
-.contactResults small {
-  color: var(--phone-chat-muted, var(--text-mute));
-  font-size: 12px;
+.contactPickerCopy small {
+  color: var(--phone-payment-form-muted);
+  font-size: 13px;
   font-weight: 560;
+  line-height: 1.25;
 }
 
-.selectField,
-.dateField {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
+.contactPickerChevron {
+  color: var(--phone-payment-form-muted);
+}
+
+.contactPickerClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-payment-form-text);
+  background: var(--phone-payment-form-panel);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.contactPickerClear:active {
+  transform: scale(0.96);
+}
+
+.controlButton,
+.textField > span:nth-of-type(2) {
+  min-height: 52px;
+  box-sizing: border-box;
+  border: 1px solid var(--phone-payment-form-control-border) !important;
+  border-radius: 12px !important;
+  color: var(--phone-payment-form-text);
+  background: var(--phone-payment-form-panel) !important;
+  font-size: 16px;
+  font-weight: 500;
+  box-shadow: none !important;
+}
+
+.controlButton:focus-visible,
+.textField > span:nth-of-type(2):focus-within {
+  border-color: color-mix(in srgb, var(--phone-payment-form-accent) 54%, var(--phone-payment-form-control-border) 46%) !important;
+  box-shadow: none !important;
+  outline: none;
+}
+
+.textField input,
+.textField textarea {
+  color: var(--phone-payment-form-text);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.textField input::placeholder,
+.textField textarea::placeholder {
+  color: color-mix(in srgb, var(--phone-payment-form-muted) 70%, transparent);
+  font-weight: 500;
+}
+
+.textArea > span:nth-of-type(2) {
+  min-height: 112px;
+  align-items: stretch;
+  border-radius: 16px !important;
 }
 
 .formGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(86px, 0.42fr);
-  gap: 10px;
-  align-items: end;
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  padding-top: 4px;
-}
-
-.successPanel {
-  flex-direction: column;
   gap: 14px;
-  width: 100%;
-  color: var(--phone-chat-text, var(--text));
+  align-items: end;
+  min-width: 0;
 }
 
 .successCopy {
   display: grid;
-  gap: 2px;
+  gap: 5px;
+  min-width: 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--phone-payment-form-border);
+}
+
+.successCopy strong {
+  color: var(--phone-payment-form-text);
+  font-size: 17px;
+  font-weight: 850;
+  line-height: 1.1;
 }
 
 .authorizationLink {
@@ -210,22 +202,192 @@
   min-width: 0;
   box-sizing: border-box;
   padding: 12px;
-  border: 1px solid var(--phone-chat-border, var(--border));
+  border: 1px solid var(--phone-payment-form-control-border);
   border-radius: 14px;
-  color: var(--phone-chat-text, var(--text));
-  background: var(--phone-chat-panel, var(--surface));
+  color: var(--phone-payment-form-text);
+  background: var(--phone-payment-form-panel);
   font-size: 12px;
+  font-weight: 560;
   line-height: 1.35;
   word-break: break-all;
 }
 
+.linkActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sheetOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 max(10px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--phone-payment-form-text) 34%, transparent);
+}
+
+.sheet {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  width: min(100%, 430px);
+  max-height: min(74dvh, 620px);
+  min-height: min(520px, 72dvh);
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1px solid var(--phone-payment-form-border);
+  border-radius: 24px 24px 18px 18px;
+  color: var(--phone-payment-form-text);
+  background: var(--phone-payment-form-bg);
+  box-shadow: 0 -18px 42px color-mix(in srgb, var(--phone-payment-form-text) 22%, transparent);
+}
+
+.sheetHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.sheetHeader div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sheetHeader span {
+  color: var(--phone-payment-form-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.sheetHeader strong {
+  color: var(--phone-payment-form-text);
+  font-size: 21px;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.sheetHeader button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-payment-form-text);
+  background: var(--phone-payment-form-panel);
+}
+
+.sheetSearch > span:nth-of-type(1) {
+  min-height: 52px;
+  border: 1px solid var(--phone-payment-form-control-border);
+  border-radius: 999px;
+  color: var(--phone-payment-form-muted);
+  background: var(--phone-payment-form-panel);
+  box-shadow: none;
+}
+
+.sheetSearch input {
+  color: var(--phone-payment-form-text);
+  font-weight: 500;
+}
+
+.contactResults {
+  display: grid;
+  align-content: start;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.contactResults::-webkit-scrollbar {
+  display: none;
+}
+
+.contactResults button {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px 0;
+  border: 0;
+  border-top: 1px solid var(--phone-payment-form-border);
+  color: var(--phone-payment-form-text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.contactResults button:first-of-type {
+  border-top: 0;
+}
+
+.contactResults button:active {
+  opacity: 0.72;
+}
+
+.contactResults button > span:last-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.contactResults strong {
+  color: var(--phone-payment-form-text);
+  font-size: 15px;
+  font-weight: 780;
+}
+
+.contactResults small {
+  color: var(--phone-payment-form-muted);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.resultsState {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 2px;
+  color: var(--phone-payment-form-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.spinIcon {
+  animation: spin 0.9s linear infinite;
+}
+
+:global(body[data-payment-contact-picker="open"]) nav[aria-label="Secciones de Ristak"] {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(12px);
+}
+
 @media (max-width: 390px) {
-  .formGrid {
+  .formGrid,
+  .linkActions {
     grid-template-columns: 1fr;
   }
+}
 
-  .actions {
-    align-items: stretch;
-    flex-direction: column-reverse;
-  }
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
