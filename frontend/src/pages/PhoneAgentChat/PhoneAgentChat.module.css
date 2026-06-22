@@ -19,6 +19,53 @@
   padding-bottom: calc(78px + env(safe-area-inset-bottom));
 }
 
+.agentWorkspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--phone-agent-bg);
+}
+
+.agentModeTabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--phone-agent-text) 10%, transparent);
+  background: color-mix(in srgb, var(--phone-agent-bg) 94%, transparent);
+}
+
+.agentModeTab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--phone-agent-text) 11%, transparent);
+  border-radius: 10px;
+  color: color-mix(in srgb, var(--phone-agent-text) 64%, transparent);
+  background: color-mix(in srgb, var(--phone-agent-surface) 62%, transparent);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.agentModeTab svg {
+  flex: 0 0 auto;
+}
+
+.agentModeTabActive {
+  color: var(--phone-agent-text);
+  border-color: color-mix(in srgb, var(--phone-agent-text) 20%, transparent);
+  background: var(--phone-agent-surface);
+}
+
 .agentPanelHost {
   min-width: 0;
   min-height: 0;
@@ -26,11 +73,31 @@
   background: var(--phone-agent-surface);
 }
 
+.agentSettingsHost {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 14px 24px;
+  background: var(--phone-agent-bg);
+}
+
+.phoneConversationalSettings {
+  min-width: 0;
+  padding-bottom: 8px;
+}
+
 :global(body[data-phone-chat-tone="dark"]) .mobilePage {
   color-scheme: dark;
 }
 
 :global(body[data-phone-chat-tone="dark"]) .agentPanelHost {
+  background: var(--phone-agent-bg);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .agentModeTabs {
   background: var(--phone-agent-bg);
 }
 
@@ -120,6 +187,10 @@
 @media (min-width: 768px) {
   .mobilePage {
     background: var(--phone-agent-bg);
+  }
+
+  .agentSettingsHost {
+    padding-inline: max(20px, env(safe-area-inset-left)) max(20px, env(safe-area-inset-right));
   }
 }
 

@@ -620,26 +620,32 @@ const AppWithNotifications: React.FC = () => {
             }
           />
           <Route
-            path="/phone/agent-chat"
+            path="/phone/agent-chat/*"
             element={
               <ProtectedRoute>
-                <PhoneAgentChat />
+                <AccessRoute moduleKey="ai_agent">
+                  <PhoneAgentChat />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />
           <Route
-            path="/phone/agent-ai"
+            path="/phone/agent-ai/*"
             element={
               <ProtectedRoute>
-                <PhoneAgentChat />
+                <AccessRoute moduleKey="ai_agent">
+                  <PhoneAgentChat />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />
           <Route
-            path="/phone/ai-agent"
+            path="/phone/ai-agent/*"
             element={
               <ProtectedRoute>
-                <PhoneAgentChat />
+                <AccessRoute moduleKey="ai_agent">
+                  <PhoneAgentChat />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />

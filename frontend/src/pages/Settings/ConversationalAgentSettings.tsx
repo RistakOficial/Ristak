@@ -64,8 +64,11 @@ import { ConditionBuilder } from './ConditionBuilder'
 import styles from './AIAgentSettings.module.css'
 
 const AUTOSAVE_DELAY_MS = 900
-const buildConversationalAgentPath = (agentId?: string | null) => (
-  agentId ? `/ai-agent/conversational/${encodeURIComponent(agentId)}` : '/ai-agent/conversational'
+const DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE = '/ai-agent/conversational'
+const DEFAULT_AI_AGENT_GENERAL_PATH = '/ai-agent/general'
+
+const buildConversationalAgentPath = (agentId?: string | null, routeBase = DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE) => (
+  agentId ? `${routeBase}/${encodeURIComponent(agentId)}` : routeBase
 )
 
 const objectiveOptions: Array<{ value: ConversationalObjective; label: string; description: string }> = [
@@ -3086,7 +3089,17 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   )
 }
 
-export const ConversationalAgentSettings: React.FC = () => {
+interface ConversationalAgentSettingsProps {
+  routeBase?: string
+  generalConfigPath?: string
+  className?: string
+}
+
+export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsProps> = ({
+  routeBase = DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE,
+  generalConfigPath = DEFAULT_AI_AGENT_GENERAL_PATH,
+  className = ''
+}) => {
   const navigate = useNavigate()
   const { agentId: routeAgentIdParam } = useParams<{ agentId?: string }>()
   const routeAgentId = routeAgentIdParam ? decodeURIComponent(routeAgentIdParam) : ''
@@ -3229,8 +3242,8 @@ export const ConversationalAgentSettings: React.FC = () => {
     }
 
     setSelectedAgentId(null)
-    navigate(buildConversationalAgentPath(), { replace: true })
-  }, [agents, loading, navigate, routeAgentId])
+    navigate(buildConversationalAgentPath(null, routeBase), { replace: true })
+  }, [agents, loading, navigate, routeAgentId, routeBase])
 
   const scheduleAgentSave = useCallback((agentId: string) => {
     const timers = saveTimersRef.current
@@ -3284,7 +3297,7 @@ export const ConversationalAgentSettings: React.FC = () => {
 
   const openProviderModal = (providerId: ConversationalAIProviderId) => {
     if (providerId === 'openai') {
-      navigate('/ai-agent/general')
+      navigate(generalConfigPath)
       return
     }
     setProviderModalId(providerId)
@@ -3361,7 +3374,7 @@ export const ConversationalAgentSettings: React.FC = () => {
       }
       setAgents((current) => [...current, agent])
       setSelectedAgentId(agent.id)
-      navigate(buildConversationalAgentPath(agent.id))
+      navigate(buildConversationalAgentPath(agent.id, routeBase))
       void refreshMetrics()
     } catch (error: any) {
       showToast('error', 'No se pudo crear', error?.message || 'Error al crear el agente')
@@ -3380,7 +3393,7 @@ export const ConversationalAgentSettings: React.FC = () => {
           setAgents((current) => current.filter((item) => item.id !== agent.id))
           setSelectedAgentId((current) => (current === agent.id ? null : current))
           if (selectedAgentId === agent.id || routeAgentId === agent.id) {
-            navigate(buildConversationalAgentPath(), { replace: true })
+            navigate(buildConversationalAgentPath(null, routeBase), { replace: true })
           }
           void refreshMetrics()
         } catch (error: any) {
@@ -3398,6 +3411,8 @@ export const ConversationalAgentSettings: React.FC = () => {
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) || null : null
   const metricsByAgentId = new Map((metrics?.byAgent || []).map((item) => [item.agentId, item]))
   const providerModalOption = providerModalId ? getConversationalAIProviderOption(providerModalId) : null
+  const rootClassName = [styles.container, className].filter(Boolean).join(' ')
+  const directoryClassName = [styles.container, styles.conversationalDirectoryPage, className].filter(Boolean).join(' ')
   const renderProviderModal = () => (
     <Modal
       isOpen={Boolean(providerModalOption)}
@@ -3445,7 +3460,7 @@ export const ConversationalAgentSettings: React.FC = () => {
 
   if (openAIAvailability.loading) {
     return (
-      <div className={styles.container}>
+      <div className={rootClassName}>
         <Card>
           <p className={styles.helper}>Revisando OpenAI...</p>
         </Card>
@@ -3455,7 +3470,7 @@ export const ConversationalAgentSettings: React.FC = () => {
 
   if (!openAIAvailability.configured) {
     return (
-      <div className={styles.container}>
+      <div className={rootClassName}>
         <Card padding="md" className={styles.conversationSettingsCard}>
           <div className={styles.header}>
             <div className={styles.headerLeft}>
@@ -3470,7 +3485,7 @@ export const ConversationalAgentSettings: React.FC = () => {
               </div>
             </div>
             <div className={styles.headerActions}>
-              <Button onClick={() => navigate('/ai-agent/general')}>
+              <Button onClick={() => navigate(generalConfigPath)}>
                 <KeyRound size={16} />
                 Configurar token
               </Button>
@@ -3483,7 +3498,7 @@ export const ConversationalAgentSettings: React.FC = () => {
 
   if (selectedAgent) {
     return (
-      <div className={styles.container}>
+      <div className={rootClassName}>
         <AgentCard
           agent={selectedAgent}
           aiProviders={aiProviders}
@@ -3498,7 +3513,7 @@ export const ConversationalAgentSettings: React.FC = () => {
           onConnectProvider={openProviderModal}
           onBack={() => {
             setSelectedAgentId(null)
-            navigate(buildConversationalAgentPath())
+            navigate(buildConversationalAgentPath(null, routeBase))
           }}
           onChange={(patch) => handleAgentChange(selectedAgent.id, patch)}
           onDelete={() => handleDeleteAgent(selectedAgent)}
@@ -3509,7 +3524,7 @@ export const ConversationalAgentSettings: React.FC = () => {
   }
 
   return (
-    <div className={`${styles.container} ${styles.conversationalDirectoryPage}`}>
+    <div className={directoryClassName}>
       <div className={styles.conversationalDirectoryHeader}>
         <div className={styles.conversationalDirectoryTitleGroup}>
           <AgentRobot size={48} active label="Agente conversacional" />
@@ -3616,7 +3631,7 @@ export const ConversationalAgentSettings: React.FC = () => {
                   className={styles.agentDirectoryOpenButton}
                   onClick={() => {
                     setSelectedAgentId(agent.id)
-                    navigate(buildConversationalAgentPath(agent.id))
+                    navigate(buildConversationalAgentPath(agent.id, routeBase))
                   }}
                 >
                   <div className={styles.agentDirectoryCardTop}>
