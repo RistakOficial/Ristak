@@ -431,12 +431,15 @@ export const PaymentsConfiguration: React.FC = () => {
   const [connectingMercadoPago, setConnectingMercadoPago] = useState(false)
   const [switchingMercadoPagoMode, setSwitchingMercadoPagoMode] = useState(false)
   const [disconnectingMercadoPago, setDisconnectingMercadoPago] = useState(false)
+  const [uploadingCheckoutLogo, setUploadingCheckoutLogo] = useState(false)
+  const [checkoutLogoUploadProgress, setCheckoutLogoUploadProgress] = useState(0)
   const [uploadingReceiptLogo, setUploadingReceiptLogo] = useState(false)
   const [receiptLogoUploadProgress, setReceiptLogoUploadProgress] = useState(0)
   const [previewingReceipt, setPreviewingReceipt] = useState(false)
   const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
   const [paymentWhatsappTemplates, setPaymentWhatsappTemplates] = useState<WhatsAppApiTemplate[]>([])
   const [loadingPaymentWhatsappTemplates, setLoadingPaymentWhatsappTemplates] = useState(false)
+  const checkoutLogoInputRef = useRef<HTMLInputElement>(null)
   const receiptLogoInputRef = useRef<HTMLInputElement>(null)
   const latestSettingsRef = useRef(settings)
   const loadedSettingsRef = useRef(false)
@@ -1244,6 +1247,36 @@ export const PaymentsConfiguration: React.FC = () => {
     navigate(`/settings/payments/${gateway.id}`)
   }
 
+  const handleCheckoutLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      showToast('error', 'Archivo no válido', 'Sube una imagen para el logo de la página de cobro.')
+      return
+    }
+
+    setUploadingCheckoutLogo(true)
+    setCheckoutLogoUploadProgress(0)
+    try {
+      const uploaded = await mediaService.uploadFile({
+        file,
+        module: 'payments',
+        moduleEntityId: 'checkout-logo',
+        isPublic: true,
+        onProgress: ({ percent }) => setCheckoutLogoUploadProgress(percent)
+      })
+      setCheckoutValue('logoUrl', uploaded.publicUrl || `/api/media/assets/${encodeURIComponent(uploaded.id)}/file`)
+      showToast('success', 'Logo subido', 'El logo quedó guardado en Media y enlazado a la página de cobro.')
+    } catch (uploadError: any) {
+      showToast('error', 'No se pudo subir el logo', uploadError.message || 'Revisa el archivo e intenta de nuevo.')
+    } finally {
+      setUploadingCheckoutLogo(false)
+      setCheckoutLogoUploadProgress(0)
+    }
+  }
+
   const handleReceiptLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0]
     event.currentTarget.value = ''
@@ -1382,16 +1415,59 @@ export const PaymentsConfiguration: React.FC = () => {
         </div>
 
         <div className={styles.formGrid}>
-          {renderField(
-            'Logo del negocio',
-            <input
-              type="url"
-              value={checkout.logoUrl}
-              onChange={(event) => setCheckoutValue('logoUrl', event.target.value)}
-              placeholder="https://tu-dominio.com/logo.png"
-            />,
-            'Se mostrará en la parte superior del link de cobro.'
-          )}
+          <div className={`${styles.formField} ${styles.fullWidthField}`}>
+            <span>Logo del negocio</span>
+            <div className={styles.logoUploadControl}>
+              <div className={styles.logoUploadPreview}>
+                {checkout.logoUrl ? <img src={checkout.logoUrl} alt="" /> : <Image size={22} />}
+              </div>
+              <div className={styles.logoUploadContent}>
+                <div className={styles.logoUploadActions}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => checkoutLogoInputRef.current?.click()}
+                    disabled={uploadingCheckoutLogo}
+                  >
+                    {uploadingCheckoutLogo ? (
+                      <>
+                        <Loader2 size={15} className={styles.spinIcon} />
+                        Subiendo {checkoutLogoUploadProgress > 0 ? `${checkoutLogoUploadProgress}%` : ''}
+                      </>
+                    ) : (
+                      <>
+                        <ImageUp size={15} />
+                        Subir logo
+                      </>
+                    )}
+                  </Button>
+                  {checkout.logoUrl && (
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setCheckoutValue('logoUrl', '')}>
+                      <Trash2 size={15} />
+                      Quitar
+                    </Button>
+                  )}
+                </div>
+                <input
+                  ref={checkoutLogoInputRef}
+                  className={styles.fileInputHidden}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCheckoutLogoUpload}
+                />
+                <small>Se guarda en Media y aparece en la parte superior del link de cobro.</small>
+                {checkout.logoUrl && (
+                  <input
+                    type="url"
+                    value={checkout.logoUrl}
+                    onChange={(event) => setCheckoutValue('logoUrl', event.target.value)}
+                    placeholder="https://tu-dominio.com/logo.png"
+                  />
+                )}
+              </div>
+            </div>
+          </div>
           {renderField(
             'Título de cobro',
             <input
@@ -1438,10 +1514,79 @@ export const PaymentsConfiguration: React.FC = () => {
           )}
         </div>
 
+        <div className={styles.subsectionBlock}>
+          <div className={styles.subsectionHeader}>
+            <h3>Información visible antes de pagar</h3>
+            <p>Estos datos son los mismos del comprobante descargable y también aparecen en el resumen del link de cobro.</p>
+          </div>
+
+          <div className={styles.formGrid}>
+            {renderField(
+              'Nombre del negocio',
+              <input
+                type="text"
+                value={receipt.businessName}
+                onChange={(event) => setReceiptValue('businessName', event.target.value)}
+                placeholder="Nombre comercial"
+              />
+            )}
+            {renderField(
+              'Email del negocio',
+              <input
+                type="email"
+                value={receipt.businessEmail}
+                onChange={(event) => setReceiptValue('businessEmail', event.target.value)}
+                placeholder="pagos@tu-negocio.com"
+              />
+            )}
+            {renderField(
+              'Teléfono del negocio',
+              <input
+                type="tel"
+                value={receipt.businessPhone}
+                onChange={(event) => setReceiptValue('businessPhone', event.target.value)}
+                placeholder="+52 656 000 0000"
+              />
+            )}
+            {renderField(
+              'Sitio web',
+              <input
+                type="url"
+                value={receipt.businessWebsite}
+                onChange={(event) => setReceiptValue('businessWebsite', event.target.value)}
+                placeholder="https://tu-negocio.com"
+              />
+            )}
+            {renderField(
+              'Dirección fiscal o comercial',
+              <textarea
+                value={receipt.businessAddress}
+                onChange={(event) => setReceiptValue('businessAddress', event.target.value)}
+                placeholder="Calle, ciudad, estado, país"
+              />
+            )}
+            <div className={`${styles.formField} ${styles.fullWidthField}`}>
+              <span>Términos y condiciones</span>
+              <textarea
+                className={styles.largeTextarea}
+                value={receipt.terms}
+                onChange={(event) => setReceiptValue('terms', event.target.value)}
+                placeholder="Políticas de pago, reembolso, emisión de comprobantes o condiciones del servicio."
+              />
+              <small>Se muestran en el resumen antes de pagar y al final del comprobante descargable.</small>
+            </div>
+          </div>
+
+          <div className={styles.switchStack}>
+            {renderSwitchRow('Mostrar datos del negocio', 'Aparecen en el link de cobro y en el comprobante.', receipt.showBusinessInfo, (next) => setReceiptValue('showBusinessInfo', next))}
+            {renderSwitchRow('Mostrar términos', 'Aparecen antes de pagar y al final del comprobante descargable.', receipt.showTerms, (next) => setReceiptValue('showTerms', next))}
+          </div>
+        </div>
+
         <div className={styles.sectionDividerStack}>
           {renderSwitchRow(
             'Mostrar sello de pago seguro',
-            'Aparece junto al formulario para reforzar confianza antes de pagar.',
+            'Aparece debajo del botón de pago para reforzar confianza sin duplicar el resumen.',
             checkout.showSecureBadge,
             (next) => setCheckoutValue('showSecureBadge', next)
           )}
@@ -1472,6 +1617,21 @@ export const PaymentsConfiguration: React.FC = () => {
             <strong>8 jul 2026</strong>
           </div>
         </div>
+        {receipt.showBusinessInfo && (receipt.businessName || receipt.businessEmail || receipt.businessPhone || receipt.businessAddress || receipt.businessWebsite) && (
+          <div className={styles.previewInfoBlock}>
+            <strong>{receipt.businessName || 'Tu negocio'}</strong>
+            {receipt.businessEmail && <span>{receipt.businessEmail}</span>}
+            {receipt.businessPhone && <span>{receipt.businessPhone}</span>}
+            {receipt.businessAddress && <span>{receipt.businessAddress}</span>}
+            {receipt.businessWebsite && <span>{receipt.businessWebsite}</span>}
+          </div>
+        )}
+        {receipt.showTerms && receipt.terms && (
+          <p className={styles.previewTerms}>
+            <strong>Términos y condiciones</strong>
+            <span>{receipt.terms}</span>
+          </p>
+        )}
         <div className={styles.previewButton}>
           <CreditCard size={16} />
           {checkout.buttonLabel || 'Pagar ahora'}

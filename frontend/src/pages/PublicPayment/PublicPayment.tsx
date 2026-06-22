@@ -140,6 +140,55 @@ function buildStripeAppearance() {
   }
 }
 
+function buildMercadoPagoCustomization() {
+  const customVariables: Record<string, string> = {
+    fontSizeSmall: '13px',
+    fontSizeMedium: '13px',
+    fontSizeLarge: '14px',
+    fontWeightNormal: '500',
+    fontWeightSemiBold: '600',
+    inputVerticalPadding: '12px',
+    inputHorizontalPadding: '14px',
+    inputBorderWidth: '1px',
+    inputFocusedBorderWidth: '1px',
+    borderRadiusSmall: '10px',
+    borderRadiusMedium: '10px',
+    borderRadiusLarge: '10px',
+    formPadding: '0px'
+  }
+  const tokenMap: Record<string, string> = {
+    textPrimaryColor: '--text',
+    textSecondaryColor: '--text-dim',
+    inputBackgroundColor: '--surface',
+    formBackgroundColor: '--surface-solid',
+    baseColor: '--accent',
+    baseColorFirstVariant: '--accent',
+    baseColorSecondVariant: '--accent-soft',
+    errorColor: '--neg',
+    successColor: '--pos',
+    successSecondaryColor: '--pos-soft',
+    outlinePrimaryColor: '--border-strong',
+    outlineSecondaryColor: '--border',
+    buttonTextColor: '--on-accent',
+    inputFocusedBoxShadow: '--ristak-focus-ring',
+    inputErrorFocusedBoxShadow: '--ristak-focus-ring'
+  }
+
+  Object.entries(tokenMap).forEach(([variable, token]) => {
+    const value = readToken(token)
+    if (value) customVariables[variable] = value
+  })
+
+  return {
+    visual: {
+      style: {
+        theme: document.body?.dataset?.mode === 'dark' ? 'dark' : 'default',
+        customVariables
+      }
+    }
+  }
+}
+
 function resolveStripeLocale(payment?: PublicStripePayment | null): StripeElementsOptions['locale'] {
   const country = payment?.tax?.country?.trim().toUpperCase()
   if (country && !STRIPE_SPANISH_COUNTRIES.has(country)) return 'auto'
@@ -309,6 +358,12 @@ const PublicPaymentForm: React.FC<{
     ? 'Autorizar tarjeta'
     : payment.settings?.checkout?.buttonLabel || 'Pagar'
   const submitAmount = Number(payment.amount || 0) > 0 ? ` ${formatCurrency(payment.amount, payment.currency)}` : ''
+  const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
+  const authorizationNotice = isCardSetupPlan
+    ? 'Al confirmar, Stripe guardará esta tarjeta para cobrar automáticamente los pagos programados de este plan.'
+    : payment.contact?.id
+      ? 'Al pagar autorizas que esta tarjeta quede resguardada en Stripe para futuros cargos acordados con este negocio.'
+      : 'La tarjeta se captura en campos seguros de Stripe. Ristak solo recibe el resultado del cobro.'
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -358,17 +413,6 @@ const PublicPaymentForm: React.FC<{
         </p>
       )}
 
-      {payment.contact?.id && (
-        <p className={styles.cardAuthorizationNotice}>
-          <ShieldCheck size={16} />
-          <span>
-            {isCardSetupPlan
-              ? 'Al confirmar, Stripe guardará esta tarjeta para cobrar automáticamente los pagos programados de este plan.'
-              : 'Al pagar autorizas que esta tarjeta quede resguardada en Stripe para futuros cargos acordados con este negocio.'}
-          </span>
-        </p>
-      )}
-
       <div className={styles.actions}>
         <Button
           type="submit"
@@ -381,6 +425,13 @@ const PublicPaymentForm: React.FC<{
           {submitting ? 'Procesando' : `${submitLabel}${submitAmount}`}
         </Button>
       </div>
+
+      {(showSecureNotice || payment.contact?.id || isCardSetupPlan) && (
+        <p className={styles.cardAuthorizationNotice}>
+          <ShieldCheck size={16} />
+          <span>{authorizationNotice}</span>
+        </p>
+      )}
     </form>
   )
 }
@@ -401,6 +452,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
+  const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
 
   useEffect(() => {
     onPaidRef.current = onPaid
@@ -432,6 +484,7 @@ const MercadoPagoCardPaymentForm: React.FC<{
           initialization: {
             amount: Number(payment.amount || 0)
           },
+          customization: buildMercadoPagoCustomization(),
           callbacks: {
             onReady: () => {
               if (!cancelled) setLoadingBrick(false)
@@ -503,11 +556,6 @@ const MercadoPagoCardPaymentForm: React.FC<{
 
   return (
     <div className={styles.stripeBox}>
-      <p className={styles.cardAuthorizationNotice}>
-        <ShieldCheck size={16} />
-        <span>La tarjeta se captura en campos seguros de Mercado Pago. Ristak solo recibe el resultado del cobro.</span>
-      </p>
-
       <div className={styles.mercadoPagoBrickShell}>
         {loadingBrick && (
           <div className={styles.brickLoading}>
@@ -517,6 +565,13 @@ const MercadoPagoCardPaymentForm: React.FC<{
         )}
         <div id={containerId} className={styles.mercadoPagoBrick} />
       </div>
+
+      {showSecureNotice && (
+        <p className={styles.cardAuthorizationNotice}>
+          <ShieldCheck size={16} />
+          <span>La tarjeta se captura en campos seguros de Mercado Pago. Ristak solo recibe el resultado del cobro.</span>
+        </p>
+      )}
 
       {message && (
         <p className={messageClassName}>
@@ -554,6 +609,7 @@ const ConektaCardTokenizerForm: React.FC<{
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
+  const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
 
   useEffect(() => {
     onPaidRef.current = onPaid
@@ -659,13 +715,6 @@ const ConektaCardTokenizerForm: React.FC<{
 
   return (
     <div className={styles.stripeBox}>
-      <p className={styles.cardAuthorizationNotice}>
-        <ShieldCheck size={16} />
-        <span>
-          La tarjeta se captura en el tokenizador seguro de Conekta. Si este pago pertenece a tu contacto, quedará guardada para futuros cargos acordados.
-        </span>
-      </p>
-
       <div className={`${styles.mercadoPagoBrickShell} ${styles.conektaTokenizerShell}`}>
         {(loadingTokenizer || submitting) && (
           <div className={styles.brickLoading}>
@@ -675,6 +724,15 @@ const ConektaCardTokenizerForm: React.FC<{
         )}
         <div id={containerId} className={styles.conektaTokenizerFrame} />
       </div>
+
+      {showSecureNotice && (
+        <p className={styles.cardAuthorizationNotice}>
+          <ShieldCheck size={16} />
+          <span>
+            La tarjeta se captura en el tokenizador seguro de Conekta. Si este pago pertenece a tu contacto, quedará guardada para futuros cargos acordados.
+          </span>
+        </p>
+      )}
 
       {message && (
         <p className={messageClassName}>
@@ -864,6 +922,15 @@ export const PublicPayment: React.FC = () => {
     checkoutSettings?.supportEmail,
     checkoutSettings?.supportPhone
   ].filter(Boolean)
+  const businessDetails = [
+    receiptSettings?.businessEmail,
+    receiptSettings?.businessPhone,
+    receiptSettings?.businessAddress,
+    receiptSettings?.businessWebsite
+  ].filter(Boolean)
+  const showCheckoutBusinessInfo = !isPaid && showBusinessInfo && Boolean(receiptSettings?.businessName || businessDetails.length)
+  const showCheckoutTerms = !isPaid && showTerms && Boolean(receiptSettings?.terms)
+  const showCheckoutInfo = showCheckoutBusinessInfo || (!isPaid && supportItems.length > 0) || showCheckoutTerms
   const taxLabel = taxDetails?.enabled
     ? `${taxDetails.taxName || 'Impuesto'} ${taxDetails.rateValue || 0}%`
     : ''
@@ -892,9 +959,6 @@ export const PublicPayment: React.FC = () => {
   const planTotal = Number(paymentPlan?.total || 0)
   const addedInstallmentCount = Number(paymentPlan?.changeSummary?.addedInstallmentCount || 0)
   const hasPlanSummary = Boolean(paymentPlan && (planTotal > 0 || firstPlanPayment || scheduledPlanCount > 0))
-  const secureCopy = isCardSetupPlan
-    ? `Este link autoriza la tarjeta para domiciliar los cobros de ${paymentPlan?.title || 'este plan de pagos'}.`
-    : `Pago cifrado y procesado por ${providerLabel}.`
 
   return (
     <main className={styles.page}>
@@ -977,6 +1041,34 @@ export const PublicPayment: React.FC = () => {
               </div>
             </div>
 
+            {showCheckoutInfo && (
+              <div className={styles.checkoutInfoBlock}>
+                {showCheckoutBusinessInfo && (
+                  <div className={styles.checkoutInfoGroup}>
+                    <span className={styles.eyebrow}>Información del negocio</span>
+                    <strong>{receiptSettings?.businessName || 'Negocio'}</strong>
+                    {businessDetails.map((detail, index) => (
+                      <span className={styles.checkoutInfoLine} key={`${detail}-${index}`}>{detail}</span>
+                    ))}
+                  </div>
+                )}
+
+                {!isPaid && supportItems.length > 0 && (
+                  <div className={styles.checkoutInfoGroup}>
+                    <span className={styles.eyebrow}>Soporte del cobro</span>
+                    <p>¿Necesitas ayuda con tu pago? {supportItems.join(' · ')}</p>
+                  </div>
+                )}
+
+                {showCheckoutTerms && (
+                  <div className={styles.checkoutInfoGroup}>
+                    <span className={styles.eyebrow}>Términos y condiciones</span>
+                    <p>{receiptSettings?.terms}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {hasPlanSummary && paymentPlan && (
               <div className={styles.planSection}>
                 <div className={styles.sectionHeading}>
@@ -1046,20 +1138,6 @@ export const PublicPayment: React.FC = () => {
                   </div>
                 )}
               </div>
-            )}
-
-            {checkoutSettings?.showSecureBadge && !isPaid && (
-              <p className={styles.secureNotice}>
-                <ShieldCheck size={16} />
-                <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
-                <span>{secureCopy}</span>
-              </p>
-            )}
-
-            {supportItems.length > 0 && !isPaid && (
-              <p className={styles.supportLine}>
-                ¿Necesitas ayuda con tu pago? {supportItems.join(' · ')}
-              </p>
             )}
           </section>
 

@@ -199,6 +199,39 @@
   overflow-wrap: anywhere;
 }
 
+.checkoutInfoBlock {
+  display: grid;
+  gap: 15px;
+  min-width: 0;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.checkoutInfoGroup {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.checkoutInfoGroup strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.checkoutInfoGroup p,
+.checkoutInfoLine {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .secureNotice {
   display: flex;
   align-items: center;
@@ -410,6 +443,23 @@
 .mercadoPagoBrick {
   min-height: 320px;
   color: var(--text);
+}
+
+.mercadoPagoBrick :global(input),
+.mercadoPagoBrick :global(select),
+.mercadoPagoBrick :global(textarea) {
+  border-color: var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.mercadoPagoBrick :global(input:focus),
+.mercadoPagoBrick :global(select:focus),
+.mercadoPagoBrick :global(textarea:focus) {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
 }
 
 .conektaTokenizerShell {

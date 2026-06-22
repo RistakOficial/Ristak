@@ -321,6 +321,30 @@
   border-top: 0;
 }
 
+.subsectionBlock {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.subsectionHeader h3 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.subsectionHeader p {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .switchRow {
   display: flex;
   align-items: center;
@@ -486,6 +510,46 @@
   margin: 12px 0 0;
   color: var(--text-dim);
   font-size: 12px;
+}
+
+.previewInfoBlock {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.previewInfoBlock strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.previewInfoBlock span {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.previewTerms {
+  display: grid;
+  gap: 5px;
+  margin: 14px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.previewTerms strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .receiptTop,
