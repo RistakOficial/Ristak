@@ -20604,14 +20604,17 @@
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
-  grid-template-columns: minmax(300px, 1fr) minmax(0, min(820px, 48vw)) minmax(520px, 1fr);
+  grid-template-columns: minmax(260px, auto) minmax(820px, 1fr) minmax(520px, max-content);
 }
 
 .pageFrame .containerFocused:has(.builder) .editorToolbarFormControls {
-  justify-content: center;
+  min-height: calc(var(--editor-control-h, 40px) + 8px);
+  align-self: stretch;
+  justify-content: flex-start;
   gap: 8px;
+  padding-block: 4px;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: visible;
   scrollbar-width: none;
 }
 
@@ -20629,12 +20632,17 @@
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus {
-  flex: 0 1 auto;
-  max-width: 190px;
+  flex: 0 0 auto;
+  max-width: 170px;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus small {
+  display: none;
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formEmbedToolbarControls {
-  flex: 0 1 440px;
+  flex: 1 1 440px;
+  max-width: 460px;
 }
 
 .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarActionsCluster {
@@ -20643,27 +20651,24 @@
 
 @media (max-width: 1680px), (max-height: 900px) {
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
-    grid-template-columns: minmax(230px, 0.82fr) minmax(0, min(700px, 44vw)) minmax(460px, 1fr);
+    grid-template-columns: minmax(210px, auto) minmax(700px, 1fr) minmax(460px, max-content);
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools .editorPageSelectorSlot {
     flex-basis: min(var(--sites-editor-page-selector-w, 206px), 172px);
   }
 
-  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus small {
-    max-width: 112px;
-  }
-
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formEmbedToolbarControls {
-    flex-basis: 380px;
+    flex-basis: 370px;
+    max-width: 390px;
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formSourceToolbarField {
-    flex-basis: 188px;
+    flex-basis: 176px;
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formCompletionToolbarControls .formToolbarField {
-    flex-basis: 202px;
+    flex-basis: 194px;
   }
 
   .editorToolbarActionsCluster {
@@ -20673,7 +20678,7 @@
 
 @media (max-width: 1540px), (max-height: 820px) {
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
-    grid-template-columns: minmax(190px, 0.72fr) minmax(0, min(600px, 42vw)) minmax(390px, 1fr);
+    grid-template-columns: minmax(176px, auto) minmax(600px, 1fr) minmax(390px, max-content);
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools .editorPageSelectorSlot {
@@ -20689,7 +20694,8 @@
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formEmbedToolbarControls {
-    flex-basis: 318px;
+    flex-basis: 310px;
+    max-width: 330px;
   }
 
   .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formToolbarField {

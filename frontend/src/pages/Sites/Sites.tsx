@@ -6937,35 +6937,31 @@ function FormEmbedEditorPanel({
     </>
   )
 
+  const formElementDesignContent = isSubmitSelected ? (
+    <FormSubmitGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+  ) : activeField && activeBlockIsField ? (
+    <>
+      <FormTypographyGlobalControls site={site} title="Tipografía de campos" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      <FormFieldGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      {isChoiceBlock(activeField.blockType) && (
+        <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      )}
+    </>
+  ) : !activeField ? (
+    <InspectorEmptyState>Selecciona un campo o el botón de envío dentro del formulario.</InspectorEmptyState>
+  ) : null
+
   const formDesignContent = (
     <>
       <div className={styles.settingsGroup}>
         <FormSurfaceStyleControls site={site} embedded onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+        <FormLayoutStyleControls site={site} embedded onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       </div>
-      <div className={styles.settingsGroup}>
-        {isSubmitSelected ? (
-          <FormSubmitGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-        ) : activeField && activeBlockIsField ? (
-          <>
-            <FormTypographyGlobalControls site={site} title="Tipografía de campos" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-            <FormFieldGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-            {isChoiceBlock(activeField.blockType) && (
-              <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-            )}
-          </>
-        ) : activeField ? (
-          <InlineBlockStyleControls
-            site={site}
-            block={activeField}
-            blocks={fields}
-            mode={showActiveFieldTypographyInEdit ? 'design' : 'all'}
-            onPatchSettings={patchActiveFieldSettings}
-            onSave={onSave}
-          />
-        ) : (
-          <InspectorEmptyState>Selecciona un elemento, campo o el botón de envío dentro del formulario.</InspectorEmptyState>
-        )}
-      </div>
+      {formElementDesignContent ? (
+        <div className={styles.settingsGroup}>
+          {formElementDesignContent}
+        </div>
+      ) : null}
     </>
   )
 
@@ -31199,6 +31195,69 @@ const FormSurfaceStyleControls: React.FC<{
         value={getThemePaint(theme, 'accentColor', userAccentColor(site) || (isSiteDark(site) ? '#ffffff' : '#111827'))}
         allowGradient
         onChange={(value) => onPatchTheme({ accentColor: value })}
+        onCommit={onSaveSite}
+      />
+    </>
+  )
+}
+
+const FormLayoutStyleControls: React.FC<{
+  site: PublicSite
+  embedded?: boolean
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, embedded = false, onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const defaultMaxWidth = isLanding(site) ? 1440 : 520
+  const maxWidth = isLanding(site) && Number(theme.pageMaxWidth) === 1160
+    ? 1440
+    : getThemeNumber(theme, 'pageMaxWidth', defaultMaxWidth, 360, 1440)
+
+  return (
+    <>
+      <div className={styles.panelSubheader}>{embedded ? 'Espacio del formulario' : 'Dimensiones del formulario'}</div>
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Separación fondo"
+          value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, 120)}
+          min={0}
+          max={120}
+          onChange={(value) => onPatchTheme({ pagePadding: value })}
+          onCommit={onSaveSite}
+        />
+        <DimensionField
+          label="Ancho formulario"
+          value={maxWidth}
+          min={360}
+          max={1440}
+          step={10}
+          onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
+          onCommit={onSaveSite}
+        />
+      </div>
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Radio formulario"
+          value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 60)}
+          min={0}
+          max={60}
+          onChange={(value) => onPatchTheme({ pageRadius: value })}
+          onCommit={onSaveSite}
+        />
+        <DimensionField
+          label="Borde formulario"
+          value={getThemeNumber(theme, 'pageBorderWidth', 0, 0, 12)}
+          min={0}
+          max={12}
+          onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
+          onCommit={onSaveSite}
+        />
+      </div>
+      <ColorField
+        label="Color borde"
+        value={getThemePaint(theme, 'pageBorderColor', '#dbe3ef')}
+        allowGradient
+        onChange={(value) => onPatchTheme({ pageBorderColor: value })}
         onCommit={onSaveSite}
       />
     </>
