@@ -5,6 +5,7 @@ export interface AgentRobotProps {
   active?: boolean
   className?: string
   label?: string
+  scene?: 'compact' | 'expanded'
   size?: number
 }
 
@@ -12,6 +13,7 @@ export const AgentRobot: React.FC<AgentRobotProps> = ({
   active = true,
   className = '',
   label = 'Agente AI de Ristak',
+  scene = 'compact',
   size
 }) => {
   const uid = useId().replace(/:/g, '')
@@ -38,7 +40,12 @@ export const AgentRobot: React.FC<AgentRobotProps> = ({
         flex: `0 0 ${size}px`
       }
     : undefined
-  const rootClassName = [styles.robotShell, active ? styles.active : '', className].filter(Boolean).join(' ')
+  const rootClassName = [
+    styles.robotShell,
+    active ? styles.active : '',
+    scene === 'expanded' ? styles.sceneExpanded : '',
+    className
+  ].filter(Boolean).join(' ')
 
   return (
     <span className={rootClassName} style={rootStyle} role="img" aria-label={label}>
@@ -118,9 +125,15 @@ export const AgentRobot: React.FC<AgentRobotProps> = ({
                   </radialGradient>
                 </defs>
 
-                <g className={styles.rkRings}>
-                  <ellipse className={styles.rkRing} cx="120" cy="50" rx="44" ry="12" fill="none" stroke="#7fdcff" strokeOpacity="0.85" strokeWidth="3.4" />
-                  <ellipse className={styles.rkRing} cx="120" cy="60" rx="30" ry="8" fill="none" stroke="#7fdcff" strokeOpacity="0.7" strokeWidth="2.8" />
+                <g className={styles.rkRotorRig}>
+                  <path className={styles.rkAntennaStem} d="M120 87 C119 76 119 65 120 53" stroke="#9bf0ff" strokeWidth="3.2" strokeLinecap="round" />
+                  <circle className={styles.rkRotorHub} cx="120" cy="50" r="6.4" fill="#d6fbff" />
+                  <g className={styles.rkRotor}>
+                    <ellipse className={styles.rkRotorBlade} cx="120" cy="50" rx="58" ry="5.5" fill="#9bf0ff" opacity="0.58" />
+                    <ellipse className={styles.rkRotorBlade} cx="120" cy="50" rx="52" ry="4.2" fill="#5bd3f4" opacity="0.24" transform="rotate(90 120 50)" />
+                    <path className={styles.rkRotorFlash} d="M72 48 C90 38 150 38 168 48" fill="none" stroke="#ffffff" strokeOpacity="0.58" strokeWidth="2.4" strokeLinecap="round" />
+                  </g>
+                  <ellipse className={styles.rkRotorDisc} cx="120" cy="50" rx="66" ry="12" fill="none" stroke="#7fdcff" strokeOpacity="0.2" strokeWidth="2" />
                 </g>
 
                 <g className={styles.rkProps}>
@@ -131,6 +144,20 @@ export const AgentRobot: React.FC<AgentRobotProps> = ({
                     <circle className={styles.rkBulb} cx="200" cy="58" r="9" fill={`url(#${ids.bulb})`} />
                     <rect x="196" y="66" width="8" height="4" rx="1.5" fill="#cfa83a" />
                     <path d="M196 54 L200 48 L204 54" fill="none" stroke="#fff7cf" strokeWidth="1.4" strokeLinecap="round" />
+                  </g>
+                  <g className={styles.rkReader}>
+                    <rect x="10" y="126" width="66" height="48" rx="12" fill="#0e1f3e" stroke="#3f6ea8" strokeWidth="1.8" />
+                    <path className={styles.rkReaderLine} d="M24 141 H59" stroke="#7fe0ff" strokeWidth="3" strokeLinecap="round" />
+                    <path className={styles.rkReaderLine} d="M24 153 H50" stroke="#bdf0ff" strokeWidth="3" strokeLinecap="round" />
+                    <path className={styles.rkReaderLine} d="M24 164 H62" stroke="#5fc7ef" strokeWidth="3" strokeLinecap="round" />
+                    <circle cx="65" cy="137" r="3.2" fill="#ffd23d" />
+                  </g>
+                  <g className={styles.rkAnalyzer}>
+                    <circle cx="203" cy="148" r="16" fill="#0e1f3e" stroke="#7fdcff" strokeWidth="2" />
+                    <path className={styles.rkAnalyzerBeam} d="M192 148 H214" stroke="#9bf0ff" strokeWidth="2.4" strokeLinecap="round" />
+                    <path className={styles.rkAnalyzerBeam} d="M203 137 V159" stroke="#5bd3f4" strokeWidth="2.4" strokeLinecap="round" />
+                    <path d="M214 160 L226 172" stroke="#d6fbff" strokeWidth="4" strokeLinecap="round" />
+                    <ellipse cx="228" cy="175" rx="8" ry="7" fill={`url(#${ids.hand})`} />
                   </g>
                 </g>
 
@@ -165,10 +192,21 @@ export const AgentRobot: React.FC<AgentRobotProps> = ({
                       </g>
                       <g className={styles.rkHappy}>
                         <path d="M90 154 Q101 142 112 154" stroke="#bdf0ff" strokeWidth="5" strokeLinecap="round" />
-                        <path d="M128 154 Q139 142 150 154" stroke="#bdf0ff" strokeWidth="5" strokeLinecap="round" />
-                      </g>
+                      <path d="M128 154 Q139 142 150 154" stroke="#bdf0ff" strokeWidth="5" strokeLinecap="round" />
                     </g>
-                    <path className={styles.rkMouthArc} d="M106,176 Q120,185 134,176" fill="none" stroke="#9bf0ff" strokeWidth="4" strokeLinecap="round" />
+                    <g className={styles.rkFocusEyes}>
+                      <path d="M89 150 H113" stroke="#9bf0ff" strokeWidth="5" strokeLinecap="round" />
+                      <path d="M127 150 H151" stroke="#9bf0ff" strokeWidth="5" strokeLinecap="round" />
+                    </g>
+                    <g className={styles.rkStarEyes}>
+                      <path d="M101 139 L105 149 L116 150 L107 156 L110 167 L101 160 L92 167 L95 156 L86 150 L97 149 Z" fill="#bdf0ff" />
+                      <path d="M139 139 L143 149 L154 150 L145 156 L148 167 L139 160 L130 167 L133 156 L124 150 L135 149 Z" fill="#bdf0ff" />
+                    </g>
+                  </g>
+                    <g className={styles.rkSoundMouth}>
+                      <path className={styles.rkSoundWave} d="M96 176 C101 168 106 184 111 176 S121 168 126 176 S136 184 141 176" fill="none" stroke="#9bf0ff" strokeWidth="4" strokeLinecap="round" />
+                      <path className={styles.rkSoundWave} d="M101 184 C105 179 109 189 113 184 S121 179 125 184 S133 189 137 184" fill="none" stroke="#5bd3f4" strokeWidth="2.8" strokeLinecap="round" />
+                    </g>
                     <g className={styles.rkEq}>
                       <rect className={styles.rkEqBar} x="105" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
                       <rect className={styles.rkEqBar} x="112" y="174" width="4" height="11" rx="2" fill="#9bf0ff" />
@@ -186,6 +224,23 @@ export const AgentRobot: React.FC<AgentRobotProps> = ({
                     <rect className={styles.rkPhoneScr} x="139" y="196" width="32" height="48" rx="4" fill="#123a6b" transform="rotate(-7 155 222)" />
                     <rect className={styles.rkPhoneScr} x="144" y="204" width="22" height="3.4" rx="1.7" fill="#7fe0ff" transform="rotate(-7 155 222)" />
                     <rect className={styles.rkPhoneScr} x="144" y="212" width="16" height="3.4" rx="1.7" fill="#5fc7ef" transform="rotate(-7 155 222)" />
+                    <path className={styles.rkPhoneSignal} d="M178 200 C192 209 198 228 188 243" fill="none" stroke="#ffd23d" strokeWidth="3" strokeLinecap="round" />
+                    <path className={styles.rkPhoneSignal} d="M184 192 C205 206 214 233 198 254" fill="none" stroke="#fff7cf" strokeWidth="2.2" strokeLinecap="round" />
+                  </g>
+                  <g className={styles.rkKeyboard}>
+                    <rect x="58" y="254" width="92" height="22" rx="8" fill="#0b1730" stroke="#37528a" strokeWidth="2" />
+                    <path className={styles.rkKeyLine} d="M70 263 H88" stroke="#7fe0ff" strokeWidth="3" strokeLinecap="round" />
+                    <path className={styles.rkKeyLine} d="M96 263 H116" stroke="#bdf0ff" strokeWidth="3" strokeLinecap="round" />
+                    <path className={styles.rkKeyLine} d="M124 263 H137" stroke="#5fc7ef" strokeWidth="3" strokeLinecap="round" />
+                    <ellipse className={styles.rkKeyboardHand} cx="82" cy="246" rx="13" ry="10" fill={`url(#${ids.hand})`} />
+                  </g>
+                  <g className={styles.rkJuggle}>
+                    <circle className={styles.rkJuggleOrb} cx="72" cy="88" r="6" fill="#ffd23d" />
+                    <circle className={styles.rkJuggleOrb} cx="120" cy="70" r="6" fill="#7fe0ff" />
+                    <circle className={styles.rkJuggleOrb} cx="168" cy="88" r="6" fill="#bdf0ff" />
+                  </g>
+                  <g className={styles.rkFlipTrail}>
+                    <path d="M54 222 C80 280 164 280 188 220" fill="none" stroke="#7fdcff" strokeOpacity="0.28" strokeWidth="4" strokeLinecap="round" strokeDasharray="6 9" />
                   </g>
                   <g className={styles.rkWave}>
                     <g className={styles.rkHandWave} transform="translate(206 150)">
