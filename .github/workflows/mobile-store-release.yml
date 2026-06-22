@@ -95,15 +95,22 @@ jobs:
           mkdir -p "$RUNNER_TEMP/appstore"
           ASC_KEY_PATH="$RUNNER_TEMP/appstore/AuthKey_${ASC_KEY_ID}.p8"
           printf '%s' "$ASC_KEY_P8" > "$ASC_KEY_PATH"
-          cat > "$RUNNER_TEMP/appstore/api_key.json" <<JSON
-          {
-            "key_id": "$ASC_KEY_ID",
-            "issuer_id": "$ASC_ISSUER_ID",
-            "key_filepath": "$ASC_KEY_PATH",
-            "duration": 1200,
-            "in_house": false
+          export ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 ASC_KEY_PATH
+          python3 - <<'PY'
+          import json
+          import os
+
+          payload = {
+              "key_id": os.environ["ASC_KEY_ID"],
+              "issuer_id": os.environ["ASC_ISSUER_ID"],
+              "key": os.environ["ASC_KEY_P8"],
+              "key_filepath": os.environ["ASC_KEY_PATH"],
+              "duration": 1200,
+              "in_house": False,
           }
-          JSON
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "appstore", "api_key.json"), "w") as file:
+              json.dump(payload, file)
+          PY
           {
             echo "ASC_KEY_ID=$ASC_KEY_ID"
             echo "ASC_ISSUER_ID=$ASC_ISSUER_ID"
