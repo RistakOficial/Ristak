@@ -5,6 +5,7 @@ import {
   Card,
   Button,
   Modal,
+  TabList,
   CustomSelect,
   NumberInput,
   Switch,
@@ -70,6 +71,11 @@ import {
   MessageComposer,
   VariableTextInput
 } from '@/pages/Automations/editor/composer/MessageComposer'
+import {
+  ACCOUNT_CURRENCY_CONFIG_KEY,
+  getDetectedAccountLocaleDefaults,
+  normalizeCurrencyCode
+} from '@/utils/accountLocale'
 import styles from './HighLevelIntegration.module.css'
 import pageStyles from './CalendarsConfiguration.module.css'
 
@@ -136,14 +142,29 @@ const CALENDAR_META_EVENT_OPTIONS = [
   { value: 'Purchase', label: 'Purchase · compra' }
 ]
 const CALENDAR_META_PARAMETER_FIELDS: Array<{
-  key: keyof Omit<CalendarCustomEventParameters, 'custom'>
+  key: 'value' | 'predictedLtv'
   label: string
   placeholder: string
 }> = [
   { key: 'value', label: 'Valor monetario', placeholder: '1500' },
-  { key: 'currency', label: 'Moneda', placeholder: 'MXN' },
-  { key: 'predictedLtv', label: 'LTV estimado', placeholder: '5000' },
-  { key: 'status', label: 'Estado', placeholder: 'booked' }
+  { key: 'predictedLtv', label: 'LTV estimado', placeholder: '5000' }
+]
+const CALENDAR_CUSTOM_EVENT_CHANNEL_TABS = [
+  {
+    value: 'site',
+    label: 'Sitios',
+    description: 'Usa Meta Pixel y Conversions API cuando la cita venga de una página o formulario.'
+  },
+  {
+    value: 'whatsapp',
+    label: 'WhatsApp',
+    description: 'Usa Business Messaging y manda LeadSubmitted para citas originadas en WhatsApp.'
+  },
+  {
+    value: 'smart',
+    label: 'Inteligente',
+    description: 'Ristak decide entre Sitios y WhatsApp según el primer punto de contacto del cliente.'
+  }
 ]
 const CALENDAR_WIZARD_STEPS: Array<{
   id: CalendarWizardStepId
@@ -266,7 +287,6 @@ const normalizeCalendarCustomEventParameters = (value?: Partial<CalendarCustomEv
           key: String(parameter.key || '').trim(),
           value: String(parameter.value || '').trim()
         }))
-        .filter(parameter => parameter.key || parameter.value)
         .slice(0, 12)
     : []
 
@@ -286,7 +306,11 @@ const normalizeCalendarCustomEventParameters = (value?: Partial<CalendarCustomEv
 }
 
 const normalizeCalendarCustomEvents = (value?: Partial<CalendarCustomEventsConfig> | null): CalendarCustomEventsConfig => {
-  const channel: CalendarCustomEventChannel = value?.channel === 'whatsapp' ? 'whatsapp' : 'site'
+  const channel: CalendarCustomEventChannel = value?.channel === 'whatsapp'
+    ? 'whatsapp'
+    : value?.channel === 'smart'
+      ? 'smart'
+      : 'site'
   const rawEventName = String(value?.eventName || '').trim()
   const siteEventName = CALENDAR_META_EVENT_OPTIONS.some(option => option.value === rawEventName)
     ? rawEventName
@@ -297,6 +321,32 @@ const normalizeCalendarCustomEvents = (value?: Partial<CalendarCustomEventsConfi
     channel,
     eventName: channel === 'whatsapp' ? CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME : siteEventName,
     parameters: normalizeCalendarCustomEventParameters(value?.parameters)
+  }
+}
+
+const hasCalendarCustomEventParameters = (parameters?: CalendarCustomEventParameters | null) => {
+  const normalized = normalizeCalendarCustomEventParameters(parameters)
+  return CALENDAR_META_PARAMETER_FIELDS.some(field => Boolean(String(normalized[field.key] || '').trim())) ||
+    Boolean(normalized.custom?.some(parameter => parameter.key || parameter.value))
+}
+
+const getSavableCalendarCustomEvents = (
+  value: Partial<CalendarCustomEventsConfig> | null | undefined,
+  accountCurrency: string
+): CalendarCustomEventsConfig => {
+  const normalized = normalizeCalendarCustomEvents(value)
+  const custom = (normalized.parameters.custom || [])
+    .filter(parameter => parameter.key || parameter.value)
+    .slice(0, 12)
+
+  return {
+    ...normalized,
+    parameters: {
+      ...normalized.parameters,
+      currency: normalized.channel === 'whatsapp' ? '' : accountCurrency,
+      status: '',
+      custom
+    }
   }
 }
 
@@ -400,6 +450,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const routeState = useMemo(() => parseCalendarSettingsRoute(location.pathname), [location.pathname])
   const { showToast, showConfirm } = useNotification()
   const { locationId, accessToken, user } = useAuth()
+  const detectedAccountLocaleDefaults = useMemo(() => getDetectedAccountLocaleDefaults(), [])
 
   // Estados de configuración (usa sistema híbrido)
   const [defaultCalendarId, setDefaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
@@ -409,6 +460,8 @@ export const CalendarsConfiguration: React.FC = () => {
   const [calendarPushEnabled, setCalendarPushEnabled] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
   const [calendarPushNotificationIds, setCalendarPushNotificationIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
   const [googleMergePromptHandledIds, setGoogleMergePromptHandledIds] = useAppConfig<string[]>('google_calendar_merge_prompt_handled_ids', [])
+  const [accountCurrencyConfig] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedAccountLocaleDefaults.currency)
+  const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig, detectedAccountLocaleDefaults.currency)
 
   // El origen de calendarios solo tiene sentido con una integración de terceros
   // (HighLevel). Sin ella, Ristak es la única fuente posible.
@@ -464,6 +517,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const [expandedCalendarId, setExpandedCalendarId] = useState<string | null>(null)
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarType | null>(null)
   const [calendarWizardStep, setCalendarWizardStep] = useState<CalendarWizardStepId>('basics')
+  const [calendarMetaParamsOpen, setCalendarMetaParamsOpen] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
   const [deletingCalendarId, setDeletingCalendarId] = useState<string | null>(null)
   const [formSites, setFormSites] = useState<PublicSite[]>([])
@@ -536,12 +590,14 @@ export const CalendarsConfiguration: React.FC = () => {
         })
         if (expandedCalendarId !== calendar.id) {
           setCalendarWizardStep('basics')
+          setCalendarMetaParamsOpen(false)
         }
         setExpandedCalendarId(calendar.id)
       }
     } else if (!routeState.calendarId && expandedCalendarId) {
       setExpandedCalendarId(null)
       setSelectedCalendar(null)
+      setCalendarMetaParamsOpen(false)
     }
   }, [calendars, expandedCalendarId, routeState.calendarId, routeState.create, routeState.view])
 
@@ -1083,6 +1139,7 @@ export const CalendarsConfiguration: React.FC = () => {
     })
     setExpandedCalendarId(calendar.id)
     setCalendarWizardStep('basics')
+    setCalendarMetaParamsOpen(false)
     if (googleIntegration?.connected && !loadingGoogleCalendarOptions && !googleCalendarOptions.length) {
       loadGoogleCalendarOptions()
     }
@@ -1093,6 +1150,7 @@ export const CalendarsConfiguration: React.FC = () => {
     setExpandedCalendarId(null)
     setSelectedCalendar(null)
     setCalendarWizardStep('basics')
+    setCalendarMetaParamsOpen(false)
     navigate(buildCalendarSettingsPath('calendars'), { replace: true })
   }
 
@@ -1109,7 +1167,7 @@ export const CalendarsConfiguration: React.FC = () => {
       // Construir payload con todos los campos editables
       const bookingForm = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
       const bookingCompletion = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
-      const customEvents = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
+      const customEvents = getSavableCalendarCustomEvents(selectedCalendar.customEvents, accountCurrency)
       const nextSlug = normalizeCalendarSlugInput(selectedCalendar.slug || selectedCalendar.widgetSlug || selectedCalendar.name || selectedCalendar.id)
       const slugConflict = calendars.some(item => (
         item.id !== selectedCalendar.id &&
@@ -1691,6 +1749,7 @@ export const CalendarsConfiguration: React.FC = () => {
     const bookingFormConfig = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
     const bookingCompletionConfig = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
     const customEventsConfig = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
+    const customEventsHasParameters = hasCalendarCustomEventParameters(customEventsConfig.parameters)
     const selectedCustomForm = customFormSites.find(site => site.id === bookingFormConfig.customFormId)
     const calendarFormOptions = customFormSites.map(site => ({
       value: site.id,
@@ -1752,6 +1811,7 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     const addCustomEventParameterRow = () => {
+      setCalendarMetaParamsOpen(true)
       updateCustomEventParameters({
         custom: [...(customEventsConfig.parameters.custom || []), createCalendarCustomEventParameter()]
       })
@@ -2506,30 +2566,48 @@ export const CalendarsConfiguration: React.FC = () => {
                       {customEventsConfig.enabled && (
                         <>
                           <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
-                            <div className={pageStyles.eventSwitchRow}>
-                              <div>
-                                <span>{customEventsConfig.channel === 'whatsapp' ? 'Conversión por WhatsApp' : 'Conversión por página pública'}</span>
-                                <small>
-                                  {customEventsConfig.channel === 'whatsapp'
-                                    ? 'Usa el evento de WhatsApp Business Messaging y manda LeadSubmitted.'
-                                    : 'Usa Meta Pixel y Conversions API como en Sitios cuando comparten la URL pública.'}
-                                </small>
-                              </div>
-                              <Switch
-                                checked={customEventsConfig.channel === 'whatsapp'}
-                                onChange={(checked) => updateCustomEventsConfig({
-                                  channel: checked ? 'whatsapp' : 'site',
-                                  eventName: checked ? CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME : CALENDAR_DEFAULT_META_EVENT_NAME
-                                })}
-                                aria-label="Usar evento de WhatsApp para este calendario"
-                              />
-                            </div>
+                            <span className={pageStyles.eventFieldTitle}>Tipo de conversión</span>
+                            <TabList
+                              tabs={CALENDAR_CUSTOM_EVENT_CHANNEL_TABS}
+                              activeTab={customEventsConfig.channel}
+                              onTabChange={(value) => {
+                                const channel = value as CalendarCustomEventChannel
+                                updateCustomEventsConfig({
+                                  channel,
+                                  eventName: channel === 'whatsapp'
+                                    ? CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME
+                                    : customEventsConfig.channel === 'whatsapp'
+                                      ? CALENDAR_DEFAULT_META_EVENT_NAME
+                                      : customEventsConfig.eventName
+                                })
+                              }}
+                              fullWidth
+                              variant="compact"
+                              className={pageStyles.eventChannelControl}
+                            />
+                            <small>
+                              Sitios usa Pixel + CAPI, WhatsApp usa LeadSubmitted y modo inteligente decide según el primer punto de contacto.
+                            </small>
                           </div>
 
-                          {customEventsConfig.channel === 'site' ? (
+                          {customEventsConfig.channel !== 'whatsapp' ? (
                             <>
+                              {customEventsConfig.channel === 'smart' && (
+                                <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                                  <div className={pageStyles.eventSmartHint}>
+                                    <Info size={16} />
+                                    <div>
+                                      <strong>Modo inteligente</strong>
+                                      <small>
+                                        Si el contacto nació por WhatsApp/Meta CTWA manda LeadSubmitted. Si nació por sitio, formulario o URL pública, manda Pixel + CAPI.
+                                      </small>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
                               <label className={pageStyles.editorField}>
-                                <span>Evento de Meta</span>
+                                <span className={pageStyles.eventFieldTitle}>Evento de Meta</span>
                                 <CustomSelect
                                   value={customEventsConfig.eventName}
                                   onValueChange={(value) => updateCustomEventsConfig({ eventName: value })}
@@ -2539,70 +2617,93 @@ export const CalendarsConfiguration: React.FC = () => {
                               </label>
 
                               <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
-                                <span>Parámetros opcionales</span>
-                                <div className={pageStyles.eventParameterGrid}>
-                                  {CALENDAR_META_PARAMETER_FIELDS.map(field => (
-                                    <label key={field.key}>
-                                      <span>{field.label}</span>
-                                      <input
-                                        className={styles.input}
-                                        value={String(customEventsConfig.parameters[field.key] || '')}
-                                        onChange={(event) => updateCustomEventParameters({ [field.key]: event.target.value } as Partial<CalendarCustomEventParameters>)}
-                                        placeholder={field.placeholder}
-                                      />
-                                    </label>
-                                  ))}
-                                </div>
-                                <small>
-                                  Si no escribes nada, Ristak manda calendario, cita, estado, fecha y el ID de evento para deduplicar Pixel + CAPI.
-                                </small>
-                              </div>
+                                <button
+                                  type="button"
+                                  className={[
+                                    pageStyles.eventInlineToggle,
+                                    calendarMetaParamsOpen ? pageStyles.eventInlineToggleActive : '',
+                                    customEventsHasParameters ? pageStyles.eventInlineToggleFilled : ''
+                                  ].filter(Boolean).join(' ')}
+                                  aria-expanded={calendarMetaParamsOpen}
+                                  onClick={() => setCalendarMetaParamsOpen(open => !open)}
+                                >
+                                  <SlidersHorizontal size={14} />
+                                  <span>Parámetros opcionales</span>
+                                  <ChevronDown size={13} />
+                                </button>
 
-                              <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
-                                <div className={pageStyles.customParameterHeader}>
-                                  <span>Parámetros extra</span>
-                                  <Button variant="secondary" size="small" onClick={addCustomEventParameterRow}>
-                                    <Plus size={14} />
-                                    Añadir parámetro
-                                  </Button>
-                                </div>
-                                <div className={pageStyles.customParameterList}>
-                                  {(customEventsConfig.parameters.custom || []).length ? (
-                                    (customEventsConfig.parameters.custom || []).map(parameter => (
-                                      <div key={parameter.id} className={pageStyles.customParameterRow}>
-                                        <input
-                                          className={styles.input}
-                                          value={parameter.key}
-                                          onChange={(event) => updateCustomEventParameterRow(parameter.id, { key: event.target.value })}
-                                          placeholder="nombre_parametro"
-                                        />
-                                        <input
-                                          className={styles.input}
-                                          value={parameter.value}
-                                          onChange={(event) => updateCustomEventParameterRow(parameter.id, { value: event.target.value })}
-                                          placeholder="valor"
-                                        />
-                                        <Button
-                                          variant="ghost"
-                                          size="small"
-                                          onClick={() => removeCustomEventParameterRow(parameter.id)}
-                                          aria-label="Eliminar parámetro"
-                                        >
-                                          <Trash2 size={14} />
-                                        </Button>
-                                      </div>
-                                    ))
-                                  ) : (
-                                    <p className={pageStyles.customParameterEmpty}>
-                                      Sin parámetros extra. Los datos comunes de la cita se mandan automáticamente.
-                                    </p>
-                                  )}
-                                </div>
+                                {calendarMetaParamsOpen && (
+                                  <div className={pageStyles.eventParameterPanel}>
+                                    <div className={pageStyles.eventCurrencyNote}>
+                                      <span>Moneda de la cuenta</span>
+                                      <strong>{accountCurrency}</strong>
+                                      <small>Se manda automáticamente con el evento; no se edita por calendario.</small>
+                                    </div>
+
+                                    <div className={pageStyles.eventParameterGrid}>
+                                      {CALENDAR_META_PARAMETER_FIELDS.map(field => (
+                                        <label key={field.key}>
+                                          <span className={pageStyles.eventParameterLabel}>{field.label}</span>
+                                          <input
+                                            className={styles.input}
+                                            value={String(customEventsConfig.parameters[field.key] || '')}
+                                            onChange={(event) => updateCustomEventParameters({ [field.key]: event.target.value } as Partial<CalendarCustomEventParameters>)}
+                                            placeholder={field.placeholder}
+                                          />
+                                        </label>
+                                      ))}
+                                    </div>
+
+                                    <div className={pageStyles.customParameterHeader}>
+                                      <span className={pageStyles.eventFieldTitle}>Parámetros extra</span>
+                                      <Button variant="secondary" size="small" onClick={addCustomEventParameterRow}>
+                                        <Plus size={14} />
+                                        Añadir parámetro
+                                      </Button>
+                                    </div>
+                                    <div className={pageStyles.customParameterList}>
+                                      {(customEventsConfig.parameters.custom || []).length ? (
+                                        (customEventsConfig.parameters.custom || []).map(parameter => (
+                                          <div key={parameter.id} className={pageStyles.customParameterRow}>
+                                            <input
+                                              className={styles.input}
+                                              value={parameter.key}
+                                              onChange={(event) => updateCustomEventParameterRow(parameter.id, { key: event.target.value })}
+                                              placeholder="nombre_parametro"
+                                            />
+                                            <input
+                                              className={styles.input}
+                                              value={parameter.value}
+                                              onChange={(event) => updateCustomEventParameterRow(parameter.id, { value: event.target.value })}
+                                              placeholder="valor"
+                                            />
+                                            <Button
+                                              variant="ghost"
+                                              size="small"
+                                              onClick={() => removeCustomEventParameterRow(parameter.id)}
+                                              aria-label="Eliminar parámetro"
+                                            >
+                                              <Trash2 size={14} />
+                                            </Button>
+                                          </div>
+                                        ))
+                                      ) : (
+                                        <p className={pageStyles.customParameterEmpty}>
+                                          Sin parámetros extra. Los datos comunes de la cita se mandan automáticamente.
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    <small>
+                                      Si no escribes nada, Ristak manda calendario, cita, fecha, moneda, estado agendado y el ID de evento para deduplicar Pixel + CAPI.
+                                    </small>
+                                  </div>
+                                )}
                               </div>
                             </>
                           ) : (
                             <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
-                              <span>Evento enviado por WhatsApp</span>
+                              <span className={pageStyles.eventFieldTitle}>Evento enviado por WhatsApp</span>
                               <div className={pageStyles.whatsappEventSummary}>
                                 <strong>{CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME}</strong>
                                 <small>
@@ -2618,7 +2719,6 @@ export const CalendarsConfiguration: React.FC = () => {
                 </>
               )}
             </div>
-
             <div className={pageStyles.calendarWizardFooter}>
               <Button
                 variant="secondary"

@@ -25,6 +25,7 @@ import {
   findContactByPhoneCandidates,
   prepareContactPhoneUpsert
 } from '../services/contactIdentityService.js';
+import { loadFirstWhatsAppAttributions } from '../services/contactSourceService.js';
 
 /**
  * Controlador para endpoints de Calendarios de HighLevel
@@ -84,6 +85,184 @@ function buildPublicCalendarMetaRequest(req, body = {}) {
       fbp: cleanString(source.fbp),
       fbc: cleanString(source.fbc)
     }
+  };
+}
+
+function parseAttributionTime(value) {
+  if (!value) return null;
+  const time = Date.parse(String(value));
+  return Number.isFinite(time) ? time : null;
+}
+
+function sourceLooksLikeWhatsApp(value = '') {
+  const normalized = cleanString(value).toLowerCase();
+  return Boolean(normalized && (
+    normalized.includes('whatsapp') ||
+    normalized.includes('wa.me') ||
+    normalized.includes('ctwa') ||
+    normalized.includes('click_to_whatsapp') ||
+    normalized.includes('ycloud')
+  ));
+}
+
+function sourceLooksLikeWeb(value = '') {
+  const normalized = cleanString(value).toLowerCase();
+  return Boolean(normalized && (
+    normalized.includes('ristak_site') ||
+    normalized.includes('ristak_calendar') ||
+    normalized.includes('public_calendar') ||
+    normalized.includes('site') ||
+    normalized.includes('form') ||
+    normalized.includes('landing') ||
+    normalized.includes('web')
+  ));
+}
+
+async function getFirstCalendarContactWebSession(contact = {}) {
+  const conditions = [];
+  const params = [];
+
+  if (contact.id) {
+    conditions.push('contact_id = ?');
+    params.push(contact.id);
+  }
+  if (contact.visitor_id) {
+    conditions.push('visitor_id = ?');
+    params.push(contact.visitor_id);
+  }
+  if (contact.email) {
+    conditions.push('LOWER(email) = ?');
+    params.push(String(contact.email).toLowerCase());
+  }
+
+  if (!conditions.length) return null;
+
+  return db.get(`
+    SELECT
+      id,
+      contact_id,
+      visitor_id,
+      email,
+      started_at,
+      created_at,
+      page_url,
+      referrer_url,
+      utm_source,
+      utm_medium,
+      utm_campaign,
+      source_platform,
+      site_source_name,
+      tracking_source,
+      site_id,
+      site_slug,
+      site_type,
+      form_site_id,
+      conversion_type,
+      submission_id,
+      fbclid,
+      fbc,
+      fbp,
+      ad_id
+    FROM sessions
+    WHERE ${conditions.join(' OR ')}
+    ORDER BY started_at ASC, created_at ASC, id ASC
+    LIMIT 1
+  `, params).catch(error => {
+    logger.warn(`[Calendars Controller] No se pudo leer primera sesión web del contacto ${contact.id || ''}: ${error.message}`);
+    return null;
+  });
+}
+
+async function getCalendarContactForMeta(contactId) {
+  if (!contactId) return null;
+  return db.get(`
+    SELECT
+      id,
+      phone,
+      email,
+      full_name,
+      first_name,
+      last_name,
+      source,
+      visitor_id,
+      attribution_url,
+      attribution_session_source,
+      attribution_medium,
+      attribution_ctwa_clid,
+      attribution_ad_name,
+      attribution_ad_id,
+      created_at
+    FROM contacts
+    WHERE id = ?
+  `, [contactId]).catch(error => {
+    logger.warn(`[Calendars Controller] No se pudo leer contacto ${contactId} para evento Meta: ${error.message}`);
+    return null;
+  });
+}
+
+async function resolveCalendarSmartEventChannel(contactId) {
+  const contact = await getCalendarContactForMeta(contactId);
+  if (!contact) return { channel: 'site', reason: 'missing_contact', contact: null };
+
+  const firstWebSession = await getFirstCalendarContactWebSession(contact);
+  const whatsappAttributions = await loadFirstWhatsAppAttributions([contactId]).catch(error => {
+    logger.warn(`[Calendars Controller] No se pudo leer atribución WhatsApp del contacto ${contactId}: ${error.message}`);
+    return new Map();
+  });
+  const whatsappAttribution = whatsappAttributions.get(contactId) || null;
+  const webTime = parseAttributionTime(firstWebSession?.started_at || firstWebSession?.created_at);
+  const whatsappTime = parseAttributionTime(whatsappAttribution?.created_at);
+  const hasWebSignal = Boolean(firstWebSession) ||
+    sourceLooksLikeWeb(contact.source) ||
+    sourceLooksLikeWeb(contact.attribution_session_source) ||
+    sourceLooksLikeWeb(contact.attribution_url);
+  const hasWhatsAppSignal = Boolean(whatsappAttribution) ||
+    Boolean(cleanString(contact.attribution_ctwa_clid)) ||
+    sourceLooksLikeWhatsApp(contact.source) ||
+    sourceLooksLikeWhatsApp(contact.attribution_session_source) ||
+    sourceLooksLikeWhatsApp(contact.attribution_url);
+
+  if (hasWhatsAppSignal) {
+    if (hasWebSignal && webTime && whatsappTime) {
+      return {
+        channel: whatsappTime < webTime ? 'whatsapp' : 'site',
+        reason: whatsappTime < webTime ? 'whatsapp_first_touch' : 'web_first_touch',
+        contact
+      };
+    }
+
+    if (!hasWebSignal || (!webTime && !sourceLooksLikeWeb(contact.source))) {
+      return { channel: 'whatsapp', reason: 'whatsapp_attribution', contact };
+    }
+  }
+
+  return {
+    channel: 'site',
+    reason: hasWebSignal ? 'web_attribution' : 'fallback_site',
+    contact
+  };
+}
+
+async function resolveCalendarCustomEventChannel({ customEvents, contactId }) {
+  const configuredChannel = customEvents?.channel === 'whatsapp'
+    ? 'whatsapp'
+    : customEvents?.channel === 'smart'
+      ? 'smart'
+      : 'site';
+
+  if (configuredChannel !== 'smart') {
+    const contact = configuredChannel === 'site' ? await getCalendarContactForMeta(contactId) : null;
+    return { channel: configuredChannel, reason: 'configured_channel', contact };
+  }
+
+  return resolveCalendarSmartEventChannel(contactId);
+}
+
+function getCustomEventsForResolvedChannel(customEvents = {}, channel = 'site') {
+  return {
+    ...customEvents,
+    channel,
+    eventName: channel === 'whatsapp' ? 'LeadSubmitted' : customEvents.eventName
   };
 }
 
@@ -1125,9 +1304,14 @@ export async function createPublicAppointment(req, res) {
 
     const customEvents = localCalendarService.normalizeCalendarCustomEventsConfig(calendar.customEvents || {});
     let metaEvent = null;
-    if (customEvents.enabled && customEvents.channel === 'site') {
+    const resolvedCustomEvent = customEvents.enabled
+      ? await resolveCalendarCustomEventChannel({ customEvents, contactId })
+      : { channel: 'whatsapp', reason: 'global_whatsapp_config' };
+
+    if (customEvents.enabled && resolvedCustomEvent.channel === 'site') {
+      const siteCustomEvents = getCustomEventsForResolvedChannel(customEvents, 'site');
       metaEvent = await sendCalendarBookingSiteMetaEvent({
-        calendar: { ...calendar, customEvents },
+        calendar: { ...calendar, customEvents: siteCustomEvents },
         appointment,
         contactId,
         contact: {
@@ -1145,7 +1329,7 @@ export async function createPublicAppointment(req, res) {
         calendarId: calendar.id,
         calendarName: calendar.name,
         appointmentId: appointment.id,
-        customEvents: customEvents.enabled ? customEvents : undefined
+        customEvents: customEvents.enabled ? getCustomEventsForResolvedChannel(customEvents, 'whatsapp') : undefined
       }).catch(error => {
         logger.warn(`[Calendars Controller] No se pudo disparar evento WhatsApp para cita publica: ${error.message}`);
         return null;
@@ -1168,10 +1352,10 @@ export async function createPublicAppointment(req, res) {
         appointment,
         message: bookingCompletion.message,
         bookingCompletion,
-        metaEvent: customEvents.enabled && customEvents.channel === 'site' && metaEvent?.eventId
+        metaEvent: customEvents.enabled && resolvedCustomEvent.channel === 'site' && metaEvent?.eventId
           ? {
               eventId: metaEvent.eventId,
-              eventName: metaEvent.eventName || customEvents.eventName,
+              eventName: metaEvent.eventName || getCustomEventsForResolvedChannel(customEvents, 'site').eventName,
               appointmentId: appointment.id,
               status: appointment.appointmentStatus || appointment.status || 'booked'
             }
@@ -1453,12 +1637,31 @@ export async function createAppointment(req, res) {
 
     if (contactId) {
       const customEvents = localCalendarService.normalizeCalendarCustomEventsConfig(localCalendar?.customEvents || {});
-      if (!customEvents.enabled || customEvents.channel === 'whatsapp') {
+      const resolvedCustomEvent = customEvents.enabled
+        ? await resolveCalendarCustomEventChannel({ customEvents, contactId })
+        : { channel: 'whatsapp', reason: 'global_whatsapp_config', contact: null };
+
+      if (customEvents.enabled && resolvedCustomEvent.channel === 'site') {
+        const metaContact = resolvedCustomEvent.contact || await getCalendarContactForMeta(contactId) || {};
+        await sendCalendarBookingSiteMetaEvent({
+          calendar: { ...(localCalendar || {}), customEvents: getCustomEventsForResolvedChannel(customEvents, 'site') },
+          appointment,
+          contactId,
+          contact: metaContact,
+          requestMeta: buildPublicCalendarMetaRequest(req, req.body || {})
+        }).catch(error => {
+          logger.warn(`[Calendars Controller] No se pudo disparar evento Meta web para cita: ${error.message}`);
+          return null;
+        });
+      } else {
         await triggerWhatsappAppointmentBookedEvent(contactId, {
           calendarId: appointment?.calendarId || appointmentData.calendarId || appointmentData.calendar_id,
           calendarName: localCalendar?.name || appointmentData.calendarName || '',
           appointmentId: appointment?.id,
-          customEvents: customEvents.enabled ? customEvents : undefined
+          customEvents: customEvents.enabled ? getCustomEventsForResolvedChannel(customEvents, 'whatsapp') : undefined
+        }).catch(error => {
+          logger.warn(`[Calendars Controller] No se pudo disparar evento WhatsApp para cita: ${error.message}`);
+          return null;
         });
       }
     }

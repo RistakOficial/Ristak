@@ -16,7 +16,7 @@ const DEFAULT_EVENT_COLOR = '#3b82f6'
 const DEFAULT_BOOKING_COMPLETION_MESSAGE = 'Listo. Tu cita quedo agendada.'
 const DEFAULT_CALENDAR_META_EVENT_NAME = 'Schedule'
 const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
-const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp'])
+const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp', 'smart'])
 const CALENDAR_SITE_META_EVENTS = new Set([
   'Lead',
   'Schedule',

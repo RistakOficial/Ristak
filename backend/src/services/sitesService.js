@@ -762,7 +762,9 @@ function mergeSiteMetaCustomData(base = {}, configured = {}) {
     'appointment_id',
     'appointment_status',
     'appointment_start_time',
-    'appointment_end_time'
+    'appointment_end_time',
+    'currency',
+    'status'
   ].forEach(key => {
     if (base[key] !== undefined) reserved[key] = base[key]
   })
@@ -18630,10 +18632,16 @@ function getCalendarSiteMetaEventConfig(calendar = {}) {
     allowNone: true,
     fallback: 'Schedule'
   })
+  const rawChannel = cleanString(source.channel || source.conversionChannel || source.conversion_channel || 'site').toLowerCase()
+  const channel = rawChannel === 'whatsapp'
+    ? 'whatsapp'
+    : rawChannel === 'smart'
+      ? 'smart'
+      : 'site'
 
   return {
     enabled: normalizeBoolean(source.enabled) === 1,
-    channel: cleanString(source.channel || source.conversionChannel || source.conversion_channel || 'site').toLowerCase() === 'whatsapp' ? 'whatsapp' : 'site',
+    channel,
     eventName: eventName === SITE_META_NO_EVENT ? SITE_META_NO_EVENT : eventName,
     parameters: pruneSiteMetaEventParametersForEvent(source.parameters || source.eventParameters || source.event_parameters || {}, eventName)
   }
@@ -18657,7 +18665,7 @@ function buildCalendarMetaBaseCustomData(calendar = {}, appointment = {}, extra 
 
 export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEnabled = true, preview = false } = {}) {
   const config = getCalendarSiteMetaEventConfig(calendar)
-  if (!trackingEnabled || preview || !config.enabled || config.channel !== 'site' || config.eventName === SITE_META_NO_EVENT) return ''
+  if (!trackingEnabled || preview || !config.enabled || !['site', 'smart'].includes(config.channel) || config.eventName === SITE_META_NO_EVENT) return ''
 
   const metaConfig = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer Pixel ID de Meta para snippet de calendario: ${error.message}`)
@@ -22447,7 +22455,7 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
     return { sent: false, reason: 'disabled', eventId, eventName: config.eventName }
   }
 
-  if (config.channel !== 'site') {
+  if (!['site', 'smart'].includes(config.channel)) {
     return { sent: false, reason: 'channel_not_site', eventId, eventName: config.eventName }
   }
 
@@ -22504,8 +22512,9 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
     return { sent: false, reason: 'insufficient_user_data', eventId, eventName: config.eventName }
   }
 
+  const accountLocale = await getAccountLocaleSettings().catch(() => null)
   const customData = mergeSiteMetaCustomData(
-    buildCalendarMetaBaseCustomData(calendar, appointment),
+    buildCalendarMetaBaseCustomData(calendar, appointment, { currency: accountLocale?.currency || 'MXN' }),
     buildSiteMetaConfiguredCustomData(config.parameters, config.eventName)
   )
   const payload = {

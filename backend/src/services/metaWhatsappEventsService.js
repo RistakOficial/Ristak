@@ -79,7 +79,7 @@ function normalizeCalendarWhatsappCustomEvents(value = {}) {
 
   return {
     enabled: parseBoolean(eventSource.enabled, false),
-    channel: channel === 'whatsapp' ? 'whatsapp' : 'site',
+    channel: channel === 'whatsapp' ? 'whatsapp' : channel === 'smart' ? 'smart' : 'site',
     eventName: eventName || DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME
   }
 }

@@ -160,6 +160,34 @@ test('public calendar normalizes custom Meta events for site appointments', () =
   assert.match(html, /trackCalendarMetaEvent\(payload\.data\?\.metaEvent\)/)
 })
 
+test('public calendar keeps smart custom Meta events eligible for Pixel tracking', () => {
+  const customEvents = normalizeCalendarCustomEventsConfig({
+    enabled: true,
+    channel: 'smart',
+    eventName: 'Schedule',
+    parameters: {
+      value: '1500',
+      predictedLtv: '5000'
+    }
+  })
+  const html = renderPublicCalendarHtml({
+    id: 'calendar-meta-smart',
+    slug: 'agenda-inteligente',
+    name: 'Agenda inteligente',
+    customEvents
+  }, {
+    metaPixelSnippet: '<script>window.ristakMetaTrackCalendarEvent=function(){}</script>'
+  })
+
+  assert.equal(customEvents.enabled, true)
+  assert.equal(customEvents.channel, 'smart')
+  assert.equal(customEvents.eventName, 'Schedule')
+  assert.equal(customEvents.parameters.value, '1500')
+  assert.equal(customEvents.parameters.predictedLtv, '5000')
+  assert.match(html, /window\.ristakMetaTrackCalendarEvent/)
+  assert.match(html, /trackCalendarMetaEvent\(payload\.data\?\.metaEvent\)/)
+})
+
 test('public calendar normalizes WhatsApp custom appointment event as LeadSubmitted', () => {
   const customEvents = normalizeCalendarCustomEventsConfig({
     enabled: true,

@@ -1134,6 +1134,130 @@
   line-height: 1.35;
 }
 
+.eventFieldTitle,
+.editorField > .eventFieldTitle,
+.eventParameterGrid label .eventParameterLabel,
+.customParameterHeader > .eventFieldTitle {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: none;
+}
+
+.eventChannelControl {
+  min-width: 0;
+}
+
+.eventSmartHint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-dim);
+}
+
+.eventSmartHint svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.eventSmartHint div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.eventSmartHint strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.eventSmartHint small {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.eventInlineToggle {
+  width: fit-content;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-dim);
+  padding: 8px 11px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.eventInlineToggle:hover,
+.eventInlineToggleActive {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.eventInlineToggleFilled {
+  color: var(--text);
+}
+
+.eventInlineToggle svg:last-child {
+  transition: transform 0.16s ease;
+}
+
+.eventInlineToggleActive svg:last-child {
+  transform: rotate(180deg);
+}
+
+.eventParameterPanel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.eventCurrencyNote {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.eventCurrencyNote span {
+  color: var(--text-dim);
+}
+
+.eventCurrencyNote strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.eventCurrencyNote small {
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .eventParameterGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1153,6 +1277,16 @@
   font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.eventParameterGrid label .eventParameterLabel,
+.customParameterHeader > .eventFieldTitle {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: none;
 }
 
 .customParameterHeader {
@@ -2408,6 +2542,7 @@
   }
 
   .eventSwitchRow,
+  .eventCurrencyNote,
   .customParameterHeader {
     align-items: stretch;
     flex-direction: column;
@@ -2420,6 +2555,10 @@
 
   .customParameterHeader button,
   .customParameterRow button {
+    width: 100%;
+  }
+
+  .eventInlineToggle {
     width: 100%;
   }
 

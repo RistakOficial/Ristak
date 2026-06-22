@@ -53,7 +53,7 @@ export interface CalendarBookingCompletionConfig {
   redirectUrl: string;
 }
 
-export type CalendarCustomEventChannel = 'site' | 'whatsapp';
+export type CalendarCustomEventChannel = 'site' | 'whatsapp' | 'smart';
 
 export interface CalendarCustomEventParameter {
   id: string;
