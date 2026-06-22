@@ -16424,7 +16424,8 @@ function buildEmbeddedFormProxyStyle(theme = {}, formStyleContext = null) {
 }
 
 function buildEmbeddedFormSourceTheme(site = {}) {
-  const theme = { ...DEFAULT_THEME, ...(site?.theme || {}) }
+  const sourceTheme = site?.theme || {}
+  const theme = { ...DEFAULT_THEME, ...sourceTheme }
   const template = resolveTemplate({ ...site, theme })
   const isLandingType = site?.siteType === 'landing_page'
   const renderOverrides = resolveRenderOverrides(template, theme, isLandingType)
@@ -16445,7 +16446,8 @@ function buildEmbeddedFormSourceTheme(site = {}) {
   const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 12)
   const backgroundMediaType = cleanString(theme.backgroundMediaType) === 'video' ? 'video' : 'image'
   const rawBackgroundPaint = normalizeCssPaint(theme.backgroundColor, '')
-  const backgroundPaint = rawBackgroundPaint.toLowerCase() === String(DEFAULT_THEME.backgroundColor).toLowerCase() ? '' : rawBackgroundPaint
+  const hasExplicitBackgroundColor = typeof sourceTheme.backgroundColor === 'string' && sourceTheme.backgroundColor.trim() !== ''
+  const backgroundPaint = rawBackgroundPaint && (hasExplicitBackgroundColor || rawBackgroundPaint.toLowerCase() !== String(DEFAULT_THEME.backgroundColor).toLowerCase()) ? rawBackgroundPaint : ''
   const pageImage = backgroundMediaType === 'video' ? 'none' : (cssImageUrl(theme.backgroundImage) || v.pageImage)
   const pageVideo = backgroundMediaType === 'video' ? cssMediaUrl(theme.backgroundImage) : ''
   const pageOverlay = backgroundPaint ? paintLayer(backgroundPaint) : 'none'
@@ -18136,11 +18138,11 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-video{border-radius:var(--rstk-video-radius,var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px))));box-shadow:none}
   .rstk-kind-landing .rstk-calendar-embed{border-radius:var(--rstk-media-radius,0)}
   .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);background:var(--rstk-block-bg,transparent);width:100%;margin-inline:auto}
-  .rstk-embedded-form-source-frame{--rstk-block-text:var(--rstk-ink);--rstk-block-font:var(--rstk-font);--rstk-block-font-style:normal;--rstk-block-text-decoration:none;--rstk-block-text-transform:none;position:relative;isolation:isolate;min-height:auto;width:100%;margin:0;padding:var(--rstk-frame-pad,22px) 16px;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:hidden}
+  .rstk-embedded-form-source-frame{--rstk-block-text:var(--rstk-ink);--rstk-block-font:var(--rstk-font);--rstk-block-font-style:normal;--rstk-block-text-decoration:none;--rstk-block-text-transform:none;position:relative;isolation:isolate;min-height:auto;width:100%;margin:0;padding:var(--rstk-frame-pad,22px) 16px;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:visible}
   .rstk-embedded-form-source-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
-  .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0)}
-  .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-surface);border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:hidden}
+  .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
+  .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-surface);border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:visible}
   .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent}
   .rstk-embedded-form-source-frame .rstk-headline{margin:0;color:var(--rstk-ink);font-family:var(--rstk-display);font-size:clamp(1.7rem,4.6vw,3rem);font-weight:var(--rstk-heading-weight);line-height:1.05;letter-spacing:0;background-image:none;-webkit-text-fill-color:currentColor}
   .rstk-embedded-form-source-frame .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);line-height:1.45;max-width:var(--rstk-content-max,60ch);background-image:none;-webkit-text-fill-color:currentColor}
@@ -19826,7 +19828,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     return renderImportedPublicSiteHtml(site, { pageId, trackingEnabled, preview })
   }
 
-  const theme = { ...DEFAULT_THEME, ...(site.theme || {}) }
+  const sourceTheme = site.theme || {}
+  const theme = { ...DEFAULT_THEME, ...sourceTheme }
   const template = resolveTemplate(site)
   const brand = getBrand(site, template)
   const isInteractive = site.siteType === 'interactive_form'
@@ -19907,7 +19910,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const pageBorder = pageBorderPaint ? paintFallbackColor(pageBorderPaint, 'transparent') : 'transparent'
   const backgroundMediaType = cleanString(theme.backgroundMediaType) === 'video' ? 'video' : 'image'
   const rawBackgroundPaint = normalizeCssPaint(theme.backgroundColor, '')
-  const backgroundPaint = rawBackgroundPaint.toLowerCase() === DEFAULT_THEME.backgroundColor ? '' : rawBackgroundPaint
+  const hasExplicitBackgroundColor = typeof sourceTheme.backgroundColor === 'string' && sourceTheme.backgroundColor.trim() !== ''
+  const backgroundPaint = rawBackgroundPaint && (hasExplicitBackgroundColor || rawBackgroundPaint.toLowerCase() !== String(DEFAULT_THEME.backgroundColor).toLowerCase()) ? rawBackgroundPaint : ''
   const pageImage = backgroundMediaType === 'video' ? '' : cssImageUrl(theme.backgroundImage)
   const pageVideo = backgroundMediaType === 'video' ? cssMediaUrl(theme.backgroundImage) : ''
   const pageOverlay = paintLayer(backgroundPaint)

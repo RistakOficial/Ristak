@@ -18752,6 +18752,61 @@
   text-overflow: ellipsis;
 }
 
+.formEmbedToolbarControls {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.formCompletionToolbarControls {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.formToolbarField {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.formToolbarField > span {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.formSourceToolbarField {
+  flex: 0 1 236px;
+}
+
+.formCompletionToolbarControls .formToolbarField {
+  flex: 0 1 244px;
+}
+
+.formToolbarField input,
+.formToolbarField select,
+.formToolbarField :global([data-ristak-dropdown-trigger]) {
+  width: 100%;
+  min-width: 150px;
+  height: var(--editor-control-h, 40px);
+  min-height: var(--editor-control-h, 40px);
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--design-control-bg);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold, 600);
+}
+
 @keyframes formModePulse {
   70% { box-shadow: 0 0 0 8px rgba(var(--color-primary-rgb), 0); }
   100% { box-shadow: 0 0 0 0 rgba(var(--color-primary-rgb), 0); }

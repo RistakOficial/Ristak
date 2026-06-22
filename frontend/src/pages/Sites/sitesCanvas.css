@@ -1857,6 +1857,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 
 .rstkCanvas .rstkEmbeddedFormSourceRoot {
   width: 100%;
+  overflow: visible;
   --rstk-block-text: var(--rstk-ink);
   --rstk-block-font: var(--rstk-font);
   --rstk-block-font-style: normal;
@@ -1878,7 +1879,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   background-size: var(--rstk-page-image-size, auto);
   background-attachment: var(--rstk-page-image-attachment, scroll);
   border-radius: var(--rstk-page-radius, 0);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame::before {
@@ -1897,6 +1898,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   margin: 0 auto;
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, transparent);
   border-radius: var(--rstk-page-radius, 0);
+  overflow: visible;
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell {
@@ -1905,7 +1907,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   background: var(--rstk-surface);
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
   border-radius: var(--rstk-radius-lg);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .rstkCanvas.rstk-kind-landing .rstkEmbeddedFormSourceFrame .rstk-embedded-form,

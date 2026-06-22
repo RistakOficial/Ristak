@@ -5677,6 +5677,10 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] =>
 
 const createEmbeddedFormDraftSettings = (siteId: string) => ({
   formSiteId: '',
+  embeddedSiteId: undefined,
+  embeddedSiteName: undefined,
+  embeddedTheme: undefined,
+  embeddedSiteType: undefined,
   embeddedPages: normalizePagesForSave(normalizeEmbeddedFormPages()),
   embeddedBlocks: createEmbeddedBlocks(siteId)
 })
@@ -6057,8 +6061,14 @@ const createEmbeddedFieldBlock = (
   }
 }
 
-const getEmbeddedFormSourceId = (block?: SiteBlock | null) =>
-  getSettingString(block?.settings || {}, 'formSiteId')
+const getEmbeddedFormSourceId = (block?: SiteBlock | null) => {
+  const settings = block?.settings || {}
+  return (
+    getSettingString(settings, 'formSiteId') ||
+    getSettingString(settings, 'embeddedSiteId') ||
+    getSettingString(settings, 'form_site_id')
+  )
+}
 
 const getEditableEmbeddedFormPages = (block: SiteBlock, forms: PublicSite[]): SitePage[] => {
   const settings = block.settings || {}
@@ -6439,7 +6449,6 @@ function FormModePalette({
 function FormEmbedEditorPanel({
   site,
   block,
-  forms,
   fields,
   activeField,
   activeElement,
@@ -6465,7 +6474,6 @@ function FormEmbedEditorPanel({
 }: {
   site: PublicSite
   block: SiteBlock
-  forms: PublicSite[]
   fields: SiteBlock[]
   activeField: SiteBlock | null
   activeElement: EmbeddedFormActiveElement
@@ -6492,7 +6500,6 @@ function FormEmbedEditorPanel({
 }) {
   const settings = block.settings || {}
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
-  const selectedFormId = getSettingString(settings, 'formSiteId')
   const activeFieldSettings = activeField?.settings || {}
   const activeBlockIsField = Boolean(activeField && fieldBlockTypes.has(activeField.blockType))
   const activeFieldSystemPreset = activeBlockIsField ? getSystemFormFieldPresetForBlock(activeField) : null
@@ -6817,6 +6824,7 @@ function FormEmbedEditorPanel({
         site={site}
         settings={settings}
         embedded
+        showCompletionControls={false}
         completionPages={sitePages}
         activePageId={activeSitePageId}
         onPatchTheme={onPatchTheme}
@@ -6835,26 +6843,6 @@ function FormEmbedEditorPanel({
 
   const pagesContent = (
     <>
-      <div className={styles.settingsGroup}>
-        <div className={styles.panelSubheader}>Contenido del formulario</div>
-        <label className={styles.field}>
-          <span>Origen del formulario</span>
-          <CustomSelect
-            value={selectedFormId}
-            onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })}
-            onBlur={onSave}
-          >
-            <option value="">Crear nuevo formulario</option>
-            {forms.filter(form => form.id !== site.id).map(form => (
-              <option key={form.id} value={form.id}>Usar formulario guardado: {form.name}</option>
-            ))}
-          </CustomSelect>
-        </label>
-        <p className={styles.customFieldHint}>
-          Si creas uno nuevo, los elementos se editan directamente dentro de este componente.
-        </p>
-      </div>
-
       <div className={styles.settingsGroup}>
         <div className={styles.optionRulesHeader}>
           <strong>Páginas del formulario</strong>
@@ -11594,6 +11582,17 @@ export const Sites: React.FC = () => {
                         <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
                       </div>
                     )}
+                    {formEditMode && formEditBlock && (
+                      <FormEmbedToolbarControls
+                        site={editorSite}
+                        block={formEditBlock}
+                        forms={forms}
+                        pages={pages}
+                        activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                        onPatchSettings={(patch) => patchBlockSettingsLocal(formEditBlock, patch)}
+                        onSave={() => { void handleSaveBlock(formEditBlock.id) }}
+                      />
+                    )}
                     <span className={`${styles.editorSaveStatus} ${styles.editorSaveStatusBeforeDevice} ${editorSaveStatusClass}`} aria-live="polite">
                       {editorSaveStatus.icon}
                       <span>{editorSaveStatus.label}</span>
@@ -12156,7 +12155,6 @@ export const Sites: React.FC = () => {
                   <FormEmbedEditorPanel
                     site={formEditPanelSite || editorSite}
                     block={formEditBlock}
-                    forms={forms}
                     fields={formEditFields}
                     activeField={activeEmbeddedFormField}
                     activeElement={activeEmbeddedFormSubmitSelected ? 'submit' : 'field'}
@@ -29902,7 +29900,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   }
 
   if (block.blockType === 'form_embed') {
-    const formSiteId = getSettingString(settings, 'formSiteId')
+    const formSiteId = getEmbeddedFormSourceId(block)
     const form = forms.find(item => item.id === formSiteId)
     const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
     const hasDraftForm = Array.isArray(settings.embeddedBlocks) || Array.isArray(settings.embeddedPages)
@@ -29941,7 +29939,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                 onChange={(event) => {
                   const nextFormId = event.target.value
                   if (!nextFormId) return
-                  patchSettings({ formSiteId: nextFormId, embeddedBlocks: undefined, embeddedPages: undefined })
+                  patchSettings({ formSiteId: nextFormId, embeddedSiteId: undefined, embeddedBlocks: undefined, embeddedPages: undefined })
                   window.setTimeout(save, 0)
                 }}
                 onBlur={save}
@@ -30608,13 +30606,15 @@ const FormCompletionSettingsControls: React.FC<{
   activePageId?: string
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ settings = {}, pages = [], activePageId = '', onPatchSettings, onSave }) => {
+  compact?: boolean
+}> = ({ settings = {}, pages = [], activePageId = '', onPatchSettings, onSave, compact = false }) => {
   const completionAction = getFormCompletionAction(settings)
   const completionTargetPageId = getCompletionTargetPageId(settings, pages, activePageId)
+  const fieldClassName = compact ? `${styles.field} ${styles.formToolbarField}` : styles.field
 
-  return (
+  const controls = (
     <>
-      <label className={styles.field}>
+      <label className={fieldClassName}>
         <span>Al enviar</span>
         <CustomSelect
           value={completionAction}
@@ -30637,7 +30637,7 @@ const FormCompletionSettingsControls: React.FC<{
       </label>
 
       {completionAction === 'specific_page' && pages.length > 0 && (
-        <label className={styles.field}>
+        <label className={fieldClassName}>
           <span>Página destino</span>
           <CustomSelect
             value={completionTargetPageId}
@@ -30652,7 +30652,7 @@ const FormCompletionSettingsControls: React.FC<{
       )}
 
       {completionAction === 'redirect_qualified' && (
-        <label className={styles.field}>
+        <label className={fieldClassName}>
           <span>URL destino</span>
           <input
             value={getSettingString(settings, 'completionRedirectUrl') || getSettingString(settings, 'formQualifiedRedirectUrl')}
@@ -30664,19 +30664,98 @@ const FormCompletionSettingsControls: React.FC<{
       )}
     </>
   )
+
+  return compact ? <div className={styles.formCompletionToolbarControls}>{controls}</div> : controls
+}
+
+const FORM_EMBED_DRAFT_SOURCE_VALUE = '__embedded_form_draft__'
+
+const FormEmbedToolbarControls: React.FC<{
+  site: PublicSite
+  block: SiteBlock
+  forms: PublicSite[]
+  pages: SitePage[]
+  activePageId: string
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ site, block, forms, pages, activePageId, onPatchSettings, onSave }) => {
+  const settings = block.settings || {}
+  const selectedFormId = getEmbeddedFormSourceId(block)
+  const selectedForm = selectedFormId ? forms.find(form => form.id === selectedFormId) : null
+  const hasDraftForm = Array.isArray(settings.embeddedBlocks) || Array.isArray(settings.embeddedPages)
+  const sourceValue = selectedFormId || (hasDraftForm ? FORM_EMBED_DRAFT_SOURCE_VALUE : '')
+  const availableForms = forms.filter(form => form.id !== site.id)
+
+  const commitSoon = () => {
+    window.setTimeout(onSave, 0)
+  }
+
+  return (
+    <div className={styles.formEmbedToolbarControls}>
+      <label className={`${styles.field} ${styles.formToolbarField} ${styles.formSourceToolbarField}`}>
+        <span>Formulario</span>
+        <CustomSelect
+          value={sourceValue}
+          onChange={(event) => {
+            const nextFormId = event.target.value
+            if (nextFormId === FORM_EMBED_DRAFT_SOURCE_VALUE) return
+            if (!nextFormId) {
+              onPatchSettings(createEmbeddedFormDraftSettings(site.id))
+              commitSoon()
+              return
+            }
+            onPatchSettings({
+              formSiteId: nextFormId,
+              embeddedSiteId: undefined,
+              embeddedSiteName: undefined,
+              embeddedBlocks: undefined,
+              embeddedPages: undefined,
+              embeddedTheme: undefined,
+              embeddedSiteType: undefined
+            })
+            commitSoon()
+          }}
+          onBlur={onSave}
+        >
+          <option value="">Crear nuevo</option>
+          {hasDraftForm && !selectedFormId && (
+            <option value={FORM_EMBED_DRAFT_SOURCE_VALUE}>Formulario interno</option>
+          )}
+          {selectedFormId && !selectedForm && (
+            <option value={selectedFormId}>{getSettingString(settings, 'embeddedSiteName') || 'Formulario seleccionado'}</option>
+          )}
+          {availableForms.map(form => (
+            <option key={form.id} value={form.id}>{form.name || 'Formulario'}</option>
+          ))}
+        </CustomSelect>
+      </label>
+      <FormCompletionSettingsControls
+        compact
+        settings={settings}
+        pages={pages}
+        activePageId={activePageId}
+        onPatchSettings={(patch) => {
+          onPatchSettings(patch)
+          commitSoon()
+        }}
+        onSave={onSave}
+      />
+    </div>
+  )
 }
 
 const FormSubmitContentControls: React.FC<{
   site: PublicSite
   settings?: Record<string, unknown>
   embedded?: boolean
+  showCompletionControls?: boolean
   completionPages?: SitePage[]
   activePageId?: string
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onPatchSettings?: (patch: Record<string, unknown>) => void
   onSaveSite: () => void
   onSaveSettings?: () => void
-}> = ({ site, settings = {}, embedded = false, completionPages = [], activePageId = '', onPatchTheme, onPatchSettings, onSaveSite, onSaveSettings }) => {
+}> = ({ site, settings = {}, embedded = false, showCompletionControls = true, completionPages = [], activePageId = '', onPatchTheme, onPatchSettings, onSaveSite, onSaveSettings }) => {
   const theme = site.theme || {}
   const saveSettings = onSaveSettings || onSaveSite
   return (
@@ -30710,7 +30789,7 @@ const FormSubmitContentControls: React.FC<{
           <input value={theme.continueText || ''} placeholder="Continuar" onChange={(event) => onPatchTheme({ continueText: event.target.value })} onBlur={onSaveSite} />
         </label>
       )}
-      {embedded && onPatchSettings && (
+      {embedded && showCompletionControls && onPatchSettings && (
         <FormCompletionSettingsControls
           settings={settings}
           pages={completionPages}
@@ -34487,22 +34566,6 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
 
     return (
       <div className={styles.settingsGroup}>
-        <label className={styles.field}>
-          <span>Origen del formulario</span>
-          <CustomSelect value={getSettingString(settings, 'formSiteId')} onChange={(event) => onPatchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined, embeddedPages: undefined })} onBlur={onSave}>
-            <option value="">Sin formulario seleccionado</option>
-            {forms.filter(form => form.id !== site.id).map(form => (
-              <option key={form.id} value={form.id}>Usar formulario guardado: {form.name}</option>
-            ))}
-          </CustomSelect>
-        </label>
-        <FormCompletionSettingsControls
-          settings={settings}
-          pages={pages}
-          activePageId={activePageId}
-          onPatchSettings={onPatchSettings}
-          onSave={onSave}
-        />
         <button
           type="button"
           className={styles.inlineCreateButton}

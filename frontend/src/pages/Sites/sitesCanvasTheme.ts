@@ -483,7 +483,8 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const pageBorder = pageBorderPaint ? paintFallbackColor(pageBorderPaint, 'transparent') : 'transparent'
   const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 12)
   const rawBackgroundPaint = normalizeCssPaint(theme.backgroundColor, '')
-  const backgroundPaint = rawBackgroundPaint.toLowerCase() === DEFAULT_BG ? '' : rawBackgroundPaint
+  const hasExplicitBackgroundColor = typeof theme.backgroundColor === 'string' && theme.backgroundColor.trim() !== ''
+  const backgroundPaint = rawBackgroundPaint && (hasExplicitBackgroundColor || rawBackgroundPaint.toLowerCase() !== DEFAULT_BG) ? rawBackgroundPaint : ''
   const backgroundMediaType = theme.backgroundMediaType === 'video' ? 'video' : 'image'
   const pageImage = backgroundMediaType === 'video' ? 'none' : (cssImageUrl(theme.backgroundImage) || v.pageImage)
   const pageVideo = backgroundMediaType === 'video' ? cssMediaUrl(theme.backgroundImage) : ''

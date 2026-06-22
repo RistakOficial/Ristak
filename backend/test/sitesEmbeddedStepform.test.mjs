@@ -332,6 +332,81 @@ test('landing form embeds proxy linked form source instead of stale embedded cop
   }
 })
 
+test('landing form embeds preserve explicit white source backgrounds', async () => {
+  let formSite
+  try {
+    formSite = await createSite({
+      name: 'Formulario blanco',
+      siteType: 'standard_form',
+      theme: {
+        template: 'facebook_lead',
+        backgroundColor: '#ffffff',
+        pageRadius: 24,
+        pageMaxWidth: 520,
+        pagePadding: 22
+      },
+      status: 'draft'
+    })
+    await createBlock(formSite.id, {
+      blockType: 'title',
+      label: 'Titulo',
+      content: 'Formulario blanco',
+      settings: { pageId: 'page-1' },
+      sortOrder: 0
+    })
+    await createBlock(formSite.id, {
+      blockType: 'email',
+      label: 'Correo',
+      content: '',
+      placeholder: 'correo@example.test',
+      required: true,
+      settings: { pageId: 'page-1' },
+      sortOrder: 1
+    })
+
+    const landing = {
+      id: 'landing_white_embed',
+      name: 'Landing blanco',
+      siteType: 'landing_page',
+      status: 'draft',
+      theme: {
+        template: 'ristak'
+      },
+      blocks: [
+      {
+        id: 'landing_white_embed_block',
+        siteId: 'landing_white_embed',
+        blockType: 'form_embed',
+        label: 'Formulario blanco',
+        content: '',
+        placeholder: '',
+        required: false,
+        options: [],
+        sortOrder: 0,
+        settings: {
+          pageId: 'page-1',
+          formSiteId: formSite.id
+        },
+        createdAt: '',
+        updatedAt: ''
+      }
+      ]
+    }
+
+    const html = await renderPublicSiteHtml(landing, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(html, /rstk-embedded-form-source-frame/)
+    assert.match(html, /--rstk-page-bg:#ffffff;/)
+    assert.match(html, /--rstk-block-bg:#ffffff;/)
+  } finally {
+    if (formSite?.id) await deleteSite(formSite.id).catch(() => undefined)
+  }
+})
+
 test('landing form embeds inherit source completion rules or target a specific page', async () => {
   const embeddedBlocks = [
     {
