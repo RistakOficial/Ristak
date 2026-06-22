@@ -12907,6 +12907,7 @@ function buildVideoFormGateRuntimeScript(blocks = []) {
                   pageUrl: window.location.href,
                   referrer: document.referrer,
                   params,
+                  eventTime: Date.now(),
                   visitorId: nativeIdentity.visitorId || null,
                   sessionId: nativeIdentity.sessionId || null,
                   ruleSubmit: Boolean(rule),
@@ -18456,6 +18457,60 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
     (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
     fbq('init', ${JSON.stringify(pixelId)});
     fbq('track', 'PageView');
+    const ristakMetaReadCookie = function(name) {
+      try {
+        const prefix = String(name || '') + '=';
+        const cookie = String(document.cookie || '').split(';').map(item => item.trim()).find(item => item.indexOf(prefix) === 0);
+        return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : '';
+      } catch (error) {
+        return '';
+      }
+    };
+    const ristakMetaCurrentParams = function() {
+      let current = {};
+      try { current = Object.fromEntries(new URL(window.location.href).searchParams.entries()); } catch (error) {}
+      const stored = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
+      return Object.assign({}, stored || {}, current || {});
+    };
+    const ristakMetaIdentity = function() {
+      try {
+        return window.ristakNativeIdentity ? window.ristakNativeIdentity() : {};
+      } catch (error) {
+        return {};
+      }
+    };
+    const ristakMetaTracking = function(extra) {
+      try {
+        return window.ristakNativeBuildData ? window.ristakNativeBuildData(extra || {}) : null;
+      } catch (error) {
+        return null;
+      }
+    };
+    window.ristakMetaBuildMetaPayload = function(extra) {
+      const identity = ristakMetaIdentity();
+      const base = {
+        pageUrl: window.location.href,
+        referrer: document.referrer,
+        params: ristakMetaCurrentParams(),
+        eventTime: Date.now(),
+        visitorId: identity.visitorId || null,
+        sessionId: identity.sessionId || null,
+        contactId: identity.contactId || null,
+        tracking: ristakMetaTracking({ conversion_type: 'meta_capi_event' }),
+        fbp: ristakMetaReadCookie('_fbp') || null,
+        fbc: ristakMetaReadCookie('_fbc') || null
+      };
+      const payload = Object.assign({}, base, extra || {});
+      if (!payload.params || typeof payload.params !== 'object') payload.params = base.params;
+      if (!payload.eventTime) payload.eventTime = base.eventTime;
+      if (!payload.visitorId) payload.visitorId = base.visitorId;
+      if (!payload.sessionId) payload.sessionId = base.sessionId;
+      if (!payload.contactId) payload.contactId = base.contactId;
+      if (!payload.tracking) payload.tracking = base.tracking;
+      if (!payload.fbp) payload.fbp = base.fbp;
+      if (!payload.fbc) payload.fbc = base.fbc;
+      return payload;
+    };
     window.ristakMetaTrackSiteEvent = function(eventName, eventId, customData) {
       if (!window.fbq) return;
       const normalizedEventName = eventName || ${JSON.stringify(submitEventName)};
@@ -18482,10 +18537,12 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
       );
     };
     window.ristakMetaSendServerEvent = function(payload) {
+      const requestPayload = Object.assign({}, payload || {});
+      requestPayload.meta = window.ristakMetaBuildMetaPayload(requestPayload.meta || {});
       fetch('/api/sites/public/meta-event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(requestPayload),
         keepalive: true
       }).catch(() => {});
     };
@@ -18511,13 +18568,7 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
         eventId: pageEventId,
         eventName: ${JSON.stringify(pageViewEventName)},
         trigger: 'page_view',
-        meta: {
-          pageUrl: window.location.href,
-          referrer: document.referrer,
-          params: Object.fromEntries(new URL(window.location.href).searchParams.entries()),
-          fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
-          fbc: (document.cookie.match(/(?:^|; )_fbc=([^;]+)/) || [])[1] || null
-        }
+        meta: window.ristakMetaBuildMetaPayload({ conversionType: 'page_view' })
       });
     } catch (error) {}
     ` : ''}
@@ -18705,6 +18756,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
                   pageUrl: window.location.href,
                   referrer: document.referrer,
                   params: getParams(),
+                  eventTime: Date.now(),
                   visitorId: TRACKING.visitorId || null,
                   sessionId: TRACKING.sessionId || null,
                   tracking: TRACKING,
@@ -19050,7 +19102,7 @@ async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabl
   // El script de preservación de params va primero: define los helpers globales
   // que usan el tracking, los botones y la captura de formularios.
   const paramPreservationScript = buildParamPreservationScript()
-  return `${paramPreservationScript}${metaPixelSnippet}${nativeTrackingScript}${videoTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
+  return `${paramPreservationScript}${nativeTrackingScript}${metaPixelSnippet}${videoTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
 }
 
 function injectImportedHtmlRuntime(html = '', injection = '') {
@@ -20868,6 +20920,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
                 pageUrl: window.location.href,
                 referrer: document.referrer,
                 params,
+                eventTime: Date.now(),
                 visitorId: nativeIdentity.visitorId || null,
                 sessionId: nativeIdentity.sessionId || null,
                 ruleSubmit,
@@ -20961,8 +21014,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       embeddedForms.forEach(renderEmbeddedForm);
     })();
   </script>
-  ${metaPixelSnippet}
   ${nativeTrackingScript}
+  ${metaPixelSnippet}
   ${videoTrackingScript}
 </body>
 </html>`
@@ -21823,6 +21876,149 @@ function hashValue(value, normalizer = normalizeForHash) {
   return crypto.createHash('sha256').update(normalized).digest('hex')
 }
 
+function firstCleanString(values = []) {
+  for (const value of values) {
+    const cleaned = cleanString(value)
+    if (cleaned) return cleaned
+  }
+  return ''
+}
+
+function getMetaRequestPayload(requestMeta = {}) {
+  return requestMeta?.meta && typeof requestMeta.meta === 'object' ? requestMeta.meta : {}
+}
+
+function getMetaTrackingPayload(meta = {}) {
+  return meta?.tracking && typeof meta.tracking === 'object' ? meta.tracking : {}
+}
+
+function getMetaParamsPayload(meta = {}) {
+  return meta?.params && typeof meta.params === 'object' ? meta.params : {}
+}
+
+function getMetaUrlParam(meta = {}, key = '') {
+  const pageUrl = firstCleanString([meta.pageUrl, meta.page_url, meta.url, getMetaTrackingPayload(meta).url])
+  if (!pageUrl || !key) return ''
+  try {
+    return cleanString(new URL(pageUrl, 'https://ristak.local').searchParams.get(key))
+  } catch (error) {
+    return ''
+  }
+}
+
+function resolveMetaEventTimeMs(requestMeta = {}) {
+  const meta = getMetaRequestPayload(requestMeta)
+  const tracking = getMetaTrackingPayload(meta)
+  const rawValue = firstCleanString([
+    meta.eventTime,
+    meta.event_time,
+    meta.timestamp,
+    meta.ts,
+    tracking.eventTime,
+    tracking.event_time,
+    tracking.timestamp,
+    tracking.ts
+  ])
+  const numericValue = Number(rawValue)
+  if (Number.isFinite(numericValue) && numericValue > 0) {
+    return Math.floor(numericValue > 100000000000 ? numericValue : numericValue * 1000)
+  }
+  const parsedDate = Date.parse(rawValue)
+  if (Number.isFinite(parsedDate) && parsedDate > 0) return parsedDate
+  return Date.now()
+}
+
+function resolveMetaEventSourceUrl(site, requestMeta = {}) {
+  const meta = getMetaRequestPayload(requestMeta)
+  const tracking = getMetaTrackingPayload(meta)
+  return firstCleanString([meta.pageUrl, meta.page_url, meta.url, tracking.url]) || `https://${site.domain}`
+}
+
+function resolveMetaFbclid(meta = {}) {
+  const params = getMetaParamsPayload(meta)
+  const tracking = getMetaTrackingPayload(meta)
+  return firstCleanString([
+    meta.fbclid,
+    meta.fbClickId,
+    meta.fb_click_id,
+    params.fbclid,
+    tracking.fbclid,
+    getMetaUrlParam(meta, 'fbclid')
+  ])
+}
+
+function resolveMetaFbc(meta = {}, eventTimeMs = Date.now()) {
+  const tracking = getMetaTrackingPayload(meta)
+  const existingFbc = firstCleanString([
+    meta.fbc,
+    meta._fbc,
+    tracking.fbc,
+    tracking._fbc,
+    tracking.cookies?.fbc,
+    tracking.cookies?._fbc
+  ])
+  if (existingFbc) return existingFbc
+  const fbclid = resolveMetaFbclid(meta)
+  if (!fbclid) return ''
+  return `fb.1.${Math.floor(eventTimeMs)}.${fbclid}`
+}
+
+function resolveMetaFbp(meta = {}) {
+  const tracking = getMetaTrackingPayload(meta)
+  return firstCleanString([
+    meta.fbp,
+    meta._fbp,
+    tracking.fbp,
+    tracking._fbp,
+    tracking.cookies?.fbp,
+    tracking.cookies?._fbp
+  ])
+}
+
+function resolveMetaExternalId({ contactId, requestMeta } = {}) {
+  const meta = getMetaRequestPayload(requestMeta)
+  const tracking = getMetaTrackingPayload(meta)
+  return firstCleanString([
+    contactId,
+    meta.contactId,
+    meta.contact_id,
+    meta.externalId,
+    meta.external_id,
+    meta.visitorId,
+    meta.visitor_id,
+    tracking.contactId,
+    tracking.contact_id,
+    tracking.visitorId,
+    tracking.visitor_id
+  ])
+}
+
+function pruneEmptyMetaUserData(userData = {}) {
+  Object.keys(userData).forEach(key => {
+    if (!userData[key]) delete userData[key]
+  })
+  return userData
+}
+
+function buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs } = {}) {
+  const meta = getMetaRequestPayload(requestMeta)
+  const tracking = getMetaTrackingPayload(meta)
+  const externalId = resolveMetaExternalId({ contactId, requestMeta })
+  return pruneEmptyMetaUserData({
+    external_id: externalId ? hashValue(externalId) : undefined,
+    client_ip_address: requestMeta?.ip || undefined,
+    client_user_agent: firstCleanString([
+      requestMeta?.userAgent,
+      meta.userAgent,
+      meta.user_agent,
+      tracking.user_agent,
+      tracking.userAgent
+    ]) || undefined,
+    fbp: resolveMetaFbp(meta) || undefined,
+    fbc: resolveMetaFbc(meta, eventTimeMs) || undefined
+  })
+}
+
 function getSiteFinalMessage(site, ruleEvaluation) {
   if (ruleEvaluation.message) return ruleEvaluation.message
 
@@ -21924,21 +22120,14 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     return { sent: false, reason: 'missing_meta_config', eventId, eventName }
   }
 
+  const eventTimeMs = resolveMetaEventTimeMs(requestMeta)
   const names = splitName(contact.fullName)
-  const userData = {
+  const userData = pruneEmptyMetaUserData({
+    ...buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs }),
     em: hashValue(contact.email),
     ph: hashValue(contact.phone, normalizePhoneForHash),
     fn: hashValue(names.firstName),
-    ln: hashValue(names.lastName),
-    external_id: hashValue(contactId),
-    client_ip_address: requestMeta.ip || undefined,
-    client_user_agent: requestMeta.userAgent || undefined,
-    fbp: cleanString(requestMeta.meta?.fbp) || undefined,
-    fbc: cleanString(requestMeta.meta?.fbc) || undefined
-  }
-
-  Object.keys(userData).forEach(key => {
-    if (!userData[key]) delete userData[key]
+    ln: hashValue(names.lastName)
   })
 
   if (!userData.em && !userData.ph && !userData.external_id) {
@@ -21957,9 +22146,9 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     data: [
       {
         event_name: eventName,
-        event_time: Math.floor(Date.now() / 1000),
+        event_time: Math.floor(eventTimeMs / 1000),
         action_source: 'website',
-        event_source_url: cleanString(requestMeta.meta?.pageUrl) || `https://${site.domain}`,
+        event_source_url: resolveMetaEventSourceUrl(site, requestMeta),
         event_id: eventId,
         user_data: userData,
         custom_data: mergeSiteMetaCustomData({
@@ -22043,17 +22232,8 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
     return { sent: false, reason: 'missing_meta_config', eventId, eventName }
   }
 
-  const userData = {
-    external_id: contactId ? hashValue(contactId) : undefined,
-    client_ip_address: requestMeta.ip || undefined,
-    client_user_agent: requestMeta.userAgent || undefined,
-    fbp: cleanString(requestMeta.meta?.fbp) || undefined,
-    fbc: cleanString(requestMeta.meta?.fbc) || undefined
-  }
-
-  Object.keys(userData).forEach(key => {
-    if (!userData[key]) delete userData[key]
-  })
+  const eventTimeMs = resolveMetaEventTimeMs(requestMeta)
+  const userData = buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs })
 
   if (!userData.client_ip_address && !userData.client_user_agent && !userData.fbp && !userData.fbc && !userData.external_id) {
     await logMetaEvent({
@@ -22071,9 +22251,9 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
     data: [
       {
         event_name: eventName,
-        event_time: Math.floor(Date.now() / 1000),
+        event_time: Math.floor(eventTimeMs / 1000),
         action_source: 'website',
-        event_source_url: cleanString(requestMeta.meta?.pageUrl) || `https://${site.domain}`,
+        event_source_url: resolveMetaEventSourceUrl(site, requestMeta),
         event_id: eventId,
         user_data: userData,
         custom_data: mergeSiteMetaCustomData({
@@ -22155,17 +22335,8 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
     return { sent: false, reason: 'missing_meta_config', eventId, eventName }
   }
 
-  const userData = {
-    external_id: contactId ? hashValue(contactId) : undefined,
-    client_ip_address: requestMeta.ip || undefined,
-    client_user_agent: requestMeta.userAgent || undefined,
-    fbp: cleanString(requestMeta.meta?.fbp) || undefined,
-    fbc: cleanString(requestMeta.meta?.fbc) || undefined
-  }
-
-  Object.keys(userData).forEach(key => {
-    if (!userData[key]) delete userData[key]
-  })
+  const eventTimeMs = resolveMetaEventTimeMs(requestMeta)
+  const userData = buildMetaBaseUserData({ contactId, requestMeta, eventTimeMs })
 
   if (!userData.client_ip_address && !userData.client_user_agent && !userData.fbp && !userData.fbc && !userData.external_id) {
     await logMetaEvent({
@@ -22185,9 +22356,9 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
     data: [
       {
         event_name: eventName,
-        event_time: Math.floor(Date.now() / 1000),
+        event_time: Math.floor(eventTimeMs / 1000),
         action_source: 'website',
-        event_source_url: cleanString(requestMeta.meta?.pageUrl) || `https://${site.domain}`,
+        event_source_url: resolveMetaEventSourceUrl(site, requestMeta),
         event_id: eventId,
         user_data: userData,
         custom_data: mergeSiteMetaCustomData({
@@ -23067,7 +23238,7 @@ export async function createMetaPageEventFromRequest(req, body = {}, options = {
       previewPageId: previewContext?.pageId || ''
     }
     const eventId = cleanString(body.eventId || body.event_id) || `site_video_action_${site.id}_${videoBlockId}_${videoActionId}_${crypto.randomUUID()}`
-    const contactId = cleanString(body.contactId || body.contact_id)
+    const contactId = cleanString(body.contactId || body.contact_id || body.meta?.contactId || body.meta?.contact_id)
 
     return sendSiteVideoActionMetaEvent({
       site,
@@ -23096,7 +23267,7 @@ export async function createMetaPageEventFromRequest(req, body = {}, options = {
     previewPageId: previewContext?.pageId || ''
   }
   const eventId = cleanString(body.eventId || body.event_id) || `site_page_${site.id}_${pageMeta.page.id}_${crypto.randomUUID()}`
-  const contactId = cleanString(body.contactId || body.contact_id)
+  const contactId = cleanString(body.contactId || body.contact_id || body.meta?.contactId || body.meta?.contact_id)
 
   return sendSitePageMetaEvent({
     site,

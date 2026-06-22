@@ -128,6 +128,8 @@ test('standard form public pages render global/page headers and page Meta Pixel 
       assert.match(html, new RegExp(`public_page_title: "${item.pageTitle}"`))
       assert.match(html, new RegExp(item.parameter))
       assert.match(html, /fetch\('\/api\/sites\/public\/meta-event'/)
+      assert.match(html, /ristakMetaBuildMetaPayload/)
+      assert.match(html, /eventTime: Date\.now\(\)/)
     }
   } finally {
     if (previousPixelId === undefined) {

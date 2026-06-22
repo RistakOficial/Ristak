@@ -441,6 +441,126 @@ test('video actions render public target state and runtime', async () => {
   assert.match(html, /eventScope: 'video_action'/)
 })
 
+test('page view meta event endpoint enriches browser match data', async () => {
+  const previousMetaEnv = {
+    pixelId: process.env.META_PIXEL_ID,
+    datasetId: process.env.META_DATASET_ID,
+    accessToken: process.env.META_ACCESS_TOKEN
+  }
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const metaCalls = []
+  const suffix = Date.now()
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  let metaServer
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    process.env.META_PIXEL_ID = 'pixel-page-view-test'
+    process.env.META_DATASET_ID = ''
+    process.env.META_ACCESS_TOKEN = 'token-page-view-test'
+    metaServer = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        metaCalls.push({ url: req.url, body })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ events_received: 1 }))
+      })
+    })
+    await new Promise(resolve => metaServer.listen(0, '127.0.0.1', resolve))
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    site = await createSite({
+      name: 'Landing page view meta',
+      slug: `landing-page-view-meta-${suffix}`,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true,
+      metaCapiEnabled: true,
+      theme: {
+        template: 'ristak',
+        pages: [
+          {
+            id: 'page-1',
+            title: 'Pagina 1',
+            sortOrder: 0,
+            metaCapiEnabled: true,
+            metaTrigger: 'page_view',
+            metaEventName: 'ViewContent',
+            metaEventParameters: {
+              contentName: 'Pagina vista',
+              status: 'page_view_match'
+            }
+          }
+        ]
+      }
+    })
+
+    const result = await createMetaPageEventFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: site.id,
+        pageId: 'page-1',
+        eventId: 'site_page_view_test_event',
+        meta: {
+          pageUrl: 'https://example.test/landing?fbclid=fbclid-page-view',
+          eventTime: 1700000005000,
+          visitorId: 'visitor-page-view',
+          fbp: 'fbp-page'
+        }
+      }
+    )
+
+    assert.equal(result.sent, true)
+    assert.equal(result.eventName, 'ViewContent')
+    assert.equal(metaCalls.length, 1)
+    const payload = JSON.parse(metaCalls[0].body)
+    assert.equal(payload.data[0].event_name, 'ViewContent')
+    assert.equal(payload.data[0].event_time, 1700000005)
+    assert.equal(payload.data[0].event_id, 'site_page_view_test_event')
+    assert.equal(payload.data[0].event_source_url, 'https://example.test/landing?fbclid=fbclid-page-view')
+    assert.equal(payload.data[0].user_data.client_user_agent, 'node-test')
+    assert.equal(payload.data[0].user_data.fbp, 'fbp-page')
+    assert.equal(payload.data[0].user_data.fbc, 'fb.1.1700000005000.fbclid-page-view')
+    assert.match(payload.data[0].user_data.external_id, /^[a-f0-9]{64}$/)
+    assert.equal(payload.data[0].custom_data.conversion_type, 'page_view')
+    assert.equal(payload.data[0].custom_data.content_name, 'Pagina vista')
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    if (previousMetaEnv.pixelId === undefined) delete process.env.META_PIXEL_ID
+    else process.env.META_PIXEL_ID = previousMetaEnv.pixelId
+    if (previousMetaEnv.datasetId === undefined) delete process.env.META_DATASET_ID
+    else process.env.META_DATASET_ID = previousMetaEnv.datasetId
+    if (previousMetaEnv.accessToken === undefined) delete process.env.META_ACCESS_TOKEN
+    else process.env.META_ACCESS_TOKEN = previousMetaEnv.accessToken
+    if (site?.id) await deleteSite(site.id).catch(() => undefined)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
 test('video action meta event endpoint sends configured CAPI event', async () => {
   const previousMetaEnv = {
     pixelId: process.env.META_PIXEL_ID,
@@ -541,6 +661,9 @@ test('video action meta event endpoint sends configured CAPI event', async () =>
         eventId: 'site_video_action_test_event',
         meta: {
           pageUrl: 'https://example.test/video',
+          params: { fbclid: 'fbclid-video-action' },
+          eventTime: 1700000000000,
+          visitorId: 'visitor-video-action',
           fbp: 'fbp-test'
         }
       }
@@ -551,7 +674,12 @@ test('video action meta event endpoint sends configured CAPI event', async () =>
     assert.equal(metaCalls.length, 1)
     const payload = JSON.parse(metaCalls[0].body)
     assert.equal(payload.data[0].event_name, 'Lead')
+    assert.equal(payload.data[0].event_time, 1700000000)
     assert.equal(payload.data[0].event_id, 'site_video_action_test_event')
+    assert.equal(payload.data[0].user_data.client_user_agent, 'node-test')
+    assert.equal(payload.data[0].user_data.fbp, 'fbp-test')
+    assert.equal(payload.data[0].user_data.fbc, 'fb.1.1700000000000.fbclid-video-action')
+    assert.match(payload.data[0].user_data.external_id, /^[a-f0-9]{64}$/)
     assert.equal(payload.data[0].custom_data.conversion_type, 'video_action')
     assert.equal(payload.data[0].custom_data.video_block_id, videoBlock.id)
     assert.equal(payload.data[0].custom_data.video_action_id, 'meta-event-at-75')
