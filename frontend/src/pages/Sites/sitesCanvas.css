@@ -1865,12 +1865,18 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   --rstk-block-text-transform: none;
 }
 
+.rstkCanvas .rstk-section-lane:has(.rstkEmbeddedFormSourceRoot),
+.rstkCanvas .rstk-section-column:has(.rstkEmbeddedFormSourceRoot),
+.rstkCanvas .rstk-block-style:has(.rstkEmbeddedFormSourceRoot) {
+  overflow: visible;
+}
+
 .rstkCanvas .rstkEmbeddedFormSourceFrame {
   position: relative;
   isolation: isolate;
   min-height: auto;
   width: 100%;
-  margin: 0;
+  margin: var(--rstk-embedded-form-safe-gap, clamp(8px, 1.2vw, 14px)) 0;
   padding: var(--rstk-frame-pad, 22px) 16px;
   background-color: var(--rstk-page-bg);
   background-image: var(--rstk-page-image);
@@ -2237,6 +2243,9 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   box-shadow:
     inset 0 0 0 1px var(--rstk-selection-contrast, rgba(15, 23, 42, 0.2)),
     0 0 0 4px var(--rstk-selection-shadow, rgba(37, 99, 235, 0.16));
+}
+.rstkCanvas .rstk-section-lane.rstkSelActive:has(.rstkEmbeddedFormSourceRoot)::after {
+  inset: -1px;
 }
 .rstkCanvas .rstk-section-lane.rstkSelActive:hover::after {
   inset: -1px;

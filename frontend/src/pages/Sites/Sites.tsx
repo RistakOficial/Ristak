@@ -11595,49 +11595,51 @@ export const Sites: React.FC = () => {
                         onSave={() => { void handleSaveBlock(formEditBlock.id) }}
                       />
                     )}
-                    <span className={`${styles.editorSaveStatus} ${styles.editorSaveStatusBeforeDevice} ${editorSaveStatusClass}`} aria-live="polite">
-                      {editorSaveStatus.icon}
-                      <span>{editorSaveStatus.label}</span>
-                    </span>
-                    <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
-                      <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio">
-                        <Monitor size={15} />
-                      </button>
-                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Móvil">
-                        <Smartphone size={15} />
-                      </button>
-                    </div>
-                    {isPublicSiteLive(editorSite, domainConfig) && (
-                      <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating} aria-label="Ver en vivo">
-                        <ExternalLink size={15} />
-                        <span className={styles.editorActionLabel}>Ver en vivo</span>
+                    <div className={styles.editorToolbarActionsCluster}>
+                      <span className={`${styles.editorSaveStatus} ${styles.editorSaveStatusBeforeDevice} ${editorSaveStatusClass}`} aria-live="polite">
+                        {editorSaveStatus.icon}
+                        <span>{editorSaveStatus.label}</span>
+                      </span>
+                      <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
+                        <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('desktop')} disabled={editorAIGenerating} title="Escritorio">
+                          <Monitor size={15} />
+                        </button>
+                        <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => selectEditorDevice('mobile')} disabled={editorAIGenerating} title="Móvil">
+                          <Smartphone size={15} />
+                        </button>
+                      </div>
+                      {isPublicSiteLive(editorSite, domainConfig) && (
+                        <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handleOpenLiveEditorSite} disabled={editorAIGenerating} aria-label="Ver en vivo">
+                          <ExternalLink size={15} />
+                          <span className={styles.editorActionLabel}>Ver en vivo</span>
+                        </Button>
+                      )}
+                      <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handlePreviewSite} disabled={editorAIGenerating} aria-label="Previsualizar">
+                        <Eye size={15} />
+                        <span className={styles.editorActionLabel}>Previsualizar</span>
                       </Button>
-                    )}
-                    <Button variant="secondary" size="md" className={styles.editorActionButton} onClick={handlePreviewSite} disabled={editorAIGenerating} aria-label="Previsualizar">
-                      <Eye size={15} />
-                      <span className={styles.editorActionLabel}>Previsualizar</span>
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="md"
-                      className={`${styles.editorActionButton} ${editorDirtyActionTarget === 'save' ? styles.editorDirtyActionButton : ''}`}
-                      onClick={() => handleSaveSite()}
-                      disabled={editorAIGenerating || saving}
-                      aria-label="Guardar"
-                    >
-                      <Save size={15} />
-                      <span className={styles.editorActionLabel}>Guardar</span>
-                    </Button>
-                    <Button
-                      size="md"
-                      className={`${styles.editorPublishButton} ${editorDirtyActionTarget === 'publish' ? styles.editorDirtyActionButton : ''}`}
-                      onClick={() => handleSaveSite('published')}
-                      disabled={editorAIGenerating || saving}
-                      aria-label="Publicar"
-                    >
-                      <Send size={15} />
-                      <span className={styles.editorActionLabel}>Publicar</span>
-                    </Button>
+                      <Button
+                        variant="secondary"
+                        size="md"
+                        className={`${styles.editorActionButton} ${editorDirtyActionTarget === 'save' ? styles.editorDirtyActionButton : ''}`}
+                        onClick={() => handleSaveSite()}
+                        disabled={editorAIGenerating || saving}
+                        aria-label="Guardar"
+                      >
+                        <Save size={15} />
+                        <span className={styles.editorActionLabel}>Guardar</span>
+                      </Button>
+                      <Button
+                        size="md"
+                        className={`${styles.editorPublishButton} ${editorDirtyActionTarget === 'publish' ? styles.editorDirtyActionButton : ''}`}
+                        onClick={() => handleSaveSite('published')}
+                        disabled={editorAIGenerating || saving}
+                        aria-label="Publicar"
+                      >
+                        <Send size={15} />
+                        <span className={styles.editorActionLabel}>Publicar</span>
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -18268,6 +18268,20 @@
   justify-content: flex-end;
 }
 
+.editorToolbarActionsCluster {
+  min-width: max-content;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.editorToolbarActionsCluster > * {
+  flex: 0 0 auto;
+}
+
 .editorHistoryControls {
   flex: 0 0 auto;
   height: var(--editor-control-h, 40px);
@@ -18754,10 +18768,10 @@
 
 .formEmbedToolbarControls {
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 470px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
 }
 
@@ -18780,31 +18794,35 @@
   flex: 0 0 auto;
   color: var(--color-text-tertiary);
   font-size: 0.72rem;
-  font-weight: var(--font-weight-semibold, 600);
+  font-weight: 500;
   line-height: 1;
   white-space: nowrap;
 }
 
 .formSourceToolbarField {
-  flex: 0 1 236px;
+  flex: 0 1 212px;
 }
 
 .formCompletionToolbarControls .formToolbarField {
-  flex: 0 1 244px;
+  flex: 0 1 226px;
 }
 
 .formToolbarField input,
 .formToolbarField select,
 .formToolbarField :global([data-ristak-dropdown-trigger]) {
   width: 100%;
-  min-width: 150px;
+  min-width: 132px;
   height: var(--editor-control-h, 40px);
   min-height: var(--editor-control-h, 40px);
   border-radius: var(--design-control-radius, 8px);
   background: var(--design-control-bg);
   box-shadow: none;
   font-size: 12px;
-  font-weight: var(--font-weight-semibold, 600);
+  font-weight: 400;
+}
+
+.formToolbarField :global([data-ristak-dropdown-trigger]) > span {
+  font-weight: 400;
 }
 
 @keyframes formModePulse {
@@ -20578,4 +20596,99 @@
   color: var(--warn);
   font-size: 10px;
   font-weight: var(--font-weight-semibold, 600);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
+  grid-template-columns: minmax(240px, 0.74fr) minmax(0, max-content) minmax(720px, 1.42fr);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools {
+  justify-content: flex-start;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools .editorPageSelectorSlot {
+  flex: 0 1 min(var(--sites-editor-page-selector-w, 224px), 184px);
+}
+
+.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarPrimary {
+  justify-content: flex-start;
+  overflow-x: auto;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus {
+  flex: 0 0 auto;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formEmbedToolbarControls {
+  flex: 0 1 470px;
+}
+
+.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarActionsCluster {
+  margin-left: auto;
+}
+
+@media (max-width: 1680px), (max-height: 900px) {
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
+    grid-template-columns: minmax(176px, 0.68fr) minmax(210px, max-content) minmax(0, 1.36fr);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools .editorPageSelectorSlot {
+    flex-basis: min(var(--sites-editor-page-selector-w, 206px), 172px);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus small {
+    max-width: 112px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formEmbedToolbarControls {
+    flex-basis: 398px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formSourceToolbarField {
+    flex-basis: 188px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formCompletionToolbarControls .formToolbarField {
+    flex-basis: 202px;
+  }
+
+  .editorToolbarActionsCluster {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 1540px), (max-height: 820px) {
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
+    grid-template-columns: minmax(150px, 0.62fr) minmax(194px, max-content) minmax(0, 1.42fr);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTools .editorPageSelectorSlot {
+    flex-basis: min(var(--sites-editor-page-selector-w, 190px), 158px);
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus {
+    padding-inline: 9px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formModeStatus small {
+    display: none;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formEmbedToolbarControls {
+    flex-basis: 326px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formToolbarField {
+    gap: 5px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formToolbarField > span {
+    font-size: 0.68rem;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formToolbarField input,
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formToolbarField select,
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .formToolbarField :global([data-ristak-dropdown-trigger]) {
+    min-width: 112px;
+  }
 }
