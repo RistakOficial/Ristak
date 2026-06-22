@@ -174,7 +174,8 @@ test('video player default preset uses large rectangular solid play button', asy
 
   assert.match(signature.classes, /\brstk-video-play-shape-rectangle\b/)
   assert.match(signature.classes, /\brstk-video-play-solid\b/)
-  assert.match(signature.style, /--rstk-video-player-color:#000000/)
+  assert.match(signature.style, /--rstk-video-player-color:rgba\(0, 0, 0, 0\.40\)/)
+  assert.match(signature.style, /--rstk-video-play-color:rgba\(255, 255, 255, 0\.87\)/)
   assert.match(signature.style, /--rstk-video-play-width:232px/)
   assert.match(signature.style, /--rstk-video-play-size:160px/)
   assert.match(signature.style, /--rstk-video-play-radius:0px/)
@@ -187,6 +188,37 @@ test('video player default preset uses large rectangular solid play button', asy
   assert.match(html, /<\/button>\s*<span class="rstk-video-sound\b/)
   assert.match(signature.classes, /\brstk-video-landscape\b/)
   assert.match(signature.style, /--rstk-video-aspect-ratio:16 \/ 9/)
+})
+
+test('video player legacy saved colors resolve to modern translucent defaults', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoPlayerColor: '#000000',
+    videoPlayColor: '#FFFFFF'
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.match(signature.style, /--rstk-video-player-color:rgba\(0, 0, 0, 0\.40\)/)
+  assert.match(signature.style, /--rstk-video-play-color:rgba\(255, 255, 255, 0\.87\)/)
+})
+
+test('video player modern color defaults version preserves explicit solid colors', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoPlayerColorDefaultsVersion: 2,
+    videoPlayerColor: '#000000',
+    videoPlayColor: '#ffffff'
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.match(signature.style, /--rstk-video-player-color:#000000/)
+  assert.match(signature.style, /--rstk-video-play-color:#ffffff/)
 })
 
 test('video player portrait format uses vertical ratio and contained desktop width', async () => {

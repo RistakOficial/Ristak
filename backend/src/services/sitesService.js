@@ -15369,6 +15369,7 @@ const LEGACY_VIDEO_PLAY_RADIUS = 999
 const DEFAULT_VIDEO_PLAY_SIZE = 160
 const DEFAULT_VIDEO_PLAY_ICON_SIZE = 95
 const DEFAULT_VIDEO_PLAY_RADIUS = 0
+const VIDEO_PLAY_RECTANGLE_RADIUS_MAX = 90
 const VIDEO_PLAY_SIZE_MIN = 56
 const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
@@ -15461,7 +15462,11 @@ function normalizeVideoFormGateThemeMode(settings = {}) {
 function getVideoFormGateThemePreset(settings = {}) {
   return { ...VIDEO_FORM_GATE_THEME_PRESETS[normalizeVideoFormGateThemeMode(settings)] }
 }
-const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
+const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0, 0, 0, 0.40)'
+const DEFAULT_VIDEO_PLAY_COLOR = 'rgba(255, 255, 255, 0.87)'
+const LEGACY_VIDEO_PLAYER_COLOR = '#000000'
+const LEGACY_VIDEO_PLAY_COLOR = '#ffffff'
+const VIDEO_PLAYER_COLOR_DEFAULTS_VERSION = 2
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
 const VIDEO_ORIENTATIONS = new Set(['auto', 'landscape', 'portrait'])
@@ -15486,6 +15491,31 @@ function isTransparentCssColorValue(value = '') {
 
 function getVisibleVideoBorderColor(value = '') {
   return isTransparentCssColorValue(value) ? DEFAULT_VIDEO_BORDER_FALLBACK : value
+}
+
+function hasModernVideoPlayerColorDefaults(settings = {}) {
+  const version = Number(settings.videoPlayerColorDefaultsVersion ?? settings.video_player_color_defaults_version)
+  return Number.isFinite(version) && version >= VIDEO_PLAYER_COLOR_DEFAULTS_VERSION
+}
+
+function isSameCssColorValue(value, target) {
+  return normalizeCssColor(value, '').toLowerCase() === normalizeCssColor(target, '').toLowerCase()
+}
+
+function getVideoPlayerButtonColor(settings = {}) {
+  const color = normalizeCssPaint(settings.videoPlayerColor, DEFAULT_VIDEO_PLAYER_COLOR) || DEFAULT_VIDEO_PLAYER_COLOR
+  if (!hasModernVideoPlayerColorDefaults(settings) && isSameCssColorValue(color, LEGACY_VIDEO_PLAYER_COLOR)) {
+    return DEFAULT_VIDEO_PLAYER_COLOR
+  }
+  return color
+}
+
+function getVideoPlayIconColor(settings = {}) {
+  const color = normalizeCssPaint(settings.videoPlayColor, DEFAULT_VIDEO_PLAY_COLOR) || DEFAULT_VIDEO_PLAY_COLOR
+  if (!hasModernVideoPlayerColorDefaults(settings) && isSameCssColorValue(color, LEGACY_VIDEO_PLAY_COLOR)) {
+    return DEFAULT_VIDEO_PLAY_COLOR
+  }
+  return color
 }
 
 function normalizeVideoFormGateVideoBackground(settings = {}) {
@@ -15552,7 +15582,8 @@ function normalizeVideoPlayRadius(settings = {}, shape = DEFAULT_VIDEO_PLAY_SHAP
   if (isLegacyDefaultVideoPlay(settings)) return DEFAULT_VIDEO_PLAY_RADIUS
   const fallback = shape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
   const radius = Number(settings.videoPlayRadius ?? fallback)
-  return Number.isFinite(radius) ? Math.min(LEGACY_VIDEO_PLAY_RADIUS, Math.max(0, radius)) : fallback
+  const maxRadius = shape === 'rectangle' ? VIDEO_PLAY_RECTANGLE_RADIUS_MAX : LEGACY_VIDEO_PLAY_RADIUS
+  return Number.isFinite(radius) ? Math.min(maxRadius, Math.max(0, radius)) : fallback
 }
 
 function normalizeVideoControlPanelRadius(settings = {}) {
@@ -16309,8 +16340,8 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const speed = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1
   const fit = ['cover', 'contain', 'fill'].includes(cleanString(settings.videoFit)) ? cleanString(settings.videoFit) : 'cover'
   const orientation = normalizeVideoOrientation(settings, getVideoOrientationFromAsset(options.tracking?.asset))
-  const playerColor = normalizeCssPaint(settings.videoPlayerColor, DEFAULT_VIDEO_PLAYER_COLOR) || DEFAULT_VIDEO_PLAYER_COLOR
-  const playColor = normalizeCssPaint(settings.videoPlayColor, '#ffffff') || '#ffffff'
+  const playerColor = getVideoPlayerButtonColor(settings)
+  const playColor = getVideoPlayIconColor(settings)
   const controlPanelRadius = normalizeVideoControlPanelRadius(settings)
   const playShape = normalizeVideoPlayShape(settings)
   const playSize = normalizeVideoPlaySize(settings)

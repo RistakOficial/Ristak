@@ -827,6 +827,9 @@ const DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(0, 0, 0, 0.84)'
 const LIGHT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(248, 250, 252, 0.78)'
 const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0, 0, 0, 0.40)'
 const DEFAULT_VIDEO_PLAY_COLOR = 'rgba(255, 255, 255, 0.87)'
+const LEGACY_VIDEO_PLAYER_COLOR = '#000000'
+const LEGACY_VIDEO_PLAY_COLOR = '#ffffff'
+const VIDEO_PLAYER_COLOR_DEFAULTS_VERSION = 2
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
 const DEFAULT_VIDEO_ORIENTATION: VideoOrientation = 'auto'
@@ -897,6 +900,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoPlayerRadius: 18,
   videoPlayerBorderColor: DEFAULT_VIDEO_TRANSPARENT,
   videoPlayerBorderWidth: 0,
+  videoPlayerColorDefaultsVersion: VIDEO_PLAYER_COLOR_DEFAULTS_VERSION,
   videoPlayerColor: DEFAULT_VIDEO_PLAYER_COLOR,
   videoPlayColor: DEFAULT_VIDEO_PLAY_COLOR,
   videoPlaySize: DEFAULT_VIDEO_PLAY_SIZE,
@@ -3109,6 +3113,46 @@ const getSettingHex = (settings: Record<string, unknown>, key: string, fallback:
 const getSettingPaint = (settings: Record<string, unknown>, key: string, fallback: string) => {
   const value = getSettingString(settings, key)
   return isCssPaint(value) ? normalizeCssPaint(value, fallback) : fallback
+}
+
+const hasModernVideoPlayerColorDefaults = (settings: Record<string, unknown>) =>
+  Number(settings.videoPlayerColorDefaultsVersion) >= VIDEO_PLAYER_COLOR_DEFAULTS_VERSION
+
+const isSameCssColorValue = (value: string, target: string) =>
+  normalizeCssColor(value, '').toLowerCase() === normalizeCssColor(target, '').toLowerCase()
+
+const getVideoPlayerButtonColor = (settings: Record<string, unknown>) => {
+  const value = getSettingString(settings, 'videoPlayerColor')
+  if (!value) return DEFAULT_VIDEO_PLAYER_COLOR
+  if (!hasModernVideoPlayerColorDefaults(settings) && isSameCssColorValue(value, LEGACY_VIDEO_PLAYER_COLOR)) {
+    return DEFAULT_VIDEO_PLAYER_COLOR
+  }
+  return value
+}
+
+const getVideoPlayIconColor = (settings: Record<string, unknown>) => {
+  const value = getSettingString(settings, 'videoPlayColor')
+  if (!value) return DEFAULT_VIDEO_PLAY_COLOR
+  if (!hasModernVideoPlayerColorDefaults(settings) && isSameCssColorValue(value, LEGACY_VIDEO_PLAY_COLOR)) {
+    return DEFAULT_VIDEO_PLAY_COLOR
+  }
+  return value
+}
+
+const getVideoPlayerColorDefaultsMigrationPatch = (settings: Record<string, unknown>) => {
+  if (hasModernVideoPlayerColorDefaults(settings)) return null
+  const patch: Record<string, unknown> = {
+    videoPlayerColorDefaultsVersion: VIDEO_PLAYER_COLOR_DEFAULTS_VERSION
+  }
+  const playerColor = getSettingString(settings, 'videoPlayerColor')
+  const playColor = getSettingString(settings, 'videoPlayColor')
+  if (!playerColor || isSameCssColorValue(playerColor, LEGACY_VIDEO_PLAYER_COLOR)) {
+    patch.videoPlayerColor = DEFAULT_VIDEO_PLAYER_COLOR
+  }
+  if (!playColor || isSameCssColorValue(playColor, LEGACY_VIDEO_PLAY_COLOR)) {
+    patch.videoPlayColor = DEFAULT_VIDEO_PLAY_COLOR
+  }
+  return patch
 }
 
 const getThemePaint = (theme: SiteTheme | undefined, key: keyof SiteTheme, fallback: string) => {
@@ -23832,8 +23876,8 @@ const VideoSettingsElementPreview: React.FC<{
 }> = ({ settings, type }) => {
   const playShape = getVideoPlayShape(settings)
   const playIconStyle = getVideoPlayIconStyle(settings)
-  const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
-  const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
+  const playerColor = getVideoPlayerButtonColor(settings)
+  const playColor = getVideoPlayIconColor(settings)
   const playSizeValue = getVideoPlaySizeValue(settings)
   const playWidthValue = playShape === 'rectangle' ? Math.round(playSizeValue * 1.45) : playSizeValue
   const playIconSizeValue = getVideoPlayIconSizeValue(settings)
@@ -23911,6 +23955,13 @@ const VideoPlayerSettingsControls: React.FC<{
   const [metadataDuration, setMetadataDuration] = useState(0)
   const metadataSource = mediaUrl || getSettingString(settings, 'mediaUrl')
   const metadataPreviewEnabled = settings.videoPreviewEnabled !== false
+
+  useEffect(() => {
+    const patch = getVideoPlayerColorDefaultsMigrationPatch(settings)
+    if (!patch) return
+    onPatchSettings(patch)
+    window.setTimeout(onSave, 0)
+  }, [onPatchSettings, onSave, settings])
 
   useEffect(() => {
     const source = safePublicMediaUrl(metadataSource, 'video')
@@ -24337,8 +24388,8 @@ const VideoPlayerSettingsControls: React.FC<{
               </label>
             )}
             <div className={styles.twoColumn}>
-              <ColorField label="Fondo del player" value={getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
-              <ColorField label="Ícono play" value={getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
+              <ColorField label="Fondo del player" value={getVideoPlayerButtonColor(settings)} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
+              <ColorField label="Ícono play" value={getVideoPlayIconColor(settings)} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
             </div>
             <div className={styles.twoColumn}>
               <VideoDimensionSliderField
@@ -28875,8 +28926,8 @@ const VideoPlayerPreview: React.FC<{
   const playerRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
   const playerBorderColor = visibleVideoBorderColor(getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT)
   const playerBorderWidth = `${getSettingNumber(settings, 'videoPlayerBorderWidth', 0, 0, 12)}px`
-  const playerColor = getSettingString(settings, 'videoPlayerColor') || DEFAULT_VIDEO_PLAYER_COLOR
-  const playColor = getSettingString(settings, 'videoPlayColor') || DEFAULT_VIDEO_PLAY_COLOR
+  const playerColor = getVideoPlayerButtonColor(settings)
+  const playColor = getVideoPlayIconColor(settings)
   const controlPanelRadius = `${getVideoControlPanelRadiusValue(settings)}px`
   const playShape = getVideoPlayShape(settings)
   const playSizeValue = getVideoPlaySizeValue(settings)
