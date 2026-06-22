@@ -19,6 +19,7 @@ import {
   getConversationalAgentConfig,
   getConversationState,
   ensureConversationState,
+  ensureConversationalAgentRuntimeEnabledForPublishedAgents,
   recordConversationalAgentEvent,
   getConversationalAgent,
   listConversationalAgents,
@@ -1030,7 +1031,12 @@ async function sendConversationalChannelTextMessage({
 
 async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex, channel = 'whatsapp' }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
-  const config = await getConversationalAgentConfig()
+  let config = await getConversationalAgentConfig()
+  if (!config.enabled) {
+    config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
+      reason: 'follow_up_with_published_agent'
+    })
+  }
   if (!config.enabled) return
 
   const state = await getConversationState(contactId)
@@ -1308,7 +1314,12 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
   try {
     if (!contactId || !messageId) return
 
-    const config = await getConversationalAgentConfig()
+    let config = await getConversationalAgentConfig()
+    if (!config.enabled) {
+      config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
+        reason: 'incoming_message_with_published_agent'
+      })
+    }
     if (!config.enabled) return
 
     clearFollowUpTimer(runKey)
@@ -1389,6 +1400,11 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       }
       if (!agentConfig) {
         // Ningún agente aplica a esta conversación: no responder.
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'agent_not_matched',
+          detail: { messageId: latest.id, channel: normalizedChannel }
+        }).catch(() => {})
         return
       }
 
@@ -1647,7 +1663,12 @@ export async function recoverPendingConversationalAgentConversations({
   nowMs = Date.now(),
   maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
 } = {}) {
-  const config = await getConversationalAgentConfig()
+  let config = await getConversationalAgentConfig()
+  if (!config.enabled) {
+    config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
+      reason: 'pending_recovery_with_published_agent'
+    })
+  }
   if (!config.enabled) return { scanned: 0, scheduled: 0 }
 
   const rowsByChannel = await Promise.all(

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
-import { db } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
 import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
@@ -52,6 +52,7 @@ const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'complet
 const DEFAULT_CONVERSATIONAL_AGENT_MODEL = getDefaultConversationalModelForProvider(DEFAULT_CONVERSATIONAL_AI_PROVIDER)
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const COMPLETION_SUMMARY_MODEL = CHEAPEST_OPENAI_MODEL
+export const CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY = 'conversational_agent_manual_disabled_at'
 const RESPONSE_DELAY_MODES = new Set(['none', 'fixed', 'random'])
 const RESPONSE_DELAY_UNITS = new Set(['seconds', 'minutes'])
 const MAX_RESPONSE_DELAY_SECONDS = 60 * 60
@@ -262,6 +263,13 @@ export async function saveConversationalAgentConfig(input = {}) {
       next.closingStrategyMode, next.closingStrategyCustom
     ])
   }
+
+  await setAppConfig(
+    CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY,
+    next.enabled ? null : new Date().toISOString()
+  ).catch((error) => {
+    logger.warn(`[Agente conversacional] No se pudo guardar bandera de apagado manual: ${error.message}`)
+  })
 
   await recordConversationalAgentEvent({
     contactId: null,
@@ -2026,6 +2034,40 @@ export async function listConversationalAgents() {
   return rows.map(mapAgentRow)
 }
 
+async function enableConversationalAgentRuntime({ reason = 'agent_published', agentId = null } = {}) {
+  const config = await getConversationalAgentConfig()
+  if (config.enabled) return config
+
+  const next = await saveConversationalAgentConfig({ enabled: true })
+  await recordConversationalAgentEvent({
+    contactId: null,
+    eventType: 'runtime_enabled',
+    detail: { reason, agentId }
+  }).catch(() => {})
+  return next
+}
+
+export async function ensureConversationalAgentRuntimeEnabledForPublishedAgents({ reason = 'published_agent_present' } = {}) {
+  await ensureAgentsMigration()
+
+  const config = await getConversationalAgentConfig()
+  if (config.enabled) return config
+
+  const manualDisabledAt = await getAppConfig(CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY).catch(() => null)
+  if (manualDisabledAt) return config
+
+  const agent = await db.get(`
+    SELECT id, name
+    FROM conversational_agents
+    WHERE enabled = 1
+    ORDER BY position ASC, created_at ASC
+    LIMIT 1
+  `).catch(() => null)
+  if (!agent) return config
+
+  return enableConversationalAgentRuntime({ reason, agentId: agent.id })
+}
+
 function toMetricNumber(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number : 0
@@ -2281,6 +2323,9 @@ export async function createConversationalAgent(input = {}) {
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters)
   ])
   await recordConversationalAgentEvent({ eventType: 'agent_created', detail: { agentId: id, name: next.name } })
+  if (next.enabled) {
+    await enableConversationalAgentRuntime({ reason: 'agent_created_enabled', agentId: id })
+  }
   return getConversationalAgent(id)
 }
 
@@ -2309,6 +2354,9 @@ export async function updateConversationalAgent(agentId, input = {}) {
     JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
     agentId
   ])
+  if (next.enabled) {
+    await enableConversationalAgentRuntime({ reason: 'agent_updated_enabled', agentId })
+  }
   return getConversationalAgent(agentId)
 }
 

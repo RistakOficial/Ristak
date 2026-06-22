@@ -9,12 +9,15 @@ import { CHEAPEST_OPENAI_MODEL } from '../src/config/openAIModels.js'
 import { APPOINTMENT_CONFIRMATION_MODEL } from '../src/agents/appointmentConfirmationAgent.js'
 import {
   buildConversationalAgentMetrics,
+  CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY,
   completeConversationalAgentSalePaymentFromInvoice,
   completeConversationGoalLinkFromWebhook,
   createConversationalAgent,
   createConversationGoalLink,
+  ensureConversationalAgentRuntimeEnabledForPublishedAgents,
   entryRulesMatch,
   getConversationalAgent,
+  getConversationalAgentConfig,
   getConversationGoalLink,
   getConversationState,
   getAgentFollowUpStepDelayMs,
@@ -27,6 +30,7 @@ import {
   normalizeAgentReplyDelivery,
   normalizeConversationalSuccessAction,
   recordConversationalAgentEvent,
+  saveConversationalAgentConfig,
   setConversationSignal,
   setConversationalCompletionSummaryGeneratorForTest,
   shouldMigrateLegacyConversationalAgentConfig,
@@ -1130,6 +1134,97 @@ test('no migra una configuración legacy vacía como agente predeterminado', () 
     objective: 'ventas',
     extra_instructions: 'Pregunta presupuesto antes de pasar al equipo.'
   }), true)
+})
+
+async function snapshotRuntimeConfig() {
+  const [config, manualDisabledRow] = await Promise.all([
+    getConversationalAgentConfig(),
+    db.get('SELECT config_value FROM app_config WHERE config_key = ?', [CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY]).catch(() => null)
+  ])
+  return { config, manualDisabledValue: manualDisabledRow?.config_value ?? null }
+}
+
+async function restoreRuntimeConfig(snapshot) {
+  if (!snapshot?.config) return
+  await saveConversationalAgentConfig(snapshot.config)
+  if (snapshot.manualDisabledValue === null) {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY]).catch(() => undefined)
+  } else {
+    await db.run(`
+      INSERT INTO app_config (config_key, config_value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(config_key) DO UPDATE SET
+        config_value = excluded.config_value,
+        updated_at = CURRENT_TIMESTAMP
+    `, [CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY, snapshot.manualDisabledValue]).catch(() => undefined)
+  }
+}
+
+test('publicar un agente enciende el runtime global aunque el switch legacy estuviera apagado', async () => {
+  const snapshot = await snapshotRuntimeConfig()
+  let agent = null
+
+  try {
+    await saveConversationalAgentConfig({ enabled: false })
+    agent = await createConversationalAgent({
+      name: 'Agente runtime apagado',
+      enabled: false
+    })
+
+    const published = await updateConversationalAgent(agent.id, { enabled: true })
+    const config = await getConversationalAgentConfig()
+    const marker = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', [CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY])
+
+    assert.equal(published.enabled, true)
+    assert.equal(config.enabled, true)
+    assert.equal(marker?.config_value ?? null, null)
+  } finally {
+    if (agent?.id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+    await restoreRuntimeConfig(snapshot)
+  }
+})
+
+test('repara runtime viejo apagado si ya existe un agente publicado sin apagado manual', async () => {
+  const snapshot = await snapshotRuntimeConfig()
+  let agent = null
+
+  try {
+    await saveConversationalAgentConfig({ enabled: false })
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY])
+    agent = await createConversationalAgent({
+      name: 'Agente publicado heredado',
+      enabled: false
+    })
+    await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agent.id])
+
+    const config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({ reason: 'test_legacy_published_agent' })
+
+    assert.equal(config.enabled, true)
+  } finally {
+    if (agent?.id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+    await restoreRuntimeConfig(snapshot)
+  }
+})
+
+test('respeta el apagado manual aunque exista un agente publicado', async () => {
+  const snapshot = await snapshotRuntimeConfig()
+  let agent = null
+
+  try {
+    await saveConversationalAgentConfig({ enabled: false })
+    agent = await createConversationalAgent({
+      name: 'Agente apagado manual',
+      enabled: false
+    })
+    await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agent.id])
+
+    const config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({ reason: 'test_manual_disabled' })
+
+    assert.equal(config.enabled, false)
+  } finally {
+    if (agent?.id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+    await restoreRuntimeConfig(snapshot)
+  }
 })
 
 test('ocultar atendidas legacy se guarda como silenciar sin sacar el chat de IA', async () => {
