@@ -463,13 +463,31 @@
 }
 
 .conektaTokenizerShell {
-  min-height: 368px;
+  --conekta-frame-visible-height: 340px;
+  --conekta-frame-source-height: 430px;
+  --conekta-frame-crop-top: 72px;
+  --conekta-frame-bleed-x: 14px;
+  min-height: var(--conekta-frame-visible-height);
+}
+
+.conektaTokenizerViewport {
+  position: relative;
+  height: var(--conekta-frame-visible-height);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid, var(--surface));
+  box-shadow: none;
+  color: var(--text);
 }
 
 .conektaTokenizerFrame {
-  height: 368px;
-  min-height: 368px;
+  width: calc(100% + (var(--conekta-frame-bleed-x) * 2));
+  height: var(--conekta-frame-source-height);
+  min-height: var(--conekta-frame-source-height);
+  margin-inline: calc(var(--conekta-frame-bleed-x) * -1);
   color: var(--text);
+  transform: translateY(calc(var(--conekta-frame-crop-top) * -1));
 }
 
 .conektaTokenizerFrame :global([id^="zoid-conekta-embedded-checkout-component-tokenizer"]) {

@@ -694,7 +694,7 @@ const ConektaCardTokenizerForm: React.FC<{
           },
           options: {
             backgroundMode: 'lightMode',
-            inputType: 'flatMode',
+            inputType: 'minimalMode',
             hideLogo: true,
             colorPrimary: readToken('--accent'),
             colorText: readToken('--text'),
@@ -747,7 +747,9 @@ const ConektaCardTokenizerForm: React.FC<{
             <span>Cargando campos seguros</span>
           </div>
         )}
-        <div id={containerId} className={styles.conektaTokenizerFrame} />
+        <div className={styles.conektaTokenizerViewport}>
+          <div id={containerId} className={styles.conektaTokenizerFrame} />
+        </div>
       </div>
 
       <Button
