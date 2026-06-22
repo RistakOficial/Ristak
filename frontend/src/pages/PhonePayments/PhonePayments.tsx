@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, CalendarDays, Check, ChevronDown, ChevronRight, CreditCard, Loader2, MonitorX, Package, Pencil, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
+import { ArrowLeft, CalendarDays, Check, ChevronDown, ChevronRight, CreditCard, Loader2, MonitorX, Package, Pencil, Plus, RefreshCw, Repeat2, Save, Trash2, X } from 'lucide-react'
 import { RecordPaymentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
+import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAccountCurrency, useHighLevelConnected, usePhoneElasticScroll } from '@/hooks'
+import { useAccountCurrency, usePaymentGatewayCapabilities, usePhoneElasticScroll } from '@/hooks'
 import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
@@ -20,7 +21,7 @@ const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|O
 const SCROLLABLE_PHONE_SELECTOR = '[data-phone-scrollable="true"], [data-phone-chat-scrollable="true"]'
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
-type PaymentView = 'select' | 'single' | 'partial' | 'products'
+type PaymentView = 'select' | 'single' | 'partial' | 'subscription' | 'products'
 type RecentPaymentsPeriod = 'today' | '7d' | '30d' | '90d'
 type ProductFormMode = 'create' | 'edit' | null
 
@@ -84,7 +85,7 @@ function getAccessState(): AccessState {
 }
 
 function getInitialView(mode: string | null): PaymentView {
-  if (mode === 'single' || mode === 'partial' || mode === 'products') return mode
+  if (mode === 'single' || mode === 'partial' || mode === 'subscription' || mode === 'products') return mode
   return 'select'
 }
 
@@ -182,7 +183,7 @@ function createEmptyProductForm(): ProductFormState {
 
 export const PhonePayments: React.FC = () => {
   const [searchParams] = useSearchParams()
-  const { connected: highLevelConnected } = useHighLevelConnected()
+  const paymentCapabilities = usePaymentGatewayCapabilities()
   const { showConfirm, showToast } = useNotification()
   const [accountCurrency] = useAccountCurrency()
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
@@ -508,10 +509,18 @@ export const PhonePayments: React.FC = () => {
     }
   }, [accessState, recentPaymentsOpen, recentPaymentsPeriod])
 
+  const canUsePaymentPlans = paymentCapabilities.canUsePaymentPlans
+  const canUseSubscriptions = paymentCapabilities.canUseSubscriptions
+
   useEffect(() => {
-    if (highLevelConnected || view !== 'partial') return
+    if (canUsePaymentPlans || view !== 'partial') return
     setView('single')
-  }, [highLevelConnected, view])
+  }, [canUsePaymentPlans, view])
+
+  useEffect(() => {
+    if (canUseSubscriptions || view !== 'subscription') return
+    setView('single')
+  }, [canUseSubscriptions, view])
 
   useEffect(() => {
     if (accessState !== 'allowed' || view !== 'products') return
@@ -743,6 +752,15 @@ export const PhonePayments: React.FC = () => {
               }}
             />
           </div>
+        ) : view === 'subscription' ? (
+          <div className={styles.formHost} data-phone-scrollable="true">
+            <PhoneSubscriptionForm
+              providers={paymentCapabilities.subscriptionProviders}
+              currency={accountCurrency}
+              onCancel={() => setView('select')}
+              onSaved={() => setView('select')}
+            />
+          </div>
         ) : view === 'products' ? (
           renderProductsView()
         ) : (
@@ -758,13 +776,13 @@ export const PhonePayments: React.FC = () => {
                 <CreditCard size={26} />
               </span>
               <span className={styles.choiceText}>
-                <strong>Registrar pago</strong>
+                <strong>Registrar pago único</strong>
                 <small>Cobro único: envía una liga de pago o registra un pago manual.</small>
               </span>
               <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
             </button>
 
-            {highLevelConnected && (
+            {canUsePaymentPlans && (
               <button
                 type="button"
                 className={styles.choiceCard}
@@ -776,6 +794,23 @@ export const PhonePayments: React.FC = () => {
                 <span className={styles.choiceText}>
                   <strong>Planes de pago</strong>
                   <small>Parcialidades automáticas con enganche y cobros recurrentes.</small>
+                </span>
+                <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
+              </button>
+            )}
+
+            {canUseSubscriptions && (
+              <button
+                type="button"
+                className={styles.choiceCard}
+                onClick={() => setView('subscription')}
+              >
+                <span className={`${styles.choiceIcon} ${styles.choiceIconBlue}`}>
+                  <Repeat2 size={26} />
+                </span>
+                <span className={styles.choiceText}>
+                  <strong>Suscripción</strong>
+                  <small>Cobros recurrentes con Stripe, Conekta o Mercado Pago.</small>
                 </span>
                 <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
               </button>

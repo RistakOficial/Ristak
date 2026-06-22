@@ -6975,7 +6975,7 @@
 
 .segmentedControl {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   gap: 6px;
   padding: 4px;
   border-radius: 999px;
@@ -6986,7 +6986,7 @@
   min-height: 40px;
   border: 0;
   border-radius: 999px;
-  color: #6f6f6f;
+  color: var(--phone-chat-muted);
   background: transparent;
   font-size: 14px;
   font-weight: 820;
@@ -7010,6 +7010,87 @@
   grid-template-rows: minmax(0, 1fr);
 }
 
+.paymentChoiceList {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+}
+
+.paymentChoiceList button {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 70px;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.paymentChoiceList button + button {
+  border-top: 1px solid var(--phone-chat-border);
+}
+
+.paymentChoiceList button:active {
+  opacity: 0.72;
+}
+
+.paymentChoiceList button > span:nth-child(2) {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.paymentChoiceList strong,
+.paymentChoiceList small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.paymentChoiceList strong {
+  color: var(--phone-chat-text);
+  font-size: 15px;
+  font-weight: 830;
+  white-space: nowrap;
+}
+
+.paymentChoiceList small {
+  color: var(--phone-chat-muted);
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1.25;
+}
+
+.paymentChoiceList svg:last-child {
+  color: var(--phone-chat-muted);
+}
+
+.paymentChoiceIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+}
+
+.paymentChoiceSingle {
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-accent);
+}
+
+.paymentChoicePlan,
+.paymentChoiceSubscription {
+  color: var(--phone-chat-primary);
+  background: color-mix(in srgb, var(--phone-chat-primary) 12%, var(--phone-chat-surface) 88%);
+}
+
 .embeddedActionForm {
   min-height: 0;
   overflow: hidden;
@@ -7020,6 +7101,17 @@
 .embeddedActionForm > * {
   min-height: 0;
   height: 100%;
+}
+
+.embeddedSubscriptionForm {
+  padding-right: 2px;
+  padding-left: 2px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.embeddedSubscriptionForm > * {
+  height: auto;
 }
 
 .appointmentSetup,
@@ -7771,7 +7863,7 @@
 
 .widePaymentSegmented {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   gap: 4px;
   min-height: 44px;
   padding: 4px;
@@ -7799,7 +7891,8 @@
 .widePaymentForm {
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--phone-chat-border);
   border-radius: 22px;
   background: var(--phone-chat-surface);

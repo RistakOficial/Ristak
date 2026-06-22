@@ -1,0 +1,231 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  color: var(--phone-chat-text, var(--text));
+}
+
+.intro,
+.lockedContact,
+.successPanel {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.introIcon,
+.successIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+  color: var(--phone-chat-text-on-primary, var(--on-accent));
+  background: var(--phone-chat-accent, var(--accent));
+}
+
+.intro strong,
+.successCopy strong {
+  display: block;
+  color: var(--phone-chat-text, var(--text));
+  font-size: 18px;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.intro span,
+.successCopy span,
+.lockedContact small {
+  display: block;
+  margin-top: 4px;
+  color: var(--phone-chat-muted, var(--text-mute));
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1.35;
+}
+
+.lockedContact {
+  display: grid;
+  gap: 3px;
+  padding: 12px 0;
+  border-top: 1px solid var(--phone-chat-border, var(--border));
+  border-bottom: 1px solid var(--phone-chat-border, var(--border));
+}
+
+.lockedContact span,
+.selectField > span,
+.dateField > span {
+  color: var(--phone-chat-muted, var(--text-mute));
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.lockedContact strong {
+  color: var(--phone-chat-text, var(--text));
+  font-size: 16px;
+  font-weight: 820;
+}
+
+.contactPicker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.selectedContact {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 12px 96px 12px 0;
+  border-top: 1px solid var(--phone-chat-border, var(--border));
+  border-bottom: 1px solid var(--phone-chat-border, var(--border));
+}
+
+.selectedContact span,
+.selectedContact small,
+.contactResults > span {
+  color: var(--phone-chat-muted, var(--text-mute));
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.selectedContact strong {
+  min-width: 0;
+  color: var(--phone-chat-text, var(--text));
+  font-size: 16px;
+  font-weight: 820;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectedContact button {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--phone-chat-border, var(--border));
+  border-radius: 999px;
+  color: var(--phone-chat-text, var(--text));
+  background: var(--phone-chat-panel, var(--surface));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 780;
+  transform: translateY(-50%);
+}
+
+.contactResults {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  border-top: 1px solid var(--phone-chat-border, var(--border));
+  border-bottom: 1px solid var(--phone-chat-border, var(--border));
+}
+
+.contactResults > span {
+  padding: 12px 0;
+}
+
+.contactResults button {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 12px 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--phone-chat-text, var(--text));
+  background: transparent;
+  text-align: left;
+}
+
+.contactResults button + button {
+  border-top: 1px solid var(--phone-chat-border, var(--border));
+}
+
+.contactResults button:active {
+  opacity: 0.72;
+}
+
+.contactResults strong,
+.contactResults small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contactResults strong {
+  color: var(--phone-chat-text, var(--text));
+  font-size: 15px;
+  font-weight: 780;
+}
+
+.contactResults small {
+  color: var(--phone-chat-muted, var(--text-mute));
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.selectField,
+.dateField {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(86px, 0.42fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.successPanel {
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  color: var(--phone-chat-text, var(--text));
+}
+
+.successCopy {
+  display: grid;
+  gap: 2px;
+}
+
+.authorizationLink {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--phone-chat-border, var(--border));
+  border-radius: 14px;
+  color: var(--phone-chat-text, var(--text));
+  background: var(--phone-chat-panel, var(--surface));
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+@media (max-width: 390px) {
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+}

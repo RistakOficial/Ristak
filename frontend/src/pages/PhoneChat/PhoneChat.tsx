@@ -46,6 +46,7 @@ import {
   Power,
   ReceiptText,
   Reply,
+  Repeat2,
   Search,
   Send,
   Sparkles,
@@ -65,6 +66,7 @@ import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
+import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
 import { PhoneSheet, PhoneTextArea, PhoneTextField } from '@/components/phone/ui'
 import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
@@ -74,7 +76,7 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
 import { PhoneCalendar } from '@/pages/PhoneCalendar'
 import { PhoneSettings } from '@/pages/PhoneSettings'
-import { useAIAgentAvailability, useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useBottomSheetDismiss, usePaymentGatewayCapabilities, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import {
   CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
@@ -247,7 +249,8 @@ type AccessState = 'checking' | 'allowed'
 type PhoneChatDeviceMode = PortableDeviceMode | 'checking'
 type ComposerStatus = 'idle' | 'sending'
 type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
-type PaymentMode = 'single' | 'partial'
+type PaymentMode = 'single' | 'partial' | 'subscription'
+type PaymentSheetStep = 'choice' | 'form'
 type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | 'tag' | null
 type ChatMoreMode = 'default' | 'agentControls'
 type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'ready_human'
@@ -3081,6 +3084,7 @@ export const PhoneChat: React.FC = () => {
   const { labels } = useLabels()
   const { showToast } = useNotification()
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
+  const [accountCurrency] = useAccountCurrency()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
   const [calendarPushEnabled, setCalendarPushEnabled] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
   const [chatPushEnabled, setChatPushEnabled] = useAppConfig<boolean>('chat_push_notifications_enabled', true)
@@ -3098,7 +3102,8 @@ export const PhoneChat: React.FC = () => {
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
   const [bankClabes, setBankClabes, savingBankClabes] = useAppConfig<BankClabeAccount[]>(PAYMENT_BANK_CLABES_CONFIG_KEY, [])
   const [enabledContactInfoCustomFieldIds] = useAppConfig<string[]>(CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY, [])
-  const { connected: highLevelConnected } = useHighLevelConnected()
+  const paymentCapabilities = usePaymentGatewayCapabilities()
+  const highLevelConnected = paymentCapabilities.highLevelConnected
   const {
     safePreference: safeChatThemePreference,
     setPreference: setChatThemePreference,
@@ -3238,6 +3243,8 @@ export const PhoneChat: React.FC = () => {
   const [customFieldDrafts, setCustomFieldDrafts] = useState<Record<string, string>>({})
   const [savingCustomFieldId, setSavingCustomFieldId] = useState<string | null>(null)
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
+  const [paymentSheetStep, setPaymentSheetStep] = useState<PaymentSheetStep>('form')
+  const [widePaymentStep, setWidePaymentStep] = useState<PaymentSheetStep>('choice')
   const [requestingPush, setRequestingPush] = useState(false)
   const [templateMode, setTemplateMode] = useState<TemplateMode>('choice')
   const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([])
@@ -3786,7 +3793,15 @@ export const PhoneChat: React.FC = () => {
   )
 
   const initialContact = useMemo(() => toPaymentContact(activeContact), [activeContact])
-  const activePhonePaymentMode: PaymentMode = highLevelConnected ? paymentMode : 'single'
+  const canUsePaymentPlans = paymentCapabilities.canUsePaymentPlans
+  const canUseSubscriptions = paymentCapabilities.canUseSubscriptions
+  const hasAdvancedMobilePayments = canUsePaymentPlans || canUseSubscriptions
+  const activePhonePaymentMode: PaymentMode = paymentMode === 'partial' && canUsePaymentPlans
+    ? 'partial'
+    : paymentMode === 'subscription' && canUseSubscriptions
+      ? 'subscription'
+      : 'single'
+  const activeRecordPaymentMode: 'single' | 'partial' = activePhonePaymentMode === 'partial' ? 'partial' : 'single'
   const defaultAppointmentRange = useMemo(() => createDefaultAppointmentRange(timezone), [timezone])
   const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
   const businessPhones = whatsappStatus?.phoneNumbers || []
@@ -4849,9 +4864,23 @@ export const PhoneChat: React.FC = () => {
   }, [aiAgentChatEnabled, aiReplySuggestionsEnabled, openAIConfigured, setAiReplySuggestionsEnabled])
 
   useEffect(() => {
-    if (highLevelConnected || paymentMode !== 'partial') return
-    setPaymentMode('single')
-  }, [highLevelConnected, paymentMode])
+    if (
+      (paymentMode === 'partial' && !canUsePaymentPlans) ||
+      (paymentMode === 'subscription' && !canUseSubscriptions)
+    ) {
+      setPaymentMode('single')
+    }
+  }, [canUsePaymentPlans, canUseSubscriptions, paymentMode])
+
+  useEffect(() => {
+    if (hasAdvancedMobilePayments || paymentSheetStep !== 'choice') return
+    setPaymentSheetStep('form')
+  }, [hasAdvancedMobilePayments, paymentSheetStep])
+
+  useEffect(() => {
+    if (hasAdvancedMobilePayments || widePaymentStep !== 'choice') return
+    setWidePaymentStep('form')
+  }, [hasAdvancedMobilePayments, widePaymentStep])
 
   useEffect(() => {
     const updateAccess = () => {
@@ -5981,6 +6010,7 @@ export const PhoneChat: React.FC = () => {
 
     if (section === 'payments') {
       setPaymentMode('single')
+      setWidePaymentStep(hasAdvancedMobilePayments ? 'choice' : 'form')
     }
 
     if (section === 'chat') return
@@ -6331,13 +6361,36 @@ export const PhoneChat: React.FC = () => {
     setSearchParams
   ])
 
-  const handleChatMoreAction = (contact: Contact, nextSheet: Exclude<ActionSheet, 'attachments' | 'templates' | 'settings' | 'newChat' | 'chatMore' | null>) => {
+  const openPaymentSheetForContact = (contact: Contact) => {
     setActiveContactId(contact.id)
     setChatActionContactId(null)
     setContactInfoOpen(false)
-    if (nextSheet === 'payment') setPaymentMode('single')
+    setPaymentMode('single')
+    setPaymentSheetStep(hasAdvancedMobilePayments ? 'choice' : 'form')
+    setSheet('payment')
+    closeSwipeActions()
+  }
+
+  const handleChatMoreAction = (contact: Contact, nextSheet: Exclude<ActionSheet, 'attachments' | 'templates' | 'settings' | 'newChat' | 'chatMore' | null>) => {
+    if (nextSheet === 'payment') {
+      openPaymentSheetForContact(contact)
+      return
+    }
+
+    setActiveContactId(contact.id)
+    setChatActionContactId(null)
+    setContactInfoOpen(false)
     setSheet(nextSheet)
     closeSwipeActions()
+  }
+
+  const choosePaymentMode = (mode: PaymentMode, target: 'sheet' | 'wide' = 'sheet') => {
+    setPaymentMode(mode)
+    if (target === 'wide') {
+      setWidePaymentStep('form')
+      return
+    }
+    setPaymentSheetStep('form')
   }
 
   const clearChatLongPress = () => {
@@ -12129,7 +12182,7 @@ export const PhoneChat: React.FC = () => {
           },
           {
             label: 'Registrar pagos',
-            description: highLevelConnected ? 'Guardar un pago o plan de pagos.' : 'Guardar un pago único.',
+            description: hasAdvancedMobilePayments ? 'Elegir pago único, plan o suscripción.' : 'Guardar un pago único.',
             Icon: CircleDollarSign,
             className: styles.chatMorePayment,
             onClick: () => handleChatMoreAction(chatActionContact, 'payment')
@@ -13451,6 +13504,82 @@ export const PhoneChat: React.FC = () => {
     </div>
   )
 
+  const renderPaymentChoiceList = (target: 'sheet' | 'wide') => (
+    <div className={styles.paymentChoiceList} role="group" aria-label="Elige tipo de cobro">
+      <button type="button" onClick={() => choosePaymentMode('single', target)}>
+        <span className={`${styles.paymentChoiceIcon} ${styles.paymentChoiceSingle}`}>
+          <CreditCard size={22} />
+        </span>
+        <span>
+          <strong>Pago único</strong>
+          <small>Registrar pago manual o mandar liga de pago.</small>
+        </span>
+        <ChevronRight size={18} aria-hidden="true" />
+      </button>
+
+      {canUsePaymentPlans && (
+        <button type="button" onClick={() => choosePaymentMode('partial', target)}>
+          <span className={`${styles.paymentChoiceIcon} ${styles.paymentChoicePlan}`}>
+            <CalendarDays size={22} />
+          </span>
+          <span>
+            <strong>Plan de pagos</strong>
+            <small>Enganche y parcialidades desde una pasarela compatible.</small>
+          </span>
+          <ChevronRight size={18} aria-hidden="true" />
+        </button>
+      )}
+
+      {canUseSubscriptions && (
+        <button type="button" onClick={() => choosePaymentMode('subscription', target)}>
+          <span className={`${styles.paymentChoiceIcon} ${styles.paymentChoiceSubscription}`}>
+            <Repeat2 size={22} />
+          </span>
+          <span>
+            <strong>Suscripción</strong>
+            <small>Cobros recurrentes con Stripe, Conekta o Mercado Pago.</small>
+          </span>
+          <ChevronRight size={18} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  )
+
+  const renderPaymentModeSwitcher = (target: 'sheet' | 'wide') => {
+    if (!hasAdvancedMobilePayments) return null
+    const className = target === 'wide' ? styles.widePaymentSegmented : styles.segmentedControl
+
+    return (
+      <div className={className} role="group" aria-label="Tipo de cobro">
+        <button
+          type="button"
+          className={activePhonePaymentMode === 'single' ? styles.segmentActive : ''}
+          onClick={() => choosePaymentMode('single', target)}
+        >
+          Único
+        </button>
+        {canUsePaymentPlans && (
+          <button
+            type="button"
+            className={activePhonePaymentMode === 'partial' ? styles.segmentActive : ''}
+            onClick={() => choosePaymentMode('partial', target)}
+          >
+            Plan
+          </button>
+        )}
+        {canUseSubscriptions && (
+          <button
+            type="button"
+            className={activePhonePaymentMode === 'subscription' ? styles.segmentActive : ''}
+            onClick={() => choosePaymentMode('subscription', target)}
+          >
+            Suscripción
+          </button>
+        )}
+      </div>
+    )
+  }
+
   const renderWideRailPanel = () => {
     if (!isWideChatDevice || activeRailSection === 'chat') return null
 
@@ -13483,45 +13612,39 @@ export const PhoneChat: React.FC = () => {
         <header className={styles.widePanelHeader}>
           <div>
             <p>Pagos</p>
-            <h2>Registrar pago</h2>
-            <span>Busca o asigna el contacto antes de cobrar.</span>
+            <h2>{widePaymentStep === 'choice' && hasAdvancedMobilePayments ? 'Elige qué cobrar' : activePhonePaymentMode === 'subscription' ? 'Nueva suscripción' : 'Registrar pago'}</h2>
+            <span>{widePaymentStep === 'choice' && hasAdvancedMobilePayments ? 'Selecciona el flujo antes de configurar el cobro.' : 'Busca o asigna el contacto antes de cobrar.'}</span>
           </div>
         </header>
 
-        {highLevelConnected && (
-          <div className={styles.widePaymentSegmented} role="group" aria-label="Tipo de pago">
-            <button
-              type="button"
-              className={activePhonePaymentMode === 'single' ? styles.segmentActive : ''}
-              onClick={() => setPaymentMode('single')}
-            >
-              Pago único
-            </button>
-            <button
-              type="button"
-              className={activePhonePaymentMode === 'partial' ? styles.segmentActive : ''}
-              onClick={() => setPaymentMode('partial')}
-            >
-              Plan de pago
-            </button>
+        {widePaymentStep === 'choice' && hasAdvancedMobilePayments ? renderPaymentChoiceList('wide') : renderPaymentModeSwitcher('wide')}
+
+        {widePaymentStep === 'choice' && hasAdvancedMobilePayments ? null : (
+          <div className={styles.widePaymentForm}>
+          {activePhonePaymentMode === 'subscription' ? (
+            <PhoneSubscriptionForm
+              providers={paymentCapabilities.subscriptionProviders}
+              currency={accountCurrency}
+              onCancel={() => setWidePaymentStep('choice')}
+              onSaved={() => setWideRailSection('chat')}
+            />
+          ) : (
+            <RecordPaymentModal
+              key={`wide-${activeRecordPaymentMode}-assign-contact`}
+              variant="embedded"
+              isOpen
+              initialPaymentMode={activeRecordPaymentMode}
+              initialContact={null}
+              lockInitialContact={false}
+              onClose={() => setWideRailSection('chat')}
+              onSuccess={(context) => {
+                if (context?.keepOpen) return
+                setWideRailSection('chat')
+              }}
+            />
+          )}
           </div>
         )}
-
-        <div className={styles.widePaymentForm}>
-          <RecordPaymentModal
-            key={`wide-${activePhonePaymentMode}-assign-contact`}
-            variant="embedded"
-            isOpen
-            initialPaymentMode={activePhonePaymentMode}
-            initialContact={null}
-            lockInitialContact={false}
-            onClose={() => setWideRailSection('chat')}
-            onSuccess={(context) => {
-              if (context?.keepOpen) return
-              setWideRailSection('chat')
-            }}
-          />
-        </div>
       </section>
     )
   }
@@ -13766,8 +13889,7 @@ export const PhoneChat: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setPaymentMode('single')
-                      setSheet('payment')
+                      if (activeContact) openPaymentSheetForContact(activeContact)
                     }}
                     aria-label="Cobrar"
                   >
@@ -13951,7 +14073,13 @@ export const PhoneChat: React.FC = () => {
                   <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? 'Agente de IA' : 'Ristak'}</p>
                   <h2>
                     {sheet === 'appointment' && 'Agendar una cita'}
-                    {sheet === 'payment' && 'Registrar pago'}
+                    {sheet === 'payment' && (
+                      paymentSheetStep === 'choice' && hasAdvancedMobilePayments
+                        ? 'Elige qué cobrar'
+                        : activePhonePaymentMode === 'subscription'
+                          ? 'Nueva suscripción'
+                          : 'Registrar pago'
+                    )}
                     {sheet === 'templates' && 'Plantillas'}
                     {sheet === 'clabe' && 'CLABE'}
                     {sheet === 'settings' && 'Ajustes del chat'}
@@ -14013,51 +14141,60 @@ export const PhoneChat: React.FC = () => {
             )}
 
             {sheet === 'payment' && (
-              <div className={`${styles.actionFormContent} ${!highLevelConnected ? styles.actionFormContentPlain : ''}`}>
-                {highLevelConnected && (
-                  <div className={styles.segmentedControl}>
-                    <button
-                      type="button"
-                      className={activePhonePaymentMode === 'single' ? styles.segmentActive : ''}
-                      onClick={() => setPaymentMode('single')}
-                    >
-                      Pago único
-                    </button>
-                    <button
-                      type="button"
-                      className={activePhonePaymentMode === 'partial' ? styles.segmentActive : ''}
-                      onClick={() => setPaymentMode('partial')}
-                    >
-                      Plan de pagos
-                    </button>
+              <div className={`${styles.actionFormContent} ${!hasAdvancedMobilePayments || (paymentSheetStep === 'choice' && hasAdvancedMobilePayments) ? styles.actionFormContentPlain : ''}`}>
+                {paymentSheetStep === 'choice' && hasAdvancedMobilePayments
+                  ? renderPaymentChoiceList('sheet')
+                  : renderPaymentModeSwitcher('sheet')}
+                {paymentSheetStep === 'choice' && hasAdvancedMobilePayments ? null : (
+                  <div className={`${styles.embeddedActionForm} ${activePhonePaymentMode === 'subscription' ? styles.embeddedSubscriptionForm : ''}`}>
+                  {activePhonePaymentMode === 'subscription' ? (
+                    <PhoneSubscriptionForm
+                      providers={paymentCapabilities.subscriptionProviders}
+                      currency={accountCurrency}
+                      initialContact={initialContact}
+                      lockInitialContact={Boolean(initialContact?.id)}
+                      onCancel={() => setPaymentSheetStep('choice')}
+                      onSaved={() => {
+                        actionSheetDismiss.requestClose()
+                        setMessages((current) => [
+                          ...current,
+                          {
+                            id: `subscription-${Date.now()}`,
+                            text: 'Suscripción creada desde este chat.',
+                            date: new Date().toISOString(),
+                            direction: 'system'
+                          }
+                        ])
+                      }}
+                    />
+                  ) : (
+                    <RecordPaymentModal
+                      key={`${activeRecordPaymentMode}-${initialContact?.id || 'empty'}`}
+                      variant="embedded"
+                      isOpen
+                      initialPaymentMode={activeRecordPaymentMode}
+                      initialContact={initialContact}
+                      lockInitialContact={Boolean(initialContact?.id)}
+                      showEmbeddedBackButton={false}
+                      onClose={actionSheetDismiss.requestClose}
+                      onSuccess={(context) => {
+                        if (context?.keepOpen) return
+
+                        actionSheetDismiss.requestClose()
+                        setMessages((current) => [
+                          ...current,
+                          {
+                            id: `payment-${Date.now()}`,
+                            text: 'Pago registrado desde este chat.',
+                            date: new Date().toISOString(),
+                            direction: 'system'
+                          }
+                        ])
+                      }}
+                    />
+                  )}
                   </div>
                 )}
-                <div className={styles.embeddedActionForm}>
-                  <RecordPaymentModal
-                    key={`${activePhonePaymentMode}-${initialContact?.id || 'empty'}`}
-                    variant="embedded"
-                    isOpen
-                    initialPaymentMode={activePhonePaymentMode}
-                    initialContact={initialContact}
-                    lockInitialContact={Boolean(initialContact?.id)}
-                    showEmbeddedBackButton={false}
-                    onClose={actionSheetDismiss.requestClose}
-                    onSuccess={(context) => {
-                      if (context?.keepOpen) return
-
-                      actionSheetDismiss.requestClose()
-                      setMessages((current) => [
-                        ...current,
-                        {
-                          id: `payment-${Date.now()}`,
-                          text: 'Pago registrado desde este chat.',
-                          date: new Date().toISOString(),
-                          direction: 'system'
-                        }
-                      ])
-                    }}
-                  />
-                </div>
               </div>
             )}
 
