@@ -25,6 +25,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability, useAppConfig } from '@/hooks'
 import {
   conversationalAgentService,
+  isConversationalAgentEntryConflictError,
   type AgentFilterOptions,
   type AgentCompletionMode,
   type AgentDepositMode,
@@ -45,6 +46,7 @@ import {
   type ConversationalAgentConfig,
   type ConversationalAgentDef,
   type ConversationalAgentDefInput,
+  type ConversationalAgentEntryConflict,
   type ConversationalAgentMetrics,
   type ConversationalAgentTestAttachment,
   type ConversationalAgentTestMessage,
@@ -3183,6 +3185,12 @@ interface ConversationalAgentSettingsProps {
   className?: string
 }
 
+interface AgentActivationConflictModalState {
+  message: string
+  conflicts: ConversationalAgentEntryConflict[]
+  pausedDraftInput?: ConversationalAgentDefInput
+}
+
 export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsProps> = ({
   routeBase = DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE,
   generalConfigPath = DEFAULT_AI_AGENT_GENERAL_PATH,
@@ -3211,6 +3219,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const [aiProvidersExpanded, setAIProvidersExpanded] = useState(false)
   const [providerApiKey, setProviderApiKey] = useState('')
   const [providerSaving, setProviderSaving] = useState(false)
+  const [activationConflict, setActivationConflict] = useState<AgentActivationConflictModalState | null>(null)
   const saveTimersRef = useRef<Map<string, number>>(new Map())
   const agentsRef = useRef<ConversationalAgentDef[]>([])
   const businessProfileVersion = [
@@ -3350,10 +3359,18 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       try {
         await conversationalAgentService.updateAgent(agentId, agentToInput(agent))
       } catch (error: any) {
+        if (isConversationalAgentEntryConflictError(error)) {
+          setActivationConflict({
+            message: error.message,
+            conflicts: error.conflicts || []
+          })
+          await refreshAgentData().catch(() => undefined)
+          return
+        }
         showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
       }
     }, AUTOSAVE_DELAY_MS))
-  }, [showToast])
+  }, [refreshAgentData, showToast])
 
   const businessPromptStatus = config?.businessPromptStatus || null
   const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
@@ -3450,13 +3467,14 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       return
     }
     setCreating(true)
+    const defaultProvider = getKnownConversationalAIProvider(config?.aiProvider)
+    const draftInput: ConversationalAgentDefInput = {
+      name: `Agente ${agents.length + 1}`,
+      aiProvider: defaultProvider,
+      model: getKnownConversationalModel(defaultProvider, config?.model || getDefaultConversationalModel(defaultProvider))
+    }
     try {
-      const defaultProvider = getKnownConversationalAIProvider(config?.aiProvider)
-      const agent = await conversationalAgentService.createAgent({
-        name: `Agente ${agents.length + 1}`,
-        aiProvider: defaultProvider,
-        model: getKnownConversationalModel(defaultProvider, config?.model || getDefaultConversationalModel(defaultProvider))
-      })
+      const agent = await conversationalAgentService.createAgent(draftInput)
       if (config && !config.enabled) {
         const nextConfig = await conversationalAgentService.saveConfig({ enabled: true })
         setConfig(nextConfig)
@@ -3466,7 +3484,34 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       navigate(buildConversationalAgentPath(agent.id, routeBase))
       void refreshMetrics()
     } catch (error: any) {
+      if (isConversationalAgentEntryConflictError(error)) {
+        setActivationConflict({
+          message: error.message,
+          conflicts: error.conflicts || [],
+          pausedDraftInput: { ...draftInput, enabled: false }
+        })
+        return
+      }
       showToast('error', 'No se pudo crear', error?.message || 'Error al crear el agente')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleCreatePausedConflictDraft = async () => {
+    const draftInput = activationConflict?.pausedDraftInput
+    if (!draftInput) return
+    setCreating(true)
+    try {
+      const agent = await conversationalAgentService.createAgent({ ...draftInput, enabled: false })
+      setActivationConflict(null)
+      setAgents((current) => [...current, agent])
+      setSelectedAgentId(agent.id)
+      navigate(buildConversationalAgentPath(agent.id, routeBase))
+      void refreshMetrics()
+      showToast('success', 'Agente creado en pausa', 'Configura sus condiciones de entrada antes de publicarlo.')
+    } catch (error: any) {
+      showToast('error', 'No se pudo crear', error?.message || 'Inténtalo otra vez.')
     } finally {
       setCreating(false)
     }
@@ -3585,6 +3630,64 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     </Modal>
   )
 
+  const renderActivationConflictModal = () => {
+    const conflicts = activationConflict?.conflicts || []
+    const canCreatePaused = Boolean(activationConflict?.pausedDraftInput)
+
+    return (
+      <Modal
+        isOpen={Boolean(activationConflict)}
+        onClose={() => setActivationConflict(null)}
+        title="No se puede publicar este agente"
+        size="md"
+      >
+        {activationConflict && (
+          <div className={styles.agentConflictModalBody}>
+            <div className={styles.agentConflictLead}>
+              <span className={styles.agentConflictIcon}>
+                <AlertTriangle size={18} />
+              </span>
+              <div>
+                <Badge variant="warning">Conflicto de entrada</Badge>
+                <p>{activationConflict.message}</p>
+              </div>
+            </div>
+
+            {conflicts.length > 0 && (
+              <div className={styles.agentConflictList}>
+                {conflicts.map((conflict) => (
+                  <div key={`${conflict.agentId}-${conflict.reason}`} className={styles.agentConflictItem}>
+                    <strong>{conflict.agentName}</strong>
+                    <span>{conflict.reason}</span>
+                    <small>
+                      Este agente: {conflict.candidateEntry}. Agente activo: {conflict.existingEntry}.
+                    </small>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p className={styles.helper}>
+              Usa una etiqueta, palabra clave, canal, número de entrada o una regla distinta para que sólo un agente pueda tomar ese chat.
+            </p>
+
+            <div className={styles.agentConflictActions}>
+              <Button variant="secondary" onClick={() => setActivationConflict(null)}>
+                Entendido
+              </Button>
+              {canCreatePaused && (
+                <Button onClick={handleCreatePausedConflictDraft} loading={creating} disabled={creating}>
+                  <PauseCircle size={16} />
+                  Crear en pausa
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+    )
+  }
+
   if (openAIAvailability.loading) {
     return (
       <div className={rootClassName}>
@@ -3646,6 +3749,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           onDelete={() => handleDeleteAgent(selectedAgent)}
         />
         {renderProviderModal()}
+        {renderActivationConflictModal()}
       </div>
     )
   }
@@ -3867,6 +3971,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         </div>
       )}
       {renderProviderModal()}
+      {renderActivationConflictModal()}
     </div>
   )
 }

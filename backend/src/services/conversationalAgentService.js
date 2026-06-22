@@ -54,6 +54,7 @@ const DEFAULT_CONVERSATIONAL_AGENT_MODEL = getDefaultConversationalModelForProvi
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const COMPLETION_SUMMARY_MODEL = CHEAPEST_OPENAI_MODEL
 export const CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY = 'conversational_agent_manual_disabled_at'
+export const CONVERSATIONAL_AGENT_ENTRY_CONFLICT_CODE = 'CONVERSATIONAL_AGENT_ENTRY_CONFLICT'
 const RESPONSE_DELAY_MODES = new Set(['none', 'fixed', 'random'])
 const RESPONSE_DELAY_UNITS = new Set(['seconds', 'minutes'])
 const MAX_RESPONSE_DELAY_SECONDS = 60 * 60
@@ -2356,11 +2357,269 @@ const DEFAULT_AGENT_BASE = {
   filters: { entry: [], exit: [] }
 }
 
+const ENTRY_CONFLICT_CATEGORY_LABELS = {
+  channel: 'canal',
+  message: 'mensaje',
+  tags: 'etiquetas',
+  contact: 'contacto',
+  appointments: 'citas',
+  payments: 'pagos',
+  ads: 'anuncios',
+  schedule: 'horario'
+}
+
+const ENTRY_CONFLICT_NEGATIVE_OPERATORS = new Set([
+  'is_not',
+  'not_contains',
+  'not_has',
+  'has_none',
+  'none',
+  'not_exists',
+  'not_from_ad',
+  'empty',
+  'no_has',
+  'not_customer'
+])
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (!value || typeof value !== 'object') return JSON.stringify(value)
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+}
+
+function cleanEntryAnchorValue(value) {
+  return normalizeMatchText(value)
+}
+
+function addEntryAnchor(target, key, label) {
+  if (!key) return
+  target.set(key, label)
+}
+
+function entryAnchorLabel(category, field, value = '') {
+  const categoryLabel = ENTRY_CONFLICT_CATEGORY_LABELS[category] || category
+  if (category === 'channel' && field === 'canal') return `mismo canal: ${value || 'chat'}`
+  if (category === 'message' && field === 'texto') return `mismo texto de entrada: ${value || 'cualquier texto'}`
+  if (category === 'message' && field === 'numero') return `mismo número de entrada: ${value}`
+  if (category === 'tags' && field === 'etiqueta') return `misma etiqueta: ${value || 'cualquier etiqueta'}`
+  if (category === 'ads' && field === 'anuncio') return `mismo anuncio: ${value}`
+  if (field === 'cualquier valor') return `misma categoría de entrada: ${categoryLabel}`
+  return [categoryLabel, field, value].map((part) => String(part || '').trim()).filter(Boolean).join(' · ')
+}
+
+function entryParamValues(param) {
+  if (Array.isArray(param.values) && param.values.length) return param.values
+  if (param.value !== undefined && param.value !== null && param.value !== '') return [param.value]
+  if (param.date || param.dateEnd) return [[param.date, param.dateEnd].filter(Boolean).join('..')]
+  if (param.timeStart || param.timeEnd) return [[param.timeStart || '09:00', param.timeEnd || '18:00'].join('..')]
+  if (param.amount !== undefined || param.amountMax !== undefined) return [[param.amount, param.amountMax].filter((item) => item !== undefined && item !== null).join('..')]
+  if (param.offsetValue !== undefined || param.offsetUnit) return [[param.offsetValue || 0, param.offsetUnit || 'minutes'].join(' ')]
+  if (param.fieldKey) return [param.fieldKey]
+  return ['*']
+}
+
+function isNegativeEntryParam(category, param) {
+  if (!param) return false
+  if (category === 'appointments' && param.field === 'presence' && param.operator === 'none') return true
+  if (category === 'payments' && param.field === 'presence' && param.operator === 'none') return true
+  if (category === 'ads' && param.field === 'presence' && ['not_exists', 'not_from_ad'].includes(param.operator)) return true
+  return ENTRY_CONFLICT_NEGATIVE_OPERATORS.has(param.operator)
+}
+
+function addEntryParamAnchors(category, param, anchors, blockers) {
+  const field = String(param?.field || '').trim() || 'base'
+  const operator = String(param?.operator || '').trim()
+  const negative = isNegativeEntryParam(category, param)
+  const target = negative ? blockers : anchors
+
+  if (category === 'channel' && field === 'channel') {
+    const value = cleanEntryAnchorValue(param.value || 'chat') || 'chat'
+    addEntryAnchor(target, `channel:${value}`, entryAnchorLabel(category, 'canal', value))
+    return
+  }
+
+  if (category === 'message' && field === 'text') {
+    for (const value of entryParamValues(param)) {
+      const clean = cleanEntryAnchorValue(value)
+      if (clean) addEntryAnchor(target, `message:text:${clean}`, entryAnchorLabel(category, 'texto', clean))
+    }
+    return
+  }
+
+  if (category === 'message' && field === 'business_phone') {
+    const value = cleanEntryAnchorValue(param.value)
+    if (value) addEntryAnchor(target, `message:business_phone:${value}`, entryAnchorLabel(category, 'numero', value))
+    return
+  }
+
+  if (category === 'tags' && field === 'tag') {
+    for (const value of entryParamValues(param)) {
+      const clean = cleanEntryAnchorValue(value)
+      if (clean) addEntryAnchor(target, `tags:tag:${clean}`, entryAnchorLabel(category, 'etiqueta', clean))
+    }
+    return
+  }
+
+  if (category === 'ads' && field === 'presence') {
+    addEntryAnchor(target, 'ads:presence', entryAnchorLabel(category, 'origen'))
+    return
+  }
+
+  if (category === 'ads' && field === 'ad') {
+    for (const value of entryParamValues(param)) {
+      const clean = cleanEntryAnchorValue(value)
+      if (clean) addEntryAnchor(target, `ads:ad:${clean}`, entryAnchorLabel(category, 'anuncio', clean))
+    }
+    return
+  }
+
+  for (const value of entryParamValues(param)) {
+    const clean = cleanEntryAnchorValue(value)
+    const keyValue = clean || `${operator || 'base'}:*`
+    addEntryAnchor(target, `${category}:${field}:${operator || 'base'}:${keyValue}`, entryAnchorLabel(category, field, clean))
+  }
+}
+
+function buildEntryGroupScope(group = null) {
+  if (!group) {
+    return {
+      catchAll: true,
+      anchors: new Map([['catch_all', 'cualquier chat']]),
+      blockers: new Map(),
+      label: 'cualquier chat',
+      fingerprint: 'catch_all'
+    }
+  }
+
+  const anchors = new Map()
+  const blockers = new Map()
+  const labels = []
+  const conditions = Array.isArray(group.conditions) ? group.conditions : []
+  for (const condition of conditions) {
+    const category = String(condition?.category || '').trim()
+    if (!CONDITION_SCHEMA[category]) continue
+    const categoryLabel = ENTRY_CONFLICT_CATEGORY_LABELS[category] || category
+    const params = Array.isArray(condition.params) ? condition.params : []
+    labels.push(categoryLabel)
+    if (!params.length) {
+      addEntryAnchor(anchors, `${category}:any`, entryAnchorLabel(category, 'cualquier valor'))
+      continue
+    }
+    for (const param of params) {
+      addEntryParamAnchors(category, param, anchors, blockers)
+    }
+  }
+
+  return {
+    catchAll: false,
+    anchors,
+    blockers,
+    label: labels.length ? labels.join(' + ') : 'entrada amplia',
+    fingerprint: stableJson(conditions)
+  }
+}
+
+function buildEntryScopes(agent = {}) {
+  const filters = normalizeAgentFilters(agent.filters)
+  const groups = filters.entry?.groups || []
+  if (!groups.length) return [buildEntryGroupScope(null)]
+  return groups.map(buildEntryGroupScope)
+}
+
+function entryScopesContradict(left, right) {
+  for (const key of left.anchors.keys()) {
+    if (right.blockers.has(key)) return true
+  }
+  for (const key of right.anchors.keys()) {
+    if (left.blockers.has(key)) return true
+  }
+  return false
+}
+
+function findEntryScopeCollision(candidateScope, existingScope) {
+  if (candidateScope.catchAll || existingScope.catchAll) {
+    return candidateScope.catchAll && existingScope.catchAll
+      ? { anchor: 'catch_all', label: 'ambos entran con cualquier chat' }
+      : null
+  }
+  if (entryScopesContradict(candidateScope, existingScope)) return null
+
+  for (const [key, label] of candidateScope.anchors.entries()) {
+    if (existingScope.anchors.has(key)) {
+      return { anchor: key, label: label || existingScope.anchors.get(key) || 'misma entrada' }
+    }
+  }
+
+  if (
+    candidateScope.fingerprint &&
+    existingScope.fingerprint &&
+    candidateScope.fingerprint === existingScope.fingerprint
+  ) {
+    return { anchor: 'same_fingerprint', label: 'misma combinacion de condiciones' }
+  }
+
+  return null
+}
+
+export function findConversationalAgentEntryConflicts(candidateAgent = {}, activeAgents = []) {
+  if (!candidateAgent?.enabled) return []
+
+  const candidateScopes = buildEntryScopes(candidateAgent)
+  const candidateId = String(candidateAgent.id || '').trim()
+  const conflicts = []
+
+  for (const agent of activeAgents || []) {
+    if (!agent?.enabled) continue
+    if (candidateId && String(agent.id || '').trim() === candidateId) continue
+
+    const existingScopes = buildEntryScopes(agent)
+    for (const candidateScope of candidateScopes) {
+      for (const existingScope of existingScopes) {
+        const collision = findEntryScopeCollision(candidateScope, existingScope)
+        if (!collision) continue
+        conflicts.push({
+          agentId: agent.id,
+          agentName: agent.name || 'Agente activo',
+          candidateName: candidateAgent.name || 'Agente nuevo',
+          candidateEntry: candidateScope.label,
+          existingEntry: existingScope.label,
+          reason: collision.label
+        })
+        break
+      }
+      if (conflicts.some((conflict) => conflict.agentId === agent.id)) break
+    }
+  }
+
+  return conflicts
+}
+
+async function assertConversationalAgentEntryDoesNotConflict(candidateAgent, { excludeAgentId = null } = {}) {
+  if (!candidateAgent?.enabled) return
+  const rows = await db.all(`
+    SELECT *
+    FROM conversational_agents
+    WHERE enabled = 1
+      ${excludeAgentId ? 'AND id <> ?' : ''}
+    ORDER BY position ASC, created_at ASC
+  `, excludeAgentId ? [excludeAgentId] : [])
+  const conflicts = findConversationalAgentEntryConflicts(candidateAgent, rows.map(mapAgentRow))
+  if (!conflicts.length) return
+
+  const firstConflict = conflicts[0]
+  const error = new Error(`No se puede publicar este agente porque sus condiciones de entrada se pisan con "${firstConflict.agentName}". Cambia las condiciones de entrada para que sólo un agente pueda tomar ese chat.`)
+  error.statusCode = 409
+  error.code = CONVERSATIONAL_AGENT_ENTRY_CONFLICT_CODE
+  error.conflicts = conflicts
+  throw error
+}
+
 export async function createConversationalAgent(input = {}) {
   await ensureAgentsMigration()
   const maxPosition = await db.get('SELECT COALESCE(MAX(position), -1) AS max_pos FROM conversational_agents')
   const next = agentInputToRowValues(input, { ...DEFAULT_AGENT_BASE, position: Number(maxPosition?.max_pos ?? -1) + 1 })
   const id = `cagent_${randomUUID()}`
+  await assertConversationalAgentEntryDoesNotConflict({ ...next, id })
   await db.run(`
     INSERT INTO conversational_agents (
       id, name, enabled, ai_provider, model, position, objective, custom_objective, success_action,
@@ -2390,6 +2649,10 @@ export async function updateConversationalAgent(agentId, input = {}) {
     throw Object.assign(new Error('Agente conversacional no encontrado'), { statusCode: 404 })
   }
   const next = agentInputToRowValues(input, current)
+  const shouldValidateEntry = next.enabled && (!current.enabled || input.enabled === true || input.filters !== undefined)
+  if (shouldValidateEntry) {
+    await assertConversationalAgentEntryDoesNotConflict({ ...next, id: agentId }, { excludeAgentId: agentId })
+  }
   await db.run(`
     UPDATE conversational_agents
     SET name = ?, enabled = ?, ai_provider = ?, model = ?, position = ?, objective = ?, custom_objective = ?,

@@ -393,7 +393,8 @@ export async function createAgent(req, res) {
       success: false,
       error: error.message || 'Error al crear el agente',
       code: error.code,
-      businessPromptStatus: error.businessPromptStatus
+      businessPromptStatus: error.businessPromptStatus,
+      conflicts: error.conflicts
     })
   }
 }
@@ -415,7 +416,8 @@ export async function updateAgent(req, res) {
       success: false,
       error: error.message || 'Error al actualizar el agente',
       code: error.code,
-      businessPromptStatus: error.businessPromptStatus
+      businessPromptStatus: error.businessPromptStatus,
+      conflicts: error.conflicts
     })
   }
 }

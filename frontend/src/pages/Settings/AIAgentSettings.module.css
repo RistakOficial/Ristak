@@ -1657,6 +1657,75 @@
   gap: 14px;
 }
 
+.agentConflictModalBody {
+  display: grid;
+  gap: 16px;
+}
+
+.agentConflictLead {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.agentConflictLead p {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.agentConflictIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-ctl);
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid var(--border);
+}
+
+.agentConflictList {
+  display: grid;
+  gap: 8px;
+}
+
+.agentConflictItem {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: var(--radius-ctl);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.agentConflictItem strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.agentConflictItem span,
+.agentConflictItem small {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.agentConflictActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .aiProviderModalActions {
   display: flex;
   align-items: center;

@@ -11,6 +11,8 @@ export type AgentResponseDelayUnit = 'seconds' | 'minutes'
 export type AgentReplyDeliveryMode = 'single' | 'split'
 export type AgentFollowUpUnit = 'minutes' | 'hours'
 
+export const CONVERSATIONAL_AGENT_ENTRY_CONFLICT_CODE = 'CONVERSATIONAL_AGENT_ENTRY_CONFLICT'
+
 export interface ConversationalAIProviderStatus {
   id: ConversationalAIProviderId
   label: string
@@ -32,6 +34,36 @@ export interface ConversationalBusinessPromptStatus {
   industry: string | null
   updatedAt: string | null
   summary: string | null
+}
+
+export interface ConversationalAgentEntryConflict {
+  agentId: string
+  agentName: string
+  candidateName: string
+  candidateEntry: string
+  existingEntry: string
+  reason: string
+}
+
+export class ConversationalAgentRequestError extends Error {
+  code?: string
+  conflicts?: ConversationalAgentEntryConflict[]
+  businessPromptStatus?: ConversationalBusinessPromptStatus
+
+  constructor(message: string, payload: Record<string, any> | null = null) {
+    super(message)
+    this.name = 'ConversationalAgentRequestError'
+    this.code = payload?.code
+    this.conflicts = Array.isArray(payload?.conflicts) ? payload.conflicts : undefined
+    this.businessPromptStatus = payload?.businessPromptStatus
+  }
+}
+
+export function isConversationalAgentEntryConflictError(error: unknown): error is ConversationalAgentRequestError {
+  return (
+    error instanceof ConversationalAgentRequestError &&
+    error.code === CONVERSATIONAL_AGENT_ENTRY_CONFLICT_CODE
+  )
 }
 
 export interface AgentResponseDelayConfig {
@@ -806,7 +838,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   if (!response.ok) {
-    throw new Error(payload?.error || payload?.message || 'Error en el agente conversacional')
+    throw new ConversationalAgentRequestError(
+      payload?.error || payload?.message || 'Error en el agente conversacional',
+      payload
+    )
   }
 
   return (payload?.data ?? payload) as T
