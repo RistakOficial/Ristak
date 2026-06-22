@@ -107,6 +107,7 @@ test('normaliza aliases de canal conversacional sin forzar WhatsApp', () => {
   assert.equal(normalizeConversationalChannel('instagram_dm'), 'instagram')
   assert.equal(normalizeConversationalChannel('facebook'), 'messenger')
   assert.equal(normalizeConversationalChannel('sms_qr'), 'sms')
+  assert.equal(normalizeConversationalChannel('mms'), 'sms')
   assert.equal(normalizeConversationalChannel('ghl_whatsapp'), 'whatsapp')
   assert.equal(normalizeConversationalChannel('ghl_webchat'), 'webchat')
   assert.equal(normalizeConversationalChannel('website_chat'), 'webchat')
@@ -156,6 +157,10 @@ test('detecta canales conversacionales de HighLevel sin mandarlos a WhatsApp por
   assert.deepEqual(
     resolveHighLevelMessageChannel({ type: 'TYPE_EMAIL' }),
     { table: 'email', transport: 'ghl_email' }
+  )
+  assert.deepEqual(
+    resolveHighLevelMessageChannel({ messageType: 'TYPE_MMS' }),
+    { table: 'whatsapp', transport: 'ghl_sms' }
   )
   assert.deepEqual(
     resolveHighLevelMessageChannel({ messageType: 'TYPE_WHATSAPP' }),

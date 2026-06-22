@@ -371,12 +371,12 @@ function normalizeCompletionSummaryChannel(value = 'whatsapp') {
   if (['email', 'mail', 'correo', 'e_mail'].includes(normalized)) return 'email'
   if (['instagram', 'instagram_dm', 'ig'].includes(normalized)) return 'instagram'
   if (['messenger', 'facebook', 'facebook_messenger', 'fb'].includes(normalized)) return 'messenger'
-  if (['sms', 'sms_qr', 'ghl_sms'].includes(normalized)) return 'sms'
+  if (['sms', 'sms_qr', 'ghl_sms', 'mms'].includes(normalized)) return 'sms'
   if (['webchat', 'web_chat', 'chat_web', 'website_chat', 'site_chat', 'ghl_webchat'].includes(normalized)) return 'webchat'
   return 'whatsapp'
 }
 
-const COMPLETION_SMS_TRANSPORTS = ['ghl_sms', 'sms', 'sms_qr']
+const COMPLETION_SMS_TRANSPORTS = ['ghl_sms', 'sms', 'sms_qr', 'mms']
 const COMPLETION_WEBCHAT_TRANSPORTS = ['ghl_webchat', 'webchat', 'web_chat', 'chat_web', 'website_chat', 'site_chat']
 
 function completionPhoneTransportFilter(channel = 'whatsapp') {

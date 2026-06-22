@@ -83,7 +83,7 @@ const SOCIAL_CHAT_CHANNELS = new Set(['instagram', 'messenger'])
 const HIGHLEVEL_CHAT_CHANNELS = new Set(['instagram', 'messenger', 'sms', 'webchat'])
 const HIGHLEVEL_WHATSAPP_TRANSPORTS = new Set(['ghl_whatsapp'])
 const HIGHLEVEL_WHATSAPP_CHANNEL_ALIASES = new Set(['ghl_whatsapp'])
-const SMS_TRANSPORTS = ['ghl_sms', 'sms', 'sms_qr']
+const SMS_TRANSPORTS = ['ghl_sms', 'sms', 'sms_qr', 'mms']
 const WEBCHAT_TRANSPORTS = ['ghl_webchat', 'webchat', 'web_chat', 'chat_web', 'website_chat', 'site_chat']
 const EMAIL_CONVERSATIONAL_CHANNEL = 'email'
 const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
@@ -98,6 +98,7 @@ const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
   ['instagram_dm', 'instagram'],
   ['sms_qr', 'sms'],
   ['ghl_sms', 'sms'],
+  ['mms', 'sms'],
   ['ghl_webchat', 'webchat'],
   ['web_chat', 'webchat'],
   ['chat_web', 'webchat'],

@@ -99,6 +99,7 @@ const GHL_CHAT_CHANNEL_ALIASES = {
   sms: 'sms_qr',
   qr: 'sms_qr',
   sms_qr: 'sms_qr',
+  mms: 'sms_qr',
   baileys: 'sms_qr',
   bailey: 'sms_qr',
   whatsapp_qr: 'sms_qr',

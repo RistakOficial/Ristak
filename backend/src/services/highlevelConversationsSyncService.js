@@ -106,7 +106,7 @@ export function resolveHighLevelMessageChannel(message = {}) {
   // Excluir tipos que contienen "SMS" pero no son chat (review requests, etc.)
   if (channelText.includes('REVIEW') || channelText.includes('NO_SHOW')) return null
 
-  if (channelText.includes('SMS')) {
+  if (channelText.includes('SMS') || channelText.includes('MMS')) {
     return { table: 'whatsapp', transport: 'ghl_sms' }
   }
 
