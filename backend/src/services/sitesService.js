@@ -3480,6 +3480,148 @@ export function isDashboardHost(hostValue) {
   return dashboardHosts.has(host)
 }
 
+function normalizePublicBaseUrl(value) {
+  const raw = cleanString(value)
+  if (!raw) return ''
+
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
+    if (!['http:', 'https:'].includes(parsed.protocol)) return ''
+
+    const host = normalizeDomain(parsed.hostname)
+    if (!host) return ''
+
+    return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+function getCalendarFallbackBaseUrl() {
+  const candidates = [
+    ['calendar_public_base_url', process.env.CALENDAR_PUBLIC_BASE_URL],
+    ['public_calendar_base_url', process.env.PUBLIC_CALENDAR_BASE_URL],
+    ['render', process.env.RENDER_EXTERNAL_URL],
+    ['render', process.env.RENDER_EXTERNAL_HOSTNAME],
+    ['public_url', process.env.PUBLIC_URL],
+    ['vite_api_url', process.env.VITE_API_URL]
+  ]
+
+  if (process.env.NODE_ENV !== 'production') {
+    candidates.push(['local', `http://localhost:${process.env.PORT || 3001}`])
+  }
+
+  for (const [source, value] of candidates) {
+    const baseUrl = normalizePublicBaseUrl(value)
+    if (!baseUrl) continue
+
+    const domain = normalizeDomain(baseUrl)
+    if (!domain) continue
+
+    return {
+      baseUrl,
+      domain,
+      source
+    }
+  }
+
+  return null
+}
+
+export async function getCalendarPublicBaseUrlStatus() {
+  const publicConfig = await getSitesPublicDomainConfig()
+
+  if (publicConfig.domain && publicConfig.renderDomainVerified) {
+    return {
+      enabled: true,
+      domain: publicConfig.domain,
+      baseUrl: `https://${publicConfig.domain}`,
+      source: 'connected_public_domain',
+      lockedToPublicCalendar: true,
+      reason: ''
+    }
+  }
+
+  const fallback = getCalendarFallbackBaseUrl()
+  if (fallback) {
+    return {
+      enabled: true,
+      domain: fallback.domain,
+      baseUrl: fallback.baseUrl,
+      source: fallback.source,
+      lockedToPublicCalendar: fallback.source !== 'local',
+      reason: publicConfig.domain
+        ? 'El dominio público general todavía no está verificado; se usará el dominio seguro de respaldo.'
+        : 'Se usará el dominio seguro de respaldo hasta conectar un dominio público.'
+    }
+  }
+
+  return {
+    enabled: false,
+    domain: publicConfig.domain || '',
+    baseUrl: '',
+    source: '',
+    lockedToPublicCalendar: false,
+    reason: publicConfig.domain
+      ? publicConfig.renderDomainError || 'El dominio público general existe, pero todavía no responde a esta app.'
+      : 'Conecta un dominio público o configura RENDER_EXTERNAL_URL para generar el enlace completo.'
+  }
+}
+
+export async function resolvePublicCalendarHostForHost(hostValue, { forceRefresh = false } = {}) {
+  const host = normalizeDomain(hostValue)
+  if (!host) {
+    return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio inválido' }
+  }
+
+  const publicResolution = await resolveConnectedPublicDomainForHost(host, { forceRefresh })
+  if (publicResolution.ok) {
+    return {
+      ...publicResolution,
+      source: 'connected_public_domain',
+      lockedToPublicCalendar: true
+    }
+  }
+
+  const fallbackStatus = await getCalendarPublicBaseUrlStatus()
+  if (fallbackStatus.enabled && matchesPublicDomain(host, fallbackStatus.domain)) {
+    return {
+      ok: true,
+      host,
+      domain: fallbackStatus.domain,
+      domainConfig: null,
+      source: fallbackStatus.source,
+      lockedToPublicCalendar: fallbackStatus.lockedToPublicCalendar,
+      fallback: true
+    }
+  }
+
+  return {
+    ok: false,
+    status: publicResolution.status || 404,
+    reason: publicResolution.reason,
+    message: publicResolution.reason === 'domain_not_configured'
+      ? 'Este dominio no está configurado para calendarios públicos.'
+      : publicResolution.message || fallbackStatus.reason || 'Dominio público no disponible'
+  }
+}
+
+export async function shouldBlockCrmOnPublicCalendarFallbackHost(hostValue) {
+  const host = normalizeDomain(hostValue)
+  if (!host) return false
+
+  const fallbackStatus = await getCalendarPublicBaseUrlStatus()
+  if (!fallbackStatus.enabled || !fallbackStatus.lockedToPublicCalendar) return false
+  if (!matchesPublicDomain(host, fallbackStatus.domain)) return false
+
+  const appConfig = await getSitesAppDomainConfig()
+  return Boolean(
+    appConfig.domain &&
+    appConfig.renderDomainVerified &&
+    !matchesPublicDomain(host, appConfig.domain)
+  )
+}
+
 function mapSite(row) {
   if (!row) return null
 

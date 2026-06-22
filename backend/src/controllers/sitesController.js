@@ -31,10 +31,11 @@ import {
   renderPublicSiteHtml,
   reorderBlocks,
   resolveConnectedAppDomainForHost,
-  resolveConnectedPublicDomainForHost,
+  resolvePublicCalendarHostForHost,
   resolvePublicSiteForHost,
   restoreBlocks,
   setSitesPublicDefaultRoute,
+  shouldBlockCrmOnPublicCalendarFallbackHost,
   updateBlock,
   updateSiteFolder,
   updateImportedSiteEditableContent,
@@ -854,9 +855,11 @@ export async function publicSiteHostMiddleware(req, res, next) {
       return sendDomainError(req, res, appDomainResolution.status || 404, appDomainResolution.message)
     }
 
+    const blockCrmOnCalendarFallbackHost = await shouldBlockCrmOnPublicCalendarFallbackHost(host)
+
     const calendarMatch = req.path.match(/^\/calendars?\/([^/?#]+)/i)
     if (calendarMatch) {
-      const domainResolution = await resolveConnectedPublicDomainForHost(host)
+      const domainResolution = await resolvePublicCalendarHostForHost(host)
       if (!domainResolution.ok) {
         return sendDomainError(req, res, domainResolution.status || 404, domainResolution.message)
       }
@@ -911,6 +914,10 @@ export async function publicSiteHostMiddleware(req, res, next) {
 
     if (resolution.reason !== 'domain_not_configured') {
       return sendDomainError(req, res, resolution.status || 404, resolution.message)
+    }
+
+    if (blockCrmOnCalendarFallbackHost) {
+      return sendDomainError(req, res, 404, 'Este host solo sirve enlaces públicos de calendario.')
     }
 
     if (isDashboardHost(host) || process.env.NODE_ENV !== 'production') {

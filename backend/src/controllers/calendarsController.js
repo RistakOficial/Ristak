@@ -10,7 +10,7 @@ import { triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappE
 import { sendCalendarAppointmentNotification } from '../services/pushNotificationsService.js';
 import {
   getRequestHost,
-  resolveConnectedPublicDomainForHost,
+  resolvePublicCalendarHostForHost,
   sendCalendarBookingSiteMetaEvent
 } from '../services/sitesService.js';
 import { renderCalendarAppointmentTemplates } from '../services/calendarAppointmentTemplateService.js';
@@ -342,9 +342,9 @@ async function ensurePublicCalendarRequest(req, slugOrId) {
     throw error;
   }
 
-  const domainResolution = await resolveConnectedPublicDomainForHost(host);
+  const domainResolution = await resolvePublicCalendarHostForHost(host);
   if (!domainResolution.ok) {
-    const error = new Error(domainResolution.message || 'Dominio público no verificado');
+    const error = new Error(domainResolution.message || 'Dominio público no disponible');
     error.status = domainResolution.status || 404;
     throw error;
   }

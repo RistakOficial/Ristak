@@ -8,7 +8,7 @@ import { normalizeToUtcIso, getAccountTimezone, isValidTimezone } from '../utils
 import { isRistakContactId, linkContactToGhl } from './contactIdentityService.js'
 import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
-import { getSitesPublicDomain } from './sitesService.js'
+import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
@@ -720,29 +720,7 @@ function publicCalendarPath(calendar = {}) {
 }
 
 export async function getCalendarPublicUrlStatus() {
-  const domainConfig = await getSitesPublicDomain()
-
-  if (!domainConfig.domain) {
-    return {
-      enabled: false,
-      domain: '',
-      reason: ''
-    }
-  }
-
-  if (!domainConfig.renderDomainVerified) {
-    return {
-      enabled: false,
-      domain: domainConfig.domain,
-      reason: 'El dominio público general existe, pero todavía no responde a esta app.'
-    }
-  }
-
-  return {
-    enabled: true,
-    domain: domainConfig.domain,
-    reason: ''
-  }
+  return getCalendarPublicBaseUrlStatus()
 }
 
 export function attachPublicCalendarUrl(calendar = {}, status = null) {
@@ -753,7 +731,9 @@ export function attachPublicCalendarUrl(calendar = {}, status = null) {
     publicBookingPath: path,
     publicBaseDomain: status?.domain || '',
     publicUrlEnabled: enabled,
-    publicUrl: enabled ? `https://${status.domain}${path}` : '',
+    publicUrl: enabled ? `${String(status.baseUrl || `https://${status.domain}`).replace(/\/+$/, '')}${path}` : '',
+    publicUrlSource: status?.source || '',
+    publicUrlLockedToPublicCalendar: Boolean(status?.lockedToPublicCalendar),
     publicUrlUnavailableReason: calendar.isActive === false
       ? 'Este calendario esta inactivo.'
       : status?.reason || ''

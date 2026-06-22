@@ -145,6 +145,8 @@ export interface Calendar {
   publicBaseDomain?: string;
   publicUrlEnabled?: boolean;
   publicUrl?: string;
+  publicUrlSource?: string;
+  publicUrlLockedToPublicCalendar?: boolean;
   publicUrlUnavailableReason?: string;
 }
 
