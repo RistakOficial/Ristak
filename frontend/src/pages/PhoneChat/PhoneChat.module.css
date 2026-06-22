@@ -3832,11 +3832,8 @@
 }
 
 .agentCompletionMessageSummary {
-  display: -webkit-box;
-  overflow: hidden;
+  overflow: visible;
   color: var(--phone-chat-muted);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .agentCompletionMessageSummary strong {

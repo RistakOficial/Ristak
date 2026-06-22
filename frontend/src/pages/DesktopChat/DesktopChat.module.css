@@ -1162,10 +1162,7 @@
 }
 
 .agentCompletionSummary {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow: visible;
 }
 
 .agentCompletionSummary strong {
@@ -2745,13 +2742,11 @@
 }
 
 .agentHistoryItem small {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
   color: var(--text-dim);
   font-size: var(--font-size-xs);
   line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .agentHistoryItem em {
