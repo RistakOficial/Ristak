@@ -43,7 +43,8 @@ import {
   Link2,
   Bell,
   BellOff,
-  Smartphone
+  Smartphone,
+  Sparkles
 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useHighLevelConnected } from '@/hooks'
@@ -62,7 +63,20 @@ import {
   type GoogleCalendarIntegrationStatus,
   type GoogleCalendarMergePreview
 } from '@/services/calendarsService'
+import {
+  appointmentRemindersService,
+  formatReminderOffsetLabel,
+  type AppointmentReminder,
+  type AppointmentReminderInput,
+  type ReminderChannelOption,
+  type ReminderSenderOption
+} from '@/services/appointmentRemindersService'
+import {
+  messageTemplatesService,
+  type MessageTemplate
+} from '@/services/messageTemplatesService'
 import { sitesService, type PublicSite } from '@/services/sitesService'
+import AppointmentReminderModal from '@/pages/Appointments/AppointmentReminderModal'
 import {
   FlowVariablesContext,
   type FlowVariable
@@ -81,7 +95,7 @@ import pageStyles from './CalendarsConfiguration.module.css'
 
 type CalendarSettingsView = 'calendars' | 'google'
 type CalendarSourcePreference = 'combined' | 'ristak' | 'ghl' | 'google'
-type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'advanced' | 'events'
+type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'reminders' | 'advanced' | 'events'
 
 const GOOGLE_HELP_LINKS = {
   googleCloudWelcome: 'https://cloud.google.com/welcome',
@@ -176,6 +190,7 @@ const CALENDAR_WIZARD_STEPS: Array<{
   { id: 'availability', label: 'Disponibilidad', description: 'Duración y espacios.' },
   { id: 'rules', label: 'Reglas', description: 'Límites de reserva.' },
   { id: 'form', label: 'Formulario', description: 'Preguntas y cierre.' },
+  { id: 'reminders', label: 'Recordatorios', description: 'Mensajes automáticos.' },
   { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' },
   { id: 'events', label: 'Eventos', description: 'Meta Pixel y WhatsApp.' }
 ]
@@ -523,6 +538,14 @@ export const CalendarsConfiguration: React.FC = () => {
   const [deletingCalendarId, setDeletingCalendarId] = useState<string | null>(null)
   const [formSites, setFormSites] = useState<PublicSite[]>([])
   const [loadingFormSites, setLoadingFormSites] = useState(false)
+  const [appointmentReminders, setAppointmentReminders] = useState<AppointmentReminder[]>([])
+  const [reminderSenders, setReminderSenders] = useState<ReminderSenderOption[]>([])
+  const [reminderChannels, setReminderChannels] = useState<ReminderChannelOption[]>([])
+  const [reminderTemplates, setReminderTemplates] = useState<MessageTemplate[]>([])
+  const [selectedAppointmentReminder, setSelectedAppointmentReminder] = useState<AppointmentReminder | null>(null)
+  const [isAppointmentReminderModalOpen, setIsAppointmentReminderModalOpen] = useState(false)
+  const [loadingAppointmentReminders, setLoadingAppointmentReminders] = useState(false)
+  const [creatingAppointmentReminder, setCreatingAppointmentReminder] = useState(false)
 
   // Cargar calendarios al montar
   useEffect(() => {
@@ -532,6 +555,39 @@ export const CalendarsConfiguration: React.FC = () => {
   useEffect(() => {
     loadCalendarForms()
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadAppointmentReminderSettings = async () => {
+      setLoadingAppointmentReminders(true)
+      try {
+        const [overview, templateBundle] = await Promise.all([
+          appointmentRemindersService.getOverview(),
+          messageTemplatesService.getBundle()
+        ])
+        if (cancelled) return
+        setAppointmentReminders(overview.reminders)
+        setReminderSenders(overview.senders)
+        setReminderChannels(overview.channels)
+        setReminderTemplates(templateBundle.templates)
+      } catch {
+        if (!cancelled) {
+          showToast('error', 'Recordatorios automáticos', 'No se pudieron cargar los mensajes automáticos.')
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingAppointmentReminders(false)
+        }
+      }
+    }
+
+    void loadAppointmentReminderSettings()
+
+    return () => {
+      cancelled = true
+    }
+  }, [showToast])
 
   useEffect(() => {
     loadGoogleIntegration()
@@ -689,6 +745,63 @@ export const CalendarsConfiguration: React.FC = () => {
       showToast('error', 'Error al cargar Google Calendar', error.message || 'No se pudo leer la integración')
     } finally {
       setLoadingGoogleIntegration(false)
+    }
+  }
+
+  const handleToggleAppointmentReminder = async (reminder: AppointmentReminder, enabled: boolean) => {
+    setAppointmentReminders(current => current.map(item => (
+      item.id === reminder.id ? { ...item, enabled } : item
+    )))
+
+    try {
+      const updated = await appointmentRemindersService.updateReminder(reminder.id, { enabled })
+      setAppointmentReminders(current => current.map(item => (
+        item.id === updated.id ? updated : item
+      )))
+    } catch {
+      setAppointmentReminders(current => current.map(item => (
+        item.id === reminder.id ? { ...item, enabled: !enabled } : item
+      )))
+      showToast('error', 'Recordatorios automáticos', 'No se pudo actualizar el mensaje automático.')
+    }
+  }
+
+  const handleAddAppointmentReminder = async () => {
+    if (creatingAppointmentReminder) return
+    setCreatingAppointmentReminder(true)
+    try {
+      const created = await appointmentRemindersService.createReminder({})
+      setAppointmentReminders(current => [...current, created])
+      setSelectedAppointmentReminder(created)
+      setIsAppointmentReminderModalOpen(true)
+    } catch {
+      showToast('error', 'Recordatorios automáticos', 'No se pudo crear el mensaje automático.')
+    } finally {
+      setCreatingAppointmentReminder(false)
+    }
+  }
+
+  const handleSaveAppointmentReminder = async (reminderId: string, input: AppointmentReminderInput) => {
+    try {
+      const updated = await appointmentRemindersService.updateReminder(reminderId, input)
+      setAppointmentReminders(current => current.map(item => (
+        item.id === updated.id ? updated : item
+      )))
+      showToast('success', 'Recordatorios automáticos', 'Cambios guardados.')
+    } catch (error) {
+      showToast('error', 'Recordatorios automáticos', 'No se pudieron guardar los cambios.')
+      throw error
+    }
+  }
+
+  const handleDeleteAppointmentReminder = async (reminderId: string) => {
+    try {
+      await appointmentRemindersService.deleteReminder(reminderId)
+      setAppointmentReminders(current => current.filter(item => item.id !== reminderId))
+      showToast('success', 'Recordatorios automáticos', 'Mensaje automático eliminado.')
+    } catch (error) {
+      showToast('error', 'Recordatorios automáticos', 'No se pudo eliminar el mensaje automático.')
+      throw error
     }
   }
 
@@ -2389,6 +2502,86 @@ export const CalendarsConfiguration: React.FC = () => {
                 </>
               )}
 
+              {currentStep.id === 'reminders' && (
+                <section className={pageStyles.editorSection}>
+                  <div className={pageStyles.editorSectionHeader}>
+                    <strong>Recordatorios automáticos</strong>
+                    <span>Configura los mismos mensajes automáticos de la página de Citas desde este wizard.</span>
+                  </div>
+                  <div className={pageStyles.editorFields}>
+                    <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                      <div className={pageStyles.remindersToolbar}>
+                        <div>
+                          <span>Mensajes activos para tus citas</span>
+                          <small>Se usan plantillas aprobadas, remitentes y reglas de envío compartidas con Citas.</small>
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="small"
+                          onClick={handleAddAppointmentReminder}
+                          disabled={creatingAppointmentReminder}
+                        >
+                          {creatingAppointmentReminder ? (
+                            <Loader2 size={14} className={styles.spinIcon} />
+                          ) : (
+                            <Plus size={14} />
+                          )}
+                          Agregar
+                        </Button>
+                      </div>
+
+                      {loadingAppointmentReminders ? (
+                        <div className={pageStyles.remindersEmpty} role="status" aria-live="polite">
+                          <Loader2 size={16} className={styles.spinIcon} />
+                          Cargando mensajes automáticos...
+                        </div>
+                      ) : appointmentReminders.length ? (
+                        <div className={pageStyles.remindersList}>
+                          {appointmentReminders.map((reminder) => {
+                            const ReminderIcon = reminder.messageType === 'confirmation' ? Sparkles : Bell
+                            return (
+                              <div key={reminder.id} className={pageStyles.reminderItem}>
+                                <span className={pageStyles.reminderIcon}>
+                                  <ReminderIcon size={16} aria-hidden="true" />
+                                </span>
+                                <div className={pageStyles.reminderCopy}>
+                                  <strong>{formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit)}</strong>
+                                  <span>
+                                    {reminder.messageType === 'confirmation'
+                                      ? `Confirmación de cita${reminder.aiEnabled ? ' · IA' : ''}`
+                                      : 'Recordatorio de cita'}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className={pageStyles.reminderDetailsButton}
+                                    onClick={() => {
+                                      setSelectedAppointmentReminder(reminder)
+                                      setIsAppointmentReminderModalOpen(true)
+                                    }}
+                                  >
+                                    Ver detalles
+                                  </button>
+                                </div>
+                                <Switch
+                                  checked={reminder.enabled}
+                                  onChange={(enabled) => void handleToggleAppointmentReminder(reminder, enabled)}
+                                  aria-label={reminder.enabled ? 'Desactivar recordatorio' : 'Activar recordatorio'}
+                                />
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <div className={pageStyles.remindersEmpty}>
+                          <Bell size={17} />
+                          Agrega un mensaje automático para recordar, confirmar o dar seguimiento a cada cita.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              )}
+
               {currentStep.id === 'availability' && (
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
@@ -3648,6 +3841,19 @@ export const CalendarsConfiguration: React.FC = () => {
       </Card>
 
       {renderCreateCalendarModal()}
+      <AppointmentReminderModal
+        isOpen={isAppointmentReminderModalOpen}
+        reminder={selectedAppointmentReminder}
+        senders={reminderSenders}
+        channels={reminderChannels}
+        templates={reminderTemplates}
+        onClose={() => {
+          setIsAppointmentReminderModalOpen(false)
+          setSelectedAppointmentReminder(null)
+        }}
+        onSave={handleSaveAppointmentReminder}
+        onDelete={handleDeleteAppointmentReminder}
+      />
     </div>
   )
 }

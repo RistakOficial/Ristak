@@ -8,57 +8,36 @@
 }
 
 .headerControls {
-  display: flex;
-  gap: 1rem;
-  align-items: flex-start;
-  justify-content: flex-start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 1.5rem;
+  align-items: stretch;
   width: 100%;
 }
 
-/* Botón de Configuración */
-.settingsButton {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.625rem 1rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  background-color: var(--color-white);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  margin-left: auto;
-  flex-shrink: 0;
+.calendarHeaderControls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: stretch;
+  min-width: 0;
 }
 
-.settingsButton:hover {
-  background-color: var(--color-gray-50);
-  color: var(--color-text-primary);
-  border-color: var(--color-primary-300);
+.settingsButton {
+  align-self: stretch;
+  justify-self: stretch;
+  min-height: 44px;
 }
 
 .settingsButton svg {
   flex-shrink: 0;
 }
 
-:global(body.dark) .settingsButton {
-  background-color: rgba(24, 24, 27, 0.7);
-  border-color: rgba(148, 163, 184, 0.18);
-}
-
-:global(body.dark) .settingsButton:hover {
-  background-color: rgba(30, 30, 32, 0.85);
-  border-color: var(--color-primary-300);
-}
-
 /* Buscador de citas */
 .searchContainer {
   position: relative;
-  flex: 1;
-  min-width: 280px;
-  max-width: 600px;
+  grid-column: span 2;
+  min-width: 0;
 }
 
 .searchOverlay {
@@ -156,15 +135,53 @@
   color: var(--color-text-tertiary);
 }
 
+.publicLinkPreview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0.45rem 0.55rem 0.45rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.publicLinkCopy {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.publicLinkCopy span {
+  color: var(--text-mute);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.publicLinkCopy strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .calendarSelector {
   position: relative;
-  flex: 0 0 auto;
-  width: 280px;
+  min-width: 0;
 }
 
 /* Botón del dropdown */
 .calendarDropdownButton {
-  min-width: 280px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
   padding: 0.625rem 1rem;
   font-size: 0.875rem;
   font-weight: 500;
@@ -225,7 +242,8 @@
   position: absolute;
   top: calc(100% + 0.5rem); /* Se abre hacia ABAJO */
   left: 0;
-  min-width: 280px;
+  width: 100%;
+  min-width: 0;
   max-height: 320px;
   overflow-y: auto;
   background-color: var(--surface-solid, var(--color-background));
@@ -376,13 +394,37 @@
 }
 
 @media (max-width: 1024px) {
+  .calendarHeaderControls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .publicLinkPreview {
+    order: 2;
+  }
+
+  .searchContainer {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+
   .statsGrid {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 
 @media (max-width: 640px) {
+  .calendarHeaderControls,
   .statsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .searchContainer,
+  .publicLinkPreview {
+    grid-column: auto;
+    order: initial;
+  }
+
+  .publicLinkPreview {
     grid-template-columns: 1fr;
   }
 }
@@ -429,6 +471,14 @@
 }
 
 @media (max-width: 1280px) {
+  .headerControls {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsButton {
+    justify-self: start;
+  }
+
   .mainGrid {
     grid-template-columns: 1fr;
     height: auto;

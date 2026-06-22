@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading, SearchField } from '@/components/common';
-import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Settings, Bell, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Settings, Bell, Sparkles, Copy } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -52,6 +52,21 @@ const viewTabs = [
 type ViewMode = 'month' | 'week' | 'day';
 
 const MIN_DAY_EVENT_MINUTES = 45;
+
+const getCalendarSharePath = (calendar?: Calendar | null) => {
+  const slug = calendar?.slug || calendar?.widgetSlug || calendar?.id || '';
+  return slug ? `/calendar/${encodeURIComponent(slug)}` : '/calendar/...';
+};
+
+const buildCalendarShareUrl = (calendar?: Calendar | null) => {
+  if (!calendar) return '';
+  const path = getCalendarSharePath(calendar);
+  if (calendar.publicUrl) return calendar.publicUrl;
+  if (calendar.publicUrlEnabled && calendar.publicBaseDomain) {
+    return `https://${calendar.publicBaseDomain}${path}`;
+  }
+  return '';
+};
 
 interface DayCell {
   date: Date;
@@ -1391,6 +1406,28 @@ export const Appointments: React.FC = () => {
     }
   };
 
+  const selectedCalendarPublicPath = getCalendarSharePath(selectedCalendar);
+  const selectedCalendarPublicUrl = buildCalendarShareUrl(selectedCalendar);
+  const selectedCalendarPublicPreview = selectedCalendarPublicUrl || selectedCalendarPublicPath;
+
+  const handleCopySelectedCalendarPublicUrl = async () => {
+    if (!selectedCalendarPublicUrl) {
+      showToast(
+        'warning',
+        'Enlace no disponible',
+        selectedCalendar?.publicUrlUnavailableReason || 'Conecta y verifica el dominio público para copiar la URL completa.'
+      );
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(selectedCalendarPublicUrl);
+      showToast('success', 'Enlace copiado', selectedCalendarPublicUrl);
+    } catch {
+      showToast('error', 'No se pudo copiar', 'Copia el enlace manualmente desde la configuración del calendario.');
+    }
+  };
+
   if (loading && calendars.length === 0) {
     return <Loading message="Cargando calendarios..." page="appointments" />
   }
@@ -1405,148 +1442,168 @@ export const Appointments: React.FC = () => {
         />
 
         <div className={styles.headerControls}>
-          {/* Selector de calendarios */}
-          <div className={styles.calendarSelector}>
-            <button
-              type="button"
-              className={styles.calendarDropdownButton}
-              onClick={() => setIsCalendarDropdownOpen(!isCalendarDropdownOpen)}
-              disabled={loading || calendars.length === 0}
-              aria-expanded={isCalendarDropdownOpen}
-              data-ristak-dropdown-trigger
-            >
-              <span className={styles.dropdownButtonText}>
-                {selectedCalendar?.name || 'Selecciona un calendario'}
-              </span>
-              <ChevronDown
-                size={18}
-                className={`${styles.dropdownIcon} ${isCalendarDropdownOpen ? styles.dropdownIconOpen : ''}`}
-              />
-            </button>
-
-          {isCalendarDropdownOpen && (
-            <>
-              <div
-                className={styles.dropdownOverlay}
-                onClick={() => setIsCalendarDropdownOpen(false)}
-              />
-              <div className={styles.dropdownMenu} data-ristak-dropdown-panel>
-                {calendars.length === 0 ? (
-                  <div className={styles.dropdownEmpty}>
-                    No hay calendarios disponibles
-                  </div>
-                ) : (
-                  calendars.map((calendar) => (
-                    <button
-                      key={calendar.id}
-                      className={`${styles.dropdownItem} ${selectedCalendar?.id === calendar.id ? styles.dropdownItemActive : ''}`}
-                      data-ristak-dropdown-item
-                      data-selected={selectedCalendar?.id === calendar.id ? 'true' : undefined}
-	                      onClick={() => {
-	                        selectCalendar(calendar);
-                          navigateCalendarView({ calendarId: calendar.id });
-	                        setIsCalendarDropdownOpen(false);
-	                      }}
-                    >
-                      <span className={styles.dropdownItemText}>{calendar.name}</span>
-                      {selectedCalendar?.id === calendar.id && (
-                        <Check size={16} className={styles.dropdownCheckIcon} />
-                      )}
-                    </button>
-                  ))
-                )}
-              </div>
-            </>
-          )}
-        </div>
-
-          {/* Buscador de citas */}
-          <div className={styles.searchContainer}>
-            <SearchField
-              ref={searchInputRef}
-              value={searchQuery}
-              placeholder="Buscar citas..."
-              onChange={(nextQuery) => {
-                setSearchQuery(nextQuery);
-                setIsSearchDropdownOpen(nextQuery.trim().length > 0);
-              }}
-              onFocus={() => {
-                if (searchQuery.trim().length > 0) {
-                  setIsSearchDropdownOpen(true);
-                }
-              }}
-              onClear={() => {
-                setSearchQuery('');
-                setIsSearchDropdownOpen(false);
-              }}
-              aria-expanded={isSearchDropdownOpen}
-            />
-
-            {/* Dropdown de resultados */}
-            {isSearchDropdownOpen && searchResults.length > 0 && (
-              <>
-                <div
-                  className={styles.searchOverlay}
-                  onClick={() => setIsSearchDropdownOpen(false)}
+          <div className={styles.calendarHeaderControls}>
+            {/* Selector de calendarios */}
+            <div className={styles.calendarSelector}>
+              <button
+                type="button"
+                className={styles.calendarDropdownButton}
+                onClick={() => setIsCalendarDropdownOpen(!isCalendarDropdownOpen)}
+                disabled={loading || calendars.length === 0}
+                aria-expanded={isCalendarDropdownOpen}
+                data-ristak-dropdown-trigger
+              >
+                <span className={styles.dropdownButtonText}>
+                  {selectedCalendar?.name || 'Selecciona un calendario'}
+                </span>
+                <ChevronDown
+                  size={18}
+                  className={`${styles.dropdownIcon} ${isCalendarDropdownOpen ? styles.dropdownIconOpen : ''}`}
                 />
-                <div className={styles.searchDropdown} data-ristak-dropdown-panel>
-                  {searchResults.map((event) => {
-                    const eventDate = new Date(event.startTime);
-                    return (
-	                      <button
-	                        key={event.id}
-                          type="button"
-	                        className={styles.searchResultItem}
+              </button>
+
+              {isCalendarDropdownOpen && (
+                <>
+                  <div
+                    className={styles.dropdownOverlay}
+                    onClick={() => setIsCalendarDropdownOpen(false)}
+                  />
+                  <div className={styles.dropdownMenu} data-ristak-dropdown-panel>
+                    {calendars.length === 0 ? (
+                      <div className={styles.dropdownEmpty}>
+                        No hay calendarios disponibles
+                      </div>
+                    ) : (
+                      calendars.map((calendar) => (
+                        <button
+                          key={calendar.id}
+                          className={`${styles.dropdownItem} ${selectedCalendar?.id === calendar.id ? styles.dropdownItemActive : ''}`}
                           data-ristak-dropdown-item
-	                        onClick={() => handleSelectSearchResult(event)}
-                      >
-                        <div className={styles.searchResultInfo}>
-                          <div className={styles.searchResultTitle}>
-                            {event.title || '(Sin título)'}
-                          </div>
-                          <div className={styles.searchResultMeta}>
-                            {(() => {
-                              const desc = getAppointmentStatusBadge(event.appointmentStatus);
-                              return (
-                                <>
-                                  {formatLocalDateShort(eventDate)} · {formatEventTime(event.startTime)} · <Badge variant={desc.variant}>{desc.label}</Badge>
-                                </>
-                              );
-                            })()}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-
-            {/* Mensaje cuando no hay resultados */}
-            {isSearchDropdownOpen && searchQuery.trim().length > 0 && searchResults.length === 0 && (
-              <>
-                <div
-                  className={styles.searchOverlay}
-                  onClick={() => setIsSearchDropdownOpen(false)}
-                />
-                <div className={styles.searchDropdown} data-ristak-dropdown-panel>
-                  <div className={styles.searchEmpty}>
-                    No se encontraron citas
+                          data-selected={selectedCalendar?.id === calendar.id ? 'true' : undefined}
+                          onClick={() => {
+                            selectCalendar(calendar);
+                            navigateCalendarView({ calendarId: calendar.id });
+                            setIsCalendarDropdownOpen(false);
+                          }}
+                        >
+                          <span className={styles.dropdownItemText}>{calendar.name}</span>
+                          {selectedCalendar?.id === calendar.id && (
+                            <Check size={16} className={styles.dropdownCheckIcon} />
+                          )}
+                        </button>
+                      ))
+                    )}
                   </div>
-                </div>
-              </>
-            )}
+                </>
+              )}
+            </div>
+
+            {/* Buscador de citas */}
+            <div className={styles.searchContainer}>
+              <SearchField
+                ref={searchInputRef}
+                value={searchQuery}
+                placeholder="Buscar citas..."
+                onChange={(nextQuery) => {
+                  setSearchQuery(nextQuery);
+                  setIsSearchDropdownOpen(nextQuery.trim().length > 0);
+                }}
+                onFocus={() => {
+                  if (searchQuery.trim().length > 0) {
+                    setIsSearchDropdownOpen(true);
+                  }
+                }}
+                onClear={() => {
+                  setSearchQuery('');
+                  setIsSearchDropdownOpen(false);
+                }}
+                aria-expanded={isSearchDropdownOpen}
+              />
+
+              {/* Dropdown de resultados */}
+              {isSearchDropdownOpen && searchResults.length > 0 && (
+                <>
+                  <div
+                    className={styles.searchOverlay}
+                    onClick={() => setIsSearchDropdownOpen(false)}
+                  />
+                  <div className={styles.searchDropdown} data-ristak-dropdown-panel>
+                    {searchResults.map((event) => {
+                      const eventDate = new Date(event.startTime);
+                      return (
+                        <button
+                          key={event.id}
+                          type="button"
+                          className={styles.searchResultItem}
+                          data-ristak-dropdown-item
+                          onClick={() => handleSelectSearchResult(event)}
+                        >
+                          <div className={styles.searchResultInfo}>
+                            <div className={styles.searchResultTitle}>
+                              {event.title || '(Sin título)'}
+                            </div>
+                            <div className={styles.searchResultMeta}>
+                              {(() => {
+                                const desc = getAppointmentStatusBadge(event.appointmentStatus);
+                                return (
+                                  <>
+                                    {formatLocalDateShort(eventDate)} · {formatEventTime(event.startTime)} · <Badge variant={desc.variant}>{desc.label}</Badge>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* Mensaje cuando no hay resultados */}
+              {isSearchDropdownOpen && searchQuery.trim().length > 0 && searchResults.length === 0 && (
+                <>
+                  <div
+                    className={styles.searchOverlay}
+                    onClick={() => setIsSearchDropdownOpen(false)}
+                  />
+                  <div className={styles.searchDropdown} data-ristak-dropdown-panel>
+                    <div className={styles.searchEmpty}>
+                      No se encontraron citas
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className={styles.publicLinkPreview}>
+              <div className={styles.publicLinkCopy}>
+                <span>Enlace público</span>
+                <strong>{selectedCalendarPublicPreview}</strong>
+              </div>
+              <Button
+                variant="secondary"
+                size="small"
+                onClick={handleCopySelectedCalendarPublicUrl}
+                disabled={!selectedCalendarPublicUrl}
+                title={selectedCalendarPublicUrl ? 'Copiar enlace de agendamiento' : selectedCalendar?.publicUrlUnavailableReason || 'Enlace no disponible'}
+              >
+                <Copy size={14} />
+                Copiar
+              </Button>
+            </div>
           </div>
 
           {/* Botón de Configuración */}
-          <button
+          <Button
+            variant="secondary"
             className={styles.settingsButton}
             onClick={() => navigate('/settings/calendars')}
             title="Configurar calendarios"
           >
             <Settings size={18} />
             <span>Configuración</span>
-          </button>
+          </Button>
         </div>
       </div>
 
