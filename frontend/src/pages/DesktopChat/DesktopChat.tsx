@@ -98,7 +98,7 @@ import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
-type AgentInboxStatusFilter = 'all' | 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
+type AgentInboxStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
 type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email'
 type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown'
 type AdvancedOriginFilter = 'all' | 'meta' | 'site' | 'organic' | 'trigger' | 'unknown'
@@ -253,8 +253,8 @@ const CHAT_FILTERS: Array<{ id: ChatFilter; label: string }> = [
   { id: 'customers', label: 'Clientes' }
 ]
 
+const DEFAULT_AGENT_INBOX_STATUS_FILTER: AgentInboxStatusFilter = 'active'
 const AGENT_INBOX_STATUS_FILTERS: Array<{ id: AgentInboxStatusFilter; label: string }> = [
-  { id: 'all', label: 'Todos' },
   { id: 'active', label: 'Activos' },
   { id: 'completed', label: 'Meta cumplida' },
   { id: 'paused', label: 'Pausados 24 horas' },
@@ -720,7 +720,6 @@ function isAgentInboxStateVisible(state: ConversationAgentState | null | undefin
   const hasHistory = hasAgentInboxHistory(state)
   if (filter === 'unassigned') return !hasHistory
   if (!state || !hasHistory) return false
-  if (filter === 'all') return true
   if (filter === 'skipped') {
     return state.status === 'skipped' || state.status === 'human' || state.status === 'discarded' || state.signal === 'discarded'
   }
@@ -729,9 +728,8 @@ function isAgentInboxStateVisible(state: ConversationAgentState | null | undefin
 
 function getAgentInboxStatusLabel(state: ConversationAgentState | null | undefined) {
   if (state?.status === 'paused') return 'Pausado 24 horas'
-  if (state?.status === 'skipped' || state?.status === 'discarded' || state?.signal === 'discarded') return 'Omitido'
+  if (state?.status === 'skipped' || state?.status === 'human' || state?.status === 'discarded' || state?.signal === 'discarded') return 'Omitido'
   if (state?.status === 'completed') return 'Meta cumplida'
-  if (state?.status === 'human') return 'Humano'
   if (state?.status === 'active') return 'Activo'
   return ''
 }
@@ -2084,7 +2082,7 @@ export const DesktopChat: React.FC = () => {
   const [conversationAgentState, setConversationAgentState] = useState<ConversationAgentState | null>(null)
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>({})
   const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>([])
-  const [agentInboxStatusFilter, setAgentInboxStatusFilter] = useState<AgentInboxStatusFilter>('all')
+  const [agentInboxStatusFilter, setAgentInboxStatusFilter] = useState<AgentInboxStatusFilter>(DEFAULT_AGENT_INBOX_STATUS_FILTER)
   const [agentComposerMenuOpen, setAgentComposerMenuOpen] = useState(false)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [conversationAgentBusy, setConversationAgentBusy] = useState(false)
@@ -2189,7 +2187,11 @@ export const DesktopChat: React.FC = () => {
   )
   const agentPriorityStates = useMemo(
     () => conversationAgentEnabled
-      ? Object.values(agentStates).filter((state) => Boolean(state.signal) && state.signal !== 'discarded')
+      ? Object.values(agentStates).filter((state) => (
+        Boolean(state.signal) &&
+        state.signal !== 'discarded' &&
+        !['human', 'skipped', 'discarded'].includes(state.status)
+      ))
       : [],
     [agentStates, conversationAgentEnabled]
   )
@@ -2210,7 +2212,6 @@ export const DesktopChat: React.FC = () => {
   }, [agentStates, visibleChatsForList])
   const agentInboxStatusCounts = useMemo(() => {
     const counts: Record<AgentInboxStatusFilter, number> = {
-      all: 0,
       active: 0,
       completed: 0,
       paused: 0,
@@ -2225,8 +2226,6 @@ export const DesktopChat: React.FC = () => {
         counts.unassigned += 1
         return
       }
-      if (!isAgentInboxStateVisible(state, 'all')) return
-      counts.all += 1
       if (state?.status === 'active') counts.active += 1
       if (state?.status === 'completed') counts.completed += 1
       if (state?.status === 'paused') counts.paused += 1
@@ -2235,7 +2234,7 @@ export const DesktopChat: React.FC = () => {
 
     return counts
   }, [agentInboxSourceChats, agentStates, archivedChatIdSet])
-  const agentAssignedChatCount = agentInboxStatusCounts.all
+  const agentAssignedChatCount = agentInboxStatusCounts[agentInboxStatusFilter]
   const listBaseChats = useMemo(
     () => (chatFilter === 'agent' ? agentInboxSourceChats : visibleChatsForList).filter((contact) => {
       if (chatFilter === 'agent') {
@@ -2250,7 +2249,7 @@ export const DesktopChat: React.FC = () => {
   )
   const agentAssignedViewOpen = chatFilter === 'agent'
   const hasTextOrAdvancedChatFilters = Boolean(chatQuery.trim()) || activeAdvancedFilterCount > 0
-  const hasAgentInboxStatusFilter = agentAssignedViewOpen && agentInboxStatusFilter !== 'all'
+  const hasAgentInboxStatusFilter = agentAssignedViewOpen && agentInboxStatusFilter !== DEFAULT_AGENT_INBOX_STATUS_FILTER
   const hasAgentInboxListFilters = agentAssignedViewOpen && (hasTextOrAdvancedChatFilters || hasAgentInboxStatusFilter)
   const hasActiveChatFilters = hasTextOrAdvancedChatFilters || chatFilter !== 'all' || hasAgentInboxStatusFilter
   const filteredChats = useMemo(() => {
@@ -2362,14 +2361,14 @@ export const DesktopChat: React.FC = () => {
   const inboxTitle = archivedViewOpen
     ? 'Archivados'
     : agentAssignedViewOpen
-    ? agentInboxStatusFilter === 'unassigned' ? 'No asignados' : 'Chats del bot'
+    ? agentInboxStatusFilter === 'active' ? 'Chats activos' : AGENT_INBOX_STATUS_FILTERS.find((filter) => filter.id === agentInboxStatusFilter)?.label || 'Chats del bot'
     : 'Conversaciones'
   const inboxSubtitle = archivedViewOpen
     ? `${filteredChats.length} de ${archivedChatCount} archivados`
     : agentAssignedViewOpen
     ? agentInboxStatusFilter === 'unassigned'
-      ? `${filteredChats.length} chats sin agente asignado`
-      : `${filteredChats.length} de ${agentAssignedChatCount} con historial del bot`
+      ? `${filteredChats.length} chats que nunca han entrado al bot`
+      : `${filteredChats.length} de ${agentAssignedChatCount} en esta bandeja`
     : `${visibleChatCount} de ${Math.max(0, visibleChatsForList.length - archivedChatCount)} visibles`
   const agentInboxEmptyTitle = agentInboxStatusFilter === 'paused'
     ? 'Sin chats pausados 24 horas'
@@ -2385,11 +2384,11 @@ export const DesktopChat: React.FC = () => {
   const agentInboxEmptyDescription = agentInboxStatusFilter === 'paused'
     ? 'Cuando pauses un chat por 24 horas, aparecerá aquí hasta que se reactive solo o lo prendas manualmente.'
     : agentInboxStatusFilter === 'skipped'
-    ? 'Cuando omitas un chat, aparecerá aquí para que puedas reactivar el agente cuando quieras.'
+    ? 'Cuando saques un chat a humano u omitas el bot, aparecerá aquí para que puedas reactivarlo cuando quieras.'
     : agentInboxStatusFilter === 'completed'
     ? 'Cuando un contacto cumpla el objetivo configurado, quedará visible aquí.'
     : agentInboxStatusFilter === 'unassigned'
-    ? 'Los contactos que todavía no entran al agente conversacional aparecerán aquí.'
+    ? 'Los contactos que nunca han entrado al agente conversacional aparecerán aquí.'
     : agentInboxStatusFilter === 'active'
     ? 'Cuando el bot esté atendiendo una conversación activa, aparecerá aquí.'
     : conversationAgentEnabled
@@ -3752,7 +3751,7 @@ export const DesktopChat: React.FC = () => {
 
   const handleToggleAgentAssignedView = useCallback(() => {
     setArchivedViewOpen(false)
-    setAgentInboxStatusFilter('all')
+    setAgentInboxStatusFilter(DEFAULT_AGENT_INBOX_STATUS_FILTER)
     setChatFilter((current) => (current === 'agent' ? 'all' : 'agent'))
   }, [])
 
@@ -4058,14 +4057,14 @@ export const DesktopChat: React.FC = () => {
     setChatQuery('')
     setChatFilter('all')
     setAdvancedFilters(DEFAULT_ADVANCED_FILTERS)
-    setAgentInboxStatusFilter('all')
+    setAgentInboxStatusFilter(DEFAULT_AGENT_INBOX_STATUS_FILTER)
     setArchivedViewOpen(false)
   }, [])
 
   const resetAgentInboxFilters = useCallback(() => {
     setChatQuery('')
     setAdvancedFilters(DEFAULT_ADVANCED_FILTERS)
-    setAgentInboxStatusFilter('all')
+    setAgentInboxStatusFilter(DEFAULT_AGENT_INBOX_STATUS_FILTER)
   }, [])
 
 	  const handleSendMessage = async (textOverride?: string) => {
