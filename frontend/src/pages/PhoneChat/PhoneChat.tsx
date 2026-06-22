@@ -4183,7 +4183,7 @@ export const PhoneChat: React.FC = () => {
   const publishedAgentDefs = useMemo(() => agentDefs.filter((agent) => agent.enabled), [agentDefs])
   const publishedAgentCount = publishedAgentDefs.length
   const aiAgentHubAgentFilters = useMemo(() => {
-    if (!agentDefs.length || aiAgentHubStatusFilter === 'unassigned') return []
+    if (!publishedAgentDefs.length || aiAgentHubStatusFilter === 'unassigned') return []
 
     const visibleCounts = new Map<string, number>()
     Object.values(agentStates).forEach((state) => {
@@ -4192,13 +4192,14 @@ export const PhoneChat: React.FC = () => {
       visibleCounts.set(state.agentId, (visibleCounts.get(state.agentId) || 0) + 1)
     })
 
-    return agentDefs.map((agent) => ({
+    return publishedAgentDefs.map((agent) => ({
       id: agent.id,
       name: agent.name || 'Agente sin nombre',
       count: visibleCounts.get(agent.id) || 0
     }))
-  }, [agentDefs, agentStates, aiAgentHubStatusFilter, archivedChatIdSet])
-  const activeAiAgentHubAgentFilter = aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)
+  }, [publishedAgentDefs, agentStates, aiAgentHubStatusFilter, archivedChatIdSet])
+  const showAiAgentHubAgentSelector = Boolean(agentEnabled && publishedAgentCount > 1 && aiAgentHubStatusFilter !== 'unassigned')
+  const activeAiAgentHubAgentFilter = showAiAgentHubAgentSelector && aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)
     ? aiAgentHubAgentFilter
     : 'all'
   const aiAgentHubSourceChats = useMemo(() => {
@@ -4322,9 +4323,9 @@ export const PhoneChat: React.FC = () => {
 
   useEffect(() => {
     if (aiAgentHubAgentFilter === 'all') return
-    if (aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)) return
+    if (showAiAgentHubAgentSelector && aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)) return
     setAiAgentHubAgentFilter('all')
-  }, [aiAgentHubAgentFilter, aiAgentHubAgentFilters])
+  }, [aiAgentHubAgentFilter, aiAgentHubAgentFilters, showAiAgentHubAgentSelector])
 
   const listBaseChats = useMemo(
     () => chats.filter((contact) => {
@@ -9042,12 +9043,13 @@ export const PhoneChat: React.FC = () => {
     const aiAgentHubSearchPlaceholder = aiAgentHubStatusFilter === 'unassigned'
       ? 'Buscar chats sin agente asignado'
       : 'Buscar chats del agente'
+    const activeAIAgentHubRobotCount = agentEnabled ? publishedAgentCount : 0
     const selectedAIAgentHubAgentDef = activeAiAgentHubAgentFilter === 'all'
       ? null
       : agentDefs.find((agent) => agent.id === activeAiAgentHubAgentFilter) || null
     const selectedAIAgentHubIsGlobal = activeAiAgentHubAgentFilter === 'all' || !selectedAIAgentHubAgentDef
     const selectedAIAgentHubName = selectedAIAgentHubIsGlobal
-      ? 'Agente jefe'
+      ? 'Todos'
       : selectedAIAgentHubAgentDef?.name || 'Agente sin nombre'
     const selectedAIAgentHubActive = selectedAIAgentHubIsGlobal
       ? agentEnabled
@@ -9064,21 +9066,47 @@ export const PhoneChat: React.FC = () => {
         ? `${agentCountLabel} atendiendo chats.`
         : `${agentCountLabel}; toca encender para activarlos.`
       : !agentEnabled
-      ? 'El agente jefe está apagado; enciende este agente para activar el sistema.'
+      ? 'Todos los agentes están apagados; enciende este agente para activar el sistema.'
       : selectedAIAgentHubAgentDef?.enabled
       ? `${selectedAIAgentHubName} atendiendo su bandeja.`
       : `${selectedAIAgentHubName} está apagado.`
     const selectedAIAgentHubPowerLabel = selectedAIAgentHubIsGlobal
-      ? agentEnabled ? 'Apagar agente jefe' : 'Encender agente jefe'
+      ? agentEnabled ? 'Apagar todos' : 'Encender todos'
       : selectedAIAgentHubActive
       ? `Apagar ${selectedAIAgentHubName}`
       : `Encender ${selectedAIAgentHubName}`
-    const aiAgentHubVisualAgentOptions = aiAgentHubStatusFilter === 'unassigned'
-      ? []
-      : [
+    const selectedAIAgentHubRobot = (compact = false) => {
+      const shouldRenderCrowd = selectedAIAgentHubIsGlobal && activeAIAgentHubRobotCount > 1
+      if (!shouldRenderCrowd) {
+        return renderAgentRobotGlyph(selectedAIAgentHubActive, compact ? 'compact' : 'expanded', compact ? 40 : isWideChatDevice ? 110 : 90)
+      }
+
+      const robotSize = compact
+        ? activeAIAgentHubRobotCount <= 3 ? 24 : activeAIAgentHubRobotCount <= 6 ? 20 : 16
+        : activeAIAgentHubRobotCount <= 2 ? 40 : activeAIAgentHubRobotCount <= 4 ? 34 : activeAIAgentHubRobotCount <= 6 ? 30 : activeAIAgentHubRobotCount <= 10 ? 24 : 18
+
+      return (
+        <span className={`${styles.aiAgentHubRobotCrowd} ${compact ? styles.aiAgentHubRobotCrowdCompact : styles.aiAgentHubRobotCrowdExpanded}`} aria-hidden="true">
+          {Array.from({ length: activeAIAgentHubRobotCount }).map((_, index) => (
+            <span key={`ai-agent-crowd-${index}`} className={styles.aiAgentHubRobotCrowdItem}>
+              {renderAgentRobotGlyph(true, 'compact', robotSize)}
+            </span>
+          ))}
+        </span>
+      )
+    }
+    const renderAIAgentHubRosterAvatar = (agentId: string, active: boolean, isSelected: boolean) => {
+      if (agentId === 'all' && activeAIAgentHubRobotCount > 1) {
+        return selectedAIAgentHubRobot(true)
+      }
+
+      return renderAgentRobotGlyph(active, 'compact', isSelected ? 48 : 40)
+    }
+    const visibleAIAgentHubOptions = showAiAgentHubAgentSelector
+      ? [
           {
             id: 'all',
-            name: 'Agente jefe',
+            name: 'Todos',
             count: aiAgentHubStatusCounts[aiAgentHubStatusFilter] || 0,
             active: agentEnabled
           },
@@ -9092,6 +9120,7 @@ export const PhoneChat: React.FC = () => {
             }
           })
         ]
+      : []
 
     return (
       <section
@@ -9110,17 +9139,17 @@ export const PhoneChat: React.FC = () => {
             </button>
             <span className={styles.aiAgentHubEyebrow}>Agente conversacional</span>
             <span className={`${styles.aiAgentHubRobot} ${selectedAIAgentHubActive ? styles.aiAgentHubRobotOn : styles.aiAgentHubRobotOff}`}>
-              {renderAgentRobotGlyph(selectedAIAgentHubActive, 'expanded', isWideChatDevice ? 110 : 90)}
+              {selectedAIAgentHubRobot(false)}
             </span>
             <div className={styles.aiAgentHubCopy}>
               <strong>{selectedAIAgentHubName}</strong>
               <p className={`${styles.aiAgentHubStatus} ${selectedAIAgentHubActive ? styles.aiAgentHubStatusOn : styles.aiAgentHubStatusOff}`}>{selectedAIAgentHubStatusLabel}</p>
               <span>{selectedAIAgentHubSummary}</span>
             </div>
-            {aiAgentHubVisualAgentOptions.length > 1 && (
+            {visibleAIAgentHubOptions.length > 1 && (
               <div className={styles.aiAgentHubRoster} role="group" aria-label="Elegir agente conversacional">
                 <div className={styles.aiAgentHubRosterRail}>
-                  {aiAgentHubVisualAgentOptions.map((agent) => {
+                  {visibleAIAgentHubOptions.map((agent) => {
                     const isSelected = agent.id === activeAiAgentHubAgentFilter
 
                     return (
@@ -9132,7 +9161,7 @@ export const PhoneChat: React.FC = () => {
                         onClick={() => setAiAgentHubAgentFilter(agent.id)}
                       >
                         <span className={styles.aiAgentHubRosterAvatar}>
-                          {renderAgentRobotGlyph(agent.active, 'compact', isSelected ? 48 : 40)}
+                          {renderAIAgentHubRosterAvatar(agent.id, agent.active, isSelected)}
                         </span>
                         <span className={styles.aiAgentHubRosterName}>{agent.name}</span>
                         <small>{agent.count === 1 ? '1 chat' : `${agent.count} chats`}</small>
