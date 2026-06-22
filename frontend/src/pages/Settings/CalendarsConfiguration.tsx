@@ -519,6 +519,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const [calendarWizardStep, setCalendarWizardStep] = useState<CalendarWizardStepId>('basics')
   const [calendarMetaParamsOpen, setCalendarMetaParamsOpen] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
+  const [savingActiveCalendarId, setSavingActiveCalendarId] = useState<string | null>(null)
   const [deletingCalendarId, setDeletingCalendarId] = useState<string | null>(null)
   const [formSites, setFormSites] = useState<PublicSite[]>([])
   const [loadingFormSites, setLoadingFormSites] = useState(false)
@@ -1084,6 +1085,30 @@ export const CalendarsConfiguration: React.FC = () => {
       showToast('success', 'Calendarios de atribución actualizados', `${newSelection.length} calendario${newSelection.length !== 1 ? 's' : ''} seleccionado${newSelection.length !== 1 ? 's' : ''}`)
     } catch (error: any) {
       showToast('error', 'Error al guardar', error.message)
+    }
+  }
+
+  const handleCalendarActiveToggle = async (calendar: CalendarType) => {
+    const nextActive = !calendar.isActive
+    setSavingActiveCalendarId(calendar.id)
+
+    try {
+      await calendarsService.updateCalendar(calendar.id, { isActive: nextActive }, accessToken || undefined)
+      setCalendars(current => current.map(item => (
+        item.id === calendar.id ? { ...item, isActive: nextActive } : item
+      )))
+      setSelectedCalendar(current => (
+        current?.id === calendar.id ? { ...current, isActive: nextActive } : current
+      ))
+      showToast(
+        'success',
+        nextActive ? 'Calendario disponible' : 'Calendario pausado',
+        nextActive ? 'La URL pública ya puede recibir citas.' : 'La URL pública dejará de aceptar nuevas citas.'
+      )
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar el estado', error.message || 'Intenta nuevamente')
+    } finally {
+      setSavingActiveCalendarId(null)
     }
   }
 
@@ -1750,6 +1775,7 @@ export const CalendarsConfiguration: React.FC = () => {
     const bookingCompletionConfig = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
     const customEventsConfig = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
     const customEventsHasParameters = hasCalendarCustomEventParameters(customEventsConfig.parameters)
+    const selectedCalendarAttributed = attributionCalendarIds.includes(selectedCalendar.id)
     const selectedCustomForm = customFormSites.find(site => site.id === bookingFormConfig.customFormId)
     const calendarFormOptions = customFormSites.map(site => ({
       value: site.id,
@@ -1985,21 +2011,24 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
 
               <div className={pageStyles.editorField}>
-                <span>Disponible para agendar</span>
+                <span>Conversión</span>
                 <div className={styles.toggleContainer}>
                   <button
                     type="button"
-                    className={`${styles.toggle} ${selectedCalendar.isActive ? styles.toggleActive : ''}`}
-                    onClick={() => updateSelectedCalendar({ isActive: !selectedCalendar.isActive })}
-                    aria-pressed={selectedCalendar.isActive}
-                    aria-label={selectedCalendar.isActive ? 'Desactivar calendario' : 'Activar calendario'}
+                    className={`${styles.toggle} ${selectedCalendarAttributed ? styles.toggleActive : ''}`}
+                    onClick={() => handleAttributionToggle(selectedCalendar.id)}
+                    aria-pressed={selectedCalendarAttributed}
+                    aria-label={selectedCalendarAttributed ? 'Quitar calendario de conversión' : 'Marcar calendario como conversión'}
                   >
                     <span className={styles.toggleThumb} />
                   </button>
-                  <span className={`${styles.toggleLabel} ${selectedCalendar.isActive ? styles.toggleLabelActive : ''}`}>
-                    {selectedCalendar.isActive ? 'Sí, activo' : 'No, pausado'}
+                  <span className={`${styles.toggleLabel} ${selectedCalendarAttributed ? styles.toggleLabelActive : ''}`}>
+                    {selectedCalendarAttributed ? 'Cuenta como conversión' : 'No cuenta como conversión'}
                   </span>
                 </div>
+                <small>
+                  Enciéndelo para que las citas de este calendario alimenten reportes, campañas y eventos de Meta/WhatsApp. Si no marcas ninguno, Ristak toma todos los calendarios.
+                </small>
               </div>
             </div>
           </section>
@@ -2914,7 +2943,6 @@ export const CalendarsConfiguration: React.FC = () => {
               <div className={pageStyles.calendarMeta}>
                 <span>{calendar.slotDuration} {calendar.slotDurationUnit}</span>
                 <span>Cada {calendar.slotInterval} {calendar.slotIntervalUnit}</span>
-                <span>{calendar.isActive ? 'Activo' : 'Inactivo'}</span>
                 {calendar.googleCalendarId && (
                   <span>Google: {calendar.googleCalendarSummary || calendar.googleCalendarId}</span>
                 )}
@@ -2923,17 +2951,18 @@ export const CalendarsConfiguration: React.FC = () => {
           </div>
 
           <div className={pageStyles.calendarActions} onClick={(event) => event.stopPropagation()}>
-            <div className={`${pageStyles.conversionControl} ${isAttributed ? pageStyles.conversionControlActive : ''}`}>
-              <span className={`${styles.toggleLabel} ${isAttributed ? styles.toggleLabelActive : ''}`}>
-                Conversión
+            <div className={`${pageStyles.calendarStateControl} ${calendar.isActive ? pageStyles.calendarStateControlActive : ''}`}>
+              <span className={`${styles.toggleLabel} ${calendar.isActive ? styles.toggleLabelActive : ''}`}>
+                {calendar.isActive ? 'Activo' : 'Pausado'}
               </span>
               <button
                 type="button"
-                className={`${styles.toggle} ${isAttributed ? styles.toggleActive : ''}`}
-                onClick={() => handleAttributionToggle(calendar.id)}
-                aria-pressed={isAttributed}
-                aria-label={`Conversión para ${calendar.name}`}
-                title="Cuenta como conversión"
+                className={`${styles.toggle} ${calendar.isActive ? styles.toggleActive : ''}`}
+                onClick={() => handleCalendarActiveToggle(calendar)}
+                aria-pressed={calendar.isActive}
+                aria-label={calendar.isActive ? `Pausar ${calendar.name}` : `Activar ${calendar.name}`}
+                title={calendar.isActive ? 'Disponible para agendar' : 'Pausado para nuevas citas'}
+                disabled={savingActiveCalendarId === calendar.id}
               >
                 <span className={styles.toggleThumb} />
               </button>

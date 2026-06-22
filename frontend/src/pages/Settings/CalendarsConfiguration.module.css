@@ -747,21 +747,21 @@
   gap: 14px;
 }
 
-.conversionControl {
+.calendarStateControl {
   display: inline-flex;
   align-items: center;
   gap: 9px;
   height: 34px;
   padding: 0 12px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.05);
+  background: var(--surface);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.conversionControlActive {
-  border-color: rgba(148, 163, 184, 0.2);
-  background: rgba(148, 163, 184, 0.045);
+.calendarStateControlActive {
+  border-color: var(--border-strong);
+  background: var(--surface);
 }
 
 .rowActionColumn {
@@ -772,12 +772,12 @@
 }
 
 .rowActionColumn > span {
-  color: var(--color-text-tertiary);
-  font-size: 10px;
+  color: var(--text-dim);
+  font-size: 12px;
   font-weight: 500;
   line-height: 1;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .moreButton {
@@ -1071,7 +1071,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 16px;
-  row-gap: 12px;
+  row-gap: 18px;
   min-width: 0;
   max-width: 940px;
 }
@@ -1085,17 +1085,18 @@
 .editorField {
   display: grid;
   align-content: start;
-  gap: 7px;
+  gap: 9px;
   min-width: 0;
 }
 
 .editorField > span,
 .lookBusyPercent > span {
-  color: var(--color-text-tertiary);
-  font-size: 11px;
+  color: var(--text);
+  font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: none;
 }
 
 .editorField small {
