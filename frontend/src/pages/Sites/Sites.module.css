@@ -13291,6 +13291,7 @@
 }
 
 .containerFocused .builderGridLanding .propertiesPanel {
+  --sites-inspector-panel-pad-left: 18px;
   padding-left: 18px;
 }
 
@@ -13308,6 +13309,8 @@
   .containerFocused .builderGridLanding .blocksRail,
   .containerFocused .builderGridLanding .propertiesPanel,
   .containerFocused .builderGridLanding .canvasColumn {
+    --sites-inspector-panel-pad-left: 0px;
+    --sites-inspector-panel-pad-right: 0px;
     padding-inline: 0;
   }
 }
@@ -16083,6 +16086,11 @@
     padding-inline: 8px;
   }
 
+  .containerFocused:has(.builder) .propertiesPanel {
+    --sites-inspector-panel-pad-left: 8px;
+    --sites-inspector-panel-pad-right: 8px;
+  }
+
   .containerFocused:has(.builder) .canvasColumn {
     height: 100%;
     display: grid;
@@ -17615,15 +17623,29 @@
   --sites-editor-border-strong: var(--design-control-border-hover, rgba(148, 163, 184, 0.58));
   --sites-editor-section-border: var(--design-section-border, rgba(203, 213, 225, 0.68));
   --sites-editor-focus-shadow: var(--design-control-focus-shadow, 0 0 0 3px rgba(var(--color-primary-rgb), 0.12));
-  --sites-inspector-panel-bg: var(--design-sidebar-bg, var(--color-background-secondary));
+  --sites-inspector-panel-bg: var(--design-panel-bg, var(--surface));
+  --sites-inspector-panel-pad-x: 12px;
+  --sites-inspector-panel-pad-left: var(--sites-inspector-panel-pad-x);
+  --sites-inspector-panel-pad-right: var(--sites-inspector-panel-pad-x);
+  --sites-inspector-panel-pad-top: 10px;
 }
 
 .pageFrame .containerFocused .sitesShellFocused .propertiesPanel {
-  background: transparent;
+  background: var(--sites-inspector-panel-bg);
 }
 
 .pageFrame .containerFocused .sitesShellFocused .inspectorStickyTop {
   z-index: 12;
+  margin:
+    calc(-1 * var(--sites-inspector-panel-pad-top))
+    calc(-1 * var(--sites-inspector-panel-pad-right))
+    0
+    calc(-1 * var(--sites-inspector-panel-pad-left));
+  padding:
+    var(--sites-inspector-panel-pad-top)
+    var(--sites-inspector-panel-pad-right)
+    12px
+    var(--sites-inspector-panel-pad-left);
   border-bottom: 1px solid var(--sites-editor-section-border);
   background: var(--sites-inspector-panel-bg);
 }
