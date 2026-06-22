@@ -8070,7 +8070,9 @@
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationScreen {
   z-index: 1;
+  grid-template-rows: auto auto minmax(0, 1fr);
   border-left: 0;
+  contain: layout;
 }
 
 .wideSectionPanel {
@@ -8602,7 +8604,9 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messagesPane {
-  padding-inline: clamp(18px, 4vw, 54px);
+  grid-row: 3;
+  padding: 8px clamp(18px, 4vw, 54px) calc(108px + env(safe-area-inset-bottom));
+  scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .messageAudioBubble {
@@ -8633,8 +8637,13 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerShell {
+  position: absolute;
+  right: clamp(18px, 3vw, 42px);
+  bottom: max(14px, env(safe-area-inset-bottom));
+  left: clamp(18px, 3vw, 42px);
+  z-index: 8;
   gap: 0;
-  padding: 0 clamp(18px, 3vw, 42px);
+  padding: 0;
   background: transparent;
   pointer-events: none;
 }
