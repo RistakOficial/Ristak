@@ -1642,8 +1642,11 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
 
   if (!matchedDetail) return { matched: false, reason: 'invoice_not_created_by_conversational_agent' }
 
-  const state = await getConversationState(cleanContactId)
-  const agentId = matchedDetail.agentId || state?.agentId || null
+  const matchedAgentId = String(matchedDetail.agentId || matchedDetail.agent_id || '').trim()
+  const state = matchedAgentId
+    ? await getConversationState(cleanContactId, { agentId: matchedAgentId })
+    : await getConversationState(cleanContactId)
+  const agentId = matchedAgentId || state?.agentId || null
   const agent = agentId ? await getConversationalAgent(agentId).catch(() => null) : null
   const cleanCurrency = String(currency || matchedDetail.currency || '').trim().toUpperCase()
   const paidAmount = Number(amount ?? matchedDetail.amount)
@@ -2006,9 +2009,32 @@ export function shouldMigrateLegacyConversationalAgentConfig(legacy) {
  * tiene reglas reales, crea el "Agente principal" a partir de ella.
  * La config default vacía no se migra, así una cuenta nueva empieza sin agentes.
  */
+async function backfillLegacyConversationStatesToPrimaryAgent() {
+  const primaryAgent = await db.get('SELECT id FROM conversational_agents ORDER BY position ASC, created_at ASC LIMIT 1').catch(() => null)
+  if (!primaryAgent?.id) return
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET agent_id = ?,
+        activated_at = COALESCE(activated_at, created_at, updated_at, CURRENT_TIMESTAMP),
+        activation_source = COALESCE(activation_source, 'automatic'),
+        activated_by = COALESCE(activated_by, updated_by, 'system'),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE (agent_id IS NULL OR agent_id = '')
+      AND (
+        signal IS NOT NULL
+        OR last_reply_at IS NOT NULL
+        OR last_answered_inbound_message_id IS NOT NULL
+        OR status IN ('paused', 'skipped', 'human', 'completed', 'discarded')
+      )
+  `, [primaryAgent.id]).catch(() => undefined)
+}
+
 export async function ensureAgentsMigration() {
   const existing = await db.get('SELECT COUNT(*) AS total FROM conversational_agents')
-  if (Number(existing?.total) > 0) return
+  if (Number(existing?.total) > 0) {
+    await backfillLegacyConversationStatesToPrimaryAgent()
+    return
+  }
   const legacy = await db.get('SELECT * FROM conversational_agent_config WHERE id = 1')
   if (!legacy) return
   if (!shouldMigrateLegacyConversationalAgentConfig(legacy)) return
@@ -2044,8 +2070,9 @@ export async function ensureAgentsMigration() {
     JSON.stringify(DEFAULT_FOLLOW_UP_CONFIG),
     JSON.stringify(DEFAULT_GOAL_WORKFLOW_CONFIG),
     JSON.stringify({ entry: [], exit: [] })
-  ])
-  logger.info('[Agente conversacional] Config previa migrada al contenedor "Agente principal"')
+	  ])
+	  logger.info('[Agente conversacional] Config previa migrada al contenedor "Agente principal"')
+  await backfillLegacyConversationStatesToPrimaryAgent()
 }
 
 export async function listConversationalAgents() {
@@ -2887,14 +2914,18 @@ export function exitRulesMatch(agent, ctx) {
  * Encuentra el primer agente habilitado (en orden de posición) cuyas reglas de
  * entrada se cumplen y cuyas reglas de salida NO aplican ya de inicio.
  */
-export async function matchAgentForMessage({ contactId, messageText = '', channel = 'whatsapp', excludeAgentId = null, ruleContext = null } = {}) {
+export async function matchAgentForMessage({ contactId, messageText = '', channel = 'whatsapp', excludeAgentId = null, excludeAgentIds = [], ruleContext = null } = {}) {
   const agents = (await listConversationalAgents()).filter((agent) => agent.enabled)
   if (!agents.length) return null
 
   const ctx = ruleContext || await buildRuleContext({ contactId, messageText, channel })
+  const excluded = new Set([
+    ...(Array.isArray(excludeAgentIds) ? excludeAgentIds : []),
+    excludeAgentId
+  ].map((item) => String(item || '').trim()).filter(Boolean))
 
   for (const agent of agents) {
-    if (excludeAgentId && agent.id === excludeAgentId) continue
+    if (excluded.has(agent.id)) continue
     if (!entryRulesMatch(agent, ctx)) continue
     if (exitRulesMatch(agent, ctx)) continue
     return agent
@@ -3096,6 +3127,7 @@ async function notifyConversationalCompletion({ contactId, reason = '', summary 
 function mapStateRow(row) {
   if (!row) return null
   return {
+    id: row.id || null,
     contactId: row.contact_id,
     status: row.status,
     pausedUntilAt: row.paused_until_at || null,
@@ -3115,9 +3147,61 @@ function mapStateRow(row) {
     activatedBy: row.activated_by || null,
     updatedBy: row.updated_by || null,
     agentId: row.agent_id || null,
+    agentName: row.agent_name || null,
     closingContext: normalizeStoredAdvancedClosingContext(row.closing_context_json || '{}'),
     updatedAt: row.updated_at || null
   }
+}
+
+function normalizeConversationStateAgentId(agentId) {
+  const clean = String(agentId || '').trim()
+  return clean || null
+}
+
+function conversationStateSortSql() {
+  return `
+    CASE
+      WHEN s.status = 'active' AND COALESCE(s.agent_id, '') <> '' THEN 0
+      WHEN s.signal IS NOT NULL AND s.signal <> '' THEN 1
+      WHEN COALESCE(s.agent_id, '') <> '' THEN 2
+      ELSE 3
+    END ASC,
+    COALESCE(s.signal_at, s.activated_at, s.last_reply_at, s.updated_at, s.created_at) DESC
+  `
+}
+
+async function loadConversationStateRow(contactId, { agentId = null } = {}) {
+  if (!contactId) return null
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  if (cleanAgentId) {
+    return db.get(`
+      SELECT s.*, a.name AS agent_name
+      FROM conversational_agent_state s
+      LEFT JOIN conversational_agents a ON a.id = s.agent_id
+      WHERE s.contact_id = ? AND s.agent_id = ?
+      LIMIT 1
+    `, [contactId, cleanAgentId])
+  }
+
+  return db.get(`
+    SELECT s.*, a.name AS agent_name
+    FROM conversational_agent_state s
+    LEFT JOIN conversational_agents a ON a.id = s.agent_id
+    WHERE s.contact_id = ?
+    ORDER BY ${conversationStateSortSql()}
+    LIMIT 1
+  `, [contactId])
+}
+
+async function loadConversationStateRowById(stateId) {
+  if (!stateId) return null
+  return db.get(`
+    SELECT s.*, a.name AS agent_name
+    FROM conversational_agent_state s
+    LEFT JOIN conversational_agents a ON a.id = s.agent_id
+    WHERE s.id = ?
+    LIMIT 1
+  `, [stateId])
 }
 
 function normalizeConversationActivationSource(source = '', updatedBy = 'system') {
@@ -3160,28 +3244,29 @@ function isExpiredPausedStateRow(row, nowMs = Date.now()) {
   return Number.isFinite(pauseUntilMs) && pauseUntilMs <= nowMs
 }
 
-async function activateExpiredPause(contactId) {
+async function activateExpiredPause(row) {
+  if (!row?.id) return
   await db.run(`
     UPDATE conversational_agent_state
     SET status = 'active',
         paused_until_at = NULL,
         updated_by = 'system',
         updated_at = CURRENT_TIMESTAMP
-    WHERE contact_id = ?
+    WHERE id = ?
       AND status = 'paused'
-  `, [contactId])
+  `, [row.id])
 
   await recordConversationalAgentEvent({
-    contactId,
+    contactId: row.contact_id,
     eventType: 'status_changed',
-    detail: { status: 'active', updatedBy: 'system', reason: 'pause_expired' }
+    detail: { status: 'active', updatedBy: 'system', reason: 'pause_expired', agentId: row.agent_id || null }
   })
 }
 
 async function expirePausedConversationStates() {
   const nowIso = new Date().toISOString()
   const rows = await db.all(`
-    SELECT contact_id
+    SELECT id, contact_id, agent_id
     FROM conversational_agent_state
     WHERE status = 'paused'
       AND paused_until_at IS NOT NULL
@@ -3189,9 +3274,9 @@ async function expirePausedConversationStates() {
     LIMIT 500
   `, [nowIso]).catch(() => [])
   if (!rows.length) return 0
-  const contactIds = rows.map((row) => row.contact_id).filter(Boolean)
-  if (!contactIds.length) return 0
-  const placeholders = contactIds.map(() => '?').join(', ')
+  const stateIds = rows.map((row) => row.id).filter(Boolean)
+  if (!stateIds.length) return 0
+  const placeholders = stateIds.map(() => '?').join(', ')
 
   await db.run(`
     UPDATE conversational_agent_state
@@ -3200,52 +3285,97 @@ async function expirePausedConversationStates() {
         updated_by = 'system',
         updated_at = CURRENT_TIMESTAMP
     WHERE status = 'paused'
-      AND contact_id IN (${placeholders})
-  `, contactIds)
+      AND id IN (${placeholders})
+  `, stateIds)
 
-  await Promise.all(contactIds.map((contactId) => recordConversationalAgentEvent({
-    contactId,
+  await Promise.all(rows.map((row) => recordConversationalAgentEvent({
+    contactId: row.contact_id,
     eventType: 'status_changed',
-    detail: { status: 'active', updatedBy: 'system', reason: 'pause_expired' }
+    detail: { status: 'active', updatedBy: 'system', reason: 'pause_expired', agentId: row.agent_id || null }
   }).catch(() => undefined)))
 
-  return contactIds.length
+  return stateIds.length
 }
 
 export async function assignAgentToConversation(contactId, agentId, { activationSource = 'automatic', updatedBy = 'system' } = {}) {
-  await ensureConversationState(contactId)
-  const assignments = ['agent_id = ?']
-  const params = [agentId || null]
-  if (agentId) {
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  if (cleanAgentId) {
+    const state = await ensureConversationState(contactId, { agentId: cleanAgentId })
+    const assignments = ['agent_id = ?', "status = 'active'", 'paused_until_at = NULL', 'updated_by = ?']
+    const params = [cleanAgentId, updatedBy]
     appendActivationAssignments(assignments, params, { activationSource, updatedBy })
+    assignments.push('updated_at = CURRENT_TIMESTAMP')
+    params.push(state.id)
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET ${assignments.join(', ')}
+      WHERE id = ?
+    `, params)
+    return getConversationState(contactId, { agentId: cleanAgentId })
   }
-  assignments.push('updated_at = CURRENT_TIMESTAMP')
-  params.push(contactId)
+
+  const state = await getConversationState(contactId)
+  if (!state?.id) return null
   await db.run(`
     UPDATE conversational_agent_state
-    SET ${assignments.join(', ')}
-    WHERE contact_id = ?
-  `, params)
+    SET agent_id = NULL,
+        updated_by = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [updatedBy, state.id])
+  return getConversationState(contactId)
 }
 
-export async function getConversationState(contactId) {
+export async function releaseAgentFromConversation(contactId, agentId, { updatedBy = 'agent' } = {}) {
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  if (!contactId || !cleanAgentId) return null
+  const state = await getConversationState(contactId, { agentId: cleanAgentId })
+  if (!state?.id) return null
+
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET agent_id = NULL,
+        updated_by = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [updatedBy, state.id])
+
+  return getConversationState(contactId)
+}
+
+export async function getConversationState(contactId, { agentId = null } = {}) {
   if (!contactId) return null
-  const row = await db.get('SELECT * FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+  const row = await loadConversationStateRow(contactId, { agentId })
   if (isExpiredPausedStateRow(row)) {
-    await activateExpiredPause(contactId)
-    const nextRow = await db.get('SELECT * FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+    await activateExpiredPause(row)
+    const nextRow = await loadConversationStateRowById(row.id)
     return mapStateRow(nextRow)
   }
   return mapStateRow(row)
 }
 
-export async function updateConversationClosingContext(contactId, patch = {}, { updatedBy = 'agent' } = {}) {
+export async function listConversationStatesForContact(contactId) {
+  if (!contactId) return []
+  await expirePausedConversationStates()
+  const rows = await db.all(`
+    SELECT s.*, a.name AS agent_name
+    FROM conversational_agent_state s
+    LEFT JOIN conversational_agents a ON a.id = s.agent_id
+    WHERE s.contact_id = ?
+    ORDER BY ${conversationStateSortSql()}
+  `, [contactId]).catch(() => [])
+  return rows.map(mapStateRow)
+}
+
+export async function updateConversationClosingContext(contactId, patch = {}, { updatedBy = 'agent', agentId = null } = {}) {
   if (!contactId) {
     return { context: normalizeAdvancedClosingContext(patch), changedKeys: Object.keys(normalizeAdvancedClosingContext(patch)) }
   }
 
-  await ensureConversationState(contactId)
-  const row = await db.get('SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+  const state = await ensureConversationState(contactId, { agentId })
+  const row = state?.id
+    ? await db.get('SELECT closing_context_json FROM conversational_agent_state WHERE id = ?', [state.id])
+    : null
   const { context, changedKeys } = mergeAdvancedClosingContext(row?.closing_context_json || '{}', patch, { updatedBy })
 
   if (!changedKeys.length) {
@@ -3259,47 +3389,79 @@ export async function updateConversationClosingContext(contactId, patch = {}, { 
         activation_source = COALESCE(activation_source, ?),
         activated_by = COALESCE(activated_by, ?),
         updated_at = CURRENT_TIMESTAMP
-    WHERE contact_id = ?
+    WHERE id = ?
   `, [
     JSON.stringify(context),
     normalizeConversationActivationSource('', updatedBy),
     String(updatedBy || 'agent').trim() || 'agent',
-    contactId
+    state.id
   ])
 
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'closing_context_updated',
-    detail: { updatedBy, changedKeys }
+    detail: { updatedBy, changedKeys, agentId: state.agentId || agentId || null }
   })
 
   return { context, changedKeys }
 }
 
-export async function ensureConversationState(contactId) {
-  const existing = await getConversationState(contactId)
+export async function ensureConversationState(contactId, { agentId = null } = {}) {
+  if (!contactId) return null
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  const existing = await getConversationState(contactId, { agentId: cleanAgentId })
   if (existing) return existing
+  if (cleanAgentId) {
+    const claimableLegacyState = await db.get(`
+      SELECT id
+      FROM conversational_agent_state s
+      WHERE s.contact_id = ?
+        AND s.agent_id IS NULL
+        AND s.status = 'active'
+      ORDER BY ${conversationStateSortSql()}
+      LIMIT 1
+    `, [contactId]).catch(() => null)
+    if (claimableLegacyState?.id) {
+      await db.run(`
+        UPDATE conversational_agent_state
+        SET agent_id = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND agent_id IS NULL
+      `, [cleanAgentId, claimableLegacyState.id])
+      return getConversationState(contactId, { agentId: cleanAgentId })
+    }
+  }
+  const id = `cas_${randomUUID()}`
   await db.run(`
-    INSERT INTO conversational_agent_state (contact_id, status)
-    VALUES (?, 'active')
-    ON CONFLICT (contact_id) DO NOTHING
-  `, [contactId]).catch(async () => {
-    // SQLite viejo sin ON CONFLICT por columna: reintenta simple
-    await db.run('INSERT OR IGNORE INTO conversational_agent_state (contact_id, status) VALUES (?, ?)', [contactId, 'active'])
+    INSERT INTO conversational_agent_state (id, contact_id, agent_id, status, activated_at, activation_source, activated_by)
+    VALUES (?, ?, ?, 'active', ?, ?, ?)
+  `, [
+    id,
+    contactId,
+    cleanAgentId,
+    null,
+    null,
+    null
+  ]).catch(async (error) => {
+    const duplicate = /unique|duplicate|constraint/i.test(String(error?.message || ''))
+    if (!duplicate) throw error
   })
-  return getConversationState(contactId)
+  return getConversationState(contactId, { agentId: cleanAgentId })
 }
 
 export async function setConversationStatus(contactId, status, {
   updatedBy = 'system',
   clearSignal = false,
   pausedUntilAt = null,
-  activationSource = ''
+  activationSource = '',
+  agentId = null
 } = {}) {
   if (!VALID_STATUSES.has(status)) {
     throw Object.assign(new Error(`Estado de conversación inválido: ${status}`), { statusCode: 400 })
   }
-  await ensureConversationState(contactId)
+  const state = await ensureConversationState(contactId, { agentId })
+  if (!state?.id) return null
   const nextPausedUntilAt = status === 'paused' ? normalizePauseUntilAt(pausedUntilAt) : null
   const assignments = [
     'status = ?',
@@ -3314,21 +3476,21 @@ export async function setConversationStatus(contactId, status, {
     assignments.push('signal = NULL', 'signal_reason = NULL', 'signal_summary = NULL', 'signal_at = NULL')
   }
   assignments.push('updated_at = CURRENT_TIMESTAMP')
-  params.push(contactId)
+  params.push(state.id)
 
   await db.run(`
     UPDATE conversational_agent_state
     SET ${assignments.join(', ')}
-    WHERE contact_id = ?
+    WHERE id = ?
   `, params)
 
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'status_changed',
-    detail: { status, updatedBy, clearSignal, pausedUntilAt: nextPausedUntilAt }
+    detail: { status, updatedBy, clearSignal, pausedUntilAt: nextPausedUntilAt, agentId: state.agentId || agentId || null }
   })
 
-  return getConversationState(contactId)
+  return getConversationState(contactId, { agentId: state.agentId || agentId || null })
 }
 
 export async function setConversationSignal(contactId, signal, {
@@ -3339,8 +3501,10 @@ export async function setConversationSignal(contactId, signal, {
   originalSummary = '',
   agentId = ''
 } = {}) {
-  await ensureConversationState(contactId)
-  const currentState = await db.get('SELECT closing_context_json, channel, agent_id FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null)
+  const state = await ensureConversationState(contactId, { agentId })
+  const currentState = state?.id
+    ? await db.get('SELECT id, closing_context_json, channel, agent_id FROM conversational_agent_state WHERE id = ?', [state.id]).catch(() => null)
+    : null
   const closingContext = normalizeStoredAdvancedClosingContext(currentState?.closing_context_json || '{}')
   const cleanStatus = String(status || 'completed').trim() || 'completed'
   const effectiveAgentId = String(agentId || currentState?.agent_id || '').trim() || null
@@ -3369,8 +3533,8 @@ export async function setConversationSignal(contactId, signal, {
         activation_source = COALESCE(activation_source, 'automatic'),
         activated_by = COALESCE(activated_by, 'agent'),
         updated_at = CURRENT_TIMESTAMP
-    WHERE contact_id = ?
-  `, [signal, cleanReason, cleanStateSummary, cleanStatus, contactId])
+    WHERE id = ?
+  `, [signal, cleanReason, cleanStateSummary, cleanStatus, currentState.id])
 
   const cleanOriginalSummary = cleanCompletionDisplayText(originalSummary || actionSummarySource)
   const detail = {
@@ -3393,25 +3557,26 @@ export async function setConversationSignal(contactId, signal, {
     detail
   })
 
-  return getConversationState(contactId)
+  return getConversationState(contactId, { agentId: effectiveAgentId })
 }
 
-export async function clearConversationSignal(contactId, { updatedBy = 'user' } = {}) {
-  await ensureConversationState(contactId)
+export async function clearConversationSignal(contactId, { updatedBy = 'user', agentId = null } = {}) {
+  const state = await ensureConversationState(contactId, { agentId })
+  if (!state?.id) return null
   await db.run(`
     UPDATE conversational_agent_state
     SET signal = NULL, signal_reason = NULL, signal_summary = NULL, signal_at = NULL,
         updated_by = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE contact_id = ?
-  `, [updatedBy, contactId])
+    WHERE id = ?
+  `, [updatedBy, state.id])
 
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'signal_cleared',
-    detail: { updatedBy }
+    detail: { updatedBy, agentId: state.agentId || agentId || null }
   })
 
-  return getConversationState(contactId)
+  return getConversationState(contactId, { agentId: state.agentId || agentId || null })
 }
 
 /**
@@ -3423,20 +3588,28 @@ export async function markHumanTakeoverIfActive(contactId, { updatedBy = 'human'
   if (!contactId) return null
   const config = await getConversationalAgentConfig()
   if (!config.enabled) return null
-  const state = await getConversationState(contactId)
-  if (!state || state.status !== 'active') return state
+  const states = await listConversationStatesForContact(contactId)
+  const activeStates = states.filter((state) => state.status === 'active')
+  if (!activeStates.length) return states[0] || null
   logger.info(`[Agente conversacional] Humano tomó la conversación de ${contactId}; el agente deja de responder`)
-  return setConversationStatus(contactId, 'human', { updatedBy })
+  const updatedStates = []
+  for (const state of activeStates) {
+    updatedStates.push(await setConversationStatus(contactId, 'human', { updatedBy, agentId: state.agentId || null }))
+  }
+  return updatedStates[0] || states[0] || null
 }
 
 export async function shouldSuppressChatNotificationForConversationalAgent(contactId) {
   if (!contactId) return false
   const config = await getConversationalAgentConfig()
   if (!config.enabled) return false
-  const state = await getConversationState(contactId)
-  if (!state?.agentId || state.status !== 'active' || state.signal) return false
-  const agent = await getConversationalAgent(state.agentId)
-  return Boolean(agent?.enabled && agent.hideAttendedNotifications)
+  const states = await listConversationStatesForContact(contactId)
+  for (const state of states) {
+    if (!state?.agentId || state.status !== 'active' || state.signal) continue
+    const agent = await getConversationalAgent(state.agentId)
+    if (agent?.enabled && agent.hideAttendedNotifications) return true
+  }
+  return false
 }
 
 function triggerLinkMatchesWorkflow(configured = {}, payload = {}) {
@@ -3457,7 +3630,14 @@ export async function handleConversationalAgentTriggerLinkClick(payload = {}) {
   const contactId = String(payload.contactId || payload.contact_id || payload.query?.contact_id || payload.query?.contactId || '').trim()
   if (!contactId) return { matched: false, reason: 'missing_contact' }
 
-  const state = await getConversationState(contactId)
+  const triggerSentEvent = await db.get(
+    "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'trigger_link_sent' ORDER BY created_at DESC LIMIT 1",
+    [contactId]
+  ).catch(() => null)
+  const triggerSentDetail = triggerSentEvent?.detail_json ? safeParse(triggerSentEvent.detail_json) : null
+  const sentAgentId = String(triggerSentDetail?.agentId || triggerSentDetail?.agent_id || '').trim()
+
+  const state = await getConversationState(contactId, { agentId: sentAgentId || null })
   if (!state?.agentId) return { matched: false, reason: 'missing_agent' }
   if (state.signal || !['active', 'paused'].includes(state.status)) {
     return { matched: false, reason: 'conversation_closed' }
@@ -3474,11 +3654,6 @@ export async function handleConversationalAgentTriggerLinkClick(payload = {}) {
   }
 
   const triggerLinkName = configured.triggerLinkName || payload.triggerLinkName || 'Enlace de disparo'
-  const triggerSentEvent = await db.get(
-    "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'trigger_link_sent' ORDER BY created_at DESC LIMIT 1",
-    [contactId]
-  ).catch(() => null)
-  const triggerSentDetail = triggerSentEvent?.detail_json ? safeParse(triggerSentEvent.detail_json) : null
   const sentTriggerId = String(triggerSentDetail?.triggerLinkId || '').trim()
   const sentTriggerPublicId = String(triggerSentDetail?.triggerLinkPublicId || '').trim()
   const matchesSentTrigger = (!sentTriggerId || !configured.triggerLinkId || sentTriggerId === configured.triggerLinkId)
@@ -3544,13 +3719,14 @@ export async function listConversationStates({ signal = null, statuses = null } 
     params.push(...statuses)
   }
 
-  const rows = await db.all(`
-    SELECT s.*, c.full_name AS contact_name, c.phone AS contact_phone
-    FROM conversational_agent_state s
-    LEFT JOIN contacts c ON c.id = s.contact_id
-    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-    ORDER BY COALESCE(s.signal_at, s.activated_at, s.updated_at) DESC
-    LIMIT 500
+	  const rows = await db.all(`
+	    SELECT s.*, c.full_name AS contact_name, c.phone AS contact_phone, a.name AS agent_name
+	    FROM conversational_agent_state s
+	    LEFT JOIN contacts c ON c.id = s.contact_id
+	    LEFT JOIN conversational_agents a ON a.id = s.agent_id
+	    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+	    ORDER BY COALESCE(s.signal_at, s.activated_at, s.updated_at) DESC
+	    LIMIT 500
   `, params)
 
   return rows.map((row) => ({

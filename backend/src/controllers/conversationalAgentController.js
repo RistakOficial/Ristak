@@ -5,6 +5,7 @@ import {
   getConversationalAgentConfig,
   saveConversationalAgentConfig,
   getConversationState,
+  listConversationStatesForContact,
   setConversationStatus,
   assignAgentToConversation,
   clearConversationSignal,
@@ -248,7 +249,12 @@ export async function listStates(req, res) {
 
 export async function getState(req, res) {
   try {
-    const state = await getConversationState(req.params?.contactId)
+    const includeAll = ['1', 'true', 'yes'].includes(String(req.query?.includeAll || '').trim().toLowerCase())
+    if (includeAll) {
+      const states = await listConversationStatesForContact(req.params?.contactId)
+      return res.json({ success: true, data: states })
+    }
+    const state = await getConversationState(req.params?.contactId, { agentId: req.query?.agentId || null })
     res.json({ success: true, data: state })
   } catch (error) {
     logger.error('Error obteniendo estado de conversación:', error)
@@ -274,7 +280,7 @@ export async function updateState(req, res) {
     }
 
     if (action === 'clear_signal') {
-      const state = await clearConversationSignal(contactId, { updatedBy: 'user' })
+      const state = await clearConversationSignal(contactId, { updatedBy: 'user', agentId: req.body?.agentId || null })
       return res.json({ success: true, data: state })
     }
 
@@ -298,15 +304,15 @@ export async function updateState(req, res) {
     let state = await setConversationStatus(contactId, mapped.status, {
       updatedBy: 'user',
       clearSignal: mapped.clearSignal,
-      activationSource: 'manual'
+      activationSource: 'manual',
+      agentId: agentId || null
     })
 
     if (action === 'activate' && agentId) {
-      await assignAgentToConversation(contactId, agentId, {
+      state = await assignAgentToConversation(contactId, agentId, {
         activationSource: 'manual',
         updatedBy: 'user'
       })
-      state = await getConversationState(contactId)
     }
 
     res.json({ success: true, data: state })

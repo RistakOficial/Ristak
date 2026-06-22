@@ -413,7 +413,7 @@ export function createConversationalTools(ctx) {
         return { ok: true, simulated: true, changedKeys: Object.keys(cleanPatch), context: cleanPatch }
       }
 
-      const result = await updateConversationClosingContext(ctx.contactId, cleanPatch, { updatedBy: 'agent' })
+      const result = await updateConversationClosingContext(ctx.contactId, cleanPatch, { updatedBy: 'agent', agentId: config.id || ctx.agentId || null })
       return { ok: true, changedKeys: result.changedKeys, context: result.context }
     }
   })
@@ -617,7 +617,7 @@ export function createConversationalTools(ctx) {
         })
       } else {
         // Acción "no hacer nada": el agente cumplió y solo deja registro
-        await setConversationStatus(ctx.contactId, 'completed', { updatedBy: 'agent' })
+        await setConversationStatus(ctx.contactId, 'completed', { updatedBy: 'agent', agentId: config.id || ctx.agentId || null })
         await recordConversationalAgentEvent({
           contactId: ctx.contactId,
           eventType: 'objective_completed',

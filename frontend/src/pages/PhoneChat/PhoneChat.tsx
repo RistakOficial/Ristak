@@ -985,9 +985,43 @@ function isChatNotificationPayload(payload: Partial<MobileAppNotificationDetail>
 function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
   const next: Record<string, ConversationAgentState> = {}
   for (const state of states) {
-    next[state.contactId] = state
+    if (!state?.contactId) continue
+    const current = next[state.contactId]
+    next[state.contactId] = selectPrimaryAgentState([current, state].filter(Boolean) as ConversationAgentState[]) || state
   }
   return next
+}
+
+function selectPrimaryAgentState(states: ConversationAgentState[] = []) {
+  return [...states].filter(Boolean).sort((left, right) => {
+    const priority = (state: ConversationAgentState) => {
+      if (state.status === 'active' && state.agentId && !state.signal) return 0
+      if (state.signal) return 1
+      if (state.agentId) return 2
+      return 3
+    }
+    const priorityDiff = priority(left) - priority(right)
+    if (priorityDiff !== 0) return priorityDiff
+    return Date.parse(right.updatedAt || right.activatedAt || right.signalAt || '') - Date.parse(left.updatedAt || left.activatedAt || left.signalAt || '')
+  })[0] || null
+}
+
+function mapAgentStateListsByContactId(states: ConversationAgentState[] = []) {
+  const next: Record<string, ConversationAgentState[]> = {}
+  for (const state of states) {
+    if (!state?.contactId) continue
+    next[state.contactId] = [...(next[state.contactId] || []), state]
+  }
+  return next
+}
+
+function upsertAgentStateList(current: ConversationAgentState[] = [], state: ConversationAgentState) {
+  const sameState = (item: ConversationAgentState) => (
+    item.id && state.id
+      ? item.id === state.id
+      : item.contactId === state.contactId && (item.agentId || '') === (state.agentId || '')
+  )
+  return [state, ...current.filter((item) => !sameState(item))]
 }
 
 function hasAIAgentHubHistory(state: ConversationAgentState | null | undefined) {
@@ -3290,6 +3324,7 @@ export const PhoneChat: React.FC = () => {
   const [agentConfig, setAgentConfig] = useState<ConversationalAgentConfig | null>(() => initialAgentLiveCache?.config || null)
   const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>(() => initialAgentLiveCache?.agents || [])
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>(() => mapAgentStatesByContactId(initialAgentLiveCache?.states || []))
+  const [agentStateLists, setAgentStateLists] = useState<Record<string, ConversationAgentState[]>>(() => mapAgentStateListsByContactId(initialAgentLiveCache?.states || []))
   const [agentMenuSection, setAgentMenuSection] = useState<AgentMenuSection>('menu')
   const [selectedAgentId, setSelectedAgentId] = useState(() => initialAgentLiveCache?.agents?.[0]?.id || '')
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
@@ -4166,15 +4201,19 @@ export const PhoneChat: React.FC = () => {
   const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
   const archivedChatCount = archivedChatIds.length
   const agentEnabled = Boolean(openAIConfigured && agentConfig?.enabled)
+  const allAgentStates = useMemo(
+    () => Object.values(agentStateLists).flat(),
+    [agentStateLists]
+  )
   const agentPriorityStates = useMemo(
     () => agentEnabled
-      ? Object.values(agentStates).filter((state) => (
+      ? allAgentStates.filter((state) => (
         Boolean(state.signal) &&
         state.signal !== 'discarded' &&
         !['human', 'skipped', 'discarded'].includes(state.status)
       ))
       : [],
-    [agentEnabled, agentStates]
+    [agentEnabled, allAgentStates]
   )
   const agentPriorityChatIdSet = useMemo(
     () => new Set(agentPriorityStates.map((state) => state.contactId)),
@@ -4186,7 +4225,7 @@ export const PhoneChat: React.FC = () => {
     if (!publishedAgentDefs.length || aiAgentHubStatusFilter === 'unassigned') return []
 
     const visibleCounts = new Map<string, number>()
-    Object.values(agentStates).forEach((state) => {
+    allAgentStates.forEach((state) => {
       if (!isAIAgentHubStateVisible(state, aiAgentHubStatusFilter)) return
       if (!state.agentId || archivedChatIdSet.has(state.contactId)) return
       visibleCounts.set(state.agentId, (visibleCounts.get(state.agentId) || 0) + 1)
@@ -4197,7 +4236,7 @@ export const PhoneChat: React.FC = () => {
       name: agent.name || 'Agente sin nombre',
       count: visibleCounts.get(agent.id) || 0
     }))
-  }, [publishedAgentDefs, agentStates, aiAgentHubStatusFilter, archivedChatIdSet])
+  }, [publishedAgentDefs, allAgentStates, aiAgentHubStatusFilter, archivedChatIdSet])
   const showAiAgentHubAgentSelector = Boolean(agentEnabled && publishedAgentCount > 1 && aiAgentHubStatusFilter !== 'unassigned')
   const activeAiAgentHubAgentFilter = showAiAgentHubAgentSelector && aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)
     ? aiAgentHubAgentFilter
@@ -4207,12 +4246,12 @@ export const PhoneChat: React.FC = () => {
     chats.forEach((contact) => {
       rows.set(contact.id, contact)
     })
-    Object.values(agentStates).forEach((state) => {
+    allAgentStates.forEach((state) => {
       if (!hasAIAgentHubHistory(state) || rows.has(state.contactId)) return
       rows.set(state.contactId, createAIAgentHubContactFromState(state))
     })
     return Array.from(rows.values())
-  }, [agentStates, chats])
+  }, [allAgentStates, chats])
   const aiAgentHubStatusCounts = useMemo(() => {
     const counts: Record<AIAgentHubStatusFilter, number> = {
       active: 0,
@@ -4224,28 +4263,32 @@ export const PhoneChat: React.FC = () => {
 
     aiAgentHubSourceChats.forEach((contact) => {
       if (archivedChatIdSet.has(contact.id)) return
-      const state = agentStates[contact.id]
-      if (isAIAgentHubStateVisible(state, 'unassigned')) {
+      const states = agentStateLists[contact.id] || []
+      const primaryState = agentStates[contact.id]
+      if (!states.length && isAIAgentHubStateVisible(primaryState, 'unassigned')) {
         counts.unassigned += 1
         return
       }
-      if (state?.status === 'active') counts.active += 1
-      if (state?.status === 'completed') counts.completed += 1
-      if (state?.status === 'paused') counts.paused += 1
-      if (isAIAgentHubStateVisible(state, 'skipped')) counts.skipped += 1
+      const visibleStates = states.length ? states : [primaryState].filter(Boolean) as ConversationAgentState[]
+      if (visibleStates.some((state) => state?.status === 'active')) counts.active += 1
+      if (visibleStates.some((state) => state?.status === 'completed')) counts.completed += 1
+      if (visibleStates.some((state) => state?.status === 'paused')) counts.paused += 1
+      if (visibleStates.some((state) => isAIAgentHubStateVisible(state, 'skipped'))) counts.skipped += 1
     })
 
     return counts
-  }, [agentStates, aiAgentHubSourceChats, archivedChatIdSet])
+  }, [agentStateLists, agentStates, aiAgentHubSourceChats, archivedChatIdSet])
   const agentHubChatRows = useMemo(() => {
     const normalizedQuery = aiAgentHubQuery.trim().toLowerCase()
 
     return aiAgentHubSourceChats
       .filter((contact) => {
+        const states = agentStateLists[contact.id] || []
         const state = agentStates[contact.id]
         if (archivedChatIdSet.has(contact.id)) return false
-        if (!isAIAgentHubStateVisible(state, aiAgentHubStatusFilter)) return false
-        if (activeAiAgentHubAgentFilter !== 'all' && state?.agentId !== activeAiAgentHubAgentFilter) return false
+        const visibleStates = states.length ? states : [state].filter(Boolean) as ConversationAgentState[]
+        if (!visibleStates.some((item) => isAIAgentHubStateVisible(item, aiAgentHubStatusFilter))) return false
+        if (activeAiAgentHubAgentFilter !== 'all' && !visibleStates.some((item) => item?.agentId === activeAiAgentHubAgentFilter)) return false
         if (!normalizedQuery) return true
 
         return [
@@ -4260,7 +4303,7 @@ export const PhoneChat: React.FC = () => {
         return Date.parse(rightState?.updatedAt || right.lastMessageDate || right.createdAt) -
           Date.parse(leftState?.updatedAt || left.lastMessageDate || left.createdAt)
       })
-  }, [activeAiAgentHubAgentFilter, agentStates, aiAgentHubQuery, aiAgentHubSourceChats, aiAgentHubStatusFilter, archivedChatIdSet])
+  }, [activeAiAgentHubAgentFilter, agentStateLists, agentStates, aiAgentHubQuery, aiAgentHubSourceChats, aiAgentHubStatusFilter, archivedChatIdSet])
   const agentPriorityChatRows = useMemo(() => {
     if (archivedViewOpen || agentPriorityViewOpen || chatFilter !== 'all') return []
     return chats
@@ -4297,7 +4340,17 @@ export const PhoneChat: React.FC = () => {
     return () => window.clearInterval(intervalId)
   }, [agentEnabled, agentStatusPhrases.length])
   const agentStatusPhrase = agentStatusPhrases[agentStatusPhraseIndex % agentStatusPhrases.length]
-  const activeConversationAgentState = activeContact?.id ? agentStates[activeContact.id] || null : null
+  const activeContactAgentStates = useMemo(
+    () => {
+      if (!activeContact?.id) return []
+      const states = agentStateLists[activeContact.id] || []
+      return states.length ? states : (agentStates[activeContact.id] ? [agentStates[activeContact.id]] : [])
+    },
+    [activeContact?.id, agentStateLists, agentStates]
+  )
+  const activeConversationAgentState = activeContact?.id
+    ? selectPrimaryAgentState(activeContactAgentStates) || agentStates[activeContact.id] || null
+    : null
   const activeConversationAgentStatus = activeConversationAgentState?.status || 'active'
   const activeConversationAgentActive = Boolean(agentEnabled && activeContact && activeConversationAgentStatus === 'active')
   const activeConversationAgentLabel = ({
@@ -4545,22 +4598,25 @@ export const PhoneChat: React.FC = () => {
     selectedChatPhoneId
   ])
 
-  const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
-    if (!cache || (!openAIConfigured && !openAILoading)) return
-    setAgentConfig(cache.config)
-    setAgentDefs(cache.agents)
-    setAgentStates(mapAgentStatesByContactId(cache.states))
-  }, [openAIConfigured, openAILoading])
+	  const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
+	    if (!cache || (!openAIConfigured && !openAILoading)) return
+	    setAgentConfig(cache.config)
+	    setAgentDefs(cache.agents)
+	    setAgentStates(mapAgentStatesByContactId(cache.states))
+	    setAgentStateLists(mapAgentStateListsByContactId(cache.states))
+	  }, [openAIConfigured, openAILoading])
 
   const loadAgentData = useCallback(async (options: { includeDefinitions?: boolean } = {}) => {
     if (openAILoading) return
 
-    if (!openAIConfigured) {
-      setAgentConfig(null)
-      setAgentDefs([])
-      setAgentStates({})
-      return
-    }
+	    if (!openAIConfigured) {
+	    setAgentConfig(null)
+	    setAgentDefs([])
+	    setAgentStates({})
+	    setAgentStateLists({})
+	      setAgentStateLists({})
+	      return
+	    }
 
     const requestGeneration = agentLoadGenerationRef.current + 1
     agentLoadGenerationRef.current = requestGeneration
@@ -4575,9 +4631,10 @@ export const PhoneChat: React.FC = () => {
           : Promise.resolve(null)
       ])
       if (agentLoadGenerationRef.current !== requestGeneration) return
-      setAgentConfig(config)
-      if (defs) setAgentDefs(defs)
-      setAgentStates(mapAgentStatesByContactId(states))
+	      setAgentConfig(config)
+	      if (defs) setAgentDefs(defs)
+	      setAgentStates(mapAgentStatesByContactId(states))
+	      setAgentStateLists(mapAgentStateListsByContactId(states))
     } catch {
       // El agente conversacional puede no estar disponible (feature apagada);
       // el chat sigue funcionando normal sin él.
@@ -4632,13 +4689,25 @@ export const PhoneChat: React.FC = () => {
     }
   }, [showToast, updateAgentDraft])
 
-  const handleAgentStateAction = useCallback(async (contactId: string, action: ConversationStateAction, successMessage: string) => {
-    try {
-      const state = await conversationalAgentService.updateState(contactId, action)
-      setAgentStates((current) => ({ ...current, [contactId]: state }))
-      showToast('success', 'Agente conversacional', successMessage)
-    } catch (error: any) {
-      showToast('error', 'Agente conversacional', error?.message || 'No se pudo actualizar la conversación')
+	  const handleAgentStateAction = useCallback(async (
+	    contactId: string,
+	    action: ConversationStateAction,
+	    successMessage: string,
+	    options: { agentId?: string } = {}
+	  ) => {
+	    try {
+	      const state = await conversationalAgentService.updateState(contactId, action, options)
+	      setAgentStateLists((current) => ({
+	        ...current,
+	        [contactId]: upsertAgentStateList(current[contactId] || [], state)
+	      }))
+	      setAgentStates((current) => ({
+	        ...current,
+	        [contactId]: selectPrimaryAgentState([state, current[contactId]].filter(Boolean) as ConversationAgentState[]) || state
+	      }))
+	      showToast('success', 'Agente conversacional', successMessage)
+	    } catch (error: any) {
+	      showToast('error', 'Agente conversacional', error?.message || 'No se pudo actualizar la conversación')
     }
   }, [showToast])
 
@@ -4657,16 +4726,29 @@ export const PhoneChat: React.FC = () => {
       updatedAt: acknowledgedAt
     })
 
-    setAgentStates((current) => {
-      const currentState = current[contactId]
-      if (!currentState?.signal || currentState.signal === 'discarded') return current
-      return { ...current, [contactId]: toAcknowledgedState(currentState) }
-    })
+	    setAgentStates((current) => {
+	      const currentState = current[contactId]
+	      if (!currentState?.signal || currentState.signal === 'discarded') return current
+	      return { ...current, [contactId]: toAcknowledgedState(currentState) }
+	    })
+	    setAgentStateLists((current) => ({
+	      ...current,
+	      [contactId]: (current[contactId] || []).map((item) => (
+	        (item.id && state.id ? item.id === state.id : item.agentId === state.agentId) ? toAcknowledgedState(item) : item
+	      ))
+	    }))
 
-    void conversationalAgentService.updateState(contactId, 'clear_signal')
-      .then((nextState) => {
-        setAgentStates((current) => ({ ...current, [contactId]: nextState }))
-      })
+	    void conversationalAgentService.updateState(contactId, 'clear_signal', { agentId: state.agentId || undefined })
+	      .then((nextState) => {
+	        setAgentStateLists((current) => ({
+	          ...current,
+	          [contactId]: upsertAgentStateList(current[contactId] || [], nextState)
+	        }))
+	        setAgentStates((current) => ({
+	          ...current,
+	          [contactId]: selectPrimaryAgentState([nextState, current[contactId]].filter(Boolean) as ConversationAgentState[]) || nextState
+	        }))
+	      })
       .catch((error: any) => {
         setAgentStates((current) => {
           const currentState = current[contactId]
@@ -12902,10 +12984,11 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
-    const isMuted = mutedChatIdSet.has(chatActionContact.id)
-    const showingAgentControls = chatMoreMode === 'agentControls'
-    const agentState = agentStates[chatActionContact.id] || null
-    const agentChatStatus = agentState?.status || 'active'
+	    const isMuted = mutedChatIdSet.has(chatActionContact.id)
+	    const showingAgentControls = chatMoreMode === 'agentControls'
+	    const contactAgentStates = (agentStateLists[chatActionContact.id] || []).filter((state) => state.agentId)
+	    const agentState = selectPrimaryAgentState(contactAgentStates) || agentStates[chatActionContact.id] || null
+	    const agentChatStatus = agentState?.status || 'active'
     const agentStatusLabels: Record<string, string> = {
       active: 'El agente atiende este chat.',
       paused: 'Agente pausado por 24hrs en este chat.',
@@ -12915,50 +12998,58 @@ export const PhoneChat: React.FC = () => {
       discarded: 'Conversación descartada por el agente.'
     }
 
-    const runAgentAction = (action: ConversationStateAction, successMessage: string) => {
-      handleAgentStateAction(chatActionContact.id, action, successMessage)
-      actionSheetDismiss.requestClose()
-      setConversationAgentDropdownOpen(false)
+	    const getStateAgentName = (state: ConversationAgentState) => (
+	      state.agentName ||
+	      agentDefs.find((agent) => agent.id === state.agentId)?.name ||
+	      'Agente'
+	    )
+
+	    const runAgentAction = (action: ConversationStateAction, successMessage: string, state?: ConversationAgentState) => {
+	      handleAgentStateAction(chatActionContact.id, action, successMessage, { agentId: state?.agentId || undefined })
+	      actionSheetDismiss.requestClose()
+	      setConversationAgentDropdownOpen(false)
       setChatActionContactId(null)
       setChatMoreMode('default')
       closeSwipeActions()
     }
 
-    const agentActions = !agentEnabled
-      ? []
-      : agentChatStatus === 'active'
-        ? [
-            {
-              label: 'Tomar conversación',
-              description: 'El agente deja de responder y tú sigues el chat.',
-              Icon: User,
-              className: styles.chatMoreAgent,
-              onClick: () => runAgentAction('take_over', `Tomaste la conversación de ${getContactName(chatActionContact)}.`)
-            },
-            {
-              label: 'Pausar por 24hrs',
-              description: 'Detiene respuestas automáticas durante 24 horas.',
-              Icon: Pause,
-              className: styles.chatMoreAgent,
-              onClick: () => runAgentAction('pause', 'El agente quedó pausado por 24hrs en este chat.')
-            },
-            {
-              label: 'Omitir agente',
-              description: 'El agente nunca atenderá este chat.',
-              Icon: X,
-              className: styles.chatMoreAgent,
-              onClick: () => runAgentAction('skip', 'El agente quedó omitido en este chat.')
-            }
-          ]
-        : [
-            {
-              label: 'Reactivar agente',
-              description: 'El agente vuelve a atender esta conversación.',
-              Icon: Play,
-              className: styles.chatMoreAgent,
-              onClick: () => runAgentAction('activate', 'El agente volvió a atender este chat.')
-            }
-          ]
+	    const agentActions = !agentEnabled
+	      ? []
+	      : contactAgentStates.flatMap((state) => {
+	          const agentName = getStateAgentName(state)
+	          if (state.status !== 'active') {
+	            return [{
+	              label: `Reactivar ${agentName}`,
+	              description: agentStatusLabels[state.status] || 'El agente vuelve a atender esta conversación.',
+	              Icon: Play,
+	              className: styles.chatMoreAgent,
+	              onClick: () => runAgentAction('activate', `${agentName} volvió a atender este chat.`, state)
+	            }]
+	          }
+	          return [
+	            {
+	              label: `Tomar ${agentName}`,
+	              description: 'Solo este agente deja de responder y tú sigues el chat.',
+	              Icon: User,
+	              className: styles.chatMoreAgent,
+	              onClick: () => runAgentAction('take_over', `Tomaste la conversación de ${getContactName(chatActionContact)} con ${agentName}.`, state)
+	            },
+	            {
+	              label: `Pausar ${agentName}`,
+	              description: 'Detiene solo este agente durante 24 horas.',
+	              Icon: Pause,
+	              className: styles.chatMoreAgent,
+	              onClick: () => runAgentAction('pause', `${agentName} quedó pausado por 24hrs en este chat.`, state)
+	            },
+	            {
+	              label: `Omitir ${agentName}`,
+	              description: 'Solo este agente no volverá a tomar este chat.',
+	              Icon: X,
+	              className: styles.chatMoreAgent,
+	              onClick: () => runAgentAction('skip', `${agentName} quedó omitido en este chat.`, state)
+	            }
+	          ]
+	        })
 
     const contactActions = showingAgentControls
       ? []
@@ -12997,12 +13088,12 @@ export const PhoneChat: React.FC = () => {
 
     return (
       <div className={styles.chatMoreList}>
-        {agentEnabled && (
-          <div className={styles.agentChatStatus}>
-            <Bot size={16} />
-            <span>{agentStatusLabels[agentChatStatus] || agentStatusLabels.active}</span>
-          </div>
-        )}
+	        {agentEnabled && (
+	          <div className={styles.agentChatStatus}>
+	            <Bot size={16} />
+	            <span>{contactAgentStates.length > 1 ? `${contactAgentStates.length} agentes asignados` : (agentStatusLabels[agentChatStatus] || agentStatusLabels.active)}</span>
+	          </div>
+	        )}
         {actions.map(({ label, description, Icon: ActionIcon, className, onClick }) => (
           <button key={label} type="button" onClick={onClick}>
             <span className={className}>

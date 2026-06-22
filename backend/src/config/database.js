@@ -1002,6 +1002,133 @@ async function ensureTableColumns(tableName, columns) {
   }
 }
 
+const CONVERSATIONAL_AGENT_STATE_COLUMNS = [
+  'id',
+  'contact_id',
+  'status',
+  'signal',
+  'signal_reason',
+  'signal_summary',
+  'signal_at',
+  'last_inbound_message_id',
+  'last_answered_inbound_message_id',
+  'last_reply_at',
+  'channel',
+  'follow_up_base_message_id',
+  'follow_up_sent_count',
+  'follow_up_last_sent_at',
+  'paused_until_at',
+  'activated_at',
+  'activation_source',
+  'activated_by',
+  'updated_by',
+  'agent_id',
+  'closing_context_json',
+  'created_at',
+  'updated_at'
+]
+
+async function ensureConversationalAgentStateIdentity() {
+  if (usePostgres) {
+    await db.run('ALTER TABLE conversational_agent_state ADD COLUMN IF NOT EXISTS id TEXT').catch(() => undefined)
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET id = 'cas_' || md5(COALESCE(contact_id, '') || COALESCE(agent_id, '') || random()::text || clock_timestamp()::text)
+      WHERE id IS NULL OR id = ''
+    `).catch(() => undefined)
+    await db.run('ALTER TABLE conversational_agent_state ALTER COLUMN id SET NOT NULL').catch(() => undefined)
+    await db.exec(`
+      DO $$
+      DECLARE pk_name text;
+      DECLARE pk_columns text;
+      BEGIN
+        SELECT tc.constraint_name, string_agg(kcu.column_name, ',' ORDER BY kcu.ordinal_position)
+          INTO pk_name, pk_columns
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+         AND tc.table_name = kcu.table_name
+        WHERE tc.table_schema = 'public'
+          AND tc.table_name = 'conversational_agent_state'
+          AND tc.constraint_type = 'PRIMARY KEY'
+        GROUP BY tc.constraint_name;
+
+        IF pk_name IS NOT NULL AND pk_columns <> 'id' THEN
+          EXECUTE format('ALTER TABLE conversational_agent_state DROP CONSTRAINT %I', pk_name);
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1
+          FROM information_schema.table_constraints
+          WHERE table_schema = 'public'
+            AND table_name = 'conversational_agent_state'
+            AND constraint_type = 'PRIMARY KEY'
+        ) THEN
+          ALTER TABLE conversational_agent_state ADD CONSTRAINT conversational_agent_state_pkey PRIMARY KEY (id);
+        END IF;
+      END $$;
+    `).catch((err) => {
+      logger.warn(`No se pudo migrar la llave primaria del estado conversacional: ${err.message}`)
+    })
+  } else {
+    const columns = await db.all('PRAGMA table_info(conversational_agent_state)').catch(() => [])
+    const idColumn = columns.find((column) => column.name === 'id')
+    const primaryColumns = columns
+      .filter((column) => Number(column.pk) > 0)
+      .sort((left, right) => Number(left.pk) - Number(right.pk))
+      .map((column) => column.name)
+
+    if (!idColumn || primaryColumns.join(',') !== 'id') {
+      const selectedColumns = CONVERSATIONAL_AGENT_STATE_COLUMNS
+        .filter((column) => column !== 'id')
+        .map((column) => (columns.some((item) => item.name === column) ? column : 'NULL'))
+        .join(', ')
+
+      await db.transaction(async (tx) => {
+        await tx.run(`
+          CREATE TABLE IF NOT EXISTS conversational_agent_state_next (
+            id ${usePostgres ? "TEXT PRIMARY KEY DEFAULT ('cas_' || md5(random()::text || clock_timestamp()::text))" : "TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))"},
+            contact_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            signal TEXT,
+            signal_reason TEXT,
+            signal_summary TEXT,
+            signal_at DATETIME,
+            last_inbound_message_id TEXT,
+            last_answered_inbound_message_id TEXT,
+            last_reply_at DATETIME,
+            channel TEXT DEFAULT 'whatsapp',
+            follow_up_base_message_id TEXT,
+            follow_up_sent_count INTEGER DEFAULT 0,
+            follow_up_last_sent_at DATETIME,
+            paused_until_at DATETIME,
+            activated_at DATETIME,
+            activation_source TEXT,
+            activated_by TEXT,
+            updated_by TEXT,
+            agent_id TEXT,
+            closing_context_json TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+          )
+        `)
+        await tx.run(`
+          INSERT INTO conversational_agent_state_next (${CONVERSATIONAL_AGENT_STATE_COLUMNS.join(', ')})
+          SELECT 'cas_' || lower(hex(randomblob(16))), ${selectedColumns}
+          FROM conversational_agent_state
+        `)
+        await tx.run('DROP TABLE conversational_agent_state')
+        await tx.run('ALTER TABLE conversational_agent_state_next RENAME TO conversational_agent_state')
+      })
+      logger.info('[Agente conversacional] Estado migrado a llave independiente por agente')
+    }
+  }
+
+  await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_state_contact_agent_unique ON conversational_agent_state(contact_id, agent_id) WHERE agent_id IS NOT NULL').catch(() => undefined)
+}
+
 // Inicializar tablas
 async function initTables() {
   try {
@@ -4388,12 +4515,13 @@ async function initTables() {
     }
     await db.run('CREATE INDEX IF NOT EXISTS idx_conversational_agents_enabled ON conversational_agents(enabled, position)')
 
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS conversational_agent_state (
-        contact_id TEXT PRIMARY KEY,
-        status TEXT NOT NULL DEFAULT 'active',
-        signal TEXT,
-        signal_reason TEXT,
+	    await db.run(`
+	      CREATE TABLE IF NOT EXISTS conversational_agent_state (
+	        id ${usePostgres ? "TEXT PRIMARY KEY DEFAULT ('cas_' || md5(random()::text || clock_timestamp()::text))" : "TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))"},
+	        contact_id TEXT NOT NULL,
+	        status TEXT NOT NULL DEFAULT 'active',
+	        signal TEXT,
+	        signal_reason TEXT,
         signal_summary TEXT,
         signal_at DATETIME,
         last_inbound_message_id TEXT,
@@ -4420,10 +4548,11 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_agent_status ON conversational_agent_state(agent_id, status, updated_at)')
 
     // Columnas agregadas al evolucionar el agente conversacional.
-    for (const [columnName, columnType] of [
-      ['agent_id', 'TEXT'],
-      ['channel', "TEXT DEFAULT 'whatsapp'"],
-      ['last_answered_inbound_message_id', 'TEXT'],
+	    for (const [columnName, columnType] of [
+	      ['id', 'TEXT'],
+	      ['agent_id', 'TEXT'],
+	      ['channel', "TEXT DEFAULT 'whatsapp'"],
+	      ['last_answered_inbound_message_id', 'TEXT'],
       ['closing_context_json', 'TEXT'],
       ['follow_up_base_message_id', 'TEXT'],
       ['follow_up_sent_count', 'INTEGER DEFAULT 0'],
@@ -4440,11 +4569,12 @@ async function initTables() {
           await db.run(`ALTER TABLE conversational_agent_state ADD COLUMN ${columnName} ${columnType}`)
         }
       } catch (err) {
-        // La columna ya existe.
-      }
-    }
-    await db.run(`
-      UPDATE conversational_agent_state
+	        // La columna ya existe.
+	      }
+	    }
+	    await ensureConversationalAgentStateIdentity()
+	    await db.run(`
+	      UPDATE conversational_agent_state
       SET activated_at = COALESCE(activated_at, created_at, updated_at, CURRENT_TIMESTAMP),
           activation_source = COALESCE(
             activation_source,

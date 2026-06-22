@@ -18,13 +18,14 @@ import {
 import {
   getConversationalAgentConfig,
   getConversationState,
-  ensureConversationState,
+  listConversationStatesForContact,
   ensureConversationalAgentRuntimeEnabledForPublishedAgents,
   recordConversationalAgentEvent,
   getConversationalAgent,
   listConversationalAgents,
   matchAgentForMessage,
   assignAgentToConversation,
+  releaseAgentFromConversation,
   buildRuleContext,
   exitRulesMatch,
   normalizeConversationalAgentModel,
@@ -399,7 +400,10 @@ async function loadAdvancedClosingRuntimeContext({
              attribution_ad_id, visitor_id, ghl_contact_id, preferred_whatsapp_phone_number_id
       FROM contacts WHERE id = ?
     `, [contactId]).catch(() => null) : null,
-    contactId ? db.get('SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null) : null,
+	    contactId ? db.get(
+	      'SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ? LIMIT 1',
+	      [contactId, config?.id || null]
+	    ).catch(() => null) : null,
     db.all(`
       SELECT p.id, p.name, pp.amount, pp.currency
       FROM products p
@@ -943,6 +947,7 @@ async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, ph
   const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
   clearFollowUpTimer(getRunKey(contactId, normalizedChannel))
   const followUp = normalizeAgentFollowUp(agentConfig.followUp)
+  const agentId = agentConfig?.id || null
   if (!followUp.enabled || !latest?.id || isEmailConversationalChannel(normalizedChannel)) {
     await db.run(`
       UPDATE conversational_agent_state
@@ -951,7 +956,8 @@ async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, ph
           follow_up_last_sent_at = NULL,
           updated_at = CURRENT_TIMESTAMP
       WHERE contact_id = ?
-    `, [contactId]).catch(() => {})
+        AND agent_id = ?
+    `, [contactId, agentId]).catch(() => {})
     return
   }
 
@@ -962,9 +968,10 @@ async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, ph
         follow_up_last_sent_at = NULL,
         updated_at = CURRENT_TIMESTAMP
     WHERE contact_id = ?
-  `, [latest.id, contactId])
+      AND agent_id = ?
+  `, [latest.id, contactId, agentId])
 
-  const state = await getConversationState(contactId).catch(() => null)
+  const state = await getConversationState(contactId, { agentId }).catch(() => null)
   scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, reason: 'respuesta enviada', channel: normalizedChannel })
 }
 
@@ -989,7 +996,7 @@ function scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, re
   const delayMs = Math.max(0, Math.min(dueAtMs - nowMs, MAX_TIMER_MS))
   const timer = setTimeout(() => {
     followUpTimers.delete(runKey)
-    runScheduledFollowUp({ contactId, phone, baseMessageId: latest.id, followUpIndex: next.index, channel: normalizedChannel }).catch((error) => {
+    runScheduledFollowUp({ contactId, phone, baseMessageId: latest.id, followUpIndex: next.index, channel: normalizedChannel, agentId: agentConfig.id }).catch((error) => {
       logger.error(`[Agente conversacional] Error ejecutando seguimiento: ${error.message}`)
     })
   }, delayMs)
@@ -1065,7 +1072,7 @@ async function sendConversationalChannelTextMessage({
   })
 }
 
-async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex, channel = 'whatsapp' }) {
+async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex, channel = 'whatsapp', agentId = null }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
   let config = await getConversationalAgentConfig()
   if (!config.enabled) {
@@ -1075,7 +1082,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   }
   if (!config.enabled) return
 
-  const state = await getConversationState(contactId)
+  const state = await getConversationState(contactId, { agentId })
   if (!state || state.status !== 'active' || state.signal) return
   if (state.followUpBaseMessageId !== baseMessageId) return
 
@@ -1137,7 +1144,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     traceMessage: `seguimiento ${followUpIndex}`
   })
 
-  const postState = await getConversationState(contactId)
+  const postState = await getConversationState(contactId, { agentId: agentConfig.id })
   if (ctx.suppressReply || !reply || postState?.status !== 'active' || postState?.signal) {
     await recordConversationalAgentEvent({
       contactId,
@@ -1181,7 +1188,8 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
               activated_by = COALESCE(activated_by, 'agent'),
               updated_at = CURRENT_TIMESTAMP
           WHERE contact_id = ?
-        `, [doneLatest.id, followUpIndex, doneContactId])
+            AND agent_id = ?
+        `, [doneLatest.id, followUpIndex, doneContactId, agentConfig.id])
       }
     }
   })
@@ -1224,7 +1232,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     }
   }).catch(() => {})
 
-  const nextState = await getConversationState(contactId).catch(() => null)
+  const nextState = await getConversationState(contactId, { agentId: agentConfig.id }).catch(() => null)
   scheduleNextFollowUp({ contactId, phone, latest, state: nextState, agentConfig, reason: 'seguimiento enviado', channel: normalizedChannel })
 }
 
@@ -1340,10 +1348,65 @@ export async function sendReplyParts({
           activated_by = COALESCE(activated_by, 'agent'),
           updated_at = CURRENT_TIMESTAMP
       WHERE contact_id = ?
-    `, [latest.id, contactId])
+        AND agent_id = ?
+    `, [latest.id, contactId, agentConfig?.id || null])
   }
 
   return { parts, sentParts: parts.length, interruptedBy: null, delaySchedule }
+}
+
+function isRunnableConversationState(state) {
+  return Boolean(state?.agentId && state.status === 'active' && !state.signal)
+}
+
+async function resolveInboundAgentForContact({ contactId, messageText, channel, ruleContext }) {
+  const states = await listConversationStatesForContact(contactId).catch(() => [])
+  const blockedAgentIds = new Set(
+    states
+      .filter((state) => state?.agentId && !isRunnableConversationState(state))
+      .map((state) => state.agentId)
+  )
+  const releasedAgentIds = new Set()
+
+  for (const state of states.filter(isRunnableConversationState)) {
+    const agentConfig = await getConversationalAgent(state.agentId).catch(() => null)
+    if (!agentConfig?.enabled) continue
+
+    if (exitRulesMatch(agentConfig, ruleContext)) {
+      releasedAgentIds.add(agentConfig.id)
+      await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'agent_released',
+        detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'exit_rules' }
+      })
+      continue
+    }
+
+    return { agentConfig, state, assigned: false }
+  }
+
+  const agentConfig = await matchAgentForMessage({
+    contactId,
+    messageText,
+    channel,
+    excludeAgentIds: [...blockedAgentIds, ...releasedAgentIds],
+    ruleContext
+  })
+
+  if (!agentConfig) return { agentConfig: null, state: states[0] || null, assigned: false }
+
+  const state = await assignAgentToConversation(contactId, agentConfig.id, {
+    activationSource: 'automatic',
+    updatedBy: 'agent'
+  })
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'agent_assigned',
+    detail: { agentId: agentConfig.id, name: agentConfig.name, channel }
+  })
+
+  return { agentConfig, state, assigned: true }
 }
 
 /**
@@ -1366,11 +1429,8 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
 
     clearFollowUpTimer(runKey)
 
-    const state = await ensureConversationState(contactId)
-    if (!state || state.status !== 'active') return
-
-    if (runningContacts.has(runKey)) {
-      pendingContactReruns.set(runKey, { contactId, phone, messageId, channel: normalizedChannel })
+	    if (runningContacts.has(runKey)) {
+	      pendingContactReruns.set(runKey, { contactId, phone, messageId, channel: normalizedChannel })
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'run_rerun_queued',
@@ -1388,70 +1448,42 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       const latest = await loadLatestInboundMessage(contactId, normalizedChannel)
       if (!latest) return
 
-      const freshState = await getConversationState(contactId)
-      if (!freshState || freshState.status !== 'active') return
-      if (freshState.lastInboundMessageId === latest.id && freshState.lastAnsweredInboundMessageId === latest.id) return
-
-      // Reclama el mensaje antes de correr para evitar respuestas duplicadas.
-      await db.run(`
-        UPDATE conversational_agent_state
-        SET last_inbound_message_id = ?, channel = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE contact_id = ?
-      `, [latest.id, normalizedChannel, contactId])
-
-      // Resolver qué agente atiende esta conversación: el ya asignado o el
-      // primero cuyas reglas de entrada coincidan con el mensaje/contacto.
-      const latestMessageText = cleanMessageText(latest)
+	      // Resolver qué agente atiende esta conversación: el ya asignado o el
+	      // primero cuyas reglas de entrada coincidan con el mensaje/contacto.
+	      const latestMessageText = cleanMessageText(latest)
       const ruleContext = await buildRuleContext({
         contactId,
         messageText: latestMessageText,
-        channel: normalizedChannel
-      })
+	        channel: normalizedChannel
+	      })
 
-      let agentConfig = freshState.agentId ? await getConversationalAgent(freshState.agentId) : null
-      let releasedAgentId = null
-
-      // Reglas de salida: si alguna se cumple, este agente suelta el contacto.
-      if (agentConfig && exitRulesMatch(agentConfig, ruleContext)) {
-        releasedAgentId = agentConfig.id
-        await assignAgentToConversation(contactId, null)
-        await recordConversationalAgentEvent({
-          contactId,
-          eventType: 'agent_released',
-          detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'exit_rules' }
-        })
-        agentConfig = null
-      }
-
-      if (!agentConfig || !agentConfig.enabled) {
-        agentConfig = await matchAgentForMessage({
-          contactId,
-          messageText: latestMessageText,
-          channel: normalizedChannel,
-          excludeAgentId: releasedAgentId,
-          ruleContext
-        })
-        if (agentConfig) {
-          await assignAgentToConversation(contactId, agentConfig.id, {
-            activationSource: 'automatic',
-            updatedBy: 'agent'
-          })
-          await recordConversationalAgentEvent({
-            contactId,
-            eventType: 'agent_assigned',
-            detail: { agentId: agentConfig.id, name: agentConfig.name, channel: normalizedChannel }
-          })
-        }
-      }
-      if (!agentConfig) {
-        // Ningún agente aplica a esta conversación: no responder.
-        await recordConversationalAgentEvent({
+	      const resolved = await resolveInboundAgentForContact({
+	        contactId,
+	        messageText: latestMessageText,
+	        channel: normalizedChannel,
+	        ruleContext
+	      })
+	      let agentConfig = resolved.agentConfig
+	      let agentState = resolved.state
+	      if (!agentConfig) {
+	        // Ningún agente aplica a esta conversación: no responder.
+	        await recordConversationalAgentEvent({
           contactId,
           eventType: 'agent_not_matched',
           detail: { messageId: latest.id, channel: normalizedChannel }
-        }).catch(() => {})
-        return
-      }
+	        }).catch(() => {})
+	        return
+	      }
+	      agentState = await getConversationState(contactId, { agentId: agentConfig.id })
+	      if (!agentState || agentState.status !== 'active' || agentState.signal) return
+	      if (agentState.lastInboundMessageId === latest.id && agentState.lastAnsweredInboundMessageId === latest.id) return
+
+	      // Reclama el mensaje antes de correr para evitar respuestas duplicadas.
+	      await db.run(`
+	        UPDATE conversational_agent_state
+	        SET last_inbound_message_id = ?, channel = ?, updated_at = CURRENT_TIMESTAMP
+	        WHERE id = ?
+	      `, [latest.id, normalizedChannel, agentState.id])
 
       const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
       const runtime = await resolveConversationalAIRuntime(aiProvider)
@@ -1471,7 +1503,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         includeBinary: includeBinaryMedia
       })
       if (!messages.length) return
-      const pendingMessages = await loadPendingInboundMessages(contactId, freshState, normalizedChannel)
+	      const pendingMessages = await loadPendingInboundMessages(contactId, agentState, normalizedChannel)
       const pendingContextMessage = buildPendingReplyContextMessage(pendingMessages)
       const messagesForAgent = pendingContextMessage ? [...messages, pendingContextMessage] : messages
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
@@ -1531,7 +1563,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       }
 
       // El estado pudo cambiar durante la ejecución o la espera (descartada, humano, etc.)
-      const postState = await getConversationState(contactId)
+	      const postState = await getConversationState(contactId, { agentId: agentConfig.id })
       const blockedStatuses = new Set(['discarded', 'paused', 'skipped', 'human'])
       if (ctx.suppressReply || !reply || blockedStatuses.has(postState?.status)) {
         await recordConversationalAgentEvent({
@@ -1730,13 +1762,21 @@ export async function recoverPendingConversationalAgentConversations({
     latestByContact.set(key, row)
   }
 
-  let scheduled = 0
-  for (const latest of latestByContact.values()) {
-    if (scheduled >= PENDING_RECOVERY_SCHEDULE_LIMIT) break
-    const state = await getConversationState(latest.contact_id).catch(() => null)
-    if (!shouldRecoverPendingInbound(latest, state, { nowMs, maxAgeMs })) continue
+	  let scheduled = 0
+	  for (const latest of latestByContact.values()) {
+	    if (scheduled >= PENDING_RECOVERY_SCHEDULE_LIMIT) break
+	    const states = await listConversationStatesForContact(latest.contact_id).catch(() => [])
+	    const runnableStates = states.filter(isRunnableConversationState)
+	    const alreadyAnswered = states.some((state) => (
+	      state?.lastAnsweredInboundMessageId === latest.id ||
+	      state?.last_answered_inbound_message_id === latest.id
+	    ))
+	    if (alreadyAnswered) continue
+	    const recoveryState = runnableStates[0] || null
+	    if (recoveryState && !shouldRecoverPendingInbound(latest, recoveryState, { nowMs, maxAgeMs })) continue
+	    if (!recoveryState && !shouldRecoverPendingInbound(latest, null, { nowMs, maxAgeMs })) continue
 
-    await recordConversationalAgentEvent({
+	    await recordConversationalAgentEvent({
       contactId: latest.contact_id,
       eventType: 'pending_recovery_scheduled',
       detail: { messageId: latest.id, channel: latest.channel || 'whatsapp', maxAgeMs }

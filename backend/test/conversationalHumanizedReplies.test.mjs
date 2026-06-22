@@ -8,6 +8,7 @@ import { getAccountTimezone } from '../src/utils/dateUtils.js'
 import { CHEAPEST_OPENAI_MODEL } from '../src/config/openAIModels.js'
 import { APPOINTMENT_CONFIRMATION_MODEL } from '../src/agents/appointmentConfirmationAgent.js'
 import {
+  assignAgentToConversation,
   buildConversationalAgentMetrics,
   CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY,
   completeConversationalAgentSalePaymentFromInvoice,
@@ -20,6 +21,7 @@ import {
   getConversationalAgentConfig,
   getConversationGoalLink,
   getConversationState,
+  listConversationStatesForContact,
   getAgentFollowUpStepDelayMs,
   getAgentReplyDeliveryPartDelayMs,
   handleConversationalAgentTriggerLinkClick,
@@ -199,6 +201,50 @@ test('pausar una conversación del agente dura 24 horas', async () => {
     const stored = await db.get('SELECT status, paused_until_at FROM conversational_agent_state WHERE contact_id = ?', [contactId])
     assert.equal(stored.status, 'paused')
     assert.equal(stored.paused_until_at, state.pausedUntilAt)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('los estados conversacionales son independientes por contacto y agente', async () => {
+  const contactId = `contact_agent_scope_${randomUUID()}`
+  const agentOneId = `agent_scope_one_${randomUUID()}`
+  const agentTwoId = `agent_scope_two_${randomUUID()}`
+  const agentThreeId = `agent_scope_three_${randomUUID()}`
+
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215552400099', `${contactId}@test.local`, 'Scope Agentes', 'test']
+    )
+
+    await assignAgentToConversation(contactId, agentOneId, { activationSource: 'manual', updatedBy: 'user' })
+    await assignAgentToConversation(contactId, agentTwoId, { activationSource: 'manual', updatedBy: 'user' })
+
+    const agentOneSkipped = await setConversationStatus(contactId, 'skipped', { updatedBy: 'user', agentId: agentOneId })
+    const agentTwoStillActive = await getConversationState(contactId, { agentId: agentTwoId })
+
+    assert.equal(agentOneSkipped.status, 'skipped')
+    assert.equal(agentOneSkipped.agentId, agentOneId)
+    assert.equal(agentTwoStillActive.status, 'active')
+    assert.equal(agentTwoStillActive.agentId, agentTwoId)
+
+    await assignAgentToConversation(contactId, agentThreeId, { activationSource: 'automatic', updatedBy: 'agent' })
+    const agentThreeState = await getConversationState(contactId, { agentId: agentThreeId })
+    assert.equal(agentThreeState.status, 'active')
+    assert.equal(agentThreeState.agentId, agentThreeId)
+
+    const states = await listConversationStatesForContact(contactId)
+    const statusesByAgent = new Map(states.map((state) => [state.agentId, state.status]))
+    assert.equal(statusesByAgent.get(agentOneId), 'skipped')
+    assert.equal(statusesByAgent.get(agentTwoId), 'active')
+    assert.equal(statusesByAgent.get(agentThreeId), 'active')
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)

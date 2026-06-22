@@ -267,8 +267,10 @@ export interface ConversationalAgentDef {
 export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt' | 'systemClosingStrategy'>>
 
 export interface ConversationAgentState {
+  id?: string | null
   contactId: string
   agentId: string | null
+  agentName?: string | null
   status: ConversationStatus
   pausedUntilAt?: string | null
   signal: ConversationSignal | null
@@ -761,10 +763,15 @@ function writeConversationalAgentLiveCache(
 function updateCachedAgentState(state: ConversationAgentState) {
   const current = readConversationalAgentLiveCache()
   const states = current?.states || []
+  const sameState = (item: ConversationAgentState) => (
+    item.id && state.id
+      ? item.id === state.id
+      : item.contactId === state.contactId && (item.agentId || '') === (state.agentId || '')
+  )
   writeConversationalAgentLiveCache({
     states: [
       state,
-      ...states.filter((item) => item.contactId !== state.contactId)
+      ...states.filter((item) => !sameState(item))
     ]
   }, { notify: true })
 }
@@ -895,6 +902,10 @@ export const conversationalAgentService = {
 
   getState(contactId: string): Promise<ConversationAgentState | null> {
     return request<ConversationAgentState | null>(`/states/${encodeURIComponent(contactId)}`)
+  },
+
+  getStates(contactId: string): Promise<ConversationAgentState[]> {
+    return request<ConversationAgentState[]>(`/states/${encodeURIComponent(contactId)}?includeAll=1`)
   },
 
   async updateState(

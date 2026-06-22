@@ -700,9 +700,43 @@ function getAvatarChannelBadgeClass(kind: ContactChannelBadgeKind) {
 function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
   const next: Record<string, ConversationAgentState> = {}
   states.forEach((state) => {
-    if (state?.contactId) next[state.contactId] = state
+    if (!state?.contactId) return
+    const current = next[state.contactId]
+    next[state.contactId] = selectPrimaryAgentState([current, state].filter(Boolean) as ConversationAgentState[]) || state
   })
   return next
+}
+
+function selectPrimaryAgentState(states: ConversationAgentState[] = []) {
+  return [...states].filter(Boolean).sort((left, right) => {
+    const priority = (state: ConversationAgentState) => {
+      if (state.status === 'active' && state.agentId && !state.signal) return 0
+      if (state.signal) return 1
+      if (state.agentId) return 2
+      return 3
+    }
+    const priorityDiff = priority(left) - priority(right)
+    if (priorityDiff !== 0) return priorityDiff
+    return Date.parse(right.updatedAt || right.activatedAt || right.signalAt || '') - Date.parse(left.updatedAt || left.activatedAt || left.signalAt || '')
+  })[0] || null
+}
+
+function mapAgentStateListsByContactId(states: ConversationAgentState[] = []) {
+  const next: Record<string, ConversationAgentState[]> = {}
+  states.forEach((state) => {
+    if (!state?.contactId) return
+    next[state.contactId] = [...(next[state.contactId] || []), state]
+  })
+  return next
+}
+
+function upsertAgentStateList(current: ConversationAgentState[] = [], state: ConversationAgentState) {
+  const sameState = (item: ConversationAgentState) => (
+    item.id && state.id
+      ? item.id === state.id
+      : item.contactId === state.contactId && (item.agentId || '') === (state.agentId || '')
+  )
+  return [state, ...current.filter((item) => !sameState(item))]
 }
 
 function hasAgentInboxHistory(state: ConversationAgentState | null | undefined) {
@@ -2081,6 +2115,7 @@ export const DesktopChat: React.FC = () => {
   const [conversationAgentEnabled, setConversationAgentEnabled] = useState(false)
   const [conversationAgentState, setConversationAgentState] = useState<ConversationAgentState | null>(null)
   const [agentStates, setAgentStates] = useState<Record<string, ConversationAgentState>>({})
+  const [agentStateLists, setAgentStateLists] = useState<Record<string, ConversationAgentState[]>>({})
   const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>([])
   const [agentInboxStatusFilter, setAgentInboxStatusFilter] = useState<AgentInboxStatusFilter>(DEFAULT_AGENT_INBOX_STATUS_FILTER)
   const [agentComposerMenuOpen, setAgentComposerMenuOpen] = useState(false)
@@ -2185,15 +2220,19 @@ export const DesktopChat: React.FC = () => {
     () => visibleChatsForList.filter((contact) => archivedChatIdSet.has(contact.id)).length,
     [archivedChatIdSet, visibleChatsForList]
   )
+  const allAgentStates = useMemo(
+    () => Object.values(agentStateLists).flat(),
+    [agentStateLists]
+  )
   const agentPriorityStates = useMemo(
     () => conversationAgentEnabled
-      ? Object.values(agentStates).filter((state) => (
+      ? allAgentStates.filter((state) => (
         Boolean(state.signal) &&
         state.signal !== 'discarded' &&
         !['human', 'skipped', 'discarded'].includes(state.status)
       ))
       : [],
-    [agentStates, conversationAgentEnabled]
+    [allAgentStates, conversationAgentEnabled]
   )
   const agentPriorityChatIdSet = useMemo(
     () => new Set(agentPriorityStates.map((state) => state.contactId)),
@@ -2204,12 +2243,12 @@ export const DesktopChat: React.FC = () => {
     visibleChatsForList.forEach((contact) => {
       rows.set(contact.id, contact)
     })
-    Object.values(agentStates).forEach((state) => {
+    allAgentStates.forEach((state) => {
       if (!hasAgentInboxHistory(state) || rows.has(state.contactId)) return
       rows.set(state.contactId, createAgentInboxContactFromState(state))
     })
     return Array.from(rows.values())
-  }, [agentStates, visibleChatsForList])
+  }, [allAgentStates, visibleChatsForList])
   const agentInboxStatusCounts = useMemo(() => {
     const counts: Record<AgentInboxStatusFilter, number> = {
       active: 0,
@@ -2219,33 +2258,40 @@ export const DesktopChat: React.FC = () => {
       unassigned: 0
     }
 
-    agentInboxSourceChats.forEach((contact) => {
-      if (archivedChatIdSet.has(contact.id)) return
-      const state = agentStates[contact.id]
-      if (isAgentInboxStateVisible(state, 'unassigned')) {
-        counts.unassigned += 1
-        return
-      }
-      if (state?.status === 'active') counts.active += 1
-      if (state?.status === 'completed') counts.completed += 1
-      if (state?.status === 'paused') counts.paused += 1
-      if (isAgentInboxStateVisible(state, 'skipped')) counts.skipped += 1
-    })
+	    agentInboxSourceChats.forEach((contact) => {
+	      if (archivedChatIdSet.has(contact.id)) return
+	      const states = agentStateLists[contact.id] || []
+	      const primaryState = agentStates[contact.id]
+	      if (!states.length && isAgentInboxStateVisible(primaryState, 'unassigned')) {
+	        counts.unassigned += 1
+	        return
+	      }
+	      const visibleStates = states.length ? states : [primaryState].filter(Boolean) as ConversationAgentState[]
+	      if (visibleStates.some((state) => state?.status === 'active')) counts.active += 1
+	      if (visibleStates.some((state) => state?.status === 'completed')) counts.completed += 1
+	      if (visibleStates.some((state) => state?.status === 'paused')) counts.paused += 1
+	      if (visibleStates.some((state) => isAgentInboxStateVisible(state, 'skipped'))) counts.skipped += 1
+	    })
 
     return counts
-  }, [agentInboxSourceChats, agentStates, archivedChatIdSet])
+	  }, [agentInboxSourceChats, agentStateLists, agentStates, archivedChatIdSet])
   const agentAssignedChatCount = agentInboxStatusCounts[agentInboxStatusFilter]
   const listBaseChats = useMemo(
     () => (chatFilter === 'agent' ? agentInboxSourceChats : visibleChatsForList).filter((contact) => {
-      if (chatFilter === 'agent') {
-        return !archivedChatIdSet.has(contact.id) && isAgentInboxStateVisible(agentStates[contact.id], agentInboxStatusFilter)
-      }
+	      if (chatFilter === 'agent') {
+	        const states = agentStateLists[contact.id] || []
+	        return !archivedChatIdSet.has(contact.id) && (
+	          states.length
+	            ? states.some((state) => isAgentInboxStateVisible(state, agentInboxStatusFilter))
+	            : isAgentInboxStateVisible(agentStates[contact.id], agentInboxStatusFilter)
+	        )
+	      }
       if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
       if (archivedChatIdSet.has(contact.id)) return false
       if (agentPriorityChatIdSet.has(contact.id)) return false
       return true
     }),
-    [agentInboxSourceChats, agentInboxStatusFilter, agentPriorityChatIdSet, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, visibleChatsForList]
+	    [agentInboxSourceChats, agentInboxStatusFilter, agentPriorityChatIdSet, agentStateLists, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, visibleChatsForList]
   )
   const agentAssignedViewOpen = chatFilter === 'agent'
   const hasTextOrAdvancedChatFilters = Boolean(chatQuery.trim()) || activeAdvancedFilterCount > 0
@@ -2534,9 +2580,17 @@ export const DesktopChat: React.FC = () => {
     () => agentDefs.filter((agent) => agent.enabled),
     [agentDefs]
   )
-  const conversationAgentStatusLabel = conversationAgentState
-    ? CONVERSATION_AGENT_STATUS_LABELS[conversationAgentState.status] || 'Agente conversacional'
-    : 'Sin agente asignado'
+	  const conversationAgentStatusLabel = conversationAgentState
+	    ? CONVERSATION_AGENT_STATUS_LABELS[conversationAgentState.status] || 'Agente conversacional'
+	    : 'Sin agente asignado'
+  const activeContactAgentStates = useMemo(
+    () => {
+      if (!activeContact?.id) return []
+      const states = agentStateLists[activeContact.id] || []
+      return states.length ? states : (conversationAgentState ? [conversationAgentState] : [])
+    },
+    [activeContact?.id, agentStateLists, conversationAgentState]
+  )
   const advancedFilterGroups = useMemo(() => ([
     {
       id: 'channel',
@@ -2658,6 +2712,7 @@ export const DesktopChat: React.FC = () => {
       setConversationAgentState(cachedConversation.agentState)
       if (cachedConversation.agentState) {
         setAgentStates((current) => ({ ...current, [contactId]: cachedConversation.agentState as ConversationAgentState }))
+        setAgentStateLists((current) => ({ ...current, [contactId]: [cachedConversation.agentState as ConversationAgentState] }))
       }
       setMessagesLoading(false)
       setContactInfoLoading(options.showCacheRefresh !== false)
@@ -2674,16 +2729,17 @@ export const DesktopChat: React.FC = () => {
     }
     setMessagesError('')
     try {
-      const [journey, scheduledMessages, details, agentState, agentCompletions] = await Promise.all([
+      const [journey, scheduledMessages, details, contactAgentStates, agentCompletions] = await Promise.all([
         contactsService.getContactJourney(contactId, { includeBusinessMessages: true, refreshExternalStatuses: false }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => []),
         contactsService.getContactDetails(contactId).catch(() => null),
-        conversationalAgentService.getState(contactId).catch(() => null),
+        conversationalAgentService.getStates(contactId).catch(() => [] as ConversationAgentState[]),
         conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
       ])
       if (!isCurrentConversationLoad()) return
 
       const nextMessages = buildConversationMessages(journey, scheduledMessages)
+      const agentState = selectPrimaryAgentState(contactAgentStates)
       setContactJourney((current) => (
         areJourneyEventsEquivalent(current, journey) ? current : journey
       ))
@@ -2691,6 +2747,7 @@ export const DesktopChat: React.FC = () => {
       setContactInfoData(details)
       setConversationAgentState(agentState)
       setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
+      setAgentStateLists((current) => ({ ...current, [contactId]: contactAgentStates }))
       setMessages((current) => (
         (() => {
           const mergedMessages = mergeDesktopMessagesWithOptimistic(nextMessages, current)
@@ -2744,6 +2801,7 @@ export const DesktopChat: React.FC = () => {
       setEmailConnected(Boolean(emailStatus?.connected))
       setConversationAgentEnabled(Boolean(conversationalConfig?.enabled))
       setAgentStates(mapAgentStatesByContactId(stateList))
+      setAgentStateLists(mapAgentStateListsByContactId(stateList))
       setAgentDefs(agentList)
       setCalendars(calendarList)
       setSelectedCalendarId((current) => current || calendarList[0]?.id || '')
@@ -2781,7 +2839,10 @@ export const DesktopChat: React.FC = () => {
     const intervalId = window.setInterval(() => {
       void loadChats({ silent: true })
       void conversationalAgentService.listStates()
-        .then((states) => setAgentStates(mapAgentStatesByContactId(states)))
+        .then((states) => {
+          setAgentStates(mapAgentStatesByContactId(states))
+          setAgentStateLists(mapAgentStateListsByContactId(states))
+        })
         .catch(() => null)
     }, CHAT_REFRESH_INTERVAL_MS)
 
@@ -3444,8 +3505,15 @@ export const DesktopChat: React.FC = () => {
   }
 
   const updateActiveConversationAgentState = useCallback((nextState: ConversationAgentState) => {
-    setConversationAgentState(nextState)
-    setAgentStates((current) => ({ ...current, [nextState.contactId]: nextState }))
+    setConversationAgentState((current) => selectPrimaryAgentState([nextState, current].filter(Boolean) as ConversationAgentState[]))
+    setAgentStates((current) => ({
+      ...current,
+      [nextState.contactId]: selectPrimaryAgentState([nextState, current[nextState.contactId]].filter(Boolean) as ConversationAgentState[]) || nextState
+    }))
+    setAgentStateLists((current) => ({
+      ...current,
+      [nextState.contactId]: upsertAgentStateList(current[nextState.contactId] || [], nextState)
+    }))
   }, [])
 
   const handleOpenComposerAgentMenu = useCallback(() => {
@@ -3716,9 +3784,9 @@ export const DesktopChat: React.FC = () => {
     if (!state?.signal || state.signal === 'discarded') return
 
     const acknowledgedAt = new Date().toISOString()
-    setAgentStates((current) => {
-      const currentState = current[contactId]
-      if (!currentState?.signal || currentState.signal === 'discarded') return current
+	    setAgentStates((current) => {
+	      const currentState = current[contactId]
+	      if (!currentState?.signal || currentState.signal === 'discarded') return current
       return {
         ...current,
         [contactId]: {
@@ -3729,15 +3797,38 @@ export const DesktopChat: React.FC = () => {
           signalAt: null,
           updatedBy: 'user',
           updatedAt: acknowledgedAt
-        }
-      }
-    })
+	        }
+	      }
+	    })
+	    setAgentStateLists((current) => ({
+	      ...current,
+	      [contactId]: (current[contactId] || []).map((item) => (
+	        (item.id && state.id ? item.id === state.id : item.agentId === state.agentId) ? {
+	          ...item,
+	          signal: null,
+	          signalReason: null,
+	          signalSummary: null,
+	          signalAt: null,
+	          updatedBy: 'user',
+	          updatedAt: acknowledgedAt
+	        } : item
+	      ))
+	    }))
 
-    void conversationalAgentService.updateState(contactId, 'clear_signal')
-      .then((nextState) => {
-        setAgentStates((current) => ({ ...current, [contactId]: nextState }))
-        if (contactId === activeContactId) setConversationAgentState(nextState)
-      })
+	    void conversationalAgentService.updateState(contactId, 'clear_signal', { agentId: state.agentId || undefined })
+	      .then((nextState) => {
+	        setAgentStateLists((current) => ({
+	          ...current,
+	          [contactId]: upsertAgentStateList(current[contactId] || [], nextState)
+	        }))
+	        setAgentStates((current) => ({
+	          ...current,
+	          [contactId]: selectPrimaryAgentState([nextState, current[contactId]].filter(Boolean) as ConversationAgentState[]) || nextState
+	        }))
+	        if (contactId === activeContactId) {
+	          setConversationAgentState((current) => selectPrimaryAgentState([nextState, current].filter(Boolean) as ConversationAgentState[]))
+	        }
+	      })
       .catch((error: any) => {
         setAgentStates((current) => ({ ...current, [contactId]: state }))
         showToast('error', 'Agente conversacional', error?.message || 'No se pudo quitar la prioridad del chat')
@@ -3946,17 +4037,26 @@ export const DesktopChat: React.FC = () => {
       const firstRejectedResult = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
       const firstErrorMessage = firstRejectedResult?.reason?.message
 
-      if (updatedStates.length > 0) {
-        setAgentStates((current) => {
-          const next = { ...current }
-          updatedStates.forEach((state) => {
-            next[state.contactId] = state
-          })
-          return next
-        })
+	      if (updatedStates.length > 0) {
+	        setAgentStates((current) => {
+	          const next = { ...current }
+	          updatedStates.forEach((state) => {
+	            next[state.contactId] = selectPrimaryAgentState([state, next[state.contactId]].filter(Boolean) as ConversationAgentState[]) || state
+	          })
+	          return next
+	        })
+	        setAgentStateLists((current) => {
+	          const next = { ...current }
+	          updatedStates.forEach((state) => {
+	            next[state.contactId] = upsertAgentStateList(next[state.contactId] || [], state)
+	          })
+	          return next
+	        })
 
-        const activeState = updatedStates.find((state) => state.contactId === activeContactId)
-        if (activeState) setConversationAgentState(activeState)
+	        const activeState = updatedStates.find((state) => state.contactId === activeContactId)
+	        if (activeState) {
+	          setConversationAgentState((current) => selectPrimaryAgentState([activeState, current].filter(Boolean) as ConversationAgentState[]))
+	        }
 
         setSelectedChatIds([])
         showToast(
@@ -4606,13 +4706,19 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
-  const renderComposerAgentMenu = () => {
-    if (!agentComposerMenuOpen || !activeContact) return null
+	  const renderComposerAgentMenu = () => {
+	    if (!agentComposerMenuOpen || !activeContact) return null
 
-    const showPicker = agentPickerOpen || !conversationAgentActive || !conversationAgentState?.agentId
-    const disabledByGlobalConfig = !conversationAgentEnabled
+	    const contactAgentStates = activeContactAgentStates.filter((state) => state.agentId)
+	    const showPicker = agentPickerOpen || !contactAgentStates.length
+	    const disabledByGlobalConfig = !conversationAgentEnabled
+	    const getStateAgentName = (state: ConversationAgentState) => (
+	      state.agentName ||
+	      agentDefs.find((agent) => agent.id === state.agentId)?.name ||
+	      'Agente conversacional'
+	    )
 
-    if (showPicker) {
+	    if (showPicker) {
       return (
         <div className={styles.agentComposerMenu} role="menu" aria-label="Seleccionar agente conversacional">
           <div className={styles.agentComposerMenuHeader}>
@@ -4649,54 +4755,81 @@ export const DesktopChat: React.FC = () => {
       )
     }
 
-    return (
-      <div className={styles.agentComposerMenu} role="menu" aria-label="Acciones del agente conversacional">
-        <div className={styles.agentComposerMenuHeader}>
-          <strong>{activeAgentDef?.name || 'Agente conversacional'}</strong>
-          <span>{conversationAgentStatusLabel}</span>
-        </div>
-        <button
-          type="button"
-          role="menuitem"
-          className={styles.agentMenuAction}
-          disabled={conversationAgentBusy}
-          onClick={() => handleRunConversationAgentAction('take_over', `Tomaste la conversación de ${getContactName(activeContact)}.`)}
-        >
-          <User size={15} />
-          <span>
-            <strong>Tomar conversación</strong>
-            <small>El agente deja de responder aquí.</small>
-          </span>
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className={styles.agentMenuAction}
-          disabled={conversationAgentBusy}
-          onClick={() => handleRunConversationAgentAction('pause', 'El chatbot quedó pausado por 24hrs en este chat.')}
-        >
-          <Pause size={15} />
-          <span>
-            <strong>Pausar por 24hrs</strong>
-            <small>Detiene respuestas automáticas durante 24 horas.</small>
-          </span>
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className={styles.agentMenuAction}
-          disabled={conversationAgentBusy}
-          onClick={() => handleRunConversationAgentAction('skip', 'El chatbot quedó omitido en este chat.')}
-        >
-          <X size={15} />
-          <span>
-            <strong>Omitir chatbot</strong>
-            <small>El agente no vuelve a tomar este chat.</small>
-          </span>
-        </button>
-        <button
-          type="button"
-          role="menuitem"
+	    return (
+	      <div className={styles.agentComposerMenu} role="menu" aria-label="Acciones del agente conversacional">
+	        <div className={styles.agentComposerMenuHeader}>
+	          <strong>{contactAgentStates.length > 1 ? 'Agentes asignados' : (activeAgentDef?.name || contactAgentStates[0]?.agentName || 'Agente conversacional')}</strong>
+	          <span>{contactAgentStates.length > 1 ? `${contactAgentStates.length} agentes en este chat` : conversationAgentStatusLabel}</span>
+	        </div>
+	        {contactAgentStates.map((state) => {
+	          const agentName = getStateAgentName(state)
+	          const statusLabel = CONVERSATION_AGENT_STATUS_LABELS[state.status] || 'Agente conversacional'
+	          const actionOptions = { agentId: state.agentId || undefined }
+	          if (state.status !== 'active') {
+	            return (
+	              <button
+	                key={state.id || `${state.contactId}-${state.agentId || 'legacy'}`}
+	                type="button"
+	                role="menuitem"
+	                className={styles.agentMenuAction}
+	                disabled={conversationAgentBusy || disabledByGlobalConfig}
+	                onClick={() => handleRunConversationAgentAction('activate', `${agentName} volvió a atender este chat.`, actionOptions)}
+	              >
+	                <Play size={15} />
+	                <span>
+	                  <strong>Reactivar {agentName}</strong>
+	                  <small>{statusLabel}</small>
+	                </span>
+	              </button>
+	            )
+	          }
+	          return (
+	            <React.Fragment key={state.id || `${state.contactId}-${state.agentId || 'legacy'}`}>
+	              <button
+	                type="button"
+	                role="menuitem"
+	                className={styles.agentMenuAction}
+	                disabled={conversationAgentBusy}
+	                onClick={() => handleRunConversationAgentAction('take_over', `Tomaste la conversación de ${getContactName(activeContact)} con ${agentName}.`, actionOptions)}
+	              >
+	                <User size={15} />
+	                <span>
+	                  <strong>Tomar {agentName}</strong>
+	                  <small>Solo este agente deja de responder aquí.</small>
+	                </span>
+	              </button>
+	              <button
+	                type="button"
+	                role="menuitem"
+	                className={styles.agentMenuAction}
+	                disabled={conversationAgentBusy}
+	                onClick={() => handleRunConversationAgentAction('pause', `${agentName} quedó pausado por 24hrs en este chat.`, actionOptions)}
+	              >
+	                <Pause size={15} />
+	                <span>
+	                  <strong>Pausar {agentName}</strong>
+	                  <small>Detiene solo este agente durante 24 horas.</small>
+	                </span>
+	              </button>
+	              <button
+	                type="button"
+	                role="menuitem"
+	                className={styles.agentMenuAction}
+	                disabled={conversationAgentBusy}
+	                onClick={() => handleRunConversationAgentAction('skip', `${agentName} quedó omitido en este chat.`, actionOptions)}
+	              >
+	                <X size={15} />
+	                <span>
+	                  <strong>Omitir {agentName}</strong>
+	                  <small>Solo este agente no vuelve a tomar este chat.</small>
+	                </span>
+	              </button>
+	            </React.Fragment>
+	          )
+	        })}
+	        <button
+	          type="button"
+	          role="menuitem"
           className={styles.agentMenuAction}
           disabled={conversationAgentBusy}
           onClick={() => setAgentPickerOpen(true)}
