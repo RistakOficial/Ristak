@@ -9008,6 +9008,32 @@
   text-decoration: var(--rstk-block-text-decoration, none);
 }
 
+.canvasChromeSourceForm .chromeName {
+  color: var(--rstk-ink);
+  font-family: var(--rstk-font);
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.18;
+  text-decoration: none;
+  text-transform: none;
+  background-image: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+.canvasChromeSourceForm .chromeSub {
+  color: var(--rstk-muted);
+  font-family: var(--rstk-font);
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1.25;
+  text-decoration: none;
+  text-transform: none;
+  background-image: none;
+  -webkit-text-fill-color: currentColor;
+}
+
 .chromeFacebook,
 .chromeInstagram,
 .chromeTiktok,

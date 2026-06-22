@@ -16840,6 +16840,7 @@ function renderContentBlock(block, context = {}) {
         ${embeddedSourceTheme.pageVideo ? `<video class="rstk-bg-video" src="${escapeHtml(embeddedSourceTheme.pageVideo)}" autoplay muted loop playsinline aria-hidden="true"></video>` : ''}
         <div class="rstk-page">
           <div class="rstk-shell">
+            ${renderEmbeddedFormSourceChrome(embeddedSiteForCopy)}
             ${embeddedSection}
           </div>
         </div>
@@ -17550,6 +17551,29 @@ function renderSocialProfileBlock(block, context = {}) {
   `
 }
 
+function renderEmbeddedFormSourceChrome(site = {}) {
+  const template = resolveTemplate(site)
+  if (!template || template.chrome === 'none') return ''
+
+  const platform = normalizeSocialPlatform(template.chrome, 'facebook')
+  const brand = getBrand(site, template)
+  const secondary = brand.followers ? `${escapeHtml(brand.followers)} seguidores` : escapeHtml(brand.subtitle)
+  const platformLabel = platform === 'facebook' ? 'Facebook' : platform === 'instagram' ? 'Instagram' : platform === 'threads' ? 'Threads' : 'TikTok'
+
+  return `
+    <section class="rstk-chrome rstk-social-profile rstk-social-profile-block rstk-embedded-form-source-chrome rstk-social-profile-${platform}" aria-label="Perfil de ${platformLabel}">
+      <div class="rstk-social-image">
+        ${renderAvatar(brand)}
+        <span class="rstk-social-platform rstk-social-platform-${platform}" aria-hidden="true">${getSocialPlatformIcon(platform)}</span>
+      </div>
+      <div class="rstk-social-details">
+        <div class="rstk-social-name">${escapeHtml(brand.name)}${brand.verified ? RSTK_ICONS.verified : ''}</div>
+        <div class="rstk-social-followers">${secondary}</div>
+      </div>
+    </section>
+  `
+}
+
 function renderLegalFooter(brand) {
   return `
     <p class="rstk-footer">
@@ -18110,12 +18134,17 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-video{border-radius:var(--rstk-video-radius,var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px))));box-shadow:none}
   .rstk-kind-landing .rstk-calendar-embed{border-radius:var(--rstk-media-radius,0)}
   .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);background:var(--rstk-block-bg,transparent);width:100%;margin-inline:auto}
-  .rstk-embedded-form-source-frame{position:relative;isolation:isolate;min-height:auto;width:100%;margin:0;padding:var(--rstk-frame-pad,22px) 16px;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:hidden}
+  .rstk-embedded-form-source-frame{--rstk-block-text:var(--rstk-ink);--rstk-block-font:var(--rstk-font);--rstk-block-font-style:normal;--rstk-block-text-decoration:none;--rstk-block-text-transform:none;position:relative;isolation:isolate;min-height:auto;width:100%;margin:0;padding:var(--rstk-frame-pad,22px) 16px;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll);border-radius:var(--rstk-page-radius,0);overflow:hidden}
   .rstk-embedded-form-source-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0)}
   .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-surface);border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:hidden}
   .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent}
+  .rstk-embedded-form-source-frame .rstk-headline{margin:0;color:var(--rstk-ink);font-family:var(--rstk-display);font-size:clamp(1.7rem,4.6vw,3rem);font-weight:var(--rstk-heading-weight);line-height:1.05;letter-spacing:0;background-image:none;-webkit-text-fill-color:currentColor}
+  .rstk-embedded-form-source-frame .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);line-height:1.45;max-width:var(--rstk-content-max,60ch);background-image:none;-webkit-text-fill-color:currentColor}
+  .rstk-embedded-form-source-frame .rstk-text{margin:0;color:color-mix(in srgb,var(--rstk-ink) 80%,transparent);font-size:1rem;line-height:1.55;max-width:var(--rstk-content-max,66ch);background-image:none;-webkit-text-fill-color:currentColor}
+  .rstk-embedded-form-source-frame .rstk-field > label{color:var(--rstk-form-label-color,var(--rstk-ink))}
+  .rstk-embedded-form-source-frame .rstk-help{color:var(--rstk-form-help-color,var(--rstk-muted));background-image:none;-webkit-text-fill-color:currentColor}
   @media (max-width:760px){.rstk-section-columns{grid-template-columns:1fr}}
   .rstkFontOverride .rstk-headline,.rstkFontOverride .rstk-subheading,.rstkFontOverride .rstk-text,.rstkFontOverride h2,.rstkFontOverride label,.rstkFontOverride .rstk-help,.rstkFontOverride .rstk-list-grid strong,.rstkFontOverride .rstk-list-grid p,.rstkFontOverride .rstk-check-body strong,.rstkFontOverride .rstk-check-body span{font-family:var(--rstk-block-font,inherit)}
   .rstkSizeOverride .rstk-headline,.rstkSizeOverride .rstk-subheading,.rstkSizeOverride .rstk-text,.rstkSizeOverride h2,.rstkSizeOverride label,.rstkSizeOverride .rstk-help,.rstkSizeOverride .rstk-list-grid strong,.rstkSizeOverride .rstk-list-grid p,.rstkSizeOverride .rstk-list-grid small,.rstkSizeOverride .rstk-check-body strong,.rstkSizeOverride .rstk-check-body span{font-size:var(--rstk-block-size)}
@@ -18128,6 +18157,8 @@ const RSTK_BASE_CSS = `
   .rstkStrokeOverride .rstk-headline,.rstkStrokeOverride .rstk-subheading,.rstkStrokeOverride .rstk-text,.rstkStrokeOverride h2,.rstkStrokeOverride label,.rstkStrokeOverride .rstk-help,.rstkStrokeOverride .rstk-list-grid strong,.rstkStrokeOverride .rstk-list-grid p,.rstkStrokeOverride .rstk-check-body strong,.rstkStrokeOverride .rstk-check-body span{-webkit-text-stroke:var(--rstk-text-stroke-width,0) var(--rstk-text-stroke-color,currentColor)}
   .rstkTextGradient .rstk-headline,.rstkTextGradient .rstk-subheading,.rstkTextGradient .rstk-text,.rstkTextGradient h2,.rstkTextGradient label,.rstkTextGradient .rstk-help,.rstkTextGradient .rstk-site-panel-copy,.rstkTextGradient .rstk-list-grid strong,.rstkTextGradient .rstk-list-grid p,.rstkTextGradient .rstk-check-body strong,.rstkTextGradient .rstk-check-body span,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-headline,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-subheading,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-text,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) h2,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) label,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-help,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-site-panel-copy,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-list-grid strong,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-list-grid p,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-check-body strong,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-check-body span{background-image:var(--rstk-block-text-paint,var(--rstk-page-text-paint));background-clip:text;-webkit-background-clip:text;color:transparent !important;-webkit-text-fill-color:transparent}
   .rstkButtonTextGradient .rstk-button-label{background-image:var(--rstk-button-text-paint);background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+  .rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-embedded-form-source-frame:not(.rstkPageTextGradient) .rstk-headline,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-embedded-form-source-frame:not(.rstkPageTextGradient) .rstk-subheading,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-embedded-form-source-frame:not(.rstkPageTextGradient) .rstk-text,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-embedded-form-source-frame:not(.rstkPageTextGradient) label,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-embedded-form-source-frame:not(.rstkPageTextGradient) .rstk-help{background-image:none !important;color:var(--rstk-ink) !important;-webkit-text-fill-color:currentColor !important}
+  .rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-embedded-form-source-frame:not(.rstkPageTextGradient) .rstk-subheading,.rstkPageTextGradient .rstk-block-style:not(.rstkBlockTextOverride) .rstk-embedded-form-source-frame:not(.rstkPageTextGradient) .rstk-help{color:var(--rstk-muted) !important}
 
   @media (max-width:640px){
     .rstk-kind-landing .rstk-hero{padding:clamp(32px,8vw,56px) 20px}

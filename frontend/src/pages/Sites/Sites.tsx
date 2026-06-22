@@ -24247,9 +24247,10 @@ const CanvasChrome: React.FC<{
   platform: SocialPlatform
   site: PublicSite
   embedded?: boolean
+  sourceEmbedded?: boolean
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSave: () => void
-}> = ({ platform, site, embedded = false }) => {
+}> = ({ platform, site, embedded = false, sourceEmbedded = false }) => {
   const theme = site.theme || {}
   const name = theme.brandName || site.title || site.name || 'Tu marca'
   const subtitle = theme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado')
@@ -24262,9 +24263,15 @@ const CanvasChrome: React.FC<{
       : platform === 'threads'
         ? styles.chromeThreads
         : styles.chromeTiktok
+  const chromeClassName = [
+    styles.canvasChrome,
+    embedded ? styles.canvasChromeEmbedded : '',
+    sourceEmbedded ? styles.canvasChromeSourceForm : '',
+    platformClass
+  ].filter(Boolean).join(' ')
 
   return (
-    <div className={`${styles.canvasChrome} ${embedded ? styles.canvasChromeEmbedded : ''} ${platformClass}`} aria-label={`Perfil de ${platform}`}>
+    <div className={chromeClassName} aria-label={`Perfil de ${platform}`}>
       <div className={styles.socialImageWrap}>
         <CanvasAvatar name={name} avatar={theme.brandAvatar} />
         <SocialPlatformBadge platform={platform} />
@@ -29977,6 +29984,9 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
           width: '100%'
         } as React.CSSProperties)
       : undefined
+    const sourceChromePlatform: SocialPlatform | null = sourceCanvasTheme?.chrome && sourceCanvasTheme.chrome !== 'none'
+      ? sourceCanvasTheme.chrome
+      : null
     const embeddedFormPreview = (
       <section className="rstk-embedded-form">
         {embeddedFormEditor ? (
@@ -30021,6 +30031,16 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
           <CanvasBackgroundVideo theme={form?.theme} />
           <main className="rstk-page">
             <div className="rstk-shell rstkEmbeddedFormSourceShell">
+              {sourceChromePlatform && form ? (
+                <CanvasChrome
+                  platform={sourceChromePlatform}
+                  site={form}
+                  embedded
+                  sourceEmbedded
+                  onPatchTheme={() => {}}
+                  onSave={() => {}}
+                />
+              ) : null}
               {embeddedFormPreview}
             </div>
           </main>

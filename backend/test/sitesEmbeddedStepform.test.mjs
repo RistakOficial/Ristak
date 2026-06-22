@@ -216,7 +216,9 @@ test('landing form embeds proxy linked form source instead of stale embedded cop
       status: 'published',
       blankCanvas: true,
       theme: {
-        template: 'ristak',
+        template: 'facebook',
+        brandName: 'Formulario 01',
+        brandSubtitle: 'Patrocinado',
         backgroundColor: '#112233',
         pages: [
           { id: 'source-step-1', title: 'Fuente 1', sortOrder: 0, buttonText: 'Siguiente desde fuente' },
@@ -225,6 +227,20 @@ test('landing form embeds proxy linked form source instead of stale embedded cop
       }
     })
 
+    await createBlock(formSite.id, {
+      blockType: 'title',
+      label: 'Título',
+      content: 'Deja tus datos y seguimos por mensaje',
+      required: false,
+      settings: { pageId: 'source-step-1' }
+    })
+    await createBlock(formSite.id, {
+      blockType: 'text',
+      label: 'Texto',
+      content: 'Completa este formulario corto y te contactamos con el siguiente paso.',
+      required: false,
+      settings: { pageId: 'source-step-1' }
+    })
     await createBlock(formSite.id, {
       blockType: 'short_text',
       label: 'Campo real fuente',
@@ -299,6 +315,12 @@ test('landing form embeds proxy linked form source instead of stale embedded cop
     assert.match(html, /<button type="button" data-embedded-next>Siguiente desde fuente<\/button>/)
     assert.match(html, /data-submit-label="Enviar fuente"/)
     assert.match(html, /rstk-embedded-form-source-frame/)
+    assert.match(html, /rstk-embedded-form-source-chrome/)
+    assert.match(html, /rstk-social-platform-facebook/)
+    assert.match(html, /Formulario 01/)
+    assert.match(html, /Patrocinado/)
+    assert.match(html, /Deja tus datos y seguimos por mensaje/)
+    assert.match(html, /Completa este formulario corto/)
     assert.match(html, /rstk-kind-form/)
     assert.match(html, /--rstk-page-bg:#112233;/)
     assert.match(html, /--rstk-block-bg:#112233;/)
