@@ -4183,21 +4183,21 @@ export const PhoneChat: React.FC = () => {
   const publishedAgentDefs = useMemo(() => agentDefs.filter((agent) => agent.enabled), [agentDefs])
   const publishedAgentCount = publishedAgentDefs.length
   const aiAgentHubAgentFilters = useMemo(() => {
-    if (!agentEnabled || publishedAgentDefs.length <= 1) return []
+    if (!agentEnabled || publishedAgentDefs.length <= 1 || aiAgentHubStatusFilter === 'unassigned') return []
 
-    const activeCounts = new Map<string, number>()
+    const visibleCounts = new Map<string, number>()
     Object.values(agentStates).forEach((state) => {
-      if (!isAIAgentHubStateVisible(state, DEFAULT_AI_AGENT_HUB_STATUS_FILTER)) return
+      if (!isAIAgentHubStateVisible(state, aiAgentHubStatusFilter)) return
       if (!state.agentId || archivedChatIdSet.has(state.contactId)) return
-      activeCounts.set(state.agentId, (activeCounts.get(state.agentId) || 0) + 1)
+      visibleCounts.set(state.agentId, (visibleCounts.get(state.agentId) || 0) + 1)
     })
 
     return publishedAgentDefs.map((agent) => ({
       id: agent.id,
       name: agent.name || 'Agente sin nombre',
-      count: activeCounts.get(agent.id) || 0
+      count: visibleCounts.get(agent.id) || 0
     }))
-  }, [agentEnabled, agentStates, archivedChatIdSet, publishedAgentDefs])
+  }, [agentEnabled, agentStates, aiAgentHubStatusFilter, archivedChatIdSet, publishedAgentDefs])
   const activeAiAgentHubAgentFilter = aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)
     ? aiAgentHubAgentFilter
     : 'all'
@@ -9015,6 +9015,23 @@ export const PhoneChat: React.FC = () => {
             </div>
           </section>
 
+          {aiAgentHubAgentFilters.length > 1 && (
+            <PhoneFilterChips
+              ariaLabel="Filtrar chats por agente"
+              value={activeAiAgentHubAgentFilter}
+              wrapOnWide
+              options={[
+                { value: 'all', label: 'Todos', count: aiAgentHubAgentFilterTotal },
+                ...aiAgentHubAgentFilters.map((agent) => ({
+                  value: agent.id,
+                  label: agent.name,
+                  count: agent.count
+                }))
+              ]}
+              onChange={setAiAgentHubAgentFilter}
+            />
+          )}
+
           <div className={styles.aiAgentHubSearch}>
             <Search size={20} />
             <input
@@ -9044,23 +9061,6 @@ export const PhoneChat: React.FC = () => {
               if (nextFilter === 'unassigned') setAiAgentHubAgentFilter('all')
             }}
           />
-
-          {aiAgentHubAgentFilters.length > 1 && (
-            <PhoneFilterChips
-              ariaLabel="Filtrar chats por agente"
-              value={activeAiAgentHubAgentFilter}
-              wrapOnWide
-              options={[
-                { value: 'all', label: 'Todos', count: aiAgentHubAgentFilterTotal },
-                ...aiAgentHubAgentFilters.map((agent) => ({
-                  value: agent.id,
-                  label: agent.name,
-                  count: agent.count
-                }))
-              ]}
-              onChange={setAiAgentHubAgentFilter}
-            />
-          )}
 
           <section className={styles.aiAgentHubChatList} aria-label="Chats tomados por el agente">
             {agentHubChatRows.length ? (
