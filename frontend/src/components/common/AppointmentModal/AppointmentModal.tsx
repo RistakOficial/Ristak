@@ -32,7 +32,7 @@ interface AppointmentModalProps {
   defaultScheduleMode?: 'default' | 'custom'; // Modo de selección de horario al abrir
   accessToken?: string; // Token para cargar slots disponibles
   locationId?: string; // Location ID para consultas
-  presentation?: 'dialog' | 'mobileSheet' | 'phonePanel';
+  presentation?: 'dialog' | 'mobileSheet' | 'phonePanel' | 'embedded';
   calendars?: Calendar[];
   calendarsLoading?: boolean;
   selectedCalendarId?: string;
@@ -1161,7 +1161,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     .find((part) => part.type === 'timeZoneName')?.value ?? selectedTimeZone;
   const isMobileSheet = presentation === 'mobileSheet';
   const isPhonePanel = presentation === 'phonePanel';
-  const isPhoneSurface = isMobileSheet || isPhonePanel;
+  const isEmbedded = presentation === 'embedded';
+  const isPhoneSurface = isMobileSheet || isPhonePanel || isEmbedded;
   const [phonePanelRendered, setPhonePanelRendered] = useState(isOpen);
   const [phonePanelClosing, setPhonePanelClosing] = useState(false);
   const phonePanelCloseTimerRef = useRef<number | null>(null);
@@ -2098,6 +2099,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         )}
       </div>
   );
+
+  if (isEmbedded) {
+    if (!isOpen) return null;
+
+    return (
+      <div className={`${styles.mobileAppointmentSheet} ${styles.embeddedAppointmentRoot}`}>
+        {appointmentContent}
+      </div>
+    );
+  }
 
   return (
     <>

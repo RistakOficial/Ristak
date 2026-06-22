@@ -5625,8 +5625,8 @@
   background: var(--phone-chat-panel);
 }
 
-.paymentSheet {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+.actionFormSheet {
+  grid-template-rows: auto auto minmax(0, 1fr);
   align-content: stretch;
   height: min(86dvh, 820px);
   min-height: 0;
@@ -6585,7 +6585,6 @@
 }
 
 .segmentedControl {
-  grid-row: 3;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
@@ -6610,15 +6609,26 @@
   box-shadow: 0 8px 18px rgba(var(--phone-chat-primary-rgb), 0.08);
 }
 
-.embeddedPayment {
-  grid-row: 4;
+.actionFormContent {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.actionFormContentPlain {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.embeddedActionForm {
   min-height: 0;
   overflow: hidden;
   margin-right: -2px;
   margin-left: -2px;
 }
 
-.embeddedPayment > * {
+.embeddedActionForm > * {
   min-height: 0;
   height: 100%;
 }

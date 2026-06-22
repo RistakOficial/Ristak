@@ -3210,7 +3210,6 @@ export const PhoneChat: React.FC = () => {
   const [customFieldDrafts, setCustomFieldDrafts] = useState<Record<string, string>>({})
   const [savingCustomFieldId, setSavingCustomFieldId] = useState<string | null>(null)
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
-  const [appointmentOpen, setAppointmentOpen] = useState(false)
   const [requestingPush, setRequestingPush] = useState(false)
   const [templateMode, setTemplateMode] = useState<TemplateMode>('choice')
   const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([])
@@ -5914,8 +5913,7 @@ export const PhoneChat: React.FC = () => {
     }
     setChatActionContactId(null)
     setContactInfoOpen(false)
-    actionSheetDismiss.requestClose()
-    setAppointmentOpen(true)
+    setSheet('appointment')
     closeSwipeActions()
   }
 
@@ -7760,7 +7758,6 @@ export const PhoneChat: React.FC = () => {
         ...payload
       }, accessToken || undefined)
 
-      setAppointmentOpen(false)
       actionSheetDismiss.requestClose()
       showToast('success', 'Cita agendada', 'La cita quedó guardada.')
       setMessages((current) => [
@@ -12837,7 +12834,7 @@ export const PhoneChat: React.FC = () => {
 
   return (
     <main
-      className={`${styles.phoneChatPage} ${conversationVisible ? styles.conversationOpen : ''} ${sheet || appointmentOpen ? styles.sheetOpen : ''}`}
+      className={`${styles.phoneChatPage} ${conversationVisible ? styles.conversationOpen : ''} ${sheet ? styles.sheetOpen : ''}`}
       data-phone-chat-tone={resolvedPhoneChatTheme}
       data-phone-chat-mode={safeChatThemePreference}
       data-phone-chat-device={deviceMode}
@@ -13190,7 +13187,7 @@ export const PhoneChat: React.FC = () => {
           onClick={actionSheetDismiss.requestClose}
         >
           <section
-            className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
+            className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
             style={actionSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
@@ -13202,6 +13199,7 @@ export const PhoneChat: React.FC = () => {
                 <div>
                   <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? 'Agente de IA' : 'Ristak'}</p>
                   <h2>
+                    {sheet === 'appointment' && 'Agendar una cita'}
                     {sheet === 'payment' && 'Registrar pago'}
                     {sheet === 'templates' && 'Plantillas'}
                     {sheet === 'clabe' && 'CLABE'}
@@ -13232,8 +13230,37 @@ export const PhoneChat: React.FC = () => {
             {sheet === 'agentMenu' && renderAgentMenuSheet()}
             {sheet === 'schedule' && renderScheduleSheet()}
 
+            {sheet === 'appointment' && (
+              <div className={`${styles.actionFormContent} ${styles.actionFormContentPlain}`}>
+                <div className={styles.embeddedActionForm}>
+                  <AppointmentModal
+                    isOpen
+                    onClose={actionSheetDismiss.requestClose}
+                    mode="create"
+                    calendar={selectedCalendar}
+                    defaultStart={defaultAppointmentRange.start}
+                    defaultEnd={defaultAppointmentRange.end}
+                    defaultTimeZone={defaultAppointmentRange.timeZone}
+                    defaultTitle={initialContact?.name || ''}
+                    initialContact={initialContact}
+                    lockInitialContact={Boolean(initialContact?.id)}
+                    enableGuests
+                    defaultScheduleMode="custom"
+                    accessToken={accessToken || undefined}
+                    locationId={locationId || undefined}
+                    presentation="embedded"
+                    calendars={calendars}
+                    calendarsLoading={calendarsLoading}
+                    selectedCalendarId={selectedCalendar?.id || ''}
+                    onCalendarChange={setSelectedCalendarId}
+                    onSave={handleCreateAppointment}
+                  />
+                </div>
+              </div>
+            )}
+
             {sheet === 'payment' && (
-              <>
+              <div className={`${styles.actionFormContent} ${!highLevelConnected ? styles.actionFormContentPlain : ''}`}>
                 {highLevelConnected && (
                   <div className={styles.segmentedControl}>
                     <button
@@ -13252,7 +13279,7 @@ export const PhoneChat: React.FC = () => {
                     </button>
                   </div>
                 )}
-                <div className={styles.embeddedPayment}>
+                <div className={styles.embeddedActionForm}>
                   <RecordPaymentModal
                     key={`${activePhonePaymentMode}-${initialContact?.id || 'empty'}`}
                     variant="embedded"
@@ -13278,7 +13305,7 @@ export const PhoneChat: React.FC = () => {
                     }}
                   />
                 </div>
-              </>
+              </div>
             )}
 
           </section>
@@ -13490,28 +13517,6 @@ export const PhoneChat: React.FC = () => {
         </div>
       </Modal>
 
-      <AppointmentModal
-        isOpen={appointmentOpen}
-        onClose={() => setAppointmentOpen(false)}
-        mode="create"
-        calendar={selectedCalendar}
-        defaultStart={defaultAppointmentRange.start}
-        defaultEnd={defaultAppointmentRange.end}
-        defaultTimeZone={defaultAppointmentRange.timeZone}
-        defaultTitle={initialContact?.name || ''}
-        initialContact={initialContact}
-        lockInitialContact={Boolean(initialContact?.id)}
-        enableGuests
-        defaultScheduleMode="custom"
-        accessToken={accessToken || undefined}
-        locationId={locationId || undefined}
-        presentation={isWideChatDevice ? 'phonePanel' : 'mobileSheet'}
-        calendars={calendars}
-        calendarsLoading={calendarsLoading}
-        selectedCalendarId={selectedCalendar?.id || ''}
-        onCalendarChange={setSelectedCalendarId}
-        onSave={handleCreateAppointment}
-      />
     </main>
   )
 }
