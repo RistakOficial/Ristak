@@ -47,6 +47,7 @@ import {
   normalizeConversationalChannel,
   sanitizeAgentReply,
   sendReplyParts,
+  shouldSendConversationalReplyThroughHighLevel,
   shouldIncludeConversationalBinaryMedia,
   shouldRecoverPendingInbound,
   splitReplyIntoParts
@@ -102,8 +103,33 @@ test('normaliza aliases de canal conversacional sin forzar WhatsApp', () => {
   assert.equal(normalizeConversationalChannel('instagram_dm'), 'instagram')
   assert.equal(normalizeConversationalChannel('facebook'), 'messenger')
   assert.equal(normalizeConversationalChannel('sms_qr'), 'sms')
+  assert.equal(normalizeConversationalChannel('ghl_whatsapp'), 'whatsapp')
   assert.equal(normalizeConversationalChannel('correo'), 'email')
   assert.equal(normalizeConversationalChannel('no-existe'), 'whatsapp')
+})
+
+test('responde por HighLevel cuando el WhatsApp entrante viene de GHL', () => {
+  assert.equal(
+    shouldSendConversationalReplyThroughHighLevel({
+      channel: 'whatsapp',
+      latest: { transport: 'ghl_whatsapp' }
+    }),
+    true
+  )
+  assert.equal(
+    shouldSendConversationalReplyThroughHighLevel({
+      channel: 'ghl_whatsapp',
+      latest: {}
+    }),
+    true
+  )
+  assert.equal(
+    shouldSendConversationalReplyThroughHighLevel({
+      channel: 'whatsapp',
+      latest: { transport: 'api' }
+    }),
+    false
+  )
 })
 
 test('la condicion Canal permite chats y SMS sin confundirlos con correo', () => {

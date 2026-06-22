@@ -81,11 +81,14 @@ const followUpTimers = new Map()
 const CHAT_CONVERSATIONAL_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'sms', 'webchat'])
 const SOCIAL_CHAT_CHANNELS = new Set(['instagram', 'messenger'])
 const HIGHLEVEL_CHAT_CHANNELS = new Set(['instagram', 'messenger', 'sms'])
+const HIGHLEVEL_WHATSAPP_TRANSPORTS = new Set(['ghl_whatsapp'])
+const HIGHLEVEL_WHATSAPP_CHANNEL_ALIASES = new Set(['ghl_whatsapp'])
 const EMAIL_CONVERSATIONAL_CHANNEL = 'email'
 const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
   ['wa', 'whatsapp'],
   ['whatsapp_api', 'whatsapp'],
   ['api', 'whatsapp'],
+  ['ghl_whatsapp', 'whatsapp'],
   ['fb', 'messenger'],
   ['facebook', 'messenger'],
   ['facebook_messenger', 'messenger'],
@@ -133,6 +136,27 @@ function isEmailConversationalChannel(channel) {
 
 function getRunKey(contactId, channel = 'whatsapp') {
   return `${normalizeConversationalChannel(channel)}:${contactId}`
+}
+
+function normalizeTransportKey(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+}
+
+export function shouldSendConversationalReplyThroughHighLevel({ channel = 'whatsapp', latest = {} } = {}) {
+  const rawChannel = normalizeTransportKey(channel || latest?.channel)
+  const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
+  if (HIGHLEVEL_CHAT_CHANNELS.has(normalizedChannel)) return true
+  return normalizedChannel === 'whatsapp' && (
+    HIGHLEVEL_WHATSAPP_TRANSPORTS.has(normalizeTransportKey(latest?.transport)) ||
+    HIGHLEVEL_WHATSAPP_CHANNEL_ALIASES.has(rawChannel)
+  )
+}
+
+function getHighLevelReplyChannel({ channel = 'whatsapp', latest = {} } = {}) {
+  const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
+  if (normalizedChannel === 'sms') return 'sms_qr'
+  if (normalizedChannel === 'whatsapp') return 'whatsapp_api'
+  return normalizedChannel
 }
 
 function getEmailSubjectForReply(latest = {}) {
@@ -559,6 +583,7 @@ function rowToConversationalMessage(row, channel = 'whatsapp') {
     media_filename: row.media_filename,
     media_duration_ms: row.media_duration_ms,
     subject: row.subject || null,
+    transport: row.transport || null,
     phone: row.phone || null,
     business_phone: row.business_phone || null,
     business_phone_number_id: row.business_phone_number_id || null,
@@ -1008,11 +1033,11 @@ async function sendConversationalChannelTextMessage({
     })
   }
 
-  if (HIGHLEVEL_CHAT_CHANNELS.has(normalizedChannel)) {
+  if (shouldSendConversationalReplyThroughHighLevel({ channel: normalizedChannel, latest })) {
     const { sendHighLevelConversationMessageCore } = await import('../../controllers/highlevelController.js')
     return sendHighLevelConversationMessageCore({
       contactId,
-      channel: normalizedChannel === 'sms' ? 'sms_qr' : normalizedChannel,
+      channel: getHighLevelReplyChannel({ channel: normalizedChannel, latest }),
       message: text,
       toNumber: phone || latest.phone || undefined,
       externalId
