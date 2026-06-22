@@ -5622,7 +5622,7 @@
 }
 
 .paymentSheet {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   align-content: stretch;
   height: min(86dvh, 820px);
   min-height: 0;
@@ -6581,6 +6581,7 @@
 }
 
 .segmentedControl {
+  grid-row: 3;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
@@ -6606,7 +6607,7 @@
 }
 
 .embeddedPayment {
-  grid-row: 3;
+  grid-row: 4;
   min-height: 0;
   overflow: hidden;
   margin-right: -2px;

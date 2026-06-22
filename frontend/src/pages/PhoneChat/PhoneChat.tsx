@@ -13190,11 +13190,12 @@ export const PhoneChat: React.FC = () => {
             {...actionSheetDismiss.sheetDragProps}
           >
             <div className={styles.sheetHandle} aria-hidden="true" />
-            {sheet !== 'attachments' && sheet !== 'payment' && (
+            {sheet !== 'attachments' && (
               <div className={styles.sheetHeader}>
                 <div>
                   <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? 'Agente de IA' : 'Ristak'}</p>
                   <h2>
+                    {sheet === 'payment' && 'Registrar pago'}
                     {sheet === 'templates' && 'Plantillas'}
                     {sheet === 'clabe' && 'CLABE'}
                     {sheet === 'settings' && 'Ajustes del chat'}
