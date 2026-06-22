@@ -1695,7 +1695,8 @@ test('parte respuestas largas respetando el máximo de segmentos', () => {
   assert.ok(parts.length > 1)
   assert.ok(parts.length <= 6)
   assert.ok(parts.every((part) => part.trim().length > 0))
-  assert.equal(parts.join(' '), longReply)
+  assert.equal(parts.join(' ').toLocaleLowerCase('es-MX'), longReply.toLocaleLowerCase('es-MX'))
+  assert.match(parts[0], /^Va/)
 })
 
 test('switch apagado envia una sola respuesta aunque el texto sea largo', async () => {
@@ -1728,7 +1729,7 @@ test('modo humano no fuerza globos cuando la respuesta corta es una sola idea', 
     random: () => 0
   })
 
-  assert.deepEqual(result.messages, ['sí, mañana a las 5 está perfecto'])
+  assert.deepEqual(result.messages, ['Sí, mañana a las 5 está perfecto'])
 })
 
 test('modo humano usa fallback natural cuando no hay splitter IA disponible', async () => {
@@ -1739,7 +1740,7 @@ test('modo humano usa fallback natural cuando no hay splitter IA disponible', as
   })
 
   assert.equal(result.source, 'fallback')
-  assert.deepEqual(result.messages, ['ah ya te entendí…', '¿pero cómo está eso exactamente?'])
+  assert.deepEqual(result.messages, ['Ah ya te entendí…', '¿pero cómo está eso exactamente?'])
 })
 
 test('modo humano acepta BREAK como separador pero no lo expone al contacto', async () => {
@@ -1750,7 +1751,7 @@ test('modo humano acepta BREAK como separador pero no lo expone al contacto', as
   })
 
   assert.equal(result.source, 'ai')
-  assert.deepEqual(result.messages, ['ok perfecto', 'ahora dime qué fecha te queda mejor'])
+  assert.deepEqual(result.messages, ['Ok perfecto', 'ahora dime qué fecha te queda mejor'])
   assert.ok(result.messages.every((message) => !message.includes('[BREAK]')))
 })
 
@@ -1762,8 +1763,51 @@ test('modo humano separa BREAK aunque venga dentro de JSON válido', async () =>
   })
 
   assert.equal(result.source, 'ai')
-  assert.deepEqual(result.messages, ['ok perfecto', 'ahora dime qué fecha te queda mejor'])
+  assert.deepEqual(result.messages, ['Ok perfecto', 'ahora dime qué fecha te queda mejor'])
   assert.ok(result.messages.every((message) => !message.includes('[BREAK]')))
+})
+
+test('modo humano alterna mayuscula inicial entre globos', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'ok perfecto ahora te explico rápido luego vemos horarios para cerrar te pido el dato',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 1, maxBubbleLength: 120 },
+    aiSplitter: async () => 'ok perfecto [BREAK] Ahora te explico rápido [BREAK] luego vemos horarios [BREAK] Para cerrar te pido el dato'
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, [
+    'Ok perfecto',
+    'ahora te explico rápido',
+    'Luego vemos horarios',
+    'para cerrar te pido el dato'
+  ])
+})
+
+test('modo humano conserva mayusculas obligatorias al alternar globos', async () => {
+  const result = await splitMessageIntoBubbles({
+    text: 'ok perfecto Ana Gómez queda registrada luego confirmamos fecha 24 de junio queda apartado después usamos WhatsApp como canal',
+    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 1, maxBubbleLength: 120 },
+    aiSplitter: async () => ({
+      messages: [
+        'ok perfecto',
+        'Ana Gómez queda registrada',
+        'luego confirmamos fecha',
+        '24 de junio queda apartado',
+        'después usamos WhatsApp como canal',
+        'WhatsApp queda como canal final'
+      ]
+    })
+  })
+
+  assert.equal(result.source, 'ai')
+  assert.deepEqual(result.messages, [
+    'Ok perfecto',
+    'Ana Gómez queda registrada',
+    'Luego confirmamos fecha',
+    '24 de junio queda apartado',
+    'Después usamos WhatsApp como canal',
+    'WhatsApp queda como canal final'
+  ])
 })
 
 test('modo humano repara globos con reacción, salto y pregunta en el mismo mensaje', async () => {
@@ -1776,9 +1820,9 @@ test('modo humano repara globos con reacción, salto y pregunta en el mismo mens
 
   assert.equal(result.source, 'ai')
   assert.deepEqual(result.messages, [
-    'ya..',
+    'Ya..',
     'entonces sí traes ese tema encima',
-    'pa entenderte bien y no decirte algo al aire',
+    'Pa entenderte bien y no decirte algo al aire',
     'hoy cómo te llegan los pacientes?'
   ])
 })
@@ -1792,9 +1836,9 @@ test('modo humano fallback separa reaccion lectura puente y pregunta final', () 
   })
 
   assert.deepEqual(result.messages, [
-    'ya..',
+    'Ya..',
     'entonces sí traes ese tema encima',
-    'pa entenderte bien y no decirte algo al aire',
+    'Pa entenderte bien y no decirte algo al aire',
     'hoy cómo te llegan los pacientes?'
   ])
 })
@@ -1807,7 +1851,7 @@ test('modo humano deja una reaccion con coma como globo propio', async () => {
   })
 
   assert.equal(result.source, 'ai')
-  assert.deepEqual(result.messages, ['claro,', 'de qué te gustaría saber?'])
+  assert.deepEqual(result.messages, ['Claro,', 'de qué te gustaría saber?'])
 })
 
 test('modo humano no deja una frase dependiente sola antes de una pregunta', async () => {
@@ -1819,7 +1863,7 @@ test('modo humano no deja una frase dependiente sola antes de una pregunta', asy
   })
 
   assert.equal(result.source, 'ai')
-  assert.deepEqual(result.messages, [original])
+  assert.deepEqual(result.messages, ['Depende de lo que necesites. tú eres médico o lo ves para alguien más?'])
 })
 
 test('modo humano fallback no corta depende de lo que necesitas antes del contexto', () => {
@@ -1830,7 +1874,7 @@ test('modo humano fallback no corta depende de lo que necesitas antes del contex
     random: () => 0.99
   })
 
-  assert.deepEqual(result.messages, [original])
+  assert.deepEqual(result.messages, ['Depende de lo que necesites. tú eres médico o lo ves para alguien más?'])
 })
 
 test('modo humano puede llegar hasta seis globos sólo cuando el texto largo lo amerita', () => {
@@ -1851,7 +1895,8 @@ test('modo humano puede llegar hasta seis globos sólo cuando el texto largo lo 
 
   assert.ok(result.messages.length > 4)
   assert.ok(result.messages.length <= 6)
-  assert.equal(result.messages.join(' '), longReply)
+  assert.equal(result.messages.join(' ').toLocaleLowerCase('es-MX'), longReply.toLocaleLowerCase('es-MX'))
+  assert.match(result.messages[0], /^Va/)
 })
 
 test('mensaje casual se divide en globos humanos con IA', async () => {

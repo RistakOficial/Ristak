@@ -18,9 +18,121 @@ const MAX_AI_INPUT_CHARS = 4000
 const SIGNIFICANT_TOKEN_MIN_LENGTH = 4
 
 const PROTECTED_TOKEN_PATTERN = /https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|[\w.+-]+@[\w.-]+\.[a-z]{2,}|\+?\d[\d\s().-]{6,}\d|\$\s?\d[\d,.]*(?:\s?(?:mxn|usd|pesos|dólares|dolares))?|\b\d{1,2}:\d{2}\s?(?:am|pm)?\b|\b[A-Z0-9]{4,}(?:-[A-Z0-9]{2,})+\b/gi
+const LEADING_OPENING_LETTER_PATTERN = /^([\s"'“”‘’([¿¡]*)(\p{L})/u
+const LEADING_OPENING_WORD_PATTERN = /^[\s"'“”‘’([¿¡]*([\p{L}][\p{L}\p{M}'’.-]*)/u
+const LEADING_PROTECTED_VALUE_PATTERN = /^(?:https?:\/\/|www\.|[\w.+-]+@|\+?\d|\$\s?\d)/i
+
+const LOWERCASEABLE_OPENING_WORDS = new Set([
+  'a', 'ah', 'ahh', 'ahi', 'ahora', 'ahorita', 'al', 'algo', 'antes', 'asi', 'aunque',
+  'buenisimo', 'cada', 'claro', 'como', 'con', 'confirmamos', 'cuando', 'cual', 'cuales',
+  'cuanto', 'cuantos', 'cuentame', 'de', 'del', 'depende', 'despues', 'dime', 'digo',
+  'donde', 'el', 'en', 'entonces', 'esa', 'ese', 'eso', 'esta', 'este', 'esto', 'hay',
+  'hoy', 'igual', 'la', 'las', 'le', 'les', 'listo', 'lo', 'los', 'luego', 'mas',
+  'me', 'mira', 'mmm', 'necesito', 'necesitamos', 'ni', 'no', 'nos', 'ok', 'okay',
+  'otra', 'otro', 'pa', 'para', 'pero', 'perfecto', 'podemos', 'podria', 'podrias',
+  'por', 'porque', 'primero', 'puede', 'puedes', 'pues', 'que', 'quedo', 'quieres',
+  'revisamos', 'sale', 'segundo', 'si', 'sin', 'solo', 'su', 'tambien', 'te', 'tercero',
+  'todavia', 'tu', 'un', 'una', 'va', 'vamos', 'ya', 'y'
+])
+const FORCED_CAPITAL_OPENING_WORDS = new Set([
+  'api', 'apple', 'bunny', 'chatgpt', 'clip', 'facebook', 'google', 'gohighlevel',
+  'highlevel', 'ia', 'ine', 'instagram', 'meta', 'mxn', 'openai', 'paypal', 'render',
+  'ristak', 'sat', 'stripe', 'tiktok', 'usd', 'whatsapp', 'ycloud'
+])
+const DATE_OPENING_WORDS = new Set([
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
+  'septiembre', 'setiembre', 'octubre', 'noviembre', 'diciembre',
+  'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'
+])
+const COMMON_PROPER_NAME_OPENING_WORDS = new Set([
+  'adriana', 'alejandro', 'alejandra', 'ana', 'andrea', 'angel', 'angela', 'antonio',
+  'camila', 'carla', 'carlos', 'daniel', 'david', 'diego', 'eduardo', 'fernanda',
+  'francisco', 'gabriela', 'guadalupe', 'jesus', 'jorge', 'jose', 'juan', 'karla',
+  'laura', 'luis', 'manuel', 'maria', 'miguel', 'monica', 'oscar', 'pablo', 'paola',
+  'patricia', 'raul', 'ricardo', 'roberto', 'sofia', 'valeria', 'veronica'
+])
 
 function cleanText(value) {
   return String(value || '').replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+function normalizeOpeningWord(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+function startsWithUppercaseLetter(value) {
+  const [first = ''] = [...String(value || '')]
+  return first.toLocaleUpperCase('es-MX') === first && first.toLocaleLowerCase('es-MX') !== first
+}
+
+function isAllCapsWord(value) {
+  const letters = String(value || '').replace(/[^\p{L}]/gu, '')
+  return letters.length > 1 && letters.toLocaleUpperCase('es-MX') === letters && letters.toLocaleLowerCase('es-MX') !== letters
+}
+
+function hasInternalCapital(value) {
+  return /\p{Ll}\p{Lu}/u.test(String(value || ''))
+}
+
+function nextWordStartsUppercase(value) {
+  const match = String(value || '').match(/^\s+([\p{L}][\p{L}\p{M}'’.-]*)/u)
+  return Boolean(match && startsWithUppercaseLetter(match[1]))
+}
+
+function shouldPreserveOpeningCapitalOnLowercaseTurn(message) {
+  const clean = cleanText(message)
+  if (!clean || LEADING_PROTECTED_VALUE_PATTERN.test(clean)) return true
+
+  const match = clean.match(LEADING_OPENING_WORD_PATTERN)
+  if (!match) return true
+
+  const word = match[1]
+  if (!startsWithUppercaseLetter(word)) return false
+
+  const normalized = normalizeOpeningWord(word)
+  const rest = clean.slice(match[0].length)
+  if (!normalized) return true
+  if (LOWERCASEABLE_OPENING_WORDS.has(normalized)) return false
+  if (
+    FORCED_CAPITAL_OPENING_WORDS.has(normalized) ||
+    DATE_OPENING_WORDS.has(normalized) ||
+    COMMON_PROPER_NAME_OPENING_WORDS.has(normalized) ||
+    isAllCapsWord(word) ||
+    hasInternalCapital(word) ||
+    nextWordStartsUppercase(rest)
+  ) {
+    return true
+  }
+
+  return false
+}
+
+function uppercaseOpeningLetter(message) {
+  const clean = cleanText(message)
+  if (!clean || LEADING_PROTECTED_VALUE_PATTERN.test(clean)) return clean
+  return clean.replace(LEADING_OPENING_LETTER_PATTERN, (_, prefix, letter) => {
+    return `${prefix}${letter.toLocaleUpperCase('es-MX')}`
+  })
+}
+
+function lowercaseOpeningLetter(message) {
+  const clean = cleanText(message)
+  if (!clean || shouldPreserveOpeningCapitalOnLowercaseTurn(clean)) return clean
+  return clean.replace(LEADING_OPENING_LETTER_PATTERN, (_, prefix, letter) => {
+    return `${prefix}${letter.toLocaleLowerCase('es-MX')}`
+  })
+}
+
+function normalizeBubbleOpeningCasing(messages) {
+  return (Array.isArray(messages) ? messages : [])
+    .map((message, index) => index % 2 === 0
+      ? uppercaseOpeningLetter(message)
+      : lowercaseOpeningLetter(message))
+    .filter(Boolean)
 }
 
 function stripVisibleLabel(value) {
@@ -413,7 +525,7 @@ function repairMessages(rawMessages, originalText, settings) {
     return { ok: false, reason: 'protected_token_changed_after_repair', messages: [] }
   }
 
-  return { ok: true, reason: 'ok', messages: repaired }
+  return { ok: true, reason: 'ok', messages: normalizeBubbleOpeningCasing(repaired) }
 }
 
 function parseSplitterJson(rawOutput) {
