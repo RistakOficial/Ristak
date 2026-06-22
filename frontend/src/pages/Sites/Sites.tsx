@@ -3590,6 +3590,49 @@ const socialProfileOptionLabel = (profile: ConnectedSocialProfile) => {
   return `${platform}: ${profile.name}${owner}${followers}`
 }
 
+const parseSocialFollowerCount = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+  if (!raw) return 0
+
+  const match = raw.match(/(\d+(?:[.,]\d+)?)/)
+  if (!match) return 0
+
+  const amount = Number(match[1].replace(',', '.'))
+  if (!Number.isFinite(amount)) return 0
+
+  if (/\b(k|mil|thousand)\b/.test(raw)) return amount * 1000
+  if (/\b(m|mm|millon|millones|million|millions)\b/.test(raw)) return amount * 1000000
+  return amount
+}
+
+const getConnectedSocialProfileFollowerCount = (profile: ConnectedSocialProfile) =>
+  typeof profile.followers === 'number' && Number.isFinite(profile.followers)
+    ? profile.followers
+    : parseSocialFollowerCount(profile.followersLabel)
+
+const isConfiguredConnectedSocialProfile = (profile: ConnectedSocialProfile) =>
+  Boolean(profile.isConfiguredPage || profile.isConfiguredInstagram)
+
+const sortConnectedSocialProfilesByPriority = (profiles: ConnectedSocialProfile[]) =>
+  [...profiles].sort((left, right) => {
+    const followersDelta = getConnectedSocialProfileFollowerCount(right) - getConnectedSocialProfileFollowerCount(left)
+    if (followersDelta !== 0) return followersDelta
+
+    const configuredDelta = Number(isConfiguredConnectedSocialProfile(right)) - Number(isConfiguredConnectedSocialProfile(left))
+    if (configuredDelta !== 0) return configuredDelta
+
+    return socialPlatformOptions.findIndex(option => option.value === left.platform) - socialPlatformOptions.findIndex(option => option.value === right.platform)
+  })
+
+const getBestConnectedSocialProfile = (profiles: ConnectedSocialProfile[]): ConnectedSocialProfile | null =>
+  sortConnectedSocialProfilesByPriority(profiles)[0] || null
+
 const connectedSocialProfileBlockPatch = (profile: ConnectedSocialProfile): Record<string, unknown> => ({
   platform: profile.platform,
   brandName: profile.name,
@@ -3597,7 +3640,11 @@ const connectedSocialProfileBlockPatch = (profile: ConnectedSocialProfile): Reco
     ? 'Perfil de Instagram conectado'
     : profile.platform === 'facebook'
       ? 'Página de Facebook conectada'
-      : 'Perfil conectado',
+      : profile.platform === 'tiktok'
+        ? 'Perfil de TikTok conectado'
+        : profile.platform === 'threads'
+          ? 'Perfil de Threads conectado'
+          : 'Perfil conectado',
   brandAvatar: profile.avatarUrl || '',
   followers: profile.followersLabel || '',
   brandVerified: true,
@@ -3610,22 +3657,24 @@ const connectedSocialProfileBlockPatch = (profile: ConnectedSocialProfile): Reco
   socialSyncedAt: profile.updatedAt || new Date().toISOString()
 })
 
-const getPreferredConnectedSocialProfile = (
-  profiles: ConnectedSocialProfile[],
-  platform: SocialPlatform
-): ConnectedSocialProfile | null => {
-  const platformProfiles = profiles.filter(profile => profile.platform === platform)
-  if (!platformProfiles.length) return null
+const socialProfileAutoPresetForNewBlock = (
+  blockType: SiteBlockType,
+  initialSettings: Record<string, unknown>,
+  profiles: ConnectedSocialProfile[]
+): Record<string, unknown> => {
+  if (blockType !== 'social_profile') return initialSettings
+  if (initialSettings.socialAutoSync === false || getSettingString(initialSettings, 'socialSourceProfileId')) return initialSettings
 
-  const configuredProfile = platformProfiles.find(profile => (
-    platform === 'facebook'
-      ? profile.isConfiguredPage
-      : platform === 'instagram'
-        ? profile.isConfiguredInstagram
-        : profile.isConfiguredPage || profile.isConfiguredInstagram
-  ))
+  const bestProfile = getBestConnectedSocialProfile(profiles)
+  if (!bestProfile) return {
+    ...initialSettings,
+    socialAutoSync: true
+  }
 
-  return configuredProfile || platformProfiles[0]
+  return {
+    ...initialSettings,
+    ...connectedSocialProfileBlockPatch(bestProfile)
+  }
 }
 
 const socialProfileDefaultsForSite = (site?: PublicSite | null): Record<string, unknown> => {
@@ -10225,7 +10274,11 @@ export const Sites: React.FC = () => {
     if (!siteForAdd) return
     try {
       const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
-      const initialSettings = options.initialSettings || {}
+      const initialSettings = socialProfileAutoPresetForNewBlock(
+        blockType,
+        options.initialSettings || {},
+        connectedSocialProfiles
+      )
       const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, siteForAdd), initialSettings)
       const duplicateSystemPreset = isFormSite(siteForAdd)
         ? getDuplicateSystemFormFieldPreset(payload, siteForAdd.blocks || [])
@@ -33787,10 +33840,10 @@ const SocialProfileSettings: React.FC<{
   onSave: () => void
 }> = ({ site, settings, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
   const platform = normalizeSocialPlatform(settings.platform || platformChromeFor(resolveTemplateId(site)))
-  const connectedProfilesForPlatform = connectedSocialProfiles.filter(profile => profile.platform === platform)
+  const connectedProfilesForPlatform = sortConnectedSocialProfilesByPriority(connectedSocialProfiles.filter(profile => profile.platform === platform))
   const selectedConnectedProfileId = getSettingString(settings, 'socialSourceProfileId')
   const hasManualSelection = settings.socialAutoSync === false
-  const preferredConnectedProfile = getPreferredConnectedSocialProfile(connectedSocialProfiles, platform)
+  const preferredConnectedProfile = getBestConnectedSocialProfile(connectedSocialProfiles)
 
   useEffect(() => {
     if (loadingSocialProfiles) return
@@ -33805,7 +33858,6 @@ const SocialProfileSettings: React.FC<{
     loadingSocialProfiles,
     onPatchSettings,
     onSave,
-    platform,
     preferredConnectedProfile,
     selectedConnectedProfileId
   ])
@@ -33819,6 +33871,7 @@ const SocialProfileSettings: React.FC<{
           value={platform}
           onChange={(event) => onPatchSettings({
             platform: event.target.value,
+            socialAutoSync: false,
             socialSourceProfileId: '',
             socialSourcePlatform: '',
             socialSourceId: '',
