@@ -16284,7 +16284,7 @@ function renderBlockStyleVars(block) {
     vars.push(`--rstk-social-gap:${socialPx(11 * profileScale)}`)
     vars.push(`--rstk-social-name-size:${socialPx(socialFontSize * profileScale)}`)
     vars.push(`--rstk-social-followers-size:${socialPx(Math.max(11, socialFontSize * profileScale * 0.82))}`)
-    vars.push(`--rstk-social-verified-size:${socialPx(14 * profileScale)}`)
+    vars.push(`--rstk-social-verified-size:${socialPx(16.5 * profileScale)}`)
     vars.push('width:max-content')
     vars.push('min-width:max-content')
     vars.push('max-width:100%')
@@ -18332,7 +18332,7 @@ const RSTK_BASE_CSS = `
   .rstk-social-profile-block .rstk-social-details{flex:0 0 auto;min-width:max-content}
   .rstk-social-name{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--rstk-social-name-size,20px);line-height:1.08;font-weight:700;color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 92%,var(--rstk-muted) 8%)}
   .rstk-social-profile-block .rstk-social-name,.rstk-social-profile-block .rstk-social-followers{white-space:nowrap}
-  .rstk-social-name .rstk-verified{width:var(--rstk-social-verified-size,15px);height:var(--rstk-social-verified-size,15px);margin-left:0;color:#1877f2;flex:0 0 auto;position:relative;top:0;transform:translateY(-0.02em)}
+  .rstk-social-name .rstk-verified{width:var(--rstk-social-verified-size,18px);height:var(--rstk-social-verified-size,18px);margin-left:1px;color:#1877f2;flex:0 0 auto;align-self:center;position:relative;top:0;transform:translateY(0.04em)}
   .rstk-social-followers{margin-top:1px;color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 50%,var(--rstk-muted) 50%);font-size:var(--rstk-social-followers-size,16px);line-height:1.18;font-weight:500}
   @media (max-width:480px){
     .rstk-social-profile{padding:15px var(--rstk-pad) 12px}

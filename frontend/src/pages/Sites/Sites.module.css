@@ -9062,10 +9062,12 @@
 }
 
 .canvasChromeProfileBlock .chromeVerified {
+  align-self: center;
   top: 0;
-  width: var(--rstk-social-verified-size, 15px);
-  height: var(--rstk-social-verified-size, 15px);
-  transform: translateY(-0.02em);
+  width: var(--rstk-social-verified-size, 18px);
+  height: var(--rstk-social-verified-size, 18px);
+  margin-left: 1px;
+  transform: translateY(0.04em);
 }
 
 .canvasChromeSourceForm .chromeName {

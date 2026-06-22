@@ -4008,7 +4008,7 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
     style['--rstk-social-gap'] = socialPx(11 * profileScale)
     style['--rstk-social-name-size'] = socialPx(socialFontSize * profileScale)
     style['--rstk-social-followers-size'] = socialPx(Math.max(11, socialFontSize * profileScale * 0.82))
-    style['--rstk-social-verified-size'] = socialPx(14 * profileScale)
+    style['--rstk-social-verified-size'] = socialPx(16.5 * profileScale)
     style.width = 'max-content'
     style.minWidth = 'max-content'
     style.maxWidth = '100%'
