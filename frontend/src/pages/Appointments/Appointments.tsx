@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading, SearchField } from '@/components/common';
-import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Settings, Bell, Sparkles, Copy } from 'lucide-react';
+import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading, SearchField, CustomSelect } from '@/components/common';
+import { ChevronLeft, ChevronRight, Plus, ChevronDown, Settings, Bell, Sparkles, Copy } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -301,8 +301,6 @@ export const Appointments: React.FC = () => {
   const [isBlockedSlotModalOpen, setIsBlockedSlotModalOpen] = useState(false);
   const [isCreateBlockedSlotMode, setIsCreateBlockedSlotMode] = useState(true);
 
-  // Dropdown de calendarios
-  const [isCalendarDropdownOpen, setIsCalendarDropdownOpen] = useState(false);
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '');
 
 
@@ -654,20 +652,6 @@ export const Appointments: React.FC = () => {
       loadUpcomingEvents();
     }
   }, [selectedCalendar, locationId, accessToken, loadUpcomingEvents]);
-
-  // Cerrar dropdown al presionar Escape
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsCalendarDropdownOpen(false);
-      }
-    };
-
-    if (isCalendarDropdownOpen) {
-      document.addEventListener('keydown', handleEscape);
-      return () => document.removeEventListener('keydown', handleEscape);
-    }
-  }, [isCalendarDropdownOpen]);
 
   // Auto-scroll en vistas de semana y día
   useEffect(() => {
@@ -1445,57 +1429,22 @@ export const Appointments: React.FC = () => {
           <div className={styles.calendarHeaderControls}>
             {/* Selector de calendarios */}
             <div className={styles.calendarSelector}>
-              <button
-                type="button"
-                className={styles.calendarDropdownButton}
-                onClick={() => setIsCalendarDropdownOpen(!isCalendarDropdownOpen)}
+              <CustomSelect
+                value={selectedCalendar?.id || ''}
+                options={calendars.map((calendar) => ({
+                  value: calendar.id,
+                  label: calendar.name
+                }))}
+                onValueChange={(calendarId) => {
+                  const calendar = calendars.find((item) => item.id === calendarId);
+                  if (!calendar) return;
+                  selectCalendar(calendar);
+                  navigateCalendarView({ calendarId: calendar.id });
+                }}
+                placeholder={calendars.length ? 'Selecciona un calendario' : 'No hay calendarios'}
                 disabled={loading || calendars.length === 0}
-                aria-expanded={isCalendarDropdownOpen}
-                data-ristak-dropdown-trigger
-              >
-                <span className={styles.dropdownButtonText}>
-                  {selectedCalendar?.name || 'Selecciona un calendario'}
-                </span>
-                <ChevronDown
-                  size={18}
-                  className={`${styles.dropdownIcon} ${isCalendarDropdownOpen ? styles.dropdownIconOpen : ''}`}
-                />
-              </button>
-
-              {isCalendarDropdownOpen && (
-                <>
-                  <div
-                    className={styles.dropdownOverlay}
-                    onClick={() => setIsCalendarDropdownOpen(false)}
-                  />
-                  <div className={styles.dropdownMenu} data-ristak-dropdown-panel>
-                    {calendars.length === 0 ? (
-                      <div className={styles.dropdownEmpty}>
-                        No hay calendarios disponibles
-                      </div>
-                    ) : (
-                      calendars.map((calendar) => (
-                        <button
-                          key={calendar.id}
-                          className={`${styles.dropdownItem} ${selectedCalendar?.id === calendar.id ? styles.dropdownItemActive : ''}`}
-                          data-ristak-dropdown-item
-                          data-selected={selectedCalendar?.id === calendar.id ? 'true' : undefined}
-                          onClick={() => {
-                            selectCalendar(calendar);
-                            navigateCalendarView({ calendarId: calendar.id });
-                            setIsCalendarDropdownOpen(false);
-                          }}
-                        >
-                          <span className={styles.dropdownItemText}>{calendar.name}</span>
-                          {selectedCalendar?.id === calendar.id && (
-                            <Check size={16} className={styles.dropdownCheckIcon} />
-                          )}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </>
-              )}
+                aria-label="Seleccionar calendario"
+              />
             </div>
 
             {/* Buscador de citas */}
@@ -1583,7 +1532,6 @@ export const Appointments: React.FC = () => {
               </div>
               <Button
                 variant="secondary"
-                size="small"
                 onClick={handleCopySelectedCalendarPublicUrl}
                 disabled={!selectedCalendarPublicUrl}
                 title={selectedCalendarPublicUrl ? 'Copiar enlace de agendamiento' : selectedCalendar?.publicUrlUnavailableReason || 'Enlace no disponible'}

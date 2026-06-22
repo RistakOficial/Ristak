@@ -8,6 +8,9 @@
 }
 
 .headerControls {
+  --appointments-toolbar-control-height: var(--ristak-dropdown-trigger-height);
+  --app-button-height: var(--appointments-toolbar-control-height);
+
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
   gap: 1.5rem;
@@ -16,17 +19,20 @@
 }
 
 .calendarHeaderControls {
+  --search-field-height: var(--appointments-toolbar-control-height);
+
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
-  align-items: stretch;
+  align-items: center;
   min-width: 0;
 }
 
 .settingsButton {
   align-self: stretch;
   justify-self: stretch;
-  min-height: 44px;
+  min-height: var(--appointments-toolbar-control-height);
+  border-radius: var(--ristak-dropdown-radius);
 }
 
 .settingsButton svg {
@@ -38,6 +44,10 @@
   position: relative;
   grid-column: span 2;
   min-width: 0;
+}
+
+.searchContainer :global([data-ristak-search-field]) {
+  --search-field-height: var(--appointments-toolbar-control-height);
 }
 
 .searchOverlay {
@@ -141,11 +151,24 @@
   align-items: center;
   gap: 0.6rem;
   min-width: 0;
-  min-height: 44px;
-  padding: 0.45rem 0.55rem 0.45rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
+  height: var(--appointments-toolbar-control-height);
+  min-height: var(--appointments-toolbar-control-height);
+  padding: 0 0.25rem 0 0.75rem;
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
+  background: var(--ristak-dropdown-bg);
+  box-shadow: var(--ristak-dropdown-trigger-shadow, var(--design-control-shadow));
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.publicLinkPreview:hover {
+  border-color: var(--ristak-dropdown-border-hover);
+  background: var(--ristak-dropdown-bg-hover);
+}
+
+.publicLinkPreview :global([data-btn]) {
+  --app-button-height: calc(var(--appointments-toolbar-control-height) - 8px);
+  --app-button-padding-x: 10px;
 }
 
 .publicLinkCopy {
@@ -175,191 +198,6 @@
 .calendarSelector {
   position: relative;
   min-width: 0;
-}
-
-/* Botón del dropdown */
-.calendarDropdownButton {
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  padding: 0.625rem 1rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  background-color: var(--color-white);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  outline: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.calendarDropdownButton:hover:not(:disabled) {
-  border-color: var(--color-primary-300);
-  background-color: var(--color-gray-50);
-}
-
-.calendarDropdownButton:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background-color: var(--color-gray-100);
-}
-
-.dropdownButtonText {
-  flex: 1;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dropdownIcon {
-  flex-shrink: 0;
-  color: var(--color-text-tertiary);
-  transition: transform 0.2s ease;
-}
-
-.dropdownIconOpen {
-  transform: rotate(180deg);
-}
-
-/* Overlay para cerrar al hacer click afuera */
-.dropdownOverlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: var(--z-index-dropdown);
-}
-
-/* Menú del dropdown */
-.dropdownMenu {
-  position: absolute;
-  top: calc(100% + 0.5rem); /* Se abre hacia ABAJO */
-  left: 0;
-  width: 100%;
-  min-width: 0;
-  max-height: 320px;
-  overflow-y: auto;
-  background-color: var(--surface-solid, var(--color-background));
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  z-index: var(--z-index-popover);
-  padding: 0;
-  overflow-x: hidden;
-  animation: dropdownSlideIn 0.15s ease-out; /* Animación hacia abajo */
-}
-
-@keyframes dropdownSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Animación para dropdown que se abre hacia arriba */
-@keyframes dropdownSlideUp {
-  from {
-    opacity: 0;
-    transform: translateY(8px); /* Empieza desde abajo */
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.dropdownMenu::-webkit-scrollbar {
-  width: var(--ristak-scrollbar-size, 10px);
-}
-
-.dropdownMenu::-webkit-scrollbar-track {
-  margin-block: var(--ristak-scrollbar-track-margin, 4px);
-  background: transparent;
-}
-
-.dropdownMenu::-webkit-scrollbar-thumb {
-  border: var(--ristak-scrollbar-padding, 3px) solid transparent;
-  border-radius: var(--radius-full);
-  background: var(--ristak-scrollbar-thumb);
-  background-clip: padding-box;
-}
-
-.dropdownMenu::-webkit-scrollbar-thumb:hover {
-  background: var(--ristak-scrollbar-thumb-hover);
-  background-clip: padding-box;
-}
-
-/* Items del dropdown */
-.dropdownItem {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 100%;
-  padding: 0.75rem 0.875rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  background-color: var(--color-background);
-  border: none;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 0 !important;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  text-align: left;
-}
-
-.dropdownItem:last-child {
-  border-bottom: none;
-}
-
-.dropdownItem:hover {
-  background-color: var(--color-background-tertiary);
-}
-
-.dropdownItemActive {
-  background-color: var(--color-primary-100);
-  color: var(--color-primary-800);
-  font-weight: 500;
-}
-
-.dropdownItemActive:hover {
-  background-color: var(--color-primary-200);
-}
-
-.dropdownItemText {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.4;
-}
-
-.dropdownCheckIcon {
-  flex-shrink: 0;
-  color: var(--color-primary-700);
-  stroke-width: 2.5px;
-}
-
-.dropdownEmpty {
-  padding: 1.5rem 1rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  text-align: center;
 }
 
 .navBtn {
