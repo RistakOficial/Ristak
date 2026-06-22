@@ -316,11 +316,62 @@ function hasAdvancedClosingContext(context = {}) {
   return ADVANCED_CLOSING_CONTEXT_FIELDS.some((field) => Boolean(context?.[field.key]))
 }
 
-function compactText(value, maxLength = 280) {
-  const clean = cleanAdvancedClosingContextValue(value, Math.max(maxLength + 40, maxLength))
+function conciseCompletionPhrase(value, maxLength = 130) {
+  const clean = cleanAdvancedClosingContextValue(value, 700)
   if (!clean || clean.length <= maxLength) return clean
-  const truncated = clean.slice(0, Math.max(0, maxLength - 1)).trim()
-  return `${truncated.replace(/[.,;:!?-]+$/g, '')}…`
+
+  const naturalBoundary = clean
+    .slice(0, maxLength + 1)
+    .split(/(?<=[.!?])\s+|[;|]\s+|\s+-\s+/)
+    .find((part) => part && part.trim().length >= 28)
+  if (naturalBoundary) return naturalBoundary.trim().replace(/[.,;:!?-]+$/g, '')
+
+  const words = clean.split(/\s+/)
+  let output = ''
+  for (const word of words) {
+    const next = output ? `${output} ${word}` : word
+    if (next.length > maxLength) break
+    output = next
+  }
+  return (output || clean.slice(0, maxLength)).trim().replace(/[.,;:!?-]+$/g, '')
+}
+
+function normalizeCompletionSummaryPart(value = '') {
+  return String(value || '').trim().replace(/[.!?]+$/g, '')
+}
+
+function getSummaryTokens(value = '') {
+  return new Set(
+    String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .split(/[^a-z0-9]+/i)
+      .filter((word) => word.length >= 5)
+  )
+}
+
+function isRedundantCompletionPart(candidate, existingParts = []) {
+  const candidateTokens = getSummaryTokens(candidate)
+  if (candidateTokens.size < 3) return false
+
+  for (const existing of existingParts) {
+    const existingTokens = getSummaryTokens(existing)
+    if (!existingTokens.size) continue
+    let shared = 0
+    for (const token of candidateTokens) {
+      if (existingTokens.has(token)) shared += 1
+    }
+    if (shared / candidateTokens.size >= 0.55) return true
+  }
+  return false
+}
+
+function joinCompletionSummaryParts(parts = []) {
+  return parts
+    .map(normalizeCompletionSummaryPart)
+    .filter(Boolean)
+    .join('. ')
 }
 
 function formatHumanDateTimeFromSummary(summary, timezone = 'America/Mexico_City') {
@@ -379,7 +430,7 @@ function buildCompletionActionSummary({ signal, summary = '', reason = '', closi
   if (cleanSignal === 'appointment_booked') {
     const humanDate = formatHumanDateTimeFromSummary(baseSummary, timezone)
     if (humanDate) return `Agendó cita para ${humanDate}`
-    if (closingContext.timingPreference) return `Agendó cita para ${compactText(closingContext.timingPreference, 120)}`
+    if (closingContext.timingPreference) return `Agendó cita para ${conciseCompletionPhrase(closingContext.timingPreference, 120)}`
     return 'Agendó una cita'
   }
 
@@ -399,23 +450,24 @@ function buildCompactContextSummary({ reason = '', closingContext = {} } = {}) {
   const normalizedContext = normalizeStoredAdvancedClosingContext(closingContext)
   const parts = []
   const main = normalizedContext.contactReason || normalizedContext.surfaceProblem || normalizedContext.realProblem || reason
-  if (main) parts.push(compactText(main, 180))
-  if (normalizedContext.attemptedBefore) parts.push(`Ya había intentado ${compactText(normalizedContext.attemptedBefore, 130)}`)
-  if (normalizedContext.objection) parts.push(`El freno era ${compactText(normalizedContext.objection, 130)}`)
-  if (!normalizedContext.objection && normalizedContext.impact) parts.push(`Le afectaba ${compactText(normalizedContext.impact, 130)}`)
-  if (normalizedContext.desiredOutcome) parts.push(`Buscaba ${compactText(normalizedContext.desiredOutcome, 130)}`)
+  const mainPart = conciseCompletionPhrase(main, 130)
+  if (mainPart) parts.push(mainPart)
 
-  const unique = []
-  const seen = new Set()
-  for (const part of parts) {
-    const clean = cleanAdvancedClosingContextValue(part, 220)
-    const key = clean.toLowerCase()
-    if (!clean || seen.has(key)) continue
-    seen.add(key)
-    unique.push(clean)
+  const detailCandidates = [
+    normalizedContext.attemptedBefore ? `Ya había intentado ${conciseCompletionPhrase(normalizedContext.attemptedBefore, 90)}` : '',
+    normalizedContext.objection ? `El freno era ${conciseCompletionPhrase(normalizedContext.objection, 90)}` : '',
+    !normalizedContext.objection && normalizedContext.impact ? `Le afectaba ${conciseCompletionPhrase(normalizedContext.impact, 90)}` : '',
+    normalizedContext.desiredOutcome ? `Buscaba ${conciseCompletionPhrase(normalizedContext.desiredOutcome, 90)}` : ''
+  ]
+
+  for (const candidate of detailCandidates) {
+    const clean = normalizeCompletionSummaryPart(candidate)
+    if (!clean || isRedundantCompletionPart(clean, parts)) continue
+    parts.push(clean)
+    if (parts.length >= 2) break
   }
 
-  return compactText(unique.join('. '), 360)
+  return joinCompletionSummaryParts(parts)
 }
 
 function buildCompletionSummaryFromClosingContext({ signal, summary = '', reason = '', closingContext = {}, timezone = 'America/Mexico_City' } = {}) {

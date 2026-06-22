@@ -599,7 +599,17 @@ const LEGACY_COMPLETION_LABELS = [
 function compactCompletionText(value = '', maxLength = 260) {
   const clean = String(value || '').replace(/\s+/g, ' ').trim()
   if (!clean || clean.length <= maxLength) return clean
-  return `${clean.slice(0, Math.max(0, maxLength - 1)).trim().replace(/[.,;:!?-]+$/g, '')}…`
+  const scope = clean.slice(0, maxLength + 1)
+  const boundaries = [
+    scope.lastIndexOf('. '),
+    scope.lastIndexOf('? '),
+    scope.lastIndexOf('! '),
+    scope.lastIndexOf('; '),
+    scope.lastIndexOf(' - ')
+  ].filter((index) => index >= 40)
+  const boundary = boundaries.length ? Math.max(...boundaries) + 1 : -1
+  const truncated = boundary > 0 ? scope.slice(0, boundary) : scope.slice(0, maxLength)
+  return truncated.trim().replace(/[.,;:!?-]+$/g, '')
 }
 
 function getLegacyCompletionValue(text: string, label: string) {
@@ -679,13 +689,15 @@ function buildLegacyContextSummary(summary: string, reason: string) {
   const freno = getLegacyCompletionValue(summary, 'Freno')
   const logro = getLegacyCompletionValue(summary, 'Quiere lograr')
   const resumen = getLegacyCompletionValue(summary, 'Resumen')
-  const parts = [
-    resumen || motivo || situacion || reason,
-    intento ? `Ya había intentado ${intento}` : '',
-    freno ? `El freno era ${freno}` : '',
-    logro ? `Buscaba ${logro}` : ''
-  ].filter(Boolean)
-  return compactCompletionText(parts.join('. '), 320)
+  const main = compactCompletionText(resumen || motivo || situacion || reason, 140)
+  const detail = intento
+    ? `Ya había intentado ${compactCompletionText(intento, 90)}`
+    : freno
+      ? `El freno era ${compactCompletionText(freno, 90)}`
+      : logro
+        ? `Buscaba ${compactCompletionText(logro, 90)}`
+        : ''
+  return [main, detail].filter(Boolean).join('. ')
 }
 
 function normalizeCompletionEvent(event: ConversationalAgentEvent): ConversationalAgentCompletionEvent | null {
@@ -699,7 +711,7 @@ function normalizeCompletionEvent(event: ConversationalAgentEvent): Conversation
   const reason = getRecordString(detail, 'reason')
   const actionSummary = getRecordString(detail, 'actionSummary') || buildLegacyActionSummary(signal, rawSummary, reason)
   const summary = getRecordString(detail, 'actionSummary')
-    ? compactCompletionText(rawSummary || reason || actionSummary, 320)
+    ? compactCompletionText(rawSummary || reason || actionSummary, 220)
     : buildLegacyContextSummary(rawSummary, reason)
   return {
     id: event.id,

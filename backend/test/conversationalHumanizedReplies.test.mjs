@@ -645,8 +645,9 @@ test('resumen de meta concretada usa el contexto de cierre aprendido', async () 
     const state = await getConversationState(contactId)
     assert.match(state.signalSummary, /Agendó cita para el jueves 25 de junio a las 11 a\.m\./)
     assert.match(state.signalSummary, /Resumen: Dolor en rodilla derecha/)
-    assert.match(state.signalSummary, /El freno era Pensaba que se iba a quitar solo/)
-    assert.ok(state.signalSummary.length < 520)
+    assert.match(state.signalSummary, /Ya había intentado Rodillera, hielo e ibuprofeno/)
+    assert.doesNotMatch(state.signalSummary, /Volver a entrenar sin miedo/)
+    assert.ok(state.signalSummary.length < 300)
 
     const event = await db.get(
       "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'signal_set' ORDER BY created_at DESC LIMIT 1",
@@ -656,8 +657,9 @@ test('resumen de meta concretada usa el contexto de cierre aprendido', async () 
     assert.equal(detail.signal, 'appointment_booked')
     assert.equal(detail.closingContextUsed, true)
     assert.match(detail.actionSummary, /Agendó cita para el jueves 25 de junio a las 11 a\.m\./)
-    assert.match(detail.summary, /preocupaba el gasto/)
-    assert.ok(detail.summary.length < 380)
+    assert.match(detail.summary, /Ya había intentado Rodillera, hielo e ibuprofeno/)
+    assert.doesNotMatch(detail.summary, /preocupaba el gasto/)
+    assert.ok(detail.summary.length < 220)
     assert.equal(detail.originalSummary, 'Cita - Closing Summary Test · 2026-06-25T17:00:00.000Z')
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
