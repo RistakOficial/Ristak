@@ -28,10 +28,11 @@ interface PhoneEcosystemNavProps {
   badges?: Partial<Record<PhoneSection, number>>
   placement?: 'bottom' | 'top' | 'rail'
   className?: string
+  onSelect?: (section: PhoneSection) => void
   style?: React.CSSProperties
 }
 
-export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, badges = {}, placement = 'bottom', className, style }) => {
+export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, badges = {}, placement = 'bottom', className, onSelect, style }) => {
   const navigate = useNavigate()
   const activeIndex = getPhoneSectionIndex(active)
   const [indicatorIndex, setIndicatorIndex] = useState(() => readStoredPhoneNavIndex(activeIndex))
@@ -219,6 +220,16 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
             onClick={(event) => {
               if (suppressClickRef.current) {
                 event.preventDefault()
+                return
+              }
+              if (onSelect) {
+                event.preventDefault()
+                const nextIndex = getPhoneSectionIndex(key)
+                storePhoneNavIntent(active, key)
+                window.sessionStorage.setItem(PHONE_NAV_ACTIVE_INDEX_KEY, String(nextIndex))
+                setIndicatorIndex(nextIndex)
+                setIndicatorDragPosition(null)
+                onSelect(key)
                 return
               }
               storePhoneNavIntent(active, key)

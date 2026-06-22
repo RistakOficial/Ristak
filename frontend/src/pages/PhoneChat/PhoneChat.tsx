@@ -66,10 +66,14 @@ import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { PhoneSheet, PhoneTextArea, PhoneTextField } from '@/components/phone/ui'
+import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
+import { PhoneCalendar } from '@/pages/PhoneCalendar'
+import { PhoneSettings } from '@/pages/PhoneSettings'
 import { useAIAgentAvailability, useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import {
@@ -3108,6 +3112,8 @@ export const PhoneChat: React.FC = () => {
   const [deviceMode, setDeviceMode] = useState<PhoneChatDeviceMode>(getPhoneChatDeviceMode)
   const [accessState, setAccessState] = useState<AccessState>(() => getAccessState(deviceMode))
   const isWideChatDevice = deviceMode === 'tablet' || deviceMode === 'desktop'
+  const [wideRailSection, setWideRailSection] = useState<PhoneSection>('chat')
+  const activeRailSection = isWideChatDevice ? wideRailSection : 'chat'
   const [chats, setChats] = useState<ChatContact[]>([])
   const [chatsLoading, setChatsLoading] = useState(true)
   const [chatsRefreshing, setChatsRefreshing] = useState(false)
@@ -3199,6 +3205,7 @@ export const PhoneChat: React.FC = () => {
   const [agentProductsLoading, setAgentProductsLoading] = useState(false)
   const [sheet, setSheet] = useState<ActionSheet>(null)
   const [tagActionContactId, setTagActionContactId] = useState<string | null>(null)
+  const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
   const [chatTags, setChatTags] = useState<ContactTag[]>([])
   const [chatTagsLoading, setChatTagsLoading] = useState(false)
   const [chatTagSearch, setChatTagSearch] = useState('')
@@ -3256,6 +3263,8 @@ export const PhoneChat: React.FC = () => {
   const messagesPaneRef = useRef<HTMLDivElement | null>(null)
   const messagesContentRef = useRef<HTMLDivElement | null>(null)
   const conversationSearchInputRef = useRef<HTMLInputElement | null>(null)
+  const tagDropdownRef = useRef<HTMLDivElement | null>(null)
+  const tagSearchInputRef = useRef<HTMLInputElement | null>(null)
   const messageTextRef = useRef('')
   const messagesPaneNearBottomRef = useRef(true)
   const activeContactIdRef = useRef<string | null>(null)
@@ -3340,6 +3349,41 @@ export const PhoneChat: React.FC = () => {
   })
   const actionSheetMoving = actionSheetDismiss.dragging || actionSheetDismiss.closing || actionSheetDismiss.dragOffset > 0
   const actionSheetDragging = actionSheetDismiss.dragging || actionSheetDismiss.dragOffset > 0
+  const closeTagPicker = useCallback((options: { closeSheet?: boolean } = {}) => {
+    if (options.closeSheet !== false) {
+      actionSheetDismiss.requestClose()
+    }
+    setTagDropdownOpen(false)
+    setTagActionContactId(null)
+  }, [actionSheetDismiss])
+
+  useEffect(() => {
+    if (isWideChatDevice) return
+    setWideRailSection('chat')
+    setTagDropdownOpen(false)
+  }, [isWideChatDevice])
+
+  useEffect(() => {
+    if (!tagDropdownOpen) return undefined
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const node = tagDropdownRef.current
+      if (!node || node.contains(event.target as Node)) return
+      closeTagPicker({ closeSheet: false })
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      closeTagPicker({ closeSheet: false })
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [closeTagPicker, tagDropdownOpen])
+
   const chatSwipeGenerationRef = useRef(0)
   const chatSwipeCloseTimerRef = useRef<number | null>(null)
   const ignoreNextChatClickRef = useRef(false)
@@ -5614,6 +5658,11 @@ export const PhoneChat: React.FC = () => {
     )))
     setConversationReturnTarget(options?.returnTarget || 'chats')
     setConversationOpen(true)
+    if (isWideChatDevice) {
+      setWideRailSection('chat')
+    }
+    setTagDropdownOpen(false)
+    setTagActionContactId(null)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
     setMessageInfoOpen(false)
@@ -5645,6 +5694,11 @@ export const PhoneChat: React.FC = () => {
     setActiveContactId(AI_AGENT_CHAT_ID)
     setConversationReturnTarget('chats')
     setConversationOpen(true)
+    if (isWideChatDevice) {
+      setWideRailSection('chat')
+    }
+    setTagDropdownOpen(false)
+    setTagActionContactId(null)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
     setMessageInfoOpen(false)
@@ -5670,6 +5724,8 @@ export const PhoneChat: React.FC = () => {
     handleCancelVoiceDraft()
     clearMessageActionPress()
     setConversationOpen(false)
+    setTagDropdownOpen(false)
+    setTagActionContactId(null)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
     setMessageInfoOpen(false)
@@ -5868,6 +5924,31 @@ export const PhoneChat: React.FC = () => {
     chatSwipeGestureRef.current = null
   }
 
+  const handleWideRailSelect = (section: PhoneSection) => {
+    if (!isWideChatDevice) return
+
+    setWideRailSection(section)
+    closeSwipeActions()
+    setChatQuickActionsContact(null)
+    setTagDropdownOpen(false)
+
+    if (section === 'payments') {
+      setPaymentMode('single')
+    }
+
+    if (section === 'chat') return
+
+    actionSheetDismiss.requestClose()
+    setContactInfoOpen(false)
+    setMessageInfoOpen(false)
+    setMessageInfoMessageId(null)
+    setMessageActionMenu(null)
+    setConversationSearchOpen(false)
+    setConversationSearchQuery('')
+    setConversationSearchIndex(0)
+    setCameraSharePhoto(null)
+  }
+
   const openConversationSearch = () => {
     if (!activeContact) return
     actionSheetDismiss.requestClose()
@@ -5915,7 +5996,14 @@ export const PhoneChat: React.FC = () => {
     setTagActionContactId(targetContact.id)
     setChatActionContactId(null)
     setChatTagSearch('')
-    setSheet('tag')
+    if (isWideChatDevice) {
+      actionSheetDismiss.requestClose()
+      setTagDropdownOpen(true)
+      window.requestAnimationFrame(() => tagSearchInputRef.current?.focus())
+    } else {
+      setSheet('tag')
+      setTagDropdownOpen(false)
+    }
     setContactInfoOpen(false)
     closeSwipeActions()
     void loadChatTags()
@@ -5940,8 +6028,7 @@ export const PhoneChat: React.FC = () => {
         applyContactInfoPatch({ tags: nextTags })
       }
       showToast('success', 'Etiqueta agregada', `${tag.name} quedó en ${getContactName(tagActionContact)}.`)
-      actionSheetDismiss.requestClose()
-      setTagActionContactId(null)
+      closeTagPicker()
     } catch (error: any) {
       showToast('error', 'No se agregó la etiqueta', getErrorMessage(error, 'Intenta otra vez.'))
     } finally {
@@ -6099,22 +6186,6 @@ export const PhoneChat: React.FC = () => {
     setContactInfoOpen(false)
     closeSwipeActions()
     loadAgentData({ includeDefinitions: false })
-  }
-
-  const handleToggleAgentInboxView = () => {
-    if (!agentEnabled) {
-      openAgentGlobalMenu()
-      return
-    }
-
-    setAgentPriorityViewOpen((current) => !current)
-    setArchivedViewOpen(false)
-    setChatFilter('all')
-    setChatQuery('')
-    actionSheetDismiss.requestClose()
-    setContactInfoOpen(false)
-    setMessageInfoOpen(false)
-    closeSwipeActions()
   }
 
   const handleOpenAppointmentForm = (contact?: Contact | null) => {
@@ -11760,6 +11831,7 @@ export const PhoneChat: React.FC = () => {
         <label className={styles.tagSearchBox}>
           <Search size={18} aria-hidden="true" />
           <input
+            ref={tagSearchInputRef}
             value={chatTagSearch}
             onChange={(event) => setChatTagSearch(event.target.value)}
             placeholder="Buscar o crear etiqueta"
@@ -11829,6 +11901,16 @@ export const PhoneChat: React.FC = () => {
             </div>
           )}
         </div>
+      </div>
+    )
+  }
+
+  const renderTagDropdown = () => {
+    if (!isWideChatDevice || !tagDropdownOpen) return null
+
+    return (
+      <div className={styles.tagDropdownPanel} role="dialog" aria-label="Agregar etiqueta">
+        {renderTagSheet()}
       </div>
     )
   }
@@ -13221,6 +13303,81 @@ export const PhoneChat: React.FC = () => {
     </div>
   )
 
+  const renderWideRailPanel = () => {
+    if (!isWideChatDevice || activeRailSection === 'chat') return null
+
+    if (activeRailSection === 'calendar') {
+      return (
+        <section className={styles.wideSectionPanel} data-wide-rail-section="calendar" aria-label="Calendario">
+          <PhoneCalendar />
+        </section>
+      )
+    }
+
+    if (activeRailSection === 'analytics') {
+      return (
+        <section className={styles.wideSectionPanel} data-wide-rail-section="analytics" aria-label="Analíticas">
+          <PhoneAnalytics />
+        </section>
+      )
+    }
+
+    if (activeRailSection === 'settings') {
+      return (
+        <section className={styles.wideSectionPanel} data-wide-rail-section="settings" aria-label="Ajustes">
+          <PhoneSettings />
+        </section>
+      )
+    }
+
+    return (
+      <section className={`${styles.wideSectionPanel} ${styles.widePaymentPanel}`} data-wide-rail-section="payments" aria-label="Pagos">
+        <header className={styles.widePanelHeader}>
+          <div>
+            <p>Pagos</p>
+            <h2>Registrar pago</h2>
+            <span>{initialContact?.name ? `Para ${initialContact.name}` : 'Elige o busca el contacto dentro del formulario.'}</span>
+          </div>
+        </header>
+
+        {highLevelConnected && (
+          <div className={styles.widePaymentSegmented} role="group" aria-label="Tipo de pago">
+            <button
+              type="button"
+              className={activePhonePaymentMode === 'single' ? styles.segmentActive : ''}
+              onClick={() => setPaymentMode('single')}
+            >
+              Pago único
+            </button>
+            <button
+              type="button"
+              className={activePhonePaymentMode === 'partial' ? styles.segmentActive : ''}
+              onClick={() => setPaymentMode('partial')}
+            >
+              Plan de pago
+            </button>
+          </div>
+        )}
+
+        <div className={styles.widePaymentForm}>
+          <RecordPaymentModal
+            key={`wide-${activePhonePaymentMode}-${initialContact?.id || 'empty'}`}
+            variant="embedded"
+            isOpen
+            initialPaymentMode={activePhonePaymentMode}
+            initialContact={initialContact}
+            lockInitialContact={Boolean(initialContact?.id)}
+            onClose={() => setWideRailSection('chat')}
+            onSuccess={(context) => {
+              if (context?.keepOpen) return
+              setWideRailSection('chat')
+            }}
+          />
+        </div>
+      </section>
+    )
+  }
+
   if (accessState === 'checking') {
     return <PhoneStartupLoader />
   }
@@ -13248,7 +13405,12 @@ export const PhoneChat: React.FC = () => {
       >
         {isWideChatDevice && (
           <aside className={styles.tabletSideRail} aria-label="Secciones de Ristak">
-            <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} placement="rail" />
+            <PhoneEcosystemNav
+              active={activeRailSection}
+              badges={{ chat: unreadTotal }}
+              placement="rail"
+              onSelect={handleWideRailSelect}
+            />
           </aside>
         )}
 
@@ -13270,8 +13432,8 @@ export const PhoneChat: React.FC = () => {
                 {renderAgentRobotButton({
                   active: agentEnabled,
                   className: styles.tabletAgentInboxButton,
-                  label: agentPriorityViewOpen ? 'Ver todos los chats' : 'Ver chats del agente',
-                  onClick: handleToggleAgentInboxView
+                  label: 'Abrir agente conversacional',
+                  onClick: openAgentGlobalMenu
                 })}
                 {agentEnabled && renderAgentStatusBubble(styles.tabletAgentStatusBubble)}
               </div>
@@ -13353,8 +13515,12 @@ export const PhoneChat: React.FC = () => {
               {renderChats()}
             </div>
           </div>
+
+          {isWideChatDevice && renderAIAgentHubScreen()}
+          {isWideChatDevice && renderAgentPickerScreen()}
         </section>
 
+        {activeRailSection === 'chat' ? (
         <section
           className={styles.conversationScreen}
           aria-label="Conversación"
@@ -13407,16 +13573,20 @@ export const PhoneChat: React.FC = () => {
                   onClick: () => openConversationAgentControls(activeContact)
                 })}
                 {isWideChatDevice && activeContact && (
-                  <button
-                    type="button"
-                    className={styles.conversationHeaderPillButton}
-                    onClick={() => openTagSheet(activeContact)}
-                    aria-label="Agregar etiqueta al chat"
-                  >
-                    <Tag size={16} />
-                    <span>Agregar etiqueta</span>
-                    <ChevronDown size={14} aria-hidden="true" />
-                  </button>
+                  <div className={styles.conversationTagDropdownHost} ref={tagDropdownRef}>
+                    <button
+                      type="button"
+                      className={`${styles.conversationHeaderPillButton} ${tagDropdownOpen ? styles.conversationHeaderPillButtonActive : ''}`}
+                      onClick={() => openTagSheet(activeContact)}
+                      aria-label="Agregar etiqueta al chat"
+                      aria-expanded={tagDropdownOpen}
+                    >
+                      <Tag size={16} />
+                      <span>Agregar etiqueta</span>
+                      <ChevronDown size={14} aria-hidden="true" />
+                    </button>
+                    {renderTagDropdown()}
+                  </div>
                 )}
                 {isWideChatDevice && activeContact && (
                   <button
@@ -13563,12 +13733,13 @@ export const PhoneChat: React.FC = () => {
             </div>
           )}
         </section>
+        ) : renderWideRailPanel()}
 
         {renderMessageInfoScreen()}
         {renderContactInfoScreen()}
         {renderCameraShareScreen()}
-        {renderAIAgentHubScreen()}
-        {renderAgentPickerScreen()}
+        {!isWideChatDevice && renderAIAgentHubScreen()}
+        {!isWideChatDevice && renderAgentPickerScreen()}
       </PhonePageTransition>
 
       {renderMessageActionMenu()}

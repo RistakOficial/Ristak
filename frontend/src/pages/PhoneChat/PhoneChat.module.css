@@ -1291,6 +1291,12 @@
   min-width: 0;
 }
 
+.conversationTagDropdownHost {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
 .conversationHeaderPillButton,
 .conversationHeaderIconButton {
   display: inline-flex;
@@ -1317,6 +1323,11 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.conversationHeaderPillButtonActive {
+  border-color: color-mix(in srgb, var(--phone-chat-primary) 26%, var(--phone-chat-border) 74%);
+  background: color-mix(in srgb, var(--phone-chat-primary) 9%, var(--phone-chat-surface) 91%);
 }
 
 .conversationHeaderIconButton {
@@ -6119,6 +6130,31 @@
   font-weight: 680;
 }
 
+.tagDropdownPanel {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  z-index: 86;
+  width: min(380px, 54vw);
+  max-height: min(430px, calc(100dvh - 134px));
+  padding: 12px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--phone-chat-surface) 96%, transparent);
+  box-shadow: 0 22px 54px rgba(var(--phone-chat-primary-rgb), 0.16);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  animation: tagDropdownIn 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.tagDropdownPanel .tagSheetContent {
+  max-height: calc(min(430px, 100dvh - 134px) - 24px);
+}
+
+.tagDropdownPanel .tagSheetList {
+  max-height: 310px;
+}
+
 .scheduleSheetContent {
   display: grid;
   gap: 14px;
@@ -7505,7 +7541,7 @@
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) {
   --tablet-side-rail-width: 62px;
-  --tablet-chat-list-width: clamp(336px, 38vw, 460px);
+  --tablet-chat-list-width: clamp(520px, 32vw, 660px);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .phoneFrame {
@@ -7552,6 +7588,146 @@
   border-left: 0;
 }
 
+.wideSectionPanel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-bg);
+  isolation: isolate;
+}
+
+.wideSectionPanel :global(main[aria-label="Calendario móvil de Ristak"]),
+.wideSectionPanel :global(main[aria-label="Analíticas de Ristak"]),
+.wideSectionPanel :global(main[aria-label="Ajustes móviles de Ristak"]) {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  transform: translateZ(0);
+}
+
+.wideSectionPanel :global(main[aria-label="Analíticas de Ristak"])::after,
+.wideSectionPanel :global(main[aria-label="Ajustes móviles de Ristak"])::after {
+  display: none !important;
+}
+
+.wideSectionPanel :global([data-phone-page-transition]) {
+  height: 100% !important;
+  min-height: 0 !important;
+  padding-bottom: 14px !important;
+}
+
+.wideSectionPanel :global(nav[aria-label="Secciones de Ristak"]) {
+  display: none !important;
+}
+
+.wideSectionPanel :global([class*="sheetBackdrop"]) {
+  position: absolute !important;
+  inset: 0 !important;
+}
+
+.widePaymentPanel {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--phone-chat-surface) 70%, transparent), transparent 42%),
+    var(--phone-chat-bg);
+}
+
+.widePanelHeader {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 58px;
+  padding: 2px 2px 0;
+}
+
+.widePanelHeader div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.widePanelHeader p,
+.widePanelHeader h2,
+.widePanelHeader span {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widePanelHeader p {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.widePanelHeader h2 {
+  color: var(--phone-chat-text);
+  font-size: 26px;
+  font-weight: 860;
+  line-height: 1.05;
+}
+
+.widePanelHeader span {
+  color: var(--phone-chat-muted);
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.widePaymentSegmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  min-height: 44px;
+  padding: 4px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 86%, transparent);
+}
+
+.widePaymentSegmented button {
+  min-width: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.widePaymentSegmented .segmentActive {
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+  box-shadow: 0 8px 18px rgba(var(--phone-chat-primary-rgb), 0.08);
+}
+
+.widePaymentForm {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 22px;
+  background: var(--phone-chat-surface);
+  box-shadow: 0 18px 44px rgba(var(--phone-chat-primary-rgb), 0.08);
+}
+
+.widePaymentForm > * {
+  height: 100%;
+  min-height: 0;
+}
+
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]).conversationOpen .chatListScreen,
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]).conversationOpen .conversationScreen {
   pointer-events: auto;
@@ -7562,6 +7738,52 @@
   gap: 8px;
   padding: calc(env(safe-area-inset-top) + 12px) 16px 10px;
   overflow: visible;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubScreen,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .agentPickerScreen {
+  z-index: 8;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubScreenOpen {
+  animation: wideAiAgentHubIn 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubContent {
+  gap: 13px;
+  padding: calc(env(safe-area-inset-top) + 18px) 18px 20px;
+  scroll-padding-bottom: 24px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubHero {
+  align-content: center;
+  min-height: min(292px, 38dvh);
+  padding: 24px 16px 18px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubHeroBack {
+  top: 16px;
+  left: 16px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubRobot {
+  width: 118px;
+  height: 118px;
+  animation: wideAiAgentRobotCenterIn 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubRobot .agentRobot {
+  width: 110px;
+  height: 110px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubActions {
+  max-width: 330px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubChatList {
+  border: 1px solid var(--phone-chat-border);
+  box-shadow: 0 12px 28px rgba(var(--phone-chat-primary-rgb), 0.06);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListHeader h1 {
@@ -7728,13 +7950,18 @@
   justify-content: flex-start;
 }
 
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .actionFormSheetBackdrop::before {
+  background: color-mix(in srgb, var(--phone-chat-conversation-bg) 18%, transparent);
+}
+
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .actionFormSheetBackdrop .actionFormSheet {
   width: min(520px, calc(100% - 22px));
   padding-top: 16px;
+  background: color-mix(in srgb, var(--phone-chat-surface) 96%, var(--phone-chat-conversation-bg) 4%);
   border-right: 1px solid var(--phone-chat-border);
   border-left: 0;
   border-radius: 0 24px 24px 0;
-  box-shadow: 24px 0 56px rgba(var(--phone-chat-primary-rgb), 0.16);
+  box-shadow: 22px 0 48px rgba(var(--phone-chat-primary-rgb), 0.12);
   transform-origin: left center;
   animation: phoneChatActionFormPanelIn 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -8661,6 +8888,43 @@
   }
 }
 
+@keyframes wideAiAgentHubIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -34px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes wideAiAgentRobotCenterIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(-70px, -82px, 0) scale(0.62);
+  }
+  58% {
+    opacity: 1;
+    transform: translate3d(0, 8px, 0) scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes tagDropdownIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -7px, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
 @keyframes agentBubbleIn {
   from { opacity: 0; transform: translate(-6px, -50%) scale(0.96); }
   to { opacity: 1; transform: translate(0, -50%) scale(1); }
@@ -8715,7 +8979,10 @@
   .agentBotSparkle,
   .agentStatusBubble,
   .agentStatusDot,
-  .agentStatusPhrase {
+  .agentStatusPhrase,
+  .tagDropdownPanel,
+  .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubScreenOpen,
+  .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubRobot {
     animation-duration: 1ms;
     animation-iteration-count: 1;
   }
