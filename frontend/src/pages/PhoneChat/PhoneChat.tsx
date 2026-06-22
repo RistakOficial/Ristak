@@ -3207,6 +3207,7 @@ export const PhoneChat: React.FC = () => {
   const [sheet, setSheet] = useState<ActionSheet>(null)
   const [tagActionContactId, setTagActionContactId] = useState<string | null>(null)
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
+  const [conversationAgentDropdownOpen, setConversationAgentDropdownOpen] = useState(false)
   const [chatTags, setChatTags] = useState<ContactTag[]>([])
   const [chatTagsLoading, setChatTagsLoading] = useState(false)
   const [chatTagSearch, setChatTagSearch] = useState('')
@@ -3263,8 +3264,10 @@ export const PhoneChat: React.FC = () => {
   const [conversationScrollSettling, setConversationScrollSettling] = useState(false)
   const messagesPaneRef = useRef<HTMLDivElement | null>(null)
   const messagesContentRef = useRef<HTMLDivElement | null>(null)
+  const conversationSearchBarRef = useRef<HTMLDivElement | null>(null)
   const conversationSearchInputRef = useRef<HTMLInputElement | null>(null)
   const tagDropdownRef = useRef<HTMLDivElement | null>(null)
+  const conversationAgentDropdownRef = useRef<HTMLDivElement | null>(null)
   const tagSearchInputRef = useRef<HTMLInputElement | null>(null)
   const messageTextRef = useRef('')
   const messagesPaneNearBottomRef = useRef(true)
@@ -3359,10 +3362,17 @@ export const PhoneChat: React.FC = () => {
     setTagActionContactId(null)
   }, [actionSheetDismiss])
 
+  const closeConversationAgentDropdown = useCallback(() => {
+    setConversationAgentDropdownOpen(false)
+    setChatActionContactId(null)
+    setChatMoreMode('default')
+  }, [])
+
   useEffect(() => {
     if (isWideChatDevice) return
     setWideRailSection('chat')
     setTagDropdownOpen(false)
+    setConversationAgentDropdownOpen(false)
   }, [isWideChatDevice])
 
   useEffect(() => {
@@ -3385,6 +3395,27 @@ export const PhoneChat: React.FC = () => {
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [closeTagPicker, tagDropdownOpen])
+
+  useEffect(() => {
+    if (!conversationAgentDropdownOpen) return undefined
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const node = conversationAgentDropdownRef.current
+      if (!node || node.contains(event.target as Node)) return
+      closeConversationAgentDropdown()
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      closeConversationAgentDropdown()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [closeConversationAgentDropdown, conversationAgentDropdownOpen])
 
   const chatSwipeGenerationRef = useRef(0)
   const chatSwipeCloseTimerRef = useRef<number | null>(null)
@@ -5946,6 +5977,7 @@ export const PhoneChat: React.FC = () => {
     closeSwipeActions()
     setChatQuickActionsContact(null)
     setTagDropdownOpen(false)
+    closeConversationAgentDropdown()
 
     if (section === 'payments') {
       setPaymentMode('single')
@@ -5967,17 +5999,34 @@ export const PhoneChat: React.FC = () => {
   const openConversationSearch = () => {
     if (!activeContact) return
     actionSheetDismiss.requestClose()
+    setTagDropdownOpen(false)
+    closeConversationAgentDropdown()
     setMessageInfoOpen(false)
     setContactInfoOpen(false)
     setConversationSearchOpen(true)
     window.requestAnimationFrame(() => conversationSearchInputRef.current?.focus())
   }
 
-  const closeConversationSearch = () => {
+  const closeConversationSearch = useCallback(() => {
     setConversationSearchOpen(false)
     setConversationSearchQuery('')
     setConversationSearchIndex(0)
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!conversationSearchOpen) return undefined
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const node = conversationSearchBarRef.current
+      if (!node || node.contains(event.target as Node)) return
+      closeConversationSearch()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [closeConversationSearch, conversationSearchOpen])
 
   const moveConversationSearchResult = (direction: 1 | -1) => {
     if (conversationSearchResults.length === 0) return
@@ -6011,6 +6060,8 @@ export const PhoneChat: React.FC = () => {
     setTagActionContactId(targetContact.id)
     setChatActionContactId(null)
     setChatTagSearch('')
+    setConversationAgentDropdownOpen(false)
+    closeConversationSearch()
     if (isWideChatDevice) {
       actionSheetDismiss.requestClose()
       setTagDropdownOpen(true)
@@ -6163,6 +6214,8 @@ export const PhoneChat: React.FC = () => {
     setActiveContactId(contact.id)
     setChatActionContactId(contact.id)
     setChatMoreMode('default')
+    setConversationAgentDropdownOpen(false)
+    closeConversationSearch()
     setSheet('chatMore')
     setContactInfoOpen(false)
     closeSwipeActions()
@@ -6197,12 +6250,32 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    const shouldCloseWideDropdown =
+      isWideChatDevice &&
+      conversationAgentDropdownOpen &&
+      chatActionContactId === contact.id &&
+      chatMoreMode === 'agentControls'
+
+    if (shouldCloseWideDropdown) {
+      closeConversationAgentDropdown()
+      return
+    }
+
     setActiveContactId(contact.id)
     setChatActionContactId(contact.id)
     setChatMoreMode('agentControls')
     setChatQuickActionsContact(null)
     setAgentMenuSection('menu')
-    setSheet('chatMore')
+    setTagDropdownOpen(false)
+    closeConversationSearch()
+    if (isWideChatDevice) {
+      actionSheetDismiss.requestClose()
+      setSheet(null)
+      setConversationAgentDropdownOpen(true)
+    } else {
+      setSheet('chatMore')
+      setConversationAgentDropdownOpen(false)
+    }
     setContactInfoOpen(false)
     closeSwipeActions()
     loadAgentData({ includeDefinitions: false })
@@ -6215,6 +6288,8 @@ export const PhoneChat: React.FC = () => {
       setActiveContactId(contact.id)
     }
     setChatActionContactId(null)
+    setConversationAgentDropdownOpen(false)
+    closeConversationSearch()
     setContactInfoOpen(false)
     setSheet('appointment')
     closeSwipeActions()
@@ -9599,7 +9674,7 @@ export const PhoneChat: React.FC = () => {
       : 'Buscar mensajes'
 
     return (
-      <div className={styles.conversationSearchBar} role="search">
+      <div ref={conversationSearchBarRef} className={styles.conversationSearchBar} role="search">
         <Search size={18} aria-hidden="true" />
         <input
           ref={conversationSearchInputRef}
@@ -11990,9 +12065,9 @@ export const PhoneChat: React.FC = () => {
     const agentChatStatus = agentState?.status || 'active'
     const agentStatusLabels: Record<string, string> = {
       active: 'El agente atiende este chat.',
-      paused: 'Chatbot pausado en este chat.',
+      paused: 'Agente pausado en este chat.',
       human: 'Conversación tomada por un humano.',
-      skipped: 'Chatbot omitido en este chat.',
+      skipped: 'Agente omitido en este chat.',
       completed: 'El agente ya cumplió el objetivo aquí.',
       discarded: 'Conversación descartada por el agente.'
     }
@@ -12000,6 +12075,7 @@ export const PhoneChat: React.FC = () => {
     const runAgentAction = (action: ConversationStateAction, successMessage: string) => {
       handleAgentStateAction(chatActionContact.id, action, successMessage)
       actionSheetDismiss.requestClose()
+      setConversationAgentDropdownOpen(false)
       setChatActionContactId(null)
       setChatMoreMode('default')
       closeSwipeActions()
@@ -12017,18 +12093,18 @@ export const PhoneChat: React.FC = () => {
               onClick: () => runAgentAction('take_over', `Tomaste la conversación de ${getContactName(chatActionContact)}.`)
             },
             {
-              label: 'Pausar chatbot',
-              description: 'Pausa el chatbot solo en esta conversación.',
+              label: 'Pausar agente',
+              description: 'Pausa el agente solo en esta conversación.',
               Icon: Pause,
               className: styles.chatMoreAgent,
-              onClick: () => runAgentAction('pause', 'El chatbot quedó pausado en este chat.')
+              onClick: () => runAgentAction('pause', 'El agente quedó pausado en este chat.')
             },
             {
-              label: 'Omitir chatbot',
+              label: 'Omitir agente',
               description: 'El agente nunca atenderá este chat.',
               Icon: X,
               className: styles.chatMoreAgent,
-              onClick: () => runAgentAction('skip', 'El chatbot quedó omitido en este chat.')
+              onClick: () => runAgentAction('skip', 'El agente quedó omitido en este chat.')
             }
           ]
         : [
@@ -12095,6 +12171,20 @@ export const PhoneChat: React.FC = () => {
             </span>
           </button>
         ))}
+      </div>
+    )
+  }
+
+  const renderConversationAgentDropdown = () => {
+    if (!isWideChatDevice || !conversationAgentDropdownOpen) return null
+
+    return (
+      <div className={styles.conversationAgentDropdownPanel} role="dialog" aria-label="Acciones del agente conversacional">
+        <div className={styles.conversationAgentDropdownHeader}>
+          <small>{chatActionContact ? getContactName(chatActionContact) : 'Chat'}</small>
+          <strong>Acciones del agente conversacional</strong>
+        </div>
+        {renderChatMoreSheet()}
       </div>
     )
   }
@@ -13624,12 +13714,24 @@ export const PhoneChat: React.FC = () => {
               <span className={styles.conversationHeaderSpacer} aria-hidden="true" />
             ) : (
               <div className={styles.conversationActionCluster}>
-                {activeContact && agentEnabled && renderAgentRobotButton({
-                  active: activeConversationAgentActive,
-                  className: styles.conversationAgentButton,
-                  label: activeConversationAgentLabel,
-                  onClick: () => openConversationAgentControls(activeContact)
-                })}
+                {activeContact && agentEnabled && (
+                  isWideChatDevice ? (
+                    <div className={styles.conversationAgentDropdownHost} ref={conversationAgentDropdownRef}>
+                      {renderAgentRobotButton({
+                        active: activeConversationAgentActive,
+                        className: `${styles.conversationAgentButton} ${conversationAgentDropdownOpen ? styles.conversationAgentButtonOpen : ''}`,
+                        label: activeConversationAgentLabel,
+                        onClick: () => openConversationAgentControls(activeContact)
+                      })}
+                      {renderConversationAgentDropdown()}
+                    </div>
+                  ) : renderAgentRobotButton({
+                    active: activeConversationAgentActive,
+                    className: styles.conversationAgentButton,
+                    label: activeConversationAgentLabel,
+                    onClick: () => openConversationAgentControls(activeContact)
+                  })
+                )}
                 {isWideChatDevice && activeContact && (
                   <div className={styles.conversationTagDropdownHost} ref={tagDropdownRef}>
                     <button
@@ -13854,7 +13956,7 @@ export const PhoneChat: React.FC = () => {
                     {sheet === 'clabe' && 'CLABE'}
                     {sheet === 'settings' && 'Ajustes del chat'}
                     {sheet === 'newChat' && 'Nuevo chat'}
-                    {sheet === 'chatMore' && (chatMoreMode === 'agentControls' ? 'Acciones del chatbot' : 'Más acciones')}
+                    {sheet === 'chatMore' && (chatMoreMode === 'agentControls' ? 'Acciones del agente conversacional' : 'Más acciones')}
                     {sheet === 'tag' && 'Agregar etiqueta'}
                     {sheet === 'agentMenu' && (
                       agentMenuSection === 'ready_human'
