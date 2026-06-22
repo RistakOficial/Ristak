@@ -1585,7 +1585,7 @@ export const CalendarsConfiguration: React.FC = () => {
     help: string
     multiline?: boolean
   }) => (
-    <div className={pageStyles.editorField}>
+    <div className={`${pageStyles.editorField} ${pageStyles.calendarTemplateField}`}>
       <span id={`${id}-label`}>{label}</span>
       <FlowVariablesContext.Provider value={calendarTemplateVariableCatalog}>
         {multiline ? (
@@ -1620,15 +1620,14 @@ export const CalendarsConfiguration: React.FC = () => {
       flushContent
     >
       <div className={pageStyles.createCalendarForm} data-modal-panel="">
-        <div className={styles.formField}>
-          <label className={styles.label}>Nombre del calendario</label>
+        <label className={pageStyles.editorField}>
+          <span>Nombre del calendario</span>
           <input
-            className={styles.input}
             value={newCalendar.name || ''}
             onChange={(e) => setNewCalendar({ ...newCalendar, name: e.target.value, eventTitle: newCalendar.eventTitle || e.target.value })}
             placeholder="Ej. Consultas de ventas"
           />
-        </div>
+        </label>
 
         {renderCalendarTemplateField({
           id: 'new-calendar-event-title',
@@ -2099,7 +2098,6 @@ export const CalendarsConfiguration: React.FC = () => {
               <label className={pageStyles.editorField}>
                 <span>Nombre del calendario</span>
                 <input
-                  className={styles.input}
                   value={selectedCalendar.name || ''}
                   onChange={(event) => updateSelectedCalendar({ name: event.target.value })}
                 />

@@ -1105,6 +1105,55 @@
   line-height: 1.45;
 }
 
+.calendarTemplateField :global([data-automation-interactive='true']) {
+  min-height: var(--design-control-height);
+  border: 1px solid var(--design-control-border);
+  border-radius: var(--design-control-radius);
+  background: var(--design-control-bg);
+  box-shadow: var(--design-control-shadow);
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.calendarTemplateField :global([data-automation-interactive='true']:hover) {
+  border-color: var(--design-control-border-hover);
+  background: var(--design-control-bg-hover);
+}
+
+.calendarTemplateField :global([data-automation-interactive='true']:focus-within) {
+  border-color: var(--design-control-border-focus);
+  background: var(--design-control-bg);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.calendarTemplateField :global([data-automation-interactive='true'] [role='textbox']) {
+  color: var(--design-control-text);
+  font-size: var(--app-control-font-size, var(--font-size-sm));
+  font-weight: var(--app-control-font-weight, var(--font-weight-medium));
+  letter-spacing: var(--app-control-letter-spacing, 0);
+  line-height: 1.35;
+}
+
+.calendarTemplateField :global([data-automation-interactive='true'] [aria-multiline='false']) {
+  min-height: calc(var(--design-control-height) - 2px);
+  padding: 0 38px 0 var(--design-control-padding-x);
+  line-height: calc(var(--design-control-height) - 2px);
+}
+
+.calendarTemplateField :global([data-automation-interactive='true'] [aria-multiline='true']) {
+  min-height: 104px;
+  padding: 10px 38px 34px var(--design-control-padding-x);
+  line-height: 1.5;
+}
+
+.calendarTemplateField :global([data-automation-interactive='true'] [data-placeholder]::before) {
+  color: var(--design-control-muted);
+}
+
+.calendarTemplateField :global([data-automation-interactive='true'] [data-variable]) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .eventSwitchRow {
   display: flex;
   align-items: center;

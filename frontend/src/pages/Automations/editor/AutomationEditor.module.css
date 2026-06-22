@@ -3283,7 +3283,7 @@
 
 .composerPopover {
   position: fixed;
-  z-index: var(--z-index-tooltip);
+  z-index: var(--z-index-modal-tooltip, var(--z-index-tooltip));
   display: flex;
   flex-direction: column;
   border-radius: 12px;
