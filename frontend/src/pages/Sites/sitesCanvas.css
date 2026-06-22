@@ -2338,51 +2338,51 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 .rstkCanvas .rstkBlockTools {
   --rstk-block-tools-gap: 8px;
   position: absolute;
-  top: auto;
+  top: calc(100% + var(--rstk-block-tools-gap));
   right: 0;
-  bottom: calc(100% + var(--rstk-block-tools-gap));
+  bottom: auto;
   z-index: 90;
   display: flex; gap: 4px; opacity: 0; pointer-events: none;
   transform: scale(calc(1 / var(--rstk-scale, 1)));
-  transform-origin: bottom right;
+  transform-origin: top right;
   transition: opacity .12s ease;
 }
-.rstkCanvas .rstkBlockToolsBelow > .rstkBlockTools {
-  top: calc(100% + var(--rstk-block-tools-gap));
-  bottom: auto;
-  transform-origin: top right;
+.rstkCanvas .rstkBlockToolsAbove > .rstkBlockTools {
+  top: auto;
+  bottom: calc(100% + var(--rstk-block-tools-gap));
+  transform-origin: bottom right;
 }
 .rstkCanvas [data-rstk-page-block="true"] > .rstkBlockTools,
 .rstkCanvas .rstk-section-lane > .rstkBlockTools {
-  top: auto;
-  bottom: calc(100% + var(--rstk-block-tools-gap));
+  top: calc(100% + var(--rstk-block-tools-gap));
+  bottom: auto;
   left: 50%;
   right: auto;
   gap: 6px;
   opacity: 0;
   transform: translateX(-50%) scale(calc(1 / var(--rstk-scale, 1)));
-  transform-origin: bottom center;
-}
-.rstkCanvas [data-rstk-page-block="true"].rstkBlockToolsBelow > .rstkBlockTools,
-.rstkCanvas .rstk-section-lane.rstkBlockToolsBelow > .rstkBlockTools {
-  top: calc(100% + var(--rstk-block-tools-gap));
-  bottom: auto;
   transform-origin: top center;
 }
-.rstkCanvas.rstk-kind-landing .rstk-section-column > .rstkSel > .rstkBlockTools {
+.rstkCanvas [data-rstk-page-block="true"].rstkBlockToolsAbove > .rstkBlockTools,
+.rstkCanvas .rstk-section-lane.rstkBlockToolsAbove > .rstkBlockTools {
   top: auto;
   bottom: calc(100% + var(--rstk-block-tools-gap));
+  transform-origin: bottom center;
+}
+.rstkCanvas.rstk-kind-landing .rstk-section-column > .rstkSel > .rstkBlockTools {
+  top: calc(100% + var(--rstk-block-tools-gap));
+  bottom: auto;
   right: 0;
   left: auto;
   flex-direction: row;
   gap: 5px;
   transform: scale(calc(1 / var(--rstk-scale, 1)));
-  transform-origin: bottom right;
-}
-.rstkCanvas.rstk-kind-landing .rstk-section-column > .rstkSel.rstkBlockToolsBelow > .rstkBlockTools {
-  top: calc(100% + var(--rstk-block-tools-gap));
-  bottom: auto;
   transform-origin: top right;
+}
+.rstkCanvas.rstk-kind-landing .rstk-section-column > .rstkSel.rstkBlockToolsAbove > .rstkBlockTools {
+  top: auto;
+  bottom: calc(100% + var(--rstk-block-tools-gap));
+  transform-origin: bottom right;
 }
 .rstkCanvas .rstkSelActive > .rstkBlockTools { opacity: 1; pointer-events: auto; }
 .rstkCanvas .rstkBlockTools .rstkBlockTool {
