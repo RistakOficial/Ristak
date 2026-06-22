@@ -46,12 +46,15 @@ import {
 } from '../services/whatsappQrDripService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
-import { markHumanTakeoverByPhone } from '../services/conversationalAgentService.js'
+import { markHumanTakeoverByPhone, markHumanTakeoverIfActive } from '../services/conversationalAgentService.js'
 
-// Un envío manual desde la app significa que un humano tomó la conversación:
-// el agente conversacional deja de responder en ese chat (fire-and-forget).
-function notifyHumanTakeover(toPhone) {
-  markHumanTakeoverByPhone(toPhone).catch(error => {
+// Un envío manual desde la app significa intervención humana. Si la UI ya pausó
+// u omitió al agente, esta llamada no pisa ese estado porque solo toca activos.
+function notifyHumanTakeover({ contactId, toPhone } = {}) {
+  const takeover = contactId
+    ? markHumanTakeoverIfActive(contactId)
+    : markHumanTakeoverByPhone(toPhone)
+  takeover.catch(error => {
     logger.warn(`[Agente conversacional] No se pudo marcar toma humana: ${error.message}`)
   })
 }
@@ -495,7 +498,7 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
       publicBaseUrl: getPublicBaseUrl(req),
       phoneNumberId: req.body?.phoneNumberId
     })
-    notifyHumanTakeover(req.body?.to)
+    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando WhatsApp_API: ${error.message}`)
@@ -521,7 +524,7 @@ export async function sendWhatsAppApiInteractiveMessageView(req, res) {
       publicBaseUrl: getPublicBaseUrl(req),
       phoneNumberId: req.body?.phoneNumberId
     })
-    notifyHumanTakeover(req.body?.to)
+    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando WhatsApp_API interactivo: ${error.message}`)
@@ -603,7 +606,7 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req)
     })
-    notifyHumanTakeover(req.body?.to)
+    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando foto WhatsApp_API: ${error.message}`)
@@ -631,7 +634,7 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req)
     })
-    notifyHumanTakeover(req.body?.to)
+    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando documento WhatsApp_API: ${error.message}`)
@@ -657,7 +660,7 @@ export async function sendWhatsAppApiAudioMessageView(req, res) {
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req)
     })
-    notifyHumanTakeover(req.body?.to)
+    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando audio WhatsApp_API: ${error.message}`)
@@ -724,7 +727,7 @@ export async function sendWhatsAppApiTemplateMessageView(req, res) {
       publicBaseUrl,
       phoneNumberId: req.body?.phoneNumberId
     })
-    notifyHumanTakeover(req.body?.to)
+    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando plantilla WhatsApp_API: ${error.message}`)

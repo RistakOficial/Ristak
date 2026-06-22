@@ -305,6 +305,7 @@ export async function updateState(req, res) {
     let state = await setConversationStatus(contactId, mapped.status, {
       updatedBy: 'user',
       clearSignal: mapped.clearSignal,
+      pausedUntilAt: req.body?.pausedUntilAt || null,
       activationSource: 'manual',
       agentId: agentId || null
     })

@@ -304,9 +304,16 @@ type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
 type MessageActionMenuMode = 'main' | 'more'
 type MessageActionMenuPlacement = 'above' | 'below'
 type MessageActionMenuAlign = 'start' | 'end'
+type ManualAgentInterruptionAction = 'pause' | 'skip'
 type SendMessageOptions = {
   textOverride?: string
   preserveComposer?: boolean
+  skipAgentInterruptionConfirm?: boolean
+}
+type ManualAgentSendPrompt = {
+  contactId: string
+  transport: 'api' | 'qr'
+  options: SendMessageOptions
 }
 
 const DEFAULT_PHONE_AGENT_RESPONSE_DELAY: AgentResponseDelayConfig = {
@@ -3438,6 +3445,7 @@ export const PhoneChat: React.FC = () => {
   const [agentConfigSaving, setAgentConfigSaving] = useState(false)
   const [resettingAgentSkipsId, setResettingAgentSkipsId] = useState<string | null>(null)
   const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
+  const [manualAgentSendPrompt, setManualAgentSendPrompt] = useState<ManualAgentSendPrompt | null>(null)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MUTED_STATE_KEY))
   const [starredMessageIds, setStarredMessageIds] = useState<string[]>(() => readStoredChatIds(CHAT_STARRED_MESSAGES_KEY))
@@ -4481,6 +4489,17 @@ export const PhoneChat: React.FC = () => {
     },
     [activeContact?.id, agentStateLists, agentStates]
   )
+  const activeManualAgentStates = useMemo(
+    () => activeContactAgentStates.filter((state) => state.agentId && state.status === 'active'),
+    [activeContactAgentStates]
+  )
+  const manualAgentSendLabel = useMemo(() => {
+    if (activeManualAgentStates.length === 1) {
+      const state = activeManualAgentStates[0]
+      return state.agentName || agentDefs.find((agent) => agent.id === state.agentId)?.name || 'el agente conversacional'
+    }
+    return `${activeManualAgentStates.length} agentes conversacionales`
+  }, [activeManualAgentStates, agentDefs])
   const activeConversationAgentState = activeContact?.id
     ? selectPrimaryAgentState(activeContactAgentStates) || agentStates[activeContact.id] || null
     : null
@@ -8542,6 +8561,21 @@ export const PhoneChat: React.FC = () => {
     const voiceToSend = hasTextOverride ? null : voiceDraft
     if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
 
+    if (
+      !options.skipAgentInterruptionConfirm &&
+      agentEnabled &&
+      activeManualAgentStates.length > 0
+    ) {
+      setManualAgentSendPrompt({
+        contactId: activeContact.id,
+        transport,
+        options: { ...options }
+      })
+      setSheet(null)
+      setConversationAgentDropdownOpen(false)
+      return
+    }
+
     if (sendingThroughHighLevel) {
       const requestedChannel = activeHighLevelChatChannel
       const optimisticChannel = effectiveHighLevelChatChannel
@@ -8926,6 +8960,59 @@ export const PhoneChat: React.FC = () => {
       showToast('error', 'No se envió el mensaje', errorMessage)
     } finally {
       setComposerStatus('idle')
+    }
+  }
+
+  const handleManualAgentSendDecision = async (action: ManualAgentInterruptionAction) => {
+    if (!manualAgentSendPrompt || !activeContact?.id) return false
+    if (manualAgentSendPrompt.contactId !== activeContact.id) {
+      setManualAgentSendPrompt(null)
+      showToast('warning', 'El chat cambió', 'Vuelve a mandar el mensaje desde la conversación abierta.')
+      return false
+    }
+
+    const targetStates = activeManualAgentStates.filter((state) => state.agentId)
+    if (!targetStates.length) {
+      const pendingSend = manualAgentSendPrompt
+      setManualAgentSendPrompt(null)
+      await handleSendMessage(pendingSend.transport, {
+        ...pendingSend.options,
+        skipAgentInterruptionConfirm: true
+      })
+      return
+    }
+
+    try {
+      const updatedStates = await Promise.all(targetStates.map((state) => (
+        conversationalAgentService.updateState(activeContact.id, action, { agentId: state.agentId || undefined })
+      )))
+      updatedStates.forEach((state) => {
+        setAgentStateLists((current) => ({
+          ...current,
+          [state.contactId]: upsertAgentStateList(current[state.contactId] || [], state)
+        }))
+        setAgentStates((current) => ({
+          ...current,
+          [state.contactId]: selectPrimaryAgentState([state, current[state.contactId]].filter(Boolean) as ConversationAgentState[]) || state
+        }))
+      })
+
+      const pendingSend = manualAgentSendPrompt
+      setManualAgentSendPrompt(null)
+      showToast(
+        'success',
+        action === 'pause' ? 'Agente pausado 24 horas' : 'Contacto omitido del agente',
+        action === 'pause'
+          ? `${manualAgentSendLabel} no responderá este chat durante 24 horas.`
+          : `${manualAgentSendLabel} ya no tomará este contacto automáticamente.`
+      )
+      await handleSendMessage(pendingSend.transport, {
+        ...pendingSend.options,
+        skipAgentInterruptionConfirm: true
+      })
+    } catch (error: any) {
+      showToast('error', 'No se pudo pausar el agente', error?.message || 'El mensaje no se envió. Intenta otra vez.')
+      return false
     }
   }
 
@@ -15670,6 +15757,23 @@ export const PhoneChat: React.FC = () => {
           </section>
         </div>
       )}
+
+      <Modal
+        isOpen={Boolean(manualAgentSendPrompt)}
+        onClose={() => setManualAgentSendPrompt(null)}
+        title="Pausar agente antes de enviar"
+        type="confirm"
+        size="sm"
+        draggableSheet
+        message={`Al enviar este mensaje, ${manualAgentSendLabel} dejará de responder este chat. Puedes pausarlo 24 horas o quitar este contacto del agente conversacional.`}
+        confirmText="Pausar 24h y enviar"
+        cancelText="Cancelar"
+        secondaryActionText="Omitir y enviar"
+        secondaryActionVariant="danger"
+        onConfirm={() => handleManualAgentSendDecision('pause')}
+        onSecondaryAction={() => handleManualAgentSendDecision('skip')}
+        onCancel={() => setManualAgentSendPrompt(null)}
+      />
 
       <Modal
         isOpen={numberIssueOpen}

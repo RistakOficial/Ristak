@@ -115,6 +115,13 @@ type SchedulePeriod = 'AM' | 'PM'
 type TemplatePanelMode = 'choice' | 'select' | 'create'
 type ComposerChannel = 'whatsapp' | 'messenger' | 'instagram' | 'email'
 type ContactIdentityField = 'name' | 'email' | 'phone'
+type ManualAgentInterruptionAction = 'pause' | 'skip'
+type ManualAgentSendOptions = { skipAgentInterruptionConfirm?: boolean }
+
+interface ManualAgentSendPrompt {
+  contactId: string
+  textOverride?: string
+}
 
 interface ContactChannelBadge {
   kind: ContactChannelBadgeKind
@@ -2121,6 +2128,7 @@ export const DesktopChat: React.FC = () => {
   const [agentComposerMenuOpen, setAgentComposerMenuOpen] = useState(false)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [conversationAgentBusy, setConversationAgentBusy] = useState(false)
+  const [manualAgentSendPrompt, setManualAgentSendPrompt] = useState<ManualAgentSendPrompt | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
@@ -2591,6 +2599,17 @@ export const DesktopChat: React.FC = () => {
     },
     [activeContact?.id, agentStateLists, conversationAgentState]
   )
+  const activeManualAgentStates = useMemo(
+    () => activeContactAgentStates.filter((state) => state.agentId && state.status === 'active'),
+    [activeContactAgentStates]
+  )
+  const manualAgentSendLabel = useMemo(() => {
+    if (activeManualAgentStates.length === 1) {
+      const state = activeManualAgentStates[0]
+      return state.agentName || agentDefs.find((agent) => agent.id === state.agentId)?.name || 'el agente conversacional'
+    }
+    return `${activeManualAgentStates.length} agentes conversacionales`
+  }, [activeManualAgentStates, agentDefs])
   const advancedFilterGroups = useMemo(() => ([
     {
       id: 'channel',
@@ -4167,7 +4186,7 @@ export const DesktopChat: React.FC = () => {
     setAgentInboxStatusFilter(DEFAULT_AGENT_INBOX_STATUS_FILTER)
   }, [])
 
-	  const handleSendMessage = async (textOverride?: string) => {
+	  const handleSendMessage = async (textOverride?: string, options: ManualAgentSendOptions = {}) => {
 		    const isEmailMessage = isEmailComposer
 		    const cleanEmailHtml = isEmailMessage ? sanitizeEmailRichHtmlForEditor(emailBodyHtml) : ''
 		    const text = isEmailMessage ? emailHtmlToPlainText(cleanEmailHtml) : (textOverride || composerText).trim()
@@ -4175,6 +4194,18 @@ export const DesktopChat: React.FC = () => {
 		    const voiceToSend = textOverride || isEmailMessage ? null : voiceDraft
 		    if (!activeContact) return
 		    if (!isEmailMessage && !text && attachmentsToSend.length === 0 && !voiceToSend) return
+
+		    if (
+		      !options.skipAgentInterruptionConfirm &&
+		      !isEmailMessage &&
+		      conversationAgentEnabled &&
+		      activeManualAgentStates.length > 0
+		    ) {
+		      setManualAgentSendPrompt({ contactId: activeContact.id, textOverride })
+		      setComposerMenuOpen(false)
+		      closeComposerAgentMenu()
+		      return
+		    }
 
 		    if (isEmailMessage) {
 		      const subject = emailSubject.trim()
@@ -4505,8 +4536,46 @@ export const DesktopChat: React.FC = () => {
       if (!textOverride) setVoiceDraft(voiceToSend)
       if (!textOverride) setVoiceElapsedMs(voiceToSend?.durationMs || 0)
       showToast('error', 'No se envió el mensaje', message)
+	    } finally {
+	      setComposerStatus('idle')
+	    }
+	  }
+
+  const handleManualAgentSendDecision = async (action: ManualAgentInterruptionAction) => {
+    if (!manualAgentSendPrompt || !activeContact?.id) return false
+    if (manualAgentSendPrompt.contactId !== activeContact.id) {
+      setManualAgentSendPrompt(null)
+      showToast('warning', 'El chat cambió', 'Vuelve a mandar el mensaje desde la conversación abierta.')
+      return false
+    }
+
+    const targetStates = activeManualAgentStates.filter((state) => state.agentId)
+    if (!targetStates.length) {
+      setManualAgentSendPrompt(null)
+      await handleSendMessage(manualAgentSendPrompt.textOverride, { skipAgentInterruptionConfirm: true })
+      return
+    }
+
+    setConversationAgentBusy(true)
+    try {
+      const updatedStates = await Promise.all(targetStates.map((state) => (
+        conversationalAgentService.updateState(activeContact.id, action, { agentId: state.agentId || undefined })
+      )))
+      updatedStates.forEach(updateActiveConversationAgentState)
+      setManualAgentSendPrompt(null)
+      showToast(
+        'success',
+        action === 'pause' ? 'Agente pausado 24 horas' : 'Contacto omitido del agente',
+        action === 'pause'
+          ? `${manualAgentSendLabel} no responderá este chat durante 24 horas.`
+          : `${manualAgentSendLabel} ya no tomará este contacto automáticamente.`
+      )
+      await handleSendMessage(manualAgentSendPrompt.textOverride, { skipAgentInterruptionConfirm: true })
+    } catch (error: any) {
+      showToast('error', 'No se pudo pausar el agente', error?.message || 'El mensaje no se envió. Intenta otra vez.')
+      return false
     } finally {
-      setComposerStatus('idle')
+      setConversationAgentBusy(false)
     }
   }
 
@@ -6268,6 +6337,22 @@ export const DesktopChat: React.FC = () => {
         onCalendarChange={setSelectedCalendarId}
         onSave={handleSaveAppointment}
         onDelete={editingAppointmentEvent ? handleDeleteAppointment : undefined}
+      />
+
+      <Modal
+        isOpen={Boolean(manualAgentSendPrompt)}
+        onClose={() => setManualAgentSendPrompt(null)}
+        title="Pausar agente antes de enviar"
+        message={`Al enviar este mensaje, ${manualAgentSendLabel} dejará de responder este chat. Puedes pausarlo 24 horas o quitar este contacto del agente conversacional.`}
+        type="confirm"
+        size="sm"
+        confirmText="Pausar 24h y enviar"
+        cancelText="Cancelar"
+        secondaryActionText="Omitir y enviar"
+        secondaryActionVariant="danger"
+        onConfirm={() => handleManualAgentSendDecision('pause')}
+        onSecondaryAction={() => handleManualAgentSendDecision('skip')}
+        onCancel={() => setManualAgentSendPrompt(null)}
       />
 
       <Modal

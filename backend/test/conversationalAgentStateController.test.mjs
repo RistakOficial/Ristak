@@ -234,6 +234,32 @@ test('omitir una conversación conserva el estado en la lista de omitidos', asyn
   }
 })
 
+test('pausar una conversación desde el controller guarda la ventana enviada por la UI', async () => {
+  const contactId = `conversation_agent_pause_state_${randomUUID()}`
+  const pausedUntilAt = new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
+
+  try {
+    const res = createMockResponse()
+    await updateState({
+      params: { contactId },
+      body: { action: 'pause', pausedUntilAt }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.body?.success, true)
+    assert.equal(res.body?.data?.status, 'paused')
+    assert.equal(res.body?.data?.pausedUntilAt, pausedUntilAt)
+    assert.equal(res.body?.data?.updatedBy, 'user')
+
+    const stored = await db.get('SELECT status, paused_until_at, updated_by FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+    assert.equal(stored.status, 'paused')
+    assert.equal(stored.paused_until_at, pausedUntilAt)
+    assert.equal(stored.updated_by, 'user')
+  } finally {
+    await cleanup(contactId)
+  }
+})
+
 test('reinicia las omisiones de contactos de un agente sin tocar otros estados', async () => {
   const skippedContactA = `conversation_agent_reset_skipped_a_${randomUUID()}`
   const skippedContactB = `conversation_agent_reset_skipped_b_${randomUUID()}`

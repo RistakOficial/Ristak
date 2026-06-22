@@ -969,13 +969,14 @@ export const conversationalAgentService = {
   async updateState(
     contactId: string,
     action: ConversationStateAction,
-    options: { agentId?: string } = {}
+    options: { agentId?: string; pausedUntilAt?: string } = {}
   ): Promise<ConversationAgentState> {
     const state = await request<ConversationAgentState>(`/states/${encodeURIComponent(contactId)}`, {
       method: 'POST',
       body: JSON.stringify({
         action,
-        ...(options.agentId ? { agentId: options.agentId } : {})
+        ...(options.agentId ? { agentId: options.agentId } : {}),
+        ...(options.pausedUntilAt ? { pausedUntilAt: options.pausedUntilAt } : {})
       })
     })
     updateCachedAgentState(state)
