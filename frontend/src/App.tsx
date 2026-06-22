@@ -661,7 +661,9 @@ const AppWithNotifications: React.FC = () => {
             path="/phone/chat"
             element={
               <ProtectedRoute>
-                <PhoneChat />
+                <AccessRoute moduleKey="chat">
+                  <PhoneChat />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />
@@ -669,7 +671,9 @@ const AppWithNotifications: React.FC = () => {
             path="/phone/payments"
             element={
               <ProtectedRoute>
-                <PhonePayments />
+                <AccessRoute moduleKey="payments">
+                  <PhonePayments />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />
@@ -677,7 +681,9 @@ const AppWithNotifications: React.FC = () => {
             path="/phone/analytics"
             element={
               <ProtectedRoute>
-                <PhoneAnalytics />
+                <AccessRoute moduleKey="analytics">
+                  <PhoneAnalytics />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />
@@ -685,7 +691,9 @@ const AppWithNotifications: React.FC = () => {
             path="/phone/settings"
             element={
               <ProtectedRoute>
-                <PhoneSettings />
+                <AccessRoute moduleKey="settings_mobile">
+                  <PhoneSettings />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />
@@ -693,7 +701,9 @@ const AppWithNotifications: React.FC = () => {
             path="/phone/calendar"
             element={
               <ProtectedRoute>
-                <PhoneCalendar />
+                <AccessRoute moduleKey="appointments">
+                  <PhoneCalendar />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />
@@ -701,7 +711,9 @@ const AppWithNotifications: React.FC = () => {
             path="/phone/appointments"
             element={
               <ProtectedRoute>
-                <PhoneCalendar />
+                <AccessRoute moduleKey="appointments">
+                  <PhoneCalendar />
+                </AccessRoute>
               </ProtectedRoute>
             }
           />
@@ -734,7 +746,7 @@ const AppWithNotifications: React.FC = () => {
             <Route index element={<HomeRedirect />} />
             <Route path="initialization/*" element={<AccessRoute moduleKey="settings_integrations"><Initialization /></AccessRoute>} />
             <Route path="dashboard/*" element={<AccessRoute moduleKey="dashboard"><Dashboard /></AccessRoute>} />
-            <Route path="chat/*" element={<AccessRoute moduleKey="contacts"><DesktopChat /></AccessRoute>} />
+            <Route path="chat/*" element={<AccessRoute moduleKey="chat"><DesktopChat /></AccessRoute>} />
             <Route path="reports/*" element={<AccessRoute moduleKey="reports"><Reports /></AccessRoute>} />
             <Route path="campaigns/*" element={<AccessRoute moduleKey="campaigns"><Campaigns /></AccessRoute>} />
             <Route path="transactions/subscriptions/*" element={<AccessRoute moduleKey="payments"><PaymentSubscriptions /></AccessRoute>} />

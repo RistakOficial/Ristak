@@ -196,6 +196,7 @@ export interface AccessControlledUser {
 }
 
 const MODULE_KEYS = new Set<PermissionKey>(ACCESS_MODULES.map((module) => module.key))
+const hasOwn = Object.prototype.hasOwnProperty
 
 export const AI_AGENT_NAV_ITEMS = [
   {
@@ -213,15 +214,37 @@ export const AI_AGENT_NAV_ITEMS = [
 ] as const
 export type AIAgentNavItem = typeof AI_AGENT_NAV_ITEMS[number]
 
-const LICENSE_FEATURES_BY_MODULE: Partial<Record<PermissionKey, readonly string[]>> = {
-  appointments: ['google_calendar'],
-  settings_calendars: ['google_calendar'],
-  reports: ['advanced_reports'],
-  settings_costs: ['advanced_reports'],
-  campaigns: ['meta_ads'],
-  settings_whatsapp: ['whatsapp'],
-  automations: ['automations'],
-  ai_agent: ['app_assistant_ai', 'conversational_ai', 'ai']
+type LicenseFeatureRule = {
+  primary: string
+  legacy?: readonly string[]
+}
+
+const LICENSE_FEATURES_BY_MODULE: Partial<Record<PermissionKey, LicenseFeatureRule>> = {
+  dashboard: { primary: 'dashboard' },
+  contacts: { primary: 'contacts' },
+  chat: { primary: 'chat', legacy: ['whatsapp'] },
+  appointments: { primary: 'appointments', legacy: ['google_calendar'] },
+  payments: { primary: 'payments' },
+  reports: { primary: 'reports', legacy: ['advanced_reports'] },
+  analytics: { primary: 'analytics' },
+  campaigns: { primary: 'campaigns', legacy: ['meta_ads'] },
+  automations: { primary: 'automations' },
+  sites: { primary: 'sites' },
+  ai_agent: { primary: 'ai_agent', legacy: ['app_assistant_ai', 'conversational_ai', 'ai'] },
+  settings_account: { primary: 'settings_account' },
+  settings_mobile: { primary: 'settings_mobile' },
+  settings_calendars: { primary: 'settings_calendars', legacy: ['google_calendar'] },
+  settings_payments: { primary: 'settings_payments' },
+  settings_integrations: { primary: 'settings_integrations' },
+  settings_whatsapp: { primary: 'settings_whatsapp', legacy: ['whatsapp'] },
+  settings_email: { primary: 'settings_email' },
+  settings_tracking: { primary: 'settings_tracking' },
+  settings_domains: { primary: 'settings_domains' },
+  settings_costs: { primary: 'settings_costs', legacy: ['advanced_reports'] },
+  settings_media: { primary: 'settings_media' },
+  settings_custom_fields: { primary: 'settings_custom_fields' },
+  settings_api_access: { primary: 'settings_api_access' },
+  settings_users: { primary: 'settings_users' }
 }
 
 export const DEFAULT_EMPLOYEE_ACCESS: AccessConfig = Object.fromEntries(
@@ -275,8 +298,21 @@ export function hasLicenseFeatureAccess(
   user: AccessControlledUser | null | undefined,
   moduleKey: PermissionKey
 ) {
-  const featureKeys = LICENSE_FEATURES_BY_MODULE[moduleKey]
-  return !featureKeys || hasLicenseFeature(user, featureKeys)
+  if (!user?.licenseEnforced) return true
+
+  const rule = LICENSE_FEATURES_BY_MODULE[moduleKey]
+  if (!rule) return true
+
+  const features = user.licenseFeatures || {}
+  if (hasOwn.call(features, rule.primary)) {
+    return features[rule.primary] === true
+  }
+
+  if (rule.legacy?.length) {
+    return rule.legacy.some((featureKey) => features[featureKey] === true)
+  }
+
+  return true
 }
 
 export function hasModuleAccess(
