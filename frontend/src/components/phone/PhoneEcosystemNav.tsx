@@ -26,7 +26,7 @@ interface NavSwipeGesture {
 interface PhoneEcosystemNavProps {
   active: PhoneSection
   badges?: Partial<Record<PhoneSection, number>>
-  placement?: 'bottom' | 'top'
+  placement?: 'bottom' | 'top' | 'rail'
   className?: string
   style?: React.CSSProperties
 }
@@ -41,7 +41,12 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
   const suppressClickRef = useRef(false)
   const suppressClickTimerRef = useRef<number | null>(null)
   const swipeEnabled = placement === 'bottom'
-  const dockClassName = [placement === 'top' ? `${styles.dock} ${styles.dockTop}` : styles.dock, className].filter(Boolean).join(' ')
+  const dockClassName = [
+    styles.dock,
+    placement === 'top' ? styles.dockTop : '',
+    placement === 'rail' ? styles.dockRail : '',
+    className
+  ].filter(Boolean).join(' ')
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -176,6 +181,9 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
   const indicatorTranslate = indicatorDragPosition !== null
     ? `${indicatorDragPosition}px`
     : `${indicatorIndex * 100}%`
+  const indicatorTransform = placement === 'rail'
+    ? `translate3d(0, ${indicatorTranslate}, 0)`
+    : `translate3d(${indicatorTranslate}, 0, 0)`
 
   return (
     <nav
@@ -194,7 +202,7 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
       <span
         className={styles.activeIndicator}
         data-phone-nav-indicator="true"
-        style={{ transform: `translate3d(${indicatorTranslate}, 0, 0)` }}
+        style={{ transform: indicatorTransform }}
         aria-hidden="true"
       />
       {PHONE_NAV_ITEMS.map(({ key, label, to, Icon }) => {

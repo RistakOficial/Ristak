@@ -96,6 +96,7 @@ import { DEFAULT_AI_MODEL, aiModelOptions, getKnownAIModel } from '@/constants/a
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
+import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import {
@@ -117,6 +118,7 @@ import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField, ContactCustomFieldDefinition } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
+import { normalizeSearchText } from '@/utils/searchText'
 import {
   formatContactCustomFieldDisplayValue,
   getContactCustomFieldDisplayLabel,
@@ -242,7 +244,7 @@ type PhoneChatDeviceMode = PortableDeviceMode | 'checking'
 type ComposerStatus = 'idle' | 'sending'
 type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
 type PaymentMode = 'single' | 'partial'
-type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | null
+type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | 'tag' | null
 type ChatMoreMode = 'default' | 'agentControls'
 type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'ready_human'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
@@ -679,6 +681,10 @@ function writeQrRiskAcceptedIds(value: Record<string, boolean>) {
   }
 }
 
+function escapeDataAttributeSelector(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
 interface ChatContact extends Contact {
   lastMessageText?: string
   lastMessageType?: string
@@ -707,6 +713,10 @@ interface ChatReadStateItem {
 }
 
 type ChatReadState = Record<string, ChatReadStateItem>
+
+interface ConversationSearchResult {
+  targetId: string
+}
 
 interface ContactInfoPayment {
   id: string
@@ -3142,6 +3152,9 @@ export const PhoneChat: React.FC = () => {
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesRefreshing, setMessagesRefreshing] = useState(false)
+  const [conversationSearchOpen, setConversationSearchOpen] = useState(false)
+  const [conversationSearchQuery, setConversationSearchQuery] = useState('')
+  const [conversationSearchIndex, setConversationSearchIndex] = useState(0)
   const [messageInfoOpen, setMessageInfoOpen] = useState(false)
   const [messageInfoMessageId, setMessageInfoMessageId] = useState<string | null>(null)
   const [draggingMessageInfoSwipe, setDraggingMessageInfoSwipe] = useState<{ messageId: string; offset: number } | null>(null)
@@ -3185,6 +3198,12 @@ export const PhoneChat: React.FC = () => {
   const [agentProducts, setAgentProducts] = useState<ProductItem[]>([])
   const [agentProductsLoading, setAgentProductsLoading] = useState(false)
   const [sheet, setSheet] = useState<ActionSheet>(null)
+  const [tagActionContactId, setTagActionContactId] = useState<string | null>(null)
+  const [chatTags, setChatTags] = useState<ContactTag[]>([])
+  const [chatTagsLoading, setChatTagsLoading] = useState(false)
+  const [chatTagSearch, setChatTagSearch] = useState('')
+  const [applyingTagId, setApplyingTagId] = useState<string | null>(null)
+  const [creatingContactTag, setCreatingContactTag] = useState(false)
   const [activeSettingsSection, setActiveSettingsSection] = useState<ChatSettingsSection>(null)
   const [contactInfoOpen, setContactInfoOpen] = useState(false)
   const [contactInfoContact, setContactInfoContact] = useState<Contact | null>(null)
@@ -3236,6 +3255,7 @@ export const PhoneChat: React.FC = () => {
   const [conversationScrollSettling, setConversationScrollSettling] = useState(false)
   const messagesPaneRef = useRef<HTMLDivElement | null>(null)
   const messagesContentRef = useRef<HTMLDivElement | null>(null)
+  const conversationSearchInputRef = useRef<HTMLInputElement | null>(null)
   const messageTextRef = useRef('')
   const messagesPaneNearBottomRef = useRef(true)
   const activeContactIdRef = useRef<string | null>(null)
@@ -3527,6 +3547,74 @@ export const PhoneChat: React.FC = () => {
 
     return groups
   }, [agentCompletionEvents, messages, timezone])
+  const normalizedConversationSearch = useMemo(
+    () => normalizeSearchText(conversationSearchQuery),
+    [conversationSearchQuery]
+  )
+  const conversationSearchResults = useMemo<ConversationSearchResult[]>(() => {
+    if (!normalizedConversationSearch || !activeContact) return []
+
+    const results: ConversationSearchResult[] = []
+    conversationMessageGroups.forEach((group) => {
+      group.items.forEach((item) => {
+        if (item.type === 'message') {
+          const { message } = item
+          const searchable = normalizeSearchText([
+            message.text,
+            message.status,
+            message.routingReason,
+            message.attachment?.name,
+            message.attachment?.type
+          ].filter(Boolean).join(' '))
+          if (searchable.includes(normalizedConversationSearch)) {
+            results.push({ targetId: `message-${message.id}` })
+          }
+          return
+        }
+
+        const { completion } = item
+        const searchable = normalizeSearchText([
+          completion.title,
+          completion.actionSummary,
+          completion.summary
+        ].filter(Boolean).join(' '))
+        if (searchable.includes(normalizedConversationSearch)) {
+          results.push({ targetId: `agent-completion-${completion.id}` })
+        }
+      })
+    })
+
+    return results
+  }, [activeContact, conversationMessageGroups, normalizedConversationSearch])
+  const conversationSearchMatchIdSet = useMemo(
+    () => new Set(conversationSearchResults.map((result) => result.targetId)),
+    [conversationSearchResults]
+  )
+  const activeConversationSearchTargetId = conversationSearchResults[conversationSearchIndex]?.targetId || ''
+  useEffect(() => {
+    setConversationSearchIndex(0)
+  }, [activeContactId, normalizedConversationSearch])
+  useEffect(() => {
+    if (conversationSearchIndex < conversationSearchResults.length) return
+    setConversationSearchIndex(Math.max(0, conversationSearchResults.length - 1))
+  }, [conversationSearchIndex, conversationSearchResults.length])
+  useEffect(() => {
+    if (activeContact || !conversationSearchOpen) return
+    setConversationSearchOpen(false)
+    setConversationSearchQuery('')
+    setConversationSearchIndex(0)
+  }, [activeContact, conversationSearchOpen])
+  useEffect(() => {
+    if (!activeConversationSearchTargetId) return
+    const frame = window.requestAnimationFrame(() => {
+      const target = messagesContentRef.current?.querySelector<HTMLElement>(
+        `[data-chat-search-id="${escapeDataAttributeSelector(activeConversationSearchTargetId)}"]`
+      )
+      target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeConversationSearchTargetId])
   const latestMessageKey = useMemo(() => {
     const lastMessage = messages[messages.length - 1]
     if (!lastMessage) return ''
@@ -3537,6 +3625,24 @@ export const PhoneChat: React.FC = () => {
     () => chats.find((contact) => contact.id === chatActionContactId) || activeContact || null,
     [activeContact, chatActionContactId, chats]
   )
+  const tagActionContact = useMemo(
+    () => chats.find((contact) => contact.id === tagActionContactId) || activeContact || null,
+    [activeContact, chats, tagActionContactId]
+  )
+  const tagActionContactTagSet = useMemo(
+    () => new Set((tagActionContact?.tags || []).map((tag) => String(tag))),
+    [tagActionContact?.tags]
+  )
+  const filteredChatTags = useMemo(() => {
+    const query = normalizeSearchText(chatTagSearch)
+    if (!query) return chatTags
+    return chatTags.filter((tag) => normalizeSearchText(tag.name).includes(query))
+  }, [chatTagSearch, chatTags])
+  const chatTagSearchCanCreate = useMemo(() => {
+    const name = chatTagSearch.trim()
+    if (!name) return false
+    return !chatTags.some((tag) => normalizeSearchText(tag.name) === normalizeSearchText(name))
+  }, [chatTagSearch, chatTags])
   const contactInfoPayments = useMemo(
     () => getContactInfoPayments(contactInfoData, contactJourney),
     [contactInfoData, contactJourney]
@@ -5513,6 +5619,9 @@ export const PhoneChat: React.FC = () => {
     setMessageInfoOpen(false)
     setMessageInfoMessageId(null)
     setMessageActionMenu(null)
+    setConversationSearchOpen(false)
+    setConversationSearchQuery('')
+    setConversationSearchIndex(0)
     setReplyingToMessageId(null)
     setScheduleEditingMessageId(null)
     messageInfoSwipeGestureRef.current = null
@@ -5541,6 +5650,9 @@ export const PhoneChat: React.FC = () => {
     setMessageInfoOpen(false)
     setMessageInfoMessageId(null)
     setMessageActionMenu(null)
+    setConversationSearchOpen(false)
+    setConversationSearchQuery('')
+    setConversationSearchIndex(0)
     setReplyingToMessageId(null)
     setScheduleEditingMessageId(null)
     messageInfoSwipeGestureRef.current = null
@@ -5563,6 +5675,9 @@ export const PhoneChat: React.FC = () => {
     setMessageInfoOpen(false)
     setMessageInfoMessageId(null)
     setMessageActionMenu(null)
+    setConversationSearchOpen(false)
+    setConversationSearchQuery('')
+    setConversationSearchIndex(0)
     setReplyingToMessageId(null)
     setScheduleEditingMessageId(null)
     setConversationReturnTarget('chats')
@@ -5751,6 +5866,103 @@ export const PhoneChat: React.FC = () => {
     setDraggingSwipe(null)
     clearClosingSwipeActions()
     chatSwipeGestureRef.current = null
+  }
+
+  const openConversationSearch = () => {
+    if (!activeContact) return
+    actionSheetDismiss.requestClose()
+    setMessageInfoOpen(false)
+    setContactInfoOpen(false)
+    setConversationSearchOpen(true)
+    window.requestAnimationFrame(() => conversationSearchInputRef.current?.focus())
+  }
+
+  const closeConversationSearch = () => {
+    setConversationSearchOpen(false)
+    setConversationSearchQuery('')
+    setConversationSearchIndex(0)
+  }
+
+  const moveConversationSearchResult = (direction: 1 | -1) => {
+    if (conversationSearchResults.length === 0) return
+    setConversationSearchIndex((current) => {
+      const next = current + direction
+      if (next < 0) return conversationSearchResults.length - 1
+      if (next >= conversationSearchResults.length) return 0
+      return next
+    })
+  }
+
+  const loadChatTags = async (forceRefresh = false) => {
+    setChatTagsLoading(true)
+    try {
+      const tags = await contactTagsService.getTags({ includeSystem: false, forceRefresh })
+      setChatTags(tags)
+    } catch (error: any) {
+      showToast('error', 'No se cargaron las etiquetas', getErrorMessage(error, 'Intenta otra vez.'))
+    } finally {
+      setChatTagsLoading(false)
+    }
+  }
+
+  const openTagSheet = (contact?: Contact | null) => {
+    const targetContact = contact || activeContact
+    if (!targetContact) {
+      showToast('warning', 'Elige un chat', 'Abre una conversación antes de agregar una etiqueta.')
+      return
+    }
+
+    setTagActionContactId(targetContact.id)
+    setChatActionContactId(null)
+    setChatTagSearch('')
+    setSheet('tag')
+    setContactInfoOpen(false)
+    closeSwipeActions()
+    void loadChatTags()
+  }
+
+  const applyTagToContact = async (tag: ContactTag) => {
+    if (!tagActionContact || applyingTagId || creatingContactTag) return
+
+    if (tagActionContactTagSet.has(tag.id)) {
+      showToast('info', 'Etiqueta ya agregada', `${getContactName(tagActionContact)} ya tiene ${tag.name}.`)
+      return
+    }
+
+    setApplyingTagId(tag.id)
+    try {
+      await contactTagsService.bulkUpdateTags([tagActionContact.id], [tag.id], [])
+      const nextTags = Array.from(new Set([...(tagActionContact.tags || []), tag.id]))
+      setChats((current) => current.map((contact) => (
+        contact.id === tagActionContact.id ? { ...contact, tags: nextTags } : contact
+      )))
+      if (contactInfoData?.id === tagActionContact.id) {
+        applyContactInfoPatch({ tags: nextTags })
+      }
+      showToast('success', 'Etiqueta agregada', `${tag.name} quedó en ${getContactName(tagActionContact)}.`)
+      actionSheetDismiss.requestClose()
+      setTagActionContactId(null)
+    } catch (error: any) {
+      showToast('error', 'No se agregó la etiqueta', getErrorMessage(error, 'Intenta otra vez.'))
+    } finally {
+      setApplyingTagId(null)
+    }
+  }
+
+  const createAndApplyContactTag = async () => {
+    const name = chatTagSearch.trim()
+    if (!name || !tagActionContact || creatingContactTag || applyingTagId) return
+
+    setCreatingContactTag(true)
+    try {
+      const tag = await contactTagsService.createTag(name)
+      setChatTags((current) => [tag, ...current.filter((item) => item.id !== tag.id)])
+      await applyTagToContact(tag)
+    } catch (error: any) {
+      showToast('error', 'No se creó la etiqueta', getErrorMessage(error, 'Intenta otra vez.'))
+    } finally {
+      setCreatingContactTag(false)
+    }
   }
 
   const handleArchiveChat = (contact: Contact) => {
@@ -9216,9 +9428,17 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  const renderAgentCompletionMessage = (completion: ConversationalAgentCompletionEvent) => (
+  const renderAgentCompletionMessage = (completion: ConversationalAgentCompletionEvent) => {
+    const searchTargetId = `agent-completion-${completion.id}`
+    const isSearchMatch = conversationSearchMatchIdSet.has(searchTargetId)
+    const isActiveSearchMatch = activeConversationSearchTargetId === searchTargetId
+
+    return (
     <div key={`agent-completion-${completion.id}`} className={styles.agentCompletionMessageRow}>
-      <article className={styles.agentCompletionMessage}>
+      <article
+        className={`${styles.agentCompletionMessage} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''}`}
+        data-chat-search-id={searchTargetId}
+      >
         <span className={styles.agentCompletionMessageIcon} aria-hidden="true">
           {renderAgentRobotGlyph(true)}
         </span>
@@ -9237,7 +9457,66 @@ export const PhoneChat: React.FC = () => {
         </span>
       </article>
     </div>
-  )
+    )
+  }
+
+  const renderConversationSearchBar = () => {
+    if (!conversationSearchOpen || !activeContact) return null
+
+    const hasQuery = Boolean(normalizedConversationSearch)
+    const matchCount = conversationSearchResults.length
+    const counterLabel = hasQuery
+      ? `${matchCount > 0 ? conversationSearchIndex + 1 : 0} de ${matchCount}`
+      : 'Buscar mensajes'
+
+    return (
+      <div className={styles.conversationSearchBar} role="search">
+        <Search size={18} aria-hidden="true" />
+        <input
+          ref={conversationSearchInputRef}
+          value={conversationSearchQuery}
+          onChange={(event) => setConversationSearchQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              closeConversationSearch()
+              return
+            }
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              moveConversationSearchResult(event.shiftKey ? -1 : 1)
+            }
+          }}
+          placeholder="Buscar en el chat"
+          aria-label="Buscar mensajes dentro del chat"
+        />
+        <span className={styles.conversationSearchCounter} aria-live="polite">
+          {counterLabel}
+        </span>
+        <span className={styles.conversationSearchNav}>
+          <button
+            type="button"
+            onClick={() => moveConversationSearchResult(-1)}
+            disabled={!matchCount}
+            aria-label="Resultado anterior"
+          >
+            <ChevronLeft size={17} />
+          </button>
+          <button
+            type="button"
+            onClick={() => moveConversationSearchResult(1)}
+            disabled={!matchCount}
+            aria-label="Resultado siguiente"
+          >
+            <ChevronRight size={17} />
+          </button>
+        </span>
+        <button type="button" className={styles.conversationSearchClose} onClick={closeConversationSearch} aria-label="Cerrar búsqueda">
+          <X size={17} />
+        </button>
+      </div>
+    )
+  }
 
   const renderMessages = () => {
     if (aiAgentConversationOpen) {
@@ -9324,6 +9603,9 @@ export const PhoneChat: React.FC = () => {
               const canOpenMessageInfo = message.direction !== 'system'
               const scheduled = message.direction === 'outbound' && isMessageScheduled(message)
               const scheduledCountdown = scheduled ? formatScheduledCountdown(message.scheduledAt, scheduledCountdownNow) : ''
+              const searchTargetId = `message-${message.id}`
+              const isSearchMatch = conversationSearchMatchIdSet.has(searchTargetId)
+              const isActiveSearchMatch = activeConversationSearchTargetId === searchTargetId
 
               return (
                 <div
@@ -9344,8 +9626,9 @@ export const PhoneChat: React.FC = () => {
                       <ReceiptText size={17} />
                     </span>
                     <div
-                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''}`}
+                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''}`}
                       data-chat-message-id={message.id}
+                      data-chat-search-id={searchTargetId}
                       style={messageSwipeOffset > 0 ? { transform: `translate3d(-${messageSwipeOffset}px, 0, 0)` } : undefined}
                       onPointerDown={canOpenMessageInfo ? (event) => handleMessageActionPointerDown(message, event) : undefined}
                       onPointerMove={canOpenMessageInfo ? handleMessageActionPointerMove : undefined}
@@ -10213,6 +10496,20 @@ export const PhoneChat: React.FC = () => {
               </span>
             )}
             {contactInfoError && <span className={styles.contactInfoError}>{contactInfoError}</span>}
+          </section>
+
+          <section className={styles.contactInfoSection}>
+            <div className={styles.contactInfoRows}>
+              {renderContactInfoActionRow(
+                'search-chat',
+                <Search size={17} />,
+                'Chat',
+                'Buscar en el chat',
+                'Encuentra mensajes dentro de esta conversación',
+                openConversationSearch,
+                'Buscar en el chat'
+              )}
+            </div>
           </section>
 
           <section className={styles.contactInfoSection}>
@@ -11447,6 +11744,95 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderTagSheet = () => {
+    if (!tagActionContact) {
+      return (
+        <div className={styles.emptySheetState}>
+          <CircleAlert size={24} />
+          <strong>Elige un chat</strong>
+          <span>Abre una conversación para agregarle una etiqueta.</span>
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.tagSheetContent}>
+        <label className={styles.tagSearchBox}>
+          <Search size={18} aria-hidden="true" />
+          <input
+            value={chatTagSearch}
+            onChange={(event) => setChatTagSearch(event.target.value)}
+            placeholder="Buscar o crear etiqueta"
+            aria-label="Buscar etiqueta"
+            autoFocus
+          />
+          {chatTagSearch && (
+            <button type="button" onClick={() => setChatTagSearch('')} aria-label="Limpiar búsqueda de etiqueta">
+              <X size={15} />
+            </button>
+          )}
+        </label>
+
+        <div className={styles.tagSheetList} data-phone-chat-scrollable="true">
+          {chatTagsLoading && (
+            <div className={styles.tagSheetLoading} role="status">
+              <Loader2 size={18} className={styles.spinIcon} />
+              Cargando etiquetas
+            </div>
+          )}
+
+          {!chatTagsLoading && chatTagSearchCanCreate && (
+            <button
+              type="button"
+              className={styles.tagSheetCreateButton}
+              onClick={createAndApplyContactTag}
+              disabled={creatingContactTag || Boolean(applyingTagId)}
+            >
+              <span className={styles.tagSheetTagIcon}>
+                {creatingContactTag ? <Loader2 size={18} className={styles.spinIcon} /> : <Plus size={18} />}
+              </span>
+              <span>
+                <strong>Crear "{chatTagSearch.trim()}"</strong>
+                <small>Crear etiqueta y agregarla a este chat</small>
+              </span>
+            </button>
+          )}
+
+          {!chatTagsLoading && filteredChatTags.map((tag) => {
+            const active = tagActionContactTagSet.has(tag.id)
+            const busy = applyingTagId === tag.id
+
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                className={`${styles.tagSheetOption} ${active ? styles.tagSheetOptionActive : ''}`}
+                onClick={() => { void applyTagToContact(tag) }}
+                disabled={active || busy || creatingContactTag || Boolean(applyingTagId)}
+              >
+                <span className={styles.tagSheetTagIcon}>
+                  {busy ? <Loader2 size={18} className={styles.spinIcon} /> : active ? <Check size={18} /> : <Tag size={18} />}
+                </span>
+                <span>
+                  <strong>{tag.name}</strong>
+                  <small>{active ? 'Ya está agregada' : 'Agregar etiqueta'}</small>
+                </span>
+              </button>
+            )
+          })}
+
+          {!chatTagsLoading && filteredChatTags.length === 0 && !chatTagSearchCanCreate && (
+            <div className={styles.emptySheetState}>
+              <Tag size={24} />
+              <strong>Sin etiquetas</strong>
+              <span>Escribe un nombre para crear una etiqueta nueva.</span>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const renderChatMoreSheet = () => {
     if (!chatActionContact) {
       return (
@@ -11531,6 +11917,13 @@ export const PhoneChat: React.FC = () => {
             Icon: CircleDollarSign,
             className: styles.chatMorePayment,
             onClick: () => handleChatMoreAction(chatActionContact, 'payment')
+          },
+          {
+            label: 'Agregar etiqueta',
+            description: 'Clasificar este chat con una etiqueta.',
+            Icon: Tag,
+            className: styles.chatMoreTag,
+            onClick: () => openTagSheet(chatActionContact)
           },
           {
             label: isMuted ? 'Quitar silencio' : 'Silenciar',
@@ -12853,6 +13246,12 @@ export const PhoneChat: React.FC = () => {
         data-phone-chat-frame="true"
         onScroll={handlePhoneFrameScroll}
       >
+        {isWideChatDevice && (
+          <aside className={styles.tabletSideRail} aria-label="Secciones de Ristak">
+            <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} placement="rail" />
+          </aside>
+        )}
+
         <section className={styles.chatListScreen} aria-label="Lista de chats">
           <header className={`${styles.chatListHeader} ${chatSearchExpanded ? styles.chatListHeaderSearchExpanded : ''}`}>
             {!isWideChatDevice && (
@@ -12954,12 +13353,6 @@ export const PhoneChat: React.FC = () => {
               {renderChats()}
             </div>
           </div>
-          {isWideChatDevice && !chatSearchExpanded && (
-            <div className={styles.tabletChatDock}>
-              <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} placement="top" />
-            </div>
-          )}
-
         </section>
 
         <section
@@ -13013,6 +13406,29 @@ export const PhoneChat: React.FC = () => {
                   label: activeConversationAgentLabel,
                   onClick: () => openConversationAgentControls(activeContact)
                 })}
+                {isWideChatDevice && activeContact && (
+                  <button
+                    type="button"
+                    className={styles.conversationHeaderPillButton}
+                    onClick={() => openTagSheet(activeContact)}
+                    aria-label="Agregar etiqueta al chat"
+                  >
+                    <Tag size={16} />
+                    <span>Agregar etiqueta</span>
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </button>
+                )}
+                {isWideChatDevice && activeContact && (
+                  <button
+                    type="button"
+                    className={styles.conversationHeaderIconButton}
+                    onClick={openConversationSearch}
+                    aria-label="Buscar en el chat"
+                    title="Buscar en el chat"
+                  >
+                    <Search size={22} />
+                  </button>
+                )}
                 <div className={styles.callActions}>
                   <button type="button" onClick={() => handleOpenAppointmentForm(activeContact)} aria-label="Agendar cita">
                     <CalendarDays size={25} />
@@ -13031,6 +13447,8 @@ export const PhoneChat: React.FC = () => {
               </div>
             )}
           </header>
+
+          {renderConversationSearchBar()}
 
           <div
             ref={messagesPaneRef}
@@ -13182,12 +13600,12 @@ export const PhoneChat: React.FC = () => {
 
       {sheet && (
           <div
-            className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' ? styles.darkSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
+            className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' ? styles.darkSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
           style={actionSheetDismiss.backdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
           <section
-            className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
+            className={`${styles.sheetPanel} ${actionSheetMoving ? styles.sheetPanelInteractive : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'clabe' ? styles.clabeSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${sheet === 'schedule' ? styles.scheduleSheet : ''} ${sheet === 'tag' ? styles.tagSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
             style={actionSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
@@ -13206,6 +13624,7 @@ export const PhoneChat: React.FC = () => {
                     {sheet === 'settings' && 'Ajustes del chat'}
                     {sheet === 'newChat' && 'Nuevo chat'}
                     {sheet === 'chatMore' && (chatMoreMode === 'agentControls' ? 'Acciones del chatbot' : 'Más acciones')}
+                    {sheet === 'tag' && 'Agregar etiqueta'}
                     {sheet === 'agentMenu' && (
                       agentMenuSection === 'ready_human'
                         ? 'Prioridad humana'
@@ -13227,6 +13646,7 @@ export const PhoneChat: React.FC = () => {
             {sheet === 'clabe' && renderClabeSheet()}
             {sheet === 'settings' && renderChatSettingsSheet()}
             {sheet === 'chatMore' && renderChatMoreSheet()}
+            {sheet === 'tag' && renderTagSheet()}
             {sheet === 'agentMenu' && renderAgentMenuSheet()}
             {sheet === 'schedule' && renderScheduleSheet()}
 

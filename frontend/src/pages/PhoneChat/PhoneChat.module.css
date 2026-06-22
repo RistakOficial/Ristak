@@ -179,7 +179,7 @@
 
 .conversationScreen {
   z-index: 2;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   background: var(--phone-chat-conversation-bg);
   contain: layout paint;
   pointer-events: none;
@@ -1193,6 +1193,7 @@
 .conversationHeader {
   position: relative;
   z-index: 2;
+  grid-row: 1;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -1290,6 +1291,46 @@
   min-width: 0;
 }
 
+.conversationHeaderPillButton,
+.conversationHeaderIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 40px;
+  border: 1px solid var(--phone-chat-border);
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface) 86%, transparent);
+}
+
+.conversationHeaderPillButton {
+  gap: 7px;
+  max-width: min(210px, 22vw);
+  padding: 0 13px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 820;
+  white-space: nowrap;
+}
+
+.conversationHeaderPillButton span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversationHeaderIconButton {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.conversationHeaderPillButton:active,
+.conversationHeaderIconButton:active {
+  transform: scale(0.97);
+}
+
 .conversationAgentButton {
   flex: 0 0 auto;
   width: 40px;
@@ -1332,6 +1373,65 @@
   display: block;
   width: 42px;
   height: 40px;
+}
+
+.conversationSearchBar {
+  position: relative;
+  z-index: 3;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 50px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--phone-chat-border);
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface) 94%, transparent);
+}
+
+.conversationSearchBar input {
+  min-width: 0;
+  height: 36px;
+  border: 0;
+  outline: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.conversationSearchCounter {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.conversationSearchNav {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.conversationSearchNav button,
+.conversationSearchClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 76%, transparent);
+}
+
+.conversationSearchNav button:disabled {
+  color: var(--phone-chat-muted);
+  opacity: 0.46;
 }
 
 .contactInfoScreen {
@@ -3433,6 +3533,7 @@
 
 .messagesPane {
   position: relative;
+  grid-row: 3;
   min-height: 0;
   padding: 8px;
   overflow-y: auto;
@@ -3675,6 +3776,22 @@
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+}
+
+.messageBubbleSearchMatch {
+  outline: 2px solid color-mix(in srgb, var(--phone-chat-accent) 44%, transparent);
+  outline-offset: 2px;
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.06),
+    0 0 0 5px color-mix(in srgb, var(--phone-chat-accent) 12%, transparent);
+}
+
+.messageBubbleSearchActive {
+  outline-color: var(--phone-chat-accent);
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.06),
+    0 0 0 6px color-mix(in srgb, var(--phone-chat-accent) 22%, transparent),
+    0 12px 30px rgba(var(--phone-chat-primary-rgb), 0.14);
 }
 
 .messageStarBadge {
@@ -4603,6 +4720,7 @@
 .composerShell {
   position: relative;
   z-index: 2;
+  grid-row: 4;
   display: grid;
   min-width: 0;
   background: var(--phone-chat-composer-bg);
@@ -5687,6 +5805,13 @@
   transform-origin: bottom center;
 }
 
+.tagSheet {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: stretch;
+  min-height: 356px;
+  background: var(--phone-chat-panel);
+}
+
 .scheduleSheet {
   min-height: 316px;
   background: var(--phone-chat-panel);
@@ -5860,6 +5985,138 @@
 .chatMoreMute {
   color: #525252;
   background: #eeeeee;
+}
+
+.chatMoreTag {
+  color: var(--phone-chat-primary);
+  background: color-mix(in srgb, var(--phone-chat-primary) 12%, var(--phone-chat-surface) 88%);
+}
+
+.tagSheetContent {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.tagSearchBox {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface);
+}
+
+.tagSearchBox input {
+  min-width: 0;
+  height: 42px;
+  border: 0;
+  outline: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 680;
+}
+
+.tagSearchBox button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 78%, transparent);
+}
+
+.tagSheetList {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 1px 4px;
+}
+
+.tagSheetLoading,
+.tagSheetOption,
+.tagSheetCreateButton {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 14px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+}
+
+.tagSheetOption,
+.tagSheetCreateButton {
+  text-align: left;
+}
+
+.tagSheetOption:disabled {
+  opacity: 0.72;
+}
+
+.tagSheetOptionActive {
+  border-color: color-mix(in srgb, var(--phone-chat-accent) 42%, var(--phone-chat-border) 58%);
+  background: color-mix(in srgb, var(--phone-chat-accent) 10%, var(--phone-chat-surface) 90%);
+}
+
+.tagSheetTagIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  color: var(--phone-chat-primary);
+  background: color-mix(in srgb, var(--phone-chat-primary) 10%, var(--phone-chat-surface-soft) 90%);
+}
+
+.tagSheetOption > span:last-child,
+.tagSheetCreateButton > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.tagSheetOption strong,
+.tagSheetOption small,
+.tagSheetCreateButton strong,
+.tagSheetCreateButton small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tagSheetOption strong,
+.tagSheetCreateButton strong {
+  font-size: 14px;
+  font-weight: 840;
+}
+
+.tagSheetOption small,
+.tagSheetCreateButton small {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 680;
 }
 
 .scheduleSheetContent {
@@ -7247,13 +7504,27 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) {
+  --tablet-side-rail-width: 62px;
   --tablet-chat-list-width: clamp(336px, 38vw, 460px);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .phoneFrame {
   display: grid;
-  grid-template-columns: var(--tablet-chat-list-width) minmax(0, 1fr);
+  grid-template-columns: var(--tablet-side-rail-width) var(--tablet-chat-list-width) minmax(0, 1fr);
   animation: none !important;
+}
+
+.tabletSideRail {
+  display: none;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletSideRail {
+  position: relative;
+  z-index: 4;
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  background: var(--phone-chat-surface-soft);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen,
@@ -7403,7 +7674,7 @@
   top: 0;
   right: 0;
   bottom: 0;
-  left: var(--tablet-chat-list-width);
+  left: calc(var(--tablet-side-rail-width) + var(--tablet-chat-list-width));
   width: auto;
   border-left: 1px solid var(--phone-chat-border);
   box-shadow: -24px 0 56px rgba(var(--phone-chat-primary-rgb), 0.12);
@@ -7414,7 +7685,7 @@
   top: 0;
   right: 0;
   bottom: 0;
-  left: var(--tablet-chat-list-width);
+  left: calc(var(--tablet-side-rail-width) + var(--tablet-chat-list-width));
   z-index: 80;
   display: flex;
   align-items: stretch;
@@ -7516,7 +7787,7 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatList {
-  padding-bottom: 108px;
+  padding-bottom: 18px;
 }
 
 .tabletChatDock {
@@ -7603,16 +7874,89 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerShell {
-  padding-inline: clamp(8px, 1.4vw, 18px);
+  gap: 6px;
+  padding: 6px clamp(18px, 3vw, 42px) max(14px, env(safe-area-inset-bottom));
+  background: transparent;
+  pointer-events: none;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerShell > * {
+  pointer-events: auto;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composer {
   gap: 6px;
-  padding-inline: 0;
+  width: min(100%, 1280px);
+  min-height: 56px;
+  margin: 0 auto;
+  padding: 7px 10px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-chat-surface) 94%, transparent);
+  box-shadow:
+    0 18px 46px rgba(var(--phone-chat-primary-rgb), 0.12),
+    0 1px 0 color-mix(in srgb, var(--phone-chat-surface) 82%, transparent);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .aiComposer {
+  width: min(100%, 760px);
+  min-height: 56px;
+  margin: 0 auto;
+  padding: 7px 10px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-chat-surface) 94%, transparent);
+  box-shadow: 0 18px 46px rgba(var(--phone-chat-primary-rgb), 0.12);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .aiComposer textarea {
+  min-height: 38px;
+  padding-inline: 12px;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .composerHasContent {
   gap: 5px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .senderBar,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .aiSuggestionBar,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .replyPreviewBar,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .draftAttachments {
+  width: min(100%, 1280px);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .senderBar {
+  padding: 0 16px;
+  border-top: 0;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .aiSuggestionBar {
+  padding-inline: 14px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .replyPreviewBar {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .replyWindowBlockedComposer {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-chat-surface) 94%, transparent);
+  box-shadow: 0 18px 46px rgba(var(--phone-chat-primary-rgb), 0.12);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .mobileDock {
