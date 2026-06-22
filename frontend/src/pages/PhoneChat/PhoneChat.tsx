@@ -286,6 +286,7 @@ type WideSidebarMode = 'chats' | 'newChat' | 'appointment'
 type ChatMoreMode = 'default' | 'agentControls'
 type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'ready_human'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
+type AIAgentHubStatusFilter = 'all' | 'active' | 'paused' | 'skipped'
 type TemplateMode = 'choice' | 'send' | 'create'
 type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notifications' | 'agent' | 'chats' | 'display' | null
 type WhatsAppNumberMode = 'merged' | 'separated'
@@ -312,6 +313,13 @@ const DEFAULT_PHONE_AGENT_RESPONSE_DELAY: AgentResponseDelayConfig = {
   maxValue: 10,
   rangeUnit: 'minutes'
 }
+
+const AI_AGENT_HUB_STATUS_FILTERS: Array<{ id: AIAgentHubStatusFilter; label: string }> = [
+  { id: 'all', label: 'Todos' },
+  { id: 'active', label: 'Activos' },
+  { id: 'paused', label: 'Pausados 24hrs' },
+  { id: 'skipped', label: 'Omitidos' }
+]
 
 const DEFAULT_PHONE_AGENT_REPLY_DELIVERY: AgentReplyDeliveryConfig = {
   mode: 'single',
@@ -978,6 +986,19 @@ function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
     next[state.contactId] = state
   }
   return next
+}
+
+function isAIAgentHubStateVisible(state: ConversationAgentState | null | undefined, filter: AIAgentHubStatusFilter) {
+  if (!state || state.signal === 'discarded') return false
+  if (filter === 'all') return state.status === 'active' || state.status === 'paused' || state.status === 'skipped'
+  return state.status === filter
+}
+
+function getAIAgentHubStatusLabel(state: ConversationAgentState | null | undefined) {
+  if (state?.status === 'paused') return 'Pausado 24hrs'
+  if (state?.status === 'skipped') return 'Omitido'
+  if (state?.status === 'active') return 'Activo'
+  return ''
 }
 
 function getAIAgentMessagePreview(message?: AIAgentMessage | null) {
@@ -3225,6 +3246,7 @@ export const PhoneChat: React.FC = () => {
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [aiAgentHubQuery, setAiAgentHubQuery] = useState('')
   const [aiAgentHubAgentFilter, setAiAgentHubAgentFilter] = useState('all')
+  const [aiAgentHubStatusFilter, setAiAgentHubStatusFilter] = useState<AIAgentHubStatusFilter>('all')
   const [conversationReturnTarget, setConversationReturnTarget] = useState<'chats' | 'aiAgentHub'>('chats')
   const [initialAgentLiveCache] = useState(() => readConversationalAgentLiveCache())
   const [agentConfig, setAgentConfig] = useState<ConversationalAgentConfig | null>(() => initialAgentLiveCache?.config || null)
@@ -4123,7 +4145,7 @@ export const PhoneChat: React.FC = () => {
 
     const activeCounts = new Map<string, number>()
     Object.values(agentStates).forEach((state) => {
-      if (state.status !== 'active' || state.signal === 'discarded') return
+      if (!isAIAgentHubStateVisible(state, 'all')) return
       if (!state.agentId || archivedChatIdSet.has(state.contactId)) return
       activeCounts.set(state.agentId, (activeCounts.get(state.agentId) || 0) + 1)
     })
@@ -4138,21 +4160,35 @@ export const PhoneChat: React.FC = () => {
     ? aiAgentHubAgentFilter
     : 'all'
   const aiAgentHubAgentFilterTotal = aiAgentHubAgentFilters.reduce((total, agent) => total + agent.count, 0)
-  const agentHubChatRows = useMemo(() => {
-    if (!agentEnabled) return []
+  const aiAgentHubStatusCounts = useMemo(() => {
+    const counts: Record<AIAgentHubStatusFilter, number> = {
+      all: 0,
+      active: 0,
+      paused: 0,
+      skipped: 0
+    }
 
-    const activeContactIds = new Set(
-      Object.values(agentStates)
-        .filter((state) => state.status === 'active' && state.signal !== 'discarded')
-        .map((state) => state.contactId)
-    )
+    chats.forEach((contact) => {
+      if (archivedChatIdSet.has(contact.id)) return
+      const state = agentStates[contact.id]
+      if (!isAIAgentHubStateVisible(state, 'all')) return
+      counts.all += 1
+      if (state?.status === 'active' || state?.status === 'paused' || state?.status === 'skipped') {
+        counts[state.status] += 1
+      }
+    })
+
+    return counts
+  }, [agentStates, archivedChatIdSet, chats])
+  const agentHubChatRows = useMemo(() => {
     const normalizedQuery = aiAgentHubQuery.trim().toLowerCase()
 
     return chats
       .filter((contact) => {
+        const state = agentStates[contact.id]
         if (archivedChatIdSet.has(contact.id)) return false
-        if (!activeContactIds.has(contact.id)) return false
-        if (activeAiAgentHubAgentFilter !== 'all' && agentStates[contact.id]?.agentId !== activeAiAgentHubAgentFilter) return false
+        if (!isAIAgentHubStateVisible(state, aiAgentHubStatusFilter)) return false
+        if (activeAiAgentHubAgentFilter !== 'all' && state?.agentId !== activeAiAgentHubAgentFilter) return false
         if (!normalizedQuery) return true
 
         return [
@@ -4167,7 +4203,7 @@ export const PhoneChat: React.FC = () => {
         return Date.parse(rightState?.updatedAt || right.lastMessageDate || right.createdAt) -
           Date.parse(leftState?.updatedAt || left.lastMessageDate || left.createdAt)
       })
-  }, [activeAiAgentHubAgentFilter, agentEnabled, agentStates, aiAgentHubQuery, archivedChatIdSet, chats])
+  }, [activeAiAgentHubAgentFilter, agentStates, aiAgentHubQuery, aiAgentHubStatusFilter, archivedChatIdSet, chats])
   const agentPriorityChatRows = useMemo(() => {
     if (archivedViewOpen || agentPriorityViewOpen || chatFilter !== 'all') return []
     return chats
@@ -4209,7 +4245,7 @@ export const PhoneChat: React.FC = () => {
   const activeConversationAgentActive = Boolean(agentEnabled && activeContact && activeConversationAgentStatus === 'active')
   const activeConversationAgentLabel = ({
     active: 'Agente leyendo este chat',
-    paused: 'Agente pausado',
+    paused: 'Agente pausado 24hrs',
     human: 'Tomado por humano',
     skipped: 'Chatbot omitido',
     completed: 'Objetivo cumplido',
@@ -8786,7 +8822,10 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderAgentHubChatButton = (contact: ChatContact) => {
-    const subtitle = showLastMessagePreview ? getChatPreview(contact) : getContactDetail(contact)
+    const agentState = agentStates[contact.id]
+    const agentStatusLabel = getAIAgentHubStatusLabel(agentState)
+    const preview = showLastMessagePreview ? getChatPreview(contact) : getContactDetail(contact)
+    const subtitle = agentStatusLabel ? `${agentStatusLabel} · ${preview}` : preview
     const dateLabel = formatMessageDate(contact.lastMessageDate || contact.createdAt)
     const unreadCount = Number(contact.unreadCount || 0)
     const hasUnread = showUnreadIndicators && unreadCount > 0
@@ -8846,6 +8885,20 @@ export const PhoneChat: React.FC = () => {
     const agentCountLabel = publishedAgentCount === 1
       ? '1 agente publicado'
       : `${publishedAgentCount} agentes publicados`
+    const emptyAgentHubTitle = aiAgentHubStatusFilter === 'paused'
+      ? 'Sin chats pausados 24hrs'
+      : aiAgentHubStatusFilter === 'skipped'
+      ? 'Sin chats omitidos'
+      : aiAgentHubStatusFilter === 'active'
+      ? 'Sin chats activos'
+      : 'Sin chats tomados'
+    const emptyAgentHubDescription = aiAgentHubStatusFilter === 'paused'
+      ? 'Cuando pauses un chat por 24hrs, aparecerá aquí hasta que se reactive solo o lo prendas manualmente.'
+      : aiAgentHubStatusFilter === 'skipped'
+      ? 'Cuando omitas un chat, aparecerá aquí para que lo reactives cuando quieras.'
+      : agentEnabled
+      ? 'Cuando un agente publicado atienda, pause u omita una conversación, aparecerá aquí.'
+      : 'Enciende la inteligencia artificial para ver los chats que tome.'
 
     return (
       <section
@@ -8902,6 +8955,21 @@ export const PhoneChat: React.FC = () => {
             )}
           </div>
 
+          <div className={styles.aiAgentHubFilters} aria-label="Filtrar chats por estado del agente">
+            {AI_AGENT_HUB_STATUS_FILTERS.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                className={`${styles.aiAgentHubFilterChip} ${aiAgentHubStatusFilter === filter.id ? styles.aiAgentHubFilterChipActive : ''}`}
+                aria-pressed={aiAgentHubStatusFilter === filter.id}
+                onClick={() => setAiAgentHubStatusFilter(filter.id)}
+              >
+                <span>{filter.label}</span>
+                <small>{aiAgentHubStatusCounts[filter.id]}</small>
+              </button>
+            ))}
+          </div>
+
           {aiAgentHubAgentFilters.length > 1 && (
             <div className={styles.aiAgentHubFilters} aria-label="Filtrar chats por agente">
               <button
@@ -8936,12 +9004,8 @@ export const PhoneChat: React.FC = () => {
                 <span className={styles.emptyChatsIcon}>
                   <Bot size={30} />
                 </span>
-                <strong>Sin chats tomados</strong>
-                <small>
-                  {agentEnabled
-                    ? 'Cuando un agente publicado atienda una conversación, aparecerá aquí.'
-                    : 'Enciende la inteligencia artificial para ver los chats que tome.'}
-                </small>
+                <strong>{emptyAgentHubTitle}</strong>
+                <small>{emptyAgentHubDescription}</small>
               </div>
             )}
           </section>
@@ -12622,7 +12686,7 @@ export const PhoneChat: React.FC = () => {
     const agentChatStatus = agentState?.status || 'active'
     const agentStatusLabels: Record<string, string> = {
       active: 'El agente atiende este chat.',
-      paused: 'Agente pausado en este chat.',
+      paused: 'Agente pausado por 24hrs en este chat.',
       human: 'Conversación tomada por un humano.',
       skipped: 'Agente omitido en este chat.',
       completed: 'El agente ya cumplió el objetivo aquí.',
@@ -12650,11 +12714,11 @@ export const PhoneChat: React.FC = () => {
               onClick: () => runAgentAction('take_over', `Tomaste la conversación de ${getContactName(chatActionContact)}.`)
             },
             {
-              label: 'Pausar agente',
-              description: 'Pausa el agente solo en esta conversación.',
+              label: 'Pausar por 24hrs',
+              description: 'Detiene respuestas automáticas durante 24 horas.',
               Icon: Pause,
               className: styles.chatMoreAgent,
-              onClick: () => runAgentAction('pause', 'El agente quedó pausado en este chat.')
+              onClick: () => runAgentAction('pause', 'El agente quedó pausado por 24hrs en este chat.')
             },
             {
               label: 'Omitir agente',

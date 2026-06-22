@@ -49,6 +49,7 @@ const VALID_OBJECTIVES = new Set(CONVERSATIONAL_OBJECTIVES.map((item) => item.id
 const VALID_SUCCESS_ACTIONS = new Set(SUCCESS_ACTIONS.map((item) => item.id))
 const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
 const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed', 'discarded'])
+const CONVERSATION_PAUSE_DURATION_MS = 24 * 60 * 60 * 1000
 const DEFAULT_CONVERSATIONAL_AGENT_MODEL = getDefaultConversationalModelForProvider(DEFAULT_CONVERSATIONAL_AI_PROVIDER)
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const COMPLETION_SUMMARY_MODEL = CHEAPEST_OPENAI_MODEL
@@ -2197,6 +2198,7 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
 
 export async function getConversationalAgentMetrics() {
   await ensureAgentsMigration()
+  await expirePausedConversationStates()
   const [agentRows, stateRows, eventSummary] = await Promise.all([
     db.all('SELECT * FROM conversational_agents ORDER BY position ASC, created_at ASC'),
     db.all(`
@@ -3084,6 +3086,7 @@ function mapStateRow(row) {
   return {
     contactId: row.contact_id,
     status: row.status,
+    pausedUntilAt: row.paused_until_at || null,
     signal: row.signal || null,
     signalReason: row.signal_reason || null,
     signalSummary: row.signal_summary || null,
@@ -3102,6 +3105,71 @@ function mapStateRow(row) {
   }
 }
 
+function normalizePauseUntilAt(value) {
+  if (!value) return new Date(Date.now() + CONVERSATION_PAUSE_DURATION_MS).toISOString()
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return new Date(Date.now() + CONVERSATION_PAUSE_DURATION_MS).toISOString()
+  return date.toISOString()
+}
+
+function isExpiredPausedStateRow(row, nowMs = Date.now()) {
+  if (!row || row.status !== 'paused' || !row.paused_until_at) return false
+  const pauseUntilMs = Date.parse(row.paused_until_at)
+  return Number.isFinite(pauseUntilMs) && pauseUntilMs <= nowMs
+}
+
+async function activateExpiredPause(contactId) {
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET status = 'active',
+        paused_until_at = NULL,
+        updated_by = 'system',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE contact_id = ?
+      AND status = 'paused'
+  `, [contactId])
+
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'status_changed',
+    detail: { status: 'active', updatedBy: 'system', reason: 'pause_expired' }
+  })
+}
+
+async function expirePausedConversationStates() {
+  const nowIso = new Date().toISOString()
+  const rows = await db.all(`
+    SELECT contact_id
+    FROM conversational_agent_state
+    WHERE status = 'paused'
+      AND paused_until_at IS NOT NULL
+      AND paused_until_at <= ?
+    LIMIT 500
+  `, [nowIso]).catch(() => [])
+  if (!rows.length) return 0
+  const contactIds = rows.map((row) => row.contact_id).filter(Boolean)
+  if (!contactIds.length) return 0
+  const placeholders = contactIds.map(() => '?').join(', ')
+
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET status = 'active',
+        paused_until_at = NULL,
+        updated_by = 'system',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE status = 'paused'
+      AND contact_id IN (${placeholders})
+  `, contactIds)
+
+  await Promise.all(contactIds.map((contactId) => recordConversationalAgentEvent({
+    contactId,
+    eventType: 'status_changed',
+    detail: { status: 'active', updatedBy: 'system', reason: 'pause_expired' }
+  }).catch(() => undefined)))
+
+  return contactIds.length
+}
+
 export async function assignAgentToConversation(contactId, agentId) {
   await ensureConversationState(contactId)
   await db.run(`
@@ -3114,6 +3182,11 @@ export async function assignAgentToConversation(contactId, agentId) {
 export async function getConversationState(contactId) {
   if (!contactId) return null
   const row = await db.get('SELECT * FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+  if (isExpiredPausedStateRow(row)) {
+    await activateExpiredPause(contactId)
+    const nextRow = await db.get('SELECT * FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+    return mapStateRow(nextRow)
+  }
   return mapStateRow(row)
 }
 
@@ -3159,24 +3232,34 @@ export async function ensureConversationState(contactId) {
   return getConversationState(contactId)
 }
 
-export async function setConversationStatus(contactId, status, { updatedBy = 'system', clearSignal = false } = {}) {
+export async function setConversationStatus(contactId, status, { updatedBy = 'system', clearSignal = false, pausedUntilAt = null } = {}) {
   if (!VALID_STATUSES.has(status)) {
     throw Object.assign(new Error(`Estado de conversación inválido: ${status}`), { statusCode: 400 })
   }
   await ensureConversationState(contactId)
+  const nextPausedUntilAt = status === 'paused' ? normalizePauseUntilAt(pausedUntilAt) : null
+  const assignments = [
+    'status = ?',
+    'paused_until_at = ?',
+    'updated_by = ?'
+  ]
+  const params = [status, nextPausedUntilAt, updatedBy]
+  if (clearSignal) {
+    assignments.push('signal = NULL', 'signal_reason = NULL', 'signal_summary = NULL', 'signal_at = NULL')
+  }
+  assignments.push('updated_at = CURRENT_TIMESTAMP')
+  params.push(contactId)
+
   await db.run(`
     UPDATE conversational_agent_state
-    SET status = ?,
-        updated_by = ?,
-        ${clearSignal ? "signal = NULL, signal_reason = NULL, signal_summary = NULL, signal_at = NULL," : ''}
-        updated_at = CURRENT_TIMESTAMP
+    SET ${assignments.join(', ')}
     WHERE contact_id = ?
-  `, [status, updatedBy, contactId])
+  `, params)
 
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'status_changed',
-    detail: { status, updatedBy, clearSignal }
+    detail: { status, updatedBy, clearSignal, pausedUntilAt: nextPausedUntilAt }
   })
 
   return getConversationState(contactId)
@@ -3357,6 +3440,8 @@ export async function markHumanTakeoverByPhone(phone, { updatedBy = 'human' } = 
 }
 
 export async function listConversationStates({ signal = null, statuses = null } = {}) {
+  await expirePausedConversationStates()
+
   const where = []
   const params = []
   if (signal) {

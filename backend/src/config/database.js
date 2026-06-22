@@ -4403,6 +4403,7 @@ async function initTables() {
         follow_up_base_message_id TEXT,
         follow_up_sent_count INTEGER DEFAULT 0,
         follow_up_last_sent_at DATETIME,
+        paused_until_at DATETIME,
         updated_by TEXT,
         agent_id TEXT,
         closing_context_json TEXT,
@@ -4423,7 +4424,8 @@ async function initTables() {
       ['closing_context_json', 'TEXT'],
       ['follow_up_base_message_id', 'TEXT'],
       ['follow_up_sent_count', 'INTEGER DEFAULT 0'],
-      ['follow_up_last_sent_at', 'DATETIME']
+      ['follow_up_last_sent_at', 'DATETIME'],
+      ['paused_until_at', 'DATETIME']
     ]) {
       try {
         if (usePostgres) {

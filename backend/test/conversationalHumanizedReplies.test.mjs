@@ -32,6 +32,7 @@ import {
   recordConversationalAgentEvent,
   saveConversationalAgentConfig,
   setConversationSignal,
+  setConversationStatus,
   setConversationalCompletionSummaryGeneratorForTest,
   shouldMigrateLegacyConversationalAgentConfig,
   updateConversationalAgent
@@ -166,6 +167,79 @@ test('detecta canales conversacionales de HighLevel sin mandarlos a WhatsApp por
     resolveHighLevelMessageChannel({ messageType: 'TYPE_WHATSAPP' }),
     { table: 'whatsapp', transport: 'ghl_whatsapp' }
   )
+})
+
+test('pausar una conversación del agente dura 24 horas', async () => {
+  const contactId = `contact_pause_24_${randomUUID()}`
+
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215552400001', `${contactId}@test.local`, 'Pausa Veinticuatro', 'test']
+    )
+
+    const beforeMs = Date.now()
+    const state = await setConversationStatus(contactId, 'paused', { updatedBy: 'user' })
+    const afterMs = Date.now()
+    const pausedUntilMs = Date.parse(state.pausedUntilAt)
+
+    assert.equal(state.status, 'paused')
+    assert.ok(state.pausedUntilAt)
+    assert.ok(pausedUntilMs >= beforeMs + (24 * 60 * 60 * 1000) - 1000)
+    assert.ok(pausedUntilMs <= afterMs + (24 * 60 * 60 * 1000) + 1000)
+
+    const stored = await db.get('SELECT status, paused_until_at FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+    assert.equal(stored.status, 'paused')
+    assert.equal(stored.paused_until_at, state.pausedUntilAt)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('una pausa vencida se reactiva al consultar el estado', async () => {
+  const contactId = `contact_pause_expired_${randomUUID()}`
+
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '+5215552400002', `${contactId}@test.local`, 'Pausa Vencida', 'test']
+    )
+    await db.run(`
+      INSERT INTO conversational_agent_state (contact_id, status, paused_until_at, updated_by, updated_at)
+      VALUES (?, 'paused', ?, 'user', CURRENT_TIMESTAMP)
+    `, [contactId, new Date(Date.now() - 60_000).toISOString()])
+
+    const state = await getConversationState(contactId)
+    assert.equal(state.status, 'active')
+    assert.equal(state.pausedUntilAt, null)
+
+    const stored = await db.get('SELECT status, paused_until_at, updated_by FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+    assert.equal(stored.status, 'active')
+    assert.equal(stored.paused_until_at, null)
+    assert.equal(stored.updated_by, 'system')
+
+    const event = await db.get(
+      "SELECT detail_json FROM conversational_agent_events WHERE contact_id = ? AND event_type = 'status_changed' ORDER BY created_at DESC LIMIT 1",
+      [contactId]
+    )
+    const detail = JSON.parse(event.detail_json)
+    assert.equal(detail.status, 'active')
+    assert.equal(detail.reason, 'pause_expired')
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
 })
 
 test('webhooks conversacionales de HighLevel guardan webchat y email en su canal real', async () => {

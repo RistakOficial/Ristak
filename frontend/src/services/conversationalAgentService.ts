@@ -270,6 +270,7 @@ export interface ConversationAgentState {
   contactId: string
   agentId: string | null
   status: ConversationStatus
+  pausedUntilAt?: string | null
   signal: ConversationSignal | null
   signalReason: string | null
   signalSummary: string | null
