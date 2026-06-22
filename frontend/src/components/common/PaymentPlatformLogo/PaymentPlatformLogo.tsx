@@ -1,6 +1,6 @@
 import React from 'react'
-import conektaLogo from '@/assets/payment-platforms/conekta.jpeg'
-import gigstackLogo from '@/assets/payment-platforms/gigstack.png'
+import conektaLogo from '@/assets/payment-platforms/conekta.webp'
+import gigstackLogo from '@/assets/payment-platforms/gigstack.webp'
 import mercadoPagoLogo from '@/assets/payment-platforms/mercadopago.webp'
 import stripeLogo from '@/assets/payment-platforms/stripe.svg'
 import { cn } from '@/utils/cn'
