@@ -1751,6 +1751,17 @@
   text-align: center;
 }
 
+.aiAgentHubCopy strong {
+  max-width: 280px;
+  overflow: hidden;
+  color: var(--phone-chat-text);
+  font-size: 15px;
+  font-weight: 860;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .aiAgentHubStatus {
   display: inline-flex;
   align-items: center;
@@ -1792,12 +1803,126 @@
   line-height: 1.32;
 }
 
+.aiAgentHubRoster {
+  display: grid;
+  justify-items: center;
+  width: 100%;
+  max-width: 360px;
+  min-width: 0;
+}
+
+.aiAgentHubRosterRail {
+  display: flex;
+  gap: 9px;
+  width: calc(100% + 28px);
+  min-width: 0;
+  margin-inline: -14px;
+  padding: 2px 16px 5px 14px;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: 14px;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+}
+
+.aiAgentHubRosterRail::-webkit-scrollbar {
+  display: none;
+}
+
+.aiAgentHubRosterOption {
+  appearance: none;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  flex: 0 0 82px;
+  min-width: 0;
+  padding: 7px 6px 8px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 18px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface);
+  font: inherit;
+  letter-spacing: 0;
+  scroll-snap-align: center;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.aiAgentHubRosterOptionSelected {
+  color: var(--phone-chat-text);
+  border-color: color-mix(in srgb, var(--phone-chat-accent) 38%, var(--phone-chat-border));
+  background: var(--phone-chat-surface-soft);
+  transform: translateY(-1px);
+}
+
+.aiAgentHubRosterOption:focus-visible {
+  outline: 2px solid rgba(var(--phone-chat-accent-rgb), 0.38);
+  outline-offset: 2px;
+}
+
+.aiAgentHubRosterAvatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 84%, transparent);
+  box-shadow: inset 0 0 0 1px var(--phone-chat-border);
+  transition:
+    width 180ms ease,
+    height 180ms ease,
+    filter 160ms ease,
+    opacity 160ms ease;
+}
+
+.aiAgentHubRosterOptionSelected .aiAgentHubRosterAvatar {
+  width: 50px;
+  height: 50px;
+}
+
+.aiAgentHubRosterOptionOff .aiAgentHubRosterAvatar {
+  filter: grayscale(0.9) brightness(0.88);
+  opacity: 0.72;
+}
+
+.aiAgentHubRosterName {
+  max-width: 100%;
+  overflow: hidden;
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 850;
+  line-height: 1.12;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiAgentHubRosterOption small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--phone-chat-muted);
+  font-size: 10.5px;
+  font-weight: 760;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .aiAgentHubActions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   width: 100%;
-  max-width: 300px;
+  max-width: 340px;
 }
 
 .aiAgentHubPowerButton,
@@ -1815,6 +1940,14 @@
   background: var(--phone-chat-surface-soft);
   font-size: 14px;
   font-weight: 840;
+}
+
+.aiAgentHubPowerButton span,
+.aiAgentHubAgentsButton span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .aiAgentHubPowerButtonOn {
@@ -8098,6 +8231,22 @@
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubRobot .agentRobot {
   width: 110px;
   height: 110px;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubRosterRail {
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  margin-inline: 0;
+  padding: 2px 1px 5px;
+  overflow: visible;
+  scroll-snap-type: none;
+  touch-action: auto;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubRosterOption {
+  flex: 0 1 88px;
+  scroll-snap-align: none;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen .aiAgentHubActions {
