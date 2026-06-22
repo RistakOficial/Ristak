@@ -2203,7 +2203,7 @@ function normalizeHighLevelMessageStatus(value = '') {
   return '';
 }
 
-function getHighLevelResponseStatus(response = {}) {
+export function getHighLevelResponseStatus(response = {}) {
   const explicitStatus = normalizeHighLevelMessageStatus(firstDefined(
     response.status,
     response.messageStatus,
@@ -2219,13 +2219,17 @@ function getHighLevelResponseStatus(response = {}) {
     response.data?.delivery_status,
     response.data?.status
   ));
-  if (explicitStatus) return explicitStatus;
+  if (explicitStatus) {
+    // A successful Conversations API response means HighLevel accepted the send.
+    // Provider queue states should not leave the local chat bubble spinning forever.
+    return explicitStatus === 'pending' ? 'sent' : explicitStatus;
+  }
 
   const responseText = cleanString(firstDefined(response.msg, response.message, response.data?.msg)).toLowerCase();
   if (responseText.includes('failed') || responseText.includes('error')) return 'failed';
-  if (responseText.includes('queued') || responseText.includes('pending') || responseText.includes('scheduled')) return 'pending';
+  if (responseText.includes('queued') || responseText.includes('pending') || responseText.includes('scheduled')) return 'sent';
 
-  return 'pending';
+  return 'sent';
 }
 
 async function saveHighLevelWhatsAppMirror({ contact, channel, text, attachments = [], fromNumber, toNumber, externalId, requestBody, response }) {
