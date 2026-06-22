@@ -301,6 +301,7 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
   }
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
+    const channel = transport === 'ghl_sms' ? 'sms' : 'whatsapp'
     sendChatMessageNotification({
       contactId: contact.id,
       contactName: contact.full_name || contact.first_name || contactPhone,
@@ -311,6 +312,16 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
     }).catch(error => {
       logger.warn(`[GHL Conversations] No se pudo notificar mensaje ${remoteMessageId}: ${error.message}`)
     })
+    import('../agents/conversational/runner.js')
+      .then(runner => runner.handleInboundConversationalChatMessage({
+        contactId: contact.id,
+        phone: contactPhone || null,
+        messageId: hashId('ghl_msg', `${remoteMessageId}:0`),
+        channel
+      }))
+      .catch(error => {
+        logger.warn(`[Agente conversacional] GHL ${channel} no atendido: ${error.message}`)
+      })
   }
 
   if (saved > 0) {
@@ -407,6 +418,15 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
     }).catch(error => {
       logger.warn(`[GHL Conversations] No se pudo notificar mensaje ${remoteMessageId}: ${error.message}`)
     })
+    import('../agents/conversational/runner.js')
+      .then(runner => runner.handleInboundConversationalChatMessage({
+        contactId: contact.id,
+        messageId: hashId('ghl_meta_msg', `${remoteMessageId}:0`),
+        channel: platform
+      }))
+      .catch(error => {
+        logger.warn(`[Agente conversacional] GHL ${platform} no atendido: ${error.message}`)
+      })
   }
 
   if (saved > 0) {

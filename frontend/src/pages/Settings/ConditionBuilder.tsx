@@ -66,11 +66,12 @@ interface SummaryHelpers {
 }
 
 const CHANNEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'chat', label: 'Chats y SMS' },
   { value: 'whatsapp', label: 'WhatsApp' },
-  { value: 'instagram', label: 'Instagram' },
-  { value: 'messenger', label: 'Facebook Messenger' },
-  { value: 'webchat', label: 'Web Chat' },
+  { value: 'instagram', label: 'Instagram DM' },
+  { value: 'messenger', label: 'Messenger' },
   { value: 'sms', label: 'SMS' },
+  { value: 'webchat', label: 'Chat web' },
   { value: 'email', label: 'Correo' }
 ]
 
@@ -148,7 +149,7 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
     id: 'channel',
     label: 'Canal',
     baseLabel: 'llegó por cualquier canal',
-    defaultParams: [{ field: 'channel', operator: 'is', value: 'whatsapp' }],
+    defaultParams: [{ field: 'channel', operator: 'is', value: 'chat' }],
     params: [
       {
         field: 'channel',
@@ -521,7 +522,7 @@ function getConditionFieldOptions(category: CategoryDef) {
 function defaultParamFor(categoryId: ConditionCategory, field: string, operatorId?: string): AgentConditionParam {
   const operator = operatorId ? getOperatorDef(categoryId, field, operatorId) : getParamDef(categoryId, field).operators[0]
   const param: AgentConditionParam = { field, operator: operator.id }
-  if (operator.valueKind === 'channel') param.value = 'whatsapp'
+  if (operator.valueKind === 'channel') param.value = 'chat'
   if (operator.valueKind === 'list' || operator.valueKind === 'tagList' || operator.valueKind === 'weekdays') param.values = []
   if (operator.valueKind === 'offset') {
     const isContactDateField = field === 'created' || field === 'updated' || field === 'last_purchase'
@@ -781,7 +782,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
         return (
           <select
             className={styles.ruleSelect}
-            value={param.value || 'whatsapp'}
+            value={param.value || 'chat'}
             onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
           >
             {CHANNEL_OPTIONS.map((option) => (

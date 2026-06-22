@@ -4395,6 +4395,7 @@ async function initTables() {
         last_inbound_message_id TEXT,
         last_answered_inbound_message_id TEXT,
         last_reply_at DATETIME,
+        channel TEXT DEFAULT 'whatsapp',
         follow_up_base_message_id TEXT,
         follow_up_sent_count INTEGER DEFAULT 0,
         follow_up_last_sent_at DATETIME,
@@ -4413,6 +4414,7 @@ async function initTables() {
     // Columnas agregadas al evolucionar el agente conversacional.
     for (const [columnName, columnType] of [
       ['agent_id', 'TEXT'],
+      ['channel', "TEXT DEFAULT 'whatsapp'"],
       ['last_answered_inbound_message_id', 'TEXT'],
       ['closing_context_json', 'TEXT'],
       ['follow_up_base_message_id', 'TEXT'],

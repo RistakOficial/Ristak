@@ -582,6 +582,15 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
             .catch(error => {
               logger.warn(`[Automatizaciones] DM Meta no procesado: ${error.message}`)
             })
+          import('../agents/conversational/runner.js')
+            .then(runner => runner.handleInboundConversationalChatMessage({
+              contactId: result.contactId,
+              messageId: result.messageId,
+              channel: socialMessage.platform === 'instagram' ? 'instagram' : 'messenger'
+            }))
+            .catch(error => {
+              logger.warn(`[Agente conversacional] DM Meta no atendido: ${error.message}`)
+            })
           sendChatMessageNotification({
             contactId: result.contactId,
             contactName: result.contactName,

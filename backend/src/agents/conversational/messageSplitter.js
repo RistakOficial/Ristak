@@ -463,7 +463,7 @@ function shouldUseAiForText(text, settings, random) {
 
 function buildSplitterInstructions(settings) {
   return [
-    'Eres un procesador de mensajes para WhatsApp. Tu única tarea es dividir una respuesta ya generada por otro agente en varios mensajes naturales.',
+    'Eres un procesador de mensajes para canales de chat. Tu única tarea es dividir una respuesta ya generada por otro agente en varios mensajes naturales.',
     'Piensa en [BREAK] como el punto donde termina un globo y empieza otro, pero tu salida final debe ser un arreglo JSON de mensajes, no texto con [BREAK].',
     '',
     'Reglas no negociables:',
@@ -509,7 +509,7 @@ function buildSplitterUserPrompt(text, settings) {
 
 async function runAiSplitter({ text, settings, apiKey }) {
   const agent = new Agent({
-    name: 'Ristak · Divisor de mensajes WhatsApp',
+    name: 'Ristak · Divisor de mensajes de chat',
     model: MESSAGE_SPLITTER_MODEL,
     instructions: buildSplitterInstructions(settings),
     tools: []

@@ -1,5 +1,5 @@
 /**
- * Prompt del agente conversacional que atiende chats de WhatsApp con prospectos.
+ * Prompt del agente conversacional que atiende conversaciones por chat o correo.
  * Es agnóstico al giro del negocio: el contexto real (servicios, precios,
  * horarios, ubicaciones, disponibilidad) se lee de la base de datos vía tools.
  */
@@ -13,12 +13,13 @@ const OBJECTIVE_TEXTS = {
 }
 
 export const CLOSING_CHANNEL_LABELS = {
+  chat: 'chat',
   whatsapp: 'WhatsApp',
   instagram: 'Instagram',
   messenger: 'Messenger',
   webchat: 'Chat web',
   sms: 'SMS',
-  email: 'Email'
+  email: 'Correo'
 }
 
 export const CLOSING_OBJECTIVE_FINAL_TEXTS = {
@@ -592,7 +593,7 @@ Decodifica la lógica. Tira las palabras. Habla desde tu propia voz.
 [TIPO_DE_PERSONA]: [ESCRIBIR]
 [OBJETIVO_FINAL]: [ESCRIBIR]   (ej: agendar, comprar, cotizar, hablar con humano, reservar, diagnóstico)
 [VALOR]: [ESCRIBIR]
-[CANAL_DE_CONVERSACION]: [WHATSAPP / INSTAGRAM / MESSENGER / CHAT WEB / SMS]
+[CANAL_DE_CONVERSACION]: [CHAT / WHATSAPP / INSTAGRAM / MESSENGER / CHAT WEB / SMS / EMAIL]
 [UBICACION_O_MODALIDAD]: [PRESENCIAL / ONLINE / AMBAS]
 [DISPONIBILIDAD]: [ESCRIBIR]
 [CONDICIONES_IMPORTANTES]: [ESCRIBIR]
@@ -786,9 +787,9 @@ Reglas:
 - Cierra con una preguntita simple para que elija ("cuál te late", "cuál te queda").
 - Esto aplica para horarios, fechas y opciones concretas (paquetes, modalidades). Para todo lo demás, sigue la regla de prosa corta.
 
-## 7.10 Estructura de globitos (mensajes sueltos)
+## 7.10 Estructura en canales de chat
 
-Tu respuesta se parte en varios globitos (mensajes sueltos de chat) en otro paso. Como ese paso no siempre adivina bien dónde cortar, TÚ le das la estructura. Reglas:
+En canales de chat, tu respuesta puede partirse en varios globitos (mensajes sueltos) en otro paso. Como ese paso no siempre adivina bien dónde cortar, TÚ le das la estructura. En correo electrónico, ignora esta mecánica de globitos y escribe un solo cuerpo breve. Reglas:
 
 - **Separa lo que va en globos distintos con SALTO DE LÍNEA (renglón nuevo), no con comas ni puntos.** El renglón nuevo marca "aquí va otro globito". No dependas de la coma o el punto para eso.
 - **Cada renglón debe leerse bien SOLO, sin coma ni punto colgando al final.** Un globito que queda "ah," o "eso ya es más directo." se ve feo y robótico. En mensajes cortos NO va la puntuación "correcta".
@@ -1080,7 +1081,7 @@ Eres la voz de la razón con criterio, ayudando a alguien a ver claro algo que y
 
 - Una sola pregunta por mensaje
 - Nada de interrogatorios ni párrafos largos
-- **JAMÁS sueltes una "biblia" (testamento). Corto en serio.** Apunta a 1 o 2 renglones por mensaje. Si te sale en párrafo, recórtalo o pártelo, pero NO mandes varios mensajes largos seguidos (eso arma un muro igual de pesado). Nadie lee testamentos en WhatsApp.
+- **JAMÁS sueltes una "biblia" (testamento). Corto en serio.** Apunta a 1 o 2 renglones por mensaje. Si te sale en párrafo, recórtalo o pártelo, pero NO mandes varios mensajes largos seguidos (eso arma un muro igual de pesado). Nadie lee testamentos en chat ni correo.
 - **No listes menús ni todas las opciones/precios de golpe.** Si preguntan precio, da UN dato, el que aplica, corto. Nada de enlistar "valoración X, seguimiento $800, programa de 8 semanas, de 12 semanas..." Eso marea y suena a folleto. Una cosa, y avanzas.
 - **Aunque te pregunten "cómo funciona / en qué consiste", NO expliques todo.** Eso es pitchar y romper el pull (ver 2.9). Da una respuesta cortita de una línea y regresa a SU situación. Ejemplo: ante "en qué consiste el tratamiento", algo en el espíritu de "es algo personalizado segun tu caso.. pero dime, desde cuando traes la molestia". Nunca describas el servicio a detalle.
 - No prometas resultados
@@ -1314,9 +1315,9 @@ export function buildAccountTextualCultureParameters(accountLocale = {}) {
   }
 }
 
-export function getClosingChannelLabel(channel = 'whatsapp') {
+export function getClosingChannelLabel(channel = 'chat') {
   const normalized = String(channel || '').toLowerCase()
-  return CLOSING_CHANNEL_LABELS[normalized] || cleanTemplateValue(channel) || 'WhatsApp'
+  return CLOSING_CHANNEL_LABELS[normalized] || cleanTemplateValue(channel) || 'chat'
 }
 
 export function describeClosingObjectiveFinal(config = {}) {
@@ -1336,7 +1337,7 @@ export function buildClosingStrategyTemplateParameters({
   industry = '',
   offering = '',
   personType = 'prospecto',
-  channelLabel = 'WhatsApp',
+  channelLabel = 'chat',
   businessInfo = '',
   value = '',
   location = '',
@@ -1369,7 +1370,7 @@ export function buildClosingStrategyTemplateParameters({
   const finalRegionContext = firstClosingText(profileParameters.CONTEXTO_DE_CIUDAD_REGION_CULTURA_CREENCIAS, adaptation.CONTEXTO_DE_CIUDAD_REGION_CULTURA_CREENCIAS, profileParameters.CONTEXTO_DE_CIUDAD_REGION, adaptation.CONTEXTO_DE_CIUDAD_REGION, finalLocation)
   const finalCustomerLanguage = firstClosingText(profileParameters.COMO_HABLA_NUESTRO_TIPO_DE_CLIENTE, adaptation.COMO_HABLA_NUESTRO_TIPO_DE_CLIENTE, adaptation.LENGUAJE_DEL_NEGOCIO, profileParameters.LENGUAJE_DEL_NEGOCIO, 'calibra el lenguaje al estilo real del contacto y al giro del negocio')
   const finalBusinessRegister = firstClosingText(profileParameters.REGISTRO_DEL_NEGOCIO, adaptation.REGISTRO_DEL_NEGOCIO, 'registro medio: cercano, claro y profesional; sube o baja formalidad segun la persona, industria y valor del servicio')
-  const finalChannel = firstClosingText(channelLabel, 'WhatsApp')
+  const finalChannel = firstClosingText(channelLabel, 'chat')
   const objectiveFinal = describeClosingObjectiveFinal(config)
   const finalAdvanceTool = firstClosingText(advanceToolName, resolveClosingAdvanceToolName(config))
   const finalDiscardTool = firstClosingText(discardToolName, 'discard_conversation')
@@ -1459,7 +1460,7 @@ export function renderClosingStrategyTemplate(template, parameters = {}, options
     ? cleanTemplateValue(options.missingFallback, 'dato pendiente de configurar')
     : ''
   const templateText = String(template || '').replace(
-    /^\[([^\]\n]+)\]:\s*\[(ESCRIBIR[^\]\n]*|WHATSAPP \/ INSTAGRAM \/ MESSENGER \/ CHAT WEB \/ SMS|PRESENCIAL \/ ONLINE \/ AMBAS)\]/gm,
+    /^\[([^\]\n]+)\]:\s*\[(ESCRIBIR[^\]\n]*|CHAT \/ WHATSAPP \/ INSTAGRAM \/ MESSENGER \/ CHAT WEB \/ SMS \/ EMAIL|WHATSAPP \/ INSTAGRAM \/ MESSENGER \/ CHAT WEB \/ SMS|PRESENCIAL \/ ONLINE \/ AMBAS)\]/gm,
     (match, rawKey, hint) => {
       const key = normalizePlaceholderKey(rawKey)
       const value = normalized[rawKey] || normalized[key] || fallback || `[${hint}]`
@@ -1760,18 +1761,21 @@ function buildEmojiUsageInstruction(config = {}) {
   return 'Control de emojis: APAGADO. No uses emojis en ningún mensaje visible.'
 }
 
-export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, advancedClosingContext = null, accountLocale = {}, followUpContext = null }) {
+export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, channel = 'chat', advancedClosingContext = null, accountLocale = {}, followUpContext = null }) {
   const sections = []
   const regionalParameters = {
     ...buildAccountTextualCultureParameters(accountLocale),
     ...(advancedClosingContext?.parameters || {})
   }
+  const conversationChannelLabel = readClosingParameter(regionalParameters, 'CANAL_DE_CONVERSACION') || getClosingChannelLabel(channel)
+  const normalizedChannelLabel = String(conversationChannelLabel || '').toLowerCase()
+  const isEmailChannel = normalizedChannelLabel.includes('email') || normalizedChannelLabel.includes('correo')
   const regionalCulture = readClosingParameter(regionalParameters, 'CULTURA_TEXTUAL_REGIONAL')
   const regionalLanguage = readClosingParameter(regionalParameters, 'LENGUAJE_COLOQUIAL_REGIONAL')
   const regionalShortcuts = readClosingParameter(regionalParameters, 'ABREVIACIONES_TEXTUALES_REGIONALES')
   const mirrorCriteria = readClosingParameter(regionalParameters, 'CRITERIO_DE_ESPEJO')
 
-  sections.push(`Eres el asistente conversacional de ${businessName || 'este negocio'} dentro de una conversación de WhatsApp con un prospecto o cliente.
+  sections.push(`Eres el asistente conversacional de ${businessName || 'este negocio'} dentro de una conversación por ${conversationChannelLabel} con un prospecto o cliente.
 Tu objetivo principal es llevar la conversación de forma natural hacia: ${describeObjective(config)}.
 
 No estás para vender de forma agresiva. Estás para acompañar, orientar, resolver dudas puntuales, filtrar curiosos y detectar cuándo la persona ya está lista para avanzar.`)
@@ -1789,11 +1793,20 @@ No estás para vender de forma agresiva. Estás para acompañar, orientar, resol
 - Si no tienes información suficiente para responder algo importante, ejecuta send_to_human en lugar de adivinar.
 - Refiérete al precio como "valor". Nunca uses la palabra "quiero".`)
 
-  sections.push(`## Multimedia recibida por WhatsApp
+  sections.push(`## ${isEmailChannel ? 'Adjuntos recibidos por correo' : `Multimedia recibida por ${conversationChannelLabel}`}
 - Puedes usar imágenes, documentos, PDFs, archivos de texto y transcripciones de audio cuando aparezcan dentro del mensaje como contexto del adjunto.
 - Si el audio fue transcrito, trata esa transcripción como lo que la persona dijo por voz.
 - Si recibes un video o archivo donde sólo tienes URL/metadatos y no contenido visual/textual/transcrito, no digas que lo viste, leíste o escuchaste completo. Responde con lo que sí tengas, pide una descripción breve o manda a humano si el archivo es necesario para decidir.
 - No menciones detalles técnicos del adjunto ni digas "no tengo acceso al archivo" salvo que sea indispensable para destrabar la conversación.`)
+
+  sections.push(isEmailChannel
+    ? `## Forma de respuesta por correo
+- Responde en un solo cuerpo de correo breve, claro y humano.
+- No escribas como globitos de chat ni uses pausas de mensajería.
+- Mantén el mismo objetivo conversacional, pero con formato de correo: directo, completo y sin sonar robótico.`
+    : `## Forma de respuesta por chat
+- Responde como conversación de chat: natural, breve y fácil de leer.
+- El sistema puede separar después tu respuesta en globitos; tú sólo escribe el texto visible limpio y sin encabezados.`)
 
   if (followUpContext) {
     sections.push(`## Jerarquía de prioridades en seguimiento (en este orden)
@@ -1801,7 +1814,7 @@ No estás para vender de forma agresiva. Estás para acompañar, orientar, resol
 2. Escribe un solo mensaje de reactivación, breve y natural.
 3. No intentes cerrar, cobrar, agendar, transferir ni marcar avance.
 4. Si no hay nada útil que retomar, abre con una pregunta simple y contextual.
-5. Tu respuesta final es sólo el texto visible para WhatsApp.`)
+5. Tu respuesta final es sólo el texto visible para ${conversationChannelLabel}.`)
   } else {
     sections.push(`## Jerarquía de prioridades (en este orden)
 1. Si detectas acoso, insultos, spam, phishing, amenazas, contenido ilegal o mensajes claramente ajenos al negocio: ejecuta discard_conversation con el motivo y deja de conversar. No confrontes ni expliques de más.
@@ -1863,7 +1876,7 @@ ${config.requiredData}`)
   }
 
   sections.push(`## Estilo (obligatorio)
-- Suena como una persona real escribiendo por WhatsApp, nunca como bot, call center ni vendedor insistente.
+- Suena como una persona real escribiendo por ${conversationChannelLabel}, nunca como bot, call center ni vendedor insistente.
 - Mensajes cortos: un solo párrafo chico, idealmente entre 100 y 400 caracteres.
 - UNA sola pregunta útil por mensaje, nunca varias.
 - Cultura textual regional: ${regionalCulture}
@@ -1880,7 +1893,7 @@ ${config.requiredData}`)
   sections.push(`## Reglas internas (críticas)
 - NUNCA menciones al cliente que ejecutaste una herramienta, que lo vas a transferir, marcar, mover de etapa o activar un flujo. La conversación debe sentirse natural.
 - NUNCA escribas palabras clave internas (AGENDAR, SALTAR, ready_for_human, ready_to_buy, send_goal_url, send_trigger_link, etc.) en el mensaje visible.
-- Tu respuesta final es SOLO el texto que verá la persona en WhatsApp. No incluyas análisis, razonamiento, planes, etiquetas ni comentarios sobre cómo vas a responder.
+- Tu respuesta final es SOLO el texto que verá la persona por ${conversationChannelLabel}. No incluyas análisis, razonamiento, planes, etiquetas ni comentarios sobre cómo vas a responder.
 - Prohibido escribir encabezados o notas como "Lectura:", "Movimiento:", "Textura:", "Análisis:", "Respuesta visible:", "voy a responder", "tengo contexto del negocio" o cualquier explicación interna.
 - No pidas datos innecesarios ni repitas preguntas ya respondidas en el historial.
 - Si recibes un mensaje que empieza con "[Contexto interno de Ristak:", úsalo sólo para saber qué mensajes entrantes siguen sin respuesta completa. No lo menciones, no lo cites y no expliques que existe.
@@ -1896,7 +1909,7 @@ ${config.requiredData}`)
 - Fecha y hora actual: ${nowIso}
 - Zona horaria del negocio: ${timezone}
 ${contactName ? `- Nombre del contacto en el sistema: ${contactName}` : '- El contacto aún no tiene nombre registrado.'}
-Interpreta fechas relativas ("hoy", "mañana") con esta fecha y zona. Tu respuesta final es el texto EXACTO que recibirá la persona por WhatsApp.`)
+Interpreta fechas relativas ("hoy", "mañana") con esta fecha y zona. Tu respuesta final es el texto EXACTO que recibirá la persona por ${conversationChannelLabel}.`)
 
   return sections.join('\n\n')
 }

@@ -532,7 +532,7 @@ export function createConversationalTools(ctx) {
       }
 
       const contact = await db.get('SELECT full_name, phone FROM contacts WHERE id = ?', [ctx.contactId])
-      const finalTitle = title || `Cita - ${contact?.full_name || contact?.phone || 'WhatsApp'}`
+      const finalTitle = title || `Cita - ${contact?.full_name || contact?.phone || 'Contacto'}`
 
       pushAction(ctx, 'book_appointment', { calendarId, startTime: start.toISOString(), endTime: end.toISOString(), title: finalTitle })
       if (ctx.dryRun) {

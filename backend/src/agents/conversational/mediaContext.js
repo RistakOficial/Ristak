@@ -48,7 +48,7 @@ function pickFilename(row = {}) {
   const type = cleanString(row.message_type || row.messageType || 'archivo').toLowerCase()
   const mimeType = normalizeMimeType(row.media_mime_type || row.mediaMimeType)
   const extension = mimeType.includes('/') ? mimeType.split('/').pop().replace(/[^a-z0-9]+/g, '') : 'bin'
-  return `whatsapp-${type || 'archivo'}.${extension || 'bin'}`
+  return `chat-${type || 'archivo'}.${extension || 'bin'}`
 }
 
 export function inferConversationalMediaKind(row = {}) {
@@ -261,7 +261,7 @@ async function analyzeAttachmentAsText(attachment = {}, options = {}) {
       body: JSON.stringify({
         model: VISUAL_ANALYSIS_MODEL,
         max_output_tokens: 450,
-        instructions: 'Eres un lector auxiliar de adjuntos para un chat de WhatsApp. Describe solo lo visible o legible, en espanol natural, breve y util para que otro agente pueda responder. No inventes datos fuera del adjunto.',
+        instructions: 'Eres un lector auxiliar de adjuntos para un canal conversacional. Describe solo lo visible o legible, en espanol natural, breve y util para que otro agente pueda responder. No inventes datos fuera del adjunto.',
         input: [{
           role: 'user',
           content: [

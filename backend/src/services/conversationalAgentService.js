@@ -349,20 +349,77 @@ function getCompletionMessageSpeaker(direction = '') {
 }
 
 function getCompletionMessageText(row = {}) {
+  const subject = cleanCompletionTranscriptText(row.subject)
   const text = cleanCompletionTranscriptText(row.message_text)
+  if (subject && text) return `Asunto: ${subject}. ${text}`
+  if (subject) return `Asunto: ${subject}`
   if (text) return text
   const type = cleanCompletionTranscriptText(row.message_type || 'archivo')
   return `[${type || 'archivo'} sin texto]`
 }
 
-async function loadCompletionSummaryMessages(contactId) {
+function normalizeCompletionSummaryChannel(value = 'whatsapp') {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (['email', 'mail', 'correo', 'e_mail'].includes(normalized)) return 'email'
+  if (['instagram', 'instagram_dm', 'ig'].includes(normalized)) return 'instagram'
+  if (['messenger', 'facebook', 'facebook_messenger', 'fb'].includes(normalized)) return 'messenger'
+  if (['sms', 'sms_qr', 'ghl_sms'].includes(normalized)) return 'sms'
+  if (['webchat', 'web_chat', 'chat_web'].includes(normalized)) return 'webchat'
+  return 'whatsapp'
+}
+
+function completionPhoneTransportFilter(channel = 'whatsapp') {
+  return channel === 'sms'
+    ? "AND LOWER(COALESCE(transport, '')) IN ('ghl_sms', 'sms', 'sms_qr')"
+    : "AND LOWER(COALESCE(transport, '')) NOT IN ('ghl_sms', 'sms', 'sms_qr')"
+}
+
+async function loadCompletionSummaryMessages(contactId, channel = 'whatsapp') {
   const cleanContactId = String(contactId || '').trim()
   if (!cleanContactId) return []
+  const normalizedChannel = normalizeCompletionSummaryChannel(channel)
+
+  if (normalizedChannel === 'instagram' || normalizedChannel === 'messenger') {
+    const rows = await db.all(`
+      SELECT id, direction, message_type, message_text, NULL AS subject, message_timestamp, created_at
+      FROM meta_social_messages
+      WHERE contact_id = ? AND platform = ?
+      ORDER BY COALESCE(message_timestamp, created_at) ASC
+    `, [cleanContactId, normalizedChannel]).catch(() => [])
+
+    return rows.map((row) => ({
+      id: row.id,
+      speaker: getCompletionMessageSpeaker(row.direction),
+      direction: row.direction || '',
+      text: getCompletionMessageText(row),
+      timestamp: row.message_timestamp || row.created_at || null,
+      channel: normalizedChannel
+    })).filter((message) => message.text)
+  }
+
+  if (normalizedChannel === 'email') {
+    const rows = await db.all(`
+      SELECT id, direction, 'email' AS message_type, message_text, subject, message_timestamp, created_at
+      FROM email_messages
+      WHERE contact_id = ?
+      ORDER BY COALESCE(message_timestamp, created_at) ASC
+    `, [cleanContactId]).catch(() => [])
+
+    return rows.map((row) => ({
+      id: row.id,
+      speaker: getCompletionMessageSpeaker(row.direction),
+      direction: row.direction || '',
+      text: getCompletionMessageText(row),
+      timestamp: row.message_timestamp || row.created_at || null,
+      channel: normalizedChannel
+    })).filter((message) => message.text)
+  }
 
   const rows = await db.all(`
-    SELECT id, direction, message_type, message_text, message_timestamp, created_at
+    SELECT id, direction, message_type, message_text, NULL AS subject, message_timestamp, created_at
     FROM whatsapp_api_messages
     WHERE contact_id = ?
+      ${completionPhoneTransportFilter(normalizedChannel)}
     ORDER BY COALESCE(message_timestamp, created_at) ASC
   `, [cleanContactId]).catch(() => [])
 
@@ -371,7 +428,8 @@ async function loadCompletionSummaryMessages(contactId) {
     speaker: getCompletionMessageSpeaker(row.direction),
     direction: row.direction || '',
     text: getCompletionMessageText(row),
-    timestamp: row.message_timestamp || row.created_at || null
+    timestamp: row.message_timestamp || row.created_at || null,
+    channel: normalizedChannel
   })).filter((message) => message.text)
 }
 
@@ -400,8 +458,8 @@ function extractCompletionSummaryFromOutput(output = '') {
   return cleanCompletionDisplayText(text)
 }
 
-async function generateCompletionSummaryWithInternalAgent({ contactId, signal, reason = '', actionSummary = '', fallbackSummary = '' } = {}) {
-  const messages = await loadCompletionSummaryMessages(contactId)
+async function generateCompletionSummaryWithInternalAgent({ contactId, signal, reason = '', actionSummary = '', fallbackSummary = '', channel = 'whatsapp' } = {}) {
+  const messages = await loadCompletionSummaryMessages(contactId, channel)
   if (!messages.length) return ''
 
   if (completionSummaryGeneratorForTest) {
@@ -411,6 +469,7 @@ async function generateCompletionSummaryWithInternalAgent({ contactId, signal, r
       reason,
       actionSummary,
       fallbackSummary,
+      channel,
       messages
     }))
   }
@@ -454,7 +513,7 @@ ${transcript}`
     })
     const result = await runner.run(agent, [{ role: 'user', content: prompt }], {
       maxTurns: 3,
-      context: { category: 'conversational_completion_summary', contactId }
+      context: { category: 'conversational_completion_summary', contactId, channel }
     })
     return extractCompletionSummaryFromOutput(result.finalOutput)
   } catch (error) {
@@ -555,7 +614,7 @@ function buildCompletionActionSummary({ signal, summary = '', reason = '', closi
   return baseSummary || baseReason || 'Objetivo concretado'
 }
 
-async function buildCompletionSummaryFromClosingContext({ contactId = '', signal, summary = '', reason = '', actionSummarySource = '', closingContext = {}, timezone = 'America/Mexico_City' } = {}) {
+async function buildCompletionSummaryFromClosingContext({ contactId = '', signal, summary = '', reason = '', actionSummarySource = '', closingContext = {}, timezone = 'America/Mexico_City', channel = 'whatsapp' } = {}) {
   const cleanSignal = String(signal || '').trim()
   const baseSummary = cleanCompletionDisplayText(summary)
   const baseReason = cleanCompletionDisplayText(reason)
@@ -569,7 +628,8 @@ async function buildCompletionSummaryFromClosingContext({ contactId = '', signal
       signal: cleanSignal,
       reason: baseReason,
       actionSummary,
-      fallbackSummary: baseSummary
+      fallbackSummary: baseSummary,
+      channel
     })
     : ''
   const summaryText = generatedSummary || baseSummary || (hidesMissingSummary ? '' : baseReason)
@@ -687,7 +747,8 @@ export const CONDITION_SCHEMA = {
   }
 }
 
-const CONDITION_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'webchat', 'sms', 'email'])
+const CHAT_CONDITION_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'webchat', 'sms'])
+const CONDITION_CHANNELS = new Set(['chat', ...CHAT_CONDITION_CHANNELS, 'email'])
 const OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
 const WEEKDAY_KEYS = new Set(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'])
 
@@ -729,7 +790,7 @@ function normalizeParam(category, param) {
   }
 
   if (field === 'channel') {
-    base.value = CONDITION_CHANNELS.has(param.value) ? param.value : 'whatsapp'
+    base.value = CONDITION_CHANNELS.has(param.value) ? param.value : 'chat'
   } else if (field === 'date') {
     base.date = cleanDate(param.date)
     if (operator === 'between') base.dateEnd = cleanDate(param.dateEnd)
@@ -2665,7 +2726,11 @@ function conditionMatches(condition, ctx) {
 
   if (category === 'channel') {
     return params.every((param) => {
-      const matches = param.value === ctx.channel
+      const targetChannel = String(param.value || '').trim().toLowerCase()
+      const currentChannel = String(ctx.channel || '').trim().toLowerCase()
+      const matches = targetChannel === 'chat'
+        ? CHAT_CONDITION_CHANNELS.has(currentChannel)
+        : targetChannel === currentChannel
       return param.operator === 'is_not' ? !matches : matches
     })
   }
@@ -2968,6 +3033,7 @@ function mapStateRow(row) {
     signalReason: row.signal_reason || null,
     signalSummary: row.signal_summary || null,
     signalAt: row.signal_at || null,
+    channel: row.channel || 'whatsapp',
     lastInboundMessageId: row.last_inbound_message_id || null,
     lastAnsweredInboundMessageId: row.last_answered_inbound_message_id || null,
     lastReplyAt: row.last_reply_at || null,
@@ -3063,10 +3129,19 @@ export async function setConversationStatus(contactId, status, { updatedBy = 'sy
 
 export async function setConversationSignal(contactId, signal, { reason = '', summary = '', status = 'completed', actionSummarySource = '', originalSummary = '' } = {}) {
   await ensureConversationState(contactId)
-  const currentState = await db.get('SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null)
+  const currentState = await db.get('SELECT closing_context_json, channel FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => null)
   const closingContext = normalizeStoredAdvancedClosingContext(currentState?.closing_context_json || '{}')
   const timezone = await getAccountTimezone().catch(() => 'America/Mexico_City')
-  const completionSummary = await buildCompletionSummaryFromClosingContext({ contactId, signal, summary, reason, actionSummarySource, closingContext, timezone })
+  const completionSummary = await buildCompletionSummaryFromClosingContext({
+    contactId,
+    signal,
+    summary,
+    reason,
+    actionSummarySource,
+    closingContext,
+    timezone,
+    channel: currentState?.channel || 'whatsapp'
+  })
   const cleanReason = cleanCompletionDisplayText(reason)
   const cleanActionSummary = cleanCompletionDisplayText(completionSummary.actionSummary)
   const cleanSummary = cleanCompletionDisplayText(completionSummary.summary)

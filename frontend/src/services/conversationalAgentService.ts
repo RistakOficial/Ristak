@@ -176,7 +176,7 @@ export type ConditionCategory =
   | 'ads'
   | 'schedule'
 
-export type ConditionChannel = 'whatsapp' | 'instagram' | 'messenger' | 'webchat' | 'sms' | 'email'
+export type ConditionChannel = 'chat' | 'whatsapp' | 'instagram' | 'messenger' | 'webchat' | 'sms' | 'email'
 export type ConditionOffsetUnit = 'minutes' | 'hours' | 'days'
 
 /**

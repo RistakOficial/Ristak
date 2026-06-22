@@ -77,6 +77,26 @@ const runningContacts = new Set()
 const pendingContactReruns = new Map()
 const followUpTimers = new Map()
 
+const CHAT_CONVERSATIONAL_CHANNELS = new Set(['whatsapp', 'instagram', 'messenger', 'sms', 'webchat'])
+const SOCIAL_CHAT_CHANNELS = new Set(['instagram', 'messenger'])
+const HIGHLEVEL_CHAT_CHANNELS = new Set(['instagram', 'messenger', 'sms'])
+const EMAIL_CONVERSATIONAL_CHANNEL = 'email'
+const CONVERSATIONAL_CHANNEL_ALIASES = new Map([
+  ['wa', 'whatsapp'],
+  ['whatsapp_api', 'whatsapp'],
+  ['api', 'whatsapp'],
+  ['fb', 'messenger'],
+  ['facebook', 'messenger'],
+  ['facebook_messenger', 'messenger'],
+  ['ig', 'instagram'],
+  ['instagram_dm', 'instagram'],
+  ['sms_qr', 'sms'],
+  ['ghl_sms', 'sms'],
+  ['correo', 'email'],
+  ['mail', 'email'],
+  ['e-mail', 'email']
+])
+
 // Palabras internas que jamás deben llegar al cliente final.
 const INTERNAL_TOKEN_PATTERN = /\b(AGENDAR|SALTAR|ready_for_human|ready_to_schedule|ready_to_buy|purchase_completed|mark_ready_to_advance|send_to_human|discard_conversation|stay_silent|book_appointment|create_payment_link|send_goal_url|send_trigger_link)\b/gi
 const INTERNAL_REASONING_LABEL_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:lectura|movimiento|textura|energ[ií]a|intenci[oó]n|an[aá]lisis|razonamiento|objetivo|decisi[oó]n|criterio|checklist|paso\s+[a-z0-9]+)\s*[:：-]\s*(?:\*\*)?/i
@@ -98,6 +118,43 @@ const SOFT_INTERNAL_META_PHRASES = [
   /\bvalores (?:de golpe|concretos)\b/i,
   /\bpregunta espec[ií]fica\b/i
 ]
+
+export function normalizeConversationalChannel(value = 'whatsapp') {
+  const raw = String(value || '').trim().toLowerCase()
+  const compact = raw.replace(/[\s-]+/g, '_')
+  const channel = CONVERSATIONAL_CHANNEL_ALIASES.get(raw) || CONVERSATIONAL_CHANNEL_ALIASES.get(compact) || compact || 'whatsapp'
+  return CHAT_CONVERSATIONAL_CHANNELS.has(channel) || channel === EMAIL_CONVERSATIONAL_CHANNEL ? channel : 'whatsapp'
+}
+
+function isEmailConversationalChannel(channel) {
+  return normalizeConversationalChannel(channel) === EMAIL_CONVERSATIONAL_CHANNEL
+}
+
+function getRunKey(contactId, channel = 'whatsapp') {
+  return `${normalizeConversationalChannel(channel)}:${contactId}`
+}
+
+function getEmailSubjectForReply(latest = {}) {
+  const cleanSubject = String(latest.subject || '').trim()
+  if (!cleanSubject) return 'Seguimiento'
+  return /^re:/i.test(cleanSubject) ? cleanSubject : `Re: ${cleanSubject}`
+}
+
+function formatEmailMessageText(row = {}) {
+  const subject = String(row.subject || '').trim()
+  const text = String(row.message_text || row.content || '').trim()
+  if (subject && text) return `Asunto: ${subject}\n${text}`
+  if (subject) return `Asunto: ${subject}`
+  return text
+}
+
+function phoneMessageTransportFilter(channel = 'whatsapp') {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  if (normalizedChannel === 'sms') {
+    return "AND LOWER(COALESCE(transport, '')) IN ('ghl_sms', 'sms', 'sms_qr')"
+  }
+  return "AND LOWER(COALESCE(transport, '')) NOT IN ('ghl_sms', 'sms', 'sms_qr')"
+}
 
 export function shouldIncludeConversationalBinaryMedia({ runtime } = {}) {
   return runtime?.supportsMultimodalInputs === true
@@ -481,42 +538,96 @@ export function buildPendingReplyContextMessage(pendingMessages = []) {
   }
 }
 
-async function loadConversationHistory(contactId) {
-  const rows = await db.all(`
-    SELECT id, direction, message_type, message_text, media_url, media_mime_type,
-           media_filename, media_duration_ms, message_timestamp, created_at
-    FROM whatsapp_api_messages
-    WHERE contact_id = ?
-    ORDER BY COALESCE(message_timestamp, created_at) DESC
-    LIMIT ?
-  `, [contactId, HISTORY_LIMIT])
+function rowToConversationalMessage(row, channel = 'whatsapp') {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  const direction = String(row.direction || '').toLowerCase()
+  const role = direction === 'outbound' || direction === 'business_echo' || direction === 'sent'
+    ? 'assistant'
+    : 'user'
+  const content = normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL
+    ? formatEmailMessageText(row)
+    : String(row.message_text || row.content || '').trim()
 
-  return rows.reverse().map((row) => {
-    return {
-      id: row.id,
-      role: row.direction === 'outbound' ? 'assistant' : 'user',
-      content: String(row.message_text || '').trim(),
-      message_type: row.message_type,
-      media_url: row.media_url,
-      media_mime_type: row.media_mime_type,
-      media_filename: row.media_filename,
-      media_duration_ms: row.media_duration_ms,
-      timestamp: row.message_timestamp || row.created_at || null
-    }
-  })
+  return {
+    id: row.id,
+    role,
+    content,
+    message_type: row.message_type || (normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL ? 'email' : 'text'),
+    media_url: row.media_url,
+    media_mime_type: row.media_mime_type,
+    media_filename: row.media_filename,
+    media_duration_ms: row.media_duration_ms,
+    subject: row.subject || null,
+    phone: row.phone || null,
+    business_phone: row.business_phone || null,
+    business_phone_number_id: row.business_phone_number_id || null,
+    from_email: row.from_email || null,
+    to_email: row.to_email || null,
+    reply_to: row.reply_to || null,
+    channel: normalizedChannel,
+    message_timestamp: row.message_timestamp || null,
+    messageTimestamp: row.message_timestamp || row.created_at || null,
+    created_at: row.created_at || null,
+    createdAt: row.created_at || null,
+    timestamp: row.message_timestamp || row.created_at || null
+  }
 }
 
-async function loadPendingInboundMessages(contactId, state = {}) {
+async function loadConversationRows(contactId, channel = 'whatsapp', { inboundOnly = false, limit = HISTORY_LIMIT } = {}) {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
+    const rows = await db.all(`
+      SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+             NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
+             platform
+      FROM meta_social_messages
+      WHERE contact_id = ? AND platform = ?
+        ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
+      ORDER BY COALESCE(message_timestamp, created_at) DESC
+      LIMIT ?
+    `, [contactId, normalizedChannel, limit])
+    return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
+  }
+
+  if (normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL) {
+    const rows = await db.all(`
+      SELECT id, direction, 'email' AS message_type, message_text, NULL AS media_url,
+             NULL AS media_mime_type, NULL AS media_filename, NULL AS media_duration_ms,
+             subject, from_email, to_email, reply_to, message_timestamp, created_at
+      FROM email_messages
+      WHERE contact_id = ?
+        ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
+      ORDER BY COALESCE(message_timestamp, created_at) DESC
+      LIMIT ?
+    `, [contactId, limit])
+    return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
+  }
+
   const rows = await db.all(`
-    SELECT id, message_text, message_type, media_url, media_mime_type,
-           media_filename, media_duration_ms, message_timestamp, created_at
+    SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+           media_filename, media_duration_ms, phone, business_phone, business_phone_number_id,
+           NULL AS subject, transport, message_timestamp, created_at
     FROM whatsapp_api_messages
-    WHERE contact_id = ? AND direction = 'inbound'
+    WHERE contact_id = ?
+      ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
+      ${phoneMessageTransportFilter(normalizedChannel)}
     ORDER BY COALESCE(message_timestamp, created_at) DESC
     LIMIT ?
-  `, [contactId, PENDING_INBOUND_SCAN_LIMIT])
+  `, [contactId, limit])
+  return rows.reverse().map((row) => rowToConversationalMessage(row, normalizedChannel))
+}
 
-  const ordered = rows.reverse()
+async function loadConversationHistory(contactId, channel = 'whatsapp') {
+  return loadConversationRows(contactId, channel, { limit: HISTORY_LIMIT })
+}
+
+async function loadPendingInboundMessages(contactId, state = {}, channel = 'whatsapp') {
+  const rows = await loadConversationRows(contactId, channel, {
+    inboundOnly: true,
+    limit: PENDING_INBOUND_SCAN_LIMIT
+  })
+
+  const ordered = rows
   const answeredIndex = state?.lastAnsweredInboundMessageId
     ? ordered.findIndex((row) => row.id === state.lastAnsweredInboundMessageId)
     : -1
@@ -533,16 +644,94 @@ async function loadPendingInboundMessages(contactId, state = {}) {
   return pending.slice(-PENDING_INBOUND_LIMIT)
 }
 
-async function loadLatestInboundMessage(contactId) {
-  return db.get(`
-    SELECT id, message_text, message_type, media_url, media_mime_type,
+async function loadLatestInboundMessage(contactId, channel = 'whatsapp') {
+  const rows = await loadConversationRows(contactId, channel, {
+    inboundOnly: true,
+    limit: 1
+  })
+  return rows[0] || null
+}
+
+async function loadInboundMessageById(contactId, messageId, channel = 'whatsapp') {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
+    const row = await db.get(`
+      SELECT id, direction, message_type, message_text, media_url, media_mime_type,
+             NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
+             platform
+      FROM meta_social_messages
+      WHERE id = ? AND contact_id = ? AND platform = ?
+      LIMIT 1
+    `, [messageId, contactId, normalizedChannel])
+    return row ? rowToConversationalMessage(row, normalizedChannel) : null
+  }
+
+  if (normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL) {
+    const row = await db.get(`
+      SELECT id, direction, 'email' AS message_type, message_text, NULL AS media_url,
+             NULL AS media_mime_type, NULL AS media_filename, NULL AS media_duration_ms,
+             subject, from_email, to_email, reply_to, message_timestamp, created_at
+      FROM email_messages
+      WHERE id = ? AND contact_id = ?
+      LIMIT 1
+    `, [messageId, contactId])
+    return row ? rowToConversationalMessage(row, normalizedChannel) : null
+  }
+
+  const row = await db.get(`
+    SELECT id, direction, message_type, message_text, media_url, media_mime_type,
            media_filename, media_duration_ms, phone, business_phone, business_phone_number_id,
-           message_timestamp, created_at
+           NULL AS subject, transport, message_timestamp, created_at
     FROM whatsapp_api_messages
-    WHERE contact_id = ? AND direction = 'inbound'
-    ORDER BY COALESCE(message_timestamp, created_at) DESC
+    WHERE id = ? AND contact_id = ?
+      ${phoneMessageTransportFilter(normalizedChannel)}
     LIMIT 1
-  `, [contactId])
+  `, [messageId, contactId])
+  return row ? rowToConversationalMessage(row, normalizedChannel) : null
+}
+
+async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit = PENDING_RECOVERY_SCAN_LIMIT) {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
+    const rows = await db.all(`
+      SELECT id, contact_id, direction, message_type, message_text, media_url, media_mime_type,
+             NULL AS media_filename, NULL AS media_duration_ms, message_timestamp, created_at,
+             platform
+      FROM meta_social_messages
+      WHERE platform = ?
+        AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'
+        AND contact_id IS NOT NULL
+      ORDER BY COALESCE(message_timestamp, created_at) DESC
+      LIMIT ?
+    `, [normalizedChannel, limit]).catch(() => [])
+    return rows.map((row) => ({ ...rowToConversationalMessage(row, normalizedChannel), contact_id: row.contact_id }))
+  }
+
+  if (normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL) {
+    const rows = await db.all(`
+      SELECT id, contact_id, direction, 'email' AS message_type, message_text, NULL AS media_url,
+             NULL AS media_mime_type, NULL AS media_filename, NULL AS media_duration_ms,
+             subject, from_email, to_email, reply_to, message_timestamp, created_at
+      FROM email_messages
+      WHERE LOWER(COALESCE(direction, 'inbound')) = 'inbound'
+        AND contact_id IS NOT NULL
+      ORDER BY COALESCE(message_timestamp, created_at) DESC
+      LIMIT ?
+    `, [limit]).catch(() => [])
+    return rows.map((row) => ({ ...rowToConversationalMessage(row, normalizedChannel), contact_id: row.contact_id }))
+  }
+
+  const rows = await db.all(`
+    SELECT id, contact_id, direction, message_type, message_text, media_url, media_mime_type,
+           media_filename, media_duration_ms, phone, business_phone,
+           business_phone_number_id, NULL AS subject, transport, message_timestamp, created_at
+    FROM whatsapp_api_messages
+    WHERE direction = 'inbound' AND contact_id IS NOT NULL
+      ${phoneMessageTransportFilter(normalizedChannel)}
+    ORDER BY COALESCE(message_timestamp, created_at) DESC
+    LIMIT ?
+  `, [limit]).catch(() => [])
+  return rows.map((row) => ({ ...rowToConversationalMessage(row, normalizedChannel), contact_id: row.contact_id }))
 }
 
 async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null }) {
@@ -591,6 +780,7 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     timezone,
     nowIso,
     contactName,
+    channel,
     advancedClosingContext,
     accountLocale,
     followUpContext
@@ -606,7 +796,8 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
   return { agent, ctx, model, aiProvider }
 }
 
-async function executeAgent({ agent, modelProvider, messages, contactId, model, aiProvider = 'openai', traceMessage = '' }) {
+async function executeAgent({ agent, modelProvider, messages, contactId, model, aiProvider = 'openai', channel = 'whatsapp', traceMessage = '' }) {
+  const normalizedChannel = normalizeConversationalChannel(channel)
   let agentRun = null
   try {
     agentRun = await startAgentRun({
@@ -616,9 +807,9 @@ async function executeAgent({ agent, modelProvider, messages, contactId, model, 
     })
     await updateAgentRun(agentRun, {
       domain: 'conversacional',
-      action: 'whatsapp_reply',
+      action: normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL ? 'email_reply' : 'chat_reply',
       model,
-      route: { engine: aiProvider === 'openai' ? 'openai-agents-sdk' : `${aiProvider}-openai-compatible`, category: 'conversacional', contactId }
+      route: { engine: aiProvider === 'openai' ? 'openai-agents-sdk' : `${aiProvider}-openai-compatible`, category: 'conversacional', contactId, channel: normalizedChannel }
     })
   } catch (error) {
     logger.warn(`[Agente conversacional] No se pudo iniciar rastro: ${error.message}`)
@@ -650,36 +841,47 @@ async function executeAgent({ agent, modelProvider, messages, contactId, model, 
   }
 }
 
-function scheduleConversationalAgentRerun({ contactId, phone, latestMessage, reason }) {
+function scheduleConversationalAgentRerun({ contactId, phone, latestMessage, reason, channel = 'whatsapp' }) {
   if (!latestMessage?.id) return
-  pendingContactReruns.delete(contactId)
+  const normalizedChannel = normalizeConversationalChannel(channel || latestMessage.channel)
+  const runKey = getRunKey(contactId, normalizedChannel)
+  pendingContactReruns.delete(runKey)
   setTimeout(() => {
-    handleInboundMessageForConversationalAgent({
+    handleInboundConversationalChatMessage({
       contactId,
       phone: latestMessage.phone || phone,
-      messageId: latestMessage.id
+      messageId: latestMessage.id,
+      channel: normalizedChannel
     }).catch((error) => {
       logger.error(`[Agente conversacional] Error reintentando tras ${reason}: ${error.message}`)
     })
   }, 0)
 }
 
-async function schedulePendingContactRerun(contactId, phone, reason) {
-  const latest = await loadLatestInboundMessage(contactId).catch(() => null)
+async function schedulePendingContactRerun(contactId, phone, reason, channel = 'whatsapp') {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  const latest = await loadLatestInboundMessage(contactId, normalizedChannel).catch(() => null)
   if (!latest) return
-  scheduleConversationalAgentRerun({ contactId, phone, latestMessage: latest, reason })
+  scheduleConversationalAgentRerun({ contactId, phone, latestMessage: latest, reason, channel: normalizedChannel })
 }
 
-async function loadNewerInboundMessage(contactId, handledMessageId) {
-  const latest = await loadLatestInboundMessage(contactId)
+async function loadNewerInboundMessage(contactId, handledMessageId, channel = 'whatsapp') {
+  const latest = await loadLatestInboundMessage(contactId, channel)
   return latest && latest.id !== handledMessageId ? latest : null
 }
 
 function clearFollowUpTimer(contactId) {
-  const timer = followUpTimers.get(contactId)
-  if (timer) {
-    clearTimeout(timer)
-    followUpTimers.delete(contactId)
+  const key = String(contactId || '')
+  const keys = key.includes(':')
+    ? [key]
+    : ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email'].map((channel) => getRunKey(key, channel))
+
+  for (const timerKey of keys) {
+    const timer = followUpTimers.get(timerKey)
+    if (timer) {
+      clearTimeout(timer)
+      followUpTimers.delete(timerKey)
+    }
   }
 }
 
@@ -700,10 +902,11 @@ function getFollowUpDueAtMs(latest, step) {
   return baseMs + getAgentFollowUpStepDelayMs(step)
 }
 
-async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone }) {
-  clearFollowUpTimer(contactId)
+async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone, channel = 'whatsapp' }) {
+  const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
+  clearFollowUpTimer(getRunKey(contactId, normalizedChannel))
   const followUp = normalizeAgentFollowUp(agentConfig.followUp)
-  if (!followUp.enabled || !latest?.id) {
+  if (!followUp.enabled || !latest?.id || isEmailConversationalChannel(normalizedChannel)) {
     await db.run(`
       UPDATE conversational_agent_state
       SET follow_up_base_message_id = NULL,
@@ -725,14 +928,17 @@ async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, ph
   `, [latest.id, contactId])
 
   const state = await getConversationState(contactId).catch(() => null)
-  scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, reason: 'respuesta enviada' })
+  scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, reason: 'respuesta enviada', channel: normalizedChannel })
 }
 
-function scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, reason = 'programado' }) {
-  clearFollowUpTimer(contactId)
+function scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, reason = 'programado', channel = 'whatsapp' }) {
+  const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel || state?.channel)
+  const runKey = getRunKey(contactId, normalizedChannel)
+  clearFollowUpTimer(runKey)
   if (!contactId || !latest?.id || !agentConfig?.id) return false
   if (!state || state.status !== 'active' || state.signal) return false
   if (state.followUpBaseMessageId && state.followUpBaseMessageId !== latest.id) return false
+  if (isEmailConversationalChannel(normalizedChannel)) return false
 
   const next = getNextFollowUpStep(agentConfig, state.followUpSentCount)
   if (!next) return false
@@ -745,12 +951,12 @@ function scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, re
 
   const delayMs = Math.max(0, Math.min(dueAtMs - nowMs, MAX_TIMER_MS))
   const timer = setTimeout(() => {
-    followUpTimers.delete(contactId)
-    runScheduledFollowUp({ contactId, phone, baseMessageId: latest.id, followUpIndex: next.index }).catch((error) => {
+    followUpTimers.delete(runKey)
+    runScheduledFollowUp({ contactId, phone, baseMessageId: latest.id, followUpIndex: next.index, channel: normalizedChannel }).catch((error) => {
       logger.error(`[Agente conversacional] Error ejecutando seguimiento: ${error.message}`)
     })
   }, delayMs)
-  followUpTimers.set(contactId, timer)
+  followUpTimers.set(runKey, timer)
 
   recordConversationalAgentEvent({
     contactId,
@@ -758,6 +964,7 @@ function scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, re
     detail: {
       agentId: agentConfig.id,
       baseMessageId: latest.id,
+      channel: normalizedChannel,
       followUpIndex: next.index,
       dueAt: new Date(dueAtMs).toISOString(),
       delayMs,
@@ -780,7 +987,49 @@ function buildFollowUpContextMessage({ followUpIndex, strategy }) {
   }
 }
 
-async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex }) {
+async function sendConversationalChannelTextMessage({
+  channel = 'whatsapp',
+  contactId,
+  latest = {},
+  phone,
+  text,
+  externalId
+} = {}) {
+  const normalizedChannel = normalizeConversationalChannel(channel || latest.channel)
+  if (normalizedChannel === EMAIL_CONVERSATIONAL_CHANNEL) {
+    const { sendEmailToContact } = await import('../../services/emailService.js')
+    return sendEmailToContact({
+      contactId,
+      to: latest.from_email || latest.to_email || undefined,
+      subject: getEmailSubjectForReply(latest),
+      text,
+      externalId
+    })
+  }
+
+  if (HIGHLEVEL_CHAT_CHANNELS.has(normalizedChannel)) {
+    const { sendHighLevelConversationMessageCore } = await import('../../controllers/highlevelController.js')
+    return sendHighLevelConversationMessageCore({
+      contactId,
+      channel: normalizedChannel === 'sms' ? 'sms_qr' : normalizedChannel,
+      message: text,
+      toNumber: phone || latest.phone || undefined,
+      externalId
+    }, { markHumanTakeover: false })
+  }
+
+  const { sendWhatsAppApiTextMessage } = await import('../../services/whatsappApiService.js')
+  return sendWhatsAppApiTextMessage({
+    to: phone || latest.phone,
+    from: latest.business_phone || undefined,
+    phoneNumberId: latest.business_phone_number_id || undefined,
+    text,
+    externalId
+  })
+}
+
+async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex, channel = 'whatsapp' }) {
+  const normalizedChannel = normalizeConversationalChannel(channel)
   const config = await getConversationalAgentConfig()
   if (!config.enabled) return
 
@@ -793,14 +1042,14 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   const next = getNextFollowUpStep(agentConfig, state.followUpSentCount)
   if (!next || next.index !== followUpIndex) return
 
-  const latest = await loadLatestInboundMessage(contactId)
+  const latest = await loadLatestInboundMessage(contactId, normalizedChannel)
   if (!latest || latest.id !== baseMessageId) return
   const latestMs = messageTimestampMs(latest)
   if (!latestMs || Date.now() - latestMs > FOLLOW_UP_WINDOW_MS) {
     await recordConversationalAgentEvent({
       contactId,
       eventType: 'follow_up_suppressed',
-      detail: { agentId: agentConfig.id, baseMessageId, followUpIndex, reason: 'whatsapp_window_expired' }
+      detail: { agentId: agentConfig.id, baseMessageId, followUpIndex, channel: normalizedChannel, reason: 'chat_reply_window_expired' }
     }).catch(() => {})
     return
   }
@@ -809,7 +1058,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   const runtime = await resolveConversationalAIRuntime(aiProvider)
   agentConfig = { ...agentConfig, aiProvider }
   const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
-  const rawMessages = await loadConversationHistory(contactId)
+  const rawMessages = await loadConversationHistory(contactId, normalizedChannel)
   const openAIFallbackApiKey = aiProvider === 'openai'
     ? runtime.apiKey
     : await getOpenAIApiKey().catch(() => null)
@@ -830,7 +1079,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     contactId,
     contactName: contact?.full_name || null,
     dryRun: false,
-    channel: 'whatsapp',
+    channel: normalizedChannel,
     ruleContext: null,
     followUpContext: { index: followUpIndex, strategy: followUp.strategy }
   })
@@ -842,6 +1091,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     contactId,
     model,
     aiProvider,
+    channel: normalizedChannel,
     traceMessage: `seguimiento ${followUpIndex}`
   })
 
@@ -855,7 +1105,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     return
   }
 
-  const latestBeforeSend = await loadNewerInboundMessage(contactId, baseMessageId)
+  const latestBeforeSend = await loadNewerInboundMessage(contactId, baseMessageId, normalizedChannel)
   if (latestBeforeSend) {
     await recordConversationalAgentEvent({
       contactId,
@@ -873,6 +1123,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     reply,
     apiKey: runtime.apiKey,
     model,
+    channel: normalizedChannel,
     externalIdPrefix: `convagent_followup${followUpIndex}`,
     dependencies: {
       splitter: runtime.supportsAISplitting ? splitMessageIntoBubbles : splitMessageIntoBubblesFallback,
@@ -929,7 +1180,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   }).catch(() => {})
 
   const nextState = await getConversationState(contactId).catch(() => null)
-  scheduleNextFollowUp({ contactId, phone, latest, state: nextState, agentConfig, reason: 'seguimiento enviado' })
+  scheduleNextFollowUp({ contactId, phone, latest, state: nextState, agentConfig, reason: 'seguimiento enviado', channel: normalizedChannel })
 }
 
 export async function sendReplyParts({
@@ -940,6 +1191,7 @@ export async function sendReplyParts({
   reply,
   apiKey,
   model,
+  channel = 'whatsapp',
   externalIdPrefix = 'convagent',
   dependencies = {}
 }) {
@@ -947,30 +1199,40 @@ export async function sendReplyParts({
     splitter = splitMessageIntoBubbles,
     sendTextMessage = null,
     wait = sleep,
-    loadNewerInbound = loadNewerInboundMessage,
+    loadNewerInbound = null,
     recordEvent = recordConversationalAgentEvent,
     markReplyComplete = null
   } = dependencies || {}
 
-  const splitResult = await splitter({
-    text: reply,
-    settings: agentConfig.replyDelivery,
-    apiKey
-  })
+  const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
+  const splitResult = isEmailConversationalChannel(normalizedChannel)
+    ? { messages: [reply].filter(Boolean), source: 'email', reason: 'email_single_message' }
+    : await splitter({
+      text: reply,
+      settings: agentConfig.replyDelivery,
+      apiKey
+    })
   const parts = splitResult.messages
   if (!parts.length) return { parts: [], sentParts: 0, interruptedBy: null }
 
-  const sendMessage = sendTextMessage || (await import('../../services/whatsappApiService.js')).sendWhatsAppApiTextMessage
+  const sendMessage = sendTextMessage || ((args) => sendConversationalChannelTextMessage({
+    ...args,
+    contactId,
+    latest,
+    phone,
+    channel: normalizedChannel
+  }))
 
   const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
   const delaySchedule = buildReplyPartDelaySchedule(parts, { replyDelivery: delivery })
-  if (delivery.splitMessagesEnabled) {
+  if (!isEmailConversationalChannel(normalizedChannel) && delivery.splitMessagesEnabled) {
     await recordEvent({
       contactId,
       eventType: 'reply_splitter_result',
       detail: {
         messageId: latest.id,
         agentId: agentConfig.id || null,
+        channel: normalizedChannel,
         source: splitResult.source,
         reason: splitResult.reason,
         partCount: parts.length
@@ -990,13 +1252,16 @@ export async function sendReplyParts({
         await wait(delayMs)
       }
 
-      const newerInbound = await loadNewerInbound(contactId, latest.id)
+      const newerInbound = await (loadNewerInbound
+        ? loadNewerInbound(contactId, latest.id)
+        : loadNewerInboundMessage(contactId, latest.id, normalizedChannel))
       if (newerInbound) {
         return { parts, sentParts: index, interruptedBy: newerInbound, delaySchedule }
       }
     }
 
     await sendMessage({
+      channel: normalizedChannel,
       to: phone || latest.phone,
       from: latest.business_phone || undefined,
       phoneNumberId: latest.business_phone_number_id || undefined,
@@ -1010,6 +1275,7 @@ export async function sendReplyParts({
       detail: {
         messageId: latest.id,
         agentId: agentConfig.id || null,
+        channel: normalizedChannel,
         partIndex: index + 1,
         partCount: parts.length,
         replyPreview: parts[index].slice(0, 180)
@@ -1033,38 +1299,40 @@ export async function sendReplyParts({
 }
 
 /**
- * Punto de entrada desde el webhook de mensajes entrantes de WhatsApp.
- * Es fire-and-forget: nunca lanza, solo registra errores.
+ * Punto de entrada genérico para conversaciones atendidas por el agente.
+ * Los chats y el correo comparten cerebro, pero cada canal conserva su entrega.
  */
-export async function handleInboundMessageForConversationalAgent({ contactId, phone, messageId }) {
+export async function handleInboundConversationalMessage({ contactId, phone, messageId, channel = 'whatsapp' }) {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  const runKey = getRunKey(contactId, normalizedChannel)
   try {
     if (!contactId || !messageId) return
 
     const config = await getConversationalAgentConfig()
     if (!config.enabled) return
 
-    clearFollowUpTimer(contactId)
+    clearFollowUpTimer(runKey)
 
     const state = await ensureConversationState(contactId)
     if (!state || state.status !== 'active') return
 
-    if (runningContacts.has(contactId)) {
-      pendingContactReruns.set(contactId, { contactId, phone, messageId })
+    if (runningContacts.has(runKey)) {
+      pendingContactReruns.set(runKey, { contactId, phone, messageId, channel: normalizedChannel })
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'run_rerun_queued',
-        detail: { messageId, reason: 'already_running' }
+        detail: { messageId, channel: normalizedChannel, reason: 'already_running' }
       }).catch(() => {})
       return
     }
-    runningContacts.add(contactId)
+    runningContacts.add(runKey)
 
     try {
       // Pequeña espera para agrupar ráfagas de mensajes: si después de la
       // espera ya hay un mensaje más nuevo, esa ejecución posterior atiende.
       await sleep(DEBOUNCE_MS)
 
-      const latest = await loadLatestInboundMessage(contactId)
+      const latest = await loadLatestInboundMessage(contactId, normalizedChannel)
       if (!latest) return
 
       const freshState = await getConversationState(contactId)
@@ -1074,9 +1342,9 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       // Reclama el mensaje antes de correr para evitar respuestas duplicadas.
       await db.run(`
         UPDATE conversational_agent_state
-        SET last_inbound_message_id = ?, updated_at = CURRENT_TIMESTAMP
+        SET last_inbound_message_id = ?, channel = ?, updated_at = CURRENT_TIMESTAMP
         WHERE contact_id = ?
-      `, [latest.id, contactId])
+      `, [latest.id, normalizedChannel, contactId])
 
       // Resolver qué agente atiende esta conversación: el ya asignado o el
       // primero cuyas reglas de entrada coincidan con el mensaje/contacto.
@@ -1084,7 +1352,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       const ruleContext = await buildRuleContext({
         contactId,
         messageText: latestMessageText,
-        channel: 'whatsapp'
+        channel: normalizedChannel
       })
 
       let agentConfig = freshState.agentId ? await getConversationalAgent(freshState.agentId) : null
@@ -1106,7 +1374,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         agentConfig = await matchAgentForMessage({
           contactId,
           messageText: latestMessageText,
-          channel: 'whatsapp',
+          channel: normalizedChannel,
           excludeAgentId: releasedAgentId,
           ruleContext
         })
@@ -1115,7 +1383,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
           await recordConversationalAgentEvent({
             contactId,
             eventType: 'agent_assigned',
-            detail: { agentId: agentConfig.id, name: agentConfig.name }
+            detail: { agentId: agentConfig.id, name: agentConfig.name, channel: normalizedChannel }
           })
         }
       }
@@ -1129,7 +1397,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
       agentConfig = { ...agentConfig, aiProvider }
 
       const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
-      const rawMessages = await loadConversationHistory(contactId)
+      const rawMessages = await loadConversationHistory(contactId, normalizedChannel)
       const openAIFallbackApiKey = aiProvider === 'openai'
         ? runtime.apiKey
         : await getOpenAIApiKey().catch(() => null)
@@ -1142,7 +1410,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         includeBinary: includeBinaryMedia
       })
       if (!messages.length) return
-      const pendingMessages = await loadPendingInboundMessages(contactId, freshState)
+      const pendingMessages = await loadPendingInboundMessages(contactId, freshState, normalizedChannel)
       const pendingContextMessage = buildPendingReplyContextMessage(pendingMessages)
       const messagesForAgent = pendingContextMessage ? [...messages, pendingContextMessage] : messages
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
@@ -1153,7 +1421,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         contactId,
         contactName: contact?.full_name || null,
         dryRun: false,
-        channel: 'whatsapp',
+        channel: normalizedChannel,
         ruleContext
       })
 
@@ -1164,6 +1432,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         contactId,
         model,
         aiProvider,
+        channel: normalizedChannel,
         traceMessage
       })
 
@@ -1172,11 +1441,11 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         await recordConversationalAgentEvent({
           contactId,
           eventType: 'reply_wait_started',
-          detail: { messageId: latest.id, agentId: agentConfig.id || null, delayMs: responseDelayMs }
+          detail: { messageId: latest.id, agentId: agentConfig.id || null, channel: normalizedChannel, delayMs: responseDelayMs }
         })
         await sleep(responseDelayMs)
 
-        const latestAfterDelay = await loadNewerInboundMessage(contactId, latest.id)
+        const latestAfterDelay = await loadNewerInboundMessage(contactId, latest.id, normalizedChannel)
         if (latestAfterDelay) {
           await recordConversationalAgentEvent({
             contactId,
@@ -1184,6 +1453,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
             detail: {
               messageId: latest.id,
               agentId: agentConfig.id || null,
+              channel: normalizedChannel,
               reason: 'newer_inbound_during_response_delay',
               newerMessageId: latestAfterDelay.id
             }
@@ -1192,6 +1462,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
             contactId,
             phone,
             latestMessage: latestAfterDelay,
+            channel: normalizedChannel,
             reason: 'pausa de respuesta'
           })
           return
@@ -1205,12 +1476,12 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         await recordConversationalAgentEvent({
           contactId,
           eventType: 'reply_suppressed',
-          detail: { messageId: latest.id, actions: ctx.actions, status: postState?.status || null }
+          detail: { messageId: latest.id, channel: normalizedChannel, actions: ctx.actions, status: postState?.status || null }
         })
         return
       }
 
-      const latestBeforeSend = await loadNewerInboundMessage(contactId, latest.id)
+      const latestBeforeSend = await loadNewerInboundMessage(contactId, latest.id, normalizedChannel)
       if (latestBeforeSend) {
         await recordConversationalAgentEvent({
           contactId,
@@ -1218,6 +1489,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
           detail: {
             messageId: latest.id,
             agentId: agentConfig.id || null,
+            channel: normalizedChannel,
             reason: 'newer_inbound_before_reply',
             newerMessageId: latestBeforeSend.id
           }
@@ -1226,6 +1498,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
           contactId,
           phone,
           latestMessage: latestBeforeSend,
+          channel: normalizedChannel,
           reason: 'mensaje nuevo antes de enviar'
         })
         return
@@ -1239,6 +1512,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         reply,
         apiKey: runtime.apiKey,
         model,
+        channel: normalizedChannel,
         dependencies: {
           splitter: runtime.supportsAISplitting ? splitMessageIntoBubbles : splitMessageIntoBubblesFallback
         }
@@ -1250,6 +1524,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
           detail: {
             messageId: latest.id,
             agentId: agentConfig.id || null,
+            channel: normalizedChannel,
             reason: 'newer_inbound_during_split_reply',
             newerMessageId: delivery.interruptedBy.id,
             sentParts: delivery.sentParts,
@@ -1260,6 +1535,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
           contactId,
           phone,
           latestMessage: delivery.interruptedBy,
+          channel: normalizedChannel,
           reason: 'envío en partes'
         })
         return
@@ -1271,6 +1547,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
         detail: {
           messageId: latest.id,
           agentId: agentConfig.id || null,
+          channel: normalizedChannel,
           replyPreview: reply.slice(0, 280),
           partCount: delivery.parts.length,
           pendingInboundCount: pendingMessages.length,
@@ -1278,28 +1555,45 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
           actions: ctx.actions
         }
       })
-      await resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone })
+      await resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone, channel: normalizedChannel })
     } finally {
-      runningContacts.delete(contactId)
-      const pending = pendingContactReruns.get(contactId)
+      runningContacts.delete(runKey)
+      const pending = pendingContactReruns.get(runKey)
       if (pending) {
-        pendingContactReruns.delete(contactId)
+        pendingContactReruns.delete(runKey)
         await schedulePendingContactRerun(
           contactId,
           pending.phone || phone,
-          'mensaje entrante durante ejecución'
+          'mensaje entrante durante ejecución',
+          pending.channel || normalizedChannel
         )
       }
     }
   } catch (error) {
-    runningContacts.delete(contactId)
+    runningContacts.delete(runKey)
     logger.error(`[Agente conversacional] Error atendiendo mensaje entrante: ${error.message}`)
     await recordConversationalAgentEvent({
       contactId: contactId || null,
       eventType: 'error',
-      detail: { message: error.message }
+      detail: { message: error.message, channel: normalizedChannel }
     }).catch(() => {})
   }
+}
+
+export async function handleInboundConversationalChatMessage({ contactId, phone, messageId, channel = 'whatsapp' }) {
+  return handleInboundConversationalMessage({ contactId, phone, messageId, channel })
+}
+
+export async function handleInboundConversationalEmailMessage({ contactId, messageId }) {
+  return handleInboundConversationalMessage({
+    contactId,
+    messageId,
+    channel: EMAIL_CONVERSATIONAL_CHANNEL
+  })
+}
+
+export async function handleInboundMessageForConversationalAgent({ contactId, phone, messageId, channel = 'whatsapp' }) {
+  return handleInboundConversationalChatMessage({ contactId, phone, messageId, channel })
 }
 
 async function recoverScheduledFollowUps({ limit = FOLLOW_UP_RECOVERY_SCAN_LIMIT } = {}) {
@@ -1307,22 +1601,10 @@ async function recoverScheduledFollowUps({ limit = FOLLOW_UP_RECOVERY_SCAN_LIMIT
     SELECT
       s.contact_id,
       s.agent_id,
+      s.channel,
       s.follow_up_base_message_id,
-      s.follow_up_sent_count,
-      m.id AS message_id,
-      m.phone,
-      m.business_phone,
-      m.business_phone_number_id,
-      m.message_text,
-      m.message_type,
-      m.media_url,
-      m.media_mime_type,
-      m.media_filename,
-      m.media_duration_ms,
-      m.message_timestamp,
-      m.created_at
+      s.follow_up_sent_count
     FROM conversational_agent_state s
-    JOIN whatsapp_api_messages m ON m.id = s.follow_up_base_message_id
     WHERE s.status = 'active'
       AND s.agent_id IS NOT NULL
       AND s.agent_id <> ''
@@ -1339,29 +1621,21 @@ async function recoverScheduledFollowUps({ limit = FOLLOW_UP_RECOVERY_SCAN_LIMIT
       status: 'active',
       signal: null,
       followUpBaseMessageId: row.follow_up_base_message_id,
-      followUpSentCount: Math.max(0, Number(row.follow_up_sent_count) || 0)
+      followUpSentCount: Math.max(0, Number(row.follow_up_sent_count) || 0),
+      channel: row.channel || 'whatsapp'
     }
-    const latest = {
-      id: row.message_id,
-      phone: row.phone,
-      business_phone: row.business_phone,
-      business_phone_number_id: row.business_phone_number_id,
-      message_text: row.message_text,
-      message_type: row.message_type,
-      media_url: row.media_url,
-      media_mime_type: row.media_mime_type,
-      media_filename: row.media_filename,
-      media_duration_ms: row.media_duration_ms,
-      message_timestamp: row.message_timestamp,
-      created_at: row.created_at
-    }
+    const channel = normalizeConversationalChannel(row.channel || 'whatsapp')
+    if (isEmailConversationalChannel(channel)) continue
+    const latest = await loadInboundMessageById(row.contact_id, row.follow_up_base_message_id, channel).catch(() => null)
+    if (!latest) continue
     if (scheduleNextFollowUp({
       contactId: row.contact_id,
-      phone: row.phone,
+      phone: latest.phone,
       latest,
       state,
       agentConfig,
-      reason: 'recuperación de seguimientos al arrancar'
+      reason: 'recuperación de seguimientos al arrancar',
+      channel
     })) {
       scheduled += 1
     }
@@ -1376,20 +1650,18 @@ export async function recoverPendingConversationalAgentConversations({
   const config = await getConversationalAgentConfig()
   if (!config.enabled) return { scanned: 0, scheduled: 0 }
 
-  const rows = await db.all(`
-    SELECT id, contact_id, message_text, message_type, media_url, media_mime_type,
-           media_filename, media_duration_ms, phone, business_phone,
-           business_phone_number_id, message_timestamp, created_at
-    FROM whatsapp_api_messages
-    WHERE direction = 'inbound' AND contact_id IS NOT NULL
-    ORDER BY COALESCE(message_timestamp, created_at) DESC
-    LIMIT ?
-  `, [PENDING_RECOVERY_SCAN_LIMIT])
+  const rowsByChannel = await Promise.all(
+    ['whatsapp', 'instagram', 'messenger', 'sms'].map((channel) => loadRecentInboundMessagesForRecovery(channel, PENDING_RECOVERY_SCAN_LIMIT))
+  )
+  const rows = rowsByChannel.flat()
+    .sort((left, right) => messageTimestampMs(right) - messageTimestampMs(left))
+    .slice(0, PENDING_RECOVERY_SCAN_LIMIT)
 
   const latestByContact = new Map()
   for (const row of rows) {
-    if (!row?.contact_id || latestByContact.has(row.contact_id)) continue
-    latestByContact.set(row.contact_id, row)
+    const key = getRunKey(row?.contact_id, row?.channel)
+    if (!row?.contact_id || latestByContact.has(key)) continue
+    latestByContact.set(key, row)
   }
 
   let scheduled = 0
@@ -1401,13 +1673,14 @@ export async function recoverPendingConversationalAgentConversations({
     await recordConversationalAgentEvent({
       contactId: latest.contact_id,
       eventType: 'pending_recovery_scheduled',
-      detail: { messageId: latest.id, maxAgeMs }
+      detail: { messageId: latest.id, channel: latest.channel || 'whatsapp', maxAgeMs }
     }).catch(() => {})
 
     scheduleConversationalAgentRerun({
       contactId: latest.contact_id,
       phone: latest.phone,
       latestMessage: latest,
+      channel: latest.channel || 'whatsapp',
       reason: 'recuperación de pendientes al arrancar'
     })
     scheduled += 1
@@ -1427,7 +1700,7 @@ export async function recoverPendingConversationalAgentConversations({
 
 /**
  * Conversación simulada para probar el agente antes de activarlo.
- * No envía WhatsApp, no toca estados ni crea citas: las acciones internas
+ * No envía mensajes reales, no toca estados ni crea citas: las acciones internas
  * se devuelven como lista para mostrarlas en la prueba.
  */
 export async function runConversationalAgentPreview({ messages = [], configOverride = null, agentId = null }) {
@@ -1450,6 +1723,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   const aiProvider = normalizeConversationalAIProvider(config.aiProvider || globalConfig.aiProvider)
   const runtime = await resolveConversationalAIRuntime(aiProvider)
   const runtimeConfig = { ...config, aiProvider }
+  const previewChannel = normalizeConversationalChannel(configOverride?.channel || configOverride?.testChannel || 'whatsapp')
 
   const cleanMessages = (Array.isArray(messages) ? messages : [])
     .filter((m) => {
@@ -1477,7 +1751,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     contactId: null,
     contactName: null,
     dryRun: true,
-    channel: 'whatsapp',
+    channel: previewChannel,
     ruleContext: null
   })
 
@@ -1499,12 +1773,15 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     messages: messagesForAgent,
     contactId: null,
     model,
-    aiProvider
+    aiProvider,
+    channel: previewChannel
   })
 
   const splitResult = ctx.suppressReply
     ? { messages: [] }
-    : runtime.supportsAISplitting
+    : isEmailConversationalChannel(previewChannel)
+      ? { messages: [reply].filter(Boolean), source: 'email', reason: 'email_single_message' }
+      : runtime.supportsAISplitting
       ? await splitMessageIntoBubbles({
         text: reply,
         settings: runtimeConfig.replyDelivery,

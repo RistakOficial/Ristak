@@ -13,6 +13,7 @@ import {
   completeConversationGoalLinkFromWebhook,
   createConversationalAgent,
   createConversationGoalLink,
+  entryRulesMatch,
   getConversationalAgent,
   getConversationGoalLink,
   getConversationState,
@@ -39,6 +40,7 @@ import {
 import {
   buildReplyPartDelaySchedule,
   buildPendingReplyContextMessage,
+  normalizeConversationalChannel,
   sanitizeAgentReply,
   sendReplyParts,
   shouldIncludeConversationalBinaryMedia,
@@ -90,6 +92,42 @@ test('normaliza la entrega de respuestas en partes', () => {
   assert.equal(delivery.maxBubbles, 10)
   assert.equal(delivery.minDelaySeconds, 3)
   assert.equal(delivery.maxDelaySeconds, 12)
+})
+
+test('normaliza aliases de canal conversacional sin forzar WhatsApp', () => {
+  assert.equal(normalizeConversationalChannel('instagram_dm'), 'instagram')
+  assert.equal(normalizeConversationalChannel('facebook'), 'messenger')
+  assert.equal(normalizeConversationalChannel('sms_qr'), 'sms')
+  assert.equal(normalizeConversationalChannel('correo'), 'email')
+  assert.equal(normalizeConversationalChannel('no-existe'), 'whatsapp')
+})
+
+test('la condicion Canal permite chats y SMS sin confundirlos con correo', () => {
+  const chatAgent = {
+    filters: {
+      entry: {
+        groups: [{
+          conditions: [{ category: 'channel', params: [{ field: 'channel', operator: 'is', value: 'chat' }] }]
+        }]
+      }
+    }
+  }
+  const emailAgent = {
+    filters: {
+      entry: {
+        groups: [{
+          conditions: [{ category: 'channel', params: [{ field: 'channel', operator: 'is', value: 'email' }] }]
+        }]
+      }
+    }
+  }
+
+  for (const channel of ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat']) {
+    assert.equal(entryRulesMatch(chatAgent, { channel }), true)
+  }
+  assert.equal(entryRulesMatch(chatAgent, { channel: 'email' }), false)
+  assert.equal(entryRulesMatch(emailAgent, { channel: 'email' }), true)
+  assert.equal(entryRulesMatch(emailAgent, { channel: 'instagram' }), false)
 })
 
 test('normaliza seguimiento del agente conversacional dentro de ventana WhatsApp', () => {
@@ -689,6 +727,58 @@ test('resumen de meta concretada lo genera un resumidor interno con el historial
   }
 })
 
+test('resumen de meta concretada usa el historial del canal real', async () => {
+  const contactId = `contact_summary_channel_${randomUUID()}`
+
+  try {
+    await db.run(
+      'INSERT OR IGNORE INTO contacts (id, full_name, phone, email) VALUES (?, ?, ?, ?)',
+      [contactId, 'Resumen Canal', '+526560000001', 'resumen-canal@test.local']
+    )
+    await db.run(`
+      INSERT OR REPLACE INTO conversational_agent_state (contact_id, status, channel, updated_at)
+      VALUES (?, 'active', 'instagram', CURRENT_TIMESTAMP)
+    `, [contactId])
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (id, contact_id, direction, message_type, message_text, message_timestamp, created_at)
+      VALUES (?, ?, 'inbound', 'text', ?, '2026-06-21T15:00:00.000Z', '2026-06-21T15:00:00.000Z')
+    `, [`${contactId}_wa`, contactId, 'Este texto de WhatsApp no debe entrar al resumen de Instagram.'])
+    await db.run(`
+      INSERT INTO meta_social_messages (id, platform, contact_id, direction, message_type, message_text, message_timestamp, created_at)
+      VALUES
+        (?, 'instagram', ?, 'inbound', 'text', ?, '2026-06-21T16:00:00.000Z', '2026-06-21T16:00:00.000Z'),
+        (?, 'instagram', ?, 'outbound', 'text', ?, '2026-06-21T16:01:00.000Z', '2026-06-21T16:01:00.000Z')
+    `, [
+      `${contactId}_ig_1`, contactId, 'Vengo de Instagram, me urge revisar la rodilla porque ya me limita al caminar.',
+      `${contactId}_ig_2`, contactId, 'Va, puedo ayudarte a encontrar horario para valoración.'
+    ])
+
+    setConversationalCompletionSummaryGeneratorForTest(async ({ messages, channel }) => {
+      assert.equal(channel, 'instagram')
+      assert.ok(messages.some((message) => message.text.includes('Vengo de Instagram')))
+      assert.ok(!messages.some((message) => message.text.includes('WhatsApp no debe entrar')))
+      return 'Llegó por Instagram con dolor de rodilla que ya le limita caminar; pidió valoración.'
+    })
+
+    await setConversationSignal(contactId, 'appointment_booked', {
+      reason: 'Cita agendada por Instagram',
+      actionSummarySource: 'Cita - Instagram Canal · 2026-06-25T17:00:00.000Z',
+      status: 'completed'
+    })
+
+    const state = await getConversationState(contactId)
+    assert.match(state.signalSummary, /Resumen: Llegó por Instagram/)
+    assert.doesNotMatch(state.signalSummary, /WhatsApp no debe entrar/)
+  } finally {
+    setConversationalCompletionSummaryGeneratorForTest(null)
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('click del enlace de disparo cumple objetivo personalizado y detiene la IA', async () => {
   const contactId = 'test_trigger_link_goal_contact'
   let triggerLink = null
@@ -1231,6 +1321,47 @@ test('envio real espera antes de cada globo posterior', async () => {
     'send:globo tres',
     'complete'
   ])
+})
+
+test('correo sale como una sola respuesta aunque el agente tenga globitos activos', async () => {
+  const sent = []
+  const result = await sendReplyParts({
+    contactId: 'contacto-email-test',
+    latest: {
+      id: 'email-inicial',
+      subject: 'Duda sobre cita',
+      from_email: 'cliente@example.com',
+      channel: 'email'
+    },
+    agentConfig: {
+      id: 'agente-email-test',
+      replyDelivery: {
+        mode: 'split',
+        splitMessagesEnabled: true,
+        delayBetweenBubblesEnabled: true,
+        minDelaySeconds: 2,
+        maxDelaySeconds: 2
+      }
+    },
+    reply: 'Hola, claro. Te paso la información completa en este correo.',
+    channel: 'email',
+    dependencies: {
+      splitter: async () => {
+        throw new Error('el correo no debe usar divisor de globitos')
+      },
+      sendTextMessage: async ({ channel, text }) => {
+        sent.push({ channel, text })
+      },
+      wait: async () => {
+        throw new Error('el correo no debe esperar entre globos')
+      },
+      recordEvent: async () => {},
+      markReplyComplete: async () => {}
+    }
+  })
+
+  assert.deepEqual(result.parts, ['Hola, claro. Te paso la información completa en este correo.'])
+  assert.deepEqual(sent, [{ channel: 'email', text: 'Hola, claro. Te paso la información completa en este correo.' }])
 })
 
 test('mantiene una sola respuesta cuando la entrega está en modo normal', () => {
@@ -2190,6 +2321,37 @@ test('instrucciones de venta completa no piden comprobante aunque exista deposit
   assert.doesNotMatch(instructions, /comprobanteValidado=true/)
 })
 
+test('instrucciones del agente separan correo de canales de chat', () => {
+  const instructions = buildConversationalInstructions({
+    config: {
+      objective: 'citas',
+      customObjective: '',
+      successAction: 'ready_for_human',
+      requiredData: '',
+      handoffRules: '',
+      extraInstructions: '',
+      allowEmojis: false,
+      closingStrategyMode: 'custom',
+      closingStrategyCustom: 'Cierra breve y claro.'
+    },
+    businessContext: '',
+    brandVoice: '',
+    businessName: 'Clinica Mail',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: null,
+    channel: 'email',
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  })
+
+  assert.match(instructions, /conversación por Correo/)
+  assert.match(instructions, /Forma de respuesta por correo/)
+  assert.match(instructions, /un solo cuerpo de correo breve/)
+  assert.match(instructions, /texto EXACTO que recibirá la persona por Correo/)
+  assert.doesNotMatch(instructions, /conversación de WhatsApp/)
+  assert.doesNotMatch(instructions, /texto visible para WhatsApp/)
+})
+
 test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {
   const baseConfig = {
     objective: 'ventas',
@@ -2239,7 +2401,7 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   })
 
   assert.match(instructions, /Eres el asistente conversacional de Ristak/)
-  assert.match(instructions, /conversación de WhatsApp/)
+  assert.match(instructions, /conversación por WhatsApp/)
   assert.match(instructions, /Parámetros internos de cierre avanzado/)
   assert.match(instructions, /Puntos aprendidos de esta conversación/)
   assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
