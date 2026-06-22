@@ -14,6 +14,21 @@ const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
 const DEFAULT_EVENT_COLOR = '#3b82f6'
 const DEFAULT_BOOKING_COMPLETION_MESSAGE = 'Listo. Tu cita quedo agendada.'
+const DEFAULT_CALENDAR_META_EVENT_NAME = 'Schedule'
+const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
+const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp'])
+const CALENDAR_SITE_META_EVENTS = new Set([
+  'Lead',
+  'Schedule',
+  'Purchase',
+  'FormSubmitted',
+  'ViewContent',
+  'CompleteRegistration',
+  'Contact',
+  'SubmitApplication',
+  'Subscribe',
+  'StartTrial'
+])
 const GOOGLE_CALENDAR_CONFIG_KEY = 'google_calendar_service_account_config'
 const DEFAULT_RISTAK_CALENDAR_NAME = 'calendario ristak'
 const DEFAULT_RISTAK_CALENDAR_DESC = 'calendario principal creado en ristak'
@@ -44,6 +59,17 @@ function makeId(prefix) {
 
 function cleanString(value) {
   return String(value ?? '').trim()
+}
+
+function parseBoolean(value, defaultValue = false) {
+  if (value === null || value === undefined || value === '') return defaultValue
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
+
+  const normalized = cleanString(value).toLowerCase()
+  if (['1', 'true', 'yes', 'on', 'enabled', 'activo'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off', 'disabled', 'inactivo'].includes(normalized)) return false
+  return defaultValue
 }
 
 function isSafeCssColor(value) {
@@ -199,6 +225,109 @@ export function normalizeCalendarBookingCompletionConfig(value = {}) {
   }
 }
 
+function normalizeCalendarCustomEventParameterKey(value = '') {
+  const key = cleanString(value)
+    .replace(/[^a-zA-Z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64)
+
+  if (!key) return ''
+  return /^[a-zA-Z_]/.test(key) ? key : `param_${key}`
+}
+
+function normalizeCalendarCustomEventParameters(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const normalized = {}
+  ;[
+    'value',
+    'predictedLtv',
+    'currency',
+    'status',
+    'contentName',
+    'contentCategory',
+    'contentIds',
+    'contentType',
+    'numItems',
+    'orderId'
+  ].forEach(key => {
+    const snakeKey = key.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`)
+    const parameterValue = cleanString(source[key] || source[snakeKey])
+    if (!parameterValue) return
+    normalized[key] = key === 'currency' ? parameterValue.toUpperCase().slice(0, 3) : parameterValue
+  })
+
+  const customSource = Array.isArray(source.custom)
+    ? source.custom
+    : Array.isArray(source.customParameters)
+      ? source.customParameters
+      : Array.isArray(source.custom_parameters)
+        ? source.custom_parameters
+        : []
+
+  const custom = customSource
+    .map(parameter => ({
+      id: cleanString(parameter?.id) || makeId('rstk_meta_param'),
+      key: normalizeCalendarCustomEventParameterKey(parameter?.key || parameter?.name),
+      value: cleanString(parameter?.value)
+    }))
+    .filter(parameter => parameter.key || parameter.value)
+    .slice(0, 12)
+
+  if (custom.length) normalized.custom = custom
+
+  return normalized
+}
+
+export function normalizeCalendarCustomEventsConfig(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const eventSource = source.customEvents && typeof source.customEvents === 'object'
+    ? source.customEvents
+    : source.custom_events && typeof source.custom_events === 'object'
+      ? source.custom_events
+      : source.metaEvent && typeof source.metaEvent === 'object'
+        ? source.metaEvent
+        : source.meta_event && typeof source.meta_event === 'object'
+          ? source.meta_event
+          : source
+  const channelInput = cleanString(
+    eventSource.channel ||
+    eventSource.conversionChannel ||
+    eventSource.conversion_channel ||
+    eventSource.source
+  ).toLowerCase()
+  const channel = CALENDAR_CUSTOM_EVENT_CHANNELS.has(channelInput) ? channelInput : 'site'
+  const eventNameInput = cleanString(
+    eventSource.eventName ||
+    eventSource.event_name ||
+    eventSource.metaEventName ||
+    eventSource.meta_event_name
+  )
+  const siteEventName = CALENDAR_SITE_META_EVENTS.has(eventNameInput) ? eventNameInput : DEFAULT_CALENDAR_META_EVENT_NAME
+  const whatsappEventName = DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME
+
+  return {
+    enabled: parseBoolean(
+      eventSource.enabled ??
+      eventSource.metaEnabled ??
+      eventSource.meta_enabled ??
+      eventSource.customEventsEnabled ??
+      eventSource.custom_events_enabled,
+      false
+    ),
+    channel,
+    eventName: channel === 'whatsapp' ? whatsappEventName : siteEventName,
+    parameters: normalizeCalendarCustomEventParameters(
+      eventSource.parameters ||
+      eventSource.eventParameters ||
+      eventSource.event_parameters ||
+      eventSource.metaEventParameters ||
+      eventSource.meta_event_parameters ||
+      {}
+    )
+  }
+}
+
 function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
   const rawSource = options.rawJson || calendar.raw_json || calendar.rawJson || {}
   const parsedRaw = parseJson(rawSource, {})
@@ -254,6 +383,17 @@ function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
       baseRaw.bookingCompletion ||
       baseRaw.booking_completion ||
       calendar
+    ),
+    customEvents: normalizeCalendarCustomEventsConfig(
+      calendar.customEvents ||
+      calendar.custom_events ||
+      calendar.metaEvent ||
+      calendar.meta_event ||
+      baseRaw.customEvents ||
+      baseRaw.custom_events ||
+      baseRaw.metaEvent ||
+      baseRaw.meta_event ||
+      {}
     )
   }
 }
@@ -701,6 +841,7 @@ function calendarRowToApi(row = {}) {
     notes: row.notes || '',
     bookingForm: normalizeCalendarBookingFormConfig(rawJson.bookingForm || rawJson.booking_form || rawJson),
     bookingCompletion: normalizeCalendarBookingCompletionConfig(rawJson.bookingCompletion || rawJson.booking_completion || rawJson),
+    customEvents: normalizeCalendarCustomEventsConfig(rawJson.customEvents || rawJson.custom_events || rawJson.metaEvent || rawJson.meta_event || {}),
     availabilityType: toInt(row.availability_type, 0),
     source: row.source || 'ristak',
     syncStatus: row.sync_status || 'pending',
@@ -1284,7 +1425,7 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
   }
 }
 
-export function renderPublicCalendarHtml(calendar, { host = '', embedded = false, style = {}, bookingForm = null, preview = false } = {}) {
+export function renderPublicCalendarHtml(calendar, { host = '', embedded = false, style = {}, bookingForm = null, preview = false, metaPixelSnippet = '' } = {}) {
   const slug = publicCalendarSlug(calendar)
   const duration = Math.max(1, toInt(calendar.slotDuration, 60))
   const title = calendar.eventTitle || calendar.name || 'Cita'
@@ -1309,6 +1450,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   const layout = normalizeCalendarEmbedLayout(style.layout)
   const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
   const bookingCompletion = normalizeCalendarBookingCompletionConfig(calendar.bookingCompletion || calendar.booking_completion || {})
+  const customEvents = normalizeCalendarCustomEventsConfig(calendar.customEvents || calendar.custom_events || calendar.metaEvent || calendar.meta_event || {})
   const payload = {
     slug,
     name: calendar.name || 'Calendario',
@@ -1321,6 +1463,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     layout,
     coverImage,
     bookingCompletion,
+    customEvents,
     styleDefaults: {
       accent,
       text: textColor,
@@ -1355,6 +1498,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(calendar.name || 'Calendario')}</title>
   <meta name="description" content="${escapeHtml(calendar.description || `Agenda ${title}`)}">
+  ${metaPixelSnippet || ''}
   <style>
     :root{--accent:${escapeHtml(accent)};--accent-soft:color-mix(in srgb,var(--accent) 10%,transparent);--ink:${escapeHtml(fieldText)};--heading:${escapeHtml(textColor)};--muted:${escapeHtml(mutedColor)};--line:${escapeHtml(lineColor)};--bg:${embedded ? 'transparent' : '#f8fafc'};--surface:${embedded ? 'transparent' : '#fff'};--control-bg:${escapeHtml(controlBg)};--slot-bg:${escapeHtml(slotBg)};--slot-text:${escapeHtml(slotText)};--selected-text:${escapeHtml(selectedText)};--field-bg:${escapeHtml(fieldBg)};--field-text:${escapeHtml(fieldText)};--field-border:${escapeHtml(fieldBorder)};--button-text:${escapeHtml(buttonText)};--slot-radius:${slotRadius}px;--field-radius:${fieldRadius}px;--danger:#b42318;--ok:#047857}
     *{box-sizing:border-box}
@@ -1832,6 +1976,26 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         slotsByDate = next;
         timezoneLabel.textContent = timezone;
       };
+      const readCookie = (name) => {
+        const prefix = name + '=';
+        const entry = document.cookie.split('; ').find(item => item.indexOf(prefix) === 0);
+        return entry ? decodeURIComponent(entry.slice(prefix.length)) : null;
+      };
+      const getMetaEventPayload = () => ({
+        pageUrl: window.location.href,
+        referrer: document.referrer,
+        params: Object.fromEntries(new URL(window.location.href).searchParams.entries()),
+        fbp: readCookie('_fbp'),
+        fbc: readCookie('_fbc')
+      });
+      const trackCalendarMetaEvent = (metaEvent = {}) => {
+        if (!window.ristakMetaTrackCalendarEvent || !metaEvent || !metaEvent.eventId) return;
+        window.ristakMetaTrackCalendarEvent(metaEvent.eventName, metaEvent.eventId, {
+          status: metaEvent.status || 'booked',
+          conversion_type: 'appointment_booked',
+          appointment_id: metaEvent.appointmentId || ''
+        });
+      };
 
       window.addEventListener('message', (event) => {
         const data = event.data || {};
@@ -1964,12 +2128,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
               notes: formData.get('notes'),
               responses,
               formId: calendar.bookingForm?.formId || '',
-              formName: calendar.bookingForm?.formName || ''
+              formName: calendar.bookingForm?.formName || '',
+              meta: getMetaEventPayload()
             })
           });
           const payload = await response.json();
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
           const completionRedirectUrl = getCompletionRedirectUrl();
+          trackCalendarMetaEvent(payload.data?.metaEvent);
           const successText = payload.data?.message || calendar.bookingCompletion?.message || 'Listo. Tu cita quedo agendada.';
           selectedSlot = '';
           form.reset();

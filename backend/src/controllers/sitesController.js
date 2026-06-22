@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import {
   buildPreviewSiteDraft,
+  buildCalendarMetaPixelSnippet,
   createBlock,
   createImportedSiteFromHtml,
   createMetaPageEventFromRequest,
@@ -581,7 +582,8 @@ export async function previewCalendarHandler(req, res) {
       embedded: req.query?.embed === '1' || req.query?.test === '1',
       style: req.query || {},
       bookingForm,
-      preview: req.query?.editor_preview === '1' || req.query?.preview === '1'
+      preview: req.query?.editor_preview === '1' || req.query?.preview === '1',
+      metaPixelSnippet: ''
     }))
   } catch (error) {
     logger.error(`Error previsualizando calendario de site: ${error.message}`)
@@ -868,13 +870,19 @@ export async function publicSiteHostMiddleware(req, res, next) {
         return sendDomainError(req, res, 404, 'Ruta no disponible en este calendario público')
       }
       const bookingForm = await getCalendarBookingFormDefinition(calendar)
+      const isPreview = req.query?.editor_preview === '1' || req.query?.preview === '1'
+      const metaPixelSnippet = await buildCalendarMetaPixelSnippet(calendar, {
+        trackingEnabled: !requestHasNoTrack(req),
+        preview: isPreview
+      })
 
       return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, {
         host,
         embedded: req.query?.embed === '1' || req.query?.test === '1',
         style: req.query || {},
         bookingForm,
-        preview: req.query?.editor_preview === '1' || req.query?.preview === '1'
+        preview: isPreview,
+        metaPixelSnippet
       }))
     }
 

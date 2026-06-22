@@ -750,7 +750,20 @@ function buildSiteMetaConfiguredCustomData(parameters = {}, eventName = SITE_MET
 
 function mergeSiteMetaCustomData(base = {}, configured = {}) {
   const reserved = {}
-  ;['source', 'site_id', 'site_name', 'public_page_id', 'public_page_title', 'conversion_type'].forEach(key => {
+  ;[
+    'source',
+    'site_id',
+    'site_name',
+    'public_page_id',
+    'public_page_title',
+    'conversion_type',
+    'calendar_id',
+    'calendar_name',
+    'appointment_id',
+    'appointment_status',
+    'appointment_start_time',
+    'appointment_end_time'
+  ].forEach(key => {
     if (base[key] !== undefined) reserved[key] = base[key]
   })
 
@@ -18576,6 +18589,86 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
   <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
 }
 
+function getCalendarSiteMetaEventConfig(calendar = {}) {
+  const source = calendar.customEvents && typeof calendar.customEvents === 'object'
+    ? calendar.customEvents
+    : calendar.custom_events && typeof calendar.custom_events === 'object'
+      ? calendar.custom_events
+      : {}
+  const eventName = normalizeSiteMetaEventName(source.eventName || source.event_name, {
+    allowNone: true,
+    fallback: 'Schedule'
+  })
+
+  return {
+    enabled: normalizeBoolean(source.enabled) === 1,
+    channel: cleanString(source.channel || source.conversionChannel || source.conversion_channel || 'site').toLowerCase() === 'whatsapp' ? 'whatsapp' : 'site',
+    eventName: eventName === SITE_META_NO_EVENT ? SITE_META_NO_EVENT : eventName,
+    parameters: pruneSiteMetaEventParametersForEvent(source.parameters || source.eventParameters || source.event_parameters || {}, eventName)
+  }
+}
+
+function buildCalendarMetaBaseCustomData(calendar = {}, appointment = {}, extra = {}) {
+  return {
+    source: 'ristak_calendar',
+    conversion_type: 'appointment_booked',
+    calendar_id: cleanString(calendar.id),
+    calendar_name: cleanString(calendar.name),
+    appointment_id: cleanString(appointment.id),
+    appointment_status: cleanString(appointment.appointmentStatus || appointment.appointment_status || appointment.status || 'booked'),
+    appointment_start_time: cleanString(appointment.startTime || appointment.start_time),
+    appointment_end_time: cleanString(appointment.endTime || appointment.end_time),
+    content_name: cleanString(calendar.eventTitle || calendar.event_title || calendar.name || 'Cita'),
+    status: 'booked',
+    ...extra
+  }
+}
+
+export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEnabled = true, preview = false } = {}) {
+  const config = getCalendarSiteMetaEventConfig(calendar)
+  if (!trackingEnabled || preview || !config.enabled || config.channel !== 'site' || config.eventName === SITE_META_NO_EVENT) return ''
+
+  const metaConfig = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer Pixel ID de Meta para snippet de calendario: ${error.message}`)
+    return null
+  })
+  const pixelId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
+  if (!pixelId) return ''
+
+  const configuredCustomData = buildSiteMetaConfiguredCustomData(config.parameters, config.eventName)
+  const baseCustomData = buildCalendarMetaBaseCustomData(calendar, {}, {
+    appointment_id: '',
+    appointment_status: '',
+    appointment_start_time: '',
+    appointment_end_time: ''
+  })
+
+  return `
+  <script>
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
+    (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', ${JSON.stringify(pixelId)});
+    fbq('track', 'PageView');
+    window.ristakMetaTrackCalendarEvent = function(eventName, eventId, customData) {
+      if (!window.fbq) return;
+      const normalizedEventName = eventName || ${JSON.stringify(config.eventName)};
+      if (!normalizedEventName || normalizedEventName === ${JSON.stringify(SITE_META_NO_EVENT)}) return;
+      const method = ${JSON.stringify([...META_STANDARD_PIXEL_EVENTS])}.indexOf(normalizedEventName) >= 0 ? 'track' : 'trackCustom';
+      const data = Object.assign({}, ${scriptJson(baseCustomData)}, ${scriptJson(configuredCustomData)}, customData || {});
+      const options = eventId ? { eventID: eventId } : undefined;
+      if (options) {
+        window.fbq(method, normalizedEventName, data, options);
+      } else {
+        window.fbq(method, normalizedEventName, data);
+      }
+    };
+  </script>
+  <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
+}
+
 function isImportedHtmlSite(site = {}) {
   return site?.theme?.importedHtml === true || cleanString(site?.theme?.template) === IMPORTED_SITE_TEMPLATE
 }
@@ -22308,6 +22401,142 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
       errorMessage: error.message
     })
     return { sent: false, reason: 'meta_error', error: error.message, eventId, eventName }
+  }
+}
+
+export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, contactId, contact = {}, requestMeta = {} }) {
+  const config = getCalendarSiteMetaEventConfig(calendar)
+  const eventId = `calendar_${cleanString(calendar?.id) || 'unknown'}_${cleanString(appointment?.id) || crypto.randomUUID()}`
+
+  if (shouldSkipTracking({ meta: requestMeta?.meta })) {
+    return { sent: false, reason: NO_TRACK_REASON, eventId, eventName: config.eventName }
+  }
+
+  if (!config.enabled) {
+    return { sent: false, reason: 'disabled', eventId, eventName: config.eventName }
+  }
+
+  if (config.channel !== 'site') {
+    return { sent: false, reason: 'channel_not_site', eventId, eventName: config.eventName }
+  }
+
+  if (config.eventName === SITE_META_NO_EVENT) {
+    return { sent: false, reason: 'no_event_configured', eventId, eventName: config.eventName }
+  }
+
+  const metaConfig = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer configuración Meta para calendario CAPI: ${error.message}`)
+    return null
+  })
+  const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
+  const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token)
+
+  if (!datasetId || !accessToken) {
+    await logMetaEvent({
+      contactId,
+      eventType: 'calendar_appointment_booked',
+      metaEventName: config.eventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Falta Pixel/Dataset ID o Pixel API Token de Meta'
+    })
+    return { sent: false, reason: 'missing_meta_config', eventId, eventName: config.eventName }
+  }
+
+  const fullName = cleanString(contact.fullName || contact.full_name || contact.name)
+  const names = splitName(fullName)
+  const userData = {
+    em: hashValue(contact.email),
+    ph: hashValue(contact.phone, normalizePhoneForHash),
+    fn: hashValue(names.firstName),
+    ln: hashValue(names.lastName),
+    external_id: hashValue(contactId),
+    client_ip_address: requestMeta.ip || undefined,
+    client_user_agent: requestMeta.userAgent || undefined,
+    fbp: cleanString(requestMeta.meta?.fbp) || undefined,
+    fbc: cleanString(requestMeta.meta?.fbc) || undefined
+  }
+
+  Object.keys(userData).forEach(key => {
+    if (!userData[key]) delete userData[key]
+  })
+
+  if (!userData.em && !userData.ph && !userData.external_id && !userData.fbp && !userData.fbc) {
+    await logMetaEvent({
+      contactId,
+      eventType: 'calendar_appointment_booked',
+      metaEventName: config.eventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'user_data insuficiente para Meta'
+    })
+    return { sent: false, reason: 'insufficient_user_data', eventId, eventName: config.eventName }
+  }
+
+  const customData = mergeSiteMetaCustomData(
+    buildCalendarMetaBaseCustomData(calendar, appointment),
+    buildSiteMetaConfiguredCustomData(config.parameters, config.eventName)
+  )
+  const payload = {
+    data: [
+      {
+        event_name: config.eventName,
+        event_time: Math.floor(Date.now() / 1000),
+        action_source: 'website',
+        event_source_url: cleanString(requestMeta.meta?.pageUrl) || cleanString(requestMeta.meta?.sourceUrl) || undefined,
+        event_id: eventId,
+        user_data: userData,
+        custom_data: customData
+      }
+    ]
+  }
+
+  const testEventCode = cleanString(await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE)
+  if (testEventCode) {
+    payload.test_event_code = testEventCode
+  }
+
+  try {
+    const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const responsePayload = await response.json().catch(() => ({}))
+
+    if (!response.ok || responsePayload?.error) {
+      throw new Error(responsePayload?.error?.message || `Meta CAPI ${response.status}`)
+    }
+
+    await logMetaEvent({
+      contactId,
+      eventType: 'calendar_appointment_booked',
+      metaEventName: config.eventName,
+      eventId,
+      status: 'success',
+      requestPayload: payload,
+      responsePayload
+    })
+
+    return {
+      sent: true,
+      eventId,
+      eventName: config.eventName,
+      appointmentId: appointment?.id || '',
+      status: customData.appointment_status || 'booked',
+      responsePayload
+    }
+  } catch (error) {
+    await logMetaEvent({
+      contactId,
+      eventType: 'calendar_appointment_booked',
+      metaEventName: config.eventName,
+      eventId,
+      status: 'error',
+      requestPayload: payload,
+      errorMessage: error.message
+    })
+    return { sent: false, reason: 'meta_error', error: error.message, eventId, eventName: config.eventName }
   }
 }
 

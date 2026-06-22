@@ -7,6 +7,7 @@ import {
   Modal,
   CustomSelect,
   NumberInput,
+  Switch,
   Loading,
   DropdownMenu,
   DropdownMenuTrigger,
@@ -52,6 +53,10 @@ import {
   type CalendarBookingCompletionConfig,
   type CalendarBookingDefaultFields,
   type CalendarBookingFormConfig,
+  type CalendarCustomEventChannel,
+  type CalendarCustomEventParameter,
+  type CalendarCustomEventParameters,
+  type CalendarCustomEventsConfig,
   type GoogleCalendarOption,
   type GoogleCalendarIntegrationStatus,
   type GoogleCalendarMergePreview
@@ -70,7 +75,7 @@ import pageStyles from './CalendarsConfiguration.module.css'
 
 type CalendarSettingsView = 'calendars' | 'google'
 type CalendarSourcePreference = 'combined' | 'ristak' | 'ghl' | 'google'
-type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'advanced'
+type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'advanced' | 'events'
 
 const GOOGLE_HELP_LINKS = {
   googleCloudWelcome: 'https://cloud.google.com/welcome',
@@ -118,7 +123,28 @@ const CALENDAR_COLOR_PALETTE = [
 const CALENDAR_DEFAULT_COLOR = '#3b82f6'
 const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
 const CALENDAR_DEFAULT_COMPLETION_MESSAGE = 'Listo. Tu cita quedó agendada.'
+const CALENDAR_DEFAULT_META_EVENT_NAME = 'Schedule'
+const CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i
+const CALENDAR_META_EVENT_OPTIONS = [
+  { value: 'Schedule', label: 'Schedule · cita agendada' },
+  { value: 'Lead', label: 'Lead · lead nuevo' },
+  { value: 'Contact', label: 'Contact · contacto iniciado' },
+  { value: 'FormSubmitted', label: 'FormSubmitted · formulario enviado' },
+  { value: 'CompleteRegistration', label: 'CompleteRegistration · registro completo' },
+  { value: 'ViewContent', label: 'ViewContent · visita de contenido' },
+  { value: 'Purchase', label: 'Purchase · compra' }
+]
+const CALENDAR_META_PARAMETER_FIELDS: Array<{
+  key: keyof Omit<CalendarCustomEventParameters, 'custom'>
+  label: string
+  placeholder: string
+}> = [
+  { key: 'value', label: 'Valor monetario', placeholder: '1500' },
+  { key: 'currency', label: 'Moneda', placeholder: 'MXN' },
+  { key: 'predictedLtv', label: 'LTV estimado', placeholder: '5000' },
+  { key: 'status', label: 'Estado', placeholder: 'booked' }
+]
 const CALENDAR_WIZARD_STEPS: Array<{
   id: CalendarWizardStepId
   label: string
@@ -129,7 +155,8 @@ const CALENDAR_WIZARD_STEPS: Array<{
   { id: 'availability', label: 'Disponibilidad', description: 'Duración y espacios.' },
   { id: 'rules', label: 'Reglas', description: 'Límites de reserva.' },
   { id: 'form', label: 'Formulario', description: 'Preguntas y cierre.' },
-  { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' }
+  { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' },
+  { id: 'events', label: 'Eventos', description: 'Meta Pixel y WhatsApp.' }
 ]
 const CALENDAR_TEMPLATE_EXTRA_CATEGORIES = [
   { id: 'calendar', label: 'Calendario' }
@@ -212,6 +239,64 @@ const normalizeCalendarBookingCompletion = (value?: Partial<CalendarBookingCompl
     action,
     message,
     redirectUrl
+  }
+}
+
+const createCalendarCustomEventParameter = (): CalendarCustomEventParameter => ({
+  id: `param-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  key: '',
+  value: ''
+})
+
+const createDefaultCalendarCustomEvents = (): CalendarCustomEventsConfig => ({
+  enabled: false,
+  channel: 'site',
+  eventName: CALENDAR_DEFAULT_META_EVENT_NAME,
+  parameters: {
+    custom: []
+  }
+})
+
+const normalizeCalendarCustomEventParameters = (value?: Partial<CalendarCustomEventParameters> | null): CalendarCustomEventParameters => {
+  const source = value || {}
+  const custom = Array.isArray(source.custom)
+    ? source.custom
+        .map(parameter => ({
+          id: String(parameter.id || `param-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+          key: String(parameter.key || '').trim(),
+          value: String(parameter.value || '').trim()
+        }))
+        .filter(parameter => parameter.key || parameter.value)
+        .slice(0, 12)
+    : []
+
+  return {
+    value: String(source.value || '').trim(),
+    predictedLtv: String(source.predictedLtv || '').trim(),
+    currency: String(source.currency || '').trim().toUpperCase().slice(0, 3),
+    status: String(source.status || '').trim(),
+    contentName: String(source.contentName || '').trim(),
+    contentCategory: String(source.contentCategory || '').trim(),
+    contentIds: String(source.contentIds || '').trim(),
+    contentType: String(source.contentType || '').trim(),
+    numItems: String(source.numItems || '').trim(),
+    orderId: String(source.orderId || '').trim(),
+    custom
+  }
+}
+
+const normalizeCalendarCustomEvents = (value?: Partial<CalendarCustomEventsConfig> | null): CalendarCustomEventsConfig => {
+  const channel: CalendarCustomEventChannel = value?.channel === 'whatsapp' ? 'whatsapp' : 'site'
+  const rawEventName = String(value?.eventName || '').trim()
+  const siteEventName = CALENDAR_META_EVENT_OPTIONS.some(option => option.value === rawEventName)
+    ? rawEventName
+    : CALENDAR_DEFAULT_META_EVENT_NAME
+
+  return {
+    enabled: Boolean(value?.enabled),
+    channel,
+    eventName: channel === 'whatsapp' ? CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME : siteEventName,
+    parameters: normalizeCalendarCustomEventParameters(value?.parameters)
   }
 }
 
@@ -371,7 +456,8 @@ export const CalendarsConfiguration: React.FC = () => {
     allowBookingFor: 30,
     allowBookingForUnit: 'days',
     bookingForm: createDefaultCalendarBookingForm(),
-    bookingCompletion: createDefaultCalendarBookingCompletion()
+    bookingCompletion: createDefaultCalendarBookingCompletion(),
+    customEvents: createDefaultCalendarCustomEvents()
   })
 
   // Estados del wizard de edición de calendario
@@ -445,7 +531,8 @@ export const CalendarsConfiguration: React.FC = () => {
         setSelectedCalendar({
           ...calendar,
           bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
-          bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion)
+          bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+          customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
         })
         if (expandedCalendarId !== calendar.id) {
           setCalendarWizardStep('basics')
@@ -485,7 +572,8 @@ export const CalendarsConfiguration: React.FC = () => {
       const normalizedCalendars = data.map(calendar => ({
         ...calendar,
         bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
-        bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion)
+        bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+        customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
       }))
       setCalendars(normalizedCalendars)
       return normalizedCalendars
@@ -990,7 +1078,8 @@ export const CalendarsConfiguration: React.FC = () => {
     setSelectedCalendar({
       ...calendar,
       bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
-      bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion)
+      bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+      customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
     })
     setExpandedCalendarId(calendar.id)
     setCalendarWizardStep('basics')
@@ -1020,6 +1109,7 @@ export const CalendarsConfiguration: React.FC = () => {
       // Construir payload con todos los campos editables
       const bookingForm = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
       const bookingCompletion = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
+      const customEvents = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
       const nextSlug = normalizeCalendarSlugInput(selectedCalendar.slug || selectedCalendar.widgetSlug || selectedCalendar.name || selectedCalendar.id)
       const slugConflict = calendars.some(item => (
         item.id !== selectedCalendar.id &&
@@ -1064,7 +1154,8 @@ export const CalendarsConfiguration: React.FC = () => {
         appoinmentPerSlot: selectedCalendar.appoinmentPerSlot,
         appoinmentPerDay: selectedCalendar.appoinmentPerDay,
         bookingForm,
-        bookingCompletion
+        bookingCompletion,
+        customEvents
       }
 
       // Agregar lookBusyConfig si está configurado
@@ -1153,7 +1244,8 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingFor: 30,
         allowBookingForUnit: 'days',
         bookingForm: createDefaultCalendarBookingForm(),
-        bookingCompletion: createDefaultCalendarBookingCompletion()
+        bookingCompletion: createDefaultCalendarBookingCompletion(),
+        customEvents: createDefaultCalendarCustomEvents()
       })
       await loadCalendars()
     } catch (error: any) {
@@ -1598,6 +1690,7 @@ export const CalendarsConfiguration: React.FC = () => {
     const customFormSites = formSites.filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
     const bookingFormConfig = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
     const bookingCompletionConfig = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
+    const customEventsConfig = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
     const selectedCustomForm = customFormSites.find(site => site.id === bookingFormConfig.customFormId)
     const calendarFormOptions = customFormSites.map(site => ({
       value: site.id,
@@ -1626,6 +1719,47 @@ export const CalendarsConfiguration: React.FC = () => {
           ...bookingCompletionConfig,
           ...nextConfig
         })
+      })
+    }
+
+    const updateCustomEventsConfig = (nextConfig: Partial<CalendarCustomEventsConfig>) => {
+      const channel = nextConfig.channel || customEventsConfig.channel
+      updateSelectedCalendar({
+        customEvents: normalizeCalendarCustomEvents({
+          ...customEventsConfig,
+          ...nextConfig,
+          eventName: channel === 'whatsapp'
+            ? CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME
+            : nextConfig.eventName || customEventsConfig.eventName || CALENDAR_DEFAULT_META_EVENT_NAME
+        })
+      })
+    }
+
+    const updateCustomEventParameters = (patch: Partial<CalendarCustomEventParameters>) => {
+      updateCustomEventsConfig({
+        parameters: normalizeCalendarCustomEventParameters({
+          ...customEventsConfig.parameters,
+          ...patch
+        })
+      })
+    }
+
+    const updateCustomEventParameterRow = (parameterId: string, patch: Partial<CalendarCustomEventParameter>) => {
+      const custom = (customEventsConfig.parameters.custom || []).map(parameter => (
+        parameter.id === parameterId ? { ...parameter, ...patch } : parameter
+      ))
+      updateCustomEventParameters({ custom })
+    }
+
+    const addCustomEventParameterRow = () => {
+      updateCustomEventParameters({
+        custom: [...(customEventsConfig.parameters.custom || []), createCalendarCustomEventParameter()]
+      })
+    }
+
+    const removeCustomEventParameterRow = (parameterId: string) => {
+      updateCustomEventParameters({
+        custom: (customEventsConfig.parameters.custom || []).filter(parameter => parameter.id !== parameterId)
       })
     }
 
@@ -2342,6 +2476,145 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
             </section>
           )}
+                </>
+              )}
+
+              {currentStep.id === 'events' && (
+                <>
+                  <section className={pageStyles.editorSection}>
+                    <div className={pageStyles.editorSectionHeader}>
+                      <strong>Eventos personalizados de Meta</strong>
+                      <span>Define qué conversión se manda cuando alguien agenda desde este calendario.</span>
+                    </div>
+                    <div className={pageStyles.editorFields}>
+                      <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                        <div className={pageStyles.eventSwitchRow}>
+                          <div>
+                            <span>Enviar evento al agendar</span>
+                            <small>
+                              Si está apagado, este calendario conserva el comportamiento global de Meta/WhatsApp.
+                            </small>
+                          </div>
+                          <Switch
+                            checked={customEventsConfig.enabled}
+                            onChange={(enabled) => updateCustomEventsConfig({ enabled })}
+                            aria-label="Activar eventos personalizados del calendario"
+                          />
+                        </div>
+                      </div>
+
+                      {customEventsConfig.enabled && (
+                        <>
+                          <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                            <div className={pageStyles.eventSwitchRow}>
+                              <div>
+                                <span>{customEventsConfig.channel === 'whatsapp' ? 'Conversión por WhatsApp' : 'Conversión por página pública'}</span>
+                                <small>
+                                  {customEventsConfig.channel === 'whatsapp'
+                                    ? 'Usa el evento de WhatsApp Business Messaging y manda LeadSubmitted.'
+                                    : 'Usa Meta Pixel y Conversions API como en Sitios cuando comparten la URL pública.'}
+                                </small>
+                              </div>
+                              <Switch
+                                checked={customEventsConfig.channel === 'whatsapp'}
+                                onChange={(checked) => updateCustomEventsConfig({
+                                  channel: checked ? 'whatsapp' : 'site',
+                                  eventName: checked ? CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME : CALENDAR_DEFAULT_META_EVENT_NAME
+                                })}
+                                aria-label="Usar evento de WhatsApp para este calendario"
+                              />
+                            </div>
+                          </div>
+
+                          {customEventsConfig.channel === 'site' ? (
+                            <>
+                              <label className={pageStyles.editorField}>
+                                <span>Evento de Meta</span>
+                                <CustomSelect
+                                  value={customEventsConfig.eventName}
+                                  onValueChange={(value) => updateCustomEventsConfig({ eventName: value })}
+                                  options={CALENDAR_META_EVENT_OPTIONS}
+                                />
+                                <small>Por defecto usa Schedule, el evento estándar de cita agendada.</small>
+                              </label>
+
+                              <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                                <span>Parámetros opcionales</span>
+                                <div className={pageStyles.eventParameterGrid}>
+                                  {CALENDAR_META_PARAMETER_FIELDS.map(field => (
+                                    <label key={field.key}>
+                                      <span>{field.label}</span>
+                                      <input
+                                        className={styles.input}
+                                        value={String(customEventsConfig.parameters[field.key] || '')}
+                                        onChange={(event) => updateCustomEventParameters({ [field.key]: event.target.value } as Partial<CalendarCustomEventParameters>)}
+                                        placeholder={field.placeholder}
+                                      />
+                                    </label>
+                                  ))}
+                                </div>
+                                <small>
+                                  Si no escribes nada, Ristak manda calendario, cita, estado, fecha y el ID de evento para deduplicar Pixel + CAPI.
+                                </small>
+                              </div>
+
+                              <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                                <div className={pageStyles.customParameterHeader}>
+                                  <span>Parámetros extra</span>
+                                  <Button variant="secondary" size="small" onClick={addCustomEventParameterRow}>
+                                    <Plus size={14} />
+                                    Añadir parámetro
+                                  </Button>
+                                </div>
+                                <div className={pageStyles.customParameterList}>
+                                  {(customEventsConfig.parameters.custom || []).length ? (
+                                    (customEventsConfig.parameters.custom || []).map(parameter => (
+                                      <div key={parameter.id} className={pageStyles.customParameterRow}>
+                                        <input
+                                          className={styles.input}
+                                          value={parameter.key}
+                                          onChange={(event) => updateCustomEventParameterRow(parameter.id, { key: event.target.value })}
+                                          placeholder="nombre_parametro"
+                                        />
+                                        <input
+                                          className={styles.input}
+                                          value={parameter.value}
+                                          onChange={(event) => updateCustomEventParameterRow(parameter.id, { value: event.target.value })}
+                                          placeholder="valor"
+                                        />
+                                        <Button
+                                          variant="ghost"
+                                          size="small"
+                                          onClick={() => removeCustomEventParameterRow(parameter.id)}
+                                          aria-label="Eliminar parámetro"
+                                        >
+                                          <Trash2 size={14} />
+                                        </Button>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <p className={pageStyles.customParameterEmpty}>
+                                      Sin parámetros extra. Los datos comunes de la cita se mandan automáticamente.
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                              <span>Evento enviado por WhatsApp</span>
+                              <div className={pageStyles.whatsappEventSummary}>
+                                <strong>{CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME}</strong>
+                                <small>
+                                  Se envía por server-side como Business Messaging, con teléfono hasheado, ctwa_clid y datos de atribución cuando Meta los tenga disponibles.
+                                </small>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </section>
                 </>
               )}
             </div>

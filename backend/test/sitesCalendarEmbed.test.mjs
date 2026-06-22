@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   normalizeCalendarBookingCompletionConfig,
+  normalizeCalendarCustomEventsConfig,
   renderPublicCalendarHtml
 } from '../src/services/localCalendarService.js'
 import { renderPublicSiteHtml } from '../src/services/sitesService.js'
@@ -126,4 +127,50 @@ test('public calendar carries booking completion behavior into the booking widge
   assert.match(html, /"bookingCompletion":\{"action":"redirect"/)
   assert.match(html, /"redirectUrl":"\/gracias"/)
   assert.match(html, /window\.location\.assign\(completionRedirectUrl\)/)
+})
+
+test('public calendar normalizes custom Meta events for site appointments', () => {
+  const customEvents = normalizeCalendarCustomEventsConfig({
+    customEvents: {
+      enabled: true,
+      channel: 'site',
+      eventName: 'Schedule',
+      parameters: {
+        value: '1500',
+        currency: 'mxn',
+        custom: [{ key: 'pipeline_stage', value: 'demo' }]
+      }
+    }
+  })
+  const html = renderPublicCalendarHtml({
+    id: 'calendar-meta-site',
+    slug: 'agenda-meta',
+    name: 'Agenda Meta',
+    customEvents
+  }, {
+    metaPixelSnippet: '<script>window.ristakMetaTrackCalendarEvent=function(){}</script>'
+  })
+
+  assert.equal(customEvents.enabled, true)
+  assert.equal(customEvents.channel, 'site')
+  assert.equal(customEvents.eventName, 'Schedule')
+  assert.equal(customEvents.parameters.currency, 'MXN')
+  assert.match(html, /window\.ristakMetaTrackCalendarEvent/)
+  assert.match(html, /meta: getMetaEventPayload\(\)/)
+  assert.match(html, /trackCalendarMetaEvent\(payload\.data\?\.metaEvent\)/)
+})
+
+test('public calendar normalizes WhatsApp custom appointment event as LeadSubmitted', () => {
+  const customEvents = normalizeCalendarCustomEventsConfig({
+    enabled: true,
+    channel: 'whatsapp',
+    eventName: 'Schedule'
+  })
+
+  assert.deepEqual(customEvents, {
+    enabled: true,
+    channel: 'whatsapp',
+    eventName: 'LeadSubmitted',
+    parameters: {}
+  })
 })

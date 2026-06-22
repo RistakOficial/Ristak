@@ -1104,6 +1104,108 @@
   line-height: 1.45;
 }
 
+.eventSwitchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.eventSwitchRow > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.eventSwitchRow span {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.eventSwitchRow small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.eventParameterGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.eventParameterGrid label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.eventParameterGrid label span,
+.customParameterHeader > span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.customParameterHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.customParameterList {
+  display: grid;
+  gap: 8px;
+}
+
+.customParameterRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.customParameterEmpty {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-ctl);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.whatsappEventSummary {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.whatsappEventSummary strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.whatsappEventSummary small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .googleSyncFieldTop {
   display: flex;
   align-items: center;
@@ -2303,6 +2405,22 @@
 
   .editorFields {
     grid-template-columns: 1fr;
+  }
+
+  .eventSwitchRow,
+  .customParameterHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .eventParameterGrid,
+  .customParameterRow {
+    grid-template-columns: 1fr;
+  }
+
+  .customParameterHeader button,
+  .customParameterRow button {
+    width: 100%;
   }
 
   .editorFieldWide {

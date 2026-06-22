@@ -20,6 +20,7 @@ const EVENT_TYPES = {
   schedule: 'appointment_booked',
   purchase: 'first_purchase'
 }
+const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
 
 const CONTACT_SENT_FIELDS = {
   [EVENT_TYPES.schedule]: {
@@ -54,6 +55,33 @@ function parseBoolean(value, defaultValue = false) {
 
 function cleanString(value) {
   return String(value || '').trim().replace(/\s+/g, ' ')
+}
+
+function parseJson(value, fallback = {}) {
+  if (!value) return fallback
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function normalizeCalendarWhatsappCustomEvents(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const eventSource = source.customEvents && typeof source.customEvents === 'object'
+    ? source.customEvents
+    : source.custom_events && typeof source.custom_events === 'object'
+      ? source.custom_events
+      : source
+  const channel = cleanString(eventSource.channel || eventSource.conversionChannel || eventSource.conversion_channel || 'site').toLowerCase()
+  const eventName = normalizeBusinessMessagingEventName(eventSource.eventName || eventSource.event_name || DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME)
+
+  return {
+    enabled: parseBoolean(eventSource.enabled, false),
+    channel: channel === 'whatsapp' ? 'whatsapp' : 'site',
+    eventName: eventName || DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME
+  }
 }
 
 function normalizeForHash(value) {
@@ -591,8 +619,44 @@ async function getAttributionCalendarIds() {
   }
 }
 
+async function getCalendarCustomEvents(calendarId) {
+  if (!calendarId) return null
+
+  try {
+    const row = await db.get(
+      'SELECT id, name, raw_json FROM calendars WHERE id = ? OR ghl_calendar_id = ?',
+      [calendarId, calendarId]
+    )
+    if (!row) return null
+
+    const rawJson = parseJson(row.raw_json, {})
+    return {
+      calendarId: row.id,
+      calendarName: row.name || '',
+      ...normalizeCalendarWhatsappCustomEvents(rawJson.customEvents || rawJson.custom_events || rawJson)
+    }
+  } catch (error) {
+    logger.warn(`Error al leer eventos personalizados del calendario ${calendarId}: ${error.message}`)
+    return null
+  }
+}
+
 export async function triggerWhatsappAppointmentBookedEvent(contactId, options = {}) {
-  if (!await getConfigBoolean(CONFIG_KEYS.scheduleEnabled, false)) {
+  const calendarId = options.calendarId ? String(options.calendarId) : null
+  const calendarCustomEvents = options.customEvents
+    ? {
+        calendarId,
+        calendarName: options.calendarName || '',
+        ...normalizeCalendarWhatsappCustomEvents(options.customEvents)
+      }
+    : await getCalendarCustomEvents(calendarId)
+  const usesCalendarConfig = Boolean(calendarCustomEvents?.enabled)
+
+  if (usesCalendarConfig && calendarCustomEvents.channel !== 'whatsapp') {
+    return { sent: false, reason: 'calendar_channel_not_whatsapp' }
+  }
+
+  if (!usesCalendarConfig && !await getConfigBoolean(CONFIG_KEYS.scheduleEnabled, false)) {
     return { sent: false, reason: 'disabled' }
   }
 
@@ -605,13 +669,17 @@ export async function triggerWhatsappAppointmentBookedEvent(contactId, options =
   // Si la cita no trae calendario, no bloqueamos (evita perder conversiones por
   // un payload incompleto).
   const attributionCalendarIds = await getAttributionCalendarIds()
-  const calendarId = options.calendarId ? String(options.calendarId) : null
-  if (attributionCalendarIds && calendarId && !attributionCalendarIds.includes(calendarId)) {
+  if (!usesCalendarConfig && attributionCalendarIds && calendarId && !attributionCalendarIds.includes(calendarId)) {
     return { sent: false, reason: 'calendar_not_attributed' }
   }
 
-  const metaEventName = await getConfiguredEventName(CONFIG_KEYS.scheduleEventName, 'LeadSubmitted')
-  const eventId = `schedule_contact_${contactId}`
+  const metaEventName = usesCalendarConfig
+    ? calendarCustomEvents.eventName
+    : await getConfiguredEventName(CONFIG_KEYS.scheduleEventName, DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME)
+  const appointmentId = cleanString(options.appointmentId || options.appointment_id)
+  const eventId = appointmentId
+    ? `schedule_appointment_${appointmentId}`
+    : `schedule_contact_${contactId}`
 
   return sendMetaWhatsappEvent({
     contactId,
@@ -620,7 +688,10 @@ export async function triggerWhatsappAppointmentBookedEvent(contactId, options =
     eventId,
     customData: {
       source: 'whatsapp',
-      conversion_type: EVENT_TYPES.schedule
+      conversion_type: EVENT_TYPES.schedule,
+      appointment_id: appointmentId,
+      calendar_id: calendarCustomEvents?.calendarId || calendarId || '',
+      calendar_name: calendarCustomEvents?.calendarName || options.calendarName || ''
     }
   })
 }

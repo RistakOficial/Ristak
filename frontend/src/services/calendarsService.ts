@@ -53,6 +53,35 @@ export interface CalendarBookingCompletionConfig {
   redirectUrl: string;
 }
 
+export type CalendarCustomEventChannel = 'site' | 'whatsapp';
+
+export interface CalendarCustomEventParameter {
+  id: string;
+  key: string;
+  value: string;
+}
+
+export interface CalendarCustomEventParameters {
+  value?: string;
+  predictedLtv?: string;
+  currency?: string;
+  status?: string;
+  contentName?: string;
+  contentCategory?: string;
+  contentIds?: string;
+  contentType?: string;
+  numItems?: string;
+  orderId?: string;
+  custom?: CalendarCustomEventParameter[];
+}
+
+export interface CalendarCustomEventsConfig {
+  enabled: boolean;
+  channel: CalendarCustomEventChannel;
+  eventName: string;
+  parameters: CalendarCustomEventParameters;
+}
+
 export interface Calendar {
   id: string;
   ghlCalendarId?: string | null;
@@ -92,6 +121,7 @@ export interface Calendar {
   formId?: string;
   bookingForm?: CalendarBookingFormConfig;
   bookingCompletion?: CalendarBookingCompletionConfig;
+  customEvents?: CalendarCustomEventsConfig;
   stickyContact?: boolean;
   isLivePaymentMode?: boolean;
   alertEmail?: string;

@@ -8,7 +8,11 @@ import { db } from '../config/database.js';
 import { getAccountTimezone } from '../utils/dateUtils.js';
 import { triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappEventsService.js';
 import { sendCalendarAppointmentNotification } from '../services/pushNotificationsService.js';
-import { getRequestHost, resolveConnectedPublicDomainForHost } from '../services/sitesService.js';
+import {
+  getRequestHost,
+  resolveConnectedPublicDomainForHost,
+  sendCalendarBookingSiteMetaEvent
+} from '../services/sitesService.js';
 import { renderCalendarAppointmentTemplates } from '../services/calendarAppointmentTemplateService.js';
 import { normalizePhoneForAccount } from '../utils/accountLocale.js';
 import {
@@ -59,6 +63,28 @@ async function getCalendarSourcePreference(override = '') {
 
 function cleanString(value) {
   return String(value ?? '').trim();
+}
+
+function getClientIp(req) {
+  const forwarded = cleanString(req.headers?.['x-forwarded-for']);
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return cleanString(req.ip || req.socket?.remoteAddress);
+}
+
+function buildPublicCalendarMetaRequest(req, body = {}) {
+  const source = body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta) ? body.meta : {};
+  return {
+    ip: getClientIp(req),
+    userAgent: cleanString(req.headers?.['user-agent']),
+    meta: {
+      ...source,
+      pageUrl: cleanString(source.pageUrl || source.page_url || body.sourceUrl || body.source_url),
+      sourceUrl: cleanString(body.sourceUrl || body.source_url),
+      referrer: cleanString(source.referrer || source.referer),
+      fbp: cleanString(source.fbp),
+      fbc: cleanString(source.fbc)
+    }
+  };
 }
 
 function serviceAccountGoogleStatus(config = {}) {
@@ -1097,11 +1123,34 @@ export async function createPublicAppointment(req, res) {
       logger.warn(`[Calendars Controller] Cita publica guardada local, sync Google pendiente/error: ${error.message}`);
     }
 
-    await triggerWhatsappAppointmentBookedEvent(contactId, {
-      calendarId: calendar.id
-    }).catch(error => {
-      logger.warn(`[Calendars Controller] No se pudo disparar evento WhatsApp para cita publica: ${error.message}`);
-    });
+    const customEvents = localCalendarService.normalizeCalendarCustomEventsConfig(calendar.customEvents || {});
+    let metaEvent = null;
+    if (customEvents.enabled && customEvents.channel === 'site') {
+      metaEvent = await sendCalendarBookingSiteMetaEvent({
+        calendar: { ...calendar, customEvents },
+        appointment,
+        contactId,
+        contact: {
+          fullName: bookingSubmission.contact.name,
+          phone: bookingSubmission.contact.phone,
+          email: bookingSubmission.contact.email
+        },
+        requestMeta: buildPublicCalendarMetaRequest(req, body)
+      }).catch(error => {
+        logger.warn(`[Calendars Controller] No se pudo disparar evento Meta web para cita publica: ${error.message}`);
+        return null;
+      });
+    } else {
+      metaEvent = await triggerWhatsappAppointmentBookedEvent(contactId, {
+        calendarId: calendar.id,
+        calendarName: calendar.name,
+        appointmentId: appointment.id,
+        customEvents: customEvents.enabled ? customEvents : undefined
+      }).catch(error => {
+        logger.warn(`[Calendars Controller] No se pudo disparar evento WhatsApp para cita publica: ${error.message}`);
+        return null;
+      });
+    }
 
     await sendCalendarAppointmentNotification(appointment, {
       calendarId: calendar.id,
@@ -1118,7 +1167,15 @@ export async function createPublicAppointment(req, res) {
       data: {
         appointment,
         message: bookingCompletion.message,
-        bookingCompletion
+        bookingCompletion,
+        metaEvent: customEvents.enabled && customEvents.channel === 'site' && metaEvent?.eventId
+          ? {
+              eventId: metaEvent.eventId,
+              eventName: metaEvent.eventName || customEvents.eventName,
+              appointmentId: appointment.id,
+              status: appointment.appointmentStatus || appointment.status || 'booked'
+            }
+          : null
       }
     });
   } catch (error) {
@@ -1395,9 +1452,15 @@ export async function createAppointment(req, res) {
     const contactId = appointmentData.contactId || appointmentData.contact_id || appointment?.contactId || appointment?.contact_id;
 
     if (contactId) {
-      await triggerWhatsappAppointmentBookedEvent(contactId, {
-        calendarId: appointment?.calendarId || appointmentData.calendarId || appointmentData.calendar_id
-      });
+      const customEvents = localCalendarService.normalizeCalendarCustomEventsConfig(localCalendar?.customEvents || {});
+      if (!customEvents.enabled || customEvents.channel === 'whatsapp') {
+        await triggerWhatsappAppointmentBookedEvent(contactId, {
+          calendarId: appointment?.calendarId || appointmentData.calendarId || appointmentData.calendar_id,
+          calendarName: localCalendar?.name || appointmentData.calendarName || '',
+          appointmentId: appointment?.id,
+          customEvents: customEvents.enabled ? customEvents : undefined
+        });
+      }
     }
 
     await sendCalendarAppointmentNotification(appointment, {
@@ -1497,9 +1560,10 @@ export async function updateCalendar(req, res) {
     const remoteCalendarId = existing?.ghlCalendarId || id;
     if (context.accessToken && remoteCalendarId && existing?.ghlCalendarId) {
       try {
-        const { bookingForm, bookingCompletion, ...remoteUpdateData } = updateData;
+        const { bookingForm, bookingCompletion, customEvents, ...remoteUpdateData } = updateData;
         const preservedBookingForm = bookingForm || calendar?.bookingForm || existing?.bookingForm;
         const preservedBookingCompletion = bookingCompletion || calendar?.bookingCompletion || existing?.bookingCompletion;
+        const preservedCustomEvents = customEvents || calendar?.customEvents || existing?.customEvents;
         const remote = await calendarService.updateCalendar(remoteCalendarId, remoteUpdateData, context.accessToken);
         calendar = await localCalendarService.upsertLocalCalendar(remote.calendar || remote, {
           id: existing.id,
@@ -1510,7 +1574,8 @@ export async function updateCalendar(req, res) {
           rawJson: {
             ...(remote && typeof remote === 'object' ? remote : {}),
             bookingForm: preservedBookingForm,
-            bookingCompletion: preservedBookingCompletion
+            bookingCompletion: preservedBookingCompletion,
+            customEvents: preservedCustomEvents
           }
         });
       } catch (error) {
