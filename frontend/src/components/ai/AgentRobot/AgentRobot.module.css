@@ -90,14 +90,13 @@
 }
 
 .agentRobotSvg .rkRotorBlade,
+.agentRobotSvg .rkRotorBladeAlt,
 .agentRobotSvg .rkRotorBlur,
+.agentRobotSvg .rkRotorEdge,
 .agentRobotSvg .rkRotorHub,
-.agentRobotSvg .rkAntennaStem {
+.agentRobotSvg .rkAntennaStem,
+.agentRobotSvg .rkAntennaBack {
   filter: drop-shadow(0 0 4px rgba(120, 225, 255, 0.58));
-}
-
-.agentRobotSvg .rkSoundMouth {
-  filter: drop-shadow(0 0 3px rgba(120, 225, 255, 0.85));
 }
 
 .agentRobotSvg .rkBulb,
@@ -120,7 +119,6 @@
   transform-origin: 80% 85%;
 }
 
-.agentRobotSvg .rkPhoneSignal,
 .agentRobotSvg .rkAnalyzerBeam,
 .agentRobotSvg .rkReaderLine,
 .agentRobotSvg .rkKeyLine {
@@ -136,9 +134,12 @@
 .agentRobotSvg .rkWave,
 .agentRobotSvg .rkPhone,
 .agentRobotSvg .rkKeyboard,
-.agentRobotSvg .rkJuggle,
-.agentRobotSvg .rkFlipTrail {
+.agentRobotSvg .rkJuggle {
   opacity: 0;
+}
+
+.agentRobotSvg .rkRotor {
+  transform: rotate(-8deg) skewX(-6deg);
 }
 
 .agentRobot .rkFloat {
@@ -193,18 +194,6 @@
   animation: rkStarEyesShow 16s ease-in-out infinite;
 }
 
-.agentRobotSvg .rkSoundMouth {
-  animation: rkSoundMouthShow 11s ease-in-out infinite, rkSoundMouthDrift 1.8s ease-in-out infinite;
-}
-
-.agentRobotSvg .rkSoundWave {
-  animation: rkSoundWave 0.78s ease-in-out infinite;
-}
-
-.agentRobotSvg .rkSoundWave:nth-child(2) {
-  animation-delay: 0.18s;
-}
-
 .sceneExpanded.active .agentRobot .rkZoom {
   animation: rkNpcZoom var(--rk-npc-cycle) ease-in-out infinite;
 }
@@ -257,10 +246,6 @@
   animation: rkPhoneShow var(--rk-npc-cycle) ease-in-out infinite;
 }
 
-.sceneExpanded.active .agentRobotSvg[data-active="true"] .rkPhoneSignal {
-  animation: rkSignalPulse 0.9s ease-in-out infinite;
-}
-
 .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkJuggle {
   animation: rkJuggleShow var(--rk-npc-cycle) ease-in-out infinite;
 }
@@ -283,10 +268,6 @@
 
 .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkAnalyzerBeam {
   animation: rkAnalyzerSweep 0.82s ease-in-out infinite;
-}
-
-.sceneExpanded.active .agentRobotSvg[data-active="true"] .rkFlipTrail {
-  animation: rkFlipTrailShow var(--rk-npc-cycle) ease-in-out infinite;
 }
 
 .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkWave {
@@ -420,11 +401,11 @@
   28%,
   50%,
   82% {
-    transform: scale(1.1);
+    transform: scale(1.06);
   }
   36%,
   66% {
-    transform: scale(1.18);
+    transform: scale(1.1);
   }
 }
 
@@ -446,13 +427,13 @@
     transform: rotateY(-10deg) rotateX(6deg) rotateZ(-7deg);
   }
   61% {
-    transform: rotateY(16deg) rotateX(-8deg) rotateZ(13deg);
+    transform: rotateY(12deg) rotateX(-5deg) rotateZ(8deg);
   }
   66% {
-    transform: rotateY(28deg) rotateX(12deg) rotateZ(360deg);
+    transform: rotateY(8deg) rotateX(4deg) rotateZ(7deg);
   }
   71% {
-    transform: rotateY(-12deg) rotateX(4deg) rotateZ(8deg);
+    transform: rotateY(-9deg) rotateX(3deg) rotateZ(5deg);
   }
   84% {
     transform: rotateY(4deg) rotateX(-9deg) rotateZ(-6deg);
@@ -595,45 +576,6 @@
   }
 }
 
-@keyframes rkSoundMouthShow {
-  0%,
-  7%,
-  54%,
-  62%,
-  89%,
-  100% {
-    opacity: 0;
-  }
-  12%,
-  48%,
-  67%,
-  84% {
-    opacity: 1;
-  }
-}
-
-@keyframes rkSoundMouthDrift {
-  0%,
-  100% {
-    transform: translateY(0) scaleX(1);
-  }
-  50% {
-    transform: translateY(1.8px) scaleX(1.06);
-  }
-}
-
-@keyframes rkSoundWave {
-  0%,
-  100% {
-    stroke-dashoffset: 0;
-    transform: scaleX(0.92);
-  }
-  50% {
-    stroke-dashoffset: -11;
-    transform: scaleX(1.12);
-  }
-}
-
 @keyframes rkSceneGaze {
   0%,
   18% {
@@ -742,7 +684,7 @@
 @keyframes rkKeyboardShow {
   0%,
   30%,
-  44%,
+  43%,
   100% {
     opacity: 0;
     transform: translateY(16px) scale(0.88);
@@ -766,7 +708,7 @@
 
 @keyframes rkPhoneShow {
   0%,
-  44%,
+  45%,
   60%,
   100% {
     opacity: 0;
@@ -776,20 +718,6 @@
   57% {
     opacity: 1;
     transform: translate(0, 0) rotate(-6deg) scale(1);
-  }
-}
-
-@keyframes rkSignalPulse {
-  0%,
-  100% {
-    opacity: 0.1;
-    stroke-dashoffset: 0;
-    transform: scale(0.94);
-  }
-  50% {
-    opacity: 1;
-    stroke-dashoffset: -18;
-    transform: scale(1.05);
   }
 }
 
@@ -845,21 +773,6 @@
   }
 }
 
-@keyframes rkFlipTrailShow {
-  0%,
-  59%,
-  73%,
-  100% {
-    opacity: 0;
-    transform: scale(0.9);
-  }
-  64%,
-  69% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
 @keyframes rkWaveShow {
   0%,
   88%,
@@ -909,8 +822,6 @@
   .agentRobotSvg .rkHappy,
   .agentRobotSvg .rkFocusEyes,
   .agentRobotSvg .rkStarEyes,
-  .agentRobotSvg .rkSoundMouth,
-  .agentRobotSvg .rkSoundWave,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkIdea,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkIdeaDot,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkBulb,
@@ -919,12 +830,10 @@
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkKeyboard,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkKeyboardHand,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkPhone,
-  .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkPhoneSignal,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkJuggle,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkJuggleOrb,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkAnalyzer,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkAnalyzerBeam,
-  .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkFlipTrail,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkWave,
   .sceneExpanded.active .agentRobotSvg[data-active="true"] .rkHandWave {
     animation: none !important;
