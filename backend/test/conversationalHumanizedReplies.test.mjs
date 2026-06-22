@@ -2623,7 +2623,7 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /DESCARTE Y SILENCIO/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Cuándo NO te quedes callado/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /El PRIMER regreso es el más delicado/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /dosis EXTRA de ligereza/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /dosis EXTRA de calidez/)
 })
 
 test('instrucciones del agente respetan el toggle de emojis', () => {
