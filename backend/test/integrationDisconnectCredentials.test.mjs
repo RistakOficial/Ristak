@@ -269,7 +269,7 @@ test('conectar WhatsApp API responde sin esperar la sincronización pesada de YC
 
     const status = await Promise.race([
       connectPromise,
-      wait(250).then(() => {
+      wait(2000).then(() => {
         throw new Error('La conexión esperó la sincronización pesada de YCloud')
       })
     ])

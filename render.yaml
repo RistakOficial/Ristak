@@ -3,6 +3,7 @@ services:
     name: ristak-app
     env: node
     region: oregon
+    maxShutdownDelaySeconds: 300
     buildCommand: |
       (cd backend && npm ci --no-audit --no-fund) &&
       rm -rf frontend/node_modules frontend/.vite frontend/dist &&
@@ -25,6 +26,8 @@ services:
         value: bunny
       - key: MEDIA_COMPRESSION_ENABLED
         value: "true"
+      - key: GRACEFUL_SHUTDOWN_TIMEOUT_MS
+        value: "295000"
       - key: DEFAULT_STORAGE_QUOTA_GB
         value: "5"
       - key: MEDIA_STORAGE_REQUIRE_BUNNY

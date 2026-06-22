@@ -83,14 +83,38 @@ const startupState = {
   ready: false,
   error: null
 }
+const DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 295_000
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = Math.max(
   1000,
-  Number(process.env.GRACEFUL_SHUTDOWN_TIMEOUT_MS || 25_000) || 25_000
+  Number(process.env.GRACEFUL_SHUTDOWN_TIMEOUT_MS || DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS) ||
+    DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS
 )
 let shuttingDown = false
 let activeRequests = 0
+let activeUploadRequests = 0
+
+function requestPath(req) {
+  return String(req.path || req.originalUrl || '').split('?')[0]
+}
+
+function isHealthRequest(req) {
+  const path = requestPath(req)
+  return path === '/health' || path === '/api/health'
+}
+
+function isProtectedUploadRequest(req) {
+  if (!['POST', 'PUT', 'PATCH'].includes(req.method)) return false
+  const path = requestPath(req)
+  return (
+    path === '/media/upload' ||
+    path === '/api/media/upload' ||
+    /^\/media\/assets\/[^/]+\/replace$/.test(path) ||
+    /^\/api\/media\/assets\/[^/]+\/replace$/.test(path)
+  )
+}
 
 function getStartupStatus() {
+  if (shuttingDown) return 'shutting_down'
   if (startupState.ready) return 'ready'
   if (startupState.error) return 'error'
   return 'starting'
@@ -100,7 +124,7 @@ function getStartupStatus() {
 app.set('trust proxy', true)
 
 app.use((req, res, next) => {
-  if (shuttingDown && req.path !== '/health' && req.path !== '/api/health') {
+  if (shuttingDown && !isHealthRequest(req)) {
     res.set('Connection', 'close')
     return res.status(503).json({
       error: 'Aplicación actualizándose',
@@ -108,12 +132,15 @@ app.use((req, res, next) => {
     })
   }
 
+  const protectedUpload = isProtectedUploadRequest(req)
   activeRequests += 1
+  if (protectedUpload) activeUploadRequests += 1
   let completed = false
   const finish = () => {
     if (completed) return
     completed = true
     activeRequests = Math.max(0, activeRequests - 1)
+    if (protectedUpload) activeUploadRequests = Math.max(0, activeUploadRequests - 1)
   }
   res.on('finish', finish)
   res.on('close', finish)
@@ -136,7 +163,7 @@ app.use('/uploads', express.static(join(__dirname, '../uploads'), {
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.status(startupState.error ? 503 : 200).json({
+  res.status(startupState.error || shuttingDown ? 503 : 200).json({
     status: 'ok',
     startup: getStartupStatus(),
     timestamp: new Date().toISOString(),
@@ -148,7 +175,7 @@ app.get('/api/health', (req, res) => {
 // Health check de instalación (lo consulta el portal instalador para saber
 // si la app ya está lista). Debe ir antes del host router de Sites.
 app.get('/health', (req, res) => {
-  res.status(startupState.error ? 503 : 200).json({
+  res.status(startupState.error || shuttingDown ? 503 : 200).json({
     ...getHealthInfo(),
     startup: getStartupStatus()
   })
@@ -338,7 +365,10 @@ function handleShutdown(signal) {
   if (shuttingDown) return
   shuttingDown = true
   startupState.ready = false
-  logger.warn(`[Shutdown] ${signal} recibido. Cerrando servidor con ${activeRequests} request(s) activa(s).`)
+  logger.warn(
+    `[Shutdown] ${signal} recibido. Drenando ${activeRequests} request(s) activa(s), ` +
+      `${activeUploadRequests} upload(s) protegido(s), por hasta ${GRACEFUL_SHUTDOWN_TIMEOUT_MS}ms.`
+  )
 
   server.close((error) => {
     if (error) {
@@ -350,7 +380,10 @@ function handleShutdown(signal) {
   })
 
   const timeout = setTimeout(() => {
-    logger.warn(`[Shutdown] Tiempo agotado con ${activeRequests} request(s) activa(s). Cerrando proceso.`)
+    logger.warn(
+      `[Shutdown] Tiempo agotado con ${activeRequests} request(s) activa(s), ` +
+        `${activeUploadRequests} upload(s) protegido(s). Cerrando proceso.`
+    )
     process.exit(0)
   }, GRACEFUL_SHUTDOWN_TIMEOUT_MS)
   timeout.unref?.()
