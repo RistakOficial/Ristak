@@ -66,9 +66,19 @@ export type MobileChatAttachment = MobilePhotoAttachment | MobileDocumentAttachm
 let shellConfigured = false
 let notificationListenersConfigured = false
 let lastKeyboardFeedbackAt = 0
+let keyboardClickAudioContext: AudioContext | null = null
 
 function getPlatform(): NativePlatform {
   return Capacitor.getPlatform() as NativePlatform
+}
+
+function getAudioContextConstructor() {
+  if (typeof window === 'undefined') return null
+
+  const audioWindow = window as Window & typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext
+  }
+  return audioWindow.AudioContext || audioWindow.webkitAudioContext || null
 }
 
 function isIosPhoneChatShell() {
@@ -400,13 +410,53 @@ export async function triggerLightHapticFeedback() {
 }
 
 export async function triggerKeyboardClickFeedback() {
-  if (!mobileKeyboardFeedbackEnabled()) return
+  if (!mobileHapticsEnabled() || !mobileKeyboardFeedbackEnabled()) return
 
   const now = Date.now()
   if (now - lastKeyboardFeedbackAt < MOBILE_KEYBOARD_FEEDBACK_INTERVAL_MS) return
   lastKeyboardFeedbackAt = now
 
-  await triggerLightHapticFeedback()
+  await Promise.all([
+    triggerLightHapticFeedback(),
+    playKeyboardClickSound()
+  ])
+}
+
+async function playKeyboardClickSound() {
+  if (!Capacitor.isNativePlatform()) return
+
+  const AudioContextConstructor = getAudioContextConstructor()
+  if (!AudioContextConstructor) return
+
+  try {
+    const context = keyboardClickAudioContext && keyboardClickAudioContext.state !== 'closed'
+      ? keyboardClickAudioContext
+      : new AudioContextConstructor()
+    keyboardClickAudioContext = context
+
+    if (context.state === 'suspended') {
+      await context.resume()
+    }
+
+    const startAt = context.currentTime
+    const oscillator = context.createOscillator()
+    const gain = context.createGain()
+    oscillator.type = 'triangle'
+    oscillator.frequency.setValueAtTime(1700, startAt)
+    gain.gain.setValueAtTime(0.0001, startAt)
+    gain.gain.exponentialRampToValueAtTime(0.018, startAt + 0.004)
+    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.026)
+    oscillator.connect(gain)
+    gain.connect(context.destination)
+    oscillator.start(startAt)
+    oscillator.stop(startAt + 0.03)
+    oscillator.onended = () => {
+      oscillator.disconnect()
+      gain.disconnect()
+    }
+  } catch {
+    // Audio feedback is best-effort; haptics still cover the interaction.
+  }
 }
 
 export function setMobileFeedbackPreferences({
