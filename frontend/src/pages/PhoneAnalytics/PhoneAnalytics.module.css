@@ -12,6 +12,8 @@
   --phone-analytics-contrast-line: #101010;
   --phone-analytics-blue-line: #2563eb;
   --phone-analytics-warning-line: #f59e0b;
+  --phone-analytics-chart-stroke: 5;
+  --phone-analytics-chart-point: 4;
   position: fixed;
   inset: 0;
   isolation: isolate;
@@ -393,6 +395,59 @@
   border-radius: 24px;
   background: var(--phone-analytics-surface);
   box-shadow: 0 12px 28px rgba(17, 24, 39, 0.05);
+}
+
+@media (min-width: 901px) {
+  .phoneAnalyticsPage {
+    --phone-analytics-chart-stroke: 2.75;
+    --phone-analytics-chart-point: 3.2;
+  }
+
+  .phoneFrame {
+    gap: 14px;
+    padding:
+      calc(env(safe-area-inset-top) + 18px)
+      clamp(26px, 4vw, 58px)
+      calc(34px + env(safe-area-inset-bottom));
+  }
+
+  .header,
+  .metricsGrid,
+  .panel {
+    width: min(100%, 1180px);
+    margin-inline: auto;
+  }
+
+  .header h1 {
+    font-size: 44px;
+  }
+
+  .metricsGrid {
+    gap: 10px;
+  }
+
+  .metricCard {
+    min-height: 92px;
+    padding: 14px;
+  }
+
+  .panel {
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .optionScroller {
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+
+  .chartCanvas {
+    min-height: 260px;
+  }
+
+  .chartCanvas svg {
+    height: clamp(248px, 28vh, 340px);
+  }
 }
 
 .panelHeader {

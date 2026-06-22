@@ -259,11 +259,20 @@ function normalizeCalendarEvent(event: any, fallbackId: string): CalendarEvent {
   }
 }
 
-interface PhoneCalendarProps {
-  embedded?: boolean
+export interface PhoneCalendarCreateRequest {
+  start: string
+  end: string
+  timeZone: string
+  title: string
+  calendarId: string
 }
 
-export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }) => {
+interface PhoneCalendarProps {
+  embedded?: boolean
+  onCreateAppointmentRequest?: (request: PhoneCalendarCreateRequest) => void
+}
+
+export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, onCreateAppointmentRequest }) => {
   const { locationId, accessToken } = useAuth()
   const { showToast } = useNotification()
   const { timezone } = useTimezone()
@@ -891,14 +900,24 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false }
       endUTC = new Date(startUTC.getTime() + 15 * 60 * 1000)
     }
 
-    setCreateDefaults({
+    const nextDefaults = {
       start: startUTC.toISOString(),
       end: endUTC.toISOString(),
       timeZone: timezone,
       title: selectedCalendar.eventTitle || ''
-    })
+    }
+
+    if (embedded && onCreateAppointmentRequest) {
+      onCreateAppointmentRequest({
+        ...nextDefaults,
+        calendarId: selectedCalendar.id
+      })
+      return
+    }
+
+    setCreateDefaults(nextDefaults)
     setIsCreateModalOpen(true)
-  }, [selectedCalendar, showToast, timezone])
+  }, [embedded, onCreateAppointmentRequest, selectedCalendar, showToast, timezone])
 
   const openCreateAppointmentForDate = useCallback((date: Date) => {
     const zonedNow = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()

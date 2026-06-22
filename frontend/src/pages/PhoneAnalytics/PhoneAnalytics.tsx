@@ -255,8 +255,8 @@ function MobileDualLineChart({
           const y = padding.top + plotHeight * step
           return <line key={step} x1={padding.left} x2={width - padding.right} y1={y} y2={y} className={styles.gridLine} />
         })}
-        <polyline points={buildPoints('value')} fill="none" stroke={meta.color1} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
-        <polyline points={buildPoints('value2')} fill="none" stroke={meta.color2} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+        <polyline points={buildPoints('value')} fill="none" stroke={meta.color1} strokeWidth="var(--phone-analytics-chart-stroke)" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <polyline points={buildPoints('value2')} fill="none" stroke={meta.color2} strokeWidth="var(--phone-analytics-chart-stroke)" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
         {data.map((point, index) => {
           const x = data.length <= 1
             ? width / 2
@@ -266,8 +266,8 @@ function MobileDualLineChart({
 
           return (
             <g key={`${point.label}-${index}`}>
-              <circle cx={x} cy={y1} r="4" fill={meta.color1} />
-              <circle cx={x} cy={y2} r="4" fill={meta.color2} />
+              <circle cx={x} cy={y1} r="var(--phone-analytics-chart-point)" fill={meta.color1} />
+              <circle cx={x} cy={y2} r="var(--phone-analytics-chart-point)" fill={meta.color2} />
             </g>
           )
         })}

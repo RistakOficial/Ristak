@@ -171,8 +171,15 @@
 }
 
 :global(body[data-phone-chat-tone="dark"]) .timelineEvent {
-  color: color-mix(in srgb, var(--event-color, #38bdf8) 62%, var(--phone-calendar-text) 38%);
-  background: color-mix(in srgb, var(--event-color, #38bdf8) 18%, var(--phone-calendar-surface) 82%);
+  color: #ffffff;
+  background: var(--event-color, #38bdf8);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+}
+
+:global([data-phone-chat-tone="dark"]) .timelineEvent {
+  color: #ffffff;
+  background: var(--event-color, #38bdf8);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .sheet {
@@ -188,7 +195,6 @@
 
 :global(body[data-phone-chat-tone="dark"]) .eventCard,
 :global(body[data-phone-chat-tone="dark"]) .appointmentCard,
-:global(body[data-phone-chat-tone="dark"]) .timelineEvent,
 :global(body[data-phone-chat-tone="dark"]) .eventCard_stacked,
 :global(body[data-phone-chat-tone="dark"]) .eventCard_list,
 :global(body[data-phone-chat-tone="dark"]) .viewChoice,
@@ -201,6 +207,16 @@
 :global(body[data-phone-chat-tone="dark"]) .blockedPanel {
   border-color: var(--phone-chat-border);
   background: var(--phone-calendar-surface);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .timelineEvent strong,
+:global(body[data-phone-chat-tone="dark"]) .timelineEvent span {
+  color: #ffffff;
+}
+
+:global([data-phone-chat-tone="dark"]) .timelineEvent strong,
+:global([data-phone-chat-tone="dark"]) .timelineEvent span {
+  color: #ffffff;
 }
 
 :global(body[data-phone-chat-tone="dark"]) .cacheRefreshPill,
@@ -622,7 +638,7 @@
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
-  background: #ffffff;
+  background: var(--phone-calendar-surface);
 }
 
 .timelineScroller[data-calendar-timeline-view="week"] {
@@ -642,7 +658,7 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 940px;
-  background: #ffffff;
+  background: var(--phone-calendar-surface);
 }
 
 .weekTimelineHeader {
@@ -653,12 +669,12 @@
   grid-template-columns: 64px repeat(7, minmax(0, 1fr));
   min-height: 78px;
   border-bottom: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--phone-calendar-surface);
 }
 
 .weekTimelineHeader > span:first-child {
   border-right: 1px solid var(--line);
-  background: #f7f6f2;
+  background: var(--phone-calendar-panel);
 }
 
 .weekTimelineHeader .weekDay {
@@ -739,7 +755,7 @@
   grid-template-rows: repeat(24, 58px);
   border-right: 1px solid var(--line);
   color: #8e8e93;
-  background: #f7f6f2;
+  background: var(--phone-calendar-panel);
 }
 
 .timelineHourColumn span {
@@ -756,7 +772,7 @@
   display: grid;
   grid-template-rows: repeat(24, 58px);
   min-width: 0;
-  background: #ffffff;
+  background: var(--phone-calendar-surface);
   touch-action: none;
 }
 

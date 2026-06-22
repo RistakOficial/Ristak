@@ -239,6 +239,11 @@
   box-shadow: 0 1px 0 var(--phone-chat-border);
 }
 
+.chatListHeaderWideMode {
+  gap: 10px;
+  box-shadow: 0 1px 0 var(--phone-chat-border);
+}
+
 .topActionRow {
   position: relative;
   display: flex;
@@ -358,6 +363,19 @@
   border-radius: 999px;
   color: var(--phone-chat-primary);
   background: transparent;
+}
+
+.wideSidebarBackButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
 }
 
 .chatPhoneSelector {
@@ -1132,6 +1150,119 @@
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.wideSidebarModeContent {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 100%;
+  padding: 4px 14px 22px;
+}
+
+.wideSidebarContactList {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.wideSidebarContactOption {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 70px;
+  padding: 10px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--phone-chat-border);
+  color: var(--phone-chat-text);
+  background: transparent;
+  text-align: left;
+}
+
+.wideSidebarContactOption:hover,
+.wideSidebarContactOption:focus-visible {
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 80%, transparent);
+}
+
+.wideAppointmentModeContent {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  padding-bottom: 0;
+}
+
+.wideSelectedContact {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 8px 10px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 18px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+}
+
+.wideSelectedContact span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.wideSelectedContact strong,
+.wideSelectedContact small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wideSelectedContact strong {
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.wideSelectedContact small {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.wideSelectedContact button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface-soft);
+}
+
+.wideAppointmentContactResults {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 18px;
+  background: var(--phone-chat-surface);
+}
+
+.wideAppointmentContactResults .wideSidebarModeContent,
+.wideAppointmentContactResults .centerState,
+.wideAppointmentContactResults .emptySheetState {
+  min-height: 160px;
+}
+
+.wideAppointmentForm {
+  min-width: 0;
+  min-height: 0;
+  margin-inline: -14px;
+  overflow: hidden;
 }
 
 .mobileDock {
@@ -8173,13 +8304,9 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop {
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: flex-start;
-  box-sizing: border-box;
-  padding:
-    0
-    max(calc((100% - 1280px) / 2 + clamp(18px, 3vw, 42px) + 10px), calc(clamp(18px, 3vw, 42px) + 10px))
-    calc(76px + env(safe-area-inset-bottom));
+  padding: 0;
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop::before {
@@ -8187,6 +8314,9 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .attachmentsSheetBackdrop .attachmentsSheet {
+  position: fixed;
+  left: clamp(14px, var(--attachment-sheet-left, 24px), calc(100vw - 374px));
+  bottom: calc(var(--attachment-sheet-bottom, 78px) + 8px);
   width: min(360px, calc(100% - 28px));
   max-height: min(360px, calc(100% - 92px));
   margin: 0;

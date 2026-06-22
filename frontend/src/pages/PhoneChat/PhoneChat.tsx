@@ -74,7 +74,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
-import { PhoneCalendar } from '@/pages/PhoneCalendar'
+import { PhoneCalendar, type PhoneCalendarCreateRequest } from '@/pages/PhoneCalendar'
 import { PhoneSettings } from '@/pages/PhoneSettings'
 import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useBottomSheetDismiss, usePaymentGatewayCapabilities, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
@@ -252,6 +252,7 @@ type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
 type PaymentMode = 'single' | 'partial' | 'subscription'
 type PaymentSheetStep = 'choice' | 'form'
 type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | 'tag' | null
+type WideSidebarMode = 'chats' | 'newChat' | 'appointment'
 type ChatMoreMode = 'default' | 'agentControls'
 type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'ready_human'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
@@ -3118,6 +3119,9 @@ export const PhoneChat: React.FC = () => {
   const [accessState, setAccessState] = useState<AccessState>(() => getAccessState(deviceMode))
   const isWideChatDevice = deviceMode === 'tablet' || deviceMode === 'desktop'
   const [wideRailSection, setWideRailSection] = useState<PhoneSection>('chat')
+  const [wideSidebarMode, setWideSidebarMode] = useState<WideSidebarMode>('chats')
+  const [wideAppointmentDefaults, setWideAppointmentDefaults] = useState<PhoneCalendarCreateRequest | null>(null)
+  const [wideAppointmentContact, setWideAppointmentContact] = useState<Contact | null>(null)
   const activeRailSection = isWideChatDevice ? wideRailSection : 'chat'
   const [chats, setChats] = useState<ChatContact[]>([])
   const [chatsLoading, setChatsLoading] = useState(true)
@@ -3174,6 +3178,7 @@ export const PhoneChat: React.FC = () => {
   const [replyingToMessageId, setReplyingToMessageId] = useState<string | null>(null)
   const [messageText, setMessageText] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MobileChatAttachment[]>([])
+  const [attachmentSheetAnchor, setAttachmentSheetAnchor] = useState<{ left: number; bottom: number } | null>(null)
   const [cameraSharePhoto, setCameraSharePhoto] = useState<MobilePhotoAttachment | null>(null)
   const [cameraShareQuery, setCameraShareQuery] = useState('')
   const [cameraShareCaption, setCameraShareCaption] = useState('')
@@ -3204,6 +3209,7 @@ export const PhoneChat: React.FC = () => {
   const [restorePrompt, setRestorePrompt] = useState<WhatsAppApiPendingRestore | null>(null)
   const [restoringNumber, setRestoringNumber] = useState(false)
   const dismissedRestoreIdsRef = useRef<Set<string>>(new Set())
+  const composerPlusRef = useRef<HTMLButtonElement | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
@@ -5292,18 +5298,32 @@ export const PhoneChat: React.FC = () => {
   useEffect(() => {
     if (accessState !== 'allowed') return
 
-    const shouldSearchContacts = sheet === 'newChat' || Boolean(cameraSharePhoto) || (!hasChats && chatQuery.trim().length >= 2)
+    if (!isWideChatDevice && wideSidebarMode !== 'chats') {
+      setWideSidebarMode('chats')
+      setWideAppointmentDefaults(null)
+      setWideAppointmentContact(null)
+      setContactQuery('')
+    }
+  }, [accessState, isWideChatDevice, wideSidebarMode])
+
+  useEffect(() => {
+    if (accessState !== 'allowed') return
+
+    const shouldSearchContacts = sheet === 'newChat' ||
+      (isWideChatDevice && wideSidebarMode !== 'chats') ||
+      Boolean(cameraSharePhoto) ||
+      (!hasChats && chatQuery.trim().length >= 2)
     if (!shouldSearchContacts) {
       setContactResults([])
       return
     }
 
     const timer = window.setTimeout(() => {
-      loadContactResults(sheet === 'newChat' ? contactQuery : cameraSharePhoto ? cameraShareQuery : chatQuery)
+      loadContactResults(sheet === 'newChat' || (isWideChatDevice && wideSidebarMode !== 'chats') ? contactQuery : cameraSharePhoto ? cameraShareQuery : chatQuery)
     }, 160)
 
     return () => window.clearTimeout(timer)
-  }, [accessState, cameraSharePhoto, cameraShareQuery, chatQuery, contactQuery, hasChats, loadContactResults, sheet])
+  }, [accessState, cameraSharePhoto, cameraShareQuery, chatQuery, contactQuery, hasChats, isWideChatDevice, loadContactResults, sheet, wideSidebarMode])
 
   useEffect(() => {
     if (sheet !== 'settings') {
@@ -5315,6 +5335,9 @@ export const PhoneChat: React.FC = () => {
     }
     if (sheet !== 'clabe') {
       setClabeFormOpen(false)
+    }
+    if (sheet !== 'attachments') {
+      setAttachmentSheetAnchor(null)
     }
   }, [sheet])
 
@@ -5730,6 +5753,9 @@ export const PhoneChat: React.FC = () => {
     setConversationOpen(true)
     if (isWideChatDevice) {
       setWideRailSection('chat')
+      setWideSidebarMode('chats')
+      setWideAppointmentDefaults(null)
+      setWideAppointmentContact(null)
     }
     setTagDropdownOpen(false)
     setTagActionContactId(null)
@@ -5766,6 +5792,9 @@ export const PhoneChat: React.FC = () => {
     setConversationOpen(true)
     if (isWideChatDevice) {
       setWideRailSection('chat')
+      setWideSidebarMode('chats')
+      setWideAppointmentDefaults(null)
+      setWideAppointmentContact(null)
     }
     setTagDropdownOpen(false)
     setTagActionContactId(null)
@@ -6003,6 +6032,10 @@ export const PhoneChat: React.FC = () => {
     if (!isWideChatDevice) return
 
     setWideRailSection(section)
+    setWideSidebarMode('chats')
+    setWideAppointmentDefaults(null)
+    setWideAppointmentContact(null)
+    setContactQuery('')
     closeSwipeActions()
     setChatQuickActionsContact(null)
     setTagDropdownOpen(false)
@@ -6024,6 +6057,63 @@ export const PhoneChat: React.FC = () => {
     setConversationSearchQuery('')
     setConversationSearchIndex(0)
     setCameraSharePhoto(null)
+  }
+
+  const closeWideSidebarMode = () => {
+    setWideSidebarMode('chats')
+    setWideAppointmentDefaults(null)
+    setWideAppointmentContact(null)
+    setContactQuery('')
+  }
+
+  const openNewChatFlow = () => {
+    setContactQuery('')
+    setArchivedViewOpen(false)
+    setAgentPriorityViewOpen(false)
+    closeSwipeActions()
+    closeConversationSearch()
+    setTagDropdownOpen(false)
+    closeConversationAgentDropdown()
+    setContactInfoOpen(false)
+
+    if (isWideChatDevice) {
+      actionSheetDismiss.requestClose()
+      setWideSidebarMode('newChat')
+      setWideAppointmentDefaults(null)
+      setWideAppointmentContact(null)
+      return
+    }
+
+    setSheet('newChat')
+  }
+
+  const openAttachmentsSheet = () => {
+    if (isWideChatDevice) {
+      const rect = composerPlusRef.current?.getBoundingClientRect()
+      setAttachmentSheetAnchor(rect ? {
+        left: Math.max(12, rect.left),
+        bottom: Math.max(0, window.innerHeight - rect.top)
+      } : null)
+    } else {
+      setAttachmentSheetAnchor(null)
+    }
+    setSheet('attachments')
+  }
+
+  const handleWideCalendarCreateRequest = (request: PhoneCalendarCreateRequest) => {
+    setWideAppointmentDefaults(request)
+    setWideAppointmentContact(null)
+    setWideSidebarMode('appointment')
+    setContactQuery('')
+    setArchivedViewOpen(false)
+    setAgentPriorityViewOpen(false)
+    setSelectedCalendarId(request.calendarId)
+    actionSheetDismiss.requestClose()
+    closeSwipeActions()
+    closeConversationSearch()
+    setTagDropdownOpen(false)
+    closeConversationAgentDropdown()
+    setContactInfoOpen(false)
   }
 
   const openConversationSearch = () => {
@@ -6321,6 +6411,11 @@ export const PhoneChat: React.FC = () => {
     setConversationAgentDropdownOpen(false)
     closeConversationSearch()
     setContactInfoOpen(false)
+    if (isWideChatDevice) {
+      setWideSidebarMode('chats')
+      setWideAppointmentDefaults(null)
+      setWideAppointmentContact(null)
+    }
     setSheet('appointment')
     closeSwipeActions()
   }
@@ -8211,17 +8306,26 @@ export const PhoneChat: React.FC = () => {
         ...payload
       }, accessToken || undefined)
 
-      actionSheetDismiss.requestClose()
+      if (wideSidebarMode === 'appointment') {
+        setWideSidebarMode('chats')
+        setWideAppointmentDefaults(null)
+        setWideAppointmentContact(null)
+        setContactQuery('')
+      } else {
+        actionSheetDismiss.requestClose()
+      }
       showToast('success', 'Cita agendada', 'La cita quedó guardada.')
-      setMessages((current) => [
-        ...current,
-        {
-          id: `appointment-${Date.now()}`,
-          text: 'Cita agendada desde este chat.',
-          date: new Date().toISOString(),
-          direction: 'system'
-        }
-      ])
+      if (wideSidebarMode !== 'appointment') {
+        setMessages((current) => [
+          ...current,
+          {
+            id: `appointment-${Date.now()}`,
+            text: 'Cita agendada desde este chat.',
+            date: new Date().toISOString(),
+            direction: 'system'
+          }
+        ])
+      }
     } catch (error) {
       showToast('error', 'No se pudo agendar', 'Intenta otra vez en unos minutos.')
       throw error
@@ -9335,7 +9439,7 @@ export const PhoneChat: React.FC = () => {
           )}
           <strong>Aún no hay chats</strong>
           <small>Toca el botón verde para buscar un contacto e iniciar una conversación.</small>
-          <button type="button" onClick={() => setSheet('newChat')}>
+          <button type="button" onClick={openNewChatFlow}>
             <Plus size={17} />
             Nuevo chat
           </button>
@@ -11061,6 +11165,113 @@ export const PhoneChat: React.FC = () => {
       </div>
     </div>
   )
+
+  const renderWideSidebarContactOption = (contact: Contact, onSelect: (contact: Contact) => void) => (
+    <button
+      key={contact.id}
+      type="button"
+      className={styles.wideSidebarContactOption}
+      onClick={() => onSelect(contact)}
+    >
+      {renderAvatar(contact)}
+      <span className={styles.chatMain}>
+        <strong>{getContactName(contact)}</strong>
+        <small>{getContactDetail(contact)}</small>
+      </span>
+    </button>
+  )
+
+  const renderWideSidebarContactResults = (onSelect: (contact: Contact) => void) => {
+    if (contactsLoading) {
+      return (
+        <div className={styles.centerState}>
+          <Loader2 size={20} className={styles.spinIcon} />
+          <span>Buscando contactos...</span>
+        </div>
+      )
+    }
+
+    if (contactResults.length > 0) {
+      return (
+        <div className={styles.wideSidebarContactList}>
+          {contactResults.map((contact) => renderWideSidebarContactOption(contact, onSelect))}
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.emptySheetState}>
+        <User size={24} />
+        <strong>No hay contactos</strong>
+        <span>Busca por nombre, número o correo.</span>
+      </div>
+    )
+  }
+
+  const renderWideNewChatPanel = () => (
+    <div className={styles.wideSidebarModeContent}>
+      {renderWideSidebarContactResults(handleSelectContact)}
+    </div>
+  )
+
+  const renderWideAppointmentPanel = () => {
+    const appointmentRange = wideAppointmentDefaults || defaultAppointmentRange
+    const appointmentContact = toPaymentContact(wideAppointmentContact)
+    const appointmentTitle = wideAppointmentDefaults?.title || ''
+    const showContactResults = contactQuery.trim().length > 0
+
+    return (
+      <div className={`${styles.wideSidebarModeContent} ${styles.wideAppointmentModeContent}`}>
+        {wideAppointmentContact && (
+          <div className={styles.wideSelectedContact}>
+            {renderAvatar(wideAppointmentContact)}
+            <span>
+              <strong>{getContactName(wideAppointmentContact)}</strong>
+              <small>{getContactDetail(wideAppointmentContact)}</small>
+            </span>
+            <button type="button" onClick={() => setWideAppointmentContact(null)} aria-label="Quitar contacto">
+              <X size={15} />
+            </button>
+          </div>
+        )}
+
+        {showContactResults && (
+          <div className={styles.wideAppointmentContactResults}>
+            {renderWideSidebarContactResults((contact) => {
+              setWideAppointmentContact(contact)
+              setContactQuery('')
+            })}
+          </div>
+        )}
+
+        <div className={styles.wideAppointmentForm}>
+          <AppointmentModal
+            key={`wide-calendar-appointment-${appointmentRange.start}-${appointmentRange.end}-${appointmentContact?.id || 'empty'}`}
+            isOpen
+            onClose={closeWideSidebarMode}
+            mode="create"
+            calendar={selectedCalendar}
+            defaultStart={appointmentRange.start}
+            defaultEnd={appointmentRange.end}
+            defaultTimeZone={appointmentRange.timeZone}
+            defaultTitle={appointmentContact?.name || appointmentTitle}
+            initialContact={appointmentContact}
+            lockInitialContact={Boolean(appointmentContact?.id)}
+            enableGuests
+            defaultScheduleMode="custom"
+            accessToken={accessToken || undefined}
+            locationId={locationId || undefined}
+            presentation="embedded"
+            calendars={calendars}
+            calendarsLoading={calendarsLoading}
+            selectedCalendarId={selectedCalendar?.id || ''}
+            onCalendarChange={setSelectedCalendarId}
+            onSave={handleCreateAppointment}
+          />
+        </div>
+      </div>
+    )
+  }
 
   const renderChatSettingsSheet = () => {
     const renderSettingsDetail = (title: string, children: React.ReactNode) => (
@@ -13287,14 +13498,14 @@ export const PhoneChat: React.FC = () => {
       <button type="button" className={styles.roundButton} onClick={() => handlePickPhoto('camera', 'cameraShare')} aria-label="Abrir cámara">
         <Camera size={24} />
       </button>
-      <button type="button" className={styles.newChatButton} onClick={() => setSheet('newChat')} aria-label="Nuevo chat">
+      <button type="button" className={styles.newChatButton} onClick={openNewChatFlow} aria-label="Nuevo chat">
         <Plus size={32} />
       </button>
     </div>
   )
 
   const renderTabletNewChatAction = () => (
-    <button type="button" className={styles.tabletNewChatButton} onClick={() => setSheet('newChat')} aria-label="Nuevo chat">
+    <button type="button" className={styles.tabletNewChatButton} onClick={openNewChatFlow} aria-label="Nuevo chat">
       <Plus size={24} />
     </button>
   )
@@ -13586,7 +13797,7 @@ export const PhoneChat: React.FC = () => {
     if (activeRailSection === 'calendar') {
       return (
         <section className={styles.wideSectionPanel} data-wide-rail-section="calendar" aria-label="Calendario">
-          <PhoneCalendar embedded />
+          <PhoneCalendar embedded onCreateAppointmentRequest={handleWideCalendarCreateRequest} />
         </section>
       )
     }
@@ -13653,6 +13864,30 @@ export const PhoneChat: React.FC = () => {
     return <PhoneStartupLoader />
   }
 
+  const wideSidebarEditing = isWideChatDevice && wideSidebarMode !== 'chats'
+  const sidebarSearchExpanded = wideSidebarMode === 'chats' && chatSearchExpanded
+  const sidebarTitle = wideSidebarEditing
+    ? wideSidebarMode === 'newChat' ? 'Nuevo chat' : 'Nueva cita'
+    : 'Chats'
+  const sidebarSearchValue = wideSidebarEditing ? contactQuery : chatQuery
+  const sidebarSearchPlaceholder = wideSidebarMode === 'appointment'
+    ? 'Buscar contacto para la cita'
+    : wideSidebarMode === 'newChat'
+      ? 'Buscar por nombre, número o correo'
+      : 'Buscar chats o contactos'
+  const sidebarSearchLabel = wideSidebarMode === 'appointment'
+    ? 'Buscar contacto para la cita'
+    : wideSidebarMode === 'newChat'
+      ? 'Buscar contacto para nuevo chat'
+      : 'Buscar chats o contactos'
+  const sheetBackdropStyle = sheet === 'attachments' && attachmentSheetAnchor
+    ? {
+        ...actionSheetDismiss.backdropStyle,
+        '--attachment-sheet-left': `${attachmentSheetAnchor.left}px`,
+        '--attachment-sheet-bottom': `${attachmentSheetAnchor.bottom}px`
+      } as React.CSSProperties
+    : actionSheetDismiss.backdropStyle
+
   return (
     <main
       className={`${styles.phoneChatPage} ${conversationVisible ? styles.conversationOpen : ''} ${sheet ? styles.sheetOpen : ''}`}
@@ -13686,9 +13921,9 @@ export const PhoneChat: React.FC = () => {
         )}
 
         <section className={styles.chatListScreen} aria-label="Lista de chats">
-          <header className={`${styles.chatListHeader} ${chatSearchExpanded ? styles.chatListHeaderSearchExpanded : ''}`}>
+          <header className={`${styles.chatListHeader} ${sidebarSearchExpanded ? styles.chatListHeaderSearchExpanded : ''} ${wideSidebarEditing ? styles.chatListHeaderWideMode : ''}`}>
             {!isWideChatDevice && (
-              <div className={styles.topActionRow} aria-hidden={chatSearchExpanded}>
+              <div className={styles.topActionRow} aria-hidden={sidebarSearchExpanded}>
                 {renderAgentRobotButton({
                   active: agentEnabled,
                   label: 'Agente conversacional',
@@ -13698,7 +13933,7 @@ export const PhoneChat: React.FC = () => {
                 {renderChatHeaderActions()}
               </div>
             )}
-            {isWideChatDevice && !chatSearchExpanded && (
+            {isWideChatDevice && wideSidebarMode === 'chats' && !sidebarSearchExpanded && (
               <div className={styles.tabletAgentHeroRow}>
                 {renderAgentRobotButton({
                   active: agentEnabled,
@@ -13709,13 +13944,18 @@ export const PhoneChat: React.FC = () => {
                 {agentEnabled && renderAgentStatusBubble(styles.tabletAgentStatusBubble)}
               </div>
             )}
-            <div className={styles.chatTitleRow} aria-hidden={chatSearchExpanded}>
+            <div className={styles.chatTitleRow} aria-hidden={sidebarSearchExpanded}>
               <div className={styles.chatTitleMain}>
-                <h1>Chats</h1>
-                {isWideChatDevice && renderTabletNewChatAction()}
+                {wideSidebarEditing && (
+                  <button type="button" className={styles.wideSidebarBackButton} onClick={closeWideSidebarMode} aria-label="Volver a chats">
+                    <ChevronLeft size={22} />
+                  </button>
+                )}
+                <h1>{sidebarTitle}</h1>
+                {isWideChatDevice && wideSidebarMode === 'chats' && renderTabletNewChatAction()}
               </div>
               <div className={styles.chatTitleRight}>
-                {chatPhoneFilterEnabled && (
+                {chatPhoneFilterEnabled && wideSidebarMode === 'chats' && (
                   <label className={styles.chatPhoneSelector}>
                     <span>Número</span>
                     <PhoneSelect
@@ -13740,40 +13980,58 @@ export const PhoneChat: React.FC = () => {
             <div className={styles.searchBox}>
               <Search size={22} />
               <input
-                value={chatQuery}
-                onChange={(event) => setChatQuery(event.target.value)}
-                placeholder="Buscar chats o contactos"
-                aria-label="Buscar chats o contactos"
+                value={sidebarSearchValue}
+                onChange={(event) => {
+                  if (wideSidebarEditing) {
+                    setContactQuery(event.target.value)
+                  } else {
+                    setChatQuery(event.target.value)
+                  }
+                }}
+                placeholder={sidebarSearchPlaceholder}
+                aria-label={sidebarSearchLabel}
               />
-              {chatQuery && (
-                <button type="button" onClick={() => setChatQuery('')} aria-label="Limpiar búsqueda">
+              {sidebarSearchValue && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (wideSidebarEditing) {
+                      setContactQuery('')
+                    } else {
+                      setChatQuery('')
+                    }
+                  }}
+                  aria-label="Limpiar búsqueda"
+                >
                   <X size={17} />
                 </button>
               )}
             </div>
-            <div className={styles.filterChips} data-phone-chat-scrollable="true" aria-hidden={chatSearchExpanded}>
-              {([
-                ['all', 'Todos'],
-                ['unread', unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos'],
-                ['appointments', 'Agendados'],
-                ['customers', customersLabel],
-                ['leads', leadsLabel]
-              ] as Array<[ChatFilter, string]>).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={chatFilter === key ? styles.filterChipActive : ''}
-                  aria-pressed={chatFilter === key}
-                  onClick={() => {
-                    setArchivedViewOpen(false)
-                    setAgentPriorityViewOpen(false)
-                    setChatFilter(key)
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {wideSidebarMode === 'chats' && (
+              <div className={styles.filterChips} data-phone-chat-scrollable="true" aria-hidden={sidebarSearchExpanded}>
+                {([
+                  ['all', 'Todos'],
+                  ['unread', unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos'],
+                  ['appointments', 'Agendados'],
+                  ['customers', customersLabel],
+                  ['leads', leadsLabel]
+                ] as Array<[ChatFilter, string]>).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={chatFilter === key ? styles.filterChipActive : ''}
+                    aria-pressed={chatFilter === key}
+                    onClick={() => {
+                      setArchivedViewOpen(false)
+                      setAgentPriorityViewOpen(false)
+                      setChatFilter(key)
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </header>
 
           <div
@@ -13783,7 +14041,11 @@ export const PhoneChat: React.FC = () => {
             onClickCapture={handleChatListClickCapture}
           >
             <div className={styles.chatListElasticContent} data-phone-elastic-target="true">
-              {renderChats()}
+              {wideSidebarEditing && wideSidebarMode === 'newChat'
+                ? renderWideNewChatPanel()
+                : wideSidebarEditing && wideSidebarMode === 'appointment'
+                  ? renderWideAppointmentPanel()
+                  : renderChats()}
             </div>
           </div>
 
@@ -13943,7 +14205,7 @@ export const PhoneChat: React.FC = () => {
                         renderVoiceComposerPanel()
                       ) : (
                         <>
-                          <button type="button" className={styles.composerPlus} onClick={() => setSheet('attachments')} aria-label="Abrir adjuntos">
+                          <button type="button" ref={composerPlusRef} className={styles.composerPlus} onClick={openAttachmentsSheet} aria-label="Abrir adjuntos">
                             <Plus size={24} />
                           </button>
                           <div className={`${styles.messageInputWrap} ${canOpenScheduleSheet ? styles.messageInputWrapWithSchedule : ''}`}>
@@ -14056,7 +14318,7 @@ export const PhoneChat: React.FC = () => {
       {sheet && (
           <div
             className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' || sheet === 'schedule' || sheet === 'tag' ? styles.darkSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'appointment' ? styles.actionFormSheetBackdrop : ''} ${sheet === 'attachments' ? styles.attachmentsSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
-          style={actionSheetDismiss.backdropStyle}
+          style={sheetBackdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
           <section
