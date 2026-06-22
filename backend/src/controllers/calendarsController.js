@@ -1775,7 +1775,14 @@ export async function updateCalendar(req, res) {
     const remoteCalendarId = existing?.ghlCalendarId || id;
     if (context.accessToken && remoteCalendarId && existing?.ghlCalendarId) {
       try {
-        const { bookingForm, bookingCompletion, customEvents, ...remoteUpdateData } = updateData;
+        const {
+          bookingForm,
+          bookingCompletion,
+          customEvents,
+          antiTrackingEnabled,
+          anti_tracking_enabled,
+          ...remoteUpdateData
+        } = updateData;
         const preservedBookingForm = bookingForm || calendar?.bookingForm || existing?.bookingForm;
         const preservedBookingCompletion = bookingCompletion || calendar?.bookingCompletion || existing?.bookingCompletion;
         const preservedCustomEvents = customEvents || calendar?.customEvents || existing?.customEvents;

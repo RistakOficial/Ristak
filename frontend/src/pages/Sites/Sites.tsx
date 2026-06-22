@@ -1441,6 +1441,7 @@ const normalizeLegacyLandingBlockSpacing = (block: SiteBlock): SiteBlock => {
 }
 const normalizeSiteForEditor = (site: PublicSite): PublicSite => ({
   ...site,
+  antiTrackingEnabled: site.antiTrackingEnabled !== false,
   blocks: site.blocks?.map(normalizeLegacyLandingBlockSpacing)
 })
 const isImportedHtmlSite = (site?: PublicSite | null) =>
@@ -2203,8 +2204,25 @@ const normalizeRouteInput = (value: string) => value
 
 const getRoutePath = (site?: PublicSite | null) => `/${normalizeRouteInput(site?.slug || '')}`
 
-const buildLivePublicUrl = (site: PublicSite, domainConfig: SitesDomainConfig) =>
-  domainConfig.domain ? `https://${domainConfig.domain}${getRoutePath(site)}` : ''
+const appendNoTrackToUrl = (url: string) => {
+  if (!url) return url
+  try {
+    const parsed = new URL(url, window.location.origin)
+    parsed.searchParams.set('no_track', '1')
+    return parsed.toString()
+  } catch {
+    const [base, hash = ''] = url.split('#')
+    const separator = base.includes('?') ? '&' : '?'
+    return `${base}${separator}no_track=1${hash ? `#${hash}` : ''}`
+  }
+}
+
+const shouldOpenSiteWithoutTracking = (site: PublicSite) => site.antiTrackingEnabled !== false
+
+const buildLivePublicUrl = (site: PublicSite, domainConfig: SitesDomainConfig, options: { noTrack?: boolean } = {}) => {
+  const url = domainConfig.domain ? `https://${domainConfig.domain}${getRoutePath(site)}` : ''
+  return options.noTrack ? appendNoTrackToUrl(url) : url
+}
 
 const getPublicRouteLabel = (site: PublicSite, domainConfig: SitesDomainConfig) =>
   domainConfig.domain ? `${domainConfig.domain}${getRoutePath(site)}` : getRoutePath(site)
@@ -8048,6 +8066,7 @@ export const Sites: React.FC = () => {
           title: getPublicTitleForSave(siteToSave),
           description: siteToSave.description,
           theme: siteToSave.theme,
+          antiTrackingEnabled: siteToSave.antiTrackingEnabled !== false,
           metaCapiEnabled: siteToSave.metaCapiEnabled,
           metaEventName: siteToSave.metaEventName
         })
@@ -8891,6 +8910,7 @@ export const Sites: React.FC = () => {
         title: getPublicTitleForSave(siteToSave),
         description: siteToSave.description,
         theme: siteToSave.theme,
+        antiTrackingEnabled: siteToSave.antiTrackingEnabled !== false,
         metaCapiEnabled: siteToSave.metaCapiEnabled,
         metaEventName: siteToSave.metaEventName
       })
@@ -10017,7 +10037,9 @@ export const Sites: React.FC = () => {
 
   const handleOpenLiveEditorSite = () => {
     if (!editorSite || !isPublicSiteLive(editorSite, domainConfig)) return
-    const liveWindow = window.open(buildLivePublicUrl(editorSite, domainConfig), '_blank')
+    const liveWindow = window.open(buildLivePublicUrl(editorSite, domainConfig, {
+      noTrack: shouldOpenSiteWithoutTracking(editorSite)
+    }), '_blank')
     if (!liveWindow) {
       showToast('error', 'Ventana bloqueada', 'Permite popups para abrir el sitio en vivo.')
       return
@@ -10051,7 +10073,9 @@ export const Sites: React.FC = () => {
 
   const handlePreviewLibrarySite = async (site: PublicSite) => {
     if (isPublicSiteLive(site, domainConfig)) {
-      const liveWindow = window.open(buildLivePublicUrl(site, domainConfig), '_blank')
+      const liveWindow = window.open(buildLivePublicUrl(site, domainConfig, {
+        noTrack: shouldOpenSiteWithoutTracking(site)
+      }), '_blank')
       if (!liveWindow) {
         showToast('error', 'Ventana bloqueada', 'Permite popups para abrir el sitio en vivo.')
       } else {
@@ -10107,6 +10131,7 @@ export const Sites: React.FC = () => {
         title: getPublicTitleForSave(siteToUpdate),
         description: siteToUpdate.description,
         theme: siteToUpdate.theme,
+        antiTrackingEnabled: siteToUpdate.antiTrackingEnabled !== false,
         metaCapiEnabled: siteToUpdate.metaCapiEnabled,
         metaEventName: siteToUpdate.metaEventName
       })
@@ -25394,10 +25419,16 @@ const SiteSettingsPanelContent: React.FC<{
 }) => {
   const publicDomain = getPublicDomainPreview(domainConfig)
   const routePreview = `${publicDomain}/${routeValue || routePlaceholder}`
+  const antiTrackingEnabled = site.antiTrackingEnabled !== false
 
   const openNestedPanel = (callback: () => void) => {
     onBeforeOpenNested?.()
     callback()
+  }
+
+  const handleAntiTrackingChange = (enabled: boolean) => {
+    onPatchSite({ antiTrackingEnabled: enabled })
+    void onSaveSite()
   }
 
   return (
@@ -25424,6 +25455,26 @@ const SiteSettingsPanelContent: React.FC<{
         <div className={styles.editorSettingsRoutePreview}>
           <ExternalLink size={13} />
           <span>{routePreview}</span>
+        </div>
+      </section>
+
+      <section className={styles.editorSettingsSection}>
+        <div className={`${styles.editorSettingsMetaRow} ${antiTrackingEnabled ? styles.editorSettingsMetaRowActive : ''}`}>
+          <span className={styles.editorSettingsSectionIcon} aria-hidden="true"><EyeOff size={15} /></span>
+          <div>
+            <strong>Antitracking</strong>
+            <small>
+              {antiTrackingEnabled
+                ? 'Prendido: tus vueltas desde Ristak no ensucian la atribución.'
+                : 'Apagado: tus pruebas en vivo sí cuentan. Úsalo solo para experimentos.'}
+            </small>
+          </div>
+          <Switch
+            checked={antiTrackingEnabled}
+            disabled={disabled}
+            onChange={handleAntiTrackingChange}
+            aria-label="Activar antitracking"
+          />
         </div>
       </section>
 

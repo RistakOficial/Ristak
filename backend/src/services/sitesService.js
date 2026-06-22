@@ -3635,6 +3635,7 @@ function mapSite(row) {
     title: row.title || '',
     description: row.description || '',
     theme: parseJson(row.theme_json, DEFAULT_THEME),
+    antiTrackingEnabled: row.anti_tracking_enabled !== 0,
     metaCapiEnabled: Boolean(Number(row.meta_capi_enabled || 0)),
     metaEventName: normalizeSiteMetaEventName(row.meta_event_name, { allowNone: true }),
     renderDomainVerified: Boolean(Number(row.render_domain_verified || 0)),
@@ -8122,8 +8123,8 @@ export async function createSite(input = {}) {
   await db.run(`
     INSERT INTO public_sites (
       id, name, slug, site_type, status, domain, title, description, theme_json,
-      meta_capi_enabled, meta_event_name, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      anti_tracking_enabled, meta_capi_enabled, meta_event_name, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
     id,
     name,
@@ -8134,6 +8135,9 @@ export async function createSite(input = {}) {
     title,
     description || null,
     jsonString(theme),
+    input.antiTrackingEnabled === undefined && input.anti_tracking_enabled === undefined
+      ? 1
+      : normalizeBoolean(input.antiTrackingEnabled ?? input.anti_tracking_enabled),
     normalizeBoolean(input.metaCapiEnabled),
     initialMetaEventName
   ])
@@ -10317,6 +10321,9 @@ export async function updateSite(siteId, input = {}) {
     nextTheme.pages = normalizeSitePages({ siteType: nextSiteType, theme: nextTheme })
   }
   const nextMetaEventName = normalizeSiteMetaEventName(input.metaEventName || current.metaEventName, { allowNone: true })
+  const nextAntiTrackingEnabled = input.antiTrackingEnabled === undefined && input.anti_tracking_enabled === undefined
+    ? normalizeBoolean(current.antiTrackingEnabled)
+    : normalizeBoolean(input.antiTrackingEnabled ?? input.anti_tracking_enabled)
   const nextMetaEventParameters = pruneSiteMetaEventParametersForEvent(
     nextTheme.metaEventParameters || nextTheme.meta_event_parameters,
     nextMetaEventName
@@ -10338,6 +10345,7 @@ export async function updateSite(siteId, input = {}) {
       title = ?,
       description = ?,
       theme_json = ?,
+      anti_tracking_enabled = ?,
       meta_capi_enabled = ?,
       meta_event_name = ?,
       render_domain_verified = CASE WHEN ? THEN 0 ELSE render_domain_verified END,
@@ -10361,6 +10369,7 @@ export async function updateSite(siteId, input = {}) {
       : current.title,
     input.description === undefined ? current.description : cleanString(input.description) || null,
     jsonString(nextTheme),
+    nextAntiTrackingEnabled,
     input.metaCapiEnabled === undefined ? normalizeBoolean(current.metaCapiEnabled) : normalizeBoolean(input.metaCapiEnabled),
     nextMetaEventName,
     domainChanged ? 1 : 0,

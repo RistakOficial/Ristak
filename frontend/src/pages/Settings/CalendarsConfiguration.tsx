@@ -386,6 +386,24 @@ const buildCalendarShareUrl = (calendar?: Partial<CalendarType> | null) => {
   return calendar.publicUrl || ''
 }
 
+const appendNoTrackToUrl = (url: string) => {
+  if (!url) return url
+  try {
+    const parsed = new URL(url, window.location.origin)
+    parsed.searchParams.set('no_track', '1')
+    return parsed.toString()
+  } catch {
+    const [base, hash = ''] = url.split('#')
+    const separator = base.includes('?') ? '&' : '?'
+    return `${base}${separator}no_track=1${hash ? `#${hash}` : ''}`
+  }
+}
+
+const buildCalendarOpenUrl = (calendar?: Partial<CalendarType> | null) => {
+  const url = buildCalendarShareUrl(calendar)
+  return calendar?.antiTrackingEnabled === false ? url : appendNoTrackToUrl(url)
+}
+
 const isValidCalendarRedirectUrl = (value: string) => {
   const text = value.trim()
   if (!text) return false
@@ -525,7 +543,8 @@ export const CalendarsConfiguration: React.FC = () => {
     allowBookingForUnit: 'days',
     bookingForm: createDefaultCalendarBookingForm(),
     bookingCompletion: createDefaultCalendarBookingCompletion(),
-    customEvents: createDefaultCalendarCustomEvents()
+    customEvents: createDefaultCalendarCustomEvents(),
+    antiTrackingEnabled: true
   })
 
   // Estados del wizard de edición de calendario
@@ -1273,7 +1292,8 @@ export const CalendarsConfiguration: React.FC = () => {
       ...calendar,
       bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
       bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
-      customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
+      customEvents: normalizeCalendarCustomEvents(calendar.customEvents),
+      antiTrackingEnabled: calendar.antiTrackingEnabled !== false
     })
     setExpandedCalendarId(calendar.id)
     setCalendarWizardStep('basics')
@@ -1351,7 +1371,8 @@ export const CalendarsConfiguration: React.FC = () => {
         appoinmentPerDay: selectedCalendar.appoinmentPerDay,
         bookingForm,
         bookingCompletion,
-        customEvents
+        customEvents,
+        antiTrackingEnabled: selectedCalendar.antiTrackingEnabled !== false
       }
 
       // Agregar lookBusyConfig si está configurado
@@ -1441,7 +1462,8 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingForUnit: 'days',
         bookingForm: createDefaultCalendarBookingForm(),
         bookingCompletion: createDefaultCalendarBookingCompletion(),
-        customEvents: createDefaultCalendarCustomEvents()
+        customEvents: createDefaultCalendarCustomEvents(),
+        antiTrackingEnabled: true
       })
       await loadCalendars()
     } catch (error: any) {
@@ -1895,6 +1917,7 @@ export const CalendarsConfiguration: React.FC = () => {
     }))
     const selectedPublicPath = getCalendarSharePath(selectedCalendar)
     const selectedPublicUrl = buildCalendarShareUrl(selectedCalendar)
+    const selectedPublicOpenUrl = buildCalendarOpenUrl(selectedCalendar)
     const currentStepIndex = CALENDAR_WIZARD_STEPS.findIndex(step => step.id === calendarWizardStep)
     const safeStepIndex = currentStepIndex >= 0 ? currentStepIndex : 0
     const currentStep = CALENDAR_WIZARD_STEPS[safeStepIndex]
@@ -2174,7 +2197,7 @@ export const CalendarsConfiguration: React.FC = () => {
                         {selectedPublicUrl && (
                           <Button
                             variant="ghost"
-                            onClick={() => window.open(selectedPublicUrl, '_blank', 'noopener,noreferrer')}
+                            onClick={() => window.open(selectedPublicOpenUrl, '_blank', 'noopener,noreferrer')}
                           >
                             <Globe2 size={15} />
                             Abrir
@@ -2204,6 +2227,20 @@ export const CalendarsConfiguration: React.FC = () => {
                       </div>
                       <small>Usa letras, números y guiones. Al guardar se valida que no choque con otro calendario.</small>
                     </label>
+
+                    <div className={`${pageStyles.eventSwitchRow} ${pageStyles.editorFieldWide}`}>
+                      <div>
+                        <span>Antitracking</span>
+                        <small>
+                          Prendido: si abres este calendario desde Ristak, tu visita no ensucia la atribución. Te recomiendo dejarlo así; apágalo solo para experimentos.
+                        </small>
+                      </div>
+                      <Switch
+                        checked={selectedCalendar.antiTrackingEnabled !== false}
+                        onChange={(enabled) => updateSelectedCalendar({ antiTrackingEnabled: enabled })}
+                        aria-label="Activar antitracking del calendario"
+                      />
+                    </div>
 
                     <div className={pageStyles.googleSyncHint}>
                       <Link2 size={16} />

@@ -148,6 +148,7 @@ export interface Calendar {
   publicUrlSource?: string;
   publicUrlLockedToPublicCalendar?: boolean;
   publicUrlUnavailableReason?: string;
+  antiTrackingEnabled?: boolean;
 }
 
 export interface CalendarEvent {

@@ -823,6 +823,7 @@ function calendarRowToApi(row = {}) {
     bookingCompletion: normalizeCalendarBookingCompletionConfig(rawJson.bookingCompletion || rawJson.booking_completion || rawJson),
     customEvents: normalizeCalendarCustomEventsConfig(rawJson.customEvents || rawJson.custom_events || rawJson.metaEvent || rawJson.meta_event || {}),
     availabilityType: toInt(row.availability_type, 0),
+    antiTrackingEnabled: row.anti_tracking_enabled !== 0,
     source: row.source || 'ristak',
     syncStatus: row.sync_status || 'pending',
     syncError: row.sync_error || null,
@@ -842,6 +843,8 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
   const slotDuration = toInt(calendar.slotDuration ?? calendar.slot_duration, 60)
 
   const rawJson = getCalendarRawJsonWithBookingForm(calendar, options)
+  const hasAntiTrackingInput = Object.prototype.hasOwnProperty.call(calendar, 'antiTrackingEnabled') ||
+    Object.prototype.hasOwnProperty.call(calendar, 'anti_tracking_enabled')
 
   return {
     id,
@@ -878,6 +881,9 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
     allowCancellation: toBoolInt(calendar.allowCancellation ?? calendar.allow_cancellation, true),
     notes: cleanString(calendar.notes || ''),
     availabilityType: toInt(calendar.availabilityType ?? calendar.availability_type, 0),
+    antiTrackingEnabled: hasAntiTrackingInput
+      ? toBoolInt(calendar.antiTrackingEnabled ?? calendar.anti_tracking_enabled, true)
+      : null,
     source,
     syncStatus: options.syncStatus || calendar.syncStatus || calendar.sync_status || (source === 'ghl' ? 'synced' : 'pending'),
     syncError: options.syncError || calendar.syncError || calendar.sync_error || null,
@@ -906,9 +912,9 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
       pre_buffer, pre_buffer_unit, appoinment_per_slot, appoinment_per_day,
       allow_booking_after, allow_booking_after_unit, allow_booking_for,
       allow_booking_for_unit, open_hours, auto_confirm, allow_reschedule,
-      allow_cancellation, notes, availability_type, source, sync_status,
+      allow_cancellation, notes, availability_type, anti_tracking_enabled, source, sync_status,
       sync_error, last_synced_at, raw_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT (id) DO UPDATE SET
       ghl_calendar_id = COALESCE(excluded.ghl_calendar_id, calendars.ghl_calendar_id),
       location_id = COALESCE(excluded.location_id, calendars.location_id),
@@ -943,6 +949,10 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
       allow_cancellation = excluded.allow_cancellation,
       notes = excluded.notes,
       availability_type = excluded.availability_type,
+      anti_tracking_enabled = CASE
+        WHEN ? IS NULL THEN COALESCE(calendars.anti_tracking_enabled, 1)
+        ELSE excluded.anti_tracking_enabled
+      END,
       source = excluded.source,
       sync_status = excluded.sync_status,
       sync_error = excluded.sync_error,
@@ -984,11 +994,13 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
     normalized.allowCancellation,
     normalized.notes || null,
     normalized.availabilityType,
+    normalized.antiTrackingEnabled,
     normalized.source,
     normalized.syncStatus,
     normalized.syncError,
     normalized.syncStatus === 'synced' ? new Date().toISOString() : null,
-    normalized.rawJson
+    normalized.rawJson,
+    normalized.antiTrackingEnabled
   ])
 
   const row = await getLocalCalendar(normalized.id)

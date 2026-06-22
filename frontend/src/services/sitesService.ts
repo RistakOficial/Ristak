@@ -661,6 +661,7 @@ export interface PublicSite {
   title: string
   description: string
   theme: SiteTheme
+  antiTrackingEnabled?: boolean
   metaCapiEnabled: boolean
   metaEventName: string
   renderDomainVerified: boolean
