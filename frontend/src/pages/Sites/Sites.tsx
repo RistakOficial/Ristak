@@ -825,8 +825,8 @@ const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
 const DEFAULT_VIDEO_PLAYER_BACKGROUND = '#000000'
 const DEFAULT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(0, 0, 0, 0.84)'
 const LIGHT_VIDEO_FORM_GATE_VIDEO_BACKGROUND = 'rgba(248, 250, 252, 0.78)'
-const DEFAULT_VIDEO_PLAYER_COLOR = '#000000'
-const DEFAULT_VIDEO_PLAY_COLOR = '#ffffff'
+const DEFAULT_VIDEO_PLAYER_COLOR = 'rgba(0, 0, 0, 0.40)'
+const DEFAULT_VIDEO_PLAY_COLOR = 'rgba(255, 255, 255, 0.87)'
 const DEFAULT_VIDEO_TRANSPARENT = 'rgba(255, 255, 255, 0)'
 const DEFAULT_VIDEO_BORDER_FALLBACK = 'var(--rstk-border)'
 const DEFAULT_VIDEO_ORIENTATION: VideoOrientation = 'auto'
@@ -839,6 +839,7 @@ const LEGACY_VIDEO_PLAY_RADIUS = 999
 const DEFAULT_VIDEO_PLAY_SIZE = 160
 const DEFAULT_VIDEO_PLAY_ICON_SIZE = 95
 const DEFAULT_VIDEO_PLAY_RADIUS = 0
+const VIDEO_PLAY_RECTANGLE_RADIUS_MAX = 90
 const DEFAULT_VIDEO_CONTROL_PANEL_RADIUS = 24
 const DEFAULT_VIDEO_TRICK_PROGRESS_RAMP_PERCENT = 35
 const DEFAULT_VIDEO_TRICK_PROGRESS_PEAK_PERCENT = 88
@@ -2836,7 +2837,8 @@ const getVideoPlayIconSizeValue = (settings: Record<string, unknown>) => {
 const getVideoPlayRadiusValue = (settings: Record<string, unknown>, shape: VideoPlayShape) => {
   if (isLegacyDefaultVideoPlay(settings)) return DEFAULT_VIDEO_PLAY_RADIUS
   const defaultRadius = shape === 'rectangle' ? DEFAULT_VIDEO_PLAY_RADIUS : LEGACY_VIDEO_PLAY_RADIUS
-  return getSettingNumber(settings, 'videoPlayRadius', defaultRadius, 0, LEGACY_VIDEO_PLAY_RADIUS)
+  const maxRadius = shape === 'rectangle' ? VIDEO_PLAY_RECTANGLE_RADIUS_MAX : LEGACY_VIDEO_PLAY_RADIUS
+  return getSettingNumber(settings, 'videoPlayRadius', defaultRadius, 0, maxRadius)
 }
 
 const getVideoControlPanelRadiusValue = (settings: Record<string, unknown>) =>
@@ -24099,7 +24101,7 @@ const VideoPlayerSettingsControls: React.FC<{
                   label="Radio del player"
                   value={getVideoPlayRadiusValue(settings, playShape)}
                   min={0}
-                  max={LEGACY_VIDEO_PLAY_RADIUS}
+                  max={VIDEO_PLAY_RECTANGLE_RADIUS_MAX}
                   onChange={(value) => onPatchSettings({ videoPlayRadius: value, videoPlayShape: playShape })}
                   onCommit={onSave}
                 />
