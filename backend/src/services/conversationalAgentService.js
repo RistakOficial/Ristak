@@ -115,6 +115,8 @@ export const ADVANCED_CLOSING_CONTEXT_FIELDS = [
   { key: 'urgencyLevel', label: 'Urgencia detectada' },
   { key: 'objection', label: 'Objecion principal' },
   { key: 'decisionSignal', label: 'Senal de decision' },
+  { key: 'appointmentIntentQuality', label: 'Calidad de intencion de agenda' },
+  { key: 'priceShoppingRisk', label: 'Riesgo de solo comparar precio' },
   { key: 'productInterest', label: 'Producto o servicio de interes' },
   { key: 'valueQuestion', label: 'Pregunta sobre valor' },
   { key: 'timingPreference', label: 'Tiempo o disponibilidad deseada' },

@@ -2108,6 +2108,43 @@ test('instrucciones del agente incluyen anticipo y acción final configurados', 
   assert.match(instructions, /asigna el contacto a Ana Ventas/)
 })
 
+test('instrucciones de agenda por IA distinguen urgencia real de falso avance por precio', () => {
+  const instructions = buildConversationalInstructions({
+    config: {
+      objective: 'citas',
+      customObjective: '',
+      successAction: 'book_appointment',
+      requiredData: '',
+      handoffRules: '',
+      extraInstructions: '',
+      allowEmojis: false,
+      closingStrategyMode: 'system',
+      closingStrategyCustom: '',
+      goalWorkflow: {
+        appointments: {
+          owner: 'ai',
+          calendarId: 'cal_test',
+          allowOverlappingAppointments: false
+        }
+      }
+    },
+    businessContext: '',
+    brandVoice: '',
+    businessName: 'Clinica Sol',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: null,
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  })
+
+  assert.match(instructions, /Flujo de agenda configurado/)
+  assert.match(instructions, /Este agente debe intentar agendar por IA/)
+  assert.match(instructions, /Si la persona está claramente urgida y pide agendar con motivo real/)
+  assert.match(instructions, /registra appointmentIntentQuality\/priceShoppingRisk/)
+  assert.match(instructions, /no ejecutes book_appointment hasta que confirme un horario real/)
+  assert.match(instructions, /Urgencia real para agendar vs falso avance/)
+})
+
 test('instrucciones de venta completa no piden comprobante aunque exista deposito legacy', () => {
   const instructions = buildConversationalInstructions({
     config: {
@@ -2178,6 +2215,8 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
       contactReason: 'pierde leads por responder tarde',
       realProblem: 'sus conversaciones se enfrían antes de que el equipo conteste',
       problemMagnitudeAwareness: 'ya entiende que cada hora de espera enfria la intencion de compra',
+      appointmentIntentQuality: 'alta: pidio hablar hoy y acepto avanzar con horario concreto',
+      priceShoppingRisk: 'bajo: pregunto valor despues de explicar el problema',
       desiredOutcome: 'responder más rápido sin contratar otra persona'
     },
     missingFields: ['whyNow', 'consequenceIfNoAction']
@@ -2201,6 +2240,11 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
   assert.match(instructions, /Puntos aprendidos de esta conversación/)
   assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
   assert.match(instructions, /Conciencia de magnitud del problema: ya entiende que cada hora/)
+  assert.match(instructions, /Calidad de intencion de agenda: alta/)
+  assert.match(instructions, /Riesgo de solo comparar precio: bajo/)
+  assert.match(instructions, /Urgencia real para agendar vs falso avance/)
+  assert.match(instructions, /no la hagas pasar por interrogatorio/)
+  assert.match(instructions, /falso positivo de avance/)
   assert.match(instructions, /update_closing_context/)
   assert.match(instructions, /Parámetros del negocio para el guión de fábrica/)
   assert.match(instructions, /El guión de fábrica manda completo/)
@@ -2247,16 +2291,20 @@ test('memoria de cierre avanzado solo acepta parametros del contrato', () => {
     {
       whyNow: 'tiene una fecha encima',
       problemMagnitudeAwareness: 'todavia cree que puede esperar aunque perderia la fecha',
+      appointmentIntentQuality: 'dudosa: dice que agenda pero no confirma dia ni hora',
+      priceShoppingRisk: 'alto: insiste en precio y evita contar contexto',
       urgencyLevel: 'alta',
       campoInventado: 'no debe guardarse'
     },
     { updatedBy: 'agent', nowIso: '2026-06-13T10:00:00.000Z' }
   )
 
-  assert.deepEqual(result.changedKeys.sort(), ['problemMagnitudeAwareness', 'urgencyLevel', 'whyNow'])
+  assert.deepEqual(result.changedKeys.sort(), ['appointmentIntentQuality', 'priceShoppingRisk', 'problemMagnitudeAwareness', 'urgencyLevel', 'whyNow'])
   assert.equal(result.context.contactReason, 'quiere saber precios')
   assert.equal(result.context.whyNow, 'tiene una fecha encima')
   assert.equal(result.context.problemMagnitudeAwareness, 'todavia cree que puede esperar aunque perderia la fecha')
+  assert.equal(result.context.appointmentIntentQuality, 'dudosa: dice que agenda pero no confirma dia ni hora')
+  assert.equal(result.context.priceShoppingRisk, 'alto: insiste en precio y evita contar contexto')
   assert.equal(result.context.urgencyLevel, 'alta')
   assert.equal(result.context.campoInventado, undefined)
   assert.equal(result.context.updatedBy, 'agent')
