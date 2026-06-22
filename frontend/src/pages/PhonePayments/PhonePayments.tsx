@@ -956,6 +956,7 @@ export const PhonePayments: React.FC = () => {
                 </div>
               )}
             </section>
+            <div className={styles.selectBottomSpacer} aria-hidden="true" />
           </section>
         )}
       </PhonePageTransition>

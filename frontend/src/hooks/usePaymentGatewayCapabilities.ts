@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getIntegrationsStatus } from '@/services/integrationsService'
+import { getIntegrationsStatus, readCachedIntegrationsStatus, type IntegrationsStatus } from '@/services/integrationsService'
 
 export type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago'
 
@@ -16,12 +16,29 @@ interface PaymentGatewayCapabilities {
   subscriptionProviders: PaymentGatewayProvider[]
 }
 
+interface PaymentGatewayConnectionState {
+  loading: boolean
+  highLevelConnected: boolean
+  stripeConnected: boolean
+  conektaConnected: boolean
+  mercadoPagoConnected: boolean
+}
+
+function getConnectionStateFromStatus(status: IntegrationsStatus | null, loading: boolean): PaymentGatewayConnectionState {
+  return {
+    loading,
+    highLevelConnected: Boolean(status?.highlevel?.connected),
+    stripeConnected: Boolean(status?.stripe?.connected),
+    conektaConnected: Boolean(status?.conekta?.connected),
+    mercadoPagoConnected: Boolean(status?.mercadopago?.connected)
+  }
+}
+
 export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
-  const [loading, setLoading] = useState(true)
-  const [highLevelConnected, setHighLevelConnected] = useState(false)
-  const [stripeConnected, setStripeConnected] = useState(false)
-  const [conektaConnected, setConektaConnected] = useState(false)
-  const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
+  const [connectionState, setConnectionState] = useState<PaymentGatewayConnectionState>(() => {
+    const cachedStatus = readCachedIntegrationsStatus()
+    return getConnectionStateFromStatus(cachedStatus, !cachedStatus)
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -30,18 +47,11 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
       try {
         const data = await getIntegrationsStatus()
         if (cancelled) return
-        setHighLevelConnected(Boolean(data?.highlevel?.connected))
-        setStripeConnected(Boolean(data?.stripe?.connected))
-        setConektaConnected(Boolean(data?.conekta?.connected))
-        setMercadoPagoConnected(Boolean(data?.mercadopago?.connected))
+        setConnectionState(getConnectionStateFromStatus(data, false))
       } catch {
         if (cancelled) return
-        setHighLevelConnected(false)
-        setStripeConnected(false)
-        setConektaConnected(false)
-        setMercadoPagoConnected(false)
-      } finally {
-        if (!cancelled) setLoading(false)
+        const cachedStatus = readCachedIntegrationsStatus()
+        setConnectionState(getConnectionStateFromStatus(cachedStatus, false))
       }
     }
 
@@ -53,6 +63,13 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
   }, [])
 
   return useMemo(() => {
+    const {
+      loading,
+      highLevelConnected,
+      stripeConnected,
+      conektaConnected,
+      mercadoPagoConnected
+    } = connectionState
     const planProviders: PaymentGatewayProvider[] = [
       ...(stripeConnected ? ['stripe' as const] : []),
       ...(conektaConnected ? ['conekta' as const] : [])
@@ -75,5 +92,5 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
       planProviders,
       subscriptionProviders
     }
-  }, [conektaConnected, highLevelConnected, loading, mercadoPagoConnected, stripeConnected])
+  }, [connectionState])
 }
