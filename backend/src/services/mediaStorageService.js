@@ -142,6 +142,11 @@ function normalizeClientAccountId(value = '', fallback = DEFAULT_CLIENT_ACCOUNT_
   return clean.replace(/[^a-zA-Z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || fallback
 }
 
+function normalizeClientUploadId(value = '') {
+  const clean = cleanString(value)
+  return clean.replace(/[^a-zA-Z0-9_.:-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 160)
+}
+
 function buildClientAccountRootPath(accountId = DEFAULT_CLIENT_ACCOUNT_ID) {
   return [CLIENT_ACCOUNT_ROOT_FOLDER, normalizeClientAccountId(accountId)].join('/')
 }
@@ -258,6 +263,10 @@ function firstCleanValue(...values) {
     if (clean) return clean
   }
   return ''
+}
+
+function escapeSqlLike(value = '') {
+  return cleanString(value).replace(/[\\%_]/g, '\\$&')
 }
 
 function clientAccountIdFromLocationData(locationData = {}) {
@@ -1479,6 +1488,25 @@ async function insertMediaAsset(row) {
   )
 }
 
+async function findMediaAssetByClientUploadId({ businessId = 'default', clientUploadId = '' } = {}) {
+  const cleanClientUploadId = normalizeClientUploadId(clientUploadId)
+  if (!cleanClientUploadId) return null
+
+  const metadataNeedle = `"clientUploadId":${JSON.stringify(cleanClientUploadId)}`
+  const row = await db.get(
+    `SELECT *
+     FROM media_assets
+     WHERE business_id = ?
+       AND deleted_at IS NULL
+       AND status != 'deleted'
+       AND metadata_json LIKE ? ESCAPE '\\'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [normalizeBusinessId(businessId), `%${escapeSqlLike(metadataNeedle)}%`]
+  )
+  return mapAssetRow(row)
+}
+
 async function saveLocalFile({ objectPath, buffer }) {
   const localPath = join(LOCAL_MEDIA_ROOT, objectPath)
   await fs.mkdir(dirname(localPath), { recursive: true })
@@ -1572,6 +1600,20 @@ export async function uploadMediaAsset(input = {}) {
   const module = normalizeModule(input.module)
   const moduleEntityId = input.moduleEntityId ? String(input.moduleEntityId) : null
   const isPublic = input.isPublic !== undefined ? boolValue(input.isPublic) : true
+  const clientUploadId = normalizeClientUploadId(
+    input.clientUploadId ||
+    input.client_upload_id ||
+    input.uploadSessionId ||
+    input.upload_session_id ||
+    input.metadata?.clientUploadId ||
+    input.metadata?.client_upload_id
+  )
+
+  const existingAsset = await findMediaAssetByClientUploadId({ businessId, clientUploadId })
+  if (existingAsset) {
+    logger.info(`[MediaStorage] Reutilizando subida existente por clientUploadId: ${existingAsset.id}`)
+    return existingAsset
+  }
 
   const detected = await detectMimeType(originalBuffer, input.mimeType || input.contentType || '', originalFilename)
   const mediaType = mediaTypeFromMime(detected.mimeType)
@@ -1621,8 +1663,17 @@ export async function uploadMediaAsset(input = {}) {
   let storageProvider = 'local'
   let publicUrl = buildAppPublicUrl(`/media/assets/${id}/file`)
   let deferredStreamSync = null
+  const inputMetadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {}
+  const uploadMetadata = inputMetadata.upload && typeof inputMetadata.upload === 'object' ? inputMetadata.upload : {}
   let metadata = {
-    ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
+    ...inputMetadata,
+    ...(clientUploadId ? {
+      clientUploadId,
+      upload: {
+        ...uploadMetadata,
+        clientUploadId
+      }
+    } : {}),
     mimeDetection: detected.source,
     compression: processed.compression,
     storageStatus: config.storageStatus,

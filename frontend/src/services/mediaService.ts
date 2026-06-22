@@ -72,6 +72,8 @@ export interface MediaUploadProgress {
 }
 
 export const MEDIA_UPLOAD_CANCELLED_MESSAGE = 'La subida se canceló.'
+const MEDIA_UPLOAD_RETRY_DELAYS_MS = [1500, 4500]
+const MEDIA_UPLOAD_RETRY_STATUS_CODES = new Set([502, 503, 504])
 
 export function isMediaUploadCancelledError(error: unknown) {
   if (!error || typeof error !== 'object') return false
@@ -88,6 +90,7 @@ export interface UploadMediaFileInput {
   moduleEntityId?: string
   isPublic?: boolean
   deferStreamSync?: boolean
+  clientUploadId?: string
   onProgress?: (progress: MediaUploadProgress) => void
   signal?: AbortSignal
 }
@@ -331,6 +334,64 @@ function buildCompletedUploadProgress(lastProgress: MediaUploadProgress | null):
   }
 }
 
+function createMediaUploadClientId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `media_upload_${crypto.randomUUID()}`
+  }
+  return `media_upload_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+}
+
+function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createMediaUploadCancelledError())
+      return
+    }
+
+    let timeout = 0
+    const abort = () => {
+      window.clearTimeout(timeout)
+      cleanup()
+      reject(createMediaUploadCancelledError())
+    }
+    const cleanup = () => signal?.removeEventListener('abort', abort)
+    timeout = window.setTimeout(() => {
+      cleanup()
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', abort, { once: true })
+  })
+}
+
+function createMediaUploadHttpError(payload: unknown, status: number, statusText: string) {
+  const error = new Error(extractApiErrorMessage(payload, status, statusText)) as Error & { status?: number }
+  error.status = status
+  return error
+}
+
+function createMediaUploadNetworkError() {
+  const error = new Error('No se pudo conectar con el servidor.') as Error & { status?: number }
+  error.status = 0
+  return error
+}
+
+function isRetryableMediaUploadError(error: unknown) {
+  if (isMediaUploadCancelledError(error)) return false
+  const status = typeof error === 'object' && error ? Number((error as { status?: unknown }).status) : NaN
+  return status === 0 || MEDIA_UPLOAD_RETRY_STATUS_CODES.has(status)
+}
+
+function buildUploadFormData(input: UploadMediaFileInput, clientUploadId: string) {
+  const formData = new FormData()
+  formData.append('file', input.file)
+  formData.append('module', input.module || 'other')
+  formData.append('isPublic', String(input.isPublic ?? true))
+  formData.append('deferStreamSync', String(input.deferStreamSync ?? true))
+  formData.append('clientUploadId', clientUploadId)
+  if (input.moduleEntityId) formData.append('moduleEntityId', input.moduleEntityId)
+  return formData
+}
+
 function postFormWithProgress<T>(
   endpoint: string,
   body: FormData,
@@ -390,12 +451,12 @@ function postFormWithProgress<T>(
         return
       }
 
-      reject(new Error(extractApiErrorMessage(payload, xhr.status, xhr.statusText)))
+      reject(createMediaUploadHttpError(payload, xhr.status, xhr.statusText))
     }
 
     xhr.onerror = () => {
       cleanup()
-      reject(new Error('No se pudo conectar con el servidor.'))
+      reject(createMediaUploadNetworkError())
     }
     xhr.onabort = () => {
       cleanup()
@@ -412,14 +473,31 @@ function createMediaUploadCancelledError() {
 }
 
 export const mediaService = {
-  uploadFile(input: UploadMediaFileInput): Promise<MediaAsset> {
-    const formData = new FormData()
-    formData.append('file', input.file)
-    formData.append('module', input.module || 'other')
-    formData.append('isPublic', String(input.isPublic ?? true))
-    formData.append('deferStreamSync', String(input.deferStreamSync ?? true))
-    if (input.moduleEntityId) formData.append('moduleEntityId', input.moduleEntityId)
-    return postFormWithProgress<MediaAsset>('/media/upload', formData, input.onProgress, input.signal)
+  async uploadFile(input: UploadMediaFileInput): Promise<MediaAsset> {
+    const clientUploadId = input.clientUploadId || createMediaUploadClientId()
+    let lastError: unknown
+
+    for (let attempt = 0; attempt <= MEDIA_UPLOAD_RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        const formData = buildUploadFormData(input, clientUploadId)
+        return await postFormWithProgress<MediaAsset>('/media/upload', formData, input.onProgress, input.signal)
+      } catch (error) {
+        lastError = error
+        const retryDelay = MEDIA_UPLOAD_RETRY_DELAYS_MS[attempt]
+        if (retryDelay === undefined || !isRetryableMediaUploadError(error)) {
+          throw error
+        }
+
+        input.onProgress?.({
+          loaded: 0,
+          total: input.file.size,
+          percent: 0
+        })
+        await sleep(retryDelay, input.signal)
+      }
+    }
+
+    throw lastError
   },
 
   uploadDataUrl(input: {

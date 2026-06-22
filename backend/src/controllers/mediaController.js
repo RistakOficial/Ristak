@@ -135,7 +135,8 @@ async function uploadInputFromRequest(req) {
     module: body.module || 'other',
     moduleEntityId: body.moduleEntityId || body.module_entity_id || null,
     isPublic: parseBoolean(body.isPublic ?? body.is_public, true),
-    deferStreamSync: parseBoolean(body.deferStreamSync ?? body.defer_stream_sync ?? req.query?.deferStreamSync ?? req.query?.defer_stream_sync, true)
+    deferStreamSync: parseBoolean(body.deferStreamSync ?? body.defer_stream_sync ?? req.query?.deferStreamSync ?? req.query?.defer_stream_sync, true),
+    clientUploadId: body.clientUploadId || body.client_upload_id || body.uploadSessionId || body.upload_session_id || req.get?.('x-ristak-upload-id') || null
   }
 
   if (req.file?.path) {

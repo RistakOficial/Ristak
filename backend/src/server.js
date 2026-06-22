@@ -83,6 +83,12 @@ const startupState = {
   ready: false,
   error: null
 }
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.GRACEFUL_SHUTDOWN_TIMEOUT_MS || 25_000) || 25_000
+)
+let shuttingDown = false
+let activeRequests = 0
 
 function getStartupStatus() {
   if (startupState.ready) return 'ready'
@@ -92,6 +98,27 @@ function getStartupStatus() {
 
 // Render y la mayoría de despliegues están detrás de un proxy que envía X-Forwarded-For con la IP real
 app.set('trust proxy', true)
+
+app.use((req, res, next) => {
+  if (shuttingDown && req.path !== '/health' && req.path !== '/api/health') {
+    res.set('Connection', 'close')
+    return res.status(503).json({
+      error: 'Aplicación actualizándose',
+      message: 'La app está aplicando una actualización. Reintenta en unos segundos.'
+    })
+  }
+
+  activeRequests += 1
+  let completed = false
+  const finish = () => {
+    if (completed) return
+    completed = true
+    activeRequests = Math.max(0, activeRequests - 1)
+  }
+  res.on('finish', finish)
+  res.on('close', finish)
+  return next()
+})
 
 // Middlewares
 app.use(cors())
@@ -295,7 +322,7 @@ async function startRuntimeServices() {
 }
 
 // Iniciar servidor. Render requiere escuchar en 0.0.0.0 y el puerto de PORT.
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   logger.success(`🚀 Servidor escuchando en puerto ${PORT}`)
   logger.info(`Entorno: ${process.env.NODE_ENV || 'development'}`)
 
@@ -306,6 +333,31 @@ app.listen(PORT, '0.0.0.0', () => {
     setTimeout(() => process.exit(1), 1000)
   })
 })
+
+function handleShutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  startupState.ready = false
+  logger.warn(`[Shutdown] ${signal} recibido. Cerrando servidor con ${activeRequests} request(s) activa(s).`)
+
+  server.close((error) => {
+    if (error) {
+      logger.error('[Shutdown] Error cerrando servidor:', error)
+      process.exit(1)
+    }
+    logger.info('[Shutdown] Servidor cerrado correctamente.')
+    process.exit(0)
+  })
+
+  const timeout = setTimeout(() => {
+    logger.warn(`[Shutdown] Tiempo agotado con ${activeRequests} request(s) activa(s). Cerrando proceso.`)
+    process.exit(0)
+  }, GRACEFUL_SHUTDOWN_TIMEOUT_MS)
+  timeout.unref?.()
+}
+
+process.on('SIGTERM', () => handleShutdown('SIGTERM'))
+process.on('SIGINT', () => handleShutdown('SIGINT'))
 
 // Manejo de errores de proceso
 process.on('unhandledRejection', (reason, promise) => {
