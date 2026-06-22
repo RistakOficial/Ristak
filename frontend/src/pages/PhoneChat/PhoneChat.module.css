@@ -1914,11 +1914,18 @@
 .aiAgentHubFilters {
   display: flex;
   gap: 8px;
+  width: calc(100% + 28px);
   min-width: 0;
-  padding: 0 1px 2px;
+  max-width: none;
+  margin-inline: -14px;
+  padding: 0 18px 2px 14px;
   overflow-x: auto;
+  overflow-y: visible;
   overscroll-behavior-x: contain;
+  scroll-padding-inline: 14px;
   scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  touch-action: pan-x;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1942,6 +1949,7 @@
   font-weight: 780;
   letter-spacing: 0;
   white-space: nowrap;
+  scroll-snap-align: start;
   transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 
@@ -8718,6 +8726,22 @@
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .mobileDock {
   display: none;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .aiAgentHubFilters {
+  flex-wrap: wrap;
+  width: 100%;
+  margin-inline: 0;
+  padding: 0 1px 2px;
+  overflow: visible;
+  scroll-snap-type: none;
+  touch-action: auto;
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .aiAgentHubFilterChip {
+  flex: 0 1 auto;
+  max-width: 100%;
+  scroll-snap-align: none;
 }
 
 @media (orientation: landscape) and (max-height: 520px) {

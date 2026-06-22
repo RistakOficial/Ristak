@@ -98,7 +98,7 @@ import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
-type AgentInboxStatusFilter = 'all' | 'active' | 'paused' | 'skipped'
+type AgentInboxStatusFilter = 'all' | 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
 type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email'
 type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown'
 type AdvancedOriginFilter = 'all' | 'meta' | 'site' | 'organic' | 'trigger' | 'unknown'
@@ -256,8 +256,10 @@ const CHAT_FILTERS: Array<{ id: ChatFilter; label: string }> = [
 const AGENT_INBOX_STATUS_FILTERS: Array<{ id: AgentInboxStatusFilter; label: string }> = [
   { id: 'all', label: 'Todos' },
   { id: 'active', label: 'Activos' },
-  { id: 'paused', label: 'Pausados 24hrs' },
-  { id: 'skipped', label: 'Omitidos' }
+  { id: 'completed', label: 'Meta cumplida' },
+  { id: 'paused', label: 'Pausados 24 horas' },
+  { id: 'skipped', label: 'Omitidos' },
+  { id: 'unassigned', label: 'No asignados' }
 ]
 
 const CHAT_REQUEST_TIMEOUT_MS = 20000
@@ -703,17 +705,55 @@ function mapAgentStatesByContactId(states: ConversationAgentState[] = []) {
   return next
 }
 
+function hasAgentInboxHistory(state: ConversationAgentState | null | undefined) {
+  if (!state) return false
+  if (state.activatedAt || state.activationSource || state.agentId || state.signal) return true
+  if (state.lastReplyAt || state.lastAnsweredInboundMessageId) return true
+  return state.status === 'paused' ||
+    state.status === 'skipped' ||
+    state.status === 'human' ||
+    state.status === 'completed' ||
+    state.status === 'discarded'
+}
+
 function isAgentInboxStateVisible(state: ConversationAgentState | null | undefined, filter: AgentInboxStatusFilter) {
-  if (!state || state.signal === 'discarded') return false
-  if (filter === 'all') return state.status === 'active' || state.status === 'paused' || state.status === 'skipped'
+  const hasHistory = hasAgentInboxHistory(state)
+  if (filter === 'unassigned') return !hasHistory
+  if (!state || !hasHistory) return false
+  if (filter === 'all') return true
+  if (filter === 'skipped') {
+    return state.status === 'skipped' || state.status === 'human' || state.status === 'discarded' || state.signal === 'discarded'
+  }
   return state.status === filter
 }
 
 function getAgentInboxStatusLabel(state: ConversationAgentState | null | undefined) {
-  if (state?.status === 'paused') return 'Pausado 24hrs'
-  if (state?.status === 'skipped') return 'Omitido'
+  if (state?.status === 'paused') return 'Pausado 24 horas'
+  if (state?.status === 'skipped' || state?.status === 'discarded' || state?.signal === 'discarded') return 'Omitido'
+  if (state?.status === 'completed') return 'Meta cumplida'
+  if (state?.status === 'human') return 'Humano'
   if (state?.status === 'active') return 'Activo'
   return ''
+}
+
+function createAgentInboxContactFromState(state: ConversationAgentState): DesktopChatContact {
+  const fallbackDate = state.updatedAt || state.activatedAt || state.signalAt || new Date().toISOString()
+  const name = state.contactName || state.contactPhone || 'Contacto sin nombre'
+  return {
+    id: state.contactId,
+    createdAt: fallbackDate,
+    name,
+    phone: state.contactPhone || '',
+    email: '',
+    ltv: 0,
+    status: 'lead',
+    purchases: 0,
+    lastMessageText: state.signalSummary || '',
+    lastMessageDate: fallbackDate,
+    lastMessageDirection: 'system',
+    messageCount: 0,
+    unreadCount: 0
+  }
 }
 
 function readStoredChatIds(key: string) {
@@ -2157,40 +2197,47 @@ export const DesktopChat: React.FC = () => {
     () => new Set(agentPriorityStates.map((state) => state.contactId)),
     [agentPriorityStates]
   )
-  const agentInboxChatIdSet = useMemo(
-    () => new Set(
-      Object.values(agentStates)
-        .filter((state) => isAgentInboxStateVisible(state, 'all'))
-        .map((state) => state.contactId)
-    ),
-    [agentStates]
-  )
+  const agentInboxSourceChats = useMemo(() => {
+    const rows = new Map<string, DesktopChatContact>()
+    visibleChatsForList.forEach((contact) => {
+      rows.set(contact.id, contact)
+    })
+    Object.values(agentStates).forEach((state) => {
+      if (!hasAgentInboxHistory(state) || rows.has(state.contactId)) return
+      rows.set(state.contactId, createAgentInboxContactFromState(state))
+    })
+    return Array.from(rows.values())
+  }, [agentStates, visibleChatsForList])
   const agentInboxStatusCounts = useMemo(() => {
     const counts: Record<AgentInboxStatusFilter, number> = {
       all: 0,
       active: 0,
+      completed: 0,
       paused: 0,
-      skipped: 0
+      skipped: 0,
+      unassigned: 0
     }
 
-    visibleChatsForList.forEach((contact) => {
+    agentInboxSourceChats.forEach((contact) => {
       if (archivedChatIdSet.has(contact.id)) return
       const state = agentStates[contact.id]
+      if (isAgentInboxStateVisible(state, 'unassigned')) {
+        counts.unassigned += 1
+        return
+      }
       if (!isAgentInboxStateVisible(state, 'all')) return
       counts.all += 1
-      if (state?.status === 'active' || state?.status === 'paused' || state?.status === 'skipped') {
-        counts[state.status] += 1
-      }
+      if (state?.status === 'active') counts.active += 1
+      if (state?.status === 'completed') counts.completed += 1
+      if (state?.status === 'paused') counts.paused += 1
+      if (isAgentInboxStateVisible(state, 'skipped')) counts.skipped += 1
     })
 
     return counts
-  }, [agentStates, archivedChatIdSet, visibleChatsForList])
-  const agentAssignedChatCount = useMemo(
-    () => visibleChatsForList.filter((contact) => !archivedChatIdSet.has(contact.id) && agentInboxChatIdSet.has(contact.id)).length,
-    [agentInboxChatIdSet, archivedChatIdSet, visibleChatsForList]
-  )
+  }, [agentInboxSourceChats, agentStates, archivedChatIdSet])
+  const agentAssignedChatCount = agentInboxStatusCounts.all
   const listBaseChats = useMemo(
-    () => visibleChatsForList.filter((contact) => {
+    () => (chatFilter === 'agent' ? agentInboxSourceChats : visibleChatsForList).filter((contact) => {
       if (chatFilter === 'agent') {
         return !archivedChatIdSet.has(contact.id) && isAgentInboxStateVisible(agentStates[contact.id], agentInboxStatusFilter)
       }
@@ -2199,7 +2246,7 @@ export const DesktopChat: React.FC = () => {
       if (agentPriorityChatIdSet.has(contact.id)) return false
       return true
     }),
-    [agentInboxStatusFilter, agentPriorityChatIdSet, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, visibleChatsForList]
+    [agentInboxSourceChats, agentInboxStatusFilter, agentPriorityChatIdSet, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, visibleChatsForList]
   )
   const agentAssignedViewOpen = chatFilter === 'agent'
   const hasTextOrAdvancedChatFilters = Boolean(chatQuery.trim()) || activeAdvancedFilterCount > 0
@@ -2312,27 +2359,41 @@ export const DesktopChat: React.FC = () => {
     }
   }, [composerMenuOpen, templatePanelOpen])
   const visibleChatCount = filteredChats.length + agentPriorityChatRows.length
-  const inboxTitle = archivedViewOpen ? 'Archivados' : agentAssignedViewOpen ? 'Chats del bot' : 'Conversaciones'
+  const inboxTitle = archivedViewOpen
+    ? 'Archivados'
+    : agentAssignedViewOpen
+    ? agentInboxStatusFilter === 'unassigned' ? 'No asignados' : 'Chats del bot'
+    : 'Conversaciones'
   const inboxSubtitle = archivedViewOpen
     ? `${filteredChats.length} de ${archivedChatCount} archivados`
     : agentAssignedViewOpen
-    ? `${filteredChats.length} de ${agentAssignedChatCount} asignados al bot`
+    ? agentInboxStatusFilter === 'unassigned'
+      ? `${filteredChats.length} chats sin agente asignado`
+      : `${filteredChats.length} de ${agentAssignedChatCount} con historial del bot`
     : `${visibleChatCount} de ${Math.max(0, visibleChatsForList.length - archivedChatCount)} visibles`
   const agentInboxEmptyTitle = agentInboxStatusFilter === 'paused'
-    ? 'Sin chats pausados 24hrs'
+    ? 'Sin chats pausados 24 horas'
     : agentInboxStatusFilter === 'skipped'
     ? 'Sin chats omitidos'
+    : agentInboxStatusFilter === 'completed'
+    ? 'Sin metas cumplidas'
+    : agentInboxStatusFilter === 'unassigned'
+    ? 'Sin chats no asignados'
     : agentInboxStatusFilter === 'active'
     ? 'Sin chats activos del bot'
     : 'Sin chats del bot'
   const agentInboxEmptyDescription = agentInboxStatusFilter === 'paused'
-    ? 'Cuando pauses un chat por 24hrs, aparecerá aquí hasta que se reactive solo o lo prendas manualmente.'
+    ? 'Cuando pauses un chat por 24 horas, aparecerá aquí hasta que se reactive solo o lo prendas manualmente.'
     : agentInboxStatusFilter === 'skipped'
     ? 'Cuando omitas un chat, aparecerá aquí para que puedas reactivar el agente cuando quieras.'
+    : agentInboxStatusFilter === 'completed'
+    ? 'Cuando un contacto cumpla el objetivo configurado, quedará visible aquí.'
+    : agentInboxStatusFilter === 'unassigned'
+    ? 'Los contactos que todavía no entran al agente conversacional aparecerán aquí.'
     : agentInboxStatusFilter === 'active'
     ? 'Cuando el bot esté atendiendo una conversación activa, aparecerá aquí.'
     : conversationAgentEnabled
-    ? 'Cuando el bot atienda, pause u omita una conversación, aparecerá aquí.'
+    ? 'Cuando el bot atienda, pause, omita o cierre una conversación, aparecerá aquí.'
     : 'Cuando enciendas el agente conversacional y tome chats, aparecerán aquí.'
   const emptyChatTitle = archivedViewOpen
     ? 'No hay chats archivados'
@@ -5425,10 +5486,17 @@ export const DesktopChat: React.FC = () => {
                   const active = contact.id === activeContactId
                   const unread = Number(contact.unreadCount || 0)
                   const agentState = agentStates[contact.id]
+                  const isAgentHistoryChat = hasAgentInboxHistory(agentState)
                   const isAgentActionChat = Boolean(agentState?.signal && agentState?.signal !== 'discarded')
-                  const isAgentActiveChat = agentState?.status === 'active' && agentState?.signal !== 'discarded'
-                  const showAgentBadge = agentAssignedViewOpen || isAgentActionChat || isAgentActiveChat
-                  const agentStatusLabel = agentAssignedViewOpen ? getAgentInboxStatusLabel(agentState) : ''
+                  const isAgentActiveChat = isAgentHistoryChat && agentState?.status === 'active' && agentState?.signal !== 'discarded'
+                  const showAgentBadge = (agentAssignedViewOpen && isAgentHistoryChat) || isAgentActionChat || isAgentActiveChat
+                  const agentStatusLabel = agentAssignedViewOpen
+                    ? isAgentHistoryChat
+                      ? getAgentInboxStatusLabel(agentState)
+                      : agentInboxStatusFilter === 'unassigned'
+                        ? 'No asignado'
+                        : ''
+                    : ''
                   const agentBadgeLabel = agentAssignedViewOpen
                     ? agentStatusLabel
                       ? `Chat del bot: ${agentStatusLabel}`

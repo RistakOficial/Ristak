@@ -1176,6 +1176,9 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
               last_answered_inbound_message_id = ?,
               follow_up_sent_count = ?,
               follow_up_last_sent_at = CURRENT_TIMESTAMP,
+              activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP),
+              activation_source = COALESCE(activation_source, 'automatic'),
+              activated_by = COALESCE(activated_by, 'agent'),
               updated_at = CURRENT_TIMESTAMP
           WHERE contact_id = ?
         `, [doneLatest.id, followUpIndex, doneContactId])
@@ -1332,6 +1335,9 @@ export async function sendReplyParts({
       UPDATE conversational_agent_state
       SET last_reply_at = CURRENT_TIMESTAMP,
           last_answered_inbound_message_id = ?,
+          activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP),
+          activation_source = COALESCE(activation_source, 'automatic'),
+          activated_by = COALESCE(activated_by, 'agent'),
           updated_at = CURRENT_TIMESTAMP
       WHERE contact_id = ?
     `, [latest.id, contactId])
@@ -1426,7 +1432,10 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           ruleContext
         })
         if (agentConfig) {
-          await assignAgentToConversation(contactId, agentConfig.id)
+          await assignAgentToConversation(contactId, agentConfig.id, {
+            activationSource: 'automatic',
+            updatedBy: 'agent'
+          })
           await recordConversationalAgentEvent({
             contactId,
             eventType: 'agent_assigned',

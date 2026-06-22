@@ -3098,11 +3098,41 @@ function mapStateRow(row) {
     followUpBaseMessageId: row.follow_up_base_message_id || null,
     followUpSentCount: Math.max(0, Number(row.follow_up_sent_count) || 0),
     followUpLastSentAt: row.follow_up_last_sent_at || null,
+    activatedAt: row.activated_at || null,
+    activationSource: row.activation_source || null,
+    activatedBy: row.activated_by || null,
     updatedBy: row.updated_by || null,
     agentId: row.agent_id || null,
     closingContext: normalizeStoredAdvancedClosingContext(row.closing_context_json || '{}'),
     updatedAt: row.updated_at || null
   }
+}
+
+function normalizeConversationActivationSource(source = '', updatedBy = 'system') {
+  const cleanSource = String(source || '').trim().toLowerCase()
+  if (cleanSource === 'manual' || cleanSource === 'automatic') return cleanSource
+  const actor = String(updatedBy || '').trim().toLowerCase()
+  if (actor === 'user' || actor === 'human' || actor === 'manual') return 'manual'
+  return 'automatic'
+}
+
+function shouldMarkConversationActivated({ status = '', updatedBy = 'system', activationSource = '' } = {}) {
+  if (activationSource) return true
+  const actor = String(updatedBy || '').trim().toLowerCase()
+  if (actor === 'user' || actor === 'human' || actor === 'agent' || actor === 'manual') return true
+  return status && status !== 'active'
+}
+
+function appendActivationAssignments(assignments, params, { activationSource = '', updatedBy = 'system' } = {}) {
+  assignments.push(
+    'activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP)',
+    'activation_source = COALESCE(activation_source, ?)',
+    'activated_by = COALESCE(activated_by, ?)'
+  )
+  params.push(
+    normalizeConversationActivationSource(activationSource, updatedBy),
+    String(updatedBy || 'system').trim() || 'system'
+  )
 }
 
 function normalizePauseUntilAt(value) {
@@ -3170,13 +3200,20 @@ async function expirePausedConversationStates() {
   return contactIds.length
 }
 
-export async function assignAgentToConversation(contactId, agentId) {
+export async function assignAgentToConversation(contactId, agentId, { activationSource = 'automatic', updatedBy = 'system' } = {}) {
   await ensureConversationState(contactId)
+  const assignments = ['agent_id = ?']
+  const params = [agentId || null]
+  if (agentId) {
+    appendActivationAssignments(assignments, params, { activationSource, updatedBy })
+  }
+  assignments.push('updated_at = CURRENT_TIMESTAMP')
+  params.push(contactId)
   await db.run(`
     UPDATE conversational_agent_state
-    SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
+    SET ${assignments.join(', ')}
     WHERE contact_id = ?
-  `, [agentId, contactId])
+  `, params)
 }
 
 export async function getConversationState(contactId) {
@@ -3205,9 +3242,18 @@ export async function updateConversationClosingContext(contactId, patch = {}, { 
 
   await db.run(`
     UPDATE conversational_agent_state
-    SET closing_context_json = ?, updated_at = CURRENT_TIMESTAMP
+    SET closing_context_json = ?,
+        activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP),
+        activation_source = COALESCE(activation_source, ?),
+        activated_by = COALESCE(activated_by, ?),
+        updated_at = CURRENT_TIMESTAMP
     WHERE contact_id = ?
-  `, [JSON.stringify(context), contactId])
+  `, [
+    JSON.stringify(context),
+    normalizeConversationActivationSource('', updatedBy),
+    String(updatedBy || 'agent').trim() || 'agent',
+    contactId
+  ])
 
   await recordConversationalAgentEvent({
     contactId,
@@ -3232,7 +3278,12 @@ export async function ensureConversationState(contactId) {
   return getConversationState(contactId)
 }
 
-export async function setConversationStatus(contactId, status, { updatedBy = 'system', clearSignal = false, pausedUntilAt = null } = {}) {
+export async function setConversationStatus(contactId, status, {
+  updatedBy = 'system',
+  clearSignal = false,
+  pausedUntilAt = null,
+  activationSource = ''
+} = {}) {
   if (!VALID_STATUSES.has(status)) {
     throw Object.assign(new Error(`Estado de conversación inválido: ${status}`), { statusCode: 400 })
   }
@@ -3244,6 +3295,9 @@ export async function setConversationStatus(contactId, status, { updatedBy = 'sy
     'updated_by = ?'
   ]
   const params = [status, nextPausedUntilAt, updatedBy]
+  if (shouldMarkConversationActivated({ status, updatedBy, activationSource })) {
+    appendActivationAssignments(assignments, params, { activationSource, updatedBy })
+  }
   if (clearSignal) {
     assignments.push('signal = NULL', 'signal_reason = NULL', 'signal_summary = NULL', 'signal_at = NULL')
   }
@@ -3287,7 +3341,11 @@ export async function setConversationSignal(contactId, signal, { reason = '', su
   await db.run(`
     UPDATE conversational_agent_state
     SET signal = ?, signal_reason = ?, signal_summary = ?, signal_at = CURRENT_TIMESTAMP,
-        status = ?, updated_by = 'agent', updated_at = CURRENT_TIMESTAMP
+        status = ?, updated_by = 'agent',
+        activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP),
+        activation_source = COALESCE(activation_source, 'automatic'),
+        activated_by = COALESCE(activated_by, 'agent'),
+        updated_at = CURRENT_TIMESTAMP
     WHERE contact_id = ?
   `, [signal, cleanReason, cleanStateSummary, status, contactId])
 
@@ -3458,7 +3516,7 @@ export async function listConversationStates({ signal = null, statuses = null } 
     FROM conversational_agent_state s
     LEFT JOIN contacts c ON c.id = s.contact_id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-    ORDER BY COALESCE(s.signal_at, s.updated_at) DESC
+    ORDER BY COALESCE(s.signal_at, s.activated_at, s.updated_at) DESC
     LIMIT 500
   `, params)
 

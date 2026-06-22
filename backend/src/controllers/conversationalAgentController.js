@@ -297,11 +297,15 @@ export async function updateState(req, res) {
 
     let state = await setConversationStatus(contactId, mapped.status, {
       updatedBy: 'user',
-      clearSignal: mapped.clearSignal
+      clearSignal: mapped.clearSignal,
+      activationSource: 'manual'
     })
 
     if (action === 'activate' && agentId) {
-      await assignAgentToConversation(contactId, agentId)
+      await assignAgentToConversation(contactId, agentId, {
+        activationSource: 'manual',
+        updatedBy: 'user'
+      })
       state = await getConversationState(contactId)
     }
 

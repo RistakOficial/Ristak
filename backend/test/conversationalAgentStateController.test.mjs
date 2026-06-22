@@ -4,7 +4,12 @@ import { randomUUID } from 'node:crypto'
 
 import { db } from '../src/config/database.js'
 import { updateState } from '../src/controllers/conversationalAgentController.js'
-import { createConversationalAgent } from '../src/services/conversationalAgentService.js'
+import {
+  assignAgentToConversation,
+  createConversationalAgent,
+  getConversationState,
+  listConversationStates
+} from '../src/services/conversationalAgentService.js'
 
 const READY_BUSINESS_PROFILE = {
   businessName: 'Clínica Test',
@@ -163,9 +168,65 @@ test('activar una conversación con agentId asigna ese agente al estado', async 
     assert.equal(res.body?.success, true)
     assert.equal(res.body?.data?.status, 'active')
     assert.equal(res.body?.data?.agentId, agentId)
+    assert.ok(res.body?.data?.activatedAt)
+    assert.equal(res.body?.data?.activationSource, 'manual')
+    assert.equal(res.body?.data?.activatedBy, 'user')
   } finally {
     await cleanup(contactId, agentId)
     await restoreBusinessProfileRow(previousBusinessProfile)
+  }
+})
+
+test('la asignación automática marca la conversación como activada por el agente', async () => {
+  const contactId = `conversation_agent_auto_state_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    const agent = await createConversationalAgent({
+      name: 'Agente automático test',
+      enabled: true,
+      objective: 'citas'
+    })
+    agentId = agent.id
+
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent'
+    })
+
+    const state = await getConversationState(contactId)
+    assert.equal(state?.status, 'active')
+    assert.equal(state?.agentId, agentId)
+    assert.ok(state?.activatedAt)
+    assert.equal(state?.activationSource, 'automatic')
+    assert.equal(state?.activatedBy, 'agent')
+  } finally {
+    await cleanup(contactId, agentId)
+  }
+})
+
+test('omitir una conversación conserva el estado en la lista de omitidos', async () => {
+  const contactId = `conversation_agent_skipped_state_${randomUUID()}`
+
+  try {
+    const res = createMockResponse()
+    await updateState({
+      params: { contactId },
+      body: { action: 'skip' }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.body?.success, true)
+    assert.equal(res.body?.data?.status, 'skipped')
+    assert.ok(res.body?.data?.activatedAt)
+    assert.equal(res.body?.data?.activationSource, 'manual')
+
+    const skippedStates = await listConversationStates({ statuses: ['skipped'] })
+    const skipped = skippedStates.find((state) => state.contactId === contactId)
+    assert.equal(skipped?.status, 'skipped')
+    assert.equal(skipped?.activationSource, 'manual')
+  } finally {
+    await cleanup(contactId)
   }
 })
 

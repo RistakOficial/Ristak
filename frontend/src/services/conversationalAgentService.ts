@@ -281,6 +281,9 @@ export interface ConversationAgentState {
   followUpBaseMessageId?: string | null
   followUpSentCount?: number
   followUpLastSentAt?: string | null
+  activatedAt?: string | null
+  activationSource?: 'manual' | 'automatic' | string | null
+  activatedBy?: string | null
   updatedBy: string | null
   closingContext?: Record<string, string>
   updatedAt: string | null

@@ -4404,6 +4404,9 @@ async function initTables() {
         follow_up_sent_count INTEGER DEFAULT 0,
         follow_up_last_sent_at DATETIME,
         paused_until_at DATETIME,
+        activated_at DATETIME,
+        activation_source TEXT,
+        activated_by TEXT,
         updated_by TEXT,
         agent_id TEXT,
         closing_context_json TEXT,
@@ -4425,7 +4428,10 @@ async function initTables() {
       ['follow_up_base_message_id', 'TEXT'],
       ['follow_up_sent_count', 'INTEGER DEFAULT 0'],
       ['follow_up_last_sent_at', 'DATETIME'],
-      ['paused_until_at', 'DATETIME']
+      ['paused_until_at', 'DATETIME'],
+      ['activated_at', 'DATETIME'],
+      ['activation_source', 'TEXT'],
+      ['activated_by', 'TEXT']
     ]) {
       try {
         if (usePostgres) {
@@ -4437,6 +4443,27 @@ async function initTables() {
         // La columna ya existe.
       }
     }
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET activated_at = COALESCE(activated_at, created_at, updated_at, CURRENT_TIMESTAMP),
+          activation_source = COALESCE(
+            activation_source,
+            CASE
+              WHEN updated_by IN ('user', 'human', 'manual') THEN 'manual'
+              ELSE 'automatic'
+            END
+          ),
+          activated_by = COALESCE(activated_by, updated_by, 'system')
+      WHERE activated_at IS NULL
+        AND (
+          agent_id IS NOT NULL
+          OR signal IS NOT NULL
+          OR last_reply_at IS NOT NULL
+          OR last_answered_inbound_message_id IS NOT NULL
+          OR status IN ('paused', 'skipped', 'human', 'completed', 'discarded')
+        )
+    `).catch(() => undefined)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_activated ON conversational_agent_state(activated_at, status, updated_at)').catch(() => undefined)
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS conversational_agent_events (
