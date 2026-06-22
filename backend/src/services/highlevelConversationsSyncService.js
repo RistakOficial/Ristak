@@ -24,6 +24,9 @@ const LAST_SYNC_CONFIG_KEY = 'highlevel_conversations_last_synced_at'
 const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1000 // re-leer 24h hacia atrás por seguridad
 const EXPORT_PAGE_LIMIT = 100
 const MAX_EXPORT_PAGES = 1000
+const WEBHOOK_FALLBACK_ID_BUCKET_MS = 60 * 1000
+const HIGHLEVEL_DUPLICATE_WINDOW_MS = 90 * 1000
+const HIGHLEVEL_WEBHOOK_FALLBACK_ID_PREFIX = 'ghl_wh_'
 
 let syncRunning = false
 
@@ -47,6 +50,17 @@ function parseTimestampToIso(value) {
   if (value === null || value === undefined || value === '') return null
   const date = typeof value === 'number' ? new Date(value) : new Date(String(value))
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function parseTimestampMs(value) {
+  const iso = parseTimestampToIso(value)
+  if (!iso) return null
+  const timestamp = new Date(iso).getTime()
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+function normalizeDedupeText(value = '') {
+  return cleanString(value).replace(/\s+/g, ' ').toLowerCase()
 }
 
 function normalizeMessageStatus(value = '') {
@@ -138,6 +152,147 @@ function extractExportCursor(response = {}) {
 
 function getRemoteMessageId(message = {}) {
   return cleanString(message.id || message._id || message.messageId || message.message_id)
+}
+
+function isHighLevelWebhookFallbackId(value = '') {
+  return cleanString(value).startsWith(HIGHLEVEL_WEBHOOK_FALLBACK_ID_PREFIX)
+}
+
+export function buildHighLevelWebhookFallbackMessageId({
+  contactId,
+  body,
+  messageType,
+  direction,
+  attachments = [],
+  timestamp
+} = {}) {
+  const timestampMs = parseTimestampMs(timestamp) ?? Date.now()
+  const timestampBucket = Math.floor(timestampMs / WEBHOOK_FALLBACK_ID_BUCKET_MS)
+  const attachmentKey = attachments.map(item => cleanString(item)).filter(Boolean).join('|')
+  return hashId('ghl_wh', [
+    cleanString(contactId),
+    cleanString(messageType).toUpperCase(),
+    cleanString(direction).toLowerCase() || 'inbound',
+    normalizeDedupeText(body),
+    attachmentKey,
+    timestampBucket
+  ].join(':'))
+}
+
+function getDuplicateWindow(timestamp) {
+  const timestampMs = parseTimestampMs(timestamp)
+  if (!timestampMs) return null
+  return {
+    start: new Date(timestampMs - HIGHLEVEL_DUPLICATE_WINDOW_MS).toISOString(),
+    end: new Date(timestampMs + HIGHLEVEL_DUPLICATE_WINDOW_MS).toISOString()
+  }
+}
+
+function isSameMessageContent(row = {}, { text = '', attachmentUrl = '' } = {}) {
+  return normalizeDedupeText(row.message_text) === normalizeDedupeText(text) &&
+    cleanString(row.media_url) === cleanString(attachmentUrl)
+}
+
+function selectCanonicalDuplicateRow(rows = [], proposedLocalMessageId = '', remoteMessageId = '', remoteColumn = '') {
+  const proposed = rows.find(row => row.id === proposedLocalMessageId)
+  if (proposed) return proposed
+
+  const remote = cleanString(remoteMessageId)
+  if (remote && !isHighLevelWebhookFallbackId(remote)) {
+    const existingRemote = rows.find(row => cleanString(row[remoteColumn]) === remote)
+    if (existingRemote) return existingRemote
+  }
+
+  const realRemote = rows.find(row => {
+    const value = cleanString(row[remoteColumn])
+    return value && !isHighLevelWebhookFallbackId(value)
+  })
+  return realRemote || rows[0] || null
+}
+
+async function findHighLevelWhatsAppDuplicateRows({
+  contactId,
+  transport,
+  direction,
+  text,
+  attachmentUrl,
+  messageTimestamp,
+  remoteMessageId,
+  proposedLocalMessageId
+}) {
+  const window = getDuplicateWindow(messageTimestamp)
+  if (!window || !contactId || !direction) return []
+
+  const rows = await db.all(`
+    SELECT id, ycloud_message_id, wamid, message_text, media_url, message_timestamp, created_at
+    FROM whatsapp_api_messages
+    WHERE contact_id = ?
+      AND COALESCE(transport, '') = COALESCE(?, '')
+      AND direction = ?
+      AND message_timestamp BETWEEN ? AND ?
+    ORDER BY created_at ASC, message_timestamp ASC
+  `, [contactId, transport || '', direction, window.start, window.end]).catch(() => [])
+
+  const remote = cleanString(remoteMessageId)
+  const incomingFallback = isHighLevelWebhookFallbackId(remote)
+  return rows.filter(row => {
+    const rowRemote = cleanString(row.ycloud_message_id || row.wamid)
+    const sameRemote = remote && rowRemote === remote
+    const fallbackRelated = incomingFallback || isHighLevelWebhookFallbackId(rowRemote) || row.id === proposedLocalMessageId
+    return (sameRemote || fallbackRelated) && isSameMessageContent(row, { text, attachmentUrl })
+  })
+}
+
+async function deleteDuplicateWhatsAppRows(rows = [], canonicalId = '') {
+  const duplicateIds = rows
+    .map(row => cleanString(row.id))
+    .filter(id => id && id !== canonicalId)
+  for (const id of duplicateIds) {
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE whatsapp_api_message_id = ?', [id]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [id]).catch(() => undefined)
+  }
+}
+
+async function findHighLevelMetaDuplicateRows({
+  contactId,
+  platform,
+  direction,
+  text,
+  attachmentUrl,
+  messageTimestamp,
+  remoteMessageId,
+  proposedLocalMessageId
+}) {
+  const window = getDuplicateWindow(messageTimestamp)
+  if (!window || !contactId || !platform || !direction) return []
+
+  const rows = await db.all(`
+    SELECT id, meta_message_id, message_text, media_url, message_timestamp, created_at
+    FROM meta_social_messages
+    WHERE contact_id = ?
+      AND platform = ?
+      AND direction = ?
+      AND message_timestamp BETWEEN ? AND ?
+    ORDER BY created_at ASC, message_timestamp ASC
+  `, [contactId, platform, direction, window.start, window.end]).catch(() => [])
+
+  const remote = cleanString(remoteMessageId)
+  const incomingFallback = isHighLevelWebhookFallbackId(remote)
+  return rows.filter(row => {
+    const rowRemote = cleanString(row.meta_message_id)
+    const sameRemote = remote && rowRemote === remote
+    const fallbackRelated = incomingFallback || isHighLevelWebhookFallbackId(rowRemote) || row.id === proposedLocalMessageId
+    return (sameRemote || fallbackRelated) && isSameMessageContent(row, { text, attachmentUrl })
+  })
+}
+
+async function deleteDuplicateMetaRows(rows = [], canonicalId = '') {
+  const duplicateIds = rows
+    .map(row => cleanString(row.id))
+    .filter(id => id && id !== canonicalId)
+  for (const id of duplicateIds) {
+    await db.run('DELETE FROM meta_social_messages WHERE id = ?', [id]).catch(() => undefined)
+  }
 }
 
 function getMessageBody(message = {}) {
@@ -309,7 +464,21 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
   let saved = 0
   let isNew = false
   for (const [index, attachmentUrl] of items.entries()) {
-    const localMessageId = hashId('ghl_msg', `${remoteMessageId}:${index}`)
+    let localMessageId = hashId('ghl_msg', `${remoteMessageId}:${index}`)
+    const duplicateRows = await findHighLevelWhatsAppDuplicateRows({
+      contactId: contact.id,
+      transport,
+      direction,
+      text: index === 0 ? text : '',
+      attachmentUrl: attachmentUrl || '',
+      messageTimestamp,
+      remoteMessageId,
+      proposedLocalMessageId: localMessageId
+    })
+    const duplicate = selectCanonicalDuplicateRow(duplicateRows, localMessageId, remoteMessageId, 'ycloud_message_id')
+    if (duplicate) {
+      localMessageId = duplicate.id
+    }
     const existing = await db.get('SELECT id FROM whatsapp_api_messages WHERE id = ?', [localMessageId])
     if (!existing) isNew = true
 
@@ -320,6 +489,7 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
         status, message_timestamp, raw_payload_json, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
+        ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
         contact_id = COALESCE(excluded.contact_id, whatsapp_api_messages.contact_id),
         phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
         from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
@@ -331,6 +501,7 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
         media_url = COALESCE(NULLIF(excluded.media_url, ''), whatsapp_api_messages.media_url),
         status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status),
         message_timestamp = COALESCE(excluded.message_timestamp, whatsapp_api_messages.message_timestamp),
+        raw_payload_json = excluded.raw_payload_json,
         updated_at = CURRENT_TIMESTAMP
     `, [
       localMessageId,
@@ -348,6 +519,7 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
       messageTimestamp,
       rawPayload
     ])
+    await deleteDuplicateWhatsAppRows(duplicateRows, localMessageId)
     saved++
   }
 
@@ -513,7 +685,21 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
   let saved = 0
   let isNew = false
   for (const [index, attachmentUrl] of items.entries()) {
-    const localMessageId = hashId('ghl_meta_msg', `${remoteMessageId}:${index}`)
+    let localMessageId = hashId('ghl_meta_msg', `${remoteMessageId}:${index}`)
+    const duplicateRows = await findHighLevelMetaDuplicateRows({
+      contactId: contact.id,
+      platform,
+      direction,
+      text: index === 0 ? text : '',
+      attachmentUrl: attachmentUrl || '',
+      messageTimestamp,
+      remoteMessageId,
+      proposedLocalMessageId: localMessageId
+    })
+    const duplicate = selectCanonicalDuplicateRow(duplicateRows, localMessageId, remoteMessageId, 'meta_message_id')
+    if (duplicate) {
+      localMessageId = duplicate.id
+    }
     const existing = await db.get('SELECT id FROM meta_social_messages WHERE id = ?', [localMessageId])
     if (!existing) isNew = true
 
@@ -525,6 +711,7 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
         message_timestamp, raw_payload_json, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
+        meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), meta_social_messages.meta_message_id),
         meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
         contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
         direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
@@ -533,6 +720,7 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
         message_text = COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text),
         media_url = COALESCE(NULLIF(excluded.media_url, ''), meta_social_messages.media_url),
         message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
+        raw_payload_json = excluded.raw_payload_json,
         updated_at = CURRENT_TIMESTAMP
     `, [
       localMessageId,
@@ -552,6 +740,7 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
       messageTimestamp,
       rawPayload
     ])
+    await deleteDuplicateMetaRows(duplicateRows, localMessageId)
     saved++
   }
 
@@ -771,16 +960,36 @@ export async function processHighLevelConversationWebhook(payload = {}) {
     messageSource.contact_id
   )
 
+  const body = getMessageBody(messageSource) || getMessageBody(payload)
+  const direction = messageSource.direction || payload.direction || 'inbound'
+  const messageType = messageSource.messageType || messageSource.type || payload.messageType || payload.type || payload.channel
+  const attachments = Array.isArray(messageSource.attachments)
+    ? messageSource.attachments
+    : Array.isArray(payload.attachments)
+      ? payload.attachments
+      : []
+  const dateAdded = messageSource.dateAdded ||
+    messageSource.date_added ||
+    messageSource.createdAt ||
+    messageSource.created_at ||
+    messageSource.timestamp ||
+    payload.dateAdded ||
+    payload.date_added ||
+    payload.createdAt ||
+    payload.created_at ||
+    payload.timestamp ||
+    new Date().toISOString()
+
   const message = {
     id: getRemoteMessageId(messageSource) || getRemoteMessageId(payload) ||
-      hashId('ghl_wh', `${contactId}:${getMessageBody(messageSource)}:${Date.now()}`),
+      buildHighLevelWebhookFallbackMessageId({ contactId, body, messageType, direction, attachments, timestamp: dateAdded }),
     contactId,
-    body: getMessageBody(messageSource) || getMessageBody(payload),
-    direction: messageSource.direction || payload.direction || 'inbound',
-    messageType: messageSource.messageType || messageSource.type || payload.messageType || payload.type || payload.channel,
+    body,
+    direction,
+    messageType,
     status: messageSource.status || payload.status,
-    attachments: Array.isArray(messageSource.attachments) ? messageSource.attachments : [],
-    dateAdded: messageSource.dateAdded || messageSource.timestamp || payload.timestamp || new Date().toISOString()
+    attachments,
+    dateAdded
   }
 
   // Si el workflow no especifica canal, asumir WhatsApp (canal principal de chat)
