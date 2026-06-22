@@ -1,0 +1,123 @@
+.root {
+  display: flex;
+  gap: 8px;
+  width: calc(100% + 28px);
+  min-width: 0;
+  max-height: 36px;
+  margin-inline: -14px;
+  padding: 0 18px 2px 14px;
+  overflow-x: auto;
+  overflow-y: visible;
+  opacity: 1;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: 14px;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+  transform: translate3d(0, 0, 0);
+  transition:
+    max-height 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 160ms ease,
+    padding 220ms ease,
+    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.root::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 7px;
+  min-height: 30px;
+  max-width: min(210px, 72vw);
+  padding: 0 12px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 760;
+  letter-spacing: 0;
+  line-height: 1;
+  scroll-snap-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.chip:focus-visible {
+  outline: 2px solid rgba(var(--phone-chat-accent-rgb), 0.38);
+  outline-offset: 2px;
+}
+
+.chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: inherit;
+  background: rgba(var(--phone-chat-primary-rgb), 0.08);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.chipActive {
+  color: #165c40;
+  border-color: rgba(var(--phone-chat-accent-rgb), 0.28);
+  background: var(--phone-chat-accent-soft);
+}
+
+.chipActive small {
+  color: #165c40;
+  background: rgba(var(--phone-chat-accent-rgb), 0.14);
+}
+
+@media (max-width: 430px) {
+  .chip {
+    min-height: 31px;
+    padding-inline: 12px;
+    font-size: 14px;
+  }
+}
+
+:global(.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])) .wrapOnWide {
+  flex-wrap: wrap;
+  width: 100%;
+  max-height: none;
+  margin-inline: 0;
+  padding: 0 1px 2px;
+  overflow: visible;
+  scroll-snap-type: none;
+  touch-action: auto;
+}
+
+:global(.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])) .wrapOnWide .chip {
+  flex: 0 1 auto;
+  max-width: 100%;
+  scroll-snap-align: none;
+}

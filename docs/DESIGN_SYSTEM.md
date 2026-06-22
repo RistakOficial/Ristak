@@ -98,6 +98,14 @@ look para buscadores, botones, inputs con iconos, tabs, cards, tablas, modales,
 badges, menús o pills. Si necesitas una variación real, extiende el componente
 global con props/tokens y documenta la variación en esta guía.
 
+**Regla operativa para filtros, formularios, modales y botones:** antes de crear
+un control nuevo, revisa si ya existe una primitiva global o móvil que resuelva
+el patrón. Si existe, úsala y cambia únicamente los datos, textos, opciones o
+condiciones de negocio que alimentan el componente. No copies el JSX/CSS de una
+pantalla para hacer “otro igual”; extrae o extiende el núcleo compartido. Esto
+aplica especialmente a filtros tipo chip, formularios, botones, modales, sheets,
+segmentos, menús y campos con icono.
+
 La guardia automática vive en `frontend/scripts/audit-design-system.mjs` y se
 ejecuta con `npm run design:audit`. Bloquea patrones locales nuevos como
 `.searchBox`, `.searchInput`, `.inputWithIcon`, `.tabs`, `.badge`, `.modal`,
@@ -109,6 +117,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Botón | `<Button variant="primary\|secondary\|ghost\|danger">` | `<button>` con estilos propios |
 | Etiqueta de estado / badge | `<Badge variant=…>` (+ `utils/statusBadges`) | un `span` "pill" con colores a mano |
 | Buscador | `<SearchField>`; para casos especializados `<ContactSearchInput>` / `<GlobalSearch>` | un `Search` + `<input>` + botón `X` con CSS local; un input con fondo `transparent`/`--bg`/glass (¡desaparece en Onyx!) |
+| Filtros tipo chip en móvil | `<PhoneFilterChips>` desde `components/phone/ui` | repetir `.filterChips`, `.aiAgentHubFilterChip` o carriles scrollables a mano |
 | Tabs segmentados (en card) | `<TabList>` | rgba hardcodeados |
 | Tabs de sub-sección (underline) | `<SegmentTabs>` (recipe `[data-segdir]`) | un nav a mano |
 | Switch / toggle | `<Switch>` (recipe `[data-sw]`) | un checkbox estilizado a mano |

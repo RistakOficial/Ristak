@@ -68,7 +68,7 @@ import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
-import { PhoneSheet, PhoneTextArea, PhoneTextField } from '@/components/phone/ui'
+import { PhoneFilterChips, PhoneSheet, PhoneTextArea, PhoneTextField } from '@/components/phone/ui'
 import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -9029,48 +9029,36 @@ export const PhoneChat: React.FC = () => {
             )}
           </div>
 
-          <div className={styles.aiAgentHubFilters} aria-label="Filtrar chats por estado del agente">
-            {AI_AGENT_HUB_STATUS_FILTERS.map((filter) => (
-              <button
-                key={filter.id}
-                type="button"
-                className={`${styles.aiAgentHubFilterChip} ${aiAgentHubStatusFilter === filter.id ? styles.aiAgentHubFilterChipActive : ''}`}
-                aria-pressed={aiAgentHubStatusFilter === filter.id}
-                onClick={() => {
-                  setAiAgentHubStatusFilter(filter.id)
-                  if (filter.id === 'unassigned') setAiAgentHubAgentFilter('all')
-                }}
-              >
-                <span>{filter.label}</span>
-                <small>{aiAgentHubStatusCounts[filter.id]}</small>
-              </button>
-            ))}
-          </div>
+          <PhoneFilterChips<AIAgentHubStatusFilter>
+            ariaLabel="Filtrar chats por estado del agente"
+            value={aiAgentHubStatusFilter}
+            wrapOnWide
+            options={AI_AGENT_HUB_STATUS_FILTERS.map((filter) => ({
+              value: filter.id,
+              label: filter.label,
+              count: aiAgentHubStatusCounts[filter.id]
+            }))}
+            onChange={(nextFilter) => {
+              setAiAgentHubStatusFilter(nextFilter)
+              if (nextFilter === 'unassigned') setAiAgentHubAgentFilter('all')
+            }}
+          />
 
           {aiAgentHubAgentFilters.length > 1 && (
-            <div className={styles.aiAgentHubFilters} aria-label="Filtrar chats por agente">
-              <button
-                type="button"
-                className={`${styles.aiAgentHubFilterChip} ${activeAiAgentHubAgentFilter === 'all' ? styles.aiAgentHubFilterChipActive : ''}`}
-                aria-pressed={activeAiAgentHubAgentFilter === 'all'}
-                onClick={() => setAiAgentHubAgentFilter('all')}
-              >
-                <span>Todos</span>
-                <small>{aiAgentHubAgentFilterTotal}</small>
-              </button>
-              {aiAgentHubAgentFilters.map((agent) => (
-                <button
-                  key={agent.id}
-                  type="button"
-                  className={`${styles.aiAgentHubFilterChip} ${activeAiAgentHubAgentFilter === agent.id ? styles.aiAgentHubFilterChipActive : ''}`}
-                  aria-pressed={activeAiAgentHubAgentFilter === agent.id}
-                  onClick={() => setAiAgentHubAgentFilter(agent.id)}
-                >
-                  <span>{agent.name}</span>
-                  <small>{agent.count}</small>
-                </button>
-              ))}
-            </div>
+            <PhoneFilterChips
+              ariaLabel="Filtrar chats por agente"
+              value={activeAiAgentHubAgentFilter}
+              wrapOnWide
+              options={[
+                { value: 'all', label: 'Todos', count: aiAgentHubAgentFilterTotal },
+                ...aiAgentHubAgentFilters.map((agent) => ({
+                  value: agent.id,
+                  label: agent.name,
+                  count: agent.count
+                }))
+              ]}
+              onChange={setAiAgentHubAgentFilter}
+            />
           )}
 
           <section className={styles.aiAgentHubChatList} aria-label="Chats tomados por el agente">
@@ -14299,29 +14287,24 @@ export const PhoneChat: React.FC = () => {
               )}
             </div>
             {wideSidebarMode === 'chats' && (
-              <div className={styles.filterChips} data-phone-chat-scrollable="true" aria-hidden={sidebarSearchExpanded}>
-                {([
-                  ['all', 'Todos'],
-                  ['unread', unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos'],
-                  ['appointments', 'Agendados'],
-                  ['customers', customersLabel],
-                  ['leads', leadsLabel]
-                ] as Array<[ChatFilter, string]>).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={chatFilter === key ? styles.filterChipActive : ''}
-                    aria-pressed={chatFilter === key}
-                    onClick={() => {
-                      setArchivedViewOpen(false)
-                      setAgentPriorityViewOpen(false)
-                      setChatFilter(key)
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <PhoneFilterChips<ChatFilter>
+                className={styles.filterChips}
+                ariaLabel="Filtros de chat"
+                hidden={sidebarSearchExpanded}
+                value={chatFilter}
+                options={[
+                  { value: 'all', label: 'Todos' },
+                  { value: 'unread', label: unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos' },
+                  { value: 'appointments', label: 'Agendados' },
+                  { value: 'customers', label: customersLabel },
+                  { value: 'leads', label: leadsLabel }
+                ]}
+                onChange={(nextFilter) => {
+                  setArchivedViewOpen(false)
+                  setAgentPriorityViewOpen(false)
+                  setChatFilter(nextFilter)
+                }}
+              />
             )}
           </header>
 
