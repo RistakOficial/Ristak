@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, Copy, ExternalLink, Loader2, Repeat2, Search, User, X } from 'lucide-react'
+import { Check, ChevronRight, Copy, ExternalLink, Loader2, Repeat2, Search, User, X } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import type { PaymentGatewayProvider } from '@/hooks'
+import { PaymentPlatformLogo } from '@/components/common/PaymentPlatformLogo'
 import { contactsService } from '@/services/contactsService'
 import {
   subscriptionsService,
@@ -110,6 +111,12 @@ function getMercadoPagoAuthorizationLink(subscription: PaymentSubscription) {
   return subscription.mercadoPagoInitPoint || subscription.mercadoPagoSandboxInitPoint || ''
 }
 
+function getPaymentMethodForProvider(provider: PaymentGatewayProvider) {
+  if (provider === 'mercadopago') return 'mercadopago_subscription'
+  if (provider === 'conekta') return 'conekta_subscription'
+  return 'stripe_saved_card'
+}
+
 function getContactName(contact?: Partial<Contact> | null) {
   return contact?.name || contact?.email || contact?.phone || 'Contacto'
 }
@@ -140,6 +147,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   const [contactResults, setContactResults] = useState<Contact[]>([])
   const [contactSearching, setContactSearching] = useState(false)
   const [provider, setProvider] = useState<PaymentGatewayProvider>(() => providers[0] || 'stripe')
+  const [providerStepOpen, setProviderStepOpen] = useState(false)
   const [draft, setDraft] = useState<SubscriptionDraft>(() => createDraft())
   const [saving, setSaving] = useState(false)
   const [savedSubscription, setSavedSubscription] = useState<PaymentSubscription | null>(null)
@@ -151,13 +159,15 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   const resolvedContactName = getContactName(resolvedContact)
   const resolvedContactEmail = resolvedContact?.email || ''
   const resolvedContactPhone = resolvedContact?.phone || ''
-  const providerNeedsStoredContact = provider === 'stripe' || provider === 'conekta'
+  const selectedProvider = providers.includes(provider) ? provider : providers[0] || 'stripe'
+  const providerNeedsStoredContact = providerStepOpen && (selectedProvider === 'stripe' || selectedProvider === 'conekta')
+  const knownProviderForDetails = providerOptions.length === 1 ? providers[0] : providerStepOpen ? selectedProvider : null
   const amount = normalizeAmount(draft.amount)
-  const providerLabel = PROVIDER_LABELS[provider] || 'Pasarela'
+  const providerLabel = providerStepOpen ? PROVIDER_LABELS[selectedProvider] || 'Pasarela' : 'Sin pasarela'
   const intervalSummary = getIntervalSummary(draft.intervalType, draft.intervalCount)
   const formSummary = {
     label: 'Cobro recurrente',
-    detail: `${providerLabel} · ${intervalSummary}`,
+    detail: providerStepOpen ? `${providerLabel} · ${intervalSummary}` : intervalSummary,
     amount: formatCurrency(amount, currency)
   }
 
@@ -168,10 +178,10 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   }, [provider, providers])
 
   useEffect(() => {
-    if (provider === 'conekta' && draft.intervalType === 'daily') {
+    if (knownProviderForDetails === 'conekta' && draft.intervalType === 'daily') {
       setDraft((current) => ({ ...current, intervalType: 'monthly' }))
     }
-  }, [draft.intervalType, provider])
+  }, [draft.intervalType, knownProviderForDetails])
 
   useEffect(() => {
     if (!contactPickerOpen || typeof document === 'undefined') return
@@ -250,39 +260,42 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     if (savedSubscription) onSaved?.(savedSubscription)
   }
 
-  const handleSubmit = async () => {
+  const validateDraft = (targetProvider?: PaymentGatewayProvider) => {
     if (!providerOptions.length) {
       showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones.')
-      return
+      return false
     }
     if (!draft.name.trim()) {
       showToast('warning', 'Falta el nombre', 'Escribe cómo se llama la suscripción.')
-      return
+      return false
     }
     if (amount <= 0) {
       showToast('warning', 'Falta el monto', 'Escribe un monto válido para la suscripción.')
-      return
+      return false
     }
-    if (providerNeedsStoredContact && !resolvedContactId) {
-      showToast('warning', 'Falta el contacto', `${PROVIDER_LABELS[provider]} necesita un contacto guardado para activar la suscripción.`)
-      return
+
+    if (targetProvider && (targetProvider === 'stripe' || targetProvider === 'conekta') && !resolvedContactId) {
+      showToast('warning', 'Falta el contacto', `${PROVIDER_LABELS[targetProvider]} necesita un contacto guardado para activar la suscripción.`)
+      return false
     }
-    if (provider === 'mercadopago' && !resolvedContactEmail) {
+    if (targetProvider === 'mercadopago' && !resolvedContactEmail) {
       showToast('warning', 'Falta el email', 'Mercado Pago necesita email para que el cliente autorice la suscripción.')
-      return
+      return false
     }
-    if (provider === 'conekta' && draft.intervalType === 'daily') {
+    if (targetProvider === 'conekta' && draft.intervalType === 'daily') {
       showToast('warning', 'Frecuencia no soportada', 'Conekta no acepta suscripciones diarias.')
-      return
+      return false
     }
+
+    return true
+  }
+
+  const createSubscriptionWithProvider = async (targetProvider: PaymentGatewayProvider) => {
+    if (!validateDraft(targetProvider)) return
 
     setSaving(true)
     try {
-      const paymentMethod = provider === 'mercadopago'
-        ? 'mercadopago_subscription'
-        : provider === 'conekta'
-          ? 'conekta_subscription'
-          : 'stripe_saved_card'
+      const paymentMethod = getPaymentMethodForProvider(targetProvider)
       const subscription = await subscriptionsService.createSubscription({
         contactId: resolvedContactId || null,
         contactName: resolvedContactName,
@@ -290,19 +303,20 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
         contactPhone: resolvedContactPhone || null,
         name: draft.name.trim(),
         description: draft.description.trim(),
-        status: provider === 'mercadopago' ? 'incomplete' : 'active',
+        status: targetProvider === 'mercadopago' ? 'incomplete' : 'active',
         amount,
         currency,
         intervalType: draft.intervalType,
         intervalCount: Math.max(1, Number(draft.intervalCount) || 1),
         startDate: draft.startDate || getTodayInputValue(),
-        nextRunAt: provider === 'mercadopago' ? null : draft.startDate || getTodayInputValue(),
+        nextRunAt: targetProvider === 'mercadopago' ? null : draft.startDate || getTodayInputValue(),
         paymentMethod,
-        paymentProvider: provider
+        paymentProvider: targetProvider
       })
-      const link = provider === 'mercadopago' ? getMercadoPagoAuthorizationLink(subscription) : ''
+      const link = targetProvider === 'mercadopago' ? getMercadoPagoAuthorizationLink(subscription) : ''
       setSavedSubscription(subscription)
       setAuthorizationLink(link)
+      setProviderStepOpen(false)
 
       if (link) {
         showToast('success', 'Autorización lista', 'Copia el link para que el cliente active la suscripción.')
@@ -316,6 +330,27 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleSubmit = async () => {
+    if (!validateDraft()) return
+
+    if (!providerStepOpen && providerOptions.length > 1) {
+      setProvider(selectedProvider)
+      setProviderStepOpen(true)
+      return
+    }
+
+    await createSubscriptionWithProvider(selectedProvider)
+  }
+
+  const handleBack = () => {
+    if (providerStepOpen) {
+      setProviderStepOpen(false)
+      return
+    }
+
+    onCancel?.()
   }
 
   const renderContactPicker = () => {
@@ -490,34 +525,63 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     )
   }
 
+  if (providerStepOpen) {
+    return (
+      <PhonePaymentFormShell
+        title="Elige pasarela"
+        subtitle="Selecciona dónde quieres crear el enlace o autorización de la suscripción."
+        icon={<Repeat2 size={22} aria-hidden="true" />}
+        ariaLabel="Elegir pasarela de suscripción"
+        onBack={handleBack}
+        summary={formSummary}
+        footer={(
+          <PhoneButton size="lg" loading={saving} onClick={handleSubmit} fullWidth>
+            Crear enlace de pago
+          </PhoneButton>
+        )}
+      >
+        <div className={styles.providerChoices}>
+          {providerOptions.map((option) => {
+            const value = option.value as PaymentGatewayProvider
+            const active = selectedProvider === value
+            return (
+              <button
+                key={value}
+                type="button"
+                className={`${styles.providerChoice} ${active ? styles.providerChoiceActive : ''}`}
+                onClick={() => setProvider(value)}
+              >
+                <span className={styles.providerChoiceIcon}>
+                  <PaymentPlatformLogo platform={value} size="md" decorative />
+                </span>
+                <span className={styles.providerChoiceCopy}>
+                  <strong>{option.label}</strong>
+                  <small>{option.description}</small>
+                </span>
+                {active && <Check size={18} className={styles.providerChoiceCheck} aria-hidden="true" />}
+              </button>
+            )
+          })}
+        </div>
+      </PhonePaymentFormShell>
+    )
+  }
+
   return (
     <PhonePaymentFormShell
       title="Nueva suscripción"
       subtitle="Configura el cobro recurrente desde el celular."
       icon={<Repeat2 size={22} aria-hidden="true" />}
       ariaLabel="Crear suscripción"
-      onBack={onCancel}
+      onBack={handleBack}
       summary={formSummary}
       footer={(
         <PhoneButton size="lg" loading={saving} onClick={handleSubmit} fullWidth>
-          Crear suscripción
+          Crear enlace de pago
         </PhoneButton>
       )}
     >
       {renderContactPicker()}
-
-      <label className={styles.selectField}>
-        <span>Pasarela</span>
-        <PhoneSelect
-          value={provider}
-          onChange={(value) => setProvider(value as PaymentGatewayProvider)}
-          options={providerOptions}
-          title="Pasarela de suscripción"
-          placeholder="Selecciona pasarela"
-          disabled={providerOptions.length <= 1}
-          buttonClassName={styles.controlButton}
-        />
-      </label>
 
       <PhoneTextField
         label="Nombre"
@@ -545,7 +609,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
             onChange={(value) => updateDraft('intervalType', value as SubscriptionInterval)}
             options={INTERVAL_OPTIONS.map((option) => ({
               ...option,
-              disabled: provider === 'conekta' && option.value === 'daily'
+              disabled: knownProviderForDetails === 'conekta' && option.value === 'daily'
             }))}
             title="Frecuencia"
             buttonClassName={styles.controlButton}

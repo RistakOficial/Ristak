@@ -782,6 +782,7 @@ export const PhonePayments: React.FC = () => {
               variant="embedded"
               isOpen
               initialPaymentMode={formMode}
+              lockPaymentMode
               onClose={() => setView('select')}
               onSuccess={(context) => {
                 if (context?.keepOpen) return

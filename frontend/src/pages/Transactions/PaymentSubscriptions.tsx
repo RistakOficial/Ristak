@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   CalendarClock,
+  Check,
   Copy,
   CreditCard,
   Edit3,
@@ -52,6 +53,7 @@ import {
 import styles from './PaymentSubscriptions.module.css'
 
 type SubscriptionFormMode = 'create' | 'edit' | null
+type SubscriptionFormStep = 'details' | 'gateway'
 type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago'
 
 interface SubscriptionFormState {
@@ -64,7 +66,7 @@ interface SubscriptionFormState {
   nextRunAt: string
   status: SubscriptionStatus
   paymentMethod: string
-  paymentProvider: string
+  paymentProvider: PaymentGatewayProvider
 }
 
 const EMPTY_SUMMARY: SubscriptionSummary = {
@@ -136,12 +138,29 @@ function createEmptyForm(): SubscriptionFormState {
   }
 }
 
+function getPaymentMethodForProvider(provider: PaymentGatewayProvider) {
+  if (provider === 'mercadopago') return 'mercadopago_subscription'
+  if (provider === 'conekta') return 'conekta_subscription'
+  return 'stripe_saved_card'
+}
+
+function resolvePaymentProvider(provider?: string | null): PaymentGatewayProvider {
+  if (provider === 'mercadopago' || provider === 'conekta' || provider === 'stripe') return provider
+  return 'stripe'
+}
+
+function getPaymentProviderFromMethod(paymentMethod: string, paymentProvider: PaymentGatewayProvider): PaymentGatewayProvider {
+  if (paymentMethod === 'mercadopago_subscription') return 'mercadopago'
+  if (paymentMethod === 'conekta_subscription') return 'conekta'
+  return paymentProvider
+}
+
 function createEmptyFormForProvider(provider: PaymentGatewayProvider | null): SubscriptionFormState {
   const form = createEmptyForm()
   if (provider === 'conekta') {
     return {
       ...form,
-      paymentMethod: 'conekta_subscription',
+      paymentMethod: getPaymentMethodForProvider(provider),
       paymentProvider: 'conekta'
     }
   }
@@ -149,7 +168,7 @@ function createEmptyFormForProvider(provider: PaymentGatewayProvider | null): Su
     return {
       ...form,
       status: 'incomplete',
-      paymentMethod: 'mercadopago_subscription',
+      paymentMethod: getPaymentMethodForProvider(provider),
       paymentProvider: 'mercadopago'
     }
   }
@@ -271,6 +290,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [actingId, setActingId] = useState<string | null>(null)
   const [formMode, setFormMode] = useState<SubscriptionFormMode>(null)
+  const [formStep, setFormStep] = useState<SubscriptionFormStep>('details')
   const [editingSubscription, setEditingSubscription] = useState<PaymentSubscription | null>(null)
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [form, setForm] = useState<SubscriptionFormState>(() => createEmptyForm())
@@ -330,10 +350,19 @@ export const PaymentSubscriptions: React.FC = () => {
     ))
   ), [conektaConnected, mercadoPagoConnected, stripeConnected])
 
+  const gatewayOptions = useMemo(() => (
+    ([
+      { provider: 'stripe' as const, connected: stripeConnected },
+      { provider: 'conekta' as const, connected: conektaConnected },
+      { provider: 'mercadopago' as const, connected: mercadoPagoConnected }
+    ]).filter((option) => option.connected)
+  ), [conektaConnected, mercadoPagoConnected, stripeConnected])
+
   const defaultProvider = stripeConnected ? 'stripe' : conektaConnected ? 'conekta' : mercadoPagoConnected ? 'mercadopago' : null
   const hasSubscriptionGateway = Boolean(defaultProvider)
-  const isMercadoPagoSelected = form.paymentProvider === 'mercadopago' || form.paymentMethod === 'mercadopago_subscription'
-  const isConektaSelected = form.paymentProvider === 'conekta' || form.paymentMethod === 'conekta_subscription'
+  const showGatewayStep = formMode === 'create' && formStep === 'gateway'
+  const isMercadoPagoSelected = (formMode === 'edit' || showGatewayStep) && (form.paymentProvider === 'mercadopago' || form.paymentMethod === 'mercadopago_subscription')
+  const isConektaSelected = (formMode === 'edit' || showGatewayStep) && (form.paymentProvider === 'conekta' || form.paymentMethod === 'conekta_subscription')
 
   useEffect(() => {
     if (integrationsLoading || hasSubscriptionGateway) return
@@ -355,7 +384,8 @@ export const PaymentSubscriptions: React.FC = () => {
 
     setEditingSubscription(null)
     setSelectedContact(null)
-    setForm(createEmptyFormForProvider(defaultProvider))
+    setForm(createEmptyForm())
+    setFormStep('details')
     setFormMode('create')
   }
 
@@ -372,13 +402,15 @@ export const PaymentSubscriptions: React.FC = () => {
       nextRunAt: toDateInputValue(subscription.nextRunAt) || getTodayInputValue(),
       status: (subscription.status as SubscriptionStatus) || 'active',
       paymentMethod: subscription.paymentMethod || 'stripe_saved_card',
-      paymentProvider: subscription.paymentProvider || 'stripe'
+      paymentProvider: resolvePaymentProvider(subscription.paymentProvider)
     })
+    setFormStep('details')
     setFormMode('edit')
   }
 
   useEffect(() => {
     if (formMode !== 'create') return
+    if (formStep !== 'gateway') return
     if (!availablePaymentMethodOptions.length) return
     if (availablePaymentMethodOptions.some((option) => option.value === form.paymentMethod)) return
 
@@ -389,12 +421,13 @@ export const PaymentSubscriptions: React.FC = () => {
       paymentProvider: fallback.provider,
       status: fallback.provider === 'mercadopago' ? 'incomplete' : current.status
     }))
-  }, [availablePaymentMethodOptions, form.paymentMethod, formMode])
+  }, [availablePaymentMethodOptions, form.paymentMethod, formMode, formStep])
 
   const closeForm = () => {
     if (saving) return
 
     setFormMode(null)
+    setFormStep('details')
     setEditingSubscription(null)
     setSelectedContact(null)
     setForm(createEmptyForm())
@@ -404,7 +437,30 @@ export const PaymentSubscriptions: React.FC = () => {
     setForm((current) => ({ ...current, [field]: value }))
   }
 
-  const buildPayload = (): SubscriptionPayload | null => {
+  const validateSubscriptionDetails = () => {
+    const name = form.name.trim()
+    const amount = Number(form.amount)
+    const intervalCount = Number.parseInt(form.intervalCount, 10)
+
+    if (!name) {
+      showToast('warning', 'Falta el nombre', 'Escribe cómo se llama la suscripción.')
+      return false
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast('warning', 'Falta el monto', 'Escribe un monto válido para la suscripción.')
+      return false
+    }
+
+    if (!Number.isFinite(intervalCount) || intervalCount <= 0) {
+      showToast('warning', 'Frecuencia inválida', 'La frecuencia debe ser de al menos 1 periodo.')
+      return false
+    }
+
+    return true
+  }
+
+  const buildPayload = (providerOverride?: PaymentGatewayProvider): SubscriptionPayload | null => {
     const name = form.name.trim()
     const amount = Number(form.amount)
     const intervalCount = Number.parseInt(form.intervalCount, 10)
@@ -424,11 +480,10 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
-    const provider = form.paymentMethod === 'mercadopago_subscription'
-      ? 'mercadopago'
-      : form.paymentMethod === 'conekta_subscription'
-        ? 'conekta'
-        : form.paymentProvider
+    const provider = providerOverride ?? getPaymentProviderFromMethod(form.paymentMethod, form.paymentProvider)
+    const paymentMethod = formMode === 'edit'
+      ? form.paymentMethod
+      : getPaymentMethodForProvider(provider)
     const contactEmail = selectedContact?.email || editingSubscription?.contactEmail || null
     const contactId = selectedContact?.id || editingSubscription?.contactId || null
 
@@ -461,7 +516,7 @@ export const PaymentSubscriptions: React.FC = () => {
       intervalCount,
       startDate: form.startDate || null,
       nextRunAt: provider === 'mercadopago' ? null : form.nextRunAt || null,
-      paymentMethod: form.paymentMethod,
+      paymentMethod,
       paymentProvider: provider,
       conektaPaymentSourceId: provider === 'conekta' ? editingSubscription?.conektaPaymentSourceId || null : undefined,
       source: editingSubscription?.source || 'ristak'
@@ -469,7 +524,28 @@ export const PaymentSubscriptions: React.FC = () => {
   }
 
   const saveSubscription = async () => {
-    const payload = buildPayload()
+    if (formMode === 'create' && formStep === 'details' && gatewayOptions.length > 1) {
+      if (!validateSubscriptionDetails()) return
+      const nextForm = createEmptyFormForProvider(defaultProvider)
+      setForm({
+        ...nextForm,
+        name: form.name,
+        description: form.description,
+        amount: form.amount,
+        intervalType: form.intervalType,
+        intervalCount: form.intervalCount,
+        startDate: form.startDate,
+        nextRunAt: form.nextRunAt,
+        status: form.status
+      })
+      setFormStep('gateway')
+      return
+    }
+
+    const provider = formMode === 'create'
+      ? (formStep === 'gateway' ? form.paymentProvider : defaultProvider || undefined)
+      : undefined
+    const payload = buildPayload(provider)
     if (!payload) return
 
     setSaving(true)
@@ -792,7 +868,7 @@ export const PaymentSubscriptions: React.FC = () => {
         <Modal
           isOpen={formMode !== null}
           onClose={closeForm}
-          title={formMode === 'edit' ? 'Editar suscripción' : 'Nueva suscripción'}
+          title={formMode === 'edit' ? 'Editar suscripción' : showGatewayStep ? 'Elige pasarela' : 'Nueva suscripción'}
           size="md"
           type="custom"
         >
@@ -800,6 +876,43 @@ export const PaymentSubscriptions: React.FC = () => {
             event.preventDefault()
             void saveSubscription()
           }}>
+            {showGatewayStep ? (
+              <div className={styles.gatewayPicker}>
+                {gatewayOptions.map((option) => {
+                  const active = form.paymentProvider === option.provider
+                  return (
+                    <button
+                      key={option.provider}
+                      type="button"
+                      className={`${styles.gatewayOption} ${active ? styles.gatewayOptionActive : ''}`}
+                      onClick={() => {
+                        setForm((current) => ({
+                          ...current,
+                          paymentMethod: getPaymentMethodForProvider(option.provider),
+                          paymentProvider: option.provider,
+                          status: option.provider === 'mercadopago' ? 'incomplete' : current.status === 'incomplete' ? 'active' : current.status
+                        }))
+                      }}
+                    >
+                      <span className={styles.gatewayOptionLogo}>
+                        <PaymentPlatformLogo platform={option.provider} size="md" decorative />
+                      </span>
+                      <span>
+                        <strong>{option.provider === 'mercadopago' ? 'Mercado Pago' : option.provider === 'conekta' ? 'Conekta' : 'Stripe'}</strong>
+                        <small>
+                          {option.provider === 'mercadopago'
+                            ? 'Crea un enlace de autorización para activar la suscripción.'
+                            : option.provider === 'conekta'
+                              ? 'Usa domiciliación con la tarjeta guardada del contacto.'
+                              : 'Usa la tarjeta guardada del contacto para activar cobros recurrentes.'}
+                        </small>
+                      </span>
+                      {active && <Check size={18} className={styles.gatewayOptionCheck} aria-hidden="true" />}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
             <div className={styles.formGrid}>
               <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                 <ContactSearchInput
@@ -890,7 +1003,7 @@ export const PaymentSubscriptions: React.FC = () => {
                 />
               </div>
 
-              {!isMercadoPagoSelected && (
+              {formMode === 'edit' && !isMercadoPagoSelected && (
                 <div className={styles.formGroup}>
                   <label>Próximo cobro</label>
                   <input
@@ -901,6 +1014,7 @@ export const PaymentSubscriptions: React.FC = () => {
                 </div>
               )}
 
+              {formMode === 'edit' && (
               <div className={styles.formGroup}>
                 <label>Método de cobro</label>
                 <CustomSelect
@@ -911,7 +1025,7 @@ export const PaymentSubscriptions: React.FC = () => {
                       ...current,
                       paymentMethod: event.target.value,
                       paymentProvider: option?.provider || 'stripe',
-                      status: option?.provider === 'mercadopago' && formMode === 'create' ? 'incomplete' : current.status
+                      status: current.status
                     }))
                   }}
                 >
@@ -920,7 +1034,9 @@ export const PaymentSubscriptions: React.FC = () => {
                   ))}
                 </CustomSelect>
               </div>
+              )}
 
+              {formMode === 'edit' && (
               <div className={`${styles.providerHint} ${styles.fullWidth}`}>
                 <PaymentPlatformLogo platform={isMercadoPagoSelected ? 'mercadopago' : isConektaSelected ? 'conekta' : 'stripe'} size="sm" decorative />
                 <p className={styles.formHint}>
@@ -928,17 +1044,30 @@ export const PaymentSubscriptions: React.FC = () => {
                     ? 'Mercado Pago creará una autorización de suscripción. Copia el link y envíalo al cliente; los cobros se activan cuando acepte el método de pago.'
                     : isConektaSelected
                       ? 'Para cobros automáticos con Conekta, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'
-                    : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto y guardará los datos técnicos por debajo.'}
+                  : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto y guardará los datos técnicos por debajo.'}
                 </p>
               </div>
+              )}
             </div>
+            )}
 
             <div className={styles.footerActions}>
-              <Button type="button" variant="ghost" onClick={closeForm} disabled={saving}>
-                Cancelar
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  if (showGatewayStep) {
+                    setFormStep('details')
+                    return
+                  }
+                  closeForm()
+                }}
+                disabled={saving}
+              >
+                {showGatewayStep ? 'Atrás' : 'Cancelar'}
               </Button>
               <Button type="submit" loading={saving}>
-                {formMode === 'edit' ? 'Guardar suscripción' : 'Crear suscripción'}
+                {formMode === 'edit' ? 'Guardar suscripción' : 'Crear enlace de pago'}
               </Button>
             </div>
           </form>

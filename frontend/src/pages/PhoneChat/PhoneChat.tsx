@@ -13984,6 +13984,7 @@ export const PhoneChat: React.FC = () => {
               variant="embedded"
               isOpen
               initialPaymentMode={activeRecordPaymentMode}
+              lockPaymentMode
               initialContact={null}
               lockInitialContact={false}
               onClose={() => setWideRailSection('chat')}
@@ -14590,6 +14591,7 @@ export const PhoneChat: React.FC = () => {
                       variant="embedded"
                       isOpen
                       initialPaymentMode={activeRecordPaymentMode}
+                      lockPaymentMode
                       initialContact={initialContact}
                       lockInitialContact={Boolean(initialContact?.id)}
                       showEmbeddedBackButton={false}

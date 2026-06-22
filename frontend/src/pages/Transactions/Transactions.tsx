@@ -3066,185 +3066,166 @@ export const Transactions: React.FC = () => {
                   </div>
                 </div>
                 <div className={styles.formGroup}>
-                  <label>Tipo de programación</label>
+                  <label>Recurrencia</label>
                   <CustomSelect
-                    name="scheduleMode"
-                    value={paymentPlanCreateModal.scheduleMode}
+                    name="frequency"
+                    value={paymentPlanCreateModal.frequency}
                     onChange={(event) => setPaymentPlanCreateModal(prev => ({
                       ...prev,
-                      scheduleMode: event.target.value as PaymentPlanCreateModalData['scheduleMode']
+                      frequency: event.target.value as PaymentPlanCreateModalData['frequency']
                     }))}
                   >
-                    <option value="recurring">Recurrente</option>
-                    <option value="one_time">Fecha específica</option>
+                    <option value="daily">Diario</option>
+                    <option value="weekly">Semanal</option>
+                    <option value="monthly">Mensual</option>
+                    <option value="yearly">Anual</option>
                   </CustomSelect>
                 </div>
+                <div className={styles.formGroup}>
+                  <label>Intervalo</label>
+                  <NumberInput
+                    name="interval"
+                    min="1"
+                    defaultValue="1"
+                    required
+                  />
+                </div>
 
-                {paymentPlanCreateModal.scheduleMode === 'recurring' && (
+                <div className={styles.formGroup}>
+                  <label>Termina</label>
+                  <CustomSelect
+                    name="endType"
+                    value={paymentPlanCreateModal.endType}
+                    onChange={(event) => setPaymentPlanCreateModal(prev => ({
+                      ...prev,
+                      endType: event.target.value as PaymentPlanCreateModalData['endType']
+                    }))}
+                  >
+                    <option value="never">Nunca</option>
+                    <option value="count">Después de N cobros</option>
+                    <option value="by">En una fecha</option>
+                  </CustomSelect>
+                </div>
+                {paymentPlanCreateModal.endType === 'count' && (
+                  <div className={styles.formGroup}>
+                    <label>Número de cobros</label>
+                    <NumberInput
+                      name="count"
+                      min="1"
+                      max="9999"
+                      defaultValue="12"
+                      required
+                    />
+                  </div>
+                )}
+                {paymentPlanCreateModal.endType === 'by' && (
                   <>
                     <div className={styles.formGroup}>
-                      <label>Recurrencia</label>
-                      <CustomSelect
-                        name="frequency"
-                        value={paymentPlanCreateModal.frequency}
-                        onChange={(event) => setPaymentPlanCreateModal(prev => ({
-                          ...prev,
-                          frequency: event.target.value as PaymentPlanCreateModalData['frequency']
-                        }))}
-                      >
-                        <option value="daily">Diario</option>
-                        <option value="weekly">Semanal</option>
-                        <option value="monthly">Mensual</option>
-                        <option value="yearly">Anual</option>
-                      </CustomSelect>
-                    </div>
-                    <div className={styles.formGroup}>
-                      <label>Intervalo</label>
-                      <NumberInput
-                        name="interval"
-                        min="1"
-                        defaultValue="1"
+                      <label>Fecha final</label>
+                      <input
+                        name="endDate"
+                        type="date"
                         required
                       />
                     </div>
-
                     <div className={styles.formGroup}>
-                      <label>Termina</label>
-                      <CustomSelect
-                        name="endType"
-                        value={paymentPlanCreateModal.endType}
-                        onChange={(event) => setPaymentPlanCreateModal(prev => ({
-                          ...prev,
-                          endType: event.target.value as PaymentPlanCreateModalData['endType']
-                        }))}
-                      >
-                        <option value="never">Nunca</option>
-                        <option value="count">Después de N cobros</option>
-                        <option value="by">En una fecha</option>
-                      </CustomSelect>
-                    </div>
-                    {paymentPlanCreateModal.endType === 'count' && (
-                      <div className={styles.formGroup}>
-                        <label>Número de cobros</label>
-                        <NumberInput
-                          name="count"
-                          min="1"
-                          max="9999"
-                          defaultValue="12"
-                          required
-                        />
-                      </div>
-                    )}
-                    {paymentPlanCreateModal.endType === 'by' && (
-                      <>
-                        <div className={styles.formGroup}>
-                          <label>Fecha final</label>
-                          <input
-                            name="endDate"
-                            type="date"
-                            required
-                          />
-                        </div>
-                        <div className={styles.formGroup}>
-                          <label>Hora final</label>
-                          <input
-                            name="endTime"
-                            type="time"
-                          />
-                        </div>
-                      </>
-                    )}
-                    <div className={styles.formGroup}>
-                      <label>Enviar factura días antes del cobro</label>
-                      <NumberInput
-                        name="daysBefore"
-                        min="0"
-                        defaultValue="0"
+                      <label>Hora final</label>
+                      <input
+                        name="endTime"
+                        type="time"
                       />
                     </div>
+                  </>
+                )}
+                <div className={styles.formGroup}>
+                  <label>Enviar factura días antes del cobro</label>
+                  <NumberInput
+                    name="daysBefore"
+                    min="0"
+                    defaultValue="0"
+                  />
+                </div>
 
-                    {paymentPlanCreateModal.frequency === 'weekly' && (
+                {paymentPlanCreateModal.frequency === 'weekly' && (
+                  <div className={styles.formGroup}>
+                    <label>Día de la semana</label>
+                    <CustomSelect name="dayOfWeek" defaultValue="mo">
+                      {WEEKDAY_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                  </div>
+                )}
+
+                {(paymentPlanCreateModal.frequency === 'monthly' || paymentPlanCreateModal.frequency === 'yearly') && (
+                  <>
+                    <div className={styles.formGroup}>
+                      <label>Regla mensual</label>
+                      <CustomSelect
+                        name="monthlyMode"
+                        value={paymentPlanCreateModal.monthlyMode}
+                        onChange={(event) => setPaymentPlanCreateModal(prev => ({
+                          ...prev,
+                          monthlyMode: event.target.value as PaymentPlanCreateModalData['monthlyMode']
+                        }))}
+                      >
+                        <option value="dayOfMonth">Día del mes</option>
+                        <option value="weekOfMonth">Semana del mes</option>
+                      </CustomSelect>
+                    </div>
+                    {paymentPlanCreateModal.frequency === 'yearly' && (
                       <div className={styles.formGroup}>
-                        <label>Día de la semana</label>
-                        <CustomSelect name="dayOfWeek" defaultValue="mo">
-                          {WEEKDAY_OPTIONS.map(option => (
+                        <label>Mes del año</label>
+                        <CustomSelect name="monthOfYear" defaultValue="jan">
+                          {MONTH_OPTIONS.map(option => (
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </CustomSelect>
                       </div>
                     )}
 
-                    {(paymentPlanCreateModal.frequency === 'monthly' || paymentPlanCreateModal.frequency === 'yearly') && (
+                    {paymentPlanCreateModal.monthlyMode === 'dayOfMonth' ? (
+                      <div className={styles.formGroup}>
+                        <label>Día del mes</label>
+                        <CustomSelect name="dayOfMonth" defaultValue="1">
+                          <option value="-1">Último día del mes</option>
+                          {Array.from({ length: 28 }).map((_, index) => (
+                            <option key={index + 1} value={index + 1}>{index + 1}</option>
+                          ))}
+                        </CustomSelect>
+                      </div>
+                    ) : (
                       <>
                         <div className={styles.formGroup}>
-                          <label>Regla mensual</label>
-                          <CustomSelect
-                            name="monthlyMode"
-                            value={paymentPlanCreateModal.monthlyMode}
-                            onChange={(event) => setPaymentPlanCreateModal(prev => ({
-                              ...prev,
-                              monthlyMode: event.target.value as PaymentPlanCreateModalData['monthlyMode']
-                            }))}
-                          >
-                            <option value="dayOfMonth">Día del mes</option>
-                            <option value="weekOfMonth">Semana del mes</option>
+                          <label>Semana del mes</label>
+                          <CustomSelect name="numOfWeek" defaultValue="1">
+                            <option value="1">Primera</option>
+                            <option value="2">Segunda</option>
+                            <option value="3">Tercera</option>
+                            <option value="4">Cuarta</option>
+                            <option value="-1">Última</option>
                           </CustomSelect>
                         </div>
-                        {paymentPlanCreateModal.frequency === 'yearly' && (
-                          <div className={styles.formGroup}>
-                            <label>Mes del año</label>
-                            <CustomSelect name="monthOfYear" defaultValue="jan">
-                              {MONTH_OPTIONS.map(option => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                              ))}
-                            </CustomSelect>
-                          </div>
-                        )}
-
-                        {paymentPlanCreateModal.monthlyMode === 'dayOfMonth' ? (
-                          <div className={styles.formGroup}>
-                            <label>Día del mes</label>
-                            <CustomSelect name="dayOfMonth" defaultValue="1">
-                              <option value="-1">Último día del mes</option>
-                              {Array.from({ length: 28 }).map((_, index) => (
-                                <option key={index + 1} value={index + 1}>{index + 1}</option>
-                              ))}
-                            </CustomSelect>
-                          </div>
-                        ) : (
-                          <>
-                            <div className={styles.formGroup}>
-                              <label>Semana del mes</label>
-                              <CustomSelect name="numOfWeek" defaultValue="1">
-                                <option value="1">Primera</option>
-                                <option value="2">Segunda</option>
-                                <option value="3">Tercera</option>
-                                <option value="4">Cuarta</option>
-                                <option value="-1">Última</option>
-                              </CustomSelect>
-                            </div>
-                            <div className={styles.formGroup}>
-                              <label>Día de la semana</label>
-                              <CustomSelect name="dayOfWeek" defaultValue="mo">
-                                {WEEKDAY_OPTIONS.map(option => (
-                                  <option key={option.value} value={option.value}>{option.label}</option>
-                                ))}
-                              </CustomSelect>
-                            </div>
-                          </>
-                        )}
+                        <div className={styles.formGroup}>
+                          <label>Día de la semana</label>
+                          <CustomSelect name="dayOfWeek" defaultValue="mo">
+                            {WEEKDAY_OPTIONS.map(option => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </CustomSelect>
+                        </div>
                       </>
                     )}
-
-                    <label className={`${styles.checkboxRow} ${styles.fullWidth}`}>
-                      <input name="useStartAsPrimaryUserAccepted" type="checkbox" />
-                      <span>Usar fecha de inicio como fecha aceptada por el usuario principal</span>
-                    </label>
                   </>
                 )}
 
+                <label className={`${styles.checkboxRow} ${styles.fullWidth}`}>
+                  <input name="useStartAsPrimaryUserAccepted" type="checkbox" />
+                  <span>Usar fecha de inicio como fecha aceptada por el usuario principal</span>
+                </label>
+
                 <div className={styles.formGroup}>
-                  <label>{paymentPlanCreateModal.scheduleMode === 'one_time' ? 'Fecha específica' : 'Fecha de inicio'}</label>
+                  <label>Fecha de inicio</label>
                   <input
                     name="startDate"
                     type="date"

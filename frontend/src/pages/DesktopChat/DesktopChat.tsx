@@ -5931,6 +5931,8 @@ export const DesktopChat: React.FC = () => {
       <RecordPaymentModal
         isOpen={paymentOpen}
         onClose={() => setPaymentOpen(false)}
+        initialPaymentMode="single"
+        lockPaymentMode
         initialContact={activeContact}
         lockInitialContact={Boolean(activeContact?.id)}
         onSuccess={(context) => {

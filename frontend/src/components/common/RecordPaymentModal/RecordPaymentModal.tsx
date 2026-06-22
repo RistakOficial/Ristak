@@ -658,7 +658,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const canUsePaymentPlans = highLevelConnected || stripeConnected || conektaConnected
   const canChoosePaymentMode = canUsePaymentPlans && (chargeType === 'direct' || Boolean(selectedProduct && selectedPrice))
-  const activePaymentMode: PaymentMode = canChoosePaymentMode ? paymentMode : 'single'
+  const activePaymentMode: PaymentMode = lockPaymentMode
+    ? paymentMode
+    : canChoosePaymentMode
+      ? paymentMode
+      : 'single'
   const subtotalAmount = useMemo(() => (
     chargeType === 'product'
       ? normalizeAmount(customAmount)

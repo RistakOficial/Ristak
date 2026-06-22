@@ -218,6 +218,78 @@
   gap: 10px;
 }
 
+.providerChoices {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.providerChoice {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 62px;
+  box-sizing: border-box;
+  padding: 8px 10px 8px 8px;
+  border: 1px solid var(--phone-payment-form-control-border);
+  border-radius: 14px;
+  color: var(--phone-payment-form-text);
+  background: var(--phone-payment-form-panel);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.providerChoiceActive {
+  border-color: color-mix(in srgb, var(--phone-payment-form-accent) 58%, var(--phone-payment-form-control-border) 42%);
+  background: color-mix(in srgb, var(--phone-payment-form-panel) 88%, var(--phone-payment-form-accent) 12%);
+}
+
+.providerChoiceIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: var(--phone-payment-form-soft);
+}
+
+.providerChoiceCopy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.providerChoiceCopy strong,
+.providerChoiceCopy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.providerChoiceCopy strong {
+  color: var(--phone-payment-form-text);
+  font-size: 16px;
+  font-weight: 820;
+  line-height: 1.1;
+}
+
+.providerChoiceCopy small {
+  color: var(--phone-payment-form-muted);
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1.25;
+}
+
+.providerChoiceCheck {
+  color: var(--phone-payment-form-accent);
+}
+
 .sheetOverlay {
   position: fixed;
   inset: 0;
