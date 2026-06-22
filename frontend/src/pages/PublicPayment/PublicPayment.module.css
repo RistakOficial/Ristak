@@ -463,12 +463,12 @@
 }
 
 .conektaTokenizerShell {
-  min-height: 744px;
+  min-height: 368px;
 }
 
 .conektaTokenizerFrame {
-  height: 714px;
-  min-height: 714px;
+  height: 368px;
+  min-height: 368px;
   color: var(--text);
 }
 
@@ -481,6 +481,13 @@
 
 .conektaTokenizerFrame :global([id^="zoid-conekta-embedded-checkout-component-tokenizer"] > iframe) {
   min-height: 100%;
+}
+
+.conektaSubmitButton[data-btn] {
+  --app-button-height: 48px;
+  --app-button-font-size: 14px;
+  --app-button-font-weight: 700;
+  width: 100%;
 }
 
 .brickLoading {

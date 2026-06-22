@@ -47,6 +47,7 @@ type ConektaCheckoutComponents = {
       targetIFrame: string
       publicKey: string
       locale?: string
+      useExternalSubmit?: boolean
     }
     callbacks: Record<string, (...args: any[]) => void>
     options?: Record<string, unknown>
@@ -605,7 +606,9 @@ const ConektaCardTokenizerForm: React.FC<{
     [payment.publicPaymentId]
   )
   const onPaidRef = useRef(onPaid)
+  const submitTokenizerRef = useRef<(() => void) | null>(null)
   const [loadingTokenizer, setLoadingTokenizer] = useState(Boolean(payment.publicKey))
+  const [tokenizerReady, setTokenizerReady] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
@@ -626,6 +629,8 @@ const ConektaCardTokenizerForm: React.FC<{
     let cancelled = false
     const mountTokenizer = async () => {
       setLoadingTokenizer(true)
+      setTokenizerReady(false)
+      submitTokenizerRef.current = null
       setMessage('')
 
       try {
@@ -639,9 +644,15 @@ const ConektaCardTokenizerForm: React.FC<{
           config: {
             targetIFrame: `#${containerId}`,
             publicKey: payment.publicKey,
-            locale: 'es'
+            locale: 'es',
+            useExternalSubmit: true
           },
           callbacks: {
+            onUpdateSubmitTrigger: (submitFunction: () => void) => {
+              if (cancelled) return
+              submitTokenizerRef.current = submitFunction
+              setTokenizerReady(true)
+            },
             onCreateTokenSucceeded: async (token: string | { id?: string }) => {
               const tokenId = typeof token === 'string' ? token : String(token?.id || '').trim()
               if (!tokenId) {
@@ -683,11 +694,12 @@ const ConektaCardTokenizerForm: React.FC<{
           },
           options: {
             backgroundMode: 'lightMode',
-            inputType: 'minimalMode',
+            inputType: 'flatMode',
             hideLogo: true,
             colorPrimary: readToken('--accent'),
             colorText: readToken('--text'),
-            colorLabel: readToken('--text-dim')
+            colorLabel: readToken('--text-dim'),
+            autoResize: true
           }
         })
       } catch (tokenizerError: any) {
@@ -702,10 +714,23 @@ const ConektaCardTokenizerForm: React.FC<{
 
     return () => {
       cancelled = true
+      submitTokenizerRef.current = null
       const container = document.getElementById(containerId)
       if (container) container.innerHTML = ''
     }
   }, [containerId, payment.contact?.id, payment.publicKey, payment.publicPaymentId])
+
+  const handleSubmit = () => {
+    const submitTokenizer = submitTokenizerRef.current
+    if (!submitTokenizer) {
+      setMessageKind('error')
+      setMessage('El formulario seguro de Conekta todavía no está listo. Espera un momento e intenta de nuevo.')
+      return
+    }
+
+    setMessage('')
+    submitTokenizer()
+  }
 
   const messageClassName = [
     styles.message,
@@ -716,20 +741,32 @@ const ConektaCardTokenizerForm: React.FC<{
   return (
     <div className={styles.stripeBox}>
       <div className={`${styles.mercadoPagoBrickShell} ${styles.conektaTokenizerShell}`}>
-        {(loadingTokenizer || submitting) && (
+        {loadingTokenizer && (
           <div className={styles.brickLoading}>
             <Loader2 size={18} className={styles.spin} />
-            <span>{submitting ? 'Procesando pago' : 'Cargando tokenizador seguro'}</span>
+            <span>Cargando campos seguros</span>
           </div>
         )}
         <div id={containerId} className={styles.conektaTokenizerFrame} />
       </div>
 
+      <Button
+        type="button"
+        variant="primary"
+        className={styles.conektaSubmitButton}
+        onClick={handleSubmit}
+        loading={submitting}
+        disabled={loadingTokenizer || !tokenizerReady}
+        leftIcon={!submitting ? <ShieldCheck size={16} /> : undefined}
+      >
+        {submitting ? 'Procesando pago' : `Pagar ${formatCurrency(payment.amount, payment.currency)}`}
+      </Button>
+
       {showSecureNotice && (
         <p className={styles.cardAuthorizationNotice}>
           <ShieldCheck size={16} />
           <span>
-            La tarjeta se captura en el tokenizador seguro de Conekta. Si este pago pertenece a tu contacto, quedará guardada para futuros cargos acordados.
+            Tus datos de tarjeta viajan en campos seguros de Conekta. Ristak solo recibe el resultado del cobro.
           </span>
         </p>
       )}
