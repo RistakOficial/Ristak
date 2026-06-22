@@ -1362,6 +1362,12 @@ const videoFormGateStorageUnitOptions: Array<{ value: VideoFormGateStorageUnit; 
 ]
 
 const LANDING_DEFAULT_PAGE_PADDING = 36
+const EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH = 20
+const FORM_PAGE_BORDER_WIDTH_MAX = 80
+const createDefaultEmbeddedFormThemeOverride = (): Partial<SiteTheme> => ({
+  pageBorderWidth: EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH,
+  pageBorderColor: 'transparent'
+})
 const HEADER_PANEL_BLOCK_TYPE: SiteBlockType = 'header_panel'
 const FOOTER_PANEL_BLOCK_TYPE: SiteBlockType = 'footer_panel'
 const PANEL_BLOCK_TYPES = new Set<SiteBlockType>([HEADER_PANEL_BLOCK_TYPE, FOOTER_PANEL_BLOCK_TYPE])
@@ -1399,7 +1405,7 @@ const LANDING_DEFAULT_BLOCK_SPACING: Partial<Record<SiteBlockType, ReturnType<ty
   testimonials: makeLandingSpacing(0, 0),
   services: makeLandingSpacing(0, 0),
   faq: makeLandingSpacing(0, 0),
-  form_embed: makeLandingSpacing(18, 0),
+  form_embed: makeLandingSpacing(0, 0),
   cta: makeLandingSpacing(0, 0),
   header_panel: makeLandingSpacing(0, 0),
   footer_panel: makeLandingSpacing(0, 0)
@@ -1417,7 +1423,8 @@ const hasLegacyLandingBlockSpacing = (block: SiteBlock) => {
   const top = Number(settings.blockMarginTop)
   const bottom = Number(settings.blockMarginBottom)
   const hasOldVerticalMargin = top === 50 || bottom === 50
-  if (!hasOldVerticalMargin) return false
+  const hasOldFormEmbedDefaultMargin = block.blockType === 'form_embed' && top === 18 && bottom === 0
+  if (!hasOldVerticalMargin && !hasOldFormEmbedDefaultMargin) return false
   if (!isZeroSpacingValue(settings.blockMarginRight) || !isZeroSpacingValue(settings.blockMarginLeft)) return false
   return ['blockPadding', 'blockPaddingTop', 'blockPaddingRight', 'blockPaddingBottom', 'blockPaddingLeft']
     .every(key => isZeroSpacingValue(settings[key]))
@@ -1669,7 +1676,7 @@ type BlockMoveState = {
   canMoveUp: boolean
   canMoveDown: boolean
 }
-type EmbeddedFormActiveElement = 'field' | 'submit'
+type EmbeddedFormActiveElement = 'form' | 'field' | 'submit'
 type EmbeddedFormCanvasEditorBridge = {
   parentBlockId: string
   activeFieldId: string
@@ -1677,6 +1684,7 @@ type EmbeddedFormCanvasEditorBridge = {
   activePageId: string
   pages: SitePage[]
   insertIndex: number | null
+  onSelectSurface: () => void
   onSelectField: (fieldId: string) => void
   onSelectSubmit: () => void
   onPatchField: (fieldId: string, patch: Partial<SiteBlock>) => void
@@ -5713,7 +5721,7 @@ const createEmbeddedFormDraftSettings = (siteId: string) => ({
   formSiteId: '',
   embeddedSiteId: undefined,
   embeddedSiteName: undefined,
-  embeddedTheme: undefined,
+  embeddedTheme: createDefaultEmbeddedFormThemeOverride(),
   embeddedSiteType: undefined,
   embeddedPages: normalizePagesForSave(normalizeEmbeddedFormPages()),
   embeddedBlocks: createEmbeddedBlocks(siteId)
@@ -5959,7 +5967,8 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
       content: '',
       settings: blockSettings({
         description: '',
-        formSiteId: ''
+        formSiteId: '',
+        embeddedTheme: createDefaultEmbeddedFormThemeOverride()
       })
     }
   }
@@ -6106,7 +6115,13 @@ const getEmbeddedFormSourceId = (block?: SiteBlock | null) => {
 
 const getEmbeddedFormThemeOverride = (block?: SiteBlock | null): Partial<SiteTheme> | null => {
   const theme = block?.settings?.embeddedTheme
-  return theme && typeof theme === 'object' && !Array.isArray(theme) ? theme as Partial<SiteTheme> : null
+  if (theme && typeof theme === 'object' && !Array.isArray(theme)) {
+    return {
+      ...createDefaultEmbeddedFormThemeOverride(),
+      ...(theme as Partial<SiteTheme>)
+    }
+  }
+  return createDefaultEmbeddedFormThemeOverride()
 }
 
 const getEditableEmbeddedFormPages = (block: SiteBlock, forms: PublicSite[]): SitePage[] => {
@@ -6577,6 +6592,7 @@ function FormEmbedEditorPanel({
     patchActiveField({ blockType: nextType, settings: nextSettings })
   }
   const isSubmitSelected = activeElement === 'submit'
+  const isFormSurfaceSelected = activeElement === 'form'
   const activePageButtonPlaceholder = activePage ? getFormPageActionLabel(site, pages, activePage.id) : ''
 
   const renderActiveContentControls = () => {
@@ -6667,8 +6683,8 @@ function FormEmbedEditorPanel({
     <div className={styles.settingsGroup}>
       <div className={styles.formFieldEditorHeader}>
         <div>
-          <strong>Elemento seleccionado</strong>
-          <small>{activeField ? blockLabels[activeField.blockType] : 'Selecciona algo dentro del formulario'}</small>
+          <strong>{isFormSurfaceSelected ? 'Formulario seleccionado' : 'Elemento seleccionado'}</strong>
+          <small>{isFormSurfaceSelected ? 'Caja y fondo del formulario' : activeField ? blockLabels[activeField.blockType] : 'Selecciona algo dentro del formulario'}</small>
         </div>
         {activeField && (
           <div className={styles.formFieldActions}>
@@ -6679,7 +6695,9 @@ function FormEmbedEditorPanel({
         )}
       </div>
 
-      {!activeField ? (
+      {isFormSurfaceSelected ? (
+        <InspectorEmptyState>Usa la pestaña Formulario para ajustar fondo, separación, borde y ancho.</InspectorEmptyState>
+      ) : !activeField ? (
         <InspectorEmptyState>Selecciona un elemento del formulario para editarlo.</InspectorEmptyState>
       ) : !activeBlockIsField ? (
         <>
@@ -6947,8 +6965,6 @@ function FormEmbedEditorPanel({
         <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       )}
     </>
-  ) : !activeField ? (
-    <InspectorEmptyState>Selecciona un campo o el botón de envío dentro del formulario.</InspectorEmptyState>
   ) : null
 
   const formDesignContent = (
@@ -7451,7 +7467,7 @@ export const Sites: React.FC = () => {
       return
     }
 
-    setActiveEmbeddedFormFieldId(current => visibleFields.some(field => field.id === current) ? current : visibleFields[0].id)
+    setActiveEmbeddedFormFieldId(current => visibleFields.some(field => field.id === current) ? current : '')
   }, [activeEmbeddedFormPageId, activeEmbeddedFormSubmitSelected, formEditMode, formEditBlock?.id, formEditFields, formEditPages])
   useEffect(() => {
     if (!videoFormGateEditMode) {
@@ -10470,8 +10486,7 @@ export const Sites: React.FC = () => {
     setActiveEmbeddedFormPageId(nextPageId)
     setEmbeddedFieldInsertIndex(null)
     if (context) {
-      const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, nextPageId)
-      setActiveEmbeddedFormFieldId(pageFields[0]?.id || '')
+      setActiveEmbeddedFormFieldId('')
     }
   }
 
@@ -11479,6 +11494,10 @@ export const Sites: React.FC = () => {
     activePageId: activeEmbeddedFormPage?.id || DEFAULT_FUNNEL_PAGE_ID,
     pages: formEditPages,
     insertIndex: embeddedFieldInsertIndex,
+    onSelectSurface: () => {
+      setActiveEmbeddedFormSubmitSelected(false)
+      setActiveEmbeddedFormFieldId('')
+    },
     onSelectField: (fieldId) => {
       setActiveEmbeddedFormSubmitSelected(false)
       setActiveEmbeddedFormFieldId(fieldId)
@@ -11502,6 +11521,10 @@ export const Sites: React.FC = () => {
     activePageId: VIDEO_FORM_GATE_PAGE_ID,
     pages: getVideoFormGateSinglePage(),
     insertIndex: embeddedFieldInsertIndex,
+    onSelectSurface: () => {
+      setActiveVideoFormGateSubmitSelected(false)
+      setActiveVideoFormGateBlockId('')
+    },
     onSelectField: (fieldId) => {
       setActiveVideoFormGateSubmitSelected(false)
       setActiveVideoFormGateBlockId(fieldId)
@@ -12293,7 +12316,7 @@ export const Sites: React.FC = () => {
                     block={formEditBlock}
                     fields={formEditFields}
                     activeField={activeEmbeddedFormField}
-                    activeElement={activeEmbeddedFormSubmitSelected ? 'submit' : 'field'}
+                    activeElement={activeEmbeddedFormSubmitSelected ? 'submit' : activeEmbeddedFormField ? 'field' : 'form'}
                     customFields={customFields}
                     customFieldFolders={customFieldFolders}
                     pages={formEditPages}
@@ -30232,7 +30255,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                 onChange={(event) => {
                   const nextFormId = event.target.value
                   if (!nextFormId) return
-                  patchSettings({ formSiteId: nextFormId, embeddedSiteId: undefined, embeddedBlocks: undefined, embeddedPages: undefined })
+                  patchSettings({
+                    formSiteId: nextFormId,
+                    embeddedSiteId: undefined,
+                    embeddedBlocks: undefined,
+                    embeddedPages: undefined,
+                    embeddedTheme: createDefaultEmbeddedFormThemeOverride()
+                  })
                   window.setTimeout(save, 0)
                 }}
                 onBlur={save}
@@ -30298,7 +30327,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
       ? sourceCanvasTheme.chrome
       : null
     const embeddedFormPreview = (
-      <section className="rstk-embedded-form">
+      <section
+        className="rstk-embedded-form"
+        onClick={embeddedFormEditor ? (event) => {
+          event.stopPropagation()
+          embeddedFormEditor.onSelectSurface()
+        } : undefined}
+      >
         {embeddedFormEditor ? (
           <EmbeddedFormCanvasFields
             fields={visibleEditorItems}
@@ -30340,7 +30375,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         <div className="rstk-frame rstkEmbeddedFormSourceFrame">
           <CanvasBackgroundVideo theme={previewForm?.theme} />
           <main className="rstk-page">
-            <div className="rstk-shell rstkEmbeddedFormSourceShell">
+            <div
+              className="rstk-shell rstkEmbeddedFormSourceShell"
+              onClick={embeddedFormEditor ? (event) => {
+                event.stopPropagation()
+                embeddedFormEditor.onSelectSurface()
+              } : undefined}
+            >
               {sourceChromePlatform && previewForm ? (
                 <CanvasChrome
                   platform={sourceChromePlatform}
@@ -31022,7 +31063,7 @@ const FormEmbedToolbarControls: React.FC<{
               embeddedSiteName: undefined,
               embeddedBlocks: undefined,
               embeddedPages: undefined,
-              embeddedTheme: undefined,
+              embeddedTheme: createDefaultEmbeddedFormThemeOverride(),
               embeddedSiteType: undefined
             })
             commitSoon()
@@ -31246,16 +31287,16 @@ const FormLayoutStyleControls: React.FC<{
         />
         <DimensionField
           label="Borde formulario"
-          value={getThemeNumber(theme, 'pageBorderWidth', 0, 0, 12)}
+          value={getThemeNumber(theme, 'pageBorderWidth', embedded ? EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH : 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)}
           min={0}
-          max={12}
+          max={FORM_PAGE_BORDER_WIDTH_MAX}
           onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
           onCommit={onSaveSite}
         />
       </div>
       <ColorField
         label="Color borde"
-        value={getThemePaint(theme, 'pageBorderColor', '#dbe3ef')}
+        value={getThemePaint(theme, 'pageBorderColor', embedded ? 'transparent' : '#dbe3ef')}
         allowGradient
         onChange={(value) => onPatchTheme({ pageBorderColor: value })}
         onCommit={onSaveSite}
@@ -31919,9 +31960,9 @@ const PageInspector: React.FC<{
       <div className={styles.twoColumn}>
         <DimensionField
           label="Grosor"
-          value={getThemeNumber(theme, 'pageBorderWidth', 0, 0, 12)}
+          value={getThemeNumber(theme, 'pageBorderWidth', 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)}
           min={0}
-          max={12}
+          max={FORM_PAGE_BORDER_WIDTH_MAX}
           onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
           onCommit={onSaveSite}
         />

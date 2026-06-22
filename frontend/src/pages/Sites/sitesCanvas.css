@@ -1877,8 +1877,8 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   min-height: auto;
   box-sizing: border-box;
   width: 100%;
-  margin: var(--rstk-embedded-form-safe-gap, clamp(18px, 2vw, 30px)) 0;
-  padding: max(var(--rstk-frame-pad, 22px), clamp(30px, 3vw, 44px)) 18px;
+  margin: 0;
+  padding: 0;
   background-color: var(--rstk-page-bg);
   background-image: var(--rstk-page-image);
   background-position: var(--rstk-page-image-position, center top);

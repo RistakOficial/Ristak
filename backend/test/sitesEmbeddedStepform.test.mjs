@@ -97,6 +97,8 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   })
 
   assert.match(html, /data-embedded-form-pages/)
+  assert.match(html, /--rstk-page-border-width:20px/)
+  assert.match(html, /\.rstk-embedded-form-source-frame\{[^}]*margin:0;padding:0/)
   assert.match(html, /data-embedded-page-content="step-1"/)
   assert.match(html, /data-embedded-page-content="step-2" hidden/)
   assert.match(html, /data-embedded-next/)

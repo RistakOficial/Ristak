@@ -481,7 +481,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
   const pageBorderPaint = normalizeCssPaint(theme.pageBorderColor, '')
   const pageBorder = pageBorderPaint ? paintFallbackColor(pageBorderPaint, 'transparent') : 'transparent'
-  const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 12)
+  const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 80)
   const rawBackgroundPaint = normalizeCssPaint(theme.backgroundColor, '')
   const hasExplicitBackgroundColor = typeof theme.backgroundColor === 'string' && theme.backgroundColor.trim() !== ''
   const backgroundPaint = rawBackgroundPaint && (hasExplicitBackgroundColor || rawBackgroundPaint.toLowerCase() !== DEFAULT_BG) ? rawBackgroundPaint : ''
