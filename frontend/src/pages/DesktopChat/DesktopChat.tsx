@@ -4684,7 +4684,7 @@ export const DesktopChat: React.FC = () => {
   const renderAvatar = (
     contact: DesktopChatContact | Contact | null,
     size: 'sm' | 'md' = 'md',
-    options: { showChannelBadge?: boolean; showAgentBadge?: boolean } = {}
+    options: { showChannelBadge?: boolean; showAgentBadge?: boolean; agentBadgeLabel?: string } = {}
   ) => {
     const photo = getContactProfilePhoto(contact)
     const initials = getContactInitials(contact)
@@ -4704,7 +4704,7 @@ export const DesktopChat: React.FC = () => {
           </span>
         ) : null}
         {options.showAgentBadge ? (
-          <span className={styles.avatarAgentBadge} title="Prioridad del agente" aria-label="Prioridad del agente">
+          <span className={styles.avatarAgentBadge} title={options.agentBadgeLabel || 'Chat del bot'} aria-label={options.agentBadgeLabel || 'Chat del bot'}>
             <Bot size={10} />
           </span>
         ) : null}
@@ -5398,7 +5398,7 @@ export const DesktopChat: React.FC = () => {
                       }}
                     >
                       {renderChatSelectionControl(contact)}
-                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge: true })}
+                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge: true, agentBadgeLabel: 'Necesita acción del agente' })}
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
@@ -5426,8 +5426,16 @@ export const DesktopChat: React.FC = () => {
                   const unread = Number(contact.unreadCount || 0)
                   const agentState = agentStates[contact.id]
                   const isAgentActionChat = Boolean(agentState?.signal && agentState?.signal !== 'discarded')
-                  const showAgentBadge = !agentAssignedViewOpen && isAgentActionChat
+                  const isAgentActiveChat = agentState?.status === 'active' && agentState?.signal !== 'discarded'
+                  const showAgentBadge = agentAssignedViewOpen || isAgentActionChat || isAgentActiveChat
                   const agentStatusLabel = agentAssignedViewOpen ? getAgentInboxStatusLabel(agentState) : ''
+                  const agentBadgeLabel = agentAssignedViewOpen
+                    ? agentStatusLabel
+                      ? `Chat del bot: ${agentStatusLabel}`
+                      : 'Chat del bot'
+                    : isAgentActionChat
+                      ? 'Necesita acción del agente'
+                      : 'Bot activo en este chat'
                   return (
                     <div
                       key={contact.id}
@@ -5444,7 +5452,7 @@ export const DesktopChat: React.FC = () => {
                       }}
                     >
                       {renderChatSelectionControl(contact)}
-                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge })}
+                      {renderAvatar(contact, 'sm', { showChannelBadge: true, showAgentBadge, agentBadgeLabel })}
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>

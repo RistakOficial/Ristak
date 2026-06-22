@@ -631,9 +631,9 @@
 }
 
 .chatRowAgentAssigned .avatarAgentBadge {
-  background: var(--accent-soft);
-  color: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, var(--chat-border));
+  background: var(--neg);
+  color: var(--on-accent);
+  box-shadow: 0 0 0 2px var(--surface), 0 5px 12px color-mix(in srgb, var(--neg) 22%, transparent);
 }
 
 .archiveRowIcon {
@@ -943,12 +943,20 @@
 
 .avatarAgentBadge {
   top: -2px;
-  right: -2px;
-  width: 17px;
-  height: 17px;
-  background: var(--chat-soft-strong);
-  color: var(--color-text-primary);
-  box-shadow: 0 0 0 1px var(--chat-border);
+  left: -2px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  background: var(--neg);
+  color: var(--on-accent);
+  box-shadow: 0 0 0 2px var(--surface), 0 5px 12px color-mix(in srgb, var(--neg) 22%, transparent);
+  pointer-events: none;
+}
+
+.avatarAgentBadge svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.7;
 }
 
 .conversationPanel {
