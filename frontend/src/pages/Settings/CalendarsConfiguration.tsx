@@ -49,6 +49,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   calendarsService,
   type Calendar as CalendarType,
+  type CalendarBookingCompletionConfig,
   type CalendarBookingDefaultFields,
   type CalendarBookingFormConfig,
   type GoogleCalendarOption,
@@ -69,6 +70,7 @@ import pageStyles from './CalendarsConfiguration.module.css'
 
 type CalendarSettingsView = 'calendars' | 'google'
 type CalendarSourcePreference = 'combined' | 'ristak' | 'ghl' | 'google'
+type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'advanced'
 
 const GOOGLE_HELP_LINKS = {
   googleCloudWelcome: 'https://cloud.google.com/welcome',
@@ -115,7 +117,20 @@ const CALENDAR_COLOR_PALETTE = [
 
 const CALENDAR_DEFAULT_COLOR = '#3b82f6'
 const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
+const CALENDAR_DEFAULT_COMPLETION_MESSAGE = 'Listo. Tu cita quedó agendada.'
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i
+const CALENDAR_WIZARD_STEPS: Array<{
+  id: CalendarWizardStepId
+  label: string
+  description: string
+}> = [
+  { id: 'basics', label: 'Detalles', description: 'Nombre, color y estado.' },
+  { id: 'publicUrl', label: 'URL pública', description: 'Link para compartir.' },
+  { id: 'availability', label: 'Disponibilidad', description: 'Duración y espacios.' },
+  { id: 'rules', label: 'Reglas', description: 'Límites de reserva.' },
+  { id: 'form', label: 'Formulario', description: 'Preguntas y cierre.' },
+  { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' }
+]
 const CALENDAR_TEMPLATE_EXTRA_CATEGORIES = [
   { id: 'calendar', label: 'Calendario' }
 ]
@@ -179,6 +194,57 @@ const normalizeCalendarBookingForm = (value?: Partial<CalendarBookingFormConfig>
     useCustomForm: Boolean(value?.useCustomForm && customFormId),
     customFormId,
     defaultFields
+  }
+}
+
+const createDefaultCalendarBookingCompletion = (): CalendarBookingCompletionConfig => ({
+  action: 'message',
+  message: CALENDAR_DEFAULT_COMPLETION_MESSAGE,
+  redirectUrl: ''
+})
+
+const normalizeCalendarBookingCompletion = (value?: Partial<CalendarBookingCompletionConfig> | null): CalendarBookingCompletionConfig => {
+  const redirectUrl = String(value?.redirectUrl || '').trim()
+  const action = value?.action === 'redirect' ? 'redirect' : 'message'
+  const message = String(value?.message || '').trim() || CALENDAR_DEFAULT_COMPLETION_MESSAGE
+
+  return {
+    action,
+    message,
+    redirectUrl
+  }
+}
+
+const normalizeCalendarSlugInput = (value: string) => value
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .trim()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '')
+  .slice(0, 80)
+
+const getCalendarSharePath = (calendar?: Partial<CalendarType> | null) => {
+  const slug = calendar?.slug || calendar?.widgetSlug || calendar?.id || ''
+  return slug ? `/calendar/${encodeURIComponent(slug)}` : '/calendar/...'
+}
+
+const buildCalendarShareUrl = (calendar?: Partial<CalendarType> | null) => {
+  if (!calendar) return ''
+  const path = getCalendarSharePath(calendar)
+  if (calendar.publicUrlEnabled && calendar.publicBaseDomain) return `https://${calendar.publicBaseDomain}${path}`
+  return calendar.publicUrl || ''
+}
+
+const isValidCalendarRedirectUrl = (value: string) => {
+  const text = value.trim()
+  if (!text) return false
+  if (/^\/(?!\/)/.test(text)) return true
+  try {
+    const parsed = new URL(text)
+    return ['http:', 'https:'].includes(parsed.protocol)
+  } catch {
+    return false
   }
 }
 
@@ -304,12 +370,14 @@ export const CalendarsConfiguration: React.FC = () => {
     allowBookingAfterUnit: 'hours',
     allowBookingFor: 30,
     allowBookingForUnit: 'days',
-    bookingForm: createDefaultCalendarBookingForm()
+    bookingForm: createDefaultCalendarBookingForm(),
+    bookingCompletion: createDefaultCalendarBookingCompletion()
   })
 
-  // Estados de edición inline de calendario
+  // Estados del wizard de edición de calendario
   const [expandedCalendarId, setExpandedCalendarId] = useState<string | null>(null)
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarType | null>(null)
+  const [calendarWizardStep, setCalendarWizardStep] = useState<CalendarWizardStepId>('basics')
   const [savingConfig, setSavingConfig] = useState(false)
   const [deletingCalendarId, setDeletingCalendarId] = useState<string | null>(null)
   const [formSites, setFormSites] = useState<PublicSite[]>([])
@@ -374,7 +442,14 @@ export const CalendarsConfiguration: React.FC = () => {
     if (routeState.calendarId && calendars.length) {
       const calendar = calendars.find(item => item.id === routeState.calendarId)
       if (calendar) {
-        setSelectedCalendar({ ...calendar, bookingForm: normalizeCalendarBookingForm(calendar.bookingForm) })
+        setSelectedCalendar({
+          ...calendar,
+          bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
+          bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion)
+        })
+        if (expandedCalendarId !== calendar.id) {
+          setCalendarWizardStep('basics')
+        }
         setExpandedCalendarId(calendar.id)
       }
     } else if (!routeState.calendarId && expandedCalendarId) {
@@ -409,7 +484,8 @@ export const CalendarsConfiguration: React.FC = () => {
       const data = await calendarsService.getCalendars(locationId, accessToken)
       const normalizedCalendars = data.map(calendar => ({
         ...calendar,
-        bookingForm: normalizeCalendarBookingForm(calendar.bookingForm)
+        bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
+        bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion)
       }))
       setCalendars(normalizedCalendars)
       return normalizedCalendars
@@ -911,15 +987,13 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleOpenCalendarEditor = (calendar: CalendarType) => {
-    if (expandedCalendarId === calendar.id) {
-      setExpandedCalendarId(null)
-      setSelectedCalendar(null)
-      navigate(buildCalendarSettingsPath('calendars'), { replace: true })
-      return
-    }
-
-    setSelectedCalendar({ ...calendar, bookingForm: normalizeCalendarBookingForm(calendar.bookingForm) })
+    setSelectedCalendar({
+      ...calendar,
+      bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
+      bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion)
+    })
     setExpandedCalendarId(calendar.id)
+    setCalendarWizardStep('basics')
     if (googleIntegration?.connected && !loadingGoogleCalendarOptions && !googleCalendarOptions.length) {
       loadGoogleCalendarOptions()
     }
@@ -929,6 +1003,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const handleCloseCalendarEditor = () => {
     setExpandedCalendarId(null)
     setSelectedCalendar(null)
+    setCalendarWizardStep('basics')
     navigate(buildCalendarSettingsPath('calendars'), { replace: true })
   }
 
@@ -944,8 +1019,32 @@ export const CalendarsConfiguration: React.FC = () => {
 
       // Construir payload con todos los campos editables
       const bookingForm = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
+      const bookingCompletion = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
+      const nextSlug = normalizeCalendarSlugInput(selectedCalendar.slug || selectedCalendar.widgetSlug || selectedCalendar.name || selectedCalendar.id)
+      const slugConflict = calendars.some(item => (
+        item.id !== selectedCalendar.id &&
+        [item.slug, item.widgetSlug].some(value => normalizeCalendarSlugInput(value || '') === nextSlug)
+      ))
+
+      if (!nextSlug) {
+        showToast('error', 'URL pública incompleta', 'Escribe una ruta válida para compartir este calendario.')
+        return
+      }
+
+      if (slugConflict) {
+        showToast('error', 'URL pública repetida', 'Otro calendario ya usa esa ruta. Cambia el enlace antes de guardar.')
+        return
+      }
+
+      if (bookingCompletion.action === 'redirect' && !isValidCalendarRedirectUrl(bookingCompletion.redirectUrl)) {
+        showToast('error', 'Redirección inválida', 'Usa una URL completa con http/https o una ruta interna que empiece con /.')
+        return
+      }
+
       const updateData: any = {
         name: selectedCalendar.name?.trim() || 'Calendario',
+        slug: nextSlug,
+        widgetSlug: nextSlug,
         eventTitle: selectedCalendar.eventTitle?.trim() || selectedCalendar.name?.trim() || 'Cita',
         notes: selectedCalendar.notes?.trim() || '',
         eventColor: selectedCalendar.eventColor || '#3b82f6',
@@ -964,7 +1063,8 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingForUnit: selectedCalendar.allowBookingForUnit || 'days',
         appoinmentPerSlot: selectedCalendar.appoinmentPerSlot,
         appoinmentPerDay: selectedCalendar.appoinmentPerDay,
-        bookingForm
+        bookingForm,
+        bookingCompletion
       }
 
       // Agregar lookBusyConfig si está configurado
@@ -1052,7 +1152,8 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingAfterUnit: 'hours',
         allowBookingFor: 30,
         allowBookingForUnit: 'days',
-        bookingForm: createDefaultCalendarBookingForm()
+        bookingForm: createDefaultCalendarBookingForm(),
+        bookingCompletion: createDefaultCalendarBookingCompletion()
       })
       await loadCalendars()
     } catch (error: any) {
@@ -1496,11 +1597,17 @@ export const CalendarsConfiguration: React.FC = () => {
 
     const customFormSites = formSites.filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
     const bookingFormConfig = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
+    const bookingCompletionConfig = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
     const selectedCustomForm = customFormSites.find(site => site.id === bookingFormConfig.customFormId)
     const calendarFormOptions = customFormSites.map(site => ({
       value: site.id,
       label: `${site.name || site.title || 'Formulario'}${site.siteType === 'interactive_form' ? ' · multistep' : ''}`
     }))
+    const selectedPublicPath = getCalendarSharePath(selectedCalendar)
+    const selectedPublicUrl = buildCalendarShareUrl(selectedCalendar)
+    const currentStepIndex = CALENDAR_WIZARD_STEPS.findIndex(step => step.id === calendarWizardStep)
+    const safeStepIndex = currentStepIndex >= 0 ? currentStepIndex : 0
+    const currentStep = CALENDAR_WIZARD_STEPS[safeStepIndex]
 
     if (bookingFormConfig.customFormId && !selectedCustomForm) {
       calendarFormOptions.push({
@@ -1511,6 +1618,20 @@ export const CalendarsConfiguration: React.FC = () => {
 
     const updateBookingFormConfig = (nextConfig: CalendarBookingFormConfig) => {
       updateSelectedCalendar({ bookingForm: normalizeCalendarBookingForm(nextConfig) })
+    }
+
+    const updateBookingCompletionConfig = (nextConfig: Partial<CalendarBookingCompletionConfig>) => {
+      updateSelectedCalendar({
+        bookingCompletion: normalizeCalendarBookingCompletion({
+          ...bookingCompletionConfig,
+          ...nextConfig
+        })
+      })
+    }
+
+    const goToRelativeStep = (offset: number) => {
+      const nextIndex = Math.min(CALENDAR_WIZARD_STEPS.length - 1, Math.max(0, safeStepIndex + offset))
+      setCalendarWizardStep(CALENDAR_WIZARD_STEPS[nextIndex].id)
     }
 
     const handleCustomBookingFormToggle = (enabled: boolean) => {
@@ -1593,24 +1714,50 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     return (
-      <div className={pageStyles.calendarEditor}>
-        <div className={pageStyles.editorHeader}>
-          <div>
-            <h4>Configuración del calendario</h4>
-            <p>{calendar.name}</p>
-          </div>
-          <Button
-            variant="ghost"
-            size="small"
-            onClick={handleCloseCalendarEditor}
-            disabled={savingConfig}
-          >
-            Cancelar
-          </Button>
-        </div>
+      <Modal
+        isOpen={expandedCalendarId === calendar.id}
+        onClose={handleCloseCalendarEditor}
+        title={`Editar ${selectedCalendar.name || calendar.name || 'calendario'}`}
+        size="xl"
+        flushContent
+        className={pageStyles.calendarWizardModal}
+      >
+        <div className={pageStyles.calendarWizardShell}>
+          <aside className={pageStyles.calendarWizardSteps} aria-label="Pasos de configuración">
+            {CALENDAR_WIZARD_STEPS.map((step, index) => (
+              <button
+                key={step.id}
+                type="button"
+                className={`${pageStyles.calendarWizardStep} ${currentStep.id === step.id ? pageStyles.calendarWizardStepActive : ''}`}
+                onClick={() => setCalendarWizardStep(step.id)}
+                aria-current={currentStep.id === step.id ? 'step' : undefined}
+              >
+                <span>{index + 1}</span>
+                <strong>{step.label}</strong>
+                <small>{step.description}</small>
+              </button>
+            ))}
+          </aside>
 
-        <div className={pageStyles.editorSections}>
-          <section className={pageStyles.editorSection}>
+          <div className={pageStyles.calendarWizardMain}>
+            <div className={pageStyles.calendarWizardTopbar}>
+              <div>
+                <span>Paso {safeStepIndex + 1} de {CALENDAR_WIZARD_STEPS.length}</span>
+                <h3>{currentStep.label}</h3>
+              </div>
+              <Button
+                variant="ghost"
+                size="small"
+                onClick={handleCloseCalendarEditor}
+                disabled={savingConfig}
+              >
+                Cancelar
+              </Button>
+            </div>
+
+            <div className={pageStyles.calendarWizardBody}>
+              {currentStep.id === 'basics' && (
+                <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
               <strong>Lo básico</strong>
               <span>Cómo se llama el calendario y cómo se van a ver sus citas.</span>
@@ -1662,7 +1809,80 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
             </div>
           </section>
+              )}
 
+              {currentStep.id === 'publicUrl' && (
+                <section className={pageStyles.editorSection}>
+                  <div className={pageStyles.editorSectionHeader}>
+                    <strong>Enlace público del calendario</strong>
+                    <span>Cada calendario tiene su propia URL para que cualquier persona pueda agendar.</span>
+                  </div>
+                  <div className={pageStyles.editorFields}>
+                    <label className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                      <span>URL para compartir</span>
+                      <div className={pageStyles.publicUrlControl}>
+                        <input
+                          className={styles.input}
+                          value={selectedPublicUrl || selectedPublicPath}
+                          readOnly
+                        />
+                        <Button
+                          variant="secondary"
+                          onClick={() => void handleCopyPublicUrl({
+                            ...selectedCalendar,
+                            publicUrl: selectedPublicUrl
+                          })}
+                          disabled={!selectedPublicUrl}
+                        >
+                          <Copy size={15} />
+                          Copiar
+                        </Button>
+                        {selectedPublicUrl && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => window.open(selectedPublicUrl, '_blank', 'noopener,noreferrer')}
+                          >
+                            <Globe2 size={15} />
+                            Abrir
+                          </Button>
+                        )}
+                      </div>
+                      <small>
+                        {selectedCalendar.publicUrlEnabled
+                          ? 'Este enlace ya puede recibir reservas públicas.'
+                          : selectedCalendar.publicUrlUnavailableReason || 'Conecta y verifica el dominio público de Sitios para activar el enlace completo.'}
+                      </small>
+                    </label>
+
+                    <label className={pageStyles.editorField}>
+                      <span>Ruta personalizada</span>
+                      <div className={pageStyles.slugInputGroup}>
+                        <span>/calendar/</span>
+                        <input
+                          className={styles.input}
+                          value={selectedCalendar.slug || selectedCalendar.widgetSlug || ''}
+                          onChange={(event) => {
+                            const slug = normalizeCalendarSlugInput(event.target.value)
+                            updateSelectedCalendar({ slug, widgetSlug: slug })
+                          }}
+                          placeholder="consulta-ventas"
+                        />
+                      </div>
+                      <small>Usa letras, números y guiones. Al guardar se valida que no choque con otro calendario.</small>
+                    </label>
+
+                    <div className={pageStyles.googleSyncHint}>
+                      <Link2 size={16} />
+                      <span>
+                        La ruta pública usa el calendario específico, su disponibilidad, su formulario y la acción de confirmación configurada en este wizard.
+                      </span>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {currentStep.id === 'availability' && (
+                <>
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
               <strong>Tiempos de cita</strong>
@@ -1725,7 +1945,10 @@ export const CalendarsConfiguration: React.FC = () => {
               </label>
             </div>
           </section>
+                </>
+              )}
 
+              {currentStep.id === 'rules' && (
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
               <strong>Reglas para agendar</strong>
@@ -1796,7 +2019,10 @@ export const CalendarsConfiguration: React.FC = () => {
               </label>
             </div>
           </section>
+              )}
 
+              {currentStep.id === 'form' && (
+                <>
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
               <strong>Formulario para agendar</strong>
@@ -1894,6 +2120,55 @@ export const CalendarsConfiguration: React.FC = () => {
 
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
+              <strong>Después de agendar</strong>
+              <span>Define qué verá la persona cuando complete la cita desde la URL pública.</span>
+            </div>
+            <div className={pageStyles.editorFields}>
+              <label className={pageStyles.editorField}>
+                <span>Acción final</span>
+                <CustomSelect
+                  value={bookingCompletionConfig.action}
+                  onValueChange={(value) => updateBookingCompletionConfig({
+                    action: value === 'redirect' ? 'redirect' : 'message'
+                  })}
+                  options={[
+                    { value: 'message', label: 'Mostrar mensaje' },
+                    { value: 'redirect', label: 'Redirigir a una página' }
+                  ]}
+                />
+              </label>
+
+              {bookingCompletionConfig.action === 'redirect' ? (
+                <label className={pageStyles.editorField}>
+                  <span>URL destino</span>
+                  <input
+                    className={styles.input}
+                    value={bookingCompletionConfig.redirectUrl}
+                    onChange={(event) => updateBookingCompletionConfig({ redirectUrl: event.target.value })}
+                    placeholder="https://tudominio.com/gracias"
+                  />
+                  <small>También puedes usar una ruta interna como /gracias.</small>
+                </label>
+              ) : (
+                <label className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                  <span>Mensaje de confirmación</span>
+                  <textarea
+                    className={styles.input}
+                    value={bookingCompletionConfig.message}
+                    onChange={(event) => updateBookingCompletionConfig({ message: event.target.value })}
+                    placeholder="Listo. Tu cita quedó agendada."
+                    rows={3}
+                  />
+                </label>
+              )}
+            </div>
+          </section>
+                </>
+              )}
+
+              {currentStep.id === 'availability' && (
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
               <strong>Espacios entre citas</strong>
               <span>Tiempo libre antes/después y opción para ocultar algunos horarios.</span>
             </div>
@@ -1977,7 +2252,10 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
             </div>
           </section>
+              )}
 
+              {currentStep.id === 'advanced' && (
+                <>
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
               <strong>Notas</strong>
@@ -2064,31 +2342,42 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
             </section>
           )}
-        </div>
+                </>
+              )}
+            </div>
 
-        <div className={pageStyles.editorFooter}>
-          <Button
-            onClick={handleSaveCalendarConfig}
-            disabled={savingConfig}
-          >
-            {savingConfig ? (
-              <>
-                <Loader2 size={16} className={styles.spinIcon} />
-                Guardando...
-              </>
-            ) : (
-              'Guardar cambios'
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={handleCloseCalendarEditor}
-            disabled={savingConfig}
-          >
-            Cancelar
-          </Button>
+            <div className={pageStyles.calendarWizardFooter}>
+              <Button
+                variant="secondary"
+                onClick={() => goToRelativeStep(-1)}
+                disabled={savingConfig || safeStepIndex === 0}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => goToRelativeStep(1)}
+                disabled={savingConfig || safeStepIndex === CALENDAR_WIZARD_STEPS.length - 1}
+              >
+                Siguiente
+              </Button>
+              <Button
+                onClick={handleSaveCalendarConfig}
+                disabled={savingConfig}
+              >
+                {savingConfig ? (
+                  <>
+                    <Loader2 size={16} className={styles.spinIcon} />
+                    Guardando...
+                  </>
+                ) : (
+                  'Guardar cambios'
+                )}
+              </Button>
+            </div>
+          </div>
         </div>
-      </div>
+      </Modal>
     )
   }
 
@@ -2220,7 +2509,6 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarRow = (calendar: CalendarType) => {
     const isAttributed = attributionCalendarIds.includes(calendar.id)
     const isDefault = defaultCalendarId === calendar.id
-    const isExpanded = expandedCalendarId === calendar.id
     const handleRowClick = (event: React.MouseEvent<HTMLElement>) => {
       const target = event.target as HTMLElement
       if (target.closest('button, a, input, select, textarea, [role="menuitem"]')) return
@@ -2230,7 +2518,7 @@ export const CalendarsConfiguration: React.FC = () => {
     return (
       <div key={calendar.id} className={pageStyles.calendarItem}>
         <article
-          className={`${pageStyles.calendarRow} ${isDefault ? pageStyles.calendarRowDefault : ''} ${isExpanded ? pageStyles.calendarRowEditing : ''}`}
+          className={`${pageStyles.calendarRow} ${isDefault ? pageStyles.calendarRowDefault : ''}`}
           onClick={handleRowClick}
         >
           <div className={pageStyles.calendarIdentity}>

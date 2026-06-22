@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import {
+  normalizeCalendarBookingCompletionConfig,
+  renderPublicCalendarHtml
+} from '../src/services/localCalendarService.js'
 import { renderPublicSiteHtml } from '../src/services/sitesService.js'
 
 function calendarSite(settings = {}) {
@@ -95,4 +99,31 @@ test('site calendar custom mode passes editable style params for live embeds', a
   assert.equal(url.searchParams.get('accent'), '#ff0055')
   assert.equal(url.searchParams.get('slotRadius'), '18')
   assert.equal(url.searchParams.get('fieldRadius'), '12')
+})
+
+test('public calendar carries booking completion behavior into the booking widget', () => {
+  const completion = normalizeCalendarBookingCompletionConfig({
+    bookingCompletion: {
+      action: 'redirect',
+      message: 'Te llevamos a la pagina de gracias.',
+      redirectUrl: '/gracias'
+    }
+  })
+  const html = renderPublicCalendarHtml({
+    id: 'calendar-public-completion',
+    slug: 'agenda-publica',
+    name: 'Agenda publica',
+    slotDuration: 30,
+    eventColor: '#146FC5',
+    bookingCompletion: completion
+  })
+
+  assert.deepEqual(completion, {
+    action: 'redirect',
+    message: 'Te llevamos a la pagina de gracias.',
+    redirectUrl: '/gracias'
+  })
+  assert.match(html, /"bookingCompletion":\{"action":"redirect"/)
+  assert.match(html, /"redirectUrl":"\/gracias"/)
+  assert.match(html, /window\.location\.assign\(completionRedirectUrl\)/)
 })

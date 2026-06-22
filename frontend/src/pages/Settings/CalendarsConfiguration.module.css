@@ -827,6 +827,174 @@
   color: currentColor;
 }
 
+.calendarWizardModal {
+  width: min(1120px, calc(100vw - 32px));
+  max-width: min(1120px, calc(100vw - 32px));
+}
+
+.calendarWizardShell {
+  display: grid;
+  grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
+  min-height: min(760px, calc(100vh - 150px));
+  min-width: 0;
+}
+
+.calendarWizardSteps {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 18px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.calendarWizardStep {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 2px;
+  width: 100%;
+  padding: 11px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.calendarWizardStep:hover,
+.calendarWizardStepActive {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.calendarWizardStep > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-ctl);
+  background: var(--surface-solid);
+  color: var(--text-mute);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  grid-row: 1 / span 2;
+}
+
+.calendarWizardStepActive > span {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.calendarWizardStep strong {
+  min-width: 0;
+  color: currentColor;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.calendarWizardStep small {
+  min-width: 0;
+  color: var(--text-mute);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.calendarWizardMain {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-solid);
+}
+
+.calendarWizardTopbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.calendarWizardTopbar span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+}
+
+.calendarWizardTopbar h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.calendarWizardBody {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+  overflow: auto;
+  padding: 22px;
+}
+
+.calendarWizardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-solid);
+}
+
+.publicUrlControl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.slugInputGroup {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+}
+
+.slugInputGroup > span {
+  padding: 0 12px;
+  color: var(--text-mute);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.slugInputGroup input {
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.editorField textarea {
+  min-height: 104px;
+  resize: vertical;
+}
+
 .calendarEditor {
   display: grid;
   gap: 18px;
@@ -2071,6 +2239,58 @@
   .calendarActions {
     grid-template-columns: minmax(0, 1fr) auto;
     width: 100%;
+  }
+
+  .calendarWizardModal {
+    width: min(100%, calc(100vw - 18px));
+    max-width: min(100%, calc(100vw - 18px));
+  }
+
+  .calendarWizardShell {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: min(780px, calc(100vh - 92px));
+  }
+
+  .calendarWizardSteps {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(156px, 1fr);
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 12px;
+  }
+
+  .calendarWizardStep {
+    min-width: 156px;
+  }
+
+  .calendarWizardTopbar,
+  .calendarWizardBody,
+  .calendarWizardFooter {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .calendarWizardFooter,
+  .publicUrlControl {
+    grid-template-columns: 1fr;
+  }
+
+  .calendarWizardFooter button,
+  .publicUrlControl button {
+    width: 100%;
+  }
+
+  .slugInputGroup {
+    grid-template-columns: 1fr;
+  }
+
+  .slugInputGroup > span {
+    padding: 9px 12px 0;
+  }
+
+  .slugInputGroup input {
+    border-left: 0;
   }
 
   .rowActionColumn {

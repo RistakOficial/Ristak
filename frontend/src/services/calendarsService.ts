@@ -45,6 +45,14 @@ export interface CalendarBookingFormConfig {
   defaultFields: CalendarBookingDefaultFields;
 }
 
+export type CalendarBookingCompletionAction = 'message' | 'redirect';
+
+export interface CalendarBookingCompletionConfig {
+  action: CalendarBookingCompletionAction;
+  message: string;
+  redirectUrl: string;
+}
+
 export interface Calendar {
   id: string;
   ghlCalendarId?: string | null;
@@ -83,6 +91,7 @@ export interface Calendar {
   notes?: string;
   formId?: string;
   bookingForm?: CalendarBookingFormConfig;
+  bookingCompletion?: CalendarBookingCompletionConfig;
   stickyContact?: boolean;
   isLivePaymentMode?: boolean;
   alertEmail?: string;

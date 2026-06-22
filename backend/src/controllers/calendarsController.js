@@ -1111,11 +1111,14 @@ export async function createPublicAppointment(req, res) {
       logger.warn(`[Calendars Controller] No se pudo enviar push de cita publica: ${error.message}`);
     });
 
+    const bookingCompletion = localCalendarService.normalizeCalendarBookingCompletionConfig(calendar.bookingCompletion || {});
+
     res.status(201).json({
       success: true,
       data: {
         appointment,
-        message: 'Listo. Tu cita quedo agendada.'
+        message: bookingCompletion.message,
+        bookingCompletion
       }
     });
   } catch (error) {
@@ -1494,8 +1497,9 @@ export async function updateCalendar(req, res) {
     const remoteCalendarId = existing?.ghlCalendarId || id;
     if (context.accessToken && remoteCalendarId && existing?.ghlCalendarId) {
       try {
-        const { bookingForm, ...remoteUpdateData } = updateData;
+        const { bookingForm, bookingCompletion, ...remoteUpdateData } = updateData;
         const preservedBookingForm = bookingForm || calendar?.bookingForm || existing?.bookingForm;
+        const preservedBookingCompletion = bookingCompletion || calendar?.bookingCompletion || existing?.bookingCompletion;
         const remote = await calendarService.updateCalendar(remoteCalendarId, remoteUpdateData, context.accessToken);
         calendar = await localCalendarService.upsertLocalCalendar(remote.calendar || remote, {
           id: existing.id,
@@ -1505,7 +1509,8 @@ export async function updateCalendar(req, res) {
           syncStatus: 'synced',
           rawJson: {
             ...(remote && typeof remote === 'object' ? remote : {}),
-            bookingForm: preservedBookingForm
+            bookingForm: preservedBookingForm,
+            bookingCompletion: preservedBookingCompletion
           }
         });
       } catch (error) {

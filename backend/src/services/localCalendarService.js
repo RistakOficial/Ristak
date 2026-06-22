@@ -13,6 +13,7 @@ import { getSitesPublicDomain } from './sitesService.js'
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
 const DEFAULT_EVENT_COLOR = '#3b82f6'
+const DEFAULT_BOOKING_COMPLETION_MESSAGE = 'Listo. Tu cita quedo agendada.'
 const GOOGLE_CALENDAR_CONFIG_KEY = 'google_calendar_service_account_config'
 const DEFAULT_RISTAK_CALENDAR_NAME = 'calendario ristak'
 const DEFAULT_RISTAK_CALENDAR_DESC = 'calendario principal creado en ristak'
@@ -165,6 +166,39 @@ function normalizeCalendarBookingFormConfig(value = {}) {
   }
 }
 
+export function normalizeCalendarBookingCompletionConfig(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const completionSource = source.bookingCompletion && typeof source.bookingCompletion === 'object'
+    ? source.bookingCompletion
+    : source.booking_completion && typeof source.booking_completion === 'object'
+      ? source.booking_completion
+      : source
+  const action = cleanString(
+    completionSource.action ||
+    completionSource.bookingCompletionAction ||
+    completionSource.booking_completion_action ||
+    completionSource.type
+  ).toLowerCase()
+  const message = cleanString(
+    completionSource.message ||
+    completionSource.successMessage ||
+    completionSource.success_message ||
+    completionSource.thankYouMessage ||
+    completionSource.thank_you_message
+  )
+  const redirectUrl = cleanString(
+    completionSource.redirectUrl ||
+    completionSource.redirect_url ||
+    completionSource.url
+  )
+
+  return {
+    action: action === 'redirect' && redirectUrl ? 'redirect' : 'message',
+    message: message || DEFAULT_BOOKING_COMPLETION_MESSAGE,
+    redirectUrl
+  }
+}
+
 function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
   const rawSource = options.rawJson || calendar.raw_json || calendar.rawJson || {}
   const parsedRaw = parseJson(rawSource, {})
@@ -212,6 +246,13 @@ function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
       calendar.booking_form ||
       baseRaw.bookingForm ||
       baseRaw.booking_form ||
+      calendar
+    ),
+    bookingCompletion: normalizeCalendarBookingCompletionConfig(
+      calendar.bookingCompletion ||
+      calendar.booking_completion ||
+      baseRaw.bookingCompletion ||
+      baseRaw.booking_completion ||
       calendar
     )
   }
@@ -659,6 +700,7 @@ function calendarRowToApi(row = {}) {
     allowCancellation: row.allow_cancellation !== 0,
     notes: row.notes || '',
     bookingForm: normalizeCalendarBookingFormConfig(rawJson.bookingForm || rawJson.booking_form || rawJson),
+    bookingCompletion: normalizeCalendarBookingCompletionConfig(rawJson.bookingCompletion || rawJson.booking_completion || rawJson),
     availabilityType: toInt(row.availability_type, 0),
     source: row.source || 'ristak',
     syncStatus: row.sync_status || 'pending',
@@ -1266,6 +1308,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   const fieldRadius = useCustomStyle ? safeCssNumber(style.fieldRadius, 8, 0, 32) : 8
   const layout = normalizeCalendarEmbedLayout(style.layout)
   const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
+  const bookingCompletion = normalizeCalendarBookingCompletionConfig(calendar.bookingCompletion || calendar.booking_completion || {})
   const payload = {
     slug,
     name: calendar.name || 'Calendario',
@@ -1277,6 +1320,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     preview: Boolean(preview),
     layout,
     coverImage,
+    bookingCompletion,
     styleDefaults: {
       accent,
       text: textColor,
@@ -1503,6 +1547,19 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         try {
           const parsed = new URL(text);
           return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
+        } catch {
+          return '';
+        }
+      };
+      const getCompletionRedirectUrl = () => {
+        const completion = calendar.bookingCompletion || {};
+        if (completion.action !== 'redirect') return '';
+        const text = String(completion.redirectUrl || '').trim();
+        if (!text) return '';
+        if (/^\/(?!\/)/.test(text)) return text;
+        try {
+          const parsed = new URL(text, window.location.origin);
+          return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
         } catch {
           return '';
         }
@@ -1912,7 +1969,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           });
           const payload = await response.json();
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
-          const successText = payload.data?.message || 'Listo. Tu cita quedo agendada.';
+          const completionRedirectUrl = getCompletionRedirectUrl();
+          const successText = payload.data?.message || calendar.bookingCompletion?.message || 'Listo. Tu cita quedo agendada.';
           selectedSlot = '';
           form.reset();
           form.classList.remove('visible');
@@ -1921,6 +1979,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           renderFormPage();
           await loadSlots();
           setMessage(successText, 'ok');
+          if (completionRedirectUrl) {
+            window.setTimeout(() => {
+              window.location.assign(completionRedirectUrl);
+            }, 450);
+          }
         } catch (error) {
           setMessage(error.message || 'No se pudo agendar la cita.', 'error');
         } finally {
