@@ -90,4 +90,43 @@ describe('notification preferences service', () => {
     assert.equal(target.configured, true)
     assert.deepEqual(target.userIds, [])
   })
+
+  it('keeps old appointment preferences for booked and confirmed appointment events', async () => {
+    await deleteTestData()
+    await setAppConfig(NOTIFICATION_PREFERENCES_CONFIG_KEY, {
+      version: 1,
+      rows: {
+        all: { appointments: 'push' }
+      }
+    })
+
+    const booked = await resolvePushNotificationTargetForEvent('appointment_booked')
+    const confirmed = await resolvePushNotificationTargetForEvent('appointment_confirmed')
+
+    assert.equal(booked.configured, true)
+    assert.equal(booked.userIds, null)
+    assert.equal(confirmed.configured, true)
+    assert.equal(confirmed.userIds, null)
+  })
+
+  it('lets a specific appointment event override the old generic appointment row', async () => {
+    await deleteTestData()
+    await setAppConfig(NOTIFICATION_PREFERENCES_CONFIG_KEY, {
+      version: 1,
+      rows: {
+        all: {
+          appointments: 'push',
+          appointment_confirmed: 'off'
+        }
+      }
+    })
+
+    const booked = await resolvePushNotificationTargetForEvent('appointment_booked')
+    const confirmed = await resolvePushNotificationTargetForEvent('appointment_confirmed')
+
+    assert.equal(booked.configured, true)
+    assert.equal(booked.userIds, null)
+    assert.equal(confirmed.configured, true)
+    assert.deepEqual(confirmed.userIds, [])
+  })
 })

@@ -7,7 +7,7 @@ import GHLClient, { getGHLClient } from '../services/ghlClient.js';
 import { db } from '../config/database.js';
 import { getAccountTimezone } from '../utils/dateUtils.js';
 import { triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappEventsService.js';
-import { sendCalendarAppointmentNotification } from '../services/pushNotificationsService.js';
+import { sendAppointmentConfirmationNotification, sendCalendarAppointmentNotification } from '../services/pushNotificationsService.js';
 import {
   getRequestHost,
   resolvePublicCalendarHostForHost,
@@ -1717,6 +1717,18 @@ export async function updateAppointment(req, res) {
 
     if (!appointment) {
       appointment = await localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
+    }
+
+    const previousStatus = String(existing?.appointmentStatus || existing?.appointment_status || existing?.status || '').trim().toLowerCase();
+    const nextStatus = String(appointment?.appointmentStatus || appointment?.appointment_status || appointment?.status || updateData.appointmentStatus || updateData.appointment_status || updateData.status || '').trim().toLowerCase();
+    if (nextStatus === 'confirmed' && previousStatus !== 'confirmed') {
+      await sendAppointmentConfirmationNotification(appointment, {
+        appointmentId: appointment?.id || id,
+        calendarId: appointment?.calendarId || appointment?.calendar_id || existing?.calendarId || existing?.calendar_id,
+        source: 'admin_calendar_status'
+      }).catch(error => {
+        logger.warn(`[Calendars Controller] No se pudo enviar push de cita confirmada: ${error.message}`);
+      });
     }
 
     try {

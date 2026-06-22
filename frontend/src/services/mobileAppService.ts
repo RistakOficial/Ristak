@@ -21,6 +21,9 @@ export const MOBILE_APP_NOTIFICATION_EVENT = 'ristak:mobile-notification'
 const IOS_PHONE_CHAT_HOME_PATH = '/phone/chat'
 const IOS_PHONE_CHAT_LOGIN_PATH = '/phone/login'
 const IOS_PHONE_TENANT_PATH = '/phone/tenant'
+const MOBILE_HAPTICS_ENABLED_STORAGE_KEY = 'ristak_mobile_haptics_enabled'
+const MOBILE_KEYBOARD_FEEDBACK_STORAGE_KEY = 'ristak_mobile_keyboard_feedback_enabled'
+const MOBILE_KEYBOARD_FEEDBACK_INTERVAL_MS = 55
 const IOS_PHONE_CHAT_ALLOWED_PATHS = new Set([
   IOS_PHONE_CHAT_HOME_PATH,
   IOS_PHONE_CHAT_LOGIN_PATH,
@@ -62,6 +65,7 @@ export type MobileChatAttachment = MobilePhotoAttachment | MobileDocumentAttachm
 
 let shellConfigured = false
 let notificationListenersConfigured = false
+let lastKeyboardFeedbackAt = 0
 
 function getPlatform(): NativePlatform {
   return Capacitor.getPlatform() as NativePlatform
@@ -176,6 +180,34 @@ function normalizeImageFormat(format = '') {
   return 'jpeg'
 }
 
+function readStoredBoolean(key: string, fallback: boolean) {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw === null) return fallback
+    return raw === '1' || raw === 'true'
+  } catch {
+    return fallback
+  }
+}
+
+function writeStoredBoolean(key: string, value: boolean) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(key, value ? '1' : '0')
+  } catch {
+    // local settings are best-effort only
+  }
+}
+
+function mobileHapticsEnabled() {
+  return readStoredBoolean(MOBILE_HAPTICS_ENABLED_STORAGE_KEY, true)
+}
+
+function mobileKeyboardFeedbackEnabled() {
+  return readStoredBoolean(MOBILE_KEYBOARD_FEEDBACK_STORAGE_KEY, true)
+}
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -233,6 +265,7 @@ async function configureNativeNotificationListeners() {
   notificationListenersConfigured = true
 
   await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+    void triggerLightHapticFeedback()
     dispatchMobileNotificationEvent(notification, 'received')
   }).catch(() => undefined)
 
@@ -242,19 +275,49 @@ async function configureNativeNotificationListeners() {
   }).catch(() => undefined)
 }
 
-async function createAndroidNotificationChannel() {
+async function createAndroidNotificationChannels() {
   if (getPlatform() !== 'android') return
 
-  await PushNotifications.createChannel({
-    id: 'ristak_alerts',
-    name: 'Mensajes de WhatsApp',
-    description: 'Notificaciones de mensajes, citas y pagos',
-    importance: 5,
-    visibility: 1,
-    sound: 'default',
-    lights: true,
-    vibration: true
-  }).catch(() => undefined)
+  await Promise.all([
+    PushNotifications.createChannel({
+      id: 'ristak_alerts',
+      name: 'Alertas con sonido y vibración',
+      description: 'Mensajes, citas, pagos y avisos importantes',
+      importance: 5,
+      visibility: 1,
+      sound: 'default',
+      lights: true,
+      vibration: true
+    }),
+    PushNotifications.createChannel({
+      id: 'ristak_sound',
+      name: 'Alertas con sonido',
+      description: 'Notificaciones de Ristak con sonido y sin vibración',
+      importance: 5,
+      visibility: 1,
+      sound: 'default',
+      lights: true,
+      vibration: false
+    }),
+    PushNotifications.createChannel({
+      id: 'ristak_vibrate',
+      name: 'Alertas con vibración',
+      description: 'Notificaciones de Ristak con vibración y sin sonido',
+      importance: 5,
+      visibility: 1,
+      lights: true,
+      vibration: true
+    }),
+    PushNotifications.createChannel({
+      id: 'ristak_silent',
+      name: 'Alertas silenciosas',
+      description: 'Notificaciones de Ristak sin sonido ni vibración',
+      importance: 3,
+      visibility: 1,
+      lights: false,
+      vibration: false
+    })
+  ].map((task) => task.catch(() => undefined)))
 }
 
 function waitForNativePushToken(calendarIds: string[] = []): Promise<PushSubscriptionResult> {
@@ -318,6 +381,8 @@ function waitForNativePushToken(calendarIds: string[] = []): Promise<PushSubscri
  * navigator.vibrate (Android); en iOS web no hay soporte y no hace nada.
  */
 export async function triggerLightHapticFeedback() {
+  if (!mobileHapticsEnabled()) return
+
   if (Capacitor.isNativePlatform()) {
     try {
       await Haptics.impact({ style: ImpactStyle.Light })
@@ -334,6 +399,31 @@ export async function triggerLightHapticFeedback() {
   }
 }
 
+export async function triggerKeyboardClickFeedback() {
+  if (!mobileKeyboardFeedbackEnabled()) return
+
+  const now = Date.now()
+  if (now - lastKeyboardFeedbackAt < MOBILE_KEYBOARD_FEEDBACK_INTERVAL_MS) return
+  lastKeyboardFeedbackAt = now
+
+  await triggerLightHapticFeedback()
+}
+
+export function setMobileFeedbackPreferences({
+  hapticsEnabled,
+  keyboardFeedbackEnabled
+}: {
+  hapticsEnabled?: boolean
+  keyboardFeedbackEnabled?: boolean
+}) {
+  if (typeof hapticsEnabled === 'boolean') {
+    writeStoredBoolean(MOBILE_HAPTICS_ENABLED_STORAGE_KEY, hapticsEnabled)
+  }
+  if (typeof keyboardFeedbackEnabled === 'boolean') {
+    writeStoredBoolean(MOBILE_KEYBOARD_FEEDBACK_STORAGE_KEY, keyboardFeedbackEnabled)
+  }
+}
+
 export const mobileAppService = {
   isNative() {
     return Capacitor.isNativePlatform()
@@ -344,6 +434,8 @@ export const mobileAppService = {
   isIosPhoneChatShell,
 
   getIosPhoneChatRedirectPath,
+
+  setFeedbackPreferences: setMobileFeedbackPreferences,
 
   async configureShell() {
     if (shellConfigured || !Capacitor.isNativePlatform()) return
@@ -370,6 +462,7 @@ export const mobileAppService = {
     }).catch(() => undefined)
 
     await configureNativeNotificationListeners()
+    await createAndroidNotificationChannels()
   },
 
   async setShellTheme(theme: MobileShellTheme) {
@@ -396,7 +489,7 @@ export const mobileAppService = {
     }
 
     await configureNativeNotificationListeners()
-    await createAndroidNotificationChannel()
+    await createAndroidNotificationChannels()
 
     let permission = await PushNotifications.checkPermissions()
     if (permission.receive === 'prompt') {

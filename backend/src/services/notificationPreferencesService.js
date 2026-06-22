@@ -8,15 +8,30 @@ const EVENT_ALIASES = {
   conversations: 'conversations',
   appointment: 'appointments',
   appointments: 'appointments',
+  appointment_booked: 'appointment_booked',
+  appointment_scheduled: 'appointment_booked',
+  appointment_created: 'appointment_booked',
+  appointment_confirmed: 'appointment_confirmed',
+  appointment_confirmation: 'appointment_confirmed',
+  appointment_reminder: 'appointment_reminders',
+  appointment_reminders: 'appointment_reminders',
   calendar: 'appointments',
   payment: 'payments',
   payments: 'payments',
   automation: 'automation_internal',
   automation_internal: 'automation_internal',
+  agent_priority: 'agent_priority',
+  priority: 'agent_priority',
   system: 'system'
 }
 
 const PUSH_CHANNELS = new Set(['push', 'app_push', 'all'])
+const EVENT_FALLBACK_KEYS = {
+  appointment_booked: ['appointments'],
+  appointment_confirmed: ['appointments'],
+  appointment_reminders: ['appointments'],
+  agent_priority: ['conversations']
+}
 
 function safeJsonParse(value, fallback = null) {
   if (!value) return fallback
@@ -40,8 +55,19 @@ function uniqueValues(values = []) {
   return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))]
 }
 
+function hasOwnPreference(row = {}, eventKey = '') {
+  return Object.prototype.hasOwnProperty.call(row, eventKey)
+}
+
 function rowHasPushChannel(row = {}, eventKey = '') {
-  return PUSH_CHANNELS.has(normalizeChannel(row[eventKey]))
+  if (hasOwnPreference(row, eventKey)) {
+    return PUSH_CHANNELS.has(normalizeChannel(row[eventKey]))
+  }
+
+  const fallbackKeys = EVENT_FALLBACK_KEYS[eventKey] || []
+  return fallbackKeys.some((fallbackKey) => (
+    hasOwnPreference(row, fallbackKey) && PUSH_CHANNELS.has(normalizeChannel(row[fallbackKey]))
+  ))
 }
 
 async function getActiveUserIds(whereClause = '', params = []) {

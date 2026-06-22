@@ -198,9 +198,12 @@ test('accion notify_push envia payload push cuando la IA detecta confirmacion', 
     await processExpiredConfirmationWindows()
 
     assert.equal(payloads.length, 1)
-    assert.equal(payloads[0].payload.title, 'Cita confirmada: Ana')
+    assert.equal(payloads[0].payload.title, 'Ana')
     assert.match(payloads[0].payload.body, /Consulta dental/)
-    assert.equal(payloads[0].payload.tag, `conf-ok-${appointmentId}`)
+    assert.match(payloads[0].payload.body, /Confirmo asistencia/)
+    assert.equal(payloads[0].payload.tag, `appointment-confirmed-${appointmentId}`)
+    assert.equal(payloads[0].payload.category, 'appointment_confirmed')
+    assert.equal(payloads[0].payload.eventKey, 'appointment_confirmed')
     assert.equal(payloads[0].payload.url, `/phone/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`)
 
     const appointment = await db.get(

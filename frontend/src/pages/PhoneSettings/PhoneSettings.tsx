@@ -136,8 +136,13 @@ export const PhoneSettings: React.FC = () => {
   const [showUnreadIndicators, setShowUnreadIndicators] = useAppConfig<boolean>('mobile_chat_show_unread_indicators', true)
   const [enabledContactInfoCustomFieldIds, setEnabledContactInfoCustomFieldIds] = useAppConfig<string[]>('mobile_chat_contact_info_custom_field_ids', [])
   const [calendarPushEnabled, setCalendarPushEnabled] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
+  const [appointmentConfirmationPushEnabled, setAppointmentConfirmationPushEnabled] = useAppConfig<boolean>('appointment_confirmation_push_notifications_enabled', true)
   const [chatPushEnabled, setChatPushEnabled] = useAppConfig<boolean>('chat_push_notifications_enabled', true)
   const [paymentPushEnabled, setPaymentPushEnabled] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
+  const [notificationSoundEnabled, setNotificationSoundEnabled] = useAppConfig<boolean>('push_notification_sound_enabled', true)
+  const [notificationVibrationEnabled, setNotificationVibrationEnabled] = useAppConfig<boolean>('push_notification_vibration_enabled', true)
+  const [mobileHapticsEnabled, setMobileHapticsEnabled] = useAppConfig<boolean>('mobile_haptics_enabled', true)
+  const [mobileKeyboardFeedbackEnabled, setMobileKeyboardFeedbackEnabled] = useAppConfig<boolean>('mobile_keyboard_feedback_enabled', true)
   const [pushCalendarIds, setPushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
   const {
     safePreference,
@@ -172,6 +177,13 @@ export const PhoneSettings: React.FC = () => {
   const lastSettingsScrollTopRef = useRef(0)
 
   usePhoneElasticScroll()
+
+  useEffect(() => {
+    mobileAppService.setFeedbackPreferences({
+      hapticsEnabled: mobileHapticsEnabled,
+      keyboardFeedbackEnabled: mobileKeyboardFeedbackEnabled
+    })
+  }, [mobileHapticsEnabled, mobileKeyboardFeedbackEnabled])
 
   const refreshPermission = useCallback(() => {
     if (mobileAppService.isNative()) {
@@ -582,7 +594,7 @@ export const PhoneSettings: React.FC = () => {
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: enabledCustomFieldCount ? `${enabledCustomFieldCount} activo${enabledCustomFieldCount === 1 ? '' : 's'}` : 'Elegir', Icon: ListChecks, tone: 'gold' },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: themeMeta, Icon: Sun, tone: 'blue' },
-      { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas y pagos.', meta: permissionLabel, Icon: Bell, tone: 'red' }
+      { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: permissionLabel, Icon: Bell, tone: 'red' }
     ]
 
     return (
@@ -864,7 +876,7 @@ export const PhoneSettings: React.FC = () => {
         </section>
       )}
       {renderToggle('Mensajes del chat', 'Avísame cuando llegue un WhatsApp nuevo.', chatPushEnabled, (checked) => saveConfigPreference(setChatPushEnabled, checked))}
-      {renderToggle('Citas', 'Avísame cuando alguien agende una cita.', calendarPushEnabled, handleCalendarPushToggle)}
+      {renderToggle('Citas agendadas', 'Avísame cuando alguien reserve una cita nueva.', calendarPushEnabled, handleCalendarPushToggle)}
       {calendarPushEnabled && (
         <section className={styles.calendarPicker}>
           <div className={styles.calendarPickerHeader}>
@@ -895,7 +907,30 @@ export const PhoneSettings: React.FC = () => {
           )}
         </section>
       )}
+      {renderToggle('Citas confirmadas', 'Avísame cuando un cliente confirme que sí asistirá.', appointmentConfirmationPushEnabled, (checked) => saveConfigPreference(setAppointmentConfirmationPushEnabled, checked))}
       {renderToggle('Pagos', 'Avísame cuando se registre un pago.', paymentPushEnabled, (checked) => saveConfigPreference(setPaymentPushEnabled, checked))}
+      <section className={styles.settingsSection}>
+        <div className={styles.sectionTitle}>
+          <BellRing size={18} />
+          <span>
+            <strong>Sonido y vibración</strong>
+            <small>Controla cómo se sienten las alertas en este celular.</small>
+          </span>
+        </div>
+        {renderToggle('Timbre de notificación', 'Hace sonar el celular cuando llegue una alerta.', notificationSoundEnabled, (checked) => saveConfigPreference(setNotificationSoundEnabled, checked))}
+        {renderToggle('Vibración de notificación', 'Vibra cuando entren mensajes, citas, confirmaciones o pagos.', notificationVibrationEnabled, (checked) => saveConfigPreference(setNotificationVibrationEnabled, checked))}
+      </section>
+      <section className={styles.settingsSection}>
+        <div className={styles.sectionTitle}>
+          <Smartphone size={18} />
+          <span>
+            <strong>Sensación de celular</strong>
+            <small>Microvibraciones al tocar, deslizar, dejar picado o escribir.</small>
+          </span>
+        </div>
+        {renderToggle('Toques y gestos', 'Vibra suave en menús, swipes, botones y acciones rápidas.', mobileHapticsEnabled, (checked) => saveConfigPreference(setMobileHapticsEnabled, checked))}
+        {renderToggle('Clics al escribir', 'Da un toque ligero mientras escribes en el chat.', mobileKeyboardFeedbackEnabled, (checked) => saveConfigPreference(setMobileKeyboardFeedbackEnabled, checked), !mobileHapticsEnabled)}
+      </section>
     </>
   )
 

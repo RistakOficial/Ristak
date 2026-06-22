@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { BellRing, CalendarDays, CheckCircle2, CreditCard, MessageCircle, RotateCcw, Save, ShieldCheck, Smartphone, UserRound, UsersRound, Workflow } from 'lucide-react'
+import { BellRing, CalendarCheck2, CalendarClock, CheckCircle2, CreditCard, MessageCircle, RotateCcw, Save, ShieldCheck, Smartphone, UserRound, UsersRound, Vibrate, Volume2, Workflow } from 'lucide-react'
 import { Badge } from '@/components/common/Badge'
-import { Button, Card, CustomSelect } from '@/components/common'
+import { Button, Card, CustomSelect, Switch } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
@@ -12,7 +12,7 @@ import styles from './Settings.module.css'
 const NOTIFICATION_PREFERENCES_CONFIG_KEY = 'notification_preferences_matrix'
 const NOTIFICATION_PREFERENCES_VERSION = 1
 
-type NotificationEventKey = 'conversations' | 'appointments' | 'payments' | 'automation_internal' | 'system'
+type NotificationEventKey = 'conversations' | 'agent_priority' | 'appointment_booked' | 'appointment_confirmed' | 'payments' | 'automation_internal' | 'system'
 type NotificationChannel = 'off' | 'app' | 'push' | 'email' | 'whatsapp' | 'app_push' | 'app_email' | 'app_whatsapp' | 'all'
 type NotificationRecipientKind = 'all' | 'role' | 'user'
 
@@ -48,10 +48,22 @@ const NOTIFICATION_EVENTS: Array<{
     icon: MessageCircle
   },
   {
-    key: 'appointments',
-    label: 'Citas',
-    description: 'Citas nuevas o confirmadas.',
-    icon: CalendarDays
+    key: 'agent_priority',
+    label: 'Atención humana',
+    description: 'Cuando el agente pida que entre una persona.',
+    icon: BellRing
+  },
+  {
+    key: 'appointment_booked',
+    label: 'Cita agendada',
+    description: 'Reservas nuevas desde calendario o equipo.',
+    icon: CalendarClock
+  },
+  {
+    key: 'appointment_confirmed',
+    label: 'Cita confirmada',
+    description: 'Clientes que confirman asistencia.',
+    icon: CalendarCheck2
   },
   {
     key: 'payments',
@@ -136,13 +148,28 @@ const eventHasPush = (preferences: NotificationPreferencesConfig, eventKey: Noti
   Object.values(preferences.rows).some((row) => hasPushChannel(row[eventKey]))
 )
 
+const getExistingFallbackChannel = (
+  eventKey: NotificationEventKey,
+  existingRow: Partial<Record<NotificationEventKey | 'appointments', NotificationChannel>>
+) => {
+  if ((eventKey === 'appointment_booked' || eventKey === 'appointment_confirmed') && existingRow.appointments) {
+    return normalizeNotificationChannel(existingRow.appointments, 'off')
+  }
+  if (eventKey === 'agent_priority' && existingRow.conversations) {
+    return normalizeNotificationChannel(existingRow.conversations, 'off')
+  }
+  return null
+}
+
 const getFallbackChannel = (
   eventKey: NotificationEventKey,
   recipientId: string,
   legacyPush: Record<'conversations' | 'appointments' | 'payments', boolean>
 ): NotificationChannel => {
   if (eventKey === 'conversations') return legacyPush.conversations ? 'push' : 'off'
-  if (eventKey === 'appointments') return legacyPush.appointments ? 'push' : 'off'
+  if (eventKey === 'agent_priority') return legacyPush.conversations ? 'push' : 'off'
+  if (eventKey === 'appointment_booked') return legacyPush.appointments ? 'push' : 'off'
+  if (eventKey === 'appointment_confirmed') return legacyPush.appointments ? 'push' : 'off'
   if (eventKey === 'payments') return legacyPush.payments ? 'push' : 'off'
   if (recipientId === 'all' && eventKey === 'system') return 'app'
   if (recipientId === 'admins' && eventKey === 'automation_internal') return 'app'
@@ -159,7 +186,11 @@ const normalizePreferences = (
   const rows = recipients.reduce<NotificationPreferencesConfig['rows']>((acc, recipient) => {
     const existingRow = sourceRows[recipient.id] || {}
     acc[recipient.id] = NOTIFICATION_EVENTS.reduce<Partial<Record<NotificationEventKey, NotificationChannel>>>((row, event) => {
-      row[event.key] = normalizeNotificationChannel(existingRow[event.key], getFallbackChannel(event.key, recipient.id, legacyPush))
+      row[event.key] = normalizeNotificationChannel(
+        existingRow[event.key],
+        getExistingFallbackChannel(event.key, existingRow as Partial<Record<NotificationEventKey | 'appointments', NotificationChannel>>) ||
+          getFallbackChannel(event.key, recipient.id, legacyPush)
+      )
       return row
     }, {})
     return acc
@@ -191,8 +222,13 @@ export const NotificationSettings: React.FC = () => {
     EMPTY_NOTIFICATION_PREFERENCES
   )
   const [calendarPushEnabled, setCalendarPushEnabled, savingCalendarPush] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
+  const [appointmentConfirmationPushEnabled, setAppointmentConfirmationPushEnabled, savingAppointmentConfirmationPush] = useAppConfig<boolean>('appointment_confirmation_push_notifications_enabled', true)
   const [chatPushEnabled, setChatPushEnabled, savingChatPush] = useAppConfig<boolean>('chat_push_notifications_enabled', true)
   const [paymentPushEnabled, setPaymentPushEnabled, savingPaymentPush] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
+  const [notificationSoundEnabled, setNotificationSoundEnabled, savingNotificationSound] = useAppConfig<boolean>('push_notification_sound_enabled', true)
+  const [notificationVibrationEnabled, setNotificationVibrationEnabled, savingNotificationVibration] = useAppConfig<boolean>('push_notification_vibration_enabled', true)
+  const [mobileHapticsEnabled, setMobileHapticsEnabled, savingMobileHaptics] = useAppConfig<boolean>('mobile_haptics_enabled', true)
+  const [mobileKeyboardFeedbackEnabled, setMobileKeyboardFeedbackEnabled, savingMobileKeyboardFeedback] = useAppConfig<boolean>('mobile_keyboard_feedback_enabled', true)
   const [pushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
@@ -267,9 +303,9 @@ export const NotificationSettings: React.FC = () => {
 
   const resolvedPreferences = useMemo(() => normalizePreferences(storedPreferences, recipients, {
     conversations: chatPushEnabled,
-    appointments: calendarPushEnabled,
+    appointments: calendarPushEnabled || appointmentConfirmationPushEnabled,
     payments: paymentPushEnabled
-  }), [calendarPushEnabled, chatPushEnabled, paymentPushEnabled, recipients, storedPreferences])
+  }), [appointmentConfirmationPushEnabled, calendarPushEnabled, chatPushEnabled, paymentPushEnabled, recipients, storedPreferences])
 
   const [preferencesDraft, setPreferencesDraft] = useState<NotificationPreferencesConfig>(resolvedPreferences)
 
@@ -282,7 +318,8 @@ export const NotificationSettings: React.FC = () => {
   const preferencesChanged = savedRowsKey !== draftRowsKey
   const activeCellCount = countActiveCells(preferencesDraft)
   const activePushEventCount = NOTIFICATION_EVENTS.filter((event) => eventHasPush(preferencesDraft, event.key)).length
-  const busy = savingPreferences || syncingPreferences || savingCalendarPush || savingChatPush || savingPaymentPush || loadingUsers
+  const savingExperience = savingNotificationSound || savingNotificationVibration || savingMobileHaptics || savingMobileKeyboardFeedback
+  const busy = savingPreferences || syncingPreferences || savingCalendarPush || savingAppointmentConfirmationPush || savingChatPush || savingPaymentPush || loadingUsers || savingExperience
 
   const handleChannelChange = (recipientId: string, eventKey: NotificationEventKey, channel: NotificationChannel) => {
     setPreferencesDraft((current) => ({
@@ -308,8 +345,9 @@ export const NotificationSettings: React.FC = () => {
     try {
       await setStoredPreferences(nextPreferences)
       await Promise.all([
-        setChatPushEnabled(eventHasPush(nextPreferences, 'conversations')),
-        setCalendarPushEnabled(eventHasPush(nextPreferences, 'appointments')),
+        setChatPushEnabled(eventHasPush(nextPreferences, 'conversations') || eventHasPush(nextPreferences, 'agent_priority')),
+        setCalendarPushEnabled(eventHasPush(nextPreferences, 'appointment_booked')),
+        setAppointmentConfirmationPushEnabled(eventHasPush(nextPreferences, 'appointment_confirmed')),
         setPaymentPushEnabled(eventHasPush(nextPreferences, 'payments'))
       ])
       showToast('success', 'Notificaciones guardadas', 'Las reglas internas quedaron actualizadas.')
@@ -350,10 +388,37 @@ export const NotificationSettings: React.FC = () => {
       preferencesDraft.rows[recipientId]?.[eventKey],
       getFallbackChannel(eventKey, recipientId, {
         conversations: chatPushEnabled,
-        appointments: calendarPushEnabled,
+        appointments: calendarPushEnabled || appointmentConfirmationPushEnabled,
         payments: paymentPushEnabled
       })
     )
+  )
+
+  const renderExperienceToggle = (
+    id: string,
+    title: string,
+    description: string,
+    checked: boolean,
+    onChange: (checked: boolean) => void,
+    Icon: React.ComponentType<{ size?: number }>,
+    disabled = false
+  ) => (
+    <div className={styles.notificationExperienceRow}>
+      <span className={styles.notificationExperienceIcon}>
+        <Icon size={17} />
+      </span>
+      <span className={styles.notificationExperienceText}>
+        <label htmlFor={id}>{title}</label>
+        <small>{description}</small>
+      </span>
+      <Switch
+        id={id}
+        checked={checked}
+        onChange={onChange}
+        disabled={disabled || busy}
+        aria-label={title}
+      />
+    </div>
   )
 
   return (
@@ -416,6 +481,52 @@ export const NotificationSettings: React.FC = () => {
               </div>
             </section>
           </div>
+        </div>
+      </Card>
+
+      <Card>
+        <div className={styles.notificationMatrixHeader}>
+          <div>
+            <h3 className={styles.sectionTitle}>Experiencia en celular</h3>
+            <p className={styles.sectionDescription}>
+              Define si las push suenan, vibran y si la app da microvibraciones al tocar o escribir.
+            </p>
+          </div>
+        </div>
+        <div className={styles.notificationExperienceGrid}>
+          {renderExperienceToggle(
+            'push-sound-enabled',
+            'Timbre de notificación',
+            'Mensajes, citas, confirmaciones y pagos pueden sonar al llegar.',
+            notificationSoundEnabled,
+            setNotificationSoundEnabled,
+            Volume2
+          )}
+          {renderExperienceToggle(
+            'push-vibration-enabled',
+            'Vibración de notificación',
+            'Android usa canal con vibración e iPhone usa la alerta sonora del sistema.',
+            notificationVibrationEnabled,
+            setNotificationVibrationEnabled,
+            Vibrate
+          )}
+          {renderExperienceToggle(
+            'mobile-haptics-enabled',
+            'Toques y gestos',
+            'Vibra suave al abrir acciones, dejar picado, deslizar o enviar.',
+            mobileHapticsEnabled,
+            setMobileHapticsEnabled,
+            Smartphone
+          )}
+          {renderExperienceToggle(
+            'mobile-keyboard-feedback-enabled',
+            'Clics al escribir',
+            'Da un toque ligero mientras se escribe en el chat móvil.',
+            mobileKeyboardFeedbackEnabled,
+            setMobileKeyboardFeedbackEnabled,
+            MessageCircle,
+            !mobileHapticsEnabled
+          )}
         </div>
       </Card>
 

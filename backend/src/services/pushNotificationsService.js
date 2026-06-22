@@ -12,6 +12,8 @@ const ENV_VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VA
 const VAPID_SUBJECT = process.env.WEB_PUSH_SUBJECT || process.env.VAPID_SUBJECT || 'mailto:soporte@ristak.com'
 const WEB_PUSH_PUBLIC_CONFIG_KEY = 'web_push_public_key'
 const WEB_PUSH_PRIVATE_CONFIG_KEY = 'web_push_private_key'
+const PUSH_SOUND_CONFIG_KEY = 'push_notification_sound_enabled'
+const PUSH_VIBRATION_CONFIG_KEY = 'push_notification_vibration_enabled'
 const FCM_PROJECT_ID = process.env.FCM_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || ''
 const FCM_SERVICE_ACCOUNT_JSON = process.env.FCM_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT_JSON || ''
 const FCM_SERVICE_ACCOUNT_FILE = process.env.FCM_SERVICE_ACCOUNT_FILE || process.env.GOOGLE_APPLICATION_CREDENTIALS || ''
@@ -23,6 +25,12 @@ const APNS_PRIVATE_KEY_FILE = process.env.APNS_PRIVATE_KEY_FILE || ''
 const APNS_ENV = String(process.env.APNS_ENV || process.env.NODE_ENV || 'production').toLowerCase()
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
+const ANDROID_CHANNELS = {
+  alerts: 'ristak_alerts',
+  sound: 'ristak_sound',
+  vibration: 'ristak_vibrate',
+  silent: 'ristak_silent'
+}
 let appNotificationPayloadSenderForTest = null
 
 export function setAppNotificationPayloadSenderForTest(sender) {
@@ -289,6 +297,8 @@ function getNotificationData(payload = {}) {
       url: payload.url || '/phone/chat',
       category: payload.category || 'ristak',
       tag: payload.tag || 'ristak',
+      threadId: payload.threadId || payload.tag || payload.category || 'ristak',
+      eventKey: payload.eventKey || '',
       messageId: payload.messageId || '',
       contactId: payload.contactId || ''
     }).map(([key, value]) => [key, String(value || '')])
@@ -383,6 +393,15 @@ async function getBooleanPushConfig(key, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase())
 }
 
+async function getNotificationExperienceConfig() {
+  const [soundEnabled, vibrationEnabled] = await Promise.all([
+    getBooleanPushConfig(PUSH_SOUND_CONFIG_KEY, true),
+    getBooleanPushConfig(PUSH_VIBRATION_CONFIG_KEY, true)
+  ])
+
+  return { soundEnabled, vibrationEnabled }
+}
+
 async function getPushPreferenceTarget(eventKey) {
   return resolvePushNotificationTargetForEvent(eventKey).catch((error) => {
     logger.warn(`[Push] No se pudo leer preferencias de notificaciones para ${eventKey}: ${error.message}`)
@@ -431,6 +450,31 @@ function formatPaymentAmount(amount, currency = 'MXN') {
   } catch {
     return `$${safeAmount.toFixed(2)}`
   }
+}
+
+function getAndroidChannelId({ soundEnabled = true, vibrationEnabled = true } = {}) {
+  if (soundEnabled && vibrationEnabled) return ANDROID_CHANNELS.alerts
+  if (soundEnabled) return ANDROID_CHANNELS.sound
+  if (vibrationEnabled) return ANDROID_CHANNELS.vibration
+  return ANDROID_CHANNELS.silent
+}
+
+function getNotificationCategory(payload = {}) {
+  const category = cleanNotificationText(payload.category || 'ristak')
+  return category || 'ristak'
+}
+
+function getNotificationThreadId(payload = {}) {
+  const threadId = cleanNotificationText(payload.threadId || payload.contactId || payload.tag || getNotificationCategory(payload))
+  return threadId.slice(0, 64) || 'ristak'
+}
+
+function getApnsCategory(payload = {}) {
+  return getNotificationCategory(payload)
+    .replace(/[^a-z0-9_]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase()
+    .slice(0, 64) || 'RISTAK'
 }
 
 async function getGlobalCalendarPushConfig() {
@@ -675,13 +719,14 @@ async function sendNotificationRows(rows = [], payload = {}) {
   return sent
 }
 
-async function sendFcmNotification(row, payload = {}) {
+async function sendFcmNotification(row, payload = {}, experience = {}) {
   if (!fcmConfigured) {
     throw new Error('Faltan credenciales FCM para notificaciones Android')
   }
 
   const notificationTitle = getNotificationTitle(payload)
   const notificationBody = getNotificationBody(payload)
+  const channelId = getAndroidChannelId(experience)
   const accessToken = await getFcmAccessToken()
   const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(FCM_PROJECT_ID)}/messages:send`, {
     method: 'POST',
@@ -700,9 +745,15 @@ async function sendFcmNotification(row, payload = {}) {
         android: {
           priority: 'HIGH',
           notification: {
-            channel_id: 'ristak_alerts',
+            channel_id: channelId,
             click_action: 'OPEN_RISTAK',
-            icon: 'ic_stat_whatsapp'
+            icon: 'ic_stat_whatsapp',
+            tag: payload.tag || undefined,
+            notification_priority: 'PRIORITY_HIGH',
+            default_sound: Boolean(experience.soundEnabled),
+            default_vibrate_timings: Boolean(experience.vibrationEnabled),
+            default_light_settings: true,
+            visibility: 'PUBLIC'
           }
         }
       }
@@ -718,7 +769,7 @@ async function sendFcmNotification(row, payload = {}) {
   }
 }
 
-async function sendApnsNotification(row, payload = {}) {
+async function sendApnsNotification(row, payload = {}, experience = {}) {
   if (!apnsConfigured) {
     throw new Error('Faltan credenciales APNs para notificaciones iPhone')
   }
@@ -730,14 +781,22 @@ async function sendApnsNotification(row, payload = {}) {
     : 'api.push.apple.com'
   const authToken = await getApnsJwt()
   const client = http2.connect(`https://${host}`)
-  const requestBody = JSON.stringify({
-    aps: {
-      alert: {
-        title: notificationTitle,
-        body: notificationBody
-      },
-      sound: 'default'
+  const aps = {
+    alert: {
+      title: notificationTitle,
+      body: notificationBody
     },
+    'thread-id': getNotificationThreadId(payload),
+    category: getApnsCategory(payload)
+  }
+  if (experience.soundEnabled) {
+    aps.sound = 'default'
+  }
+  if (Number.isFinite(Number(payload.badge))) {
+    aps.badge = Math.max(0, Number(payload.badge))
+  }
+  const requestBody = JSON.stringify({
+    aps,
     ...getNotificationData(payload)
   })
 
@@ -789,15 +848,15 @@ async function sendApnsNotification(row, payload = {}) {
   })
 }
 
-async function sendMobileNotificationRows(rows = [], payload = {}) {
+async function sendMobileNotificationRows(rows = [], payload = {}, experience = {}) {
   let sent = 0
   await Promise.all(rows.map(async (row) => {
     const platform = normalizePlatform(row.platform)
     try {
       if (platform === 'android') {
-        await sendFcmNotification(row, payload)
+        await sendFcmNotification(row, payload, experience)
       } else if (platform === 'ios') {
-        await sendApnsNotification(row, payload)
+        await sendApnsNotification(row, payload, experience)
       } else {
         return
       }
@@ -827,13 +886,14 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
   }
 
   const normalizedPayload = normalizeNotificationPayload(payload)
-  const [webRows, nativeRows] = await Promise.all([
+  const [webRows, nativeRows, experience] = await Promise.all([
     pushConfigured
       ? (calendarId ? getSubscriptionsForCalendar(calendarId) : getEnabledSubscriptions())
       : Promise.resolve([]),
     nativePushConfigured
       ? (calendarId ? getMobileDevicesForCalendar(calendarId) : getEnabledMobileDevices(normalizedUserIds))
-      : Promise.resolve([])
+      : Promise.resolve([]),
+    getNotificationExperienceConfig()
   ])
 
   const filteredWebRows = filterByUser
@@ -849,7 +909,7 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
 
   const [webSent, nativeSent] = await Promise.all([
     pushConfigured ? sendNotificationRows(filteredWebRows, normalizedPayload) : Promise.resolve(0),
-    nativePushConfigured ? sendMobileNotificationRows(filteredNativeRows, normalizedPayload) : Promise.resolve(0)
+    nativePushConfigured ? sendMobileNotificationRows(filteredNativeRows, normalizedPayload, experience) : Promise.resolve(0)
   ])
 
   return {
@@ -871,11 +931,12 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
   if (config.calendarIds.length > 0 && !config.calendarIds.includes(calendarId)) {
     return { sent: 0, skipped: true, reason: 'calendar_filtered' }
   }
-  const preferenceTarget = await getPushPreferenceTarget('appointments')
+  const preferenceTarget = await getPushPreferenceTarget('appointment_booked')
   if (isPushPreferenceDisabled(preferenceTarget)) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
   }
 
+  const contactName = await getAppointmentContactName(appointment, options)
   const appointmentTitle = String(appointment.title || appointment.name || 'Nueva cita').trim()
   const calendarName = String(options.calendarName || appointment.calendarName || 'Calendario').trim()
   const timeLabel = formatAppointmentTime(appointment.startTime || appointment.start_time)
@@ -883,10 +944,76 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
     ? `${appointmentTitle} · ${timeLabel}`
     : appointmentTitle
   const payload = {
-    title: 'Nueva cita agendada',
+    title: contactName || 'Nueva cita',
     body: `${calendarName}: ${body}`,
     tag: `calendar-${calendarId}`,
-    url: `/phone/calendar?open=appointment&id=${encodeURIComponent(appointment.id || '')}`
+    threadId: `calendar-${calendarId}`,
+    url: `/phone/calendar?open=appointment&id=${encodeURIComponent(appointment.id || '')}`,
+    category: 'appointment_booked',
+    eventKey: 'appointment_booked',
+    contactId: appointment.contactId || appointment.contact_id || ''
+  }
+
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, { calendarId }))
+}
+
+async function getAppointmentContactName(appointment = {}, options = {}) {
+  const direct = cleanNotificationText(
+    options.contactName ||
+    appointment.contactName ||
+    appointment.contact_name ||
+    appointment.fullName ||
+    appointment.full_name ||
+    appointment.firstName ||
+    appointment.first_name ||
+    ''
+  )
+  if (direct) return direct.slice(0, 90)
+
+  const contactId = String(options.contactId || appointment.contactId || appointment.contact_id || '').trim()
+  if (!contactId) return ''
+
+  const contact = await db.get(
+    'SELECT full_name, first_name, phone FROM contacts WHERE id = ?',
+    [contactId]
+  ).catch(() => null)
+
+  return cleanNotificationText(contact?.full_name || contact?.first_name || contact?.phone || '').slice(0, 90)
+}
+
+export async function sendAppointmentConfirmationNotification(appointment = {}, options = {}) {
+  if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
+
+  const enabled = await getBooleanPushConfig('appointment_confirmation_push_notifications_enabled', true)
+  if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
+
+  const appointmentId = String(options.appointmentId || appointment.id || '').trim()
+  if (!appointmentId) return { sent: 0, skipped: true, reason: 'missing_appointment' }
+
+  const calendarId = String(options.calendarId || appointment.calendarId || appointment.calendar_id || '').trim()
+  const preferenceTarget = await getPushPreferenceTarget('appointment_confirmed')
+  if (isPushPreferenceDisabled(preferenceTarget)) {
+    return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
+  }
+
+  const contactName = await getAppointmentContactName(appointment, options)
+  const appointmentTitle = cleanNotificationText(options.appointmentTitle || appointment.title || appointment.name || 'cita')
+  const timeLabel = formatAppointmentTime(options.startTime || appointment.startTime || appointment.start_time)
+  const detail = cleanNotificationText(options.resultDetail || '')
+  const bodyParts = [
+    `Confirmó ${appointmentTitle}`,
+    timeLabel,
+    detail
+  ].filter(Boolean)
+  const payload = {
+    title: contactName || 'Cita confirmada',
+    body: bodyParts.join(' · ').slice(0, 220),
+    tag: `appointment-confirmed-${appointmentId}`,
+    threadId: calendarId ? `calendar-${calendarId}` : `appointment-${appointmentId}`,
+    url: `/phone/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`,
+    category: 'appointment_confirmed',
+    eventKey: 'appointment_confirmed',
+    contactId: appointment.contactId || appointment.contact_id || options.contactId || ''
   }
 
   return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, { calendarId }))
@@ -917,6 +1044,7 @@ export async function sendChatMessageNotification(message = {}) {
     title: senderName,
     body: bodyText,
     tag: `chat-${messageKey}`,
+    threadId: message.contactId ? `chat-${message.contactId}` : `chat-${senderName}`,
     messageId: messageKey,
     contactId: message.contactId || '',
     url: `/phone/chat?contact=${encodeURIComponent(message.contactId || '')}`,
@@ -934,7 +1062,7 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
 
   const contactId = String(signal.contactId || '').trim()
   if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
-  const preferenceTarget = await getPushPreferenceTarget('conversations')
+  const preferenceTarget = await getPushPreferenceTarget('agent_priority')
   if (isPushPreferenceDisabled(preferenceTarget)) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
   }
@@ -955,6 +1083,7 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
     title: 'Pasar a un humano',
     body,
     tag: `agent-priority-${contactId}`,
+    threadId: `chat-${contactId}`,
     messageId: `agent-priority-${contactId}-${Date.now()}`,
     contactId,
     url: `/phone/chat?contact=${encodeURIComponent(contactId)}`,
@@ -980,8 +1109,11 @@ export async function sendPaymentNotification(payment = {}) {
     title: 'Pago registrado',
     body: `${contactLabel}: ${amountLabel}`,
     tag: `payment-${payment.id || payment.contactId || 'ristak'}`,
+    threadId: payment.contactId || payment.contact_id ? `payment-${payment.contactId || payment.contact_id}` : 'payments',
     url: '/phone/transactions',
-    category: 'payment'
+    category: 'payment',
+    eventKey: 'payments',
+    contactId: payment.contactId || payment.contact_id || ''
   }
 
   return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget))

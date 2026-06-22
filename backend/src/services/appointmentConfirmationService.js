@@ -3,7 +3,7 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { isAffirmativeReply } from './appointmentReminderLogic.js'
 import { classifyConfirmationResponse } from '../agents/appointmentConfirmationAgent.js'
-import { sendAppNotificationPayload } from './pushNotificationsService.js'
+import { sendAppNotificationPayload, sendAppointmentConfirmationNotification } from './pushNotificationsService.js'
 
 export { isAffirmativeReply }
 
@@ -244,7 +244,7 @@ async function processConfirmationWindow(win) {
 async function executeConfirmationSuccessAction({ contactId, appointmentId, action, resultDetail, reminderData }) {
   const normalizedAction = normalizeConfirmationSuccessAction(action)
   const appointment = await db.get(`
-    SELECT a.id, a.title, a.start_time, c.first_name, c.full_name
+    SELECT a.id, a.title, a.start_time, a.calendar_id, a.contact_id, c.first_name, c.full_name
     FROM appointments a
     LEFT JOIN contacts c ON c.id = a.contact_id
     WHERE a.id = ?
@@ -252,6 +252,18 @@ async function executeConfirmationSuccessAction({ contactId, appointmentId, acti
 
   const contactName = String(appointment?.first_name || appointment?.full_name || reminderData?.first_name || 'Contacto').trim()
   const appointmentTitle = String(appointment?.title || 'cita').trim()
+
+  await sendAppointmentConfirmationNotification(appointment || { id: appointmentId, contactId }, {
+    appointmentId,
+    contactId,
+    contactName,
+    appointmentTitle,
+    calendarId: appointment?.calendar_id,
+    startTime: appointment?.start_time,
+    resultDetail
+  }).catch(error => {
+    logger.warn(`[Confirmación IA] No se pudo enviar push de cita confirmada: ${error.message}`)
+  })
 
   if (normalizedAction === 'chat_badge') {
     await db.run(`
@@ -264,16 +276,6 @@ async function executeConfirmationSuccessAction({ contactId, appointmentId, acti
   }
 
   if (normalizedAction === 'notify_push') {
-    const payload = {
-      title: `Cita confirmada: ${contactName}`,
-      body: `${contactName} confirmó "${appointmentTitle}". ${resultDetail || ''}`.trim().slice(0, 160),
-      tag: `conf-ok-${appointmentId}`,
-      url: `/phone/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`
-    }
-
-    await sendAppNotificationPayload(payload).catch(error => {
-      logger.warn(`[Confirmación IA] No se pudo enviar notificación push de confirmación: ${error.message}`)
-    })
     logger.info(`[Confirmación IA] Notificación de confirmación enviada para cita ${appointmentId}`)
     return
   }
