@@ -699,9 +699,12 @@
 
 /* Installment table with column headers */
 .installmentTable {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .installmentHead,
@@ -710,6 +713,7 @@
   grid-template-columns: 34px minmax(72px, 1fr) 150px minmax(86px, auto) 36px;
   gap: 8px;
   align-items: center;
+  min-width: 0;
 }
 
 .installmentHead {
@@ -774,6 +778,8 @@
   font-size: 13px;
   font-weight: 700;
   color: var(--color-text-primary);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .addInstallment {
@@ -796,6 +802,79 @@
 .addInstallment:hover {
   border-color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.06);
+}
+
+@container (max-width: 430px) {
+  .installmentHead {
+    display: none;
+  }
+
+  .installmentRow {
+    grid-template-columns: 30px minmax(0, 1fr) 36px;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-surface);
+    align-items: center;
+  }
+
+  .installmentSeq {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+  }
+
+  .installmentValue {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .cellLabel {
+    display: block;
+  }
+
+  .installmentDate {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .installmentMonto {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    text-align: left;
+    padding-top: 8px;
+    border-top: 1px dashed var(--color-border);
+  }
+
+  .installmentDelete {
+    grid-column: 3;
+    grid-row: 1;
+    width: 36px;
+    justify-self: end;
+  }
+}
+
+@container (max-width: 320px) {
+  .installmentRow {
+    grid-template-columns: 1fr;
+  }
+
+  .installmentSeq,
+  .installmentValue,
+  .installmentDate,
+  .installmentMonto,
+  .installmentDelete {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .installmentDelete {
+    width: 100%;
+  }
 }
 
 .iconButton {

@@ -3289,7 +3289,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     {resolvedRemainingInstallments.map((installment) => (
                       <div key={installment.id} className={styles.installmentRow}>
                         <div className={styles.installmentSeq}>{installment.sequence}</div>
-                        <label className={styles.installmentCell}>
+                        <label className={`${styles.installmentCell} ${styles.installmentValue}`}>
                           <span className={styles.cellLabel}>{effectiveRemainingValueType === 'percentage' ? 'Porcentaje' : 'Monto fijo'}</span>
                           <div className={styles.amountInput}>
                             {effectiveRemainingValueType === 'percentage'
