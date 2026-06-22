@@ -23416,6 +23416,7 @@ const SitesMediaPickerModal: React.FC<{
   onSelect: (url: string, asset?: MediaAsset) => void
 }> = ({ kind, moduleEntityId, onClose, onSelect }) => {
   const inputRef = useRef<HTMLInputElement>(null)
+  const blockedCloseToastAtRef = useRef(0)
   const uploadQueue = useMediaUploadQueue()
   const [assets, setAssets] = useState<MediaAsset[]>([])
   const [query, setQuery] = useState('')
@@ -23428,6 +23429,24 @@ const SitesMediaPickerModal: React.FC<{
   const title = kind === 'image' ? 'Elegir imagen' : 'Elegir video'
   const uploadText = uploading ? 'Subiendo...' : kind === 'image' ? 'Subir imagen nueva' : 'Subir video nuevo'
   const mediaPickerBusy = uploading || Boolean(syncingAssetId)
+
+  const requestClose = useCallback(() => {
+    if (!mediaPickerBusy) {
+      onClose()
+      return
+    }
+
+    const message = uploading
+      ? `Ristak todavía está subiendo ${kind === 'image' ? 'la imagen' : 'el video'}. Espera a que termine para que no quede incompleto.`
+      : kind === 'video'
+        ? 'Ristak está procesando el video para dejarlo listo en el sitio. Espera a que termine.'
+        : 'Ristak está procesando la imagen para dejarla lista en el sitio. Espera a que termine.'
+
+    const now = Date.now()
+    if (now - blockedCloseToastAtRef.current < 1800) return
+    blockedCloseToastAtRef.current = now
+    showToast('warning', 'No se puede cerrar todavía', message)
+  }, [kind, mediaPickerBusy, onClose, showToast, uploading])
 
   const loadAssets = useCallback(async () => {
     setLoading(true)
@@ -23452,11 +23471,11 @@ const SitesMediaPickerModal: React.FC<{
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') requestClose()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
+  }, [requestClose])
 
   const filteredAssets = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -23573,15 +23592,15 @@ const SitesMediaPickerModal: React.FC<{
       className={styles.mediaPickerOverlay}
       role="presentation"
       data-overlay=""
-      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}
+      onMouseDown={(event) => { if (event.target === event.currentTarget) requestClose() }}
     >
-      <div className={styles.mediaPickerModal} role="dialog" aria-modal="true" aria-label={title} data-modal="">
+      <div className={styles.mediaPickerModal} role="dialog" aria-modal="true" aria-label={title} aria-busy={mediaPickerBusy} data-modal="">
         <header className={styles.mediaPickerHeader}>
           <div className={styles.mediaPickerHeaderTitle}>
             <span>{kind === 'image' ? 'Biblioteca de imágenes' : 'Biblioteca de videos'}</span>
             <strong>{title}</strong>
           </div>
-          <button type="button" className={styles.mediaPickerCloseButton} onClick={onClose} aria-label="Cerrar selector">
+          <button type="button" className={styles.mediaPickerCloseButton} onClick={requestClose} aria-label="Cerrar selector">
             <X size={16} />
           </button>
         </header>
