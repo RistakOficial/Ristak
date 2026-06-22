@@ -8745,8 +8745,10 @@ export const PhoneChat: React.FC = () => {
         type="button"
         className={`${styles.chatItem} ${styles.aiAgentHubChatItem} ${hasUnread ? styles.chatItemUnread : ''}`}
         onClick={() => {
-          setAiAgentHubOpen(false)
-          setAgentPickerOpen(false)
+          if (!isWideChatDevice) {
+            setAiAgentHubOpen(false)
+            setAgentPickerOpen(false)
+          }
           handleSelectContact(contact, { returnTarget: 'aiAgentHub' })
         }}
       >
