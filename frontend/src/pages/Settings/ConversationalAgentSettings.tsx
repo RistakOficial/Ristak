@@ -89,12 +89,33 @@ const successActionLabels: Record<ConversationalSuccessAction, { label: string; 
   none: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' }
 }
 
-const actionsByObjective: Record<ConversationalObjective, ConversationalSuccessAction[]> = {
-  citas: ['ready_for_human', 'book_appointment', 'send_goal_url', 'send_trigger_link'],
-  ventas: ['ready_for_human', 'ready_to_buy', 'send_goal_url'],
-  datos: ['ready_for_human'],
-  filtrar: ['ready_for_human'],
-  custom: ['ready_for_human', 'send_trigger_link']
+type GoalExecutionOption = {
+  value: ConversationalSuccessAction
+  label: string
+  description: string
+}
+
+const goalExecutionOptionsByObjective: Record<ConversationalObjective, GoalExecutionOption[]> = {
+  citas: [
+    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA detecta intención real, detiene el bot y avisa para que el equipo agende.' },
+    { value: 'book_appointment', label: 'Que la IA agende', description: 'La IA confirma un horario real y agenda la cita en el calendario.' },
+    { value: 'send_goal_url', label: 'Mandar enlace', description: 'La IA manda el enlace del calendario y la meta se completa cuando la cita queda confirmada.' }
+  ],
+  ventas: [
+    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA detecta intención de compra, detiene el bot y avisa para que el equipo cierre.' },
+    { value: 'ready_to_buy', label: 'Que la IA cobre', description: 'La IA guía el pago y la venta se completa cuando el pago queda confirmado.' },
+    { value: 'send_goal_url', label: 'Mandar enlace', description: 'La IA manda el enlace de compra y la meta se completa cuando el pago queda confirmado.' }
+  ],
+  datos: [
+    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA junta los datos y avisa para que el equipo continúe.' }
+  ],
+  filtrar: [
+    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA filtra la conversación y avisa cuando el prospecto ya vale atención.' }
+  ],
+  custom: [
+    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA detecta que el objetivo está listo y avisa al equipo.' },
+    { value: 'send_trigger_link', label: 'Mandar enlace', description: 'La IA manda un enlace y detiene el bot cuando la persona lo abre.' }
+  ]
 }
 
 const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
@@ -102,12 +123,12 @@ const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
 const attendedChatActionOptions = [
   {
     value: 'mute_only',
-    label: 'Silenciar al contacto hasta que termine meta',
+    label: 'Silenciar hasta terminar',
     description: 'El contacto sigue en el chat de la IA, pero no manda avisos hasta que la meta termine.'
   },
   {
     value: 'keep_visible',
-    label: 'Recibir notificaciones incluso si la IA responde',
+    label: 'Avisar aunque responda',
     description: 'El contacto sigue en el chat de la IA y manda avisos aunque el agente esté respondiendo.'
   }
 ] as const
@@ -130,8 +151,8 @@ const appointmentOverlapOptions: Array<{ value: BinaryChoice; label: string }> =
 ]
 
 const completionModeOptions: Array<{ value: AgentCompletionMode; label: string }> = [
-  { value: 'notify_only', label: 'Sacarlo del chat del bot y avisarme' },
-  { value: 'assign_user', label: 'Asignar a un usuario y avisar' }
+  { value: 'notify_only', label: 'Pasar a humano y notificar' },
+  { value: 'assign_user', label: 'Asignar usuario y notificar' }
 ]
 
 const extraTypeOptions: Array<{ value: SuccessExtraType; label: string }> = [
@@ -173,8 +194,8 @@ const defaultResponseDelay: AgentResponseDelayConfig = {
 }
 
 const defaultReplyDelivery: AgentReplyDeliveryConfig = {
-  mode: 'single',
-  splitMessagesEnabled: false,
+  mode: 'split',
+  splitMessagesEnabled: true,
   minMessageLengthToSplit: 120,
   maxBubbles: 6,
   minBubbleLength: 20,
@@ -388,16 +409,31 @@ function getSuccessActionInfo(
   return successActionLabels.send_goal_url
 }
 
-function getObjectiveCompletionLabel(objective: ConversationalObjective) {
-  if (objective === 'citas') return 'el agendamiento'
-  if (objective === 'ventas') return 'la venta'
-  if (objective === 'datos') return 'la captura de datos'
-  if (objective === 'filtrar') return 'la filtración'
-  return 'el objetivo'
-}
-
 function objectiveCanConfigurePaymentRequirement(objective: ConversationalObjective) {
   return objective === 'citas' || objective === 'ventas'
+}
+
+function getGoalExecutionOptions(objective: ConversationalObjective) {
+  return goalExecutionOptionsByObjective[objective] || goalExecutionOptionsByObjective.custom
+}
+
+function getSelectedGoalExecutionInfo(
+  action: ConversationalSuccessAction,
+  objective: ConversationalObjective,
+  workflow?: AgentGoalWorkflowConfig
+) {
+  const options = getGoalExecutionOptions(objective)
+  return options.find((option) => option.value === action) ||
+    options.find((option) => option.value === getObjectiveSuccessAction(objective, workflow || defaultGoalWorkflow)) ||
+    options[0]
+}
+
+function getGoalExecutionQuestion(objective: ConversationalObjective) {
+  if (objective === 'citas') return '¿Quién quieres que agende la cita?'
+  if (objective === 'ventas') return '¿Quién quieres que cierre el pago?'
+  if (objective === 'datos') return '¿Quién quieres que reciba los datos?'
+  if (objective === 'filtrar') return '¿Quién quieres que atienda al prospecto filtrado?'
+  return '¿Quién quieres que complete el objetivo?'
 }
 
 const systemReplyDeliveryDefaults: Pick<
@@ -1216,7 +1252,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     }
   }, [])
 
-  const allowedActions = actionsByObjective[agent.objective] || actionsByObjective.custom
   const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
   const selectedProviderId = getKnownConversationalAIProvider(agent.aiProvider)
   const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
@@ -1257,7 +1292,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const goalWorkflow = getAgentGoalWorkflow(agent)
   const deposit = goalWorkflow.deposit
   const completion = goalWorkflow.completion
-  const selectedActionInfo = getSuccessActionInfo(agent.successAction, agent.objective, goalWorkflow)
+  const goalExecutionOptions = getGoalExecutionOptions(agent.objective)
+  const selectedGoalExecutionInfo = getSelectedGoalExecutionInfo(agent.successAction, agent.objective, goalWorkflow)
   const paymentRequirementConfigAvailable = objectiveCanConfigurePaymentRequirement(agent.objective)
   const completionMode = completion.mode === 'assign_user' ? 'assign_user' : 'notify_only'
   const selectedCompletionUser = teamUsers.find((user) => user.id === completion.userId) || null
@@ -1438,21 +1474,26 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleObjectiveChange = (objective: ConversationalObjective) => {
-    const allowed = actionsByObjective[objective] || actionsByObjective.custom
-    const patch: ConversationalAgentDefInput = { objective }
+    const options = getGoalExecutionOptions(objective)
     const objectiveAction = getObjectiveSuccessAction(objective, goalWorkflow)
-    patch.successAction = allowed.includes(agent.successAction)
+    const nextAction = options.some((option) => option.value === agent.successAction)
       ? agent.successAction
-      : allowed.includes(objectiveAction)
+      : options.some((option) => option.value === objectiveAction)
         ? objectiveAction
-        : allowed[0]
-    onChange(patch)
+        : options[0]?.value || 'ready_for_human'
+    onChange({
+      objective,
+      ...buildGoalExecutionPatch(nextAction, objective)
+    })
   }
 
-  const handleSuccessActionChange = (successAction: ConversationalSuccessAction) => {
+  const buildGoalExecutionPatch = (
+    successAction: ConversationalSuccessAction,
+    objective: ConversationalObjective = agent.objective
+  ): ConversationalAgentDefInput => {
     const patch: ConversationalAgentDefInput = { successAction }
     let nextGoalWorkflow: AgentGoalWorkflowConfig | null = null
-    if (agent.objective === 'citas') {
+    if (objective === 'citas') {
       const owner = successAction === 'book_appointment' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
       const calendarId = owner === 'ai' || owner === 'url'
         ? goalWorkflow.appointments.calendarId || agent.defaultCalendarId || calendars[0]?.id || null
@@ -1462,7 +1503,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       })
       if (owner === 'ai') patch.defaultCalendarId = calendarId
     }
-    if (agent.objective === 'ventas') {
+    if (objective === 'ventas') {
       const owner = successAction === 'ready_to_buy' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
       nextGoalWorkflow = mergeGoalWorkflow(nextGoalWorkflow || goalWorkflow, {
         sales: { ...goalWorkflow.sales, owner }
@@ -1474,6 +1515,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       })
     }
     if (nextGoalWorkflow) patch.goalWorkflow = nextGoalWorkflow
+    return patch
+  }
+
+  const handleGoalExecutionChange = (successAction: ConversationalSuccessAction) => {
+    const patch = buildGoalExecutionPatch(successAction)
     onChange(patch)
   }
 
@@ -2047,7 +2093,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <p className={styles.agentCardSummary}>
-            {selectedObjective.label} · {selectedActionInfo.label}
+            {selectedObjective.label} · {selectedGoalExecutionInfo.label}
             {entryCount > 0
               ? ` · entra con ${entryCount} ${entryCount === 1 ? 'regla' : 'reglas'}`
               : ' · entra con cualquier chat'}
@@ -2220,21 +2266,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 )}
               </QuestionSelectRow>
 
-              <QuestionSelectRow
-                question="¿Puede usar emojis?"
-                helper="Sólo si queda natural para tu negocio. Ejemplo: puede poner 🙂 cuando la plática está relajada."
-                value={agent.allowEmojis ? 'yes' : 'no'}
-                options={binaryChoiceOptions}
-                selectLabel="Uso de emojis"
-                onChange={(value) => onChange({ allowEmojis: value === 'yes' })}
-              />
             </div>
           </div>
 
           <div className={styles.agentSection}>
             <h3 className={styles.sectionTitle}>2. Qué debe lograr</h3>
             <p className={styles.agentSectionHint}>
-              Define el objetivo, qué acción lo confirma y qué pasa después. Ejemplo: pedir anticipo antes de agendar.
+              Define la meta, quién la cumple y qué pasa después. Ejemplo: pedir anticipo antes de agendar.
             </p>
             <div className={styles.configQuestionList}>
               <QuestionSelectRow
@@ -2359,21 +2397,21 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </QuestionSelectRow>
 
               <QuestionSelectRow
-                question={`¿Qué acción confirma que se concretó ${getObjectiveCompletionLabel(agent.objective)}?`}
-                helper={selectedActionInfo.description}
-                value={agent.successAction}
-                options={allowedActions.map((action) => ({ value: action, label: getSuccessActionInfo(action, agent.objective, goalWorkflow).label }))}
-                selectLabel="Acción que confirma el objetivo"
-                onChange={(action) => handleSuccessActionChange(action as ConversationalSuccessAction)}
+                question={getGoalExecutionQuestion(agent.objective)}
+                helper={selectedGoalExecutionInfo.description}
+                value={selectedGoalExecutionInfo.value}
+                options={goalExecutionOptions.map((option) => ({ value: option.value, label: option.label }))}
+                selectLabel="Quién cumple la meta"
+                onChange={(action) => handleGoalExecutionChange(action as ConversationalSuccessAction)}
               />
 
               <QuestionSelectRow
                 question="Al momento de cumplir el objetivo, ¿qué quieres que suceda?"
                 helper={completionMode === 'assign_user'
                   ? (selectedCompletionUser
-                      ? `Se asigna a ${selectedCompletionUser.fullName || selectedCompletionUser.email || selectedCompletionUser.phone || selectedCompletionUser.username} y se avisa.`
+                      ? `Se asigna a ${selectedCompletionUser.fullName || selectedCompletionUser.email || selectedCompletionUser.phone || selectedCompletionUser.username} y manda notificación.`
                       : 'Elige quién lo toma cuando el bot termine.')
-                  : 'El bot deja de atender ese chat y te avisa para que el equipo lo vea.'}
+                  : 'El bot deja de atender ese chat y manda una notificación para que el equipo lo vea.'}
                 value={completionMode}
                 options={completionModeOptions.map((option) => ({
                   value: option.value,
@@ -3615,7 +3653,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         <div className={styles.agentDirectoryGrid}>
           {agents.map((agent) => {
             const objectiveLabel = objectiveOptions.find((option) => option.value === agent.objective)?.label || 'Objetivo'
-            const actionLabel = successActionLabels[agent.successAction]?.label || 'Acción'
+            const actionLabel = getSelectedGoalExecutionInfo(agent.successAction, agent.objective, agent.goalWorkflow).label
             const provider = getConversationalAIProviderOption(agent.aiProvider)
             const modelLabel = getConversationalModelLabel(agent.aiProvider, agent.model)
             const entryRules = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)

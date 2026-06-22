@@ -88,6 +88,10 @@ test('flujos IA automaticos de bajo costo usan siempre el modelo mas barato apro
 })
 
 test('normaliza la entrega de respuestas en partes', () => {
+  const defaultDelivery = normalizeAgentReplyDelivery()
+  assert.equal(defaultDelivery.mode, 'split')
+  assert.equal(defaultDelivery.splitMessagesEnabled, true)
+
   const delivery = normalizeAgentReplyDelivery({
     mode: 'split',
     maxBubbleLength: 40,
@@ -2483,13 +2487,11 @@ test('instrucciones del agente respetan el toggle de emojis', () => {
     ...commonContext
   })
 
-  assert.match(disabledInstructions, /Control de emojis: APAGADO/)
-  assert.match(disabledInstructions, /No uses emojis en ningún mensaje visible/)
-  assert.doesNotMatch(disabledInstructions, /Control de emojis: ACTIVADO/)
+  assert.doesNotMatch(disabledInstructions, /Control de emojis/)
+  assert.doesNotMatch(disabledInstructions, /No uses emojis en ningún mensaje visible/)
   assert.match(enabledInstructions, /Control de emojis: ACTIVADO/)
   assert.match(enabledInstructions, /incluye 1 emoji cuando suene natural/)
   assert.match(enabledInstructions, /No uses más de 1 emoji por mensaje/)
-  assert.doesNotMatch(enabledInstructions, /Control de emojis: APAGADO/)
 })
 
 test('instrucciones del agente incluyen anticipo y acción final configurados', () => {

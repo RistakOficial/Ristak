@@ -1781,7 +1781,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
       successExtras: [], requiredData: '', handoffRules: '', extraInstructions: '',
       allowEmojis: false, aiProvider: globalConfig.aiProvider, model: globalConfig.model, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
       responseDelay: { mode: 'none', fixedValue: 10, fixedUnit: 'seconds', minValue: 1, maxValue: 10, rangeUnit: 'minutes' },
-      replyDelivery: { mode: 'single', targetChars: 280, minDelaySeconds: 2, maxDelaySeconds: 6 },
+      replyDelivery: { mode: 'split', splitMessagesEnabled: true, targetChars: 280, minDelaySeconds: 2, maxDelaySeconds: 6 },
       followUp: { enabled: false, first: { enabled: true, value: 30, unit: 'minutes' }, second: { enabled: false, value: 2, unit: 'hours' }, strategy: '' }
     }
   }

@@ -324,8 +324,8 @@ const AI_AGENT_HUB_STATUS_FILTERS: Array<{ id: AIAgentHubStatusFilter; label: st
 ]
 
 const DEFAULT_PHONE_AGENT_REPLY_DELIVERY: AgentReplyDeliveryConfig = {
-  mode: 'single',
-  splitMessagesEnabled: false,
+  mode: 'split',
+  splitMessagesEnabled: true,
   minMessageLengthToSplit: 120,
   maxBubbles: 6,
   minBubbleLength: 20,

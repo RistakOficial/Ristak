@@ -1758,7 +1758,7 @@ function buildEmojiUsageInstruction(config = {}) {
     ].join(' ')
   }
 
-  return 'Control de emojis: APAGADO. No uses emojis en ningún mensaje visible.'
+  return ''
 }
 
 export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, channel = 'chat', advancedClosingContext = null, accountLocale = {}, followUpContext = null }) {
@@ -1875,6 +1875,7 @@ ${config.requiredData}`)
     if (closingContextSection) sections.push(closingContextSection)
   }
 
+  const emojiUsageInstruction = buildEmojiUsageInstruction(config)
   sections.push(`## Estilo (obligatorio)
 - Suena como una persona real escribiendo por ${conversationChannelLabel}, nunca como bot, call center ni vendedor insistente.
 - Mensajes cortos: un solo párrafo chico, idealmente entre 100 y 400 caracteres.
@@ -1885,8 +1886,7 @@ ${config.requiredData}`)
 - Espejo y rapport: ${mirrorCriteria}
 - Antes de escribir, revisa tus últimos mensajes del historial y cambia la entrada, el ritmo y la forma de preguntar. No uses el mismo molde dos veces seguidas.
 - Si ya validaste con una muletilla, la siguiente respuesta debe avanzar distinto: precisión concreta, reflejo breve, respuesta puntual o siguiente paso.
-- ${buildEmojiUsageInstruction(config)}
-- No uses signos de admiración ni interrogación invertidos (¡ ¿). No saludos forzados. No prometas resultados garantizados.
+${emojiUsageInstruction ? `- ${emojiUsageInstruction}\n` : ''}- No uses signos de admiración ni interrogación invertidos (¡ ¿). No saludos forzados. No prometas resultados garantizados.
 - Evita frases de robot: "agradecemos su interés", "permítame", "será canalizado", "procederé a".
 - Si la conversación ya cerró y solo contestan por educación, responde mínimo ("va", "claro").`)
 

@@ -67,8 +67,8 @@ const DEFAULT_RESPONSE_DELAY_CONFIG = {
 }
 const REPLY_DELIVERY_MODES = new Set(['single', 'split'])
 const DEFAULT_REPLY_DELIVERY_CONFIG = {
-  mode: 'single',
-  splitMessagesEnabled: false,
+  mode: 'split',
+  splitMessagesEnabled: true,
   minMessageLengthToSplit: 120,
   maxBubbles: 6,
   minBubbleLength: 20,
