@@ -763,8 +763,8 @@ export const CONDITION_SCHEMA = {
   },
   // base: vino de un anuncio (clic CTWA de WhatsApp)
   ads: {
-    presence: ['from_ad', 'not_from_ad'],
-    ad: ['is', 'is_not']
+    presence: ['exists', 'not_exists', 'from_ad', 'not_from_ad'],
+    ad: ['is', 'is_not', 'contains', 'not_contains', 'starts_with', 'ends_with']
   },
   // base: siempre cierto; los parámetros acotan hora/día actuales del negocio
   schedule: {
@@ -800,7 +800,12 @@ function normalizeParam(category, param) {
   const field = String(param.field || '')
   const operators = fields[field]
   if (!operators) return null
-  const operator = operators.includes(param.operator) ? param.operator : operators[0]
+  let rawOperator = String(param.operator || '')
+  if (category === 'ads' && field === 'presence') {
+    if (rawOperator === 'from_ad') rawOperator = 'exists'
+    if (rawOperator === 'not_from_ad') rawOperator = 'not_exists'
+  }
+  const operator = operators.includes(rawOperator) ? rawOperator : operators[0]
 
   const base = { field, operator }
 
@@ -933,10 +938,12 @@ function legacyConditionToParams(cond) {
   }
   if (category === 'ads') {
     const map = {
-      from_ad: [],
-      not_from_ad: [{ field: 'presence', operator: 'not_from_ad' }],
+      from_ad: [{ field: 'presence', operator: 'exists' }],
+      not_from_ad: [{ field: 'presence', operator: 'not_exists' }],
       ad_is: [{ field: 'ad', operator: 'is', value: cond.value }],
-      ad_is_not: [{ field: 'ad', operator: 'is_not', value: cond.value }]
+      ad_is_not: [{ field: 'ad', operator: 'is_not', value: cond.value }],
+      ad_contains: [{ field: 'ad', operator: 'contains', value: cond.value }],
+      ad_not_contains: [{ field: 'ad', operator: 'not_contains', value: cond.value }]
     }
     return map[operator] ? { category: 'ads', params: map[operator] } : null
   }
@@ -2515,10 +2522,22 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
     `, [contactId]).catch(() => []) : [],
     // Atribución de anuncios: clics CTWA y anuncios detectados en sus mensajes
     contactId ? db.all(`
-      SELECT DISTINCT detected_ctwa_clid, detected_source_id
-      FROM whatsapp_api_messages
-      WHERE contact_id = ? AND direction = 'inbound'
-        AND (COALESCE(detected_ctwa_clid, '') != '' OR COALESCE(detected_source_id, '') != '')
+      SELECT DISTINCT
+        m.detected_ctwa_clid,
+        m.detected_source_id,
+        (
+          SELECT MAX(a.ad_name)
+          FROM meta_ads a
+          WHERE a.ad_id = m.detected_source_id
+        ) AS ad_name,
+        (
+          SELECT MAX(a.campaign_name)
+          FROM meta_ads a
+          WHERE a.ad_id = m.detected_source_id
+        ) AS campaign_name
+      FROM whatsapp_api_messages m
+      WHERE m.contact_id = ? AND m.direction = 'inbound'
+        AND (COALESCE(m.detected_ctwa_clid, '') != '' OR COALESCE(m.detected_source_id, '') != '')
       LIMIT 50
     `, [contactId]).catch(() => []) : [],
     contactId ? db.get(`
@@ -2577,6 +2596,20 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
     )).filter(Boolean)
   }
 
+  const contactAdValues = [
+    contact?.attribution_ad_name,
+    contact?.attribution_ad_id
+  ].map((value) => String(value || '').trim()).filter(Boolean)
+  const adSourceIds = [...new Set([
+    ...adRows.map((row) => String(row.detected_source_id || '').trim()).filter(Boolean),
+    String(contact?.attribution_ad_id || '').trim()
+  ].filter(Boolean))]
+  const adSourceValues = [...new Set([
+    ...adSourceIds,
+    ...adRows.flatMap((row) => [row.ad_name, row.campaign_name]),
+    ...contactAdValues
+  ].map(normalizeMatchText).filter(Boolean))]
+
   return {
     now: Date.now(),
     nowIso,
@@ -2591,8 +2624,9 @@ export async function buildRuleContext({ contactId = null, messageText = '', cha
     })),
     assigneeIds: assigneeIds.map(normalizeMatchText),
     assigneeNames,
-    cameFromAd: adRows.some((row) => String(row.detected_ctwa_clid || '').trim() || String(row.detected_source_id || '').trim()),
-    adSourceIds: [...new Set(adRows.map((row) => String(row.detected_source_id || '').trim()).filter(Boolean))],
+    cameFromAd: adRows.some((row) => String(row.detected_ctwa_clid || '').trim() || String(row.detected_source_id || '').trim()) || contactAdValues.length > 0,
+    adSourceIds,
+    adSourceValues,
     businessPhoneNumberId: String(latestInbound?.business_phone_number_id || ''),
     contactInfo: contact ? {
       name: normalizeMatchText(contact.full_name || ''),
@@ -2926,14 +2960,22 @@ function conditionMatches(condition, ctx) {
   }
 
   if (category === 'ads') {
-    const presence = params.find((param) => param.field === 'presence')?.operator || 'from_ad'
-    if (presence === 'not_from_ad') return !ctx.cameFromAd
+    const presence = params.find((param) => param.field === 'presence')?.operator || 'exists'
+    if (presence === 'not_exists' || presence === 'not_from_ad') return !ctx.cameFromAd
     if (!ctx.cameFromAd) return false
+    const adValues = [...new Set([
+      ...(Array.isArray(ctx.adSourceValues) ? ctx.adSourceValues : []),
+      ...(Array.isArray(ctx.adSourceIds) ? ctx.adSourceIds : [])
+    ].map(normalizeMatchText).filter(Boolean))]
     return params.every((param) => {
       if (param.field !== 'ad') return true
-      if (!param.value) return true
-      const matches = ctx.adSourceIds.includes(param.value)
-      return param.operator === 'is_not' ? !matches : matches
+      const expected = normalizeMatchText(param.value)
+      if (!expected) return true
+      const matches = adValues.some((value) => textValueMatches(value, param.operator, expected))
+      if (param.operator === 'is_not' || param.operator === 'not_contains') {
+        return adValues.every((value) => textValueMatches(value, param.operator, expected))
+      }
+      return matches
     })
   }
 

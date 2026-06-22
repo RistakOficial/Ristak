@@ -29,7 +29,7 @@ import styles from './AIAgentSettings.module.css'
 type ValueKind =
   | 'none' | 'channel' | 'text' | 'list' | 'tag' | 'tagList' | 'calendar'
   | 'date' | 'dateRange' | 'offset' | 'amount' | 'amountRange'
-  | 'ad' | 'businessPhone' | 'timeRange' | 'weekdays' | 'customField' | 'customFieldValue'
+  | 'ad' | 'adText' | 'businessPhone' | 'timeRange' | 'weekdays' | 'customField' | 'customFieldValue'
 
 interface OperatorDef {
   id: string
@@ -132,6 +132,25 @@ function textOperators(subject: string, placeholder: string): OperatorDef[] {
     { id: 'not_empty', label: 'no está vacío', valueKind: 'none', phrase: (p) => textOperatorPhrase(subject, p) },
     { id: 'empty', label: 'está vacío', valueKind: 'none', phrase: (p) => textOperatorPhrase(subject, p) }
   ]
+}
+
+function adOperatorPhrase(subject: string, param: AgentConditionParam, helpers: SummaryHelpers) {
+  const selectedAd = helpers.adName(param.value)
+  const value = param.value || '…'
+  switch (param.operator) {
+    case 'is':
+      return `${subject} es igual a "${selectedAd}"`
+    case 'is_not':
+      return `${subject} no es igual a "${selectedAd}"`
+    case 'not_contains':
+      return `${subject} no contiene "${value}"`
+    case 'starts_with':
+      return `${subject} empieza con "${value}"`
+    case 'ends_with':
+      return `${subject} termina con "${value}"`
+    default:
+      return `${subject} contiene "${value}"`
+  }
 }
 
 function dateOperators(subject: string): OperatorDef[] {
@@ -445,22 +464,26 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
   {
     id: 'ads',
     label: 'Anuncios',
-    baseLabel: 'llegó desde un anuncio de Meta',
+    baseLabel: 'existe atribución de anuncio',
     params: [
       {
         field: 'presence',
-        menuLabel: 'Viene o no de un anuncio',
+        menuLabel: 'Atribución de anuncio',
         operators: [
-          { id: 'from_ad', label: 'sí llegó de un anuncio', valueKind: 'none', phrase: () => 'llegó de un anuncio' },
-          { id: 'not_from_ad', label: 'no llegó de ningún anuncio', valueKind: 'none', phrase: () => 'no llegó de ningún anuncio' }
+          { id: 'exists', label: 'existe', valueKind: 'none', phrase: () => 'llegó de un anuncio' },
+          { id: 'not_exists', label: 'no existe', valueKind: 'none', phrase: () => 'no llegó de ningún anuncio' }
         ]
       },
       {
         field: 'ad',
-        menuLabel: 'Anuncio específico',
+        menuLabel: 'Anuncio',
         operators: [
-          { id: 'is', label: 'el anuncio es igual a', valueKind: 'ad', phrase: (p, h) => `el anuncio es igual a "${h.adName(p.value)}"` },
-          { id: 'is_not', label: 'el anuncio no es igual a', valueKind: 'ad', phrase: (p, h) => `el anuncio no es igual a "${h.adName(p.value)}"` }
+          { id: 'is', label: 'es igual a', valueKind: 'ad', phrase: (p, h) => adOperatorPhrase('el anuncio', p, h) },
+          { id: 'is_not', label: 'no es igual a', valueKind: 'ad', phrase: (p, h) => adOperatorPhrase('el anuncio', p, h) },
+          { id: 'contains', label: 'contiene', valueKind: 'adText', placeholder: 'Nombre, campaña o ID', phrase: (p, h) => adOperatorPhrase('el anuncio', p, h) },
+          { id: 'not_contains', label: 'no contiene', valueKind: 'adText', placeholder: 'Nombre, campaña o ID', phrase: (p, h) => adOperatorPhrase('el anuncio', p, h) },
+          { id: 'starts_with', label: 'empieza con', valueKind: 'adText', placeholder: 'Nombre, campaña o ID', phrase: (p, h) => adOperatorPhrase('el anuncio', p, h) },
+          { id: 'ends_with', label: 'termina con', valueKind: 'adText', placeholder: 'Nombre, campaña o ID', phrase: (p, h) => adOperatorPhrase('el anuncio', p, h) }
         ]
       }
     ]
@@ -940,6 +963,26 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
             ))}
           </select>
         )
+      case 'adText': {
+        const listId = `agent-ad-options-${groupIndex}-${conditionIndex}-${paramIndex}`
+        return (
+          <>
+            <input
+              className={styles.ruleInput}
+              list={listId}
+              value={param.value || ''}
+              placeholder={operator.placeholder || 'Nombre, campaña o ID'}
+              onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
+            />
+            <datalist id={listId}>
+              {(options?.ads || []).flatMap((ad) => ([
+                <option key={`${ad.id}-name`} value={ad.name}>{ad.campaign ? `${ad.campaign} · ${ad.id}` : ad.id}</option>,
+                <option key={`${ad.id}-id`} value={ad.id}>{ad.name}{ad.campaign ? ` · ${ad.campaign}` : ''}</option>
+              ]))}
+            </datalist>
+          </>
+        )
+      }
       case 'businessPhone':
         return (
           <select

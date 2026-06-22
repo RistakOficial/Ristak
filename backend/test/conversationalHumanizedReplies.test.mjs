@@ -384,6 +384,85 @@ test('la condicion Canal permite chats y SMS sin confundirlos con correo', () =>
   assert.equal(entryRulesMatch(emailAgent, { channel: 'instagram' }), false)
 })
 
+test('la condicion Anuncios separa existencia y comparadores por anuncio', () => {
+  const agentWithAd = {
+    filters: {
+      entry: {
+        groups: [{
+          conditions: [{ category: 'ads', params: [{ field: 'presence', operator: 'exists' }] }]
+        }]
+      }
+    }
+  }
+  const agentWithoutAd = {
+    filters: {
+      entry: {
+        groups: [{
+          conditions: [{ category: 'ads', params: [{ field: 'presence', operator: 'not_exists' }] }]
+        }]
+      }
+    }
+  }
+  const exactAdAgent = {
+    filters: {
+      entry: {
+        groups: [{
+          conditions: [{
+            category: 'ads',
+            params: [
+              { field: 'presence', operator: 'exists' },
+              { field: 'ad', operator: 'is', value: 'ad_123' }
+            ]
+          }]
+        }]
+      }
+    }
+  }
+  const containsAdAgent = {
+    filters: {
+      entry: {
+        groups: [{
+          conditions: [{
+            category: 'ads',
+            params: [
+              { field: 'presence', operator: 'exists' },
+              { field: 'ad', operator: 'contains', value: 'promo verano' }
+            ]
+          }]
+        }]
+      }
+    }
+  }
+  const notContainsAdAgent = {
+    filters: {
+      entry: {
+        groups: [{
+          conditions: [{
+            category: 'ads',
+            params: [
+              { field: 'presence', operator: 'exists' },
+              { field: 'ad', operator: 'not_contains', value: 'frio' }
+            ]
+          }]
+        }]
+      }
+    }
+  }
+  const ctx = {
+    cameFromAd: true,
+    adSourceIds: ['ad_123'],
+    adSourceValues: ['ad_123', 'promo verano', 'campana caliente']
+  }
+
+  assert.equal(entryRulesMatch(agentWithAd, ctx), true)
+  assert.equal(entryRulesMatch(agentWithoutAd, ctx), false)
+  assert.equal(entryRulesMatch(agentWithoutAd, { cameFromAd: false, adSourceIds: [], adSourceValues: [] }), true)
+  assert.equal(entryRulesMatch(exactAdAgent, ctx), true)
+  assert.equal(entryRulesMatch(containsAdAgent, ctx), true)
+  assert.equal(entryRulesMatch(notContainsAdAgent, ctx), true)
+  assert.equal(entryRulesMatch(containsAdAgent, { cameFromAd: true, adSourceIds: ['ad_999'], adSourceValues: ['campana fria'] }), false)
+})
+
 test('normaliza seguimiento del agente conversacional dentro de ventana WhatsApp', () => {
   const followUp = normalizeAgentFollowUp({
     enabled: true,
