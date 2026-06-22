@@ -4876,7 +4876,7 @@ export const DesktopChat: React.FC = () => {
       }
 
       return (
-        <a className={styles.mediaAttachment} href={attachmentSrc} target="_blank" rel="noreferrer" aria-label={attachment.name || (attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}>
+        <a className={`${styles.mediaAttachment} ${styles.mediaAttachmentImage}`} href={attachmentSrc} target="_blank" rel="noreferrer" aria-label={attachment.name || (attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}>
           <img src={attachmentSrc} alt={attachment.name || (attachment.isGif ? 'GIF enviado' : 'Foto enviada')} loading="lazy" />
         </a>
       )
@@ -4894,7 +4894,7 @@ export const DesktopChat: React.FC = () => {
       }
 
       return (
-        <div className={styles.mediaAttachment}>
+        <div className={`${styles.mediaAttachment} ${styles.mediaAttachmentVideo}`}>
           <video
             src={attachmentSrc}
             controls={!isGifVideo}

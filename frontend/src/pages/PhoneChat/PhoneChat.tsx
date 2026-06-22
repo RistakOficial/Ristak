@@ -3564,10 +3564,6 @@ export const PhoneChat: React.FC = () => {
     markConversationScrollSettling()
     scrollMessagesPaneToBottom()
     queueMessagesPaneBottomScroll(0)
-    const settlingDelays = [70, 160, 300, 520]
-    settlingDelays.forEach((delay) => {
-      queueMessagesPaneBottomScroll(delay)
-    })
   }, [clearQueuedBottomScrolls, markConversationScrollSettling, queueMessagesPaneBottomScroll, scrollMessagesPaneToBottom])
   const handleConversationTransitionEnd = useCallback((event: React.TransitionEvent<HTMLElement>) => {
     if (event.currentTarget !== event.target || event.propertyName !== 'transform') return

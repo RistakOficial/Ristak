@@ -4138,11 +4138,14 @@
 .messageImage {
   display: block;
   width: min(252px, 62vw);
+  aspect-ratio: 1 / 1;
+  height: auto;
   max-height: 318px;
   margin: 0 0 5px;
   border-radius: 8px;
   object-fit: cover;
-  background: #d7d2c8;
+  background: color-mix(in srgb, var(--phone-chat-muted) 20%, var(--phone-chat-surface) 80%);
+  contain: paint;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -4151,10 +4154,14 @@
 .messageVideo {
   display: block;
   width: min(252px, 62vw);
+  aspect-ratio: 16 / 9;
+  height: auto;
   max-height: 318px;
   margin: 0 0 5px;
   border-radius: 8px;
-  background: #111827;
+  object-fit: contain;
+  background: color-mix(in srgb, var(--phone-chat-text) 86%, var(--phone-chat-bg) 14%);
+  contain: paint;
 }
 
 .messageFileBubble {
