@@ -966,30 +966,6 @@
   min-width: 0;
 }
 
-.slugInputGroup {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-}
-
-.slugInputGroup > span {
-  padding: 0 12px;
-  color: var(--text-mute);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.slugInputGroup input {
-  border: 0;
-  border-left: 1px solid var(--border);
-  border-radius: 0;
-  background: transparent;
-}
-
 .editorField textarea {
   min-height: 104px;
   resize: vertical;
@@ -3168,18 +3144,6 @@
   .calendarWizardFooter button,
   .publicUrlControl button {
     width: 100%;
-  }
-
-  .slugInputGroup {
-    grid-template-columns: 1fr;
-  }
-
-  .slugInputGroup > span {
-    padding: 9px 12px 0;
-  }
-
-  .slugInputGroup input {
-    border-left: 0;
   }
 
   .rowActionColumn {

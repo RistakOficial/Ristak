@@ -111,6 +111,7 @@ import {
   Loading,
   Modal,
   NumberInput,
+  PathInput,
   CustomSelect,
   SearchField,
   Switch,
@@ -22394,30 +22395,25 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                 <X size={17} />
               </button>
             </div>
-            <label className={styles.libraryRouteField} data-ristak-unstyled>
-              <span className={styles.libraryRouteDomain} title={getPublicDomainPreview(domainConfig)}>
-                {getPublicDomainPreview(domainConfig)}
-              </span>
-              <span className={styles.libraryRouteSlash} aria-hidden="true">/</span>
-              <input
-                value={routeDraft}
-                aria-label={`Ruta de ${routeEditingSite.name}`}
-                autoFocus
-                disabled={routeSavingId === routeEditingSite.id}
-                placeholder={routeEditingSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
-                onFocus={(event) => event.currentTarget.select()}
-                onChange={(event) => setRouteDraft(normalizeRouteEditorInput(event.target.value, domainConfig))}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') {
-                    event.preventDefault()
-                    cancelRouteEdit()
-                  }
-                }}
-              />
-              <span className={styles.libraryRouteEditHint} aria-hidden="true">
-                <Pencil size={16} />
-              </span>
-            </label>
+            <PathInput
+              size="lg"
+              prefix={`${getPublicDomainPreview(domainConfig)}/`}
+              prefixTitle={getPublicDomainPreview(domainConfig)}
+              value={routeDraft}
+              aria-label={`Ruta de ${routeEditingSite.name}`}
+              autoFocus
+              disabled={routeSavingId === routeEditingSite.id}
+              placeholder={routeEditingSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
+              suffix={<Pencil size={16} />}
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(value) => setRouteDraft(normalizeRouteEditorInput(value, domainConfig))}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  cancelRouteEdit()
+                }
+              }}
+            />
             <div className={styles.libraryRouteActions}>
               <button type="button" disabled={routeSavingId === routeEditingSite.id} onClick={cancelRouteEdit}>Cancelar</button>
               <button type="submit" disabled={routeSavingId === routeEditingSite.id}>
@@ -25616,17 +25612,16 @@ const SiteSettingsPanelContent: React.FC<{
             <small>Edita la dirección de esta página</small>
           </div>
         </div>
-        <label className={styles.editorSettingsRouteField}>
-          <span>{publicDomain}/</span>
-          <input
-            value={routeValue}
-            aria-label="Ruta pública"
-            placeholder={routePlaceholder}
-            disabled={disabled}
-            onChange={(event) => onRouteChange(event.target.value)}
-            onBlur={() => { void onSaveSite() }}
-          />
-        </label>
+        <PathInput
+          prefix={`${publicDomain}/`}
+          prefixTitle={publicDomain}
+          value={routeValue}
+          aria-label="Ruta pública"
+          placeholder={routePlaceholder}
+          disabled={disabled}
+          onChange={(value) => onRouteChange(value)}
+          onBlur={() => { void onSaveSite() }}
+        />
         <div className={styles.editorSettingsRoutePreview}>
           <ExternalLink size={13} />
           <span>{routePreview}</span>

@@ -8,6 +8,7 @@ import {
   TabList,
   CustomSelect,
   NumberInput,
+  PathInput,
   Switch,
   Loading,
   DropdownMenu,
@@ -2554,18 +2555,16 @@ export const CalendarsConfiguration: React.FC = () => {
 
                     <label className={pageStyles.editorField}>
                       <span>Ruta personalizada</span>
-                      <div className={pageStyles.slugInputGroup}>
-                        <span>/calendar/</span>
-                        <input
-                          className={styles.input}
-                          value={selectedCalendar.slug || selectedCalendar.widgetSlug || ''}
-                          onChange={(event) => {
-                            const slug = normalizeCalendarSlugInput(event.target.value)
-                            updateSelectedCalendar({ slug, widgetSlug: slug })
-                          }}
-                          placeholder="consulta-ventas"
-                        />
-                      </div>
+                      <PathInput
+                        prefix="/calendar/"
+                        value={selectedCalendar.slug || selectedCalendar.widgetSlug || ''}
+                        aria-label="Ruta personalizada del calendario"
+                        placeholder="consulta-ventas"
+                        onChange={(value) => {
+                          const slug = normalizeCalendarSlugInput(value)
+                          updateSelectedCalendar({ slug, widgetSlug: slug })
+                        }}
+                      />
                       <small>Usa letras, números y guiones. Al guardar se valida que no choque con otro calendario.</small>
                     </label>
 

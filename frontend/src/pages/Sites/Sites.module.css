@@ -11992,82 +11992,6 @@
   cursor: pointer;
 }
 
-.libraryRouteField {
-  min-width: 0;
-  min-height: 56px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1.5px solid var(--color-border-subtle, rgba(148, 163, 184, 0.28));
-  border-radius: 10px;
-  background: var(--color-background-primary);
-  padding: 0 12px;
-  cursor: text;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38);
-  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
-}
-
-.libraryRouteField:hover,
-.libraryRouteField:focus-within {
-  border-color: rgba(var(--color-primary-rgb), 0.48);
-  background: color-mix(in srgb, var(--color-background-primary) 88%, var(--color-primary) 12%);
-  box-shadow:
-    0 0 0 4px rgba(var(--color-primary-rgb), 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.46);
-}
-
-.libraryRouteDomain {
-  min-width: 0;
-  max-width: 52%;
-  overflow: hidden;
-  color: color-mix(in srgb, var(--color-text-primary) 82%, var(--color-text-secondary) 18%);
-  font-size: 1rem;
-  font-weight: 850;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.libraryRouteSlash {
-  color: var(--color-text-primary);
-  font-size: 1rem;
-  font-weight: 900;
-  line-height: 1;
-}
-
-.libraryRouteField input {
-  min-width: 42px;
-  flex: 1;
-  border: 0;
-  background: transparent;
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 1rem;
-  font-weight: 850;
-  line-height: 1;
-  outline: none;
-  caret-color: var(--color-primary);
-}
-
-.libraryRouteField input::placeholder {
-  color: var(--color-text-tertiary);
-  opacity: 1;
-  font-weight: 800;
-}
-
-.libraryRouteEditHint {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: rgba(var(--color-primary-rgb), 0.12);
-  color: var(--color-primary);
-  pointer-events: none;
-}
-
 .libraryRouteActions {
   display: inline-flex;
   align-items: center;
@@ -12104,8 +12028,7 @@
   color: var(--color-primary);
 }
 
-.libraryRouteEditor button:disabled,
-.libraryRouteField input:disabled {
+.libraryRouteEditor button:disabled {
   cursor: wait;
   opacity: 0.62;
 }
@@ -15114,49 +15037,6 @@
 .editorSettingsMetaLogo {
   background: color-mix(in srgb, #0866ff 88%, var(--color-background-primary) 12%);
   color: #ffffff;
-}
-
-.editorSettingsRouteField {
-  min-width: 0;
-  height: 42px;
-  display: grid;
-  grid-template-columns: minmax(190px, 1fr) minmax(132px, 0.72fr);
-  align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--design-control-border);
-  border-radius: var(--design-control-radius);
-  background: var(--design-control-bg);
-}
-
-.editorSettingsRouteField > span {
-  min-width: 0;
-  overflow: hidden;
-  border-right: 1px solid color-mix(in srgb, var(--design-control-border) 82%, transparent);
-  color: var(--color-text-tertiary);
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: var(--font-weight-semibold, 600);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.editorSettingsRouteField input {
-  width: 100%;
-  min-width: 0;
-  height: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--color-text-primary);
-  padding: 0 12px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: var(--font-weight-semibold, 600);
-  outline: none;
-}
-
-.editorSettingsRouteField:focus-within {
-  border-color: var(--ristak-focus-border, rgba(var(--color-primary-rgb), 0.5));
-  box-shadow: var(--ristak-focus-ring, 0 0 0 3px rgba(var(--color-primary-rgb), 0.12));
 }
 
 .editorSettingsRoutePreview {

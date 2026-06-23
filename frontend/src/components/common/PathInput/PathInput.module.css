@@ -1,0 +1,114 @@
+.root {
+  --path-input-height: 42px;
+  --path-input-font-size: 13px;
+  --path-input-font-weight: 600;
+  --path-input-prefix-weight: 500;
+
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--path-input-height);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--design-control-shadow, none);
+  cursor: text;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.root[data-size='lg'] {
+  --path-input-height: 52px;
+  --path-input-font-size: 14px;
+}
+
+.root:hover:not([data-disabled='true']) {
+  border-color: var(--border-strong);
+  background: var(--design-control-bg-hover, var(--surface-hover));
+}
+
+.root:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.root[data-disabled='true'] {
+  background: var(--surface-2);
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.prefix {
+  flex: 0 1 auto;
+  max-width: min(58%, 320px);
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 12px;
+  color: var(--text-mute);
+  font-size: var(--path-input-font-size);
+  font-weight: var(--path-input-prefix-weight);
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.divider {
+  align-self: stretch;
+  width: 1px;
+  flex: 0 0 auto;
+  background: var(--border);
+}
+
+.input {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1 1 96px;
+  width: 100%;
+  min-width: 0;
+  height: calc(var(--path-input-height) - 2px);
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+  padding: 0 12px;
+  font: inherit;
+  font-family: var(--font-body, inherit);
+  font-size: var(--path-input-font-size);
+  font-weight: var(--path-input-font-weight);
+  letter-spacing: 0;
+  line-height: 1.25rem;
+}
+
+.input::placeholder {
+  color: var(--text-mute);
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.input:disabled {
+  cursor: not-allowed;
+}
+
+.suffix {
+  width: 32px;
+  height: calc(var(--path-input-height) - 10px);
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 5px;
+  color: var(--text-mute);
+  pointer-events: none;
+  transition: color var(--transition-fast);
+}
+
+.root:focus-within .suffix {
+  color: var(--accent);
+}

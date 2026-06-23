@@ -122,6 +122,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Tabs de sub-sección (underline) | `<SegmentTabs>` (recipe `[data-segdir]`) | un nav a mano |
 | Switch / toggle | `<Switch>` (recipe `[data-sw]`) | un checkbox estilizado a mano |
 | Select enriquecido | `<CustomSelect>` | — |
+| Ruta / slug con prefijo fijo | `<PathInput prefix="…">` | un wrapper con prefijo + `<input className={styles.input}>` que crea doble contenedor |
 | Menú | `<DropdownMenu>` | — |
 | Modal / overlay | `<Modal>` (recipe `[data-overlay]`/`[data-modal]`) | un `position:fixed` a mano |
 | Card / KPI | `<Card>` / `<KpiCard>` (llevan `data-ristak-card`) | — |
