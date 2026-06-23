@@ -15761,14 +15761,14 @@ export const PhoneChat: React.FC = () => {
       <Modal
         isOpen={Boolean(manualAgentSendPrompt)}
         onClose={() => setManualAgentSendPrompt(null)}
-        title="Pausar agente antes de enviar"
+        title="Agente activo en este chat"
         type="confirm"
         size="sm"
         draggableSheet
-        message={`Al enviar este mensaje, ${manualAgentSendLabel} dejará de responder este chat. Puedes pausarlo 24 horas o quitar este contacto del agente conversacional.`}
+        message={`Si envías este mensaje, ${manualAgentSendLabel} dejará de responder este chat. Elige si quieres pausarlo 24 horas o quitar este contacto del agente hasta que lo reactives.`}
         confirmText="Pausar 24h y enviar"
         cancelText="Cancelar"
-        secondaryActionText="Omitir y enviar"
+        secondaryActionText="Quitar del agente y enviar"
         secondaryActionVariant="danger"
         onConfirm={() => handleManualAgentSendDecision('pause')}
         onSecondaryAction={() => handleManualAgentSendDecision('skip')}
