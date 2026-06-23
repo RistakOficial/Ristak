@@ -52,6 +52,7 @@ const CALENDAR_FORM_FIELD_TYPES = new Set([
   'email',
   'date'
 ])
+const CALENDAR_SLUG_MAX_LENGTH = 80
 
 function makeId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`
@@ -687,7 +688,79 @@ function slugify(value, fallback = '') {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || `calendario-${Date.now()}`
+    .slice(0, CALENDAR_SLUG_MAX_LENGTH) || `calendario-${Date.now()}`
+}
+
+function calendarSlugIdSuffix(calendarId = '') {
+  return cleanString(calendarId)
+    .replace(new RegExp(`^${LOCAL_CALENDAR_PREFIX}_?`, 'i'), '')
+    .replace(/[^a-z0-9]+/gi, '')
+    .slice(0, 8)
+    .toLowerCase()
+}
+
+function normalizeSlugSuffix(value = '') {
+  return cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 16)
+}
+
+function appendCalendarSlugSuffix(baseSlug, suffix) {
+  const normalizedBase = slugify(baseSlug)
+  const normalizedSuffix = normalizeSlugSuffix(suffix)
+  if (!normalizedSuffix) return normalizedBase
+  if (normalizedBase.endsWith(`-${normalizedSuffix}`)) return normalizedBase
+
+  const maxBaseLength = Math.max(1, CALENDAR_SLUG_MAX_LENGTH - normalizedSuffix.length - 1)
+  const truncatedBase = normalizedBase
+    .slice(0, maxBaseLength)
+    .replace(/-+$/g, '') || 'calendario'
+
+  return `${truncatedBase}-${normalizedSuffix}`.slice(0, CALENDAR_SLUG_MAX_LENGTH)
+}
+
+async function ristakPublicCalendarSlugExists(candidateSlug, calendarId) {
+  const slug = cleanString(candidateSlug)
+  if (!slug) return false
+
+  const row = await db.get(`
+    SELECT id
+    FROM calendars
+    WHERE id != ?
+      AND LOWER(COALESCE(source, 'ristak')) = 'ristak'
+      AND (
+        LOWER(COALESCE(slug, '')) = LOWER(?)
+        OR LOWER(COALESCE(widget_slug, '')) = LOWER(?)
+      )
+    LIMIT 1
+  `, [calendarId, slug, slug])
+
+  return Boolean(row)
+}
+
+async function ensureUniqueRistakPublicSlug(value, calendarId) {
+  const baseSlug = slugify(value, calendarId)
+  const idSuffix = calendarSlugIdSuffix(calendarId)
+  let candidate = baseSlug
+  let attempt = 0
+
+  while (await ristakPublicCalendarSlugExists(candidate, calendarId)) {
+    attempt += 1
+    const suffix = attempt === 1
+      ? idSuffix || String(attempt + 1)
+      : `${idSuffix || 'cal'}${attempt + 1}`
+    candidate = appendCalendarSlugSuffix(baseSlug, suffix)
+
+    if (attempt > 25) {
+      candidate = appendCalendarSlugSuffix(baseSlug, crypto.randomUUID().replace(/-/g, '').slice(0, 8))
+      break
+    }
+  }
+
+  return candidate
 }
 
 function decodeSegment(value) {
@@ -835,12 +908,15 @@ function calendarRowToApi(row = {}) {
 
 function normalizeCalendarRecord(raw = {}, options = {}) {
   const calendar = raw.calendar && typeof raw.calendar === 'object' ? raw.calendar : raw
-  const source = options.source || calendar.source || (calendar.id && !String(calendar.id).startsWith(LOCAL_CALENDAR_PREFIX) ? 'ghl' : 'ristak')
+  const source = normalizeCalendarSource(options.source || calendar.source || (calendar.id && !String(calendar.id).startsWith(LOCAL_CALENDAR_PREFIX) ? 'ghl' : 'ristak'))
   const ghlCalendarId = cleanString(options.ghlCalendarId || calendar.ghlCalendarId || calendar.ghl_calendar_id || (source === 'ghl' ? calendar.id : '')) || null
   const id = cleanString(options.id || calendar.localId || calendar.local_id || calendar.ristakCalendarId || calendar.id) ||
     makeId(LOCAL_CALENDAR_PREFIX)
   const name = cleanString(calendar.name || calendar.title || calendar.calendarName || 'Calendario Ristak')
   const slotDuration = toInt(calendar.slotDuration ?? calendar.slot_duration, 60)
+  const explicitSlug = cleanString(calendar.slug || '')
+  const explicitWidgetSlug = cleanString(calendar.widgetSlug || calendar.widget_slug || '')
+  const generatedSlug = slugify(name, id)
 
   const rawJson = getCalendarRawJsonWithBookingForm(calendar, options)
   const hasAntiTrackingInput = Object.prototype.hasOwnProperty.call(calendar, 'antiTrackingEnabled') ||
@@ -852,8 +928,10 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
     locationId: cleanString(options.locationId || calendar.locationId || calendar.location_id || ''),
     name,
     description: cleanString(calendar.description || ''),
-    slug: cleanString(calendar.slug || '') || slugify(name, id),
-    widgetSlug: cleanString(calendar.widgetSlug || calendar.widget_slug || calendar.slug || '') || slugify(name, id),
+    slug: explicitSlug || generatedSlug,
+    widgetSlug: explicitWidgetSlug || explicitSlug || generatedSlug,
+    slugWasExplicit: Boolean(explicitSlug),
+    widgetSlugWasExplicit: Boolean(explicitWidgetSlug),
     calendarType: cleanString(calendar.calendarType || calendar.calendar_type || 'event') || 'event',
     widgetType: cleanString(calendar.widgetType || calendar.widget_type || 'classic') || 'classic',
     eventTitle: cleanString(calendar.eventTitle || calendar.event_title || name || 'Cita'),
@@ -901,6 +979,13 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
   const existingByGhl = normalized.ghlCalendarId ? await getCalendarByGhlId(normalized.ghlCalendarId) : null
   if (existingByGhl?.id) {
     normalized.id = existingByGhl.id
+  }
+
+  if (normalizeCalendarSource(normalized.source) === 'ristak') {
+    normalized.slug = await ensureUniqueRistakPublicSlug(normalized.slug, normalized.id)
+    normalized.widgetSlug = normalized.widgetSlugWasExplicit
+      ? await ensureUniqueRistakPublicSlug(normalized.widgetSlug, normalized.id)
+      : normalized.slug
   }
 
   await db.run(`

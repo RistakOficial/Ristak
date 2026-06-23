@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
 import { db } from '../src/config/database.js'
 import {
+  createLocalCalendar,
   createLocalAppointment,
   ensureHighLevelContactForAppointment,
   getLocalFreeSlots,
@@ -146,6 +147,96 @@ test('getLocalFreeSlots deduplica slots cuando horarios personalizados se empalm
   } finally {
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+  }
+})
+
+test('createLocalCalendar genera IDs y URLs publicas unicas para calendarios Ristak con el mismo nombre', async () => {
+  const suffix = randomUUID()
+  const name = `Mi calendario ${suffix}`
+  const createdIds = []
+
+  try {
+    const first = await createLocalCalendar({
+      name,
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [
+        {
+          daysOfTheWeek: [1],
+          hours: [{ openHour: 9, openMinute: 0, closeHour: 11, closeMinute: 0 }]
+        }
+      ]
+    })
+    const second = await createLocalCalendar({
+      name,
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [
+        {
+          daysOfTheWeek: [1],
+          hours: [{ openHour: 12, openMinute: 0, closeHour: 14, closeMinute: 0 }]
+        }
+      ]
+    })
+    createdIds.push(first.id, second.id)
+
+    assert.match(first.id, /^rstk_cal_/)
+    assert.match(second.id, /^rstk_cal_/)
+    assert.notEqual(first.id, second.id)
+    assert.notEqual(first.slug, second.slug)
+    assert.equal(first.widgetSlug, first.slug)
+    assert.equal(second.widgetSlug, second.slug)
+
+    const firstPublic = await getPublicCalendarBySlug(first.slug)
+    const secondPublic = await getPublicCalendarBySlug(second.slug)
+    assert.equal(firstPublic?.id, first.id)
+    assert.equal(secondPublic?.id, second.id)
+  } finally {
+    if (createdIds.length) {
+      await db.run(`DELETE FROM calendars WHERE id IN (${createdIds.map(() => '?').join(', ')})`, createdIds).catch(() => undefined)
+    }
+  }
+})
+
+test('upsertLocalCalendar evita slugs publicos duplicados entre calendarios internos de Ristak', async () => {
+  const suffix = randomUUID()
+  const slug = `agenda-crm-${suffix}`
+  const firstId = `rstk_cal_slug_a_${suffix}`
+  const secondId = `rstk_cal_slug_b_${suffix}`
+
+  try {
+    const first = await upsertLocalCalendar({
+      id: firstId,
+      slug,
+      widgetSlug: slug,
+      name: 'Agenda CRM',
+      source: 'ristak'
+    }, {
+      source: 'ristak',
+      syncStatus: 'pending'
+    })
+    const second = await upsertLocalCalendar({
+      id: secondId,
+      slug,
+      widgetSlug: slug,
+      name: 'Agenda CRM duplicada',
+      source: 'ristak'
+    }, {
+      source: 'ristak',
+      syncStatus: 'pending'
+    })
+
+    assert.equal(first.slug, slug)
+    assert.notEqual(second.slug, slug)
+    assert.notEqual(first.slug, second.slug)
+    assert.equal(second.widgetSlug, second.slug)
+
+    const firstPublic = await getPublicCalendarBySlug(first.slug)
+    const secondPublic = await getPublicCalendarBySlug(second.slug)
+    assert.equal(firstPublic?.id, firstId)
+    assert.equal(secondPublic?.id, secondId)
+  } finally {
+    await db.run('DELETE FROM calendars WHERE id IN (?, ?)', [firstId, secondId]).catch(() => undefined)
   }
 })
 
