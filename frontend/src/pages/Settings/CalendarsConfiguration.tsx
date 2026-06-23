@@ -2465,29 +2465,10 @@ export const CalendarsConfiguration: React.FC = () => {
 
                   <section className={pageStyles.editorSection}>
                     <div className={pageStyles.editorSectionHeader}>
-                      <strong>Estilo y diseño</strong>
-                      <span>Controla lo que aparece en la URL pública: panel izquierdo, textos, colores, tipografía y zona horaria.</span>
+                      <strong>Agenda y zona horaria</strong>
+                      <span>Define cómo se interpretan los horarios y la confirmación antes de mostrar el calendario público.</span>
                     </div>
-                    {renderCalendarBookingPreview()}
                     <div className={pageStyles.editorFields}>
-                      <label className={pageStyles.editorField}>
-                        <span>Vista pública</span>
-                        <CustomSelect
-                          value={bookingDisplayConfig.layout}
-                          onValueChange={(value) => updateBookingDisplayConfig({ layout: normalizeCalendarBookingLayout(value) })}
-                          options={CALENDAR_PUBLIC_LAYOUT_OPTIONS}
-                        />
-                      </label>
-
-                      <label className={pageStyles.editorField}>
-                        <span>Tipografía</span>
-                        <CustomSelect
-                          value={bookingDisplayConfig.fontFamily}
-                          onValueChange={(value) => updateBookingDisplayConfig({ fontFamily: normalizeCalendarBookingFontFamily(value) })}
-                          options={CALENDAR_PUBLIC_FONT_OPTIONS}
-                        />
-                      </label>
-
                       <label className={pageStyles.editorField}>
                         <span>Zona horaria base</span>
                         <CustomSelect
@@ -2517,6 +2498,48 @@ export const CalendarsConfiguration: React.FC = () => {
                         </div>
                       </div>
 
+                      <div className={pageStyles.editorField}>
+                        <span>Confirmación de la cita</span>
+                        <div className={pageStyles.displaySwitchRow}>
+                          <div>
+                            <strong>Mostrar confirmación</strong>
+                            <small>Muestra si la cita queda automática o pendiente en la vista pública.</small>
+                          </div>
+                          <Switch
+                            checked={bookingDisplayConfig.showConfirmation}
+                            onChange={(showConfirmation) => updateBookingDisplayConfig({ showConfirmation })}
+                            aria-label="Mostrar confirmación de la cita"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className={pageStyles.editorSection}>
+                    <div className={pageStyles.editorSectionHeader}>
+                      <strong>Estilo y diseño</strong>
+                      <span>Controla la apariencia de la URL pública: panel izquierdo, textos, colores y tipografía.</span>
+                    </div>
+                    {renderCalendarBookingPreview()}
+                    <div className={pageStyles.editorFields}>
+                      <label className={pageStyles.editorField}>
+                        <span>Vista pública</span>
+                        <CustomSelect
+                          value={bookingDisplayConfig.layout}
+                          onValueChange={(value) => updateBookingDisplayConfig({ layout: normalizeCalendarBookingLayout(value) })}
+                          options={CALENDAR_PUBLIC_LAYOUT_OPTIONS}
+                        />
+                      </label>
+
+                      <label className={pageStyles.editorField}>
+                        <span>Tipografía</span>
+                        <CustomSelect
+                          value={bookingDisplayConfig.fontFamily}
+                          onValueChange={(value) => updateBookingDisplayConfig({ fontFamily: normalizeCalendarBookingFontFamily(value) })}
+                          options={CALENDAR_PUBLIC_FONT_OPTIONS}
+                        />
+                      </label>
+
                       <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
                         <span>Qué se muestra</span>
                         <div className={pageStyles.displayToggleGrid}>
@@ -2526,8 +2549,7 @@ export const CalendarsConfiguration: React.FC = () => {
                             ['showEventTitle', 'Título corto', 'Muestra el texto tipo “Cita”.'],
                             ['showCalendarName', 'Nombre del calendario', 'Muestra el título grande público.'],
                             ['showDescription', 'Descripción', 'Muestra el texto descriptivo.'],
-                            ['showDuration', 'Duración', 'Muestra los minutos de la cita.'],
-                            ['showConfirmation', 'Confirmación', 'Muestra si la confirmación es automática o pendiente.']
+                            ['showDuration', 'Duración', 'Muestra los minutos de la cita.']
                           ].map(([key, label, description]) => (
                             <div className={pageStyles.displaySwitchRow} key={key}>
                               <div>

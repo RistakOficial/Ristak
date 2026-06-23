@@ -1423,8 +1423,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  aspect-ratio: 1;
+  justify-self: center;
+  width: 34px;
+  height: 34px;
   min-width: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
