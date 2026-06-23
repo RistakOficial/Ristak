@@ -145,6 +145,7 @@ const CHAT_MUTED_STATE_KEY = 'ristak_phone_chat_muted_state_v1'
 const CHAT_STARRED_MESSAGES_KEY = 'ristak_phone_chat_starred_messages_v1'
 const CHAT_FAST_START_INBOX_KEY = 'ristak_phone_chat_fast_start_inbox_v1'
 const CHAT_FAST_START_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
+const CHAT_LIST_PAGE_SIZE = 100
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -910,6 +911,16 @@ function writeChatFastStartInbox(selectedChatPhoneId: string, chats: ChatContact
   } catch {
     // El cache diario y la API siguen siendo fuente de verdad.
   }
+}
+
+function dedupeChatsById<T extends { id?: string | null }>(chats: T[]) {
+  const map = new Map<string, T>()
+  chats.forEach((chat) => {
+    const key = String(chat?.id || '').trim()
+    if (!key) return
+    if (!map.has(key)) map.set(key, chat)
+  })
+  return Array.from(map.values())
 }
 
 function sanitizeAIAgentAttachment(value: unknown): AIAgentAttachment | null {
@@ -4732,15 +4743,30 @@ export const PhoneChat: React.FC = () => {
     }
 
     try {
+      let offset = 0
+      let nextChats: ChatContact[] = []
+
       const params: Record<string, string> = {
-        limit: '60',
         ...(trimmed ? { q: trimmed } : {}),
         ...phoneFilterParams
       }
 
-      const data = await apiClient.get<ChatContact[]>('/contacts/chats', { params })
+      while (true) {
+        const data = await apiClient.get<ChatContact[]>('/contacts/chats', {
+          params: {
+            ...params,
+            limit: String(CHAT_LIST_PAGE_SIZE),
+            offset: String(offset)
+          }
+        })
 
-      let nextChats = Array.isArray(data) ? data : []
+        const pageChats = Array.isArray(data) ? data : []
+        nextChats = dedupeChatsById([...nextChats, ...pageChats])
+
+        if (pageChats.length < CHAT_LIST_PAGE_SIZE) break
+        offset += pageChats.length
+      }
+
       let requestedContact = requestedContactParam
         ? nextChats.find((contact) => contact.id === requestedContactParam)
         : null
@@ -4756,7 +4782,7 @@ export const PhoneChat: React.FC = () => {
       const displayedChats = applyLoadedChats(nextChats, requestedContact)
       if (cacheEnabled) {
         writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
-        writeChatFastStartInbox(selectedChatPhoneId, displayedChats.slice(0, 80))
+        writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
       }
     } catch {
       if (!showedCachedChats && !silentRefresh) {

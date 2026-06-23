@@ -1628,8 +1628,15 @@ export const updateContactCustomFieldDefinitionHandler = async (req, res) => {
  */
 export const getChatContacts = async (req, res) => {
   try {
-    const { q = '', limit = 60, businessPhoneNumberId = '', businessPhone = '' } = req.query
-    const limitNumber = Math.min(Number(limit) || 60, 100)
+    const {
+      q = '',
+      limit = 60,
+      offset = 0,
+      businessPhoneNumberId = '',
+      businessPhone = ''
+    } = req.query
+    const limitNumber = Math.min(Math.max(Number(limit) || 60, 1), 100)
+    const offsetNumber = Math.max(Math.floor(Number(offset) || 0), 0)
     const shouldWarmProfilePictures = isTruthyQueryValue(req.query.warmProfilePictures || req.query.warmProfiles)
     const searchTerm = cleanString(q)
     const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
@@ -1771,7 +1778,7 @@ export const getChatContacts = async (req, res) => {
         JOIN contacts c ON c.id = chat_stats.contact_id
         ${whereClause}
         ORDER BY chat_stats.last_message_date DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
       ),
       selected_message_rows AS (
         SELECT message_rows.*
@@ -1895,7 +1902,7 @@ ${CONTACT_META_PROFILE_SELECT},
       LEFT JOIN latest_inbound_messages lim ON lim.contact_id = c.id AND lim.row_rank = 1
       LEFT JOIN first_inbound_messages fim ON fim.contact_id = c.id AND fim.row_rank = 1
       ORDER BY ranked_chats.last_message_date DESC
-    `, [...whatsappMessageParams, ...params, limitNumber])
+    `, [...whatsappMessageParams, ...params, limitNumber, offsetNumber])
 
     const responseRows = shouldWarmProfilePictures
       ? await warmWhatsAppProfilePicturesForRows(rows, {
