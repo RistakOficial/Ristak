@@ -5218,78 +5218,6 @@
   padding-left: 12px;
 }
 
-.senderChannelSelect {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 5px;
-  max-width: 58%;
-  min-height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--phone-chat-border);
-  border-radius: 999px;
-  color: var(--phone-chat-text);
-  background: var(--phone-chat-surface);
-}
-
-.senderChannelSelect span {
-  color: var(--phone-chat-muted);
-  font-size: 10px;
-  font-weight: 850;
-  white-space: nowrap;
-}
-
-.senderChannelSelect select {
-  min-width: 0;
-  max-width: 122px;
-  border: 0;
-  outline: 0;
-  color: var(--phone-chat-text);
-  background: transparent;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 850;
-  letter-spacing: 0;
-}
-
-.senderChannelHint {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--phone-chat-muted);
-  font-size: 10px;
-  font-weight: 720;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversationChannelPicker {
-  display: none;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 7px;
-  min-width: 0;
-  max-width: min(320px, 34vw);
-}
-
-.conversationChannelPicker > span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--phone-chat-muted);
-  font-size: 11px;
-  font-weight: 720;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversationSenderChannelSelect {
-  max-width: none;
-  min-height: 30px;
-  padding: 0 10px;
-  background: color-mix(in srgb, var(--phone-chat-surface) 92%, transparent);
-}
-
 .conversationReplyWindowNotice {
   display: none;
   align-items: center;
@@ -8787,7 +8715,6 @@
   max-width: min(420px, 100%);
 }
 
-.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationChannelPicker,
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .conversationReplyWindowNotice {
   display: inline-flex;
 }

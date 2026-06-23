@@ -660,16 +660,6 @@ const PHONE_CHAT_THEME_OPTIONS: Array<{
     Icon: Clock
   }
 ]
-const GHL_CHAT_CHANNEL_OPTIONS: Array<{
-  id: HighLevelChatChannel
-  label: string
-  hint: string
-}> = [
-  { id: 'whatsapp_api', label: 'WhatsApp API', hint: 'Sale por WhatsApp oficial de HighLevel.' },
-  { id: 'sms_qr', label: 'SMS', hint: 'Usa el SMS conectado en GoHighLevel.' },
-  { id: 'messenger', label: 'Messenger', hint: 'Responde al chat de Facebook.' },
-  { id: 'instagram', label: 'Instagram', hint: 'Responde al DM de Instagram.' }
-]
 const GHL_CHAT_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
   whatsapp_api: 'WhatsApp API',
   sms_qr: 'SMS',
@@ -11425,42 +11415,6 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  const getSenderChannelHint = () => {
-    const activeOption = GHL_CHAT_CHANNEL_OPTIONS.find((option) => option.id === activeHighLevelChatChannel)
-    const effectiveOption = GHL_CHAT_CHANNEL_OPTIONS.find((option) => option.id === effectiveHighLevelChatChannel)
-
-    return highLevelWhatsAppFallsBackToSms
-      ? 'Fuera de 24 h: se mandará por SMS de GoHighLevel.'
-      : effectiveOption?.hint || activeOption?.hint || 'Sale por la cuenta conectada.'
-  }
-
-  const renderSenderChannelSelect = (className = '') => {
-    if (!activeContact || !sendingThroughHighLevel) return null
-
-    return (
-      <label className={`${styles.senderChannelSelect} ${className}`.trim()}>
-        <span>Enviar por</span>
-        <select
-          value={activeHighLevelChatChannel}
-          onChange={(event) => {
-            const nextChannel = normalizeGhlChatChannelValue(event.target.value)
-            if (!nextChannel || !activeContact?.id) return
-            setContactHighLevelChannelOverrides((current) => ({
-              ...current,
-              [activeContact.id]: nextChannel
-            }))
-            saveConfigPreference(setSelectedHighLevelChatChannel, nextChannel)
-          }}
-          aria-label="Canal de envío"
-        >
-          {GHL_CHAT_CHANNEL_OPTIONS.map((option) => (
-            <option key={option.id} value={option.id}>{option.label}</option>
-          ))}
-        </select>
-      </label>
-    )
-  }
-
   const renderComposerMessageChannelIcon = (value: ComposerMessageChannelValue) => {
     if (value === 'email') return <Mail size={20} aria-hidden="true" />
     if (value === 'messenger') return <Icon name="facebook" size={18} />
@@ -11572,15 +11526,6 @@ export const PhoneChat: React.FC = () => {
   const renderConversationChannelPicker = () => {
     if (!isWideChatDevice || !activeContact || aiAgentConversationOpen) return null
 
-    if (sendingThroughHighLevel) {
-      return (
-        <div className={styles.conversationChannelPicker}>
-          {renderSenderChannelSelect(styles.conversationSenderChannelSelect)}
-          <span>{getSenderChannelHint()}</span>
-        </div>
-      )
-    }
-
     if (!outsideReplyWindow || !selectedQrReady) return null
 
     return (
@@ -11594,15 +11539,6 @@ export const PhoneChat: React.FC = () => {
   const renderSenderBar = () => {
     if (!activeContact) return null
     if (isWideChatDevice) return null
-
-    if (sendingThroughHighLevel) {
-      return (
-        <div className={styles.senderBar}>
-          {renderSenderChannelSelect()}
-          <span className={styles.senderChannelHint}>{getSenderChannelHint()}</span>
-        </div>
-      )
-    }
 
     if (!outsideReplyWindow || !selectedQrReady) return null
 
