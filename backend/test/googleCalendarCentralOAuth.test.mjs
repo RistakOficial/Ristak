@@ -231,6 +231,46 @@ test('Google Login central conserva return_path móvil y limpia rutas inseguras'
   }
 })
 
+test('estado Google Calendar en instalación licenciada muestra OAuth central antes de conectar', async () => {
+  const previousEnv = snapshotEnv()
+  let googleCalendarService = null
+
+  try {
+    process.env.LICENSE_SERVER_URL = 'https://license.ristak.test'
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+
+    googleCalendarService = await import('../src/services/googleCalendarService.js')
+    await googleCalendarService.deleteGoogleCalendarConfig()
+
+    const { getGoogleCalendarIntegration } = await import('../src/controllers/calendarsController.js')
+    let statusCode = 200
+    let responseBody = null
+    const res = {
+      status(code) {
+        statusCode = code
+        return this
+      },
+      json(payload) {
+        responseBody = payload
+        return this
+      }
+    }
+
+    await getGoogleCalendarIntegration({}, res)
+
+    assert.equal(statusCode, 200)
+    assert.equal(responseBody.success, true)
+    assert.equal(responseBody.data.connectionMode, 'oauth')
+    assert.equal(responseBody.data.configured, true)
+    assert.equal(responseBody.data.connected, false)
+  } finally {
+    await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
+    restoreEnv(previousEnv)
+  }
+})
+
 test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales', async () => {
   await initializeMasterKey()
   const previousEnv = snapshotEnv()

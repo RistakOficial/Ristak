@@ -266,7 +266,16 @@ function getCustomEventsForResolvedChannel(customEvents = {}, channel = 'site') 
   };
 }
 
-function serviceAccountGoogleStatus(config = {}) {
+function googleCalendarIntegrationStatus(config = {}) {
+  if (isLicenseEnforced()) {
+    return {
+      ...config,
+      connectionMode: 'oauth',
+      configured: true,
+      connected: config.connectionMode === 'oauth' ? Boolean(config.connected) : false
+    };
+  }
+
   return {
     connectionMode: 'service_account',
     configured: true,
@@ -409,13 +418,13 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, tim
 
 /**
  * GET /api/calendars/google-integration
- * Estado público de la integración Google Calendar por Service Account.
+ * Estado público de la integración Google Calendar.
  */
 export async function getGoogleCalendarIntegration(req, res) {
   try {
     res.json({
       success: true,
-      data: serviceAccountGoogleStatus(await googleCalendarService.getGoogleCalendarConfig())
+      data: googleCalendarIntegrationStatus(await googleCalendarService.getGoogleCalendarConfig())
     });
   } catch (error) {
     logger.error(`[Calendars Controller] Error en getGoogleCalendarIntegration: ${error.message}`);
