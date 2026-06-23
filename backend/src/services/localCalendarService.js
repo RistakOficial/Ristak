@@ -1035,6 +1035,7 @@ export async function getPublicCalendarBySlug(slugOrId) {
     SELECT *
     FROM calendars
     WHERE COALESCE(is_active, 1) != 0
+      AND LOWER(COALESCE(source, 'ristak')) = 'ristak'
       AND (id = ? OR slug = ? OR widget_slug = ?)
     ORDER BY
       CASE WHEN id = ? THEN 0 ELSE 1 END,

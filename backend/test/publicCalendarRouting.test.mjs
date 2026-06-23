@@ -46,3 +46,16 @@ test('public calendar widget keeps the month visible while slots load or fail', 
   )
   assert.equal(serviceSource.includes("daysEl.innerHTML = '';"), false)
 })
+
+test('public calendar free slots use Ristak local availability only', async () => {
+  const controllerSource = await readFile(join(backendRoot, 'src/controllers/calendarsController.js'), 'utf8')
+  const match = controllerSource.match(/async function getCalendarFreeSlotsForPublic[\s\S]*?\n}\n\n\/\*\*/)
+  assert.ok(match, 'public free slots helper should exist')
+  const helperSource = match[0]
+
+  assert.match(helperSource, /return localCalendarService\.getLocalFreeSlots\(/)
+  assert.equal(helperSource.includes('syncGoogleEventsForDateRange'), false)
+  assert.equal(helperSource.includes('calendarService.getFreeSlots'), false)
+  assert.equal(helperSource.includes('ghlCalendarId'), false)
+  assert.equal(helperSource.includes('accessToken'), false)
+})

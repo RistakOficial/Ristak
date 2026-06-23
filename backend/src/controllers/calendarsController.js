@@ -368,52 +368,13 @@ async function ensurePublicCalendarRequest(req, slugOrId) {
   return { host, calendar };
 }
 
-async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, timezone }, context = {}) {
-  let slots = null;
-  const useLocalAvailability = shouldUseLocalAvailabilityForOverlaps(calendar);
-
-  await googleCalendarService.syncGoogleEventsForDateRange({
-    calendarId: calendar.id,
+async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, timezone }) {
+  return localCalendarService.getLocalFreeSlots(
+    calendar.id,
     startDate,
     endDate,
     timezone
-  }).catch(error => {
-    logger.warn(`[Calendars Controller] Sync Google para slots publicos falló, usando DB local: ${error.message}`);
-  });
-
-  if (useLocalAvailability) {
-    return localCalendarService.getLocalFreeSlots(
-      calendar.id,
-      startDate,
-      endDate,
-      timezone
-    );
-  }
-
-  if (context.accessToken && calendar.ghlCalendarId) {
-    try {
-      slots = await calendarService.getFreeSlots(
-        calendar.ghlCalendarId,
-        startDate,
-        endDate,
-        context.accessToken,
-        timezone
-      );
-    } catch (error) {
-      logger.warn(`[Calendars Controller] Free slots publicos GHL fallaron, usando local: ${error.message}`);
-    }
-  }
-
-  if (!slots) {
-    slots = await localCalendarService.getLocalFreeSlots(
-      calendar.id,
-      startDate,
-      endDate,
-      timezone
-    );
-  }
-
-  return slots;
+  );
 }
 
 /**
@@ -1155,13 +1116,12 @@ export async function getPublicFreeSlots(req, res) {
     }
 
     const { calendar } = await ensurePublicCalendarRequest(req, slug);
-    const context = await getSavedHighLevelOnlyContext();
     const resolvedTimezone = cleanString(timezone) || await getAccountTimezone();
     const slots = await getCalendarFreeSlotsForPublic(calendar, {
       startDate,
       endDate,
       timezone: resolvedTimezone
-    }, context);
+    });
 
     res.json({
       success: true,

@@ -7,6 +7,7 @@ import {
   createLocalAppointment,
   ensureHighLevelContactForAppointment,
   getLocalFreeSlots,
+  getPublicCalendarBySlug,
   upsertLocalCalendar
 } from '../src/services/localCalendarService.js'
 
@@ -145,6 +146,48 @@ test('getLocalFreeSlots deduplica slots cuando horarios personalizados se empalm
   } finally {
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+  }
+})
+
+test('getPublicCalendarBySlug resuelve el calendario Ristak aunque exista un origen Google con el mismo slug', async () => {
+  const suffix = randomUUID()
+  const slug = `agenda-publica-${suffix}`
+  const ristakCalendarId = `rstk_cal_public_${suffix}`
+  const googleCalendarId = `google_cal_public_${suffix}`
+
+  try {
+    await upsertLocalCalendar({
+      id: googleCalendarId,
+      slug,
+      widgetSlug: slug,
+      name: 'Google no publico',
+      source: 'google',
+      googleCalendarId: 'ventas-google@test.com'
+    }, {
+      source: 'google',
+      syncStatus: 'synced'
+    })
+
+    await upsertLocalCalendar({
+      id: ristakCalendarId,
+      slug,
+      widgetSlug: slug,
+      name: 'Ristak publico',
+      source: 'ristak',
+      googleCalendarId: 'ventas-google@test.com'
+    }, {
+      source: 'ristak',
+      syncStatus: 'pending'
+    })
+
+    const bySlug = await getPublicCalendarBySlug(slug)
+    assert.equal(bySlug?.id, ristakCalendarId)
+    assert.equal(bySlug?.source, 'ristak')
+
+    const googleById = await getPublicCalendarBySlug(googleCalendarId)
+    assert.equal(googleById, null)
+  } finally {
+    await db.run('DELETE FROM calendars WHERE id IN (?, ?)', [ristakCalendarId, googleCalendarId]).catch(() => undefined)
   }
 })
 
