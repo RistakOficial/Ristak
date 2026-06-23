@@ -3938,18 +3938,6 @@ export const getContactJourney = async (req, res) => {
 
     const detectWhatsAppAdPlatform = (data = {}) => normalizeWhatsAppAttributionPlatform(data)
 
-    // El journey default sólo representa acciones del contacto. Las pantallas de chat
-    // pueden pedir includeBusinessMessages=true para reconstruir conversación completa,
-    // pero los timelines de atribución no deben contar mensajes salientes del negocio.
-    const isStoredChatMessageEvent = (event) => Boolean(
-	      event?.data?.whatsapp_api_message_id ||
-	      event?.data?.whatsapp_message_id ||
-	      event?.data?.email_message_id ||
-	      event?.data?.message_type ||
-	      event?.data?.direction ||
-	      event?.data?.transport
-    )
-
     const addWhatsAppJourneyEvents = (events) => {
       events
         .filter(event => event?.date)
@@ -3957,9 +3945,7 @@ export const getContactJourney = async (req, res) => {
         .sort((a, b) => getDateTime(a.date) - getDateTime(b.date))
         .forEach(event => {
           const eventTime = getDateTime(event.date)
-          const isAfterFirstPayment = firstPaymentTime !== null && eventTime >= firstPaymentTime
-
-          if (isAfterFirstPayment && !event.data?.is_ad_attributed && !isStoredChatMessageEvent(event)) {
+          if (firstPaymentTime !== null && eventTime >= firstPaymentTime) {
             return
           }
 
@@ -4317,12 +4303,14 @@ export const getContactJourney = async (req, res) => {
       }
     })
 
-    // 4. TODAS las citas agendadas (filtradas por calendarios de atribución)
+    // 4. TODAS las citas agendadas (filtradas por calendarios de atribución y fecha de conversión)
     // Obtener calendarios de atribución configurados
     const attributionConfig = await db.get(
       'SELECT config_value FROM app_config WHERE config_key = ?',
       ['attribution_calendar_ids']
     )
+    const firstPaymentDateLimit = firstPaymentTime === null ? null : new Date(firstPaymentTime).toISOString()
+    const appendFirstPaymentDateFilter = firstPaymentDateLimit ? 'AND date_added <= ?' : ''
 
     let appointments
     if (attributionConfig && attributionConfig.config_value) {
@@ -4333,17 +4321,19 @@ export const getContactJourney = async (req, res) => {
           appointments = await db.all(
             `SELECT * FROM appointments
              WHERE contact_id = ?
+             ${appendFirstPaymentDateFilter}
                AND calendar_id IN (${placeholders})
              ORDER BY date_added ASC`,
-            [id, ...calendarIds]
+            firstPaymentDateLimit ? [id, firstPaymentDateLimit, ...calendarIds] : [id, ...calendarIds]
           )
         } else {
           // Sin calendarios configurados, usar todos
           appointments = await db.all(
             `SELECT * FROM appointments
              WHERE contact_id = ?
+             ${appendFirstPaymentDateFilter}
              ORDER BY date_added ASC`,
-            [id]
+            firstPaymentDateLimit ? [id, firstPaymentDateLimit] : [id]
           )
         }
       } catch (error) {
@@ -4352,8 +4342,9 @@ export const getContactJourney = async (req, res) => {
         appointments = await db.all(
           `SELECT * FROM appointments
            WHERE contact_id = ?
+           ${appendFirstPaymentDateFilter}
            ORDER BY date_added ASC`,
-          [id]
+          firstPaymentDateLimit ? [id, firstPaymentDateLimit] : [id]
         )
       }
     } else {
@@ -4361,8 +4352,9 @@ export const getContactJourney = async (req, res) => {
       appointments = await db.all(
         `SELECT * FROM appointments
          WHERE contact_id = ?
+         ${appendFirstPaymentDateFilter}
          ORDER BY date_added ASC`,
-        [id]
+        firstPaymentDateLimit ? [id, firstPaymentDateLimit] : [id]
       )
     }
 
