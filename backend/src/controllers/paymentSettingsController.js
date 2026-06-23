@@ -75,6 +75,7 @@ async function buildPaymentSettingsPreviewSnapshot(input = {}) {
   const draft = input?.settings && typeof input.settings === 'object' ? input.settings : input
 
   return normalizePaymentSettings({
+    paymentMode: draft.paymentMode ?? current.paymentMode,
     checkout: { ...current.checkout, ...(draft.checkout || {}) },
     receipt: { ...current.receipt, ...(draft.receipt || {}) },
     automations: { ...current.automations, ...(draft.automations || {}) },

@@ -111,7 +111,7 @@ export async function createMercadoPagoConnectUrlView(req, res) {
   try {
     const requestBaseUrl = getRequestBaseUrl(req)
     const result = await createMercadoPagoOAuthUrl({
-      mode: req.body?.mode || req.query?.mode || 'test',
+      mode: req.body?.mode || req.query?.mode || '',
       appUrl: req.body?.appUrl || req.body?.app_url || req.headers.origin || requestBaseUrl,
       returnPath: req.body?.returnPath || '/settings/payments/mercadopago'
     })

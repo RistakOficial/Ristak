@@ -11,16 +11,18 @@ import {
   setMercadoPagoFetchForTest
 } from '../src/services/mercadoPagoPaymentService.js'
 import { createSubscription } from '../src/services/subscriptionsService.js'
+import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import { encrypt } from '../src/utils/encryption.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
 async function snapshotMercadoPagoConfig(callback) {
   const previousRows = await db.all(
-    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'mercadopago_%'"
+    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'mercadopago_%' OR config_key = 'payments_settings'"
   )
 
   try {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'mercadopago_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'mercadopago_%' OR config_key = 'payments_settings'")
+    await savePaymentSettings({ paymentMode: 'test' })
     await setAppConfig('mercadopago_enabled', '1')
     await setAppConfig('mercadopago_mode', 'test')
     await setAppConfig('mercadopago_default_currency', 'MXN')
@@ -34,7 +36,7 @@ async function snapshotMercadoPagoConfig(callback) {
 
     return await callback()
   } finally {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'mercadopago_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'mercadopago_%' OR config_key = 'payments_settings'")
     for (const row of previousRows) {
       await db.run(`
         INSERT INTO app_config (config_key, config_value, updated_at)

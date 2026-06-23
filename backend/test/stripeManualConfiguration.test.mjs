@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { db } from '../src/config/database.js'
 import { getStripeConfigView } from '../src/controllers/stripePaymentsController.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
+import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import {
   completeStripeConnectOAuth,
   createStripeConnectOAuthUrl,
@@ -34,16 +35,16 @@ const STRIPE_ENV_KEYS = [
 
 async function snapshotStripeConfig(callback) {
   const previousRows = await db.all(
-    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'stripe_%'"
+    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'"
   )
   const previousEnv = Object.fromEntries(STRIPE_ENV_KEYS.map((key) => [key, process.env[key]]))
 
   try {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'")
     for (const key of STRIPE_ENV_KEYS) delete process.env[key]
     return await callback()
   } finally {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'")
     for (const row of previousRows) {
       await db.run(`
         INSERT INTO app_config (config_key, config_value, updated_at)
@@ -79,6 +80,45 @@ function createJsonResponse() {
     }
   }
 }
+
+test('Stripe manual: el modo global de pasarelas selecciona las credenciales activas', async () => {
+  await initializeMasterKey()
+
+  await snapshotStripeConfig(async () => {
+    await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'live',
+      manualModes: {
+        test: {
+          publishableKey: 'pk_test_global_public',
+          secretKey: 'sk_test_global_secret',
+          webhookSecret: 'whsec_global_test'
+        },
+        live: {
+          publishableKey: 'pk_live_global_public',
+          secretKey: 'sk_live_global_secret',
+          webhookSecret: 'whsec_global_live'
+        }
+      }
+    })
+
+    await savePaymentSettings({ paymentMode: 'test' })
+    const testConfig = await getStripePaymentConfig({ includeSecrets: true })
+    assert.equal(testConfig.mode, 'test')
+    assert.equal(testConfig.configured, true)
+    assert.equal(testConfig.publishableKey, 'pk_test_global_public')
+    assert.equal(testConfig.secretKey, 'sk_test_global_secret')
+    assert.equal(testConfig.webhookSecret, 'whsec_global_test')
+
+    await savePaymentSettings({ paymentMode: 'live' })
+    const liveConfig = await getStripePaymentConfig({ includeSecrets: true })
+    assert.equal(liveConfig.mode, 'live')
+    assert.equal(liveConfig.configured, true)
+    assert.equal(liveConfig.publishableKey, 'pk_live_global_public')
+    assert.equal(liveConfig.secretKey, 'sk_live_global_secret')
+    assert.equal(liveConfig.webhookSecret, 'whsec_global_live')
+  })
+})
 
 test('Stripe manual: guarda Secret keys de prueba y en vivo cifradas como flujo oficial', async () => {
   await initializeMasterKey()
@@ -202,6 +242,7 @@ test('Stripe manual: permite guardar o desconectar una modalidad sin afectar la 
         }
       }
     })
+    await savePaymentSettings({ paymentMode: 'test' })
 
     const testOnlyUpdate = await saveStripePaymentConfig({
       enabled: true,

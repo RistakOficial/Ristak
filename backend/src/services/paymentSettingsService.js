@@ -3,8 +3,12 @@ import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 
 const PAYMENT_SETTINGS_CONFIG_KEY = 'payments_settings'
+const PAYMENT_MODE_TEST = 'test'
+const PAYMENT_MODE_LIVE = 'live'
+const PAYMENT_MODES = [PAYMENT_MODE_TEST, PAYMENT_MODE_LIVE]
 
 const DEFAULT_PAYMENT_SETTINGS = {
+  paymentMode: PAYMENT_MODE_LIVE,
   checkout: {
     logoUrl: '',
     headline: 'Pago seguro',
@@ -109,6 +113,11 @@ function cleanBoolean(value, fallback = false) {
   if (['1', 'true', 'yes', 'si', 'sí', 'on'].includes(normalized)) return true
   if (['0', 'false', 'no', 'off'].includes(normalized)) return false
   return fallback
+}
+
+export function normalizePaymentSettingsMode(value, fallback = DEFAULT_PAYMENT_SETTINGS.paymentMode) {
+  const normalized = cleanString(value, 12).toLowerCase()
+  return PAYMENT_MODES.includes(normalized) ? normalized : fallback
 }
 
 function cleanNumber(value, fallback, { min = 0, max = 9999, decimals = 0 } = {}) {
@@ -237,6 +246,7 @@ export function normalizePaymentSettings(input = {}, options = {}) {
   const hasGigstackApiToken = Boolean(gigstackToken.plain || gigstackToken.encrypted)
 
   const normalized = {
+    paymentMode: normalizePaymentSettingsMode(input.paymentMode || input.mode, DEFAULT_PAYMENT_SETTINGS.paymentMode),
     checkout: {
       logoUrl: cleanString(checkout.logoUrl, 1000),
       headline: cleanString(checkout.headline, 120) || DEFAULT_PAYMENT_SETTINGS.checkout.headline,
@@ -385,6 +395,7 @@ function settingsForStorage(settings = {}) {
 export async function getPaymentSettings(options = {}) {
   const stored = parseStoredSettings(await getAppConfig(PAYMENT_SETTINGS_CONFIG_KEY))
   return normalizePaymentSettings({
+    paymentMode: stored.paymentMode || DEFAULT_PAYMENT_SETTINGS.paymentMode,
     checkout: { ...DEFAULT_PAYMENT_SETTINGS.checkout, ...(stored.checkout || {}) },
     receipt: { ...DEFAULT_PAYMENT_SETTINGS.receipt, ...(stored.receipt || {}) },
     automations: { ...DEFAULT_PAYMENT_SETTINGS.automations, ...(stored.automations || {}) },
@@ -395,6 +406,7 @@ export async function getPaymentSettings(options = {}) {
 export async function savePaymentSettings(input = {}) {
   const current = await getPaymentSettings({ includeSecrets: true, includePrivateStorage: true })
   const next = normalizePaymentSettings({
+    paymentMode: input.paymentMode ?? current.paymentMode,
     checkout: { ...current.checkout, ...(input.checkout || {}) },
     receipt: { ...current.receipt, ...(input.receipt || {}) },
     automations: { ...current.automations, ...(input.automations || {}) },
@@ -407,9 +419,15 @@ export async function savePaymentSettings(input = {}) {
   return normalizePaymentSettings(next)
 }
 
+export async function getPaymentGatewayMode() {
+  const settings = await getPaymentSettings()
+  return normalizePaymentSettingsMode(settings.paymentMode)
+}
+
 export async function getPublicPaymentSettings() {
   const settings = await getPaymentSettings()
   return {
+    paymentMode: settings.paymentMode,
     checkout: settings.checkout,
     receipt: settings.receipt,
     taxes: settings.taxes

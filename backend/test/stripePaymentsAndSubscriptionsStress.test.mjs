@@ -19,6 +19,7 @@ import {
 } from '../src/services/subscriptionsService.js'
 import { saveAccountLocaleSettings } from '../src/utils/accountLocale.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
+import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 
 function suffix(label = 'stress') {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -27,6 +28,7 @@ function suffix(label = 'stress') {
 async function configureStripe({ webhookSecret = '' } = {}) {
   await initializeMasterKey()
   await saveAccountLocaleSettings({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })
+  await savePaymentSettings({ paymentMode: 'test' })
   await saveStripePaymentConfig({
     enabled: true,
     mode: 'test',

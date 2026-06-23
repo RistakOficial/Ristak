@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
+import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import {
   actionSubscription,
   createSubscription,
@@ -25,14 +26,14 @@ import {
 
 async function snapshotConektaConfig(callback) {
   const previousRows = await db.all(
-    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'conekta_%'"
+    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'conekta_%' OR config_key = 'payments_settings'"
   )
 
   try {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'conekta_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'conekta_%' OR config_key = 'payments_settings'")
     return await callback()
   } finally {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'conekta_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'conekta_%' OR config_key = 'payments_settings'")
     for (const row of previousRows) {
       await db.run(`
         INSERT INTO app_config (config_key, config_value, updated_at)
@@ -64,6 +65,41 @@ function todayConektaDateOnly() {
     day: '2-digit'
   }).format(new Date())
 }
+
+test('Conekta manual: el modo global de pasarelas selecciona las credenciales activas', async () => {
+  await initializeMasterKey()
+
+  await snapshotConektaConfig(async () => {
+    await saveConektaPaymentConfig({
+      enabled: true,
+      mode: 'live',
+      manualModes: {
+        test: {
+          publicKey: 'key_test_global_public',
+          privateKey: 'key_test_global_private'
+        },
+        live: {
+          publicKey: 'key_live_global_public',
+          privateKey: 'key_live_global_private'
+        }
+      }
+    })
+
+    await savePaymentSettings({ paymentMode: 'test' })
+    const testConfig = await getConektaPaymentConfig({ includeSecrets: true })
+    assert.equal(testConfig.mode, 'test')
+    assert.equal(testConfig.configured, true)
+    assert.equal(testConfig.publicKey, 'key_test_global_public')
+    assert.equal(testConfig.privateKey, 'key_test_global_private')
+
+    await savePaymentSettings({ paymentMode: 'live' })
+    const liveConfig = await getConektaPaymentConfig({ includeSecrets: true })
+    assert.equal(liveConfig.mode, 'live')
+    assert.equal(liveConfig.configured, true)
+    assert.equal(liveConfig.publicKey, 'key_live_global_public')
+    assert.equal(liveConfig.privateKey, 'key_live_global_private')
+  })
+})
 
 test('Conekta manual: guarda llaves por modo cifradas y conserva privadas enmascaradas', async () => {
   await initializeMasterKey()
@@ -227,6 +263,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
       return jsonResponse({ message: 'unexpected request' }, 500)
     })
 
+    await savePaymentSettings({ paymentMode: 'test' })
     await saveConektaPaymentConfig({
       enabled: true,
       mode: 'test',

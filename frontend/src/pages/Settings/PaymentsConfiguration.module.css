@@ -1343,20 +1343,49 @@
   gap: 12px;
 }
 
-.modeSelector {
+.paymentModeCard :global([data-ristak-card-content]) {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 38px;
+  justify-content: space-between;
+  gap: 18px;
 }
 
-.modeSelector span {
+.paymentModeCopy {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.paymentModeCopy h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.paymentModeCopy p {
+  margin: 5px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.paymentModeControl {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.paymentModeControl span {
   color: var(--text-mute);
   font-size: 12px;
   font-weight: 600;
 }
 
-.modeSelector .modeActive {
+.paymentModeControl .modeActive {
   color: var(--text);
 }
 
@@ -1383,6 +1412,16 @@
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid);
+}
+
+.mercadoPagoConnectionPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
@@ -1610,7 +1649,8 @@
   .gigstackHeader,
   .gigstackPortalHeader,
   .gatewaySectionTitle,
-  .gatewayItem :global([data-ristak-card-content]) {
+  .gatewayItem :global([data-ristak-card-content]),
+  .paymentModeCard :global([data-ristak-card-content]) {
     flex-direction: column;
   }
 
@@ -1637,7 +1677,8 @@
   .stripeModeActions,
   .copyField,
   .sectionSaveBar,
-  .gatewayDetailBar {
+  .gatewayDetailBar,
+  .paymentModeControl {
     width: 100%;
   }
 

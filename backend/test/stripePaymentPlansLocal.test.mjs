@@ -14,6 +14,7 @@ import {
   saveStripePaymentConfig,
   setStripeFactoryForTest
 } from '../src/services/stripePaymentService.js'
+import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
 function createResponse() {
@@ -151,6 +152,7 @@ async function seedStripePlan() {
 
 async function ensurePublicStripeConfig() {
   await initializeMasterKey()
+  await savePaymentSettings({ paymentMode: 'test' })
   await saveStripePaymentConfig({
     enabled: true,
     mode: 'test',
@@ -527,6 +529,7 @@ test('cobra automáticamente parcialidades vencidas con tarjeta guardada sin dup
 
   try {
     await initializeMasterKey()
+    await savePaymentSettings({ paymentMode: 'test' })
     await saveStripePaymentConfig({
       enabled: true,
       mode: 'test',
@@ -689,6 +692,7 @@ test('usa la nueva tarjeta domiciliada en cobros automáticos posteriores', asyn
 
   try {
     await initializeMasterKey()
+    await savePaymentSettings({ paymentMode: 'test' })
     await saveStripePaymentConfig({
       enabled: true,
       mode: 'test',

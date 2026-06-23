@@ -5,7 +5,7 @@ import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
-import { calculatePaymentTax, getPublicPaymentSettings } from './paymentSettingsService.js'
+import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { getPaymentPlanAuditSummary } from './paymentRecordSafetyService.js'
@@ -281,7 +281,7 @@ async function getStoredModeConnections(raw = null, options = {}) {
 export async function getConektaPaymentConfig(options = {}) {
   const raw = await readRawConfig()
   const modeConnections = await getStoredModeConnections(raw, options)
-  const activeMode = normalizeMode(options.mode || raw[CONFIG_KEYS.mode] || chooseMode(modeConnections, 'live'))
+  const activeMode = normalizeMode(options.mode || await getPaymentGatewayMode())
   const active = modeConnections[activeMode] || modeConnections.test
   const enabled = normalizeBoolean(raw[CONFIG_KEYS.enabled], true)
   const configured = Boolean(enabled && active?.configured)

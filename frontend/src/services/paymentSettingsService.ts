@@ -83,13 +83,14 @@ export interface PaymentTaxSettings {
 }
 
 export interface PaymentSettings {
+  paymentMode: 'test' | 'live'
   checkout: PaymentCheckoutSettings
   receipt: PaymentReceiptSettings
   automations: PaymentAutomationSettings
   taxes: PaymentTaxSettings
 }
 
-export type PublicPaymentSettings = Pick<PaymentSettings, 'checkout' | 'receipt' | 'taxes'>
+export type PublicPaymentSettings = Pick<PaymentSettings, 'paymentMode' | 'checkout' | 'receipt' | 'taxes'>
 
 export interface PaymentReceiptPreviewSession {
   url: string
@@ -97,6 +98,7 @@ export interface PaymentReceiptPreviewSession {
 }
 
 export const defaultPaymentSettings: PaymentSettings = {
+  paymentMode: 'live',
   checkout: {
     logoUrl: '',
     headline: 'Pago seguro',

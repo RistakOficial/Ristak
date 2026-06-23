@@ -1,9 +1,21 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { calculatePaymentTax, normalizePaymentSettings } from '../src/services/paymentSettingsService.js'
+import {
+  calculatePaymentTax,
+  normalizePaymentSettings,
+  normalizePaymentSettingsMode
+} from '../src/services/paymentSettingsService.js'
 
 describe('payment settings automations', () => {
+  it('normalizes the global payment gateway mode', () => {
+    assert.equal(normalizePaymentSettingsMode('test'), 'test')
+    assert.equal(normalizePaymentSettingsMode('live'), 'live')
+    assert.equal(normalizePaymentSettingsMode('sandbox'), 'live')
+    assert.equal(normalizePaymentSettings({ paymentMode: 'test' }).paymentMode, 'test')
+    assert.equal(normalizePaymentSettings({ mode: 'live' }).paymentMode, 'live')
+  })
+
   it('normalizes payment automation categories and QR fallback flags', () => {
     const settings = normalizePaymentSettings({
       automations: {

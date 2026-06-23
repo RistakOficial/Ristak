@@ -11,7 +11,7 @@ import {
   isLicenseEnforced,
   refreshCentralMercadoPagoToken
 } from './licenseService.js'
-import { calculatePaymentTax, getPublicPaymentSettings } from './paymentSettingsService.js'
+import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 
 const CONFIG_KEYS = {
@@ -366,30 +366,31 @@ async function writeActiveMercadoPagoConnection(mode, connection) {
   if (cleanConnection.webhookSecret) await setAppConfig(CONFIG_KEYS.webhookSecret, cleanConnection.webhookSecret)
 }
 
-function mapConfig(raw = {}, { includeSecrets = false } = {}) {
-  const mode = normalizeMode(raw[CONFIG_KEYS.mode])
+function mapConfig(raw = {}, { includeSecrets = false, mode: modeOverride = '' } = {}) {
+  const mode = normalizeMode(modeOverride || raw[CONFIG_KEYS.mode])
   const selectedConnection = decryptStoredMercadoPagoConnection(getMercadoPagoModeConnection(raw, mode))
-  const accessToken = cleanString(selectedConnection?.accessToken) || (raw[CONFIG_KEYS.accessToken] ? decryptSecret(raw[CONFIG_KEYS.accessToken]) : '')
-  const refreshToken = cleanString(selectedConnection?.refreshToken) || (raw[CONFIG_KEYS.refreshToken] ? decryptSecret(raw[CONFIG_KEYS.refreshToken]) : '')
-  const webhookSecret = cleanString(selectedConnection?.webhookSecret) || (raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : '')
+  const legacyMatchesMode = normalizeMode(raw[CONFIG_KEYS.mode]) === mode
+  const accessToken = cleanString(selectedConnection?.accessToken) || (legacyMatchesMode && raw[CONFIG_KEYS.accessToken] ? decryptSecret(raw[CONFIG_KEYS.accessToken]) : '')
+  const refreshToken = cleanString(selectedConnection?.refreshToken) || (legacyMatchesMode && raw[CONFIG_KEYS.refreshToken] ? decryptSecret(raw[CONFIG_KEYS.refreshToken]) : '')
+  const webhookSecret = cleanString(selectedConnection?.webhookSecret) || (legacyMatchesMode && raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : '')
   const enabled = normalizeBoolean(raw[CONFIG_KEYS.enabled], true)
-  const configured = Boolean(enabled && accessToken && cleanString(selectedConnection?.userId || raw[CONFIG_KEYS.userId]))
+  const configured = Boolean(enabled && accessToken && cleanString(selectedConnection?.userId || (legacyMatchesMode ? raw[CONFIG_KEYS.userId] : '')))
 
   return {
     enabled,
     configured,
     mode,
     defaultCurrency: normalizeCurrency(raw[CONFIG_KEYS.defaultCurrency] || DEFAULT_CURRENCY),
-    accountLabel: cleanString(selectedConnection?.accountLabel || raw[CONFIG_KEYS.accountLabel]),
-    userId: cleanString(selectedConnection?.userId || raw[CONFIG_KEYS.userId]),
-    publicKey: cleanString(selectedConnection?.publicKey || raw[CONFIG_KEYS.publicKey]),
-    scope: cleanString(selectedConnection?.scope || raw[CONFIG_KEYS.scope]),
-    tokenType: cleanString(selectedConnection?.tokenType || raw[CONFIG_KEYS.tokenType] || 'bearer'),
-    livemode: normalizeBoolean(selectedConnection?.livemode ?? raw[CONFIG_KEYS.livemode], mode === 'live'),
-    webhookUrl: cleanString(selectedConnection?.webhookUrl || raw[CONFIG_KEYS.webhookUrl]),
+    accountLabel: cleanString(selectedConnection?.accountLabel || (legacyMatchesMode ? raw[CONFIG_KEYS.accountLabel] : '')),
+    userId: cleanString(selectedConnection?.userId || (legacyMatchesMode ? raw[CONFIG_KEYS.userId] : '')),
+    publicKey: cleanString(selectedConnection?.publicKey || (legacyMatchesMode ? raw[CONFIG_KEYS.publicKey] : '')),
+    scope: cleanString(selectedConnection?.scope || (legacyMatchesMode ? raw[CONFIG_KEYS.scope] : '')),
+    tokenType: cleanString(selectedConnection?.tokenType || (legacyMatchesMode ? raw[CONFIG_KEYS.tokenType] : '') || 'bearer'),
+    livemode: normalizeBoolean(selectedConnection?.livemode ?? (legacyMatchesMode ? raw[CONFIG_KEYS.livemode] : undefined), mode === 'live'),
+    webhookUrl: cleanString(selectedConnection?.webhookUrl || (legacyMatchesMode ? raw[CONFIG_KEYS.webhookUrl] : '')),
     hasWebhookSecret: Boolean(webhookSecret),
-    tokenExpiresAt: selectedConnection?.tokenExpiresAt || raw[CONFIG_KEYS.tokenExpiresAt] || null,
-    connectedAt: selectedConnection?.connectedAt || raw[CONFIG_KEYS.connectedAt] || null,
+    tokenExpiresAt: selectedConnection?.tokenExpiresAt || (legacyMatchesMode ? raw[CONFIG_KEYS.tokenExpiresAt] : '') || null,
+    connectedAt: selectedConnection?.connectedAt || (legacyMatchesMode ? raw[CONFIG_KEYS.connectedAt] : '') || null,
     disconnectedAt: raw[CONFIG_KEYS.disconnectedAt] || null,
     managedByPortal: normalizeBoolean(selectedConnection?.managedByPortal ?? raw[CONFIG_KEYS.managedByPortal], false) || isLicenseEnforced(),
     hasAccessToken: Boolean(accessToken),
@@ -463,7 +464,7 @@ async function refreshMercadoPagoLocalToken(raw = {}) {
   })
 }
 
-export async function getMercadoPagoPaymentConfig({ includeSecrets = false } = {}) {
+export async function getMercadoPagoPaymentConfig({ includeSecrets = false, mode: modeOverride = '' } = {}) {
   let raw = await readRawConfig()
   if (isLicenseEnforced() && raw[CONFIG_KEYS.accessToken] && shouldSyncToken(raw)) {
     try {
@@ -473,12 +474,14 @@ export async function getMercadoPagoPaymentConfig({ includeSecrets = false } = {
       logger.warn(`No se pudo refrescar Mercado Pago con el broker central: ${error.message}`)
     }
   }
-  return mapConfig(raw, { includeSecrets })
+  const mode = modeOverride || await getPaymentGatewayMode()
+  return mapConfig(raw, { includeSecrets, mode })
 }
 
-export async function createMercadoPagoOAuthUrl({ mode = 'test', appUrl = '', returnPath = '/settings/payments/mercadopago' } = {}) {
+export async function createMercadoPagoOAuthUrl({ mode = '', appUrl = '', returnPath = '/settings/payments/mercadopago' } = {}) {
+  const requestedMode = mode || await getPaymentGatewayMode()
   const result = await createCentralMercadoPagoConnectUrl({
-    mode,
+    mode: requestedMode,
     appUrl,
     returnPath
   })
@@ -504,7 +507,7 @@ export async function syncMercadoPagoFromCentral({ handoffToken = '' } = {}) {
   })
   const connection = handoff?.payload?.connection || {}
   await writeCentralConnection(connection)
-  return getMercadoPagoPaymentConfig()
+  return getMercadoPagoPaymentConfig({ mode: connection.mode })
 }
 
 export async function setMercadoPagoActiveMode(mode = 'live') {

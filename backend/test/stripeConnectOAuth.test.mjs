@@ -13,6 +13,7 @@ import {
   testStripePaymentConfig
 } from '../src/services/stripePaymentService.js'
 import { setVerifiedAppBaseUrlResolverForTests } from '../src/services/licenseService.js'
+import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 
 const STRIPE_ENV_KEYS = [
   'STRIPE_CONNECT_TEST_CLIENT_ID',
@@ -31,16 +32,17 @@ const STRIPE_ENV_KEYS = [
 
 async function snapshotStripeConfig(callback) {
   const previousRows = await db.all(
-    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'stripe_%'"
+    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'"
   )
   const previousEnv = Object.fromEntries(STRIPE_ENV_KEYS.map((key) => [key, process.env[key]]))
 
   try {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'")
     process.env.STRIPE_CONNECT_OAUTH_ENABLED = '1'
+    await savePaymentSettings({ paymentMode: 'test' })
     return await callback()
   } finally {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'")
     for (const row of previousRows) {
       await db.run(`
         INSERT INTO app_config (config_key, config_value, updated_at)

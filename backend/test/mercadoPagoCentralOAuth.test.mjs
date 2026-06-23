@@ -10,6 +10,7 @@ import {
   syncMercadoPagoFromCentral
 } from '../src/services/mercadoPagoPaymentService.js'
 import { setVerifiedAppBaseUrlResolverForTests } from '../src/services/licenseService.js'
+import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 
 const ENV_KEYS = [
   'LICENSE_SERVER_URL',
@@ -33,15 +34,15 @@ function writeJson(res, status, body) {
 
 async function withMercadoPagoConfigSnapshot(callback) {
   const previousRows = await db.all(
-    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'mercadopago_%'"
+    "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'mercadopago_%' OR config_key = 'payments_settings'"
   )
   const previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]))
 
   try {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'mercadopago_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'mercadopago_%' OR config_key = 'payments_settings'")
     return await callback()
   } finally {
-    await db.run("DELETE FROM app_config WHERE config_key LIKE 'mercadopago_%'")
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'mercadopago_%' OR config_key = 'payments_settings'")
     for (const row of previousRows) {
       await db.run(`
         INSERT INTO app_config (config_key, config_value, updated_at)
@@ -129,9 +130,9 @@ test('Mercado Pago central manda modo prueba y el cliente guarda secretos desde 
       process.env.INSTALLATION_ID = 'inst_mp_central'
       process.env.APP_URL = 'https://app.test'
       setVerifiedAppBaseUrlResolverForTests(async () => 'https://app.test')
+      await savePaymentSettings({ paymentMode: 'test' })
 
       const oauth = await createMercadoPagoOAuthUrl({
-        mode: 'test',
         appUrl: 'https://app.test',
         returnPath: '/settings/payments/mercadopago'
       })
@@ -162,6 +163,10 @@ test('Mercado Pago central manda modo prueba y el cliente guarda secretos desde 
       assert.equal(config.modeConnections.test.hasRefreshToken, true)
       assert.equal(config.modeConnections.test.hasWebhookSecret, true)
       assert.equal(config.modeConnections.live.connected, false)
+
+      const liveConfig = await getMercadoPagoPaymentConfig({ mode: 'live' })
+      assert.equal(liveConfig.configured, false)
+      assert.equal(liveConfig.hasAccessToken, false)
 
       const secrets = await getMercadoPagoPaymentConfig({ includeSecrets: true })
       assert.equal(secrets.accessToken, 'APP_USR-sandbox-access-token')

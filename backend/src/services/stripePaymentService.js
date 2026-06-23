@@ -12,7 +12,7 @@ import {
   disconnectCentralStripeConnect,
   isLicenseEnforced
 } from './licenseService.js'
-import { calculatePaymentTax, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
+import { calculatePaymentTax, getPaymentGatewayMode, getPaymentSettings, getPublicPaymentSettings, savePaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 
@@ -733,9 +733,10 @@ export async function getStripePaymentConfig({ includeSecrets = false, mode: mod
   const raw = await readRawConfig()
   const accountCurrency = await getConfiguredCurrency()
   const manualModeConnections = readManualModeConnections(raw)
+  const preferredMode = modeOverride || await getPaymentGatewayMode()
   const mode = modeOverride
     ? normalizeMode(modeOverride)
-    : chooseManualMode(manualModeConnections, raw[CONFIG_KEYS.mode] || 'live')
+    : normalizeMode(preferredMode)
   const stripeConnectOAuthEnabled = isStripeConnectOAuthEnabled()
   const storedConnectionType = normalizeConnectionType(raw[CONFIG_KEYS.connectionType])
   const legacyConnectDisabled = storedConnectionType === 'connect' && !stripeConnectOAuthEnabled
@@ -744,27 +745,28 @@ export async function getStripePaymentConfig({ includeSecrets = false, mode: mod
   const selectedStoredConnection = stripeConnectOAuthEnabled && connectionType === 'connect'
     ? decryptStoredConnection(getConnectModeConnection(raw, mode))
     : null
+  const legacyConnectMatchesMode = normalizeMode(raw[CONFIG_KEYS.mode]) === mode
   const managedByPortal = stripeConnectOAuthEnabled
-    ? normalizeBoolean(selectedStoredConnection?.managedByPortal ?? raw[CONFIG_KEYS.connectManagedByPortal], false) || isLicenseEnforced()
+    ? normalizeBoolean(selectedStoredConnection?.managedByPortal ?? (legacyConnectMatchesMode ? raw[CONFIG_KEYS.connectManagedByPortal] : undefined), false) || isLicenseEnforced()
     : false
   const platform = stripeConnectOAuthEnabled && connectionType === 'connect'
     ? getStripeConnectPlatformConfig(mode)
     : { mode, clientId: '', secretKey: '', publishableKey: '', missing: [] }
-  const connectedAccountId = cleanString(selectedStoredConnection?.accountId || raw[CONFIG_KEYS.connectAccountId])
+  const connectedAccountId = cleanString(selectedStoredConnection?.accountId || (legacyConnectMatchesMode ? raw[CONFIG_KEYS.connectAccountId] : ''))
   const connectAccessToken = cleanString(selectedStoredConnection?.accessToken)
-    || (raw[CONFIG_KEYS.connectAccessToken] ? decryptSecret(raw[CONFIG_KEYS.connectAccessToken]) : '')
+    || (legacyConnectMatchesMode && raw[CONFIG_KEYS.connectAccessToken] ? decryptSecret(raw[CONFIG_KEYS.connectAccessToken]) : '')
   const connectRefreshToken = cleanString(selectedStoredConnection?.refreshToken)
-    || (raw[CONFIG_KEYS.connectRefreshToken] ? decryptSecret(raw[CONFIG_KEYS.connectRefreshToken]) : '')
+    || (legacyConnectMatchesMode && raw[CONFIG_KEYS.connectRefreshToken] ? decryptSecret(raw[CONFIG_KEYS.connectRefreshToken]) : '')
   const publishableKey = connectionType === 'connect'
-    ? cleanString(selectedStoredConnection?.publishableKey || raw[CONFIG_KEYS.connectPublishableKey] || platform.publishableKey || raw[CONFIG_KEYS.publishableKey])
+    ? cleanString(selectedStoredConnection?.publishableKey || (legacyConnectMatchesMode ? raw[CONFIG_KEYS.connectPublishableKey] || raw[CONFIG_KEYS.publishableKey] : '') || platform.publishableKey)
     : cleanString(selectedManualConnection.publishableKey)
   const secretKey = connectionType === 'manual'
     ? cleanString(selectedManualConnection.secretKey)
-    : (raw[CONFIG_KEYS.secretKey] ? decryptSecret(raw[CONFIG_KEYS.secretKey]) : '')
+    : (legacyConnectMatchesMode && raw[CONFIG_KEYS.secretKey] ? decryptSecret(raw[CONFIG_KEYS.secretKey]) : '')
   const webhookSecret = cleanString(selectedStoredConnection?.webhookSecret)
     || (connectionType === 'manual'
       ? cleanString(selectedManualConnection.webhookSecret)
-      : (raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : ''))
+      : (legacyConnectMatchesMode && raw[CONFIG_KEYS.webhookSecret] ? decryptSecret(raw[CONFIG_KEYS.webhookSecret]) : ''))
   const enabled = normalizeBoolean(raw[CONFIG_KEYS.enabled], true)
   const connectReady = Boolean(
     stripeConnectOAuthEnabled &&
@@ -1230,7 +1232,7 @@ async function saveStripeConnectConnection({
   await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.connectDisconnectedAt])
   await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.connectOauthState])
 
-  return getStripePaymentConfig()
+  return getStripePaymentConfig({ mode: livemode ? 'live' : 'test' })
 }
 
 export async function createStripeConnectOAuthUrl({ mode = 'test', baseUrl = '', appUrl = '', returnPath = '/settings/payments/stripe' } = {}) {
@@ -1368,7 +1370,7 @@ export async function syncStripeConnectFromCentral({ handoffToken = '' } = {}) {
   })
 
   await db.run('DELETE FROM app_config WHERE config_key IN (?, ?)', [CONFIG_KEYS.secretKey, CONFIG_KEYS.connectOauthState])
-  return getStripePaymentConfig()
+  return getStripePaymentConfig({ mode })
 }
 
 export async function setStripeConnectActiveMode(mode = 'live') {
@@ -1397,7 +1399,8 @@ export async function setStripeConnectActiveMode(mode = 'live') {
   }
 
   await writeActiveConnectConnection(normalizedMode, connection)
-  return getStripePaymentConfig()
+  await savePaymentSettings({ paymentMode: normalizedMode })
+  return getStripePaymentConfig({ mode: normalizedMode })
 }
 
 export async function completeStripeConnectOAuth({ code = '', state = '', baseUrl = '' } = {}) {
