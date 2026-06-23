@@ -764,7 +764,13 @@ export const CustomFields: React.FC = () => {
       </div>
 
       {editorOpen && (
-        <div className={styles.editorOverlay} role="dialog" aria-modal="true" aria-labelledby="custom-field-editor-title">
+        <div
+          className={styles.editorOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="custom-field-editor-title"
+          data-overlay
+        >
           <section className={styles.editorPanel}>
             <div className={styles.editorHeader}>
               <div>
@@ -841,7 +847,13 @@ export const CustomFields: React.FC = () => {
       )}
 
       {folderModalOpen && (
-        <div className={styles.editorOverlay} role="dialog" aria-modal="true" aria-labelledby="custom-field-folder-title">
+        <div
+          className={styles.editorOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="custom-field-folder-title"
+          data-overlay
+        >
           <section className={`${styles.editorPanel} ${styles.folderEditorPanel}`}>
             <div className={styles.editorHeader}>
               <div>

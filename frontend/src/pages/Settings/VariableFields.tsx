@@ -411,7 +411,13 @@ export const VariableFields: React.FC = () => {
       </div>
 
       {editorOpen && (
-        <div className={styles.editorOverlay} role="dialog" aria-modal="true" aria-labelledby="variable-field-editor-title">
+        <div
+          className={styles.editorOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="variable-field-editor-title"
+          data-overlay
+        >
           <section className={styles.editorPanel}>
             <div className={styles.editorHeader}>
               <div>

@@ -678,7 +678,13 @@ export const TagsSettings: React.FC = () => {
       </div>
 
       {editorOpen && (
-        <div className={styles.editorOverlay} role="dialog" aria-modal="true" aria-labelledby="contact-tag-editor-title">
+        <div
+          className={styles.editorOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="contact-tag-editor-title"
+          data-overlay
+        >
           <section className={styles.editorPanel}>
             <div className={styles.editorHeader}>
               <div>
@@ -728,7 +734,13 @@ export const TagsSettings: React.FC = () => {
       )}
 
       {folderModalOpen && (
-        <div className={styles.editorOverlay} role="dialog" aria-modal="true" aria-labelledby="contact-tag-folder-title">
+        <div
+          className={styles.editorOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="contact-tag-folder-title"
+          data-overlay
+        >
           <section className={`${styles.editorPanel} ${styles.folderEditorPanel}`}>
             <div className={styles.editorHeader}>
               <div>

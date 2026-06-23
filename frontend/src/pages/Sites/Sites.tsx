@@ -32431,6 +32431,7 @@ const CustomFieldBindingControl: React.FC<{
   const currentDefinitionId = getSettingString(settings, 'customFieldDefinitionId')
   const availableFields = customFields
     .filter(field => !field.archived && !isSystemCustomFieldDefinition(field))
+    .filter(field => normalizeCustomFieldDataType(field.dataType) === normalizeCustomFieldDataType(customFieldDataTypeForBlock(block.blockType)))
     .sort((a, b) => (
       String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
       String(a.label || '').localeCompare(String(b.label || ''))
@@ -32506,7 +32507,13 @@ const CustomFieldBindingControl: React.FC<{
         </p>
       )}
       {creatorOpen && (
-        <div className={customFieldModalStyles.editorOverlay} role="dialog" aria-modal="true" aria-labelledby="sites-custom-field-editor-title">
+        <div
+          className={customFieldModalStyles.editorOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sites-custom-field-editor-title"
+          data-overlay
+        >
           <section className={customFieldModalStyles.editorPanel}>
             <div className={customFieldModalStyles.editorHeader}>
               <div>
