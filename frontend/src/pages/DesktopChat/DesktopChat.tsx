@@ -281,8 +281,13 @@ const CHAT_CACHE_STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_REFRESH_INTERVAL_MS = 20000
-const CHAT_LIST_PAGE_SIZE = 100
-const CHAT_LIST_AUTO_LOAD_GAP_PX = 180
+// Lotes pequeños para que la lista se revele progresivamente al hacer scroll (como
+// cualquier app de chat) en vez de aparecer toda de golpe.
+const CHAT_LIST_PAGE_SIZE = 30
+// Distancia mínima al fondo para empezar a prefetch del siguiente lote. El disparo real
+// usa ~1.5 pantallas (ver loadMoreChatsIfNeeded) para que el lote llegue ANTES de tocar
+// el fondo y nunca se sienta "trabado".
+const CHAT_LIST_AUTO_LOAD_GAP_PX = 320
 const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'archivar'
 const BULK_CHAT_RESTORE_CONFIRM_WORD = 'restaurar'
 const BULK_CHAT_REMOVE_CONFIRM_WORD = 'eliminar'
@@ -2083,6 +2088,7 @@ export const DesktopChat: React.FC = () => {
 
   const [chats, setChats] = useState<DesktopChatContact[]>(() => initialChatCache.chats)
   const [chatsLoading, setChatsLoading] = useState(() => initialChatCache.chats.length === 0)
+  const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false)
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
@@ -2707,15 +2713,22 @@ export const DesktopChat: React.FC = () => {
       if (chatsRef.current.length === 0 || hasSearch) {
         setChatsLoading(true)
       }
-      chatListOffsetRef.current = 0
-      chatListHasMoreRef.current = true
+      // Un refresco silencioso NO debe reiniciar la paginación: si lo hiciera, la fusión
+      // perdería la profundidad cargada y la lista se recortaría al primer lote.
+      if (!silent) {
+        chatListOffsetRef.current = 0
+        chatListHasMoreRef.current = true
+      }
       chatsRequestRef.current?.abort()
     }
 
     const controller = new AbortController()
     chatsRequestRef.current = controller
     const timeoutId = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS)
-    if (append) chatListLoadingMoreRef.current = true
+    if (append) {
+      chatListLoadingMoreRef.current = true
+      setIsLoadingMoreChats(true)
+    }
 
     const fetchChatPage = async (offset: number) => {
       const data = await apiClient.get<DesktopChatContact[]>('/contacts/chats', {
@@ -2763,7 +2776,25 @@ export const DesktopChat: React.FC = () => {
           const agentSet = agentPriorityChatIdSetRef.current
           return getDefaultActiveChatId(allChats, archivedSet, agentSet, removedStates)
         })
+      } else if (silent) {
+        // Refresco en segundo plano: NO recortar ni reconstruir la lista entera (eso causa
+        // tirones de scroll). Traemos solo la primera página (lo más reciente) y la fusionamos
+        // sobre los chats ya cargados, conservando la cola que el usuario reveló con scroll.
+        // No reiniciamos offset/hasMore ni el chat activo.
+        const freshPage = await fetchChatPage(0)
+        if (chatsRequestRef.current !== controller) return
+
+        const freshIds = new Set(freshPage.map((contact) => contact.id))
+        const merged = dedupeChatsById([
+          ...freshPage,
+          ...chatsRef.current.filter((contact) => !freshIds.has(contact.id))
+        ])
+        writeCachedChatList(merged)
+        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, merged))
+        setChats(merged)
       } else {
+        // Recarga explícita (montaje / reintento): conservamos la profundidad ya mostrada
+        // (p. ej. la del caché) para no encoger la lista a un solo lote.
         let offset = 0
         let allChats: DesktopChatContact[] = []
         let hasMore = true
@@ -2808,6 +2839,7 @@ export const DesktopChat: React.FC = () => {
       }
       if (append) {
         chatListLoadingMoreRef.current = false
+        setIsLoadingMoreChats(false)
       } else {
         setChatsLoading(false)
       }
@@ -2819,8 +2851,11 @@ export const DesktopChat: React.FC = () => {
     const pane = event?.currentTarget || chatListRef.current
     if (!pane) return
 
+    // Prefetch anticipado: disparamos cuando faltan ~1.5 pantallas para el fondo, así el
+    // siguiente lote llega antes de que el usuario lo alcance y el scroll nunca se "traba".
+    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, pane.clientHeight * 1.5)
     const bottomGap = pane.scrollHeight - pane.scrollTop - pane.clientHeight
-    if (bottomGap > CHAT_LIST_AUTO_LOAD_GAP_PX) return
+    if (bottomGap > prefetchDistance) return
 
     void loadChats({ silent: true, append: true })
   }, [loadChats])
@@ -5879,6 +5914,12 @@ export const DesktopChat: React.FC = () => {
                         {resetChatFiltersLabel}
                       </button>
                     ) : null}
+                  </div>
+                ) : null}
+                {isLoadingMoreChats ? (
+                  <div className={styles.chatListLoadingMore} role="status" aria-live="polite">
+                    <Loader2 size={16} className={styles.spin} aria-hidden="true" />
+                    <span>Cargando más chats…</span>
                   </div>
                 ) : null}
               </>

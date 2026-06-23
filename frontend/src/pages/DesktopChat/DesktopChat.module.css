@@ -3079,6 +3079,16 @@
   flex-direction: column;
 }
 
+.chatListLoadingMore {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
 .emptyConversation strong,
 .noSelection strong,
 .emptyChatList strong,

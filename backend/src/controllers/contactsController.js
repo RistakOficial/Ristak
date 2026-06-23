@@ -1777,7 +1777,7 @@ export const getChatContacts = async (req, res) => {
         FROM chat_stats
         JOIN contacts c ON c.id = chat_stats.contact_id
         ${whereClause}
-        ORDER BY chat_stats.last_message_date DESC
+        ORDER BY chat_stats.last_message_date DESC, chat_stats.contact_id DESC
         LIMIT ? OFFSET ?
       ),
       selected_message_rows AS (
@@ -1901,7 +1901,7 @@ ${CONTACT_META_PROFILE_SELECT},
       LEFT JOIN latest_messages lm ON lm.contact_id = c.id AND lm.row_rank = 1
       LEFT JOIN latest_inbound_messages lim ON lim.contact_id = c.id AND lim.row_rank = 1
       LEFT JOIN first_inbound_messages fim ON fim.contact_id = c.id AND fim.row_rank = 1
-      ORDER BY ranked_chats.last_message_date DESC
+      ORDER BY ranked_chats.last_message_date DESC, ranked_chats.contact_id DESC
     `, [...whatsappMessageParams, ...params, limitNumber, offsetNumber])
 
     const responseRows = shouldWarmProfilePictures

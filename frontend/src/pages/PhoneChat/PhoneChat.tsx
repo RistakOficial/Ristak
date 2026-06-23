@@ -145,8 +145,12 @@ const CHAT_MUTED_STATE_KEY = 'ristak_phone_chat_muted_state_v1'
 const CHAT_STARRED_MESSAGES_KEY = 'ristak_phone_chat_starred_messages_v1'
 const CHAT_FAST_START_INBOX_KEY = 'ristak_phone_chat_fast_start_inbox_v1'
 const CHAT_FAST_START_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
-const CHAT_LIST_PAGE_SIZE = 100
-const CHAT_LIST_AUTO_LOAD_GAP_PX = 180
+// Lotes pequeños para revelado progresivo al hacer scroll (como cualquier app de chat),
+// en vez de aparecer toda la lista de golpe.
+const CHAT_LIST_PAGE_SIZE = 30
+// Mínimo para prefetch del siguiente lote. El disparo real usa ~1.5 pantallas (ver
+// loadMoreChatsIfNeeded) para que el lote llegue antes de tocar el fondo.
+const CHAT_LIST_AUTO_LOAD_GAP_PX = 320
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -3437,6 +3441,7 @@ export const PhoneChat: React.FC = () => {
   const [chats, setChats] = useState<ChatContact[]>(() => initialFastStartInbox?.chats || [])
   const [chatsLoading, setChatsLoading] = useState(() => !initialFastStartInbox?.chats.length)
   const [chatsRefreshing, setChatsRefreshing] = useState(false)
+  const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false)
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
@@ -4766,17 +4771,22 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (!append) {
+      // Un refresco silencioso NO reinicia la paginación ni muestra el loader: si lo hiciera,
+      // la fusión perdería la profundidad cargada y la lista se recortaría al primer lote.
       if (!silentRefresh) {
         setChatsError('')
+        setChatsLoading(true)
+        chatListOffsetRef.current = 0
+        chatListHasMoreRef.current = true
       }
-      setChatsLoading(true)
       setChatsRefreshing(false)
-      chatListOffsetRef.current = 0
-      chatListHasMoreRef.current = true
       chatsRequestRef.current?.abort()
     }
 
-    if (append) chatListLoadingMoreRef.current = true
+    if (append) {
+      chatListLoadingMoreRef.current = true
+      setIsLoadingMoreChats(true)
+    }
 
     const controller = new AbortController()
     chatsRequestRef.current = controller
@@ -4800,7 +4810,26 @@ export const PhoneChat: React.FC = () => {
         chatListOffsetRef.current = offset + loadedPageChats.length
         chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
         applyLoadedChats(dedupeChatsById([...chatsRef.current, ...pageChats]))
+      } else if (silentRefresh) {
+        // Refresco en segundo plano: NO reconstruir la lista entera (causa tirones). Traemos
+        // solo la primera página y la fusionamos sobre lo ya cargado, conservando la cola que
+        // el usuario reveló con scroll. No reiniciamos offset/hasMore ni el chat activo.
+        const freshPage = dedupeChatsById(await fetchChatPage(0))
+        if (chatsRequestRef.current !== controller) return
+
+        const freshIds = new Set(freshPage.map((contact) => contact.id))
+        const merged = dedupeChatsById([
+          ...freshPage,
+          ...chatsRef.current.filter((contact) => !freshIds.has(contact.id))
+        ])
+        const displayedChats = applyLoadedChats(merged)
+        if (cacheEnabled) {
+          writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
+          writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
+        }
       } else {
+        // Recarga explícita: conservamos la profundidad ya mostrada (p. ej. la del caché)
+        // para no encoger la lista a un solo lote.
         let offset = 0
         let nextChats: ChatContact[] = []
         let hasMore = true
@@ -4852,6 +4881,7 @@ export const PhoneChat: React.FC = () => {
       }
       if (append) {
         chatListLoadingMoreRef.current = false
+        setIsLoadingMoreChats(false)
       } else {
         setChatsLoading(false)
         setChatsRefreshing(false)
@@ -4873,8 +4903,11 @@ export const PhoneChat: React.FC = () => {
     const pane = event?.currentTarget || chatListRef.current
     if (!pane) return
 
+    // Prefetch anticipado: disparamos cuando faltan ~1.5 pantallas para el fondo, así el
+    // siguiente lote llega antes de que el usuario lo alcance y el scroll nunca se "traba".
+    const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, pane.clientHeight * 1.5)
     const bottomGap = pane.scrollHeight - pane.scrollTop - pane.clientHeight
-    if (bottomGap > CHAT_LIST_AUTO_LOAD_GAP_PX) return
+    if (bottomGap > prefetchDistance) return
 
     void loadChats({ silent: true, append: true })
   }, [loadChats])
@@ -15403,7 +15436,17 @@ export const PhoneChat: React.FC = () => {
                 ? renderWideNewChatPanel()
                 : wideSidebarEditing && wideSidebarMode === 'appointment'
                   ? renderWideAppointmentPanel()
-                  : renderChats()}
+                  : (
+                    <>
+                      {renderChats()}
+                      {isLoadingMoreChats ? (
+                        <div className={styles.chatListLoadingMore} role="status" aria-live="polite">
+                          <Loader2 size={16} className={styles.spinIcon} aria-hidden="true" />
+                          <span>Cargando más chats…</span>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
             </div>
           </div>
 
