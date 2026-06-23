@@ -1,5 +1,6 @@
 import { processDueContactBulkActions } from '../services/contactBulkActionsService.js'
 import { logger } from '../utils/logger.js'
+import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 
 const CONTACT_BULK_ACTIONS_INTERVAL_MS = 20 * 1000
 
@@ -7,17 +8,19 @@ let started = false
 let running = false
 
 async function runContactBulkActions(source = 'interval') {
-  if (running) return
+  if (running || isDeployShutdownStarted()) return
   running = true
 
   try {
-    const results = await processDueContactBulkActions()
-    const completed = results.filter((result) => result.completed).length
-    const failed = results.filter((result) => result.error).length
+    await trackDeployDrainWork('cron:contact-bulk-actions', async () => {
+      const results = await processDueContactBulkActions()
+      const completed = results.filter((result) => result.completed).length
+      const failed = results.filter((result) => result.error).length
 
-    if (completed || failed) {
-      logger.info(`[Acciones masivas] ${source}: ${completed} completadas, ${failed} con error`)
-    }
+      if (completed || failed) {
+        logger.info(`[Acciones masivas] ${source}: ${completed} completadas, ${failed} con error`)
+      }
+    }, source)
   } catch (error) {
     logger.error(`[Acciones masivas] Error revisando cola: ${error.message}`)
   } finally {

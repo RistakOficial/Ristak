@@ -73,6 +73,17 @@ import { getHealthInfo } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
 import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
 import { repairStoredYCloudHistoryMessageDirections } from './services/whatsappApiService.js'
+import {
+  classifyDeployDrainRequest,
+  isHealthRequest,
+  shouldAllowDuringDeployDrain
+} from './utils/deployDrainPolicy.js'
+import {
+  beginDeployDrainWork,
+  formatDeployDrainSnapshot,
+  getDeployDrainSnapshot,
+  markDeployShutdownStarted
+} from './utils/deployDrainTracker.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -92,26 +103,7 @@ const GRACEFUL_SHUTDOWN_TIMEOUT_MS = Math.max(
 let shuttingDown = false
 let activeRequests = 0
 let activeUploadRequests = 0
-
-function requestPath(req) {
-  return String(req.path || req.originalUrl || '').split('?')[0]
-}
-
-function isHealthRequest(req) {
-  const path = requestPath(req)
-  return path === '/health' || path === '/api/health'
-}
-
-function isProtectedUploadRequest(req) {
-  if (!['POST', 'PUT', 'PATCH'].includes(req.method)) return false
-  const path = requestPath(req)
-  return (
-    path === '/media/upload' ||
-    path === '/api/media/upload' ||
-    /^\/media\/assets\/[^/]+\/replace$/.test(path) ||
-    /^\/api\/media\/assets\/[^/]+\/replace$/.test(path)
-  )
-}
+let activeDrainAllowedRequests = 0
 
 function getStartupStatus() {
   if (shuttingDown) return 'shutting_down'
@@ -124,7 +116,10 @@ function getStartupStatus() {
 app.set('trust proxy', true)
 
 app.use((req, res, next) => {
-  if (shuttingDown && !isHealthRequest(req)) {
+  const drainClassification = classifyDeployDrainRequest(req)
+  const drainAllowed = Boolean(drainClassification && drainClassification !== 'health')
+
+  if (shuttingDown && !isHealthRequest(req) && !shouldAllowDuringDeployDrain(req)) {
     res.set('Connection', 'close')
     return res.status(503).json({
       error: 'Aplicación actualizándose',
@@ -132,15 +127,20 @@ app.use((req, res, next) => {
     })
   }
 
-  const protectedUpload = isProtectedUploadRequest(req)
   activeRequests += 1
-  if (protectedUpload) activeUploadRequests += 1
+  if (drainClassification === 'http:media-upload') activeUploadRequests += 1
+  if (drainAllowed) activeDrainAllowedRequests += 1
+  const finishDrainWork = drainAllowed
+    ? beginDeployDrainWork(drainClassification, `${req.method} ${req.originalUrl || req.url || req.path || ''}`)
+    : null
   let completed = false
   const finish = () => {
     if (completed) return
     completed = true
     activeRequests = Math.max(0, activeRequests - 1)
-    if (protectedUpload) activeUploadRequests = Math.max(0, activeUploadRequests - 1)
+    if (drainClassification === 'http:media-upload') activeUploadRequests = Math.max(0, activeUploadRequests - 1)
+    if (drainAllowed) activeDrainAllowedRequests = Math.max(0, activeDrainAllowedRequests - 1)
+    finishDrainWork?.()
   }
   res.on('finish', finish)
   res.on('close', finish)
@@ -366,24 +366,50 @@ function handleShutdown(signal) {
   if (shuttingDown) return
   shuttingDown = true
   startupState.ready = false
+  markDeployShutdownStarted()
   logger.warn(
     `[Shutdown] ${signal} recibido. Drenando ${activeRequests} request(s) activa(s), ` +
-      `${activeUploadRequests} upload(s) protegido(s), por hasta ${GRACEFUL_SHUTDOWN_TIMEOUT_MS}ms.`
+      `${activeUploadRequests} upload(s) protegido(s), ${activeDrainAllowedRequests} request(s) critico(s), ` +
+      `${formatDeployDrainSnapshot()}, por hasta ${GRACEFUL_SHUTDOWN_TIMEOUT_MS}ms.`
   )
+
+  let serverClosed = false
+  let exiting = false
+  let poller = null
+  let timeout = null
+
+  const finishShutdownIfIdle = () => {
+    if (exiting || !serverClosed) return
+    const snapshot = getDeployDrainSnapshot()
+    if (activeRequests > 0 || snapshot.total > 0) return
+
+    exiting = true
+    if (poller) clearInterval(poller)
+    if (timeout) clearTimeout(timeout)
+    logger.info('[Shutdown] Servidor cerrado correctamente y trabajo critico drenado.')
+    process.exit(0)
+  }
 
   server.close((error) => {
     if (error) {
       logger.error('[Shutdown] Error cerrando servidor:', error)
       process.exit(1)
     }
-    logger.info('[Shutdown] Servidor cerrado correctamente.')
-    process.exit(0)
+    serverClosed = true
+    finishShutdownIfIdle()
   })
 
-  const timeout = setTimeout(() => {
+  poller = setInterval(finishShutdownIfIdle, 500)
+  poller.unref?.()
+
+  timeout = setTimeout(() => {
+    exiting = true
+    if (poller) clearInterval(poller)
+    const snapshot = getDeployDrainSnapshot()
     logger.warn(
       `[Shutdown] Tiempo agotado con ${activeRequests} request(s) activa(s), ` +
-        `${activeUploadRequests} upload(s) protegido(s). Cerrando proceso.`
+        `${activeUploadRequests} upload(s) protegido(s), ${activeDrainAllowedRequests} request(s) critico(s), ` +
+        `${formatDeployDrainSnapshot(snapshot)}. Cerrando proceso.`
     )
     process.exit(0)
   }, GRACEFUL_SHUTDOWN_TIMEOUT_MS)

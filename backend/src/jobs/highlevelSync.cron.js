@@ -5,6 +5,7 @@ import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { syncHighLevelData, setSyncTriggerSource } from '../services/highlevelSyncService.js'
 import { syncHighLevelConversationHistory } from '../services/highlevelConversationsSyncService.js'
+import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 
 async function isHighLevelConnected(config) {
   const locationId = String(config?.location_id || '').trim()
@@ -45,43 +46,46 @@ export function startHighLevelSyncCron() {
 
   // Ejecutar cada hora (minuto 17) para no competir con el cron de Meta Ads
   cron.schedule('17 * * * *', async () => {
+    if (isDeployShutdownStarted()) return
     logger.info('⏰ Revisando conexión de HighLevel antes de sincronizar...')
 
     try {
-      // Obtener configuración de HighLevel
-      const config = await db.get(
-        'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
-      )
-
-      if (!config || !config.location_id || !config.api_token) {
-        logger.warn('⚠️  No hay configuración de HighLevel, saltando sincronización')
-        return
-      }
-
-      const connected = await isHighLevelConnected(config)
-      if (!connected) {
-        return
-      }
-
-      logger.info('⏰ Ejecutando sincronización automática de HighLevel (contactos, citas, pagos)...')
-
-      // IMPORTANTE: Establecer triggerSource como 'cron' para que NO aparezca la barra lateral
-      setSyncTriggerSource('cron')
-
-      // Ejecutar sincronización completa (contactos, citas, pagos/invoices)
-      const result = await syncHighLevelData(config.location_id, config.api_token, 'cron')
-
-      if (result.success) {
-        logger.success(
-          `✅ Sincronización HighLevel completada: ` +
-          `${result.contacts.saved} contactos, ` +
-          `${result.appointments.saved} citas, ` +
-          `${result.products?.pulled?.savedProducts || 0} productos GHL→Ristak, ` +
-          `${result.payments.saved} pagos/invoices`
+      await trackDeployDrainWork('cron:highlevel-sync', async () => {
+        // Obtener configuración de HighLevel
+        const config = await db.get(
+          'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
         )
-      } else {
-        logger.warn('⚠️  Sincronización HighLevel terminó con advertencias')
-      }
+
+        if (!config || !config.location_id || !config.api_token) {
+          logger.warn('⚠️  No hay configuración de HighLevel, saltando sincronización')
+          return
+        }
+
+        const connected = await isHighLevelConnected(config)
+        if (!connected) {
+          return
+        }
+
+        logger.info('⏰ Ejecutando sincronización automática de HighLevel (contactos, citas, pagos)...')
+
+        // IMPORTANTE: Establecer triggerSource como 'cron' para que NO aparezca la barra lateral
+        setSyncTriggerSource('cron')
+
+        // Ejecutar sincronización completa (contactos, citas, pagos/invoices)
+        const result = await syncHighLevelData(config.location_id, config.api_token, 'cron')
+
+        if (result.success) {
+          logger.success(
+            `✅ Sincronización HighLevel completada: ` +
+            `${result.contacts.saved} contactos, ` +
+            `${result.appointments.saved} citas, ` +
+            `${result.products?.pulled?.savedProducts || 0} productos GHL→Ristak, ` +
+            `${result.payments.saved} pagos/invoices`
+          )
+        } else {
+          logger.warn('⚠️  Sincronización HighLevel terminó con advertencias')
+        }
+      })
     } catch (error) {
       logger.error('❌ Error en sincronización automática de HighLevel:', error.message)
     }
@@ -94,25 +98,28 @@ export function startHighLevelSyncCron() {
   // para que los mensajes entrantes aparezcan en el chat de la app
   // aunque el workflow de webhook no esté configurado en GHL.
   cron.schedule('*/10 * * * *', async () => {
+    if (isDeployShutdownStarted()) return
     try {
-      const config = await db.get(
-        'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
-      )
+      await trackDeployDrainWork('cron:highlevel-conversations', async () => {
+        const config = await db.get(
+          'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
+        )
 
-      if (!config || !config.location_id || !config.api_token) {
-        return
-      }
+        if (!config || !config.location_id || !config.api_token) {
+          return
+        }
 
-      const result = await syncHighLevelConversationHistory({
-        locationId: config.location_id,
-        apiToken: String(config.api_token).trim().replace(/[\r\n\t]/g, ''),
-        fullSync: false,
-        notifyNewInbound: true
+        const result = await syncHighLevelConversationHistory({
+          locationId: config.location_id,
+          apiToken: String(config.api_token).trim().replace(/[\r\n\t]/g, ''),
+          fullSync: false,
+          notifyNewInbound: true
+        })
+
+        if (result.saved > 0) {
+          logger.info(`💬 Chats HighLevel actualizados: ${result.saved} mensajes nuevos/actualizados`)
+        }
       })
-
-      if (result.saved > 0) {
-        logger.info(`💬 Chats HighLevel actualizados: ${result.saved} mensajes nuevos/actualizados`)
-      }
     } catch (error) {
       logger.warn(`No se pudieron actualizar conversaciones de HighLevel: ${error.message}`)
     }

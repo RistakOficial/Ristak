@@ -1,5 +1,6 @@
 import { processDueConektaPaymentPlanCharges } from '../services/conektaPaymentService.js'
 import { logger } from '../utils/logger.js'
+import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 
 // Los planes se cobran por fecha, no por segundo exacto; 30 minutos evita ruido innecesario.
 const CONEKTA_PAYMENT_PLANS_INTERVAL_MS = 30 * 60 * 1000
@@ -8,14 +9,16 @@ let started = false
 let running = false
 
 async function runConektaPaymentPlans(source = 'interval') {
-  if (running) return
+  if (running || isDeployShutdownStarted()) return
   running = true
 
   try {
-    const result = await processDueConektaPaymentPlanCharges()
-    if (result.succeeded || result.failed) {
-      logger.info(`[Conekta Planes] ${source}: ${result.succeeded} cobrados, ${result.failed} con error`)
-    }
+    await trackDeployDrainWork('cron:conekta-payment-plans', async () => {
+      const result = await processDueConektaPaymentPlanCharges()
+      if (result.succeeded || result.failed) {
+        logger.info(`[Conekta Planes] ${source}: ${result.succeeded} cobrados, ${result.failed} con error`)
+      }
+    }, source)
   } catch (error) {
     const message = String(error?.message || '')
     if (!/Conekta no está configurado/i.test(message)) {

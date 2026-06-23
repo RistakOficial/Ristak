@@ -1,5 +1,6 @@
 import { dispatchDueScheduledChatMessages } from '../services/scheduledChatMessagesService.js'
 import { logger } from '../utils/logger.js'
+import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 
 const SCHEDULED_CHAT_INTERVAL_MS = 30 * 1000
 
@@ -7,17 +8,19 @@ let started = false
 let running = false
 
 async function runScheduledChatDispatch(source = 'interval') {
-  if (running) return
+  if (running || isDeployShutdownStarted()) return
   running = true
 
   try {
-    const results = await dispatchDueScheduledChatMessages()
-    const sent = results.filter(result => result.sent).length
-    const failed = results.filter(result => result.error).length
+    await trackDeployDrainWork('cron:scheduled-chat-messages', async () => {
+      const results = await dispatchDueScheduledChatMessages()
+      const sent = results.filter(result => result.sent).length
+      const failed = results.filter(result => result.error).length
 
-    if (sent || failed) {
-      logger.info(`[Mensajes programados] ${source}: ${sent} enviados, ${failed} con error`)
-    }
+      if (sent || failed) {
+        logger.info(`[Mensajes programados] ${source}: ${sent} enviados, ${failed} con error`)
+      }
+    }, source)
   } catch (error) {
     logger.error(`[Mensajes programados] Error revisando cola: ${error.message}`)
   } finally {

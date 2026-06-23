@@ -1,5 +1,6 @@
 import cron from 'node-cron'
 import { logger } from '../utils/logger.js'
+import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import {
   compareMetaApiVersions,
   detectLatestVersion,
@@ -95,9 +96,14 @@ export async function updateMetaVersion({ source = 'manual' } = {}) {
 export function startMetaVersionCron() {
   // Ejecutar el día 1 de cada mes a las 3:00 AM
   cron.schedule('0 3 1 * *', async () => {
+    if (isDeployShutdownStarted()) return
     logger.info('⏰ Ejecutando verificación mensual de versión de Meta API...')
 
-    const result = await updateMetaVersion({ source: 'monthly-cron' })
+    const result = await trackDeployDrainWork(
+      'cron:meta-version',
+      () => updateMetaVersion({ source: 'monthly-cron' }),
+      'monthly-cron'
+    )
 
     if (result.updated) {
       logger.success(`✅ Cron: Versión actualizada de ${result.oldVersion} a ${result.newVersion}`)

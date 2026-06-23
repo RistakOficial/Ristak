@@ -4,6 +4,7 @@ import {
 } from '../services/appointmentRemindersService.js'
 import { processExpiredConfirmationWindows } from '../services/appointmentConfirmationService.js'
 import { logger } from '../utils/logger.js'
+import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 
 const APPOINTMENT_REMINDERS_INTERVAL_MS = 60 * 1000
 // Las ventanas se verifican más frecuentemente para no agregar latencia innecesaria
@@ -15,14 +16,16 @@ let running = false
 let windowsRunning = false
 
 async function runAppointmentRemindersDispatch(source = 'interval') {
-  if (running) return
+  if (running || isDeployShutdownStarted()) return
   running = true
 
   try {
-    const { sent, errors, skipped } = await processDueAppointmentReminders()
-    if (sent || errors || skipped) {
-      logger.info(`[Citas] Mensajes automáticos (${source}): ${sent} enviados, ${errors} con error, ${skipped} omitidos`)
-    }
+    await trackDeployDrainWork('cron:appointment-reminders', async () => {
+      const { sent, errors, skipped } = await processDueAppointmentReminders()
+      if (sent || errors || skipped) {
+        logger.info(`[Citas] Mensajes automáticos (${source}): ${sent} enviados, ${errors} con error, ${skipped} omitidos`)
+      }
+    }, source)
   } catch (error) {
     logger.error(`[Citas] Error procesando mensajes automáticos: ${error.message}`)
   } finally {
@@ -31,13 +34,15 @@ async function runAppointmentRemindersDispatch(source = 'interval') {
 }
 
 async function runConfirmationWindowsDispatch() {
-  if (windowsRunning) return
+  if (windowsRunning || isDeployShutdownStarted()) return
   windowsRunning = true
   try {
-    const { processed } = await processExpiredConfirmationWindows()
-    if (processed) {
-      logger.info(`[Citas] Ventanas de confirmación IA procesadas: ${processed}`)
-    }
+    await trackDeployDrainWork('cron:appointment-confirmations', async () => {
+      const { processed } = await processExpiredConfirmationWindows()
+      if (processed) {
+        logger.info(`[Citas] Ventanas de confirmación IA procesadas: ${processed}`)
+      }
+    })
   } catch (error) {
     logger.error(`[Citas] Error procesando ventanas de confirmación IA: ${error.message}`)
   } finally {

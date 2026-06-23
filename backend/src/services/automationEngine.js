@@ -3,6 +3,7 @@ import { DateTime } from 'luxon'
 import fetch from 'node-fetch'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import { createInternalNotification } from './notificationsService.js'
@@ -3693,9 +3694,14 @@ export function startAutomationScheduler(intervalMs = 20000) {
   if (schedulerStarted) return
   schedulerStarted = true
   setInterval(() => {
-    processDueResumes().catch(() => undefined)
-    processScheduledTriggers().catch(() => undefined)
-    processScheduledContactEnrollments().catch(() => undefined)
+    if (isDeployShutdownStarted()) return
+    trackDeployDrainWork('cron:automation-scheduler', async () => {
+      await Promise.all([
+        processDueResumes(),
+        processScheduledTriggers(),
+        processScheduledContactEnrollments()
+      ])
+    }).catch(() => undefined)
   }, intervalMs)
   logger.info('⚙️ Motor de automatizaciones activo (tick cada 20s)')
 }

@@ -1,5 +1,6 @@
 import { resumeWhatsAppQrSessions } from '../services/whatsappQrService.js'
 import { logger } from '../utils/logger.js'
+import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 
 // Cada cuanto revisa el watchdog que las sesiones de WhatsApp Web con
 // credenciales guardadas tengan un socket vivo.
@@ -23,7 +24,8 @@ export function startWhatsAppQrWatchdogCron() {
   }
 
   setTimeout(() => {
-    resumeWhatsAppQrSessions({ source: 'boot' })
+    if (isDeployShutdownStarted()) return
+    trackDeployDrainWork('cron:whatsapp-qr-watchdog', () => resumeWhatsAppQrSessions({ source: 'boot' }), 'boot')
       .then(({ resumed }) => {
         if (resumed) logger.info(`[WhatsApp QR] ${resumed} sesion(es) de WhatsApp Web reabiertas al arrancar`)
       })
@@ -33,7 +35,8 @@ export function startWhatsAppQrWatchdogCron() {
   }, BOOT_DELAY_MS)
 
   setInterval(() => {
-    resumeWhatsAppQrSessions({ source: 'watchdog' }).catch(error => {
+    if (isDeployShutdownStarted()) return
+    trackDeployDrainWork('cron:whatsapp-qr-watchdog', () => resumeWhatsAppQrSessions({ source: 'watchdog' }), 'watchdog').catch(error => {
       logger.warn(`[WhatsApp QR] Watchdog de sesiones fallo: ${error.message}`)
     })
   }, WATCHDOG_INTERVAL_MS)
