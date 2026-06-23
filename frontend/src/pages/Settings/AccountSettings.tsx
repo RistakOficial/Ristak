@@ -8,6 +8,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig } from '@/hooks'
+import { contactTagsService } from '@/services/contactTagsService'
 import { apiUrl } from '@/services/apiBaseUrl'
 import apiClient from '@/services/apiClient'
 import mediaService from '@/services/mediaService'
@@ -642,6 +643,7 @@ export const AccountSettings: React.FC = () => {
         lead: nextLead,
         leads: `${nextLead}s`
       })
+      await contactTagsService.getTags({ forceRefresh: true, includeSystem: true })
       showToast('success', 'Guardado', 'Nombres actualizados')
     } catch (error) {
       setCustomLabels({

@@ -14,11 +14,23 @@ import { logger } from '../utils/logger.js'
  * se pueden editar ni borrar, pero sí se pueden usar en filtros.
  */
 
-export const SYSTEM_TAGS = [
-  { id: 'client', name: 'Cliente' },
-  { id: 'booked', name: 'Cita agendada' },
-  { id: 'lead', name: 'Prospecto' }
+const SYSTEM_TAG_DEFINITIONS = [
+  { id: 'client', labelKey: 'customer', fallback: 'Cliente' },
+  { id: 'booked', labelKey: 'booked', fallback: 'Cita agendada' },
+  { id: 'lead', labelKey: 'lead', fallback: 'Prospecto' }
 ]
+
+export const SYSTEM_TAGS = SYSTEM_TAG_DEFINITIONS.map((tag) => ({
+  id: tag.id,
+  name: tag.fallback
+}))
+
+const DEFAULT_CUSTOM_LABELS = {
+  customer: 'Cliente',
+  customers: 'Clientes',
+  lead: 'Interesado',
+  leads: 'Interesados'
+}
 
 /** IDs viejos de las internas (configs guardadas antes del cambio a slugs) */
 export const LEGACY_SYSTEM_TAG_ALIASES = {
@@ -43,12 +55,51 @@ export function isSystemTagId(id) {
   return SYSTEM_TAG_IDS.has(clean) || Boolean(LEGACY_SYSTEM_TAG_ALIASES[clean])
 }
 
-export function isSystemTagName(name) {
-  return SYSTEM_TAG_NAMES.has(normalizeTagName(name))
+async function parseCustomLabelsFromDb() {
+  let row
+  try {
+    row = await db.get('SELECT custom_labels FROM highlevel_config LIMIT 1')
+  } catch (error) {
+    logger.warn(`No se pudo leer highlevel_config, usando labels por defecto: ${error.message}`)
+    return DEFAULT_CUSTOM_LABELS
+  }
+
+  if (!row?.custom_labels) return DEFAULT_CUSTOM_LABELS
+
+  try {
+    const parsed = typeof row.custom_labels === 'object'
+      ? row.custom_labels
+      : JSON.parse(row.custom_labels)
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return DEFAULT_CUSTOM_LABELS
+    }
+
+    return { ...DEFAULT_CUSTOM_LABELS, ...parsed }
+  } catch (error) {
+    logger.warn(`No se pudieron leer custom_labels del account config: ${error.message}`)
+    return DEFAULT_CUSTOM_LABELS
+  }
 }
 
-function isSystemLikeTagRow(row) {
-  return isSystemTagId(row?.id) || isSystemTagName(row?.name)
+export async function getSystemTagDefinitions() {
+  const labels = await parseCustomLabelsFromDb()
+  return SYSTEM_TAG_DEFINITIONS.map((definition) => ({
+    ...definition,
+    name: String(labels[definition.labelKey] || definition.fallback).trim() || definition.fallback
+  }))
+}
+
+async function getSystemTagNameSet() {
+  const definitions = await getSystemTagDefinitions()
+  return new Set(definitions.map((tag) => normalizeTagName(tag.name)))
+}
+
+export async function isSystemTagName(name) {
+  const normalized = normalizeTagName(name)
+  if (SYSTEM_TAG_NAMES.has(normalized)) return true
+  const names = await getSystemTagNameSet()
+  return names.has(normalized)
 }
 
 /** Devuelve el ID interno actual (acepta los alias viejos tag_sys_*) */
@@ -106,28 +157,37 @@ function mapFolderRow(row) {
   }
 }
 
-export function listSystemContactTags() {
-  return SYSTEM_TAGS.map((tag) => ({ ...tag, isSystem: true }))
+export async function listSystemContactTags() {
+  const definitions = await getSystemTagDefinitions()
+  return definitions.map((tag) => ({ ...tag, isSystem: true }))
+}
+
+function isSystemLikeTagRow(row, systemTagNameSet) {
+  const normalizedName = normalizeTagName(row?.name)
+  return isSystemTagId(row?.id) || systemTagNameSet.has(normalizedName)
 }
 
 /** Lista etiquetas del usuario; las internas sólo se anexan si se piden explícitamente. */
 export async function listContactTags({ includeSystem = false } = {}) {
   const rows = await db.all('SELECT * FROM contact_tags ORDER BY name COLLATE NOCASE ASC')
     .catch(async () => db.all('SELECT * FROM contact_tags ORDER BY LOWER(name) ASC'))
-  const customTags = rows.filter((row) => !isSystemLikeTagRow(row)).map(mapRow)
-  return includeSystem ? [...listSystemContactTags(), ...customTags] : customTags
+  const systemTagNameSet = await getSystemTagNameSet()
+  const customTags = rows.filter((row) => !isSystemLikeTagRow(row, systemTagNameSet)).map(mapRow)
+  return includeSystem ? [...(await listSystemContactTags()), ...customTags] : customTags
 }
 
 async function findCustomTagByName(name) {
   const normalized = normalizeTagName(name)
   if (!normalized) return null
   const rows = await db.all('SELECT * FROM contact_tags')
-  return rows.find((row) => !isSystemLikeTagRow(row) && normalizeTagName(row.name) === normalized) || null
+  const systemTagNameSet = await getSystemTagNameSet()
+  return rows.find((row) => !isSystemLikeTagRow(row, systemTagNameSet) && normalizeTagName(row.name) === normalized) || null
 }
 
 export async function getContactTag(id) {
   if (isSystemTagId(id)) {
-    const system = SYSTEM_TAGS.find((tag) => tag.id === canonicalSystemTagId(id))
+    const system = (await getSystemTagDefinitions()).find((tag) => tag.id === canonicalSystemTagId(id))
+    if (!system) return null
     return { ...system, isSystem: true }
   }
   const row = await db.get('SELECT * FROM contact_tags WHERE id = ?', [id])
@@ -153,7 +213,7 @@ export async function createContactTag(name, { folderId = null } = {}) {
   if (!clean) {
     throw Object.assign(new Error('El nombre de la etiqueta no puede estar vacío'), { statusCode: 400 })
   }
-  if (isSystemTagName(clean) || isSystemTagId(slugifyTagId(clean))) {
+  if ((await isSystemTagName(clean)) || isSystemTagId(slugifyTagId(clean))) {
     throw Object.assign(new Error('Ese nombre está reservado para el estado interno del contacto'), { statusCode: 400 })
   }
   const existing = await findCustomTagByName(clean)
@@ -193,7 +253,7 @@ export async function updateContactTag(id, { name, folderId } = {}) {
     if (!clean) {
       throw Object.assign(new Error('El nombre de la etiqueta no puede estar vacío'), { statusCode: 400 })
     }
-    if (isSystemTagName(clean) || isSystemTagId(slugifyTagId(clean))) {
+    if ((await isSystemTagName(clean)) || isSystemTagId(slugifyTagId(clean))) {
       throw Object.assign(new Error('Ese nombre está reservado para el estado interno del contacto'), { statusCode: 400 })
     }
     const duplicate = await findCustomTagByName(clean)
@@ -316,7 +376,7 @@ export async function resolveTagIds(values, { createMissing = false } = {}) {
 
   const resolved = []
   for (const value of list) {
-    if (isSystemTagId(value) || isSystemTagName(value)) continue // las internas no se guardan en contacts.tags
+    if (isSystemTagId(value) || (await isSystemTagName(value))) continue // las internas no se guardan en contacts.tags
     if (byId.has(value)) {
       resolved.push(value)
       continue
@@ -390,6 +450,8 @@ export async function buildTagMatchKeys(contactId, storedTags = null) {
   const keys = new Set()
   const all = await listContactTags()
   const byId = new Map(all.map((tag) => [tag.id, tag]))
+  const systemDefinitions = await getSystemTagDefinitions()
+  const bySystem = new Map(systemDefinitions.map((tag) => [tag.id, tag]))
 
   for (const value of list) {
     const raw = String(value || '').trim()
@@ -402,7 +464,7 @@ export async function buildTagMatchKeys(contactId, storedTags = null) {
 
   for (const systemId of await computeSystemTagIds(contactId)) {
     keys.add(systemId)
-    const system = SYSTEM_TAGS.find((tag) => tag.id === systemId)
+    const system = bySystem.get(systemId)
     if (system) keys.add(normalizeTagName(system.name))
     // Alias viejo (tag_sys_*) para filtros guardados antes del cambio de IDs
     for (const [legacy, canonical] of Object.entries(LEGACY_SYSTEM_TAG_ALIASES)) {

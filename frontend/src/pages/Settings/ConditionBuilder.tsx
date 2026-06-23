@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Check, Copy, Pencil, Plus, X } from 'lucide-react'
+import { Plus, Trash2, X } from 'lucide-react'
 import type {
   AgentCondition,
   AgentConditionParam,
@@ -723,15 +723,51 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
   useContactTags()
   // Filas en edición, identificadas por "grupo:índice"
   const [editingKeys, setEditingKeys] = useState<Set<string>>(new Set())
+  const editingKeysRef = useRef<Set<string>>(new Set())
+  const conditionBuilderRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    editingKeysRef.current = editingKeys
+  }, [editingKeys])
 
   const setEditing = (key: string, editing: boolean) => {
     setEditingKeys((current) => {
       const next = new Set(current)
+      next.clear()
       if (editing) next.add(key)
       else next.delete(key)
       return next
     })
   }
+
+  const stopEditingAll = () => {
+    setEditingKeys(new Set())
+  }
+
+  useEffect(() => {
+    const handlePointerDown = (event: Event) => {
+      const target = event.target as Node | null
+      if (!editingKeysRef.current.size || !conditionBuilderRef.current || !target) return
+      if (!conditionBuilderRef.current.contains(target)) {
+        stopEditingAll()
+      }
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && editingKeysRef.current.size) {
+        stopEditingAll()
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('touchstart', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('touchstart', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [])
 
   const updateCondition = (groupIndex: number, conditionIndex: number, next: AgentCondition) => {
     onChange(groups.map((group, gi) => (
@@ -765,23 +801,6 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
       .filter((group) => group.conditions.length > 0)
     setEditingKeys(new Set())
     onChange(next)
-  }
-
-  const duplicateCondition = (groupIndex: number, conditionIndex: number) => {
-    const source = groups[groupIndex].conditions[conditionIndex]
-    const clone: AgentCondition = {
-      category: source.category,
-      params: source.params.map((param) => ({ ...param, values: param.values ? [...param.values] : undefined }))
-    }
-    onChange(groups.map((group, gi) => (
-      gi !== groupIndex ? group : {
-        conditions: [
-          ...group.conditions.slice(0, conditionIndex + 1),
-          clone,
-          ...group.conditions.slice(conditionIndex + 1)
-        ]
-      }
-    )))
   }
 
   const addCondition = (groupIndex: number, category: ConditionCategory) => {
@@ -1047,7 +1066,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
     )
   }
 
-  const renderEditingCondition = (condition: AgentCondition, groupIndex: number, conditionIndex: number, key: string) => {
+  const renderEditingCondition = (condition: AgentCondition, groupIndex: number, conditionIndex: number) => {
     const category = getCategory(condition.category)
     const usedPresence = condition.params.some((param) => param.field === 'presence')
     const fieldOptions = getConditionFieldOptions(category)
@@ -1070,12 +1089,6 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
         ))}
       </select>
     )
-    const doneButton = (
-      <button type="button" className={styles.ruleDelete} onClick={() => setEditing(key, false)} aria-label="Listo">
-        <Check size={14} />
-      </button>
-    )
-
     return (
       <div className={styles.conditionEditPanel}>
         {condition.params.length === 0 && (
@@ -1083,9 +1096,6 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
             <span className={styles.conditionPrefix}>{conditionIndex === 0 ? 'Si' : 'Y'}</span>
             {conditionTypeSelect}
             <span className={styles.conditionBaseHint}>{category.baseLabel}</span>
-            <span className={styles.conditionInlineActions}>
-              {doneButton}
-            </span>
           </div>
         )}
 
@@ -1158,7 +1168,6 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
                 >
                   <X size={13} />
                 </button>
-                {paramIndex === 0 && doneButton}
               </span>
             </div>
           )
@@ -1184,7 +1193,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
   const categoryMenuItems = CONDITION_CATEGORIES.map((category) => ({ id: category.id, label: category.label }))
 
   return (
-    <div className={styles.conditionBuilder}>
+    <div ref={conditionBuilderRef} className={styles.conditionBuilder}>
       {groups.length === 0 && <p className={styles.ruleEmptyHint}>{emptyText}</p>}
 
       {groups.map((group, groupIndex) => (
@@ -1205,22 +1214,53 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
               return (
                 <div key={key} className={`${styles.conditionRow} ${editing ? styles.conditionRowEditing : ''}`}>
                   {editing ? (
-                    renderEditingCondition(condition, groupIndex, conditionIndex, key)
+                    <>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') {
+                            event.preventDefault()
+                            setEditing(key, false)
+                          }
+                        }}
+                      >
+                        {renderEditingCondition(condition, groupIndex, conditionIndex)}
+                      </div>
+                      <div className={styles.conditionActions}>
+                        <button
+                          type="button"
+                          className={styles.ruleDelete}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            removeCondition(groupIndex, conditionIndex)
+                          }}
+                          aria-label="Eliminar condición"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </>
                   ) : (
                     <>
-                      <span className={styles.conditionSentence}>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className={styles.conditionSentence}
+                        onClick={() => setEditing(key, true)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setEditing(key, true)
+                          }
+                        }}
+                      >
                         <span className={styles.conditionPrefix}>{conditionIndex === 0 ? 'Si ' : 'Y '}</span>
                         {conditionSummary(condition, calendars, options)}
                       </span>
                       <div className={styles.conditionActions}>
-                        <button type="button" className={styles.ruleDelete} onClick={() => setEditing(key, true)} aria-label="Editar condición">
-                          <Pencil size={13} />
-                        </button>
-                        <button type="button" className={styles.ruleDelete} onClick={() => duplicateCondition(groupIndex, conditionIndex)} aria-label="Duplicar condición">
-                          <Copy size={13} />
-                        </button>
                         <button type="button" className={styles.ruleDelete} onClick={() => removeCondition(groupIndex, conditionIndex)} aria-label="Eliminar condición">
-                          <X size={14} />
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </>

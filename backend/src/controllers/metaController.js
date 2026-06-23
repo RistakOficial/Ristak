@@ -77,6 +77,167 @@ function normalizeMetaTestEventName(value) {
   return eventName;
 }
 
+function cleanMetaTestString(value) {
+  return cleanString(value);
+}
+
+const metaTestEventParameterFields = {
+  Lead: ['value', 'predictedLtv', 'currency', 'status'],
+  Schedule: ['value', 'predictedLtv', 'currency', 'status'],
+  Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
+  FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
+  CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
+  Contact: ['value', 'predictedLtv', 'currency', 'status'],
+  ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType'],
+  AddPaymentInfo: ['value', 'predictedLtv', 'currency', 'status'],
+  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status']
+}
+
+function getMetaTestEventFieldsForEvent(eventName) {
+  return metaTestEventParameterFields[eventName] || [];
+}
+
+function normalizeMetaTestNumber(value) {
+  const raw = cleanMetaTestString(value).replace(/[$,\s]/g, '');
+  if (!raw) return null;
+  const numberValue = Number(raw);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function parseMetaTestContentIds(value) {
+  return cleanMetaTestString(value)
+    .split(',')
+    .map(item => cleanMetaTestString(item))
+    .filter(Boolean)
+    .slice(0, 50);
+}
+
+function normalizeMetaTestCustomParameter(parameter) {
+  if (!parameter || typeof parameter !== 'object') {
+    return null;
+  }
+
+  const key = cleanMetaTestString(parameter.key)
+    .replace(/[^a-zA-Z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64);
+  const value = cleanMetaTestString(parameter.value);
+
+  if (!key || !value) {
+    return null;
+  }
+
+  return { key, value }
+}
+
+function normalizeMetaTestEventParameters(parameters = {}) {
+  const source = parameters && typeof parameters === 'object' ? parameters : {};
+  const normalized = {};
+
+  ['value', 'predictedLtv', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType', 'numItems', 'orderId', 'status', 'searchString'].forEach((field) => {
+    const value = cleanMetaTestString(source[field]);
+    if (value) {
+      normalized[field] = value;
+    }
+  });
+
+  const custom = Array.isArray(source.custom)
+    ? source.custom
+      .map(normalizeMetaTestCustomParameter)
+      .filter(Boolean)
+      .slice(0, 12)
+    : [];
+
+  if (custom.length) {
+    normalized.custom = custom;
+  }
+
+  return normalized;
+}
+
+function pruneMetaTestEventParametersForEvent(parameters, eventName) {
+  const normalized = normalizeMetaTestEventParameters(parameters);
+  const fields = getMetaTestEventFieldsForEvent(eventName);
+
+  if (!fields.length) {
+    const next = {};
+    if (Array.isArray(normalized.custom)) {
+      next.custom = normalized.custom;
+    }
+    return next;
+  }
+
+  const next = {};
+  fields.forEach((field) => {
+    const value = cleanMetaTestString(normalized[field]);
+    if (value) {
+      next[field] = value;
+    }
+  });
+
+  if (Array.isArray(normalized.custom)) {
+    next.custom = normalized.custom;
+  }
+
+  return next;
+}
+
+function buildMetaTestCustomData(parameters = {}, eventName = 'LeadSubmitted') {
+  const normalized = pruneMetaTestEventParametersForEvent(parameters, eventName);
+  const customData = {};
+
+  const value = normalizeMetaTestNumber(normalized.value);
+  if (value !== null) {
+    customData.value = value;
+  }
+
+  const predictedLtv = normalizeMetaTestNumber(normalized.predictedLtv);
+  if (predictedLtv !== null) {
+    customData.predicted_ltv = predictedLtv;
+  }
+
+  const currency = cleanMetaTestString(normalized.currency).toUpperCase().slice(0, 3);
+  if (/^[A-Z]{3}$/.test(currency)) {
+    customData.currency = currency;
+  }
+
+  const contentIds = parseMetaTestContentIds(normalized.contentIds);
+  if (contentIds.length) {
+    customData.content_ids = contentIds;
+  }
+
+  const numItems = normalizeMetaTestNumber(normalized.numItems);
+  if (numItems !== null) {
+    customData.num_items = Math.max(0, Math.round(numItems));
+  }
+
+  [
+    ['contentName', 'content_name'],
+    ['contentCategory', 'content_category'],
+    ['contentType', 'content_type'],
+    ['orderId', 'order_id'],
+    ['status', 'status'],
+    ['searchString', 'search_string']
+  ].forEach(([sourceKey, targetKey]) => {
+    const value = cleanMetaTestString(normalized[sourceKey]);
+    if (value) {
+      customData[targetKey] = value;
+    }
+  });
+
+  if (Array.isArray(normalized.custom)) {
+    normalized.custom.forEach((parameter) => {
+      if (!parameter?.key) return;
+      const value = cleanMetaTestString(parameter.value);
+      if (!value) return;
+      customData[parameter.key] = value;
+    });
+  }
+
+  return customData;
+}
+
 function getRequestIp(req) {
   const forwardedFor = cleanString(req.headers?.['x-forwarded-for']).split(',').map(item => item.trim()).filter(Boolean)[0];
   return forwardedFor || cleanString(req.ip) || cleanString(req.socket?.remoteAddress);
@@ -443,6 +604,7 @@ export const sendMetaTestEvent = async (req, res) => {
     const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token);
     const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE).replace(/\s+/g, '');
     const eventName = normalizeMetaTestEventName(req.body?.eventName || req.body?.event_name);
+    const eventParameters = normalizeMetaTestEventParameters(req.body?.eventParameters || req.body?.event_parameters);
 
     if (!datasetId || !accessToken) {
       return res.status(400).json({
@@ -484,7 +646,8 @@ export const sendMetaTestEvent = async (req, res) => {
           custom_data: {
             source: 'ristak_settings',
             conversion_type: 'settings_test_event',
-            content_name: 'Ristak Meta CAPI test'
+            content_name: 'Ristak Meta CAPI test',
+            ...buildMetaTestCustomData(eventParameters, eventName)
           }
         }
       ]

@@ -33,7 +33,8 @@ export const getContactTags = async (req, res) => {
 
 /** GET /api/contact-tags/system — estados internos calculados por el sistema */
 export const getSystemContactTags = async (_req, res) => {
-  res.json({ success: true, data: listSystemContactTags() })
+  const tags = await listSystemContactTags()
+  res.json({ success: true, data: tags })
 }
 
 /** GET /api/contact-tags/catalog — etiquetas (con uso) + carpetas en una llamada */

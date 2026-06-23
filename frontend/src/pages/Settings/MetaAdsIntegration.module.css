@@ -397,6 +397,121 @@
   gap: 12px;
 }
 
+.metaTestParametersToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--color-text-secondary);
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.metaTestParametersToggle:hover {
+  border-color: var(--color-text-secondary);
+  color: var(--text);
+}
+
+.metaTestParametersToggleActive {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.metaTestParametersToggleFilled {
+  color: var(--color-text-primary);
+  border-color: var(--pos);
+}
+
+.metaTestParametersForm {
+  display: grid;
+  gap: 12px;
+}
+
+.metaTestParametersGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metaTestParameterField {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.metaTestParameterField span,
+.metaTestCustomParameters > span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.metaTestParameterField input,
+.metaTestCustomParameterRow input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  padding: 0 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.metaTestParameterField input:focus,
+.metaTestCustomParameterRow input:focus {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-ring);
+}
+
+.metaTestCustomParameters {
+  display: grid;
+  gap: 8px;
+}
+
+.metaTestCustomParameterRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
+  gap: 8px;
+  align-items: center;
+}
+
+.metaTestCustomParameterDelete {
+  width: 34px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-background);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.metaTestCustomParameterDelete:hover:not(:disabled) {
+  border-color: var(--color-status-error);
+  color: var(--color-status-error);
+}
+
+.metaTestCustomParameterDelete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .metaTestResult {
   display: flex;
   flex-direction: column;

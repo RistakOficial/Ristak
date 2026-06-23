@@ -69,8 +69,23 @@ test('sendMetaTestEvent posts CAPI payload with test_event_code', async () => {
     await sendMetaTestEvent({
       body: {
         testEventCode: ' TEST98765 ',
-        eventName: 'LeadSubmitted',
-        eventSourceUrl: 'https://app.test/settings/meta-ads'
+        eventName: 'Purchase',
+        eventSourceUrl: 'https://app.test/settings/meta-ads',
+        eventParameters: {
+          value: '2,500',
+          predictedLtv: '12000',
+          currency: 'mxn',
+          contentIds: 'SKU-001, SKU-002',
+          contentType: 'product',
+          numItems: '2',
+          orderId: 'ORD-TEST-001',
+          custom: [
+            {
+              key: 'ad_source',
+              value: 'test'
+            }
+          ]
+        }
       },
       headers: {
         host: 'app.test',
@@ -85,14 +100,21 @@ test('sendMetaTestEvent posts CAPI payload with test_event_code', async () => {
 
     assert.equal(response.statusCode, 200)
     assert.equal(response.payload.success, true)
-    assert.equal(response.payload.eventName, 'LeadSubmitted')
+    assert.equal(response.payload.eventName, 'Purchase')
     assert.match(response.payload.eventId, /^ristak_meta_test_/)
     assert.equal(metaCalls.length, 1)
 
     const payload = JSON.parse(metaCalls[0].body)
     assert.equal(payload.test_event_code, 'TEST98765')
-    assert.equal(payload.data[0].event_name, 'LeadSubmitted')
+    assert.equal(payload.data[0].event_name, 'Purchase')
     assert.equal(payload.data[0].event_source_url, 'https://app.test/settings/meta-ads')
+    assert.equal(payload.data[0].custom_data.value, 2500)
+    assert.equal(payload.data[0].custom_data.currency, 'MXN')
+    assert.deepEqual(payload.data[0].custom_data.content_ids, ['SKU-001', 'SKU-002'])
+    assert.equal(payload.data[0].custom_data.num_items, 2)
+    assert.equal(payload.data[0].custom_data.order_id, 'ORD-TEST-001')
+    assert.equal(payload.data[0].custom_data.content_type, 'product')
+    assert.equal(payload.data[0].custom_data.ad_source, 'test')
     assert.equal(payload.data[0].user_data.client_ip_address, '203.0.113.10')
     assert.equal(payload.data[0].user_data.client_user_agent, 'node-test')
     assert.match(payload.data[0].user_data.external_id, /^[a-f0-9]{64}$/)

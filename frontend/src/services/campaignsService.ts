@@ -20,6 +20,27 @@ export interface Campaign {
   adsets?: AdSet[]
 }
 
+export interface MetaTestCustomParameter {
+  id?: string
+  key: string
+  value: string
+}
+
+export interface MetaTestEventParameters {
+  value?: string
+  predictedLtv?: string
+  currency?: string
+  contentName?: string
+  contentCategory?: string
+  contentIds?: string
+  contentType?: string
+  numItems?: string
+  orderId?: string
+  status?: string
+  searchString?: string
+  custom?: MetaTestCustomParameter[]
+}
+
 export interface ConnectedSocialProfile {
   id: string
   platform: 'facebook' | 'instagram' | 'threads' | 'tiktok'
@@ -254,6 +275,7 @@ class CampaignsService {
     testEventCode: string
     eventName?: string
     eventSourceUrl?: string
+    eventParameters?: MetaTestEventParameters
   }): Promise<MetaTestEventResponse> {
     return apiClient.post<MetaTestEventResponse>('/meta/test-event', payload)
   }

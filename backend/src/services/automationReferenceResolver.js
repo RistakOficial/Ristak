@@ -1,6 +1,7 @@
 import { db } from '../config/database.js'
 import {
   LEGACY_SYSTEM_TAG_ALIASES,
+  getSystemTagDefinitions,
   SYSTEM_TAGS,
   normalizeTagName
 } from './contactTagsService.js'
@@ -309,8 +310,9 @@ export async function loadAutomationReferenceCatalogs() {
     loadFormReferences()
   ])
 
+  const customSystemTags = await getSystemTagDefinitions()
   const tags = new Set(SYSTEM_TAGS.map((tag) => tag.id))
-  const tagNames = new Set(SYSTEM_TAGS.map((tag) => normalizeTagName(tag.name)))
+  const tagNames = new Set(customSystemTags.map((tag) => normalizeTagName(tag.name)))
   Object.keys(LEGACY_SYSTEM_TAG_ALIASES).forEach((alias) => tags.add(alias))
   tagRows.forEach((row) => {
     if (row.id) tags.add(cleanString(row.id))

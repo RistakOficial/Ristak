@@ -2,10 +2,16 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button, Icon, Modal, CustomSelect, PageHeader, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
-import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, FlaskConical, Pencil, Power, RefreshCw, Save, Send, Trash2, XCircle } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, FlaskConical, Pencil, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
-import { campaignsService, type ConnectedSocialProfile, type MetaTestEventResponse } from '@/services/campaignsService'
+import {
+  campaignsService,
+  type ConnectedSocialProfile,
+  type MetaTestCustomParameter,
+  type MetaTestEventParameters,
+  type MetaTestEventResponse
+} from '@/services/campaignsService'
 import styles from './MetaAdsIntegration.module.css'
 
 interface MetaCredentials {
@@ -44,6 +50,19 @@ interface FetchCollectionResult {
   success: boolean
   count: number
 }
+
+type MetaTestParameterFieldKey =
+  | 'value'
+  | 'predictedLtv'
+  | 'currency'
+  | 'contentName'
+  | 'contentCategory'
+  | 'contentIds'
+  | 'contentType'
+  | 'numItems'
+  | 'orderId'
+  | 'status'
+  | 'searchString'
 
 type SecretTokenField = 'accessToken'
 type MetaMessagingPlatform = 'messenger' | 'instagram'
@@ -102,6 +121,137 @@ const tokenSetupScopes = [
   'instagram_manage_messages'
 ]
 
+const metaTestEventOptions = [
+  { value: 'Lead', label: 'Lead' },
+  { value: 'Schedule', label: 'Schedule' },
+  { value: 'Purchase', label: 'Purchase' },
+  { value: 'FormSubmitted', label: 'FormSubmitted' },
+  { value: 'CompleteRegistration', label: 'CompleteRegistration' },
+  { value: 'ViewContent', label: 'ViewContent' },
+  { value: 'Contact', label: 'Contact' },
+  { value: 'AddPaymentInfo', label: 'AddPaymentInfo (Pago)' },
+  { value: 'LeadSubmitted', label: 'LeadSubmitted (WhatsApp)' }
+]
+
+const defaultMetaTestEventName = 'LeadSubmitted'
+
+const metaTestParameterFieldLabels: Record<MetaTestParameterFieldKey, string> = {
+  value: 'Valor',
+  predictedLtv: 'LTV estimado',
+  currency: 'Moneda',
+  contentName: 'Contenido',
+  contentCategory: 'Categoría',
+  contentIds: 'IDs de contenido',
+  contentType: 'Tipo de contenido',
+  numItems: 'Cantidad',
+  orderId: 'Orden',
+  status: 'Estado',
+  searchString: 'Búsqueda'
+}
+
+const metaTestParameterFieldPlaceholders: Record<MetaTestParameterFieldKey, string> = {
+  value: '2500',
+  predictedLtv: '12000',
+  currency: 'MXN',
+  contentName: 'Plan premium',
+  contentCategory: 'Consultoría',
+  contentIds: 'sku-1, sku-2',
+  contentType: 'product',
+  numItems: '1',
+  orderId: 'ORD-123',
+  status: 'nuevos',
+  searchString: 'buscar servicio'
+}
+
+const metaTestEventParameterFields: Record<string, MetaTestParameterFieldKey[]> = {
+  Lead: ['value', 'predictedLtv', 'currency', 'status'],
+  Schedule: ['value', 'predictedLtv', 'currency', 'status'],
+  Purchase: ['value', 'currency', 'orderId', 'contentIds', 'contentName', 'contentType', 'numItems'],
+  FormSubmitted: ['value', 'predictedLtv', 'currency', 'status'],
+  CompleteRegistration: ['value', 'predictedLtv', 'currency', 'status'],
+  Contact: ['value', 'predictedLtv', 'currency', 'status'],
+  ViewContent: ['value', 'currency', 'contentName', 'contentCategory', 'contentIds', 'contentType'],
+  AddPaymentInfo: ['value', 'predictedLtv', 'currency', 'status'],
+  LeadSubmitted: ['value', 'predictedLtv', 'currency', 'status']
+}
+
+const getMetaTestEventFieldsForEvent = (eventName?: string): MetaTestParameterFieldKey[] => {
+  return metaTestEventParameterFields[eventName || defaultMetaTestEventName] || []
+}
+
+const createDefaultMetaTestCustomParameter = (): MetaTestCustomParameter => ({
+  id: `meta-test-custom-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  key: '',
+  value: ''
+})
+
+const cleanMetaTestParameterString = (value: unknown) => String(value ?? '').trim()
+
+const normalizeMetaTestCustomParameter = (parameter?: Partial<MetaTestCustomParameter> | null): MetaTestCustomParameter => ({
+  ...(cleanMetaTestParameterString(parameter?.id) ? { id: cleanMetaTestParameterString(parameter?.id) } : {}),
+  key: cleanMetaTestParameterString(parameter?.key),
+  value: cleanMetaTestParameterString(parameter?.value)
+})
+
+const normalizeMetaTestEventParameters = (parameters?: MetaTestEventParameters | null): MetaTestEventParameters => {
+  const source = parameters && typeof parameters === 'object' ? parameters : {}
+  const normalized: MetaTestEventParameters = {}
+
+  ;([
+    'value',
+    'predictedLtv',
+    'currency',
+    'contentName',
+    'contentCategory',
+    'contentIds',
+    'contentType',
+    'numItems',
+    'orderId',
+    'status',
+    'searchString'
+  ] as MetaTestParameterFieldKey[]).forEach((field) => {
+    const value = cleanMetaTestParameterString(source[field])
+    if (value) {
+      normalized[field] = value
+    }
+  })
+
+  const custom = Array.isArray(source.custom)
+    ? source.custom
+      .map(parameter => normalizeMetaTestCustomParameter(parameter))
+      .filter(parameter => parameter.key || parameter.value)
+      .slice(0, 12)
+    : []
+
+  if (custom.length) {
+    normalized.custom = custom
+  }
+
+  return normalized
+}
+
+const pruneMetaTestEventParametersForEvent = (
+  parameters: MetaTestEventParameters | null | undefined,
+  eventName?: string
+) => {
+  const normalized = normalizeMetaTestEventParameters(parameters)
+  const fields = getMetaTestEventFieldsForEvent(eventName)
+  if (!fields.length) {
+    return {
+      ...normalized.custom ? { custom: normalized.custom } : {}
+    }
+  }
+
+  const next: MetaTestEventParameters = {}
+  fields.forEach((field) => {
+    const value = cleanMetaTestParameterString(normalized[field])
+    if (value) next[field] = value
+  })
+
+  if (normalized.custom?.length) next.custom = normalized.custom
+  return next
+}
+
 export const MetaAdsIntegration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
@@ -137,7 +287,9 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isDisconnectingMeta, setIsDisconnectingMeta] = useState(false)
   const [isMetaTestModalOpen, setIsMetaTestModalOpen] = useState(false)
   const [metaTestDraftCode, setMetaTestDraftCode] = useState('')
-  const [metaTestEventName, setMetaTestEventName] = useState('LeadSubmitted')
+  const [metaTestEventName, setMetaTestEventName] = useState(defaultMetaTestEventName)
+  const [metaTestEventParameters, setMetaTestEventParameters] = useState<MetaTestEventParameters>({})
+  const [isMetaTestParametersOpen, setIsMetaTestParametersOpen] = useState(false)
   const [isSendingMetaTestEvent, setIsSendingMetaTestEvent] = useState(false)
   const [metaTestResult, setMetaTestResult] = useState<MetaTestEventResponse | null>(null)
   const [activeStep, setActiveStep] = useState(routeStep)
@@ -161,6 +313,8 @@ export const MetaAdsIntegration: React.FC = () => {
   useEffect(() => {
     if (!isMetaTestModalOpen) return
     setMetaTestDraftCode(metaTestEventCode || '')
+    setMetaTestEventParameters((current) => pruneMetaTestEventParametersForEvent(current, metaTestEventName || defaultMetaTestEventName))
+    setIsMetaTestParametersOpen(false)
     setMetaTestResult(null)
   }, [isMetaTestModalOpen, metaTestEventCode])
 
@@ -880,11 +1034,86 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const normalizeMetaTestCode = (value = '') => value.trim().replace(/\s+/g, '')
-  const normalizeMetaTestEventName = (value = '') => value.trim() || 'LeadSubmitted'
+  const normalizeMetaTestEventName = (value = '') => {
+    const normalizedValue = String(value || '').trim()
+    return metaTestEventOptions.some(option => option.value === normalizedValue)
+      ? normalizedValue
+      : defaultMetaTestEventName
+  }
+  const hasMetaTestEventParameters = (parameters?: MetaTestEventParameters | null) => {
+    const normalized = pruneMetaTestEventParametersForEvent(parameters, normalizeMetaTestEventName(metaTestEventName))
+    return Object.keys(normalized).some(key => key !== 'custom' && Boolean((normalized as Record<string, string>)[key]))
+      || Boolean(normalized.custom?.length)
+  }
+
+  const addMetaTestCustomParameter = () => {
+    setMetaTestEventParameters(current => {
+      const normalized = normalizeMetaTestEventParameters(current)
+      const nextCustom = [...(normalized.custom || [])]
+
+      if (nextCustom.length >= 12) return normalized
+      nextCustom.push(createDefaultMetaTestCustomParameter())
+      return { ...normalized, custom: nextCustom }
+    })
+  }
+
+  const patchMetaTestCustomParameter = (
+    index: number,
+    patch: Partial<MetaTestCustomParameter>
+  ) => {
+    setMetaTestEventParameters(current => {
+      const normalized = normalizeMetaTestEventParameters(current)
+      const rows = [...(normalized.custom || [])]
+
+      if (index === rows.length) {
+        rows.push(normalizeMetaTestCustomParameter(patch))
+      } else if (rows[index]) {
+        rows[index] = { ...rows[index], ...patch }
+      }
+
+      return {
+        ...normalized,
+        custom: rows
+          .filter(row => row.key || row.value)
+          .slice(0, 12)
+      }
+    })
+  }
+
+  const removeMetaTestCustomParameter = (index: number) => {
+    setMetaTestEventParameters(current => {
+      const normalized = normalizeMetaTestEventParameters(current)
+      const rows = [...(normalized.custom || [])]
+      if (index < 0 || index >= rows.length) return normalized
+      rows.splice(index, 1)
+
+      const next = {
+        ...normalized,
+        ...(rows.length ? { custom: rows } : {})
+      } as MetaTestEventParameters
+      return next
+    })
+  }
+
+  const setMetaTestEventNameAndResetParameters = (value: string) => {
+    const normalizedEventName = normalizeMetaTestEventName(value)
+    setMetaTestEventName(normalizedEventName)
+
+    setMetaTestEventParameters(current => pruneMetaTestEventParametersForEvent(current, normalizedEventName))
+  }
+
+  const setMetaTestEventParameterField = (field: MetaTestParameterFieldKey, value: string) => {
+    setMetaTestEventParameters(current => ({
+      ...normalizeMetaTestEventParameters(current),
+      [field]: String(value ?? '').trim()
+    }))
+  }
 
   const handleOpenMetaTestModal = () => {
     setMetaTestDraftCode(metaTestEventCode || '')
-    setMetaTestEventName(current => current.trim() || 'LeadSubmitted')
+    setMetaTestEventName(current => normalizeMetaTestEventName(current))
+    setMetaTestEventParameters(current => pruneMetaTestEventParametersForEvent(current, normalizeMetaTestEventName(metaTestEventName)))
+    setIsMetaTestParametersOpen(false)
     setMetaTestResult(null)
     setIsMetaTestModalOpen(true)
   }
@@ -927,6 +1156,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
     const testEventCode = normalizeMetaTestCode(metaTestDraftCode)
     const eventName = normalizeMetaTestEventName(metaTestEventName)
+    const eventParameters = pruneMetaTestEventParametersForEvent(metaTestEventParameters, eventName)
 
     if (!testEventCode) {
       showToast('warning', 'Código requerido', 'Pega el código TEST de Events Manager')
@@ -948,7 +1178,8 @@ export const MetaAdsIntegration: React.FC = () => {
 
       const result = await campaignsService.sendMetaTestEvent({
         testEventCode,
-        eventName
+        eventName,
+        eventParameters
       })
 
       setMetaTestDraftCode(testEventCode)
@@ -1053,6 +1284,15 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasPageId = Boolean(savedPageId)
   const hasInstagramAccount = Boolean(savedInstagramAccountId || credentials.instagramAccountId)
   const isMetaConfigured = Boolean(hasAccessToken && hasAdAccount)
+  const normalizedMetaTestEventName = normalizeMetaTestEventName(metaTestEventName)
+  const normalizedMetaTestEventParameters = normalizeMetaTestEventParameters(metaTestEventParameters)
+  const metaTestEventFieldKeys = getMetaTestEventFieldsForEvent(normalizedMetaTestEventName)
+  const visibleMetaTestCustomRows = [
+    ...(normalizedMetaTestEventParameters.custom || []),
+    ...(normalizedMetaTestEventParameters.custom?.length && normalizedMetaTestEventParameters.custom.length >= 12
+      ? []
+      : [createDefaultMetaTestCustomParameter()])
+  ]
   const shouldShowWizard = !isMetaConfigured || isEditingMetaConfig || activeStep > 0
   const shouldShowAccessTokenAction = Boolean(
     credentials.accessToken &&
@@ -1906,16 +2146,94 @@ export const MetaAdsIntegration: React.FC = () => {
             </label>
             <label className={styles.formGroup}>
               <span className={styles.formLabel}>Evento</span>
-              <input
-                className={styles.formInput}
-                value={metaTestEventName}
-                onChange={(event) => setMetaTestEventName(event.target.value)}
-                placeholder="LeadSubmitted"
-                autoComplete="off"
-                spellCheck={false}
-              />
+              <CustomSelect
+                value={normalizedMetaTestEventName}
+                onChange={(event) => setMetaTestEventNameAndResetParameters(event.target.value)}
+              >
+                {metaTestEventOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </CustomSelect>
             </label>
           </div>
+
+          <button
+            type="button"
+            className={[
+              styles.metaTestParametersToggle,
+              isMetaTestParametersOpen ? styles.metaTestParametersToggleActive : '',
+              hasMetaTestEventParameters(normalizedMetaTestEventParameters) ? styles.metaTestParametersToggleFilled : ''
+            ].filter(Boolean).join(' ')}
+            onClick={() => setIsMetaTestParametersOpen(current => !current)}
+          >
+            <Settings2 size={15} />
+            Parámetros del evento
+          </button>
+
+          {isMetaTestParametersOpen && (
+            <div className={styles.metaTestParametersForm}>
+              {metaTestEventFieldKeys.length > 0 && (
+                <div className={styles.metaTestParametersGrid}>
+                  {metaTestEventFieldKeys.map((field) => (
+                    <label key={field} className={styles.metaTestParameterField}>
+                      <span>{metaTestParameterFieldLabels[field]}</span>
+                      <input
+                        value={normalizedMetaTestEventParameters[field] || ''}
+                        placeholder={metaTestParameterFieldPlaceholders[field]}
+                        onChange={(event) => setMetaTestEventParameterField(
+                          field,
+                          event.target.value
+                        )}
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <div className={styles.metaTestCustomParameters}>
+                <span>Parámetros custom</span>
+                {visibleMetaTestCustomRows.map((parameter, index) => {
+                  const isDefaultRow = index >= (normalizedMetaTestEventParameters.custom?.length || 0)
+
+                  return (
+                    <div key={parameter.id || `meta-test-parameter-${index}`} className={styles.metaTestCustomParameterRow}>
+                      <input
+                        value={parameter.key}
+                        placeholder="parametro_meta"
+                        onChange={(event) => patchMetaTestCustomParameter(index, { key: event.target.value })}
+                      />
+                      <input
+                        value={parameter.value}
+                        placeholder="valor"
+                        onChange={(event) => patchMetaTestCustomParameter(index, { value: event.target.value })}
+                      />
+                      <button
+                        type="button"
+                        className={styles.metaTestCustomParameterDelete}
+                        disabled={isDefaultRow}
+                        title="Eliminar parámetro"
+                        onClick={() => removeMetaTestCustomParameter(index)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  )
+                })}
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => void addMetaTestCustomParameter()}
+                  disabled={(normalizedMetaTestEventParameters.custom || []).length >= 12}
+                >
+                  <Plus size={14} />
+                  Añadir parámetro
+                </Button>
+              </div>
+            </div>
+          )}
 
           {metaTestResult && (
             <div
