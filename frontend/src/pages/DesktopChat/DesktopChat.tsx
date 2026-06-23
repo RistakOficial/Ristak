@@ -2062,6 +2062,7 @@ export const DesktopChat: React.FC = () => {
   const messageAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
   const selectAllChatCheckboxRef = useRef<HTMLInputElement | null>(null)
   const chatsRef = useRef<DesktopChatContact[]>([])
+  const [initialChatCache] = useState<ChatListCacheSnapshot>(() => readCachedChatList())
   const chatListOffsetRef = useRef(initialChatCache.chats.length)
   const chatListHasMoreRef = useRef(initialChatCache.chats.length >= CHAT_LIST_PAGE_SIZE)
   const chatListLoadingMoreRef = useRef(false)
@@ -2080,7 +2081,6 @@ export const DesktopChat: React.FC = () => {
         ? styles.desktopChatTransitionFromDesktop
         : ''
 
-  const [initialChatCache] = useState<ChatListCacheSnapshot>(() => readCachedChatList())
   const [chats, setChats] = useState<DesktopChatContact[]>(() => initialChatCache.chats)
   const [chatsLoading, setChatsLoading] = useState(() => initialChatCache.chats.length === 0)
   const [chatsError, setChatsError] = useState('')
@@ -2244,6 +2244,8 @@ export const DesktopChat: React.FC = () => {
   )
   const stageLabel = stageBadge?.text || labels.lead
   const activeAdvancedFilterCount = useMemo(() => countAdvancedFilters(advancedFilters), [advancedFilters])
+  const normalizedChatQuery = chatQuery.trim()
+  const isChatQueryActive = normalizedChatQuery.length > 0
   const archivedChatIdSet = useMemo(() => new Set(archivedChatIds), [archivedChatIds])
   const removedChatStateMap = useMemo(() => new Map(removedChatStates.map((state) => [state.contactId, state])), [removedChatStates])
   const visibleChatsForList = useMemo(
@@ -2328,13 +2330,13 @@ export const DesktopChat: React.FC = () => {
 	    [agentInboxSourceChats, agentInboxStatusFilter, agentPriorityChatIdSet, agentStateLists, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, visibleChatsForList]
   )
   const agentAssignedViewOpen = chatFilter === 'agent'
-  const hasTextOrAdvancedChatFilters = Boolean(chatQuery.trim()) || activeAdvancedFilterCount > 0
+  const hasTextOrAdvancedChatFilters = isChatQueryActive || activeAdvancedFilterCount > 0
   const hasAgentInboxStatusFilter = agentAssignedViewOpen && agentInboxStatusFilter !== DEFAULT_AGENT_INBOX_STATUS_FILTER
   const hasAgentInboxListFilters = agentAssignedViewOpen && (hasTextOrAdvancedChatFilters || hasAgentInboxStatusFilter)
   const hasActiveChatFilters = hasTextOrAdvancedChatFilters || chatFilter !== 'all' || hasAgentInboxStatusFilter
   const filteredChats = useMemo(() => {
     return listBaseChats
-      .filter((contact) => contactMatchesQuery(contact, chatQuery))
+      .filter((contact) => (isChatQueryActive ? true : contactMatchesQuery(contact, normalizedChatQuery)))
       .filter((contact) => contactMatchesAdvancedFilters(contact, advancedFilters))
       .filter((contact) => {
         if (chatFilter === 'agent') return true
@@ -2343,9 +2345,9 @@ export const DesktopChat: React.FC = () => {
         if (chatFilter === 'customers') return contact.status === 'customer'
         return true
       })
-  }, [advancedFilters, chatFilter, chatQuery, listBaseChats])
+  }, [advancedFilters, chatFilter, isChatQueryActive, normalizedChatQuery, listBaseChats])
   const agentPriorityChatRows = useMemo(() => {
-    if (archivedViewOpen || chatFilter !== 'all' || chatQuery.trim() || activeAdvancedFilterCount > 0) return []
+    if (archivedViewOpen || chatFilter !== 'all' || isChatQueryActive || activeAdvancedFilterCount > 0) return []
     return visibleChatsForList
       .filter((contact) => agentPriorityChatIdSet.has(contact.id) && !archivedChatIdSet.has(contact.id))
       .sort((left, right) => {
@@ -2354,7 +2356,7 @@ export const DesktopChat: React.FC = () => {
         return Date.parse(rightState?.signalAt || right.lastMessageDate || right.createdAt) -
           Date.parse(leftState?.signalAt || left.lastMessageDate || left.createdAt)
       })
-  }, [activeAdvancedFilterCount, agentPriorityChatIdSet, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, chatQuery, visibleChatsForList])
+  }, [activeAdvancedFilterCount, agentPriorityChatIdSet, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, isChatQueryActive, visibleChatsForList])
   const selectableChatRows = useMemo(() => {
     const rows = [...agentPriorityChatRows, ...filteredChats]
     const seen = new Set<string>()
@@ -2682,19 +2684,27 @@ export const DesktopChat: React.FC = () => {
     }
   ]), [advancedFilters])
 
-  const loadChats = useCallback(async (options: { silent?: boolean; append?: boolean } = {}) => {
+  const loadChats = useCallback(async (options: { silent?: boolean; append?: boolean; search?: string } = {}) => {
     const silent = options.silent === true
     const append = options.append === true
+    const normalizedSearch = String(options.search ?? chatQuery).trim()
+    const hasSearch = normalizedSearch.length > 0
 
     if (append) {
+      if (hasSearch) return
       if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current || chatsRequestRef.current) return
     } else if (silent && chatsRequestRef.current) {
       return
     }
 
+    // En recargas completas conservamos la profundidad ya cargada por scroll: si el
+    // usuario ya cargó varias páginas, volvemos a traerlas todas para que un refresco
+    // silencioso (intervalo de 20s / eventos en vivo) no recorte la lista al primer page.
+    const reloadTargetCount = Math.max(CHAT_LIST_PAGE_SIZE, chatListOffsetRef.current)
+
     if (!append) {
       setChatsError('')
-      if (chatsRef.current.length === 0) {
+      if (chatsRef.current.length === 0 || hasSearch) {
         setChatsLoading(true)
       }
       chatListOffsetRef.current = 0
@@ -2707,40 +2717,86 @@ export const DesktopChat: React.FC = () => {
     const timeoutId = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS)
     if (append) chatListLoadingMoreRef.current = true
 
-    try {
-      const offset = append ? chatListOffsetRef.current : 0
+    const fetchChatPage = async (offset: number) => {
       const data = await apiClient.get<DesktopChatContact[]>('/contacts/chats', {
         params: {
           limit: String(CHAT_LIST_PAGE_SIZE),
-          ...(offset > 0 ? { offset: String(offset) } : {})
+          ...(offset > 0 ? { offset: String(offset) } : {}),
+          ...(hasSearch ? { q: normalizedSearch } : {})
         },
         signal: controller.signal
       })
-      const loadedPageChats = Array.isArray(data) ? data : []
-      const pageChats = dedupeChatsById(loadedPageChats)
+      return dedupeChatsById(Array.isArray(data) ? data : [])
+    }
 
-      chatListOffsetRef.current = offset + loadedPageChats.length
-      chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
-
+    try {
       if (append) {
+        const offset = chatListOffsetRef.current
+        const pageChats = await fetchChatPage(offset)
+        chatListOffsetRef.current = offset + pageChats.length
+        chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE
         setChats((currentChats) => dedupeChatsById([...currentChats, ...pageChats]))
-      } else {
-        writeCachedChatList(pageChats)
-        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, pageChats))
-        setChats(pageChats)
+      } else if (hasSearch) {
+        let offset = 0
+        let allChats: DesktopChatContact[] = []
+        let hasMore = true
+
+        while (hasMore && chatsRequestRef.current === controller) {
+          const pageChats = await fetchChatPage(offset)
+          allChats = dedupeChatsById([...allChats, ...pageChats])
+          offset += pageChats.length
+          hasMore = pageChats.length >= CHAT_LIST_PAGE_SIZE
+        }
+
+        if (chatsRequestRef.current !== controller) return
+
+        chatListOffsetRef.current = offset
+        chatListHasMoreRef.current = hasMore
+        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, allChats))
+        setChats(allChats)
         setActiveContactId((current) => {
           const removedStates = removedChatStatesRef.current
-          if (current && pageChats.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) return current
+          if (current && allChats.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) {
+            return current
+          }
           const archivedSet = archivedChatIdSetRef.current
           const agentSet = agentPriorityChatIdSetRef.current
-          return getDefaultActiveChatId(pageChats, archivedSet, agentSet, removedStates)
+          return getDefaultActiveChatId(allChats, archivedSet, agentSet, removedStates)
+        })
+      } else {
+        let offset = 0
+        let allChats: DesktopChatContact[] = []
+        let hasMore = true
+
+        while (hasMore && offset < reloadTargetCount && chatsRequestRef.current === controller) {
+          const pageChats = await fetchChatPage(offset)
+          allChats = dedupeChatsById([...allChats, ...pageChats])
+          offset += pageChats.length
+          hasMore = pageChats.length >= CHAT_LIST_PAGE_SIZE
+        }
+
+        if (chatsRequestRef.current !== controller) return
+
+        chatListOffsetRef.current = offset
+        chatListHasMoreRef.current = hasMore
+        writeCachedChatList(allChats)
+        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, allChats))
+        setChats(allChats)
+        setActiveContactId((current) => {
+          const removedStates = removedChatStatesRef.current
+          if (current && allChats.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) {
+            return current
+          }
+          const archivedSet = archivedChatIdSetRef.current
+          const agentSet = agentPriorityChatIdSetRef.current
+          return getDefaultActiveChatId(allChats, archivedSet, agentSet, removedStates)
         })
       }
     } catch (error: any) {
       if (controller.signal.aborted && chatsRequestRef.current !== controller) return
       if (!silent && !append) {
         const timedOut = controller.signal.aborted || error?.name === 'AbortError'
-        if (chatsRef.current.length === 0) {
+        if (chatsRef.current.length === 0 || hasSearch) {
           setChatsError(timedOut ? 'Los chats tardaron demasiado en cargar. Intenta otra vez.' : 'No se pudieron cargar los chats.')
           setChats([])
         }
@@ -2756,7 +2812,7 @@ export const DesktopChat: React.FC = () => {
         setChatsLoading(false)
       }
     }
-  }, [])
+  }, [chatQuery])
 
   const loadMoreChatsIfNeeded = useCallback((event?: React.UIEvent<HTMLDivElement>) => {
     if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
@@ -3193,18 +3249,12 @@ export const DesktopChat: React.FC = () => {
     void startVoiceRecording()
   }, [cancelVoiceDraft, composerStatus, startVoiceRecording, stopVoiceRecording, voiceDraft, voiceProcessing, voiceRecording])
 
-  const ensureContactInList = useCallback((contact: Contact) => {
-    const nextContact = toChatContact(contact)
-    setChats((current) => current.some((item) => item.id === nextContact.id) ? current : [nextContact, ...current])
-    setActiveContactId(nextContact.id)
-  }, [])
-
-  const handleSearchContacts = useCallback(async () => {
-    const trimmed = chatQuery.trim()
-    if (trimmed.length < 2) return
-    const results = await contactsService.searchContacts(trimmed)
-    if (results[0]) ensureContactInList(results[0])
-  }, [chatQuery, ensureContactInList])
+  const handleSearchContacts = useCallback(() => {
+    void loadChats({
+      silent: false,
+      search: isChatQueryActive ? normalizedChatQuery : undefined
+    })
+  }, [isChatQueryActive, loadChats, normalizedChatQuery])
 
   const addDraftAttachment = useCallback((attachment: DesktopDraftAttachment) => {
     setDraftAttachments((current) => [attachment, ...current].slice(0, 4))

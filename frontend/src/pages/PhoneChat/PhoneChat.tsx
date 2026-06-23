@@ -4725,6 +4725,11 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    // En recargas completas conservamos la profundidad ya cargada por scroll: si el
+    // usuario ya cargó varias páginas, volvemos a traerlas todas para que un refresco
+    // silencioso (intervalo de 20s / eventos en vivo) no recorte la lista al primer page.
+    const reloadTargetCount = Math.max(CHAT_LIST_PAGE_SIZE, chatListOffsetRef.current)
+
     if (!silentRefresh) setChatsError('')
     const trimmed = chatQuery.trim()
     const phoneFilterParams: Record<string, string> = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
@@ -4775,26 +4780,43 @@ export const PhoneChat: React.FC = () => {
 
     const controller = new AbortController()
     chatsRequestRef.current = controller
-    try {
-      const offset = append ? chatListOffsetRef.current : 0
 
+    const fetchChatPage = async (pageOffset: number) => {
       const params: Record<string, string> = {
         ...(trimmed ? { q: trimmed } : {}),
         ...phoneFilterParams,
         limit: String(CHAT_LIST_PAGE_SIZE),
-        ...(offset > 0 ? { offset: String(offset) } : {})
+        ...(pageOffset > 0 ? { offset: String(pageOffset) } : {})
       }
       const data = await apiClient.get<ChatContact[]>('/contacts/chats', { params })
-      const loadedPageChats = Array.isArray(data) ? data : []
-      const pageChats = dedupeChatsById(loadedPageChats)
-      const nextChats = append ? dedupeChatsById([...chatsRef.current, ...pageChats]) : pageChats
+      return Array.isArray(data) ? data : []
+    }
 
-      chatListOffsetRef.current = offset + loadedPageChats.length
-      chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
-
+    try {
       if (append) {
-        applyLoadedChats(nextChats)
+        const offset = chatListOffsetRef.current
+        const loadedPageChats = await fetchChatPage(offset)
+        const pageChats = dedupeChatsById(loadedPageChats)
+        chatListOffsetRef.current = offset + loadedPageChats.length
+        chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
+        applyLoadedChats(dedupeChatsById([...chatsRef.current, ...pageChats]))
       } else {
+        let offset = 0
+        let nextChats: ChatContact[] = []
+        let hasMore = true
+
+        while (hasMore && offset < reloadTargetCount && chatsRequestRef.current === controller) {
+          const loadedPageChats = await fetchChatPage(offset)
+          nextChats = dedupeChatsById([...nextChats, ...loadedPageChats])
+          offset += loadedPageChats.length
+          hasMore = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
+        }
+
+        if (chatsRequestRef.current !== controller) return
+
+        chatListOffsetRef.current = offset
+        chatListHasMoreRef.current = hasMore
+
         let requestedContact = requestedContactParam
           ? nextChats.find((contact) => contact.id === requestedContactParam)
           : null
