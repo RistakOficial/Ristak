@@ -843,19 +843,19 @@
 }
 
 .phoneChatPage[data-phone-chat-tone="dark"] .chatSwipeContent {
-  background: var(--phone-chat-surface);
+  background: var(--phone-chat-bg);
 }
 
 .phoneChatPage[data-phone-chat-tone="dark"] .chatItemUnread.chatSwipeContent {
   background:
     linear-gradient(0deg, var(--phone-chat-accent-soft), var(--phone-chat-accent-soft)),
-    var(--phone-chat-surface);
+    var(--phone-chat-bg);
 }
 
 .phoneChatPage[data-phone-chat-tone="dark"] .chatItemAgentAction.chatSwipeContent {
   background:
     linear-gradient(0deg, color-mix(in srgb, var(--neg) 19%, transparent), color-mix(in srgb, var(--neg) 19%, transparent)),
-    var(--phone-chat-surface);
+    var(--phone-chat-bg);
 }
 
 .phoneChatPage[data-phone-chat-tone="dark"] .chatItemSelected.chatSwipeContent,
@@ -863,7 +863,7 @@
 .phoneChatPage[data-phone-chat-tone="dark"] .chatItemSelected.chatItemAgentAction.chatSwipeContent {
   background:
     linear-gradient(0deg, var(--phone-chat-accent-soft), var(--phone-chat-accent-soft)),
-    var(--phone-chat-surface);
+    var(--phone-chat-bg);
 }
 
 .chatSelectionPanel {
