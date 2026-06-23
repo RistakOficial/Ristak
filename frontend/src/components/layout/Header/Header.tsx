@@ -186,7 +186,7 @@ export const Header: React.FC<HeaderProps> = ({ sitesEditorActive = false }) => 
 
   const handleOpenSimpleChatView = () => {
     if (typeof window === 'undefined') return
-    window.open(PHONE_APP_HOME_PATH, '_blank', 'noopener,noreferrer')
+    navigate(PHONE_APP_HOME_PATH)
   }
 
   const unreadNotifications = notifications.filter((notification) => !seenNotificationIds.has(notification.id))

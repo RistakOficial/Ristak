@@ -8266,12 +8266,40 @@
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .tabletSideRail {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   position: relative;
   z-index: 4;
-  display: block;
   min-width: 0;
   min-height: 0;
   background: var(--phone-chat-surface-soft);
+}
+
+.tabletSideRailNav {
+  flex: 1;
+}
+
+.phoneChatDesktopViewButton {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-top: 1px solid var(--phone-chat-border);
+  padding: 0;
+  background: transparent;
+  color: var(--phone-chat-text);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.phoneChatDesktopViewButton:hover {
+  background: color-mix(in srgb, var(--phone-chat-surface) 92%, transparent);
+}
+
+.phoneChatDesktopViewButton:active {
+  background: color-mix(in srgb, var(--phone-chat-surface) 82%, transparent);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatListScreen,

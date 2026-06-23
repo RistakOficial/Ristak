@@ -3678,6 +3678,10 @@ export const PhoneChat: React.FC = () => {
     setSheet(null)
     navigate('/dashboard', { replace: true })
   }, [navigate])
+
+  const handleOpenDesktopChat = useCallback(() => {
+    navigate('/chat')
+  }, [navigate])
   const actionSheetDismiss = useBottomSheetDismiss({
     isOpen: Boolean(sheet),
     onClose: closeSheetNow
@@ -15202,11 +15206,21 @@ export const PhoneChat: React.FC = () => {
         {isWideChatDevice && (
           <aside className={styles.tabletSideRail} aria-label="Secciones de Ristak">
             <PhoneEcosystemNav
+              className={styles.tabletSideRailNav}
               active={activeRailSection}
               badges={{ chat: unreadTotal }}
               placement="rail"
               onSelect={handleWideRailSelect}
             />
+            <button
+              type="button"
+              className={styles.phoneChatDesktopViewButton}
+              onClick={handleOpenDesktopChat}
+              aria-label="Volver a la vista completa de chat"
+              title="Regresar a chat normal"
+            >
+              <MessageCircle size={21} aria-hidden="true" />
+            </button>
           </aside>
         )}
 
