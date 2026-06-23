@@ -8336,8 +8336,7 @@ export const Sites: React.FC = () => {
           response.configured &&
           response.config?.adAccountId &&
           response.config?.accessToken &&
-          response.config?.pixelId &&
-          response.config?.pixelApiToken
+          response.config?.pixelId
         ))
       })
       .catch(() => {
