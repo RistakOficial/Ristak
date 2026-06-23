@@ -12,6 +12,7 @@ const CONFIG_KEYS = {
   purchaseEnabled: 'meta_whatsapp_purchase_enabled',
   scheduleEventName: 'meta_whatsapp_schedule_event_name',
   purchaseEventName: 'meta_whatsapp_purchase_event_name',
+  paymentPurchaseEventConfig: 'meta_payment_purchase_event_config',
   testEventCode: 'meta_test_event_code',
   whatsappBusinessAccountId: 'meta_whatsapp_business_account_id'
 }
@@ -21,6 +22,21 @@ const EVENT_TYPES = {
   purchase: 'first_purchase'
 }
 const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
+const DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
+const DEFAULT_PAYMENT_EVENT_NAME = 'Purchase'
+const PAYMENT_META_DEFAULT_CURRENCY = 'MXN'
+const PAYMENT_META_MAX_CUSTOM_PARAMETERS = 12
+const PAYMENT_META_EVENT_OPTIONS = new Set([
+  'Purchase',
+  'AddPaymentInfo',
+  'Schedule',
+  'Lead',
+  'Contact',
+  'FormSubmitted',
+  'CompleteRegistration',
+  'ViewContent',
+  DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
+])
 
 const CONTACT_SENT_FIELDS = {
   [EVENT_TYPES.schedule]: {
@@ -84,6 +100,79 @@ function normalizeCalendarWhatsappCustomEvents(value = {}) {
   }
 }
 
+function hasStructuredPaymentMetaPurchaseEventConfig(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+
+  return Object.prototype.hasOwnProperty.call(value, 'enabled')
+    || Object.prototype.hasOwnProperty.call(value, 'channel')
+    || Object.prototype.hasOwnProperty.call(value, 'eventName')
+    || Object.prototype.hasOwnProperty.call(value, 'event_name')
+    || Object.prototype.hasOwnProperty.call(value, 'conversionChannel')
+    || Object.prototype.hasOwnProperty.call(value, 'conversion_channel')
+    || Object.prototype.hasOwnProperty.call(value, 'parameters')
+}
+
+function normalizePaymentMetaPurchaseEventCustomParameterKey(value = '') {
+  const key = cleanString(value)
+    .replace(/[^a-zA-Z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64)
+
+  if (!key) return ''
+  return /^[a-zA-Z_]/.test(key) ? key : `param_${key}`
+}
+
+function normalizePaymentMetaPurchaseEventParameters(value = {}) {
+  const source = value && typeof value === 'object' ? value : parseJson(value, {})
+
+  const rawCustom = Array.isArray(source.custom)
+    ? source.custom
+    : Array.isArray(source.customParameters)
+      ? source.customParameters
+      : Array.isArray(source.custom_parameters)
+        ? source.custom_parameters
+        : []
+
+  const custom = rawCustom
+    .map((parameter = {}) => ({
+      id: cleanString(parameter.id),
+      key: cleanString(parameter.key || parameter.name),
+      value: cleanString(parameter.value)
+    }))
+    .filter(parameter => parameter.key || parameter.value)
+    .slice(0, PAYMENT_META_MAX_CUSTOM_PARAMETERS)
+
+  return {
+    sendValue: Object.prototype.hasOwnProperty.call(source, 'sendValue')
+      ? parseBoolean(source.sendValue, true)
+      : true,
+    value: cleanString(source.value),
+    predictedLtv: cleanString(source.predictedLtv || source.predicted_ltv),
+    custom
+  }
+}
+
+function normalizePaymentMetaPurchaseEventConfig(value = null) {
+  const source = parseJson(value, {})
+  const eventSource = source && typeof source === 'object' && !Array.isArray(source) ? source : {}
+  const channel = cleanString(
+    eventSource.channel || eventSource.conversionChannel || eventSource.conversion_channel || 'site'
+  ).toLowerCase()
+  const eventName = cleanString(eventSource.eventName || eventSource.event_name)
+
+  return {
+    enabled: parseBoolean(eventSource.enabled, false),
+    channel: channel === 'whatsapp' ? 'whatsapp' : channel === 'smart' ? 'smart' : 'site',
+    eventName: channel === 'whatsapp'
+      ? normalizeBusinessMessagingEventName(eventName || DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME)
+      : PAYMENT_META_EVENT_OPTIONS.has(eventName)
+        ? eventName
+        : DEFAULT_PAYMENT_EVENT_NAME,
+    parameters: normalizePaymentMetaPurchaseEventParameters(eventSource.parameters || {})
+  }
+}
+
 function normalizeForHash(value) {
   const clean = cleanString(value).toLowerCase()
   return clean || null
@@ -112,14 +201,117 @@ function jsonForLog(value) {
   }
 }
 
-function normalizeCurrency(value) {
-  const currency = cleanString(value || 'MXN').toUpperCase()
-  return currency || 'MXN'
+function parseMetaNumber(value) {
+  const raw = cleanString(value).replace(/[$,\s]/g, '')
+  if (!raw) return null
+  const number = Number(raw)
+  return Number.isFinite(number) ? number : null
 }
 
-function normalizeAmount(value) {
-  const amount = Number(value)
-  return Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : null
+function hasWhatsappAttributionSignal(whatsappAttribution = null) {
+  if (!whatsappAttribution) return false
+
+  return Boolean(
+    cleanString(whatsappAttribution.referral_ctwa_clid)
+    || cleanString(whatsappAttribution.referral_source_id)
+    || cleanString(whatsappAttribution.referral_source_url)
+    || cleanString(whatsappAttribution.referral_headline)
+    || cleanString(whatsappAttribution.ad_id_thru_message)
+  )
+}
+
+function extractPaymentMetaEventSourceUrl(payment = {}) {
+  const sourceUrl = cleanString(
+    payment.eventSourceUrl
+    || payment.event_source_url
+    || payment.sourceUrl
+    || payment.source_url
+    || payment.checkoutUrl
+    || payment.checkout_url
+  )
+
+  return sourceUrl || ''
+}
+
+function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}) {
+  const normalizedParameters = normalizePaymentMetaPurchaseEventParameters(parameters)
+  const normalizedAmount = parseMetaNumber(normalizedParameters.value)
+  const paymentAmount = parseMetaNumber(payment.amount)
+  const predictedLtv = parseMetaNumber(normalizedParameters.predictedLtv)
+  const currency = cleanString(payment.currency || PAYMENT_META_DEFAULT_CURRENCY).toUpperCase().slice(0, 3)
+  const customData = {
+    source: 'ristak_payment',
+    conversion_type: EVENT_TYPES.purchase
+  }
+
+  const finalValue = normalizedParameters.sendValue === false
+    ? null
+    : (normalizedAmount ?? paymentAmount)
+  if (finalValue !== null) {
+    customData.value = finalValue
+  }
+
+  if (predictedLtv !== null) {
+    customData.predicted_ltv = predictedLtv
+  }
+
+  if (/^[A-Z]{3}$/.test(currency)) {
+    customData.currency = currency
+  }
+
+  const paymentId = cleanString(payment.id || payment.reference || payment.ghl_invoice_id || payment.paymentId || payment.payment_id)
+  if (paymentId) {
+    customData.payment_id = paymentId
+  }
+
+  const paymentStatus = cleanString(payment.status)
+  if (paymentStatus) {
+    customData.payment_status = paymentStatus
+  }
+
+  if (Array.isArray(normalizedParameters.custom)) {
+    normalizedParameters.custom.forEach((parameter) => {
+      const key = normalizePaymentMetaPurchaseEventCustomParameterKey(parameter.key)
+      const value = cleanString(parameter.value)
+      if (!key || !value) return
+      customData[key] = value
+    })
+  }
+
+  return customData
+}
+
+async function getPaymentMetaPurchaseEventConfig() {
+  const rawConfig = parseJson(await getAppConfig(CONFIG_KEYS.paymentPurchaseEventConfig), null)
+  if (hasStructuredPaymentMetaPurchaseEventConfig(rawConfig)) {
+    return normalizePaymentMetaPurchaseEventConfig(rawConfig)
+  }
+
+  const legacyEnabled = await getConfigBoolean(CONFIG_KEYS.purchaseEnabled, false)
+  if (!legacyEnabled) {
+    return {
+      enabled: false,
+      channel: 'site',
+      eventName: DEFAULT_PAYMENT_EVENT_NAME,
+      parameters: {
+        value: '',
+        predictedLtv: '',
+        custom: []
+      }
+    }
+  }
+
+  const legacyEventName = await getConfiguredEventName(CONFIG_KEYS.purchaseEventName, DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME)
+  return {
+    enabled: true,
+    channel: 'whatsapp',
+    eventName: normalizeBusinessMessagingEventName(legacyEventName),
+    parameters: {
+      value: '',
+      predictedLtv: '',
+      custom: []
+    }
+  }
 }
 
 function deriveNames(contact = {}) {
@@ -590,6 +782,117 @@ async function sendMetaWhatsappEvent({
   }
 }
 
+async function sendMetaSiteEvent({
+  contactId,
+  eventType,
+  metaEventName,
+  eventId,
+  customData,
+  eventSourceUrl = ''
+}) {
+  const contact = await getContactForMetaEvent(contactId)
+
+  if (!contact) {
+    await logMetaEvent({
+      contactId,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'Contacto no encontrado'
+    })
+    return { sent: false, reason: 'contact_not_found' }
+  }
+
+  if (contactAlreadySent(contact, eventType)) {
+    return { sent: false, reason: 'already_sent' }
+  }
+
+  const metaConfig = await getMetaCapiConfig()
+  if (!metaConfig.datasetId || !metaConfig.accessToken) {
+    await logMetaEvent({
+      contactId,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'error',
+      errorMessage: 'Falta META_PIXEL_ID/DATASET_ID o META_ACCESS_TOKEN/Pixel API Token'
+    })
+    return { sent: false, reason: 'missing_meta_config' }
+  }
+
+  const userData = buildUserData(contact)
+  if (!userData.em && !userData.ph && !userData.external_id) {
+    await logMetaEvent({
+      contactId,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'skipped',
+      errorMessage: 'user_data insuficiente para Meta'
+    })
+    return { sent: false, reason: 'insufficient_user_data' }
+  }
+
+  const payload = {
+    data: [
+      {
+        event_name: metaEventName,
+        event_time: Math.floor(Date.now() / 1000),
+        action_source: 'website',
+        event_id: eventId,
+        user_data: userData,
+        custom_data: customData || {}
+      }
+    ]
+  }
+
+  const normalizedEventSourceUrl = cleanString(eventSourceUrl)
+  if (normalizedEventSourceUrl) {
+    payload.data[0].event_source_url = normalizedEventSourceUrl
+  }
+
+  if (metaConfig.testEventCode) {
+    payload.test_event_code = metaConfig.testEventCode
+  }
+
+  try {
+    const responsePayload = await postEventToMeta({
+      datasetId: metaConfig.datasetId,
+      accessToken: metaConfig.accessToken,
+      payload
+    })
+
+    await markContactEventSent(contactId, eventType, eventId)
+    await logMetaEvent({
+      contactId,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'success',
+      requestPayload: payload,
+      responsePayload
+    })
+
+    logger.info(`✅ Evento Meta ${eventType} enviado a Meta para contacto ${contactId}`)
+    return { sent: true, eventId, responsePayload }
+  } catch (error) {
+    await logMetaEvent({
+      contactId,
+      eventType,
+      metaEventName,
+      eventId,
+      status: 'error',
+      requestPayload: payload,
+      responsePayload: error.responsePayload || null,
+      errorMessage: error.message
+    })
+
+    logger.error(`Error enviando evento de sitio ${eventType} a Meta para contacto ${contactId}: ${error.message}`)
+    return { sent: false, reason: 'meta_error', error: error.message }
+  }
+}
+
 export function isSuccessfulPaymentStatus(status) {
   return SUCCESS_PAYMENT_STATUSES.has(String(status || '').trim().toLowerCase())
 }
@@ -697,7 +1000,8 @@ export async function triggerWhatsappAppointmentBookedEvent(contactId, options =
 }
 
 export async function triggerWhatsappFirstPurchaseEvent(contactId, payment = {}) {
-  if (!await getConfigBoolean(CONFIG_KEYS.purchaseEnabled, false)) {
+  const paymentMetaConfig = await getPaymentMetaPurchaseEventConfig()
+  if (!paymentMetaConfig.enabled) {
     return { sent: false, reason: 'disabled' }
   }
 
@@ -710,26 +1014,51 @@ export async function triggerWhatsappFirstPurchaseEvent(contactId, payment = {})
     return { sent: false, reason: 'test_payment' }
   }
 
-  const metaEventName = await getConfiguredEventName(CONFIG_KEYS.purchaseEventName, 'Purchase')
+  const siteMetaEventName = paymentMetaConfig.eventName || DEFAULT_PAYMENT_EVENT_NAME
+  const whatsappMetaEventName = normalizeBusinessMessagingEventName(
+    paymentMetaConfig.channel === 'whatsapp'
+      ? paymentMetaConfig.eventName || DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
+      : DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
+  )
   const eventId = `purchase_contact_${contactId}`
-  const value = normalizeAmount(payment.amount)
-  const currency = normalizeCurrency(payment.currency)
-  const customData = {
-    currency,
-    source: 'whatsapp',
-    conversion_type: EVENT_TYPES.purchase
+  const eventSourceUrl = extractPaymentMetaEventSourceUrl(payment)
+  const customData = buildPaymentMetaPurchaseEventCustomData(paymentMetaConfig.parameters, payment)
+
+  if (paymentMetaConfig.channel === 'whatsapp') {
+    return sendMetaWhatsappEvent({
+      contactId,
+      eventType: EVENT_TYPES.purchase,
+      metaEventName: whatsappMetaEventName,
+      eventId,
+      customData
+    })
   }
 
-  if (value !== null) {
-    customData.value = value
+  const smartChannel = paymentMetaConfig.channel === 'smart'
+    ? hasWhatsappAttributionSignal(await getLatestWhatsappAttribution(await getContactForMetaEvent(contactId)))
+    : false
+
+  if (smartChannel) {
+    const whatsappResult = await sendMetaWhatsappEvent({
+      contactId,
+      eventType: EVENT_TYPES.purchase,
+      metaEventName: whatsappMetaEventName,
+      eventId,
+      customData
+    })
+
+    if (whatsappResult.sent || whatsappResult.reason === 'already_sent' || whatsappResult.reason === 'meta_error') {
+      return whatsappResult
+    }
   }
 
-  return sendMetaWhatsappEvent({
+  return sendMetaSiteEvent({
     contactId,
     eventType: EVENT_TYPES.purchase,
-    metaEventName,
+    metaEventName: siteMetaEventName,
     eventId,
-    customData
+    customData,
+    eventSourceUrl
   })
 }
 
