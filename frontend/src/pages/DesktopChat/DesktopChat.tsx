@@ -282,6 +282,7 @@ const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_REFRESH_INTERVAL_MS = 20000
 const CHAT_LIST_PAGE_SIZE = 100
+const CHAT_LIST_AUTO_LOAD_GAP_PX = 180
 const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'archivar'
 const BULK_CHAT_RESTORE_CONFIRM_WORD = 'restaurar'
 const BULK_CHAT_REMOVE_CONFIRM_WORD = 'eliminar'
@@ -2049,6 +2050,7 @@ export const DesktopChat: React.FC = () => {
   const { timezone, formatLocalDateTime } = useTimezone()
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const chatsRequestRef = useRef<AbortController | null>(null)
+  const chatListRef = useRef<HTMLDivElement | null>(null)
   const photoInputRef = useRef<HTMLInputElement | null>(null)
   const documentInputRef = useRef<HTMLInputElement | null>(null)
   const composerMenuRef = useRef<HTMLDivElement | null>(null)
@@ -2060,6 +2062,9 @@ export const DesktopChat: React.FC = () => {
   const messageAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
   const selectAllChatCheckboxRef = useRef<HTMLInputElement | null>(null)
   const chatsRef = useRef<DesktopChatContact[]>([])
+  const chatListOffsetRef = useRef(initialChatCache.chats.length)
+  const chatListHasMoreRef = useRef(initialChatCache.chats.length >= CHAT_LIST_PAGE_SIZE)
+  const chatListLoadingMoreRef = useRef(false)
   const activeContactIdRef = useRef('')
   const conversationLoadGenerationRef = useRef(0)
   const chatLiveRefreshTimeoutRef = useRef<number | null>(null)
@@ -2677,54 +2682,63 @@ export const DesktopChat: React.FC = () => {
     }
   ]), [advancedFilters])
 
-  const loadChats = useCallback(async (options: { silent?: boolean } = {}) => {
+  const loadChats = useCallback(async (options: { silent?: boolean; append?: boolean } = {}) => {
     const silent = options.silent === true
-    if (silent && chatsRequestRef.current) return
+    const append = options.append === true
 
-    if (!silent) {
+    if (append) {
+      if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current || chatsRequestRef.current) return
+    } else if (silent && chatsRequestRef.current) {
+      return
+    }
+
+    if (!append) {
       setChatsError('')
       if (chatsRef.current.length === 0) {
         setChatsLoading(true)
       }
+      chatListOffsetRef.current = 0
+      chatListHasMoreRef.current = true
+      chatsRequestRef.current?.abort()
     }
 
-    if (!silent) chatsRequestRef.current?.abort()
     const controller = new AbortController()
     chatsRequestRef.current = controller
     const timeoutId = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS)
+    if (append) chatListLoadingMoreRef.current = true
 
     try {
-      let offset = 0
-      let nextChats: DesktopChatContact[] = []
-
-      while (true) {
-        const data = await apiClient.get<DesktopChatContact[]>('/contacts/chats', {
-          params: {
-            limit: String(CHAT_LIST_PAGE_SIZE),
-            offset: String(offset)
-          },
-          signal: controller.signal
-        })
-        const pageChats = Array.isArray(data) ? data : []
-        nextChats = dedupeChatsById([...nextChats, ...pageChats])
-
-        if (pageChats.length < CHAT_LIST_PAGE_SIZE) break
-        offset += pageChats.length
-      }
-
-      writeCachedChatList(nextChats)
-      setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, nextChats))
-      setChats(nextChats)
-      setActiveContactId((current) => {
-        const removedStates = removedChatStatesRef.current
-        if (current && nextChats.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) return current
-        const archivedSet = archivedChatIdSetRef.current
-        const agentSet = agentPriorityChatIdSetRef.current
-        return getDefaultActiveChatId(nextChats, archivedSet, agentSet, removedStates)
+      const offset = append ? chatListOffsetRef.current : 0
+      const data = await apiClient.get<DesktopChatContact[]>('/contacts/chats', {
+        params: {
+          limit: String(CHAT_LIST_PAGE_SIZE),
+          ...(offset > 0 ? { offset: String(offset) } : {})
+        },
+        signal: controller.signal
       })
+      const loadedPageChats = Array.isArray(data) ? data : []
+      const pageChats = dedupeChatsById(loadedPageChats)
+
+      chatListOffsetRef.current = offset + loadedPageChats.length
+      chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
+
+      if (append) {
+        setChats((currentChats) => dedupeChatsById([...currentChats, ...pageChats]))
+      } else {
+        writeCachedChatList(pageChats)
+        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, pageChats))
+        setChats(pageChats)
+        setActiveContactId((current) => {
+          const removedStates = removedChatStatesRef.current
+          if (current && pageChats.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) return current
+          const archivedSet = archivedChatIdSetRef.current
+          const agentSet = agentPriorityChatIdSetRef.current
+          return getDefaultActiveChatId(pageChats, archivedSet, agentSet, removedStates)
+        })
+      }
     } catch (error: any) {
       if (controller.signal.aborted && chatsRequestRef.current !== controller) return
-      if (!silent) {
+      if (!silent && !append) {
         const timedOut = controller.signal.aborted || error?.name === 'AbortError'
         if (chatsRef.current.length === 0) {
           setChatsError(timedOut ? 'Los chats tardaron demasiado en cargar. Intenta otra vez.' : 'No se pudieron cargar los chats.')
@@ -2735,10 +2749,33 @@ export const DesktopChat: React.FC = () => {
       window.clearTimeout(timeoutId)
       if (chatsRequestRef.current === controller) {
         chatsRequestRef.current = null
+      }
+      if (append) {
+        chatListLoadingMoreRef.current = false
+      } else {
         setChatsLoading(false)
       }
     }
   }, [])
+
+  const loadMoreChatsIfNeeded = useCallback((event?: React.UIEvent<HTMLDivElement>) => {
+    if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
+    const pane = event?.currentTarget || chatListRef.current
+    if (!pane) return
+
+    const bottomGap = pane.scrollHeight - pane.scrollTop - pane.clientHeight
+    if (bottomGap > CHAT_LIST_AUTO_LOAD_GAP_PX) return
+
+    void loadChats({ silent: true, append: true })
+  }, [loadChats])
+
+  useEffect(() => {
+    const list = chatListRef.current
+    if (!list || chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
+    if (list.scrollHeight <= list.clientHeight + CHAT_LIST_AUTO_LOAD_GAP_PX) {
+      void loadChats({ silent: true, append: true })
+    }
+  }, [chats.length, loadChats])
 
   const loadConversation = useCallback(async (
     contactId: string,
@@ -5463,7 +5500,12 @@ export const DesktopChat: React.FC = () => {
             ) : null}
           </div>
 
-          <div className={styles.chatList} data-chat-list>
+          <div
+            className={styles.chatList}
+            data-chat-list
+            ref={chatListRef}
+            onScroll={loadMoreChatsIfNeeded}
+          >
             {chatsLoading ? (
               <div className={styles.stateBlock} role="status" aria-live="polite" aria-label="Cargando chats">
                 <Loader2 size={18} className={styles.spin} aria-hidden="true" />

@@ -146,6 +146,7 @@ const CHAT_STARRED_MESSAGES_KEY = 'ristak_phone_chat_starred_messages_v1'
 const CHAT_FAST_START_INBOX_KEY = 'ristak_phone_chat_fast_start_inbox_v1'
 const CHAT_FAST_START_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
 const CHAT_LIST_PAGE_SIZE = 100
+const CHAT_LIST_AUTO_LOAD_GAP_PX = 180
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -3524,6 +3525,12 @@ export const PhoneChat: React.FC = () => {
   const [qrRiskAcceptedIds, setQrRiskAcceptedIds] = useState<Record<string, boolean>>(() => readQrRiskAcceptedIds())
   const [restorePrompt, setRestorePrompt] = useState<WhatsAppApiPendingRestore | null>(null)
   const [restoringNumber, setRestoringNumber] = useState(false)
+  const chatsRef = useRef<ChatContact[]>([])
+  const chatsRequestRef = useRef<AbortController | null>(null)
+  const chatListRef = useRef<HTMLDivElement | null>(null)
+  const chatListOffsetRef = useRef(initialFastStartInbox?.chats.length || 0)
+  const chatListHasMoreRef = useRef(true)
+  const chatListLoadingMoreRef = useRef(false)
   const dismissedRestoreIdsRef = useRef<Set<string>>(new Set())
   const composerPlusRef = useRef<HTMLButtonElement | null>(null)
   const composerScheduleRef = useRef<HTMLButtonElement | null>(null)
@@ -3663,6 +3670,9 @@ export const PhoneChat: React.FC = () => {
     activeContactIdRef.current = activeContactId
     conversationOpenRef.current = conversationOpen
   }, [activeContactId, conversationOpen])
+  useEffect(() => {
+    chatsRef.current = chats
+  }, [chats])
   const setComposerMessageText = useCallback((nextText: string) => {
     messageTextRef.current = nextText
     setMessageText(nextText)
@@ -4703,17 +4713,25 @@ export const PhoneChat: React.FC = () => {
     return nextChats
   }, [aiAgentChatEnabled, openAIConfigured, runConversationOpenBottomScrollSequence, startConversationBottomLock])
 
-  const loadChats = useCallback(async (options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
+  const loadChats = useCallback(async (options: { append?: boolean; showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
     const silentRefresh = options.silent === true
+    const append = options.append === true
     const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
     const useCache = options.useCache !== false && !silentRefresh
+
+    if (append) {
+      if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current || chatsRequestRef.current) return
+    } else if (silentRefresh && chatsRequestRef.current) {
+      return
+    }
+
     if (!silentRefresh) setChatsError('')
     const trimmed = chatQuery.trim()
     const phoneFilterParams: Record<string, string> = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
       ? {
-          businessPhoneNumberId: effectiveSelectedChatPhoneId,
-          businessPhone: getBusinessPhoneValue(effectiveSelectedChatPhone)
-        }
+        businessPhoneNumberId: effectiveSelectedChatPhoneId,
+        businessPhone: getBusinessPhoneValue(effectiveSelectedChatPhone)
+      }
       : {}
     const cacheEnabled = !trimmed
     const cacheKey = getPhoneDailyCacheKey(
@@ -4723,75 +4741,99 @@ export const PhoneChat: React.FC = () => {
       effectiveSelectedChatPhoneId,
       phoneFilterParams.businessPhone || 'all'
     )
-    const cachedChats = cacheEnabled && useCache ? readPhoneDailyCache<ChatContact[]>(cacheKey) : null
-    const fastStartInbox = cacheEnabled && useCache && !cachedChats ? readChatFastStartInbox(selectedChatPhoneId) : null
+    const cachedChats = !append && cacheEnabled && useCache ? readPhoneDailyCache<ChatContact[]>(cacheKey) : null
+    const fastStartInbox = !append && cacheEnabled && useCache && !cachedChats ? readChatFastStartInbox(selectedChatPhoneId) : null
     const showedCachedChats = Boolean(cachedChats || fastStartInbox)
 
-    if (cachedChats || fastStartInbox) {
+    if (!append && (cachedChats || fastStartInbox)) {
       const cachedList = cachedChats
         ? Array.isArray(cachedChats.data) ? cachedChats.data : []
         : fastStartInbox?.chats || []
+      chatListOffsetRef.current = cachedList.length
+      chatListHasMoreRef.current = true
       const cachedRequestedContact = requestedContactParam
         ? cachedList.find((contact) => contact.id === requestedContactParam) || null
         : null
       applyLoadedChats(cachedList, cachedRequestedContact)
       setChatsLoading(false)
       setChatsRefreshing(showCacheRefresh)
-    } else if (!silentRefresh) {
-      setChatsLoading(true)
-      setChatsRefreshing(false)
+      return
     }
 
+    if (!append) {
+      if (!silentRefresh) {
+        setChatsError('')
+      }
+      setChatsLoading(true)
+      setChatsRefreshing(false)
+      chatListOffsetRef.current = 0
+      chatListHasMoreRef.current = true
+      chatsRequestRef.current?.abort()
+    }
+
+    if (append) chatListLoadingMoreRef.current = true
+
+    const controller = new AbortController()
+    chatsRequestRef.current = controller
     try {
-      let offset = 0
-      let nextChats: ChatContact[] = []
+      const offset = append ? chatListOffsetRef.current : 0
 
       const params: Record<string, string> = {
         ...(trimmed ? { q: trimmed } : {}),
-        ...phoneFilterParams
+        ...phoneFilterParams,
+        limit: String(CHAT_LIST_PAGE_SIZE),
+        ...(offset > 0 ? { offset: String(offset) } : {})
       }
+      const data = await apiClient.get<ChatContact[]>('/contacts/chats', { params })
+      const loadedPageChats = Array.isArray(data) ? data : []
+      const pageChats = dedupeChatsById(loadedPageChats)
+      const nextChats = append ? dedupeChatsById([...chatsRef.current, ...pageChats]) : pageChats
 
-      while (true) {
-        const data = await apiClient.get<ChatContact[]>('/contacts/chats', {
-          params: {
-            ...params,
-            limit: String(CHAT_LIST_PAGE_SIZE),
-            offset: String(offset)
+      chatListOffsetRef.current = offset + loadedPageChats.length
+      chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
+
+      if (append) {
+        applyLoadedChats(nextChats)
+      } else {
+        let requestedContact = requestedContactParam
+          ? nextChats.find((contact) => contact.id === requestedContactParam)
+          : null
+
+        if (requestedContactParam && !requestedContact) {
+          const contact = await contactsService.getContactDetails(requestedContactParam).catch(() => null)
+          if (contact) {
+            requestedContact = toChatContact(contact)
+            const nextList = [requestedContact, ...nextChats.filter((item) => item.id !== contact.id)]
+            const displayedChats = applyLoadedChats(nextList, requestedContact)
+            if (cacheEnabled) {
+              writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
+              writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
+            }
+            return
           }
-        })
+        }
 
-        const pageChats = Array.isArray(data) ? data : []
-        nextChats = dedupeChatsById([...nextChats, ...pageChats])
-
-        if (pageChats.length < CHAT_LIST_PAGE_SIZE) break
-        offset += pageChats.length
-      }
-
-      let requestedContact = requestedContactParam
-        ? nextChats.find((contact) => contact.id === requestedContactParam)
-        : null
-
-      if (requestedContactParam && !requestedContact) {
-        const contact = await contactsService.getContactDetails(requestedContactParam).catch(() => null)
-        if (contact) {
-          requestedContact = toChatContact(contact)
-          nextChats = [requestedContact, ...nextChats.filter((item) => item.id !== contact.id)]
+        const displayedChats = applyLoadedChats(nextChats, requestedContact)
+        if (cacheEnabled) {
+          writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
+          writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
         }
       }
-
-      const displayedChats = applyLoadedChats(nextChats, requestedContact)
-      if (cacheEnabled) {
-        writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
-        writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
-      }
     } catch {
-      if (!showedCachedChats && !silentRefresh) {
+      if (!append && !showedCachedChats && !silentRefresh) {
         setChatsError('No se pudieron cargar los chats.')
         setChats([])
       }
     } finally {
-      setChatsLoading(false)
-      setChatsRefreshing(false)
+      if (chatsRequestRef.current === controller) {
+        chatsRequestRef.current = null
+      }
+      if (append) {
+        chatListLoadingMoreRef.current = false
+      } else {
+        setChatsLoading(false)
+        setChatsRefreshing(false)
+      }
     }
   }, [
     applyLoadedChats,
@@ -4803,6 +4845,17 @@ export const PhoneChat: React.FC = () => {
     selectedChatPhoneFilterActive,
     selectedChatPhoneId
   ])
+
+  const loadMoreChatsIfNeeded = useCallback((event?: React.UIEvent<HTMLDivElement>) => {
+    if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
+    const pane = event?.currentTarget || chatListRef.current
+    if (!pane) return
+
+    const bottomGap = pane.scrollHeight - pane.scrollTop - pane.clientHeight
+    if (bottomGap > CHAT_LIST_AUTO_LOAD_GAP_PX) return
+
+    void loadChats({ silent: true, append: true })
+  }, [loadChats])
 
   const applyAgentLiveCache = useCallback((cache: ConversationalAgentLiveCache | null) => {
     if (!cache || (!openAIConfigured && !openAILoading)) return
@@ -5648,6 +5701,15 @@ export const PhoneChat: React.FC = () => {
 
     return () => window.clearTimeout(timer)
   }, [accessState, chatQuery, loadChats])
+
+  useEffect(() => {
+    if (accessState !== 'allowed' || chats.length === 0) return
+    const list = chatListRef.current
+    if (!list || chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
+    if (list.scrollHeight <= list.clientHeight + CHAT_LIST_AUTO_LOAD_GAP_PX) {
+      void loadChats({ silent: true, append: true, useCache: false })
+    }
+  }, [accessState, chats.length, loadChats])
 
   useEffect(() => {
     if (accessState !== 'allowed') return
@@ -15310,6 +15372,8 @@ export const PhoneChat: React.FC = () => {
             className={styles.chatList}
             data-phone-chat-scrollable="true"
             data-phone-chat-list-scroll="true"
+            ref={chatListRef}
+            onScroll={loadMoreChatsIfNeeded}
             onClickCapture={handleChatListClickCapture}
           >
             <div className={styles.chatListElasticContent} data-phone-elastic-target="true">
