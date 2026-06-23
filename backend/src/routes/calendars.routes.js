@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/authMiddleware.js';
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js';
 
 const router = express.Router();
+export const publicCalendarsRoutes = express.Router();
 
 /**
  * Rutas para la gestión de Calendarios de HighLevel
@@ -11,8 +12,8 @@ const router = express.Router();
  */
 
 // Slots y reservas publicas para URLs compartibles de calendario
-router.get('/public/:slug/free-slots', calendarsController.getPublicFreeSlots);
-router.post('/public/:slug/appointments', calendarsController.createPublicAppointment);
+publicCalendarsRoutes.get('/public/:slug/free-slots', calendarsController.getPublicFreeSlots);
+publicCalendarsRoutes.post('/public/:slug/appointments', calendarsController.createPublicAppointment);
 
 router.use(requireAuth);
 router.use(requireModuleAccess('appointments'));

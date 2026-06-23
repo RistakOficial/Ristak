@@ -2044,6 +2044,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       });
 
       const loadSlots = async () => {
+        renderMonth();
         setLoading(true);
         try {
           const start = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
@@ -2065,7 +2066,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
             renderSlotsForDate('');
           }
         } catch (error) {
-          daysEl.innerHTML = '';
+          slotsByDate = new Map();
+          renderMonth();
           slotsEl.innerHTML = '<div class="slotEmpty">No se pudieron cargar horarios. Intenta más tarde.</div>';
         } finally {
           setLoading(false);

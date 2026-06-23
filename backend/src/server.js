@@ -39,7 +39,7 @@ import transactionsRoutes from './routes/transactions.routes.js'
 import integrationsRoutes from './routes/integrations.routes.js'
 import attributionRoutes from './routes/attribution.routes.js'
 import settingsRoutes from './routes/settings.routes.js'
-import calendarsRoutes from './routes/calendars.routes.js'
+import calendarsRoutes, { publicCalendarsRoutes } from './routes/calendars.routes.js'
 import trackingRoutes, { publicTrackingRoutes } from './routes/tracking.routes.js'
 import triggerLinksRoutes from './routes/triggerLinks.routes.js'
 import configRoutes from './routes/config.routes.js'
@@ -233,6 +233,7 @@ app.use('/api/transactions', transactionsRoutes)
 app.use('/api/integrations', integrationsRoutes)
 app.use('/api/attribution', attributionRoutes)
 app.use('/api/settings', settingsRoutes)
+app.use('/api/calendars', publicCalendarsRoutes)
 app.use('/api/calendars', requireFeature('google_calendar'), calendarsRoutes)
 app.use('/api/push', pushRoutes)
 app.use('/api/license', licenseRoutes)
