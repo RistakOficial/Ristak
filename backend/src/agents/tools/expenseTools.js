@@ -48,6 +48,109 @@ function normalizeAdjustmentMode(value) {
   return 'replace'
 }
 
+const MONTH_NAMES_ES = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre'
+]
+
+function formatMoneyForUser(value) {
+  const number = Number(value || 0)
+  const fractionDigits = Number.isInteger(number) ? 0 : 2
+
+  return new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency: 'MXN',
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: 2
+  }).format(number)
+}
+
+function parseDateParts(value) {
+  const [year, month = '1', day = '1'] = String(value || '').slice(0, 10).split('-')
+  const parsedYear = Number(year)
+  const parsedMonth = Number(month)
+  const parsedDay = Number(day)
+
+  if (!Number.isInteger(parsedYear) || parsedYear <= 0) return null
+
+  return {
+    year: parsedYear,
+    month: Number.isInteger(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12 ? parsedMonth : 1,
+    day: Number.isInteger(parsedDay) && parsedDay >= 1 && parsedDay <= 31 ? parsedDay : 1
+  }
+}
+
+function formatPeriodForUser(periodType, periodStart) {
+  const parts = parseDateParts(periodStart)
+  if (!parts) return 'ese periodo'
+
+  if (periodType === 'year') return String(parts.year)
+
+  const monthName = MONTH_NAMES_ES[parts.month - 1] || 'ese mes'
+  if (periodType === 'month') return `${monthName} de ${parts.year}`
+
+  return `${parts.day} de ${monthName} de ${parts.year}`
+}
+
+function buildManualExpenseListUserSummary({ periodType, startDate, endDate, rows, effectiveTotal }) {
+  const total = effectiveTotal !== null && effectiveTotal !== undefined
+    ? Number(effectiveTotal || 0)
+    : rows.reduce((sum, row) => sum + Number(row.amount || 0), 0)
+  const formattedTotal = formatMoneyForUser(total)
+
+  if (periodType && startDate) {
+    return `Para ${formatPeriodForUser(periodType, startDate)}, los reportes tienen ${formattedTotal} en gastos del negocio escritos por el usuario.`
+  }
+
+  if (startDate && endDate) {
+    return `Para el periodo del ${startDate} al ${endDate}, los reportes tienen ${formattedTotal} en gastos del negocio escritos por el usuario.`
+  }
+
+  return `Encontré ${rows.length} monto${rows.length === 1 ? '' : 's'} de gastos del negocio escritos por el usuario.`
+}
+
+function buildManualExpenseAdjustmentUserMessage({
+  mode,
+  periodType,
+  periodStart,
+  previousAmount,
+  newAmount,
+  amountDelta,
+  deletedChildCount,
+  effectiveTotalForRange
+}) {
+  const periodLabel = formatPeriodForUser(periodType, periodStart)
+  const previous = formatMoneyForUser(previousAmount)
+  const next = formatMoneyForUser(newAmount)
+  const effectiveTotal = formatMoneyForUser(effectiveTotalForRange ?? newAmount)
+  const delta = formatMoneyForUser(Math.abs(Number(amountDelta || 0)))
+
+  let message
+  if (mode === 'add') {
+    message = `Listo. Agregué ${delta} a los gastos del negocio de ${periodLabel}. Ahora quedan en ${next} para los reportes.`
+  } else if (mode === 'clear') {
+    message = `Listo. Quité el monto escrito para los gastos del negocio de ${periodLabel}. Ahora los reportes toman ${effectiveTotal} para ese periodo.`
+  } else {
+    message = `Listo. Dejé los gastos del negocio de ${periodLabel} en ${next}. Antes estaban en ${previous}.`
+  }
+
+  if (deletedChildCount > 0) {
+    message += ` También quité ${deletedChildCount} monto${deletedChildCount === 1 ? '' : 's'} más específico${deletedChildCount === 1 ? '' : 's'} dentro de ese periodo para que el reporte no mezcle cálculos viejos.`
+  }
+
+  return message
+}
+
 async function getManualExpense(periodType, periodStart) {
   return db.get(
     `SELECT period_type, period_start, amount
@@ -95,6 +198,13 @@ export async function listManualBusinessExpenseRecords({ periodType = null, star
     ok: true,
     total: rows.length,
     effectiveTotal,
+    userSummary: buildManualExpenseListUserSummary({
+      periodType: normalizedPeriodType,
+      startDate,
+      endDate,
+      rows,
+      effectiveTotal
+    }),
     expenses: rows.map(MANUAL_EXPENSE_FIELDS)
   }
 }
@@ -189,6 +299,17 @@ export async function applyManualBusinessExpenseAdjustment({
     deletedChildCount: result.deletedChildCount,
     effectiveRange: range,
     effectiveTotalForRange,
+    userMessage: buildManualExpenseAdjustmentUserMessage({
+      mode: safeMode,
+      periodType: normalizedPeriodType,
+      periodStart: normalizedPeriodStart,
+      previousAmount,
+      newAmount: safeMode === 'clear' ? 0 : Number(result.row?.amount || nextAmount),
+      amountDelta: roundCurrencyValue((safeMode === 'clear' ? 0 : nextAmount) - previousAmount),
+      deletedChildCount: result.deletedChildCount,
+      effectiveTotalForRange
+    }),
+    assistantGuidance: 'Usa userMessage como base para contestar al usuario. No menciones mode, add, replace, clear, override, periodType, resetChildren ni nombres internos.',
     expense: result.row ? MANUAL_EXPENSE_FIELDS(normalizeManualBusinessExpenseRow(result.row)) : null
   }
 }
@@ -285,7 +406,7 @@ export const deleteCostTool = tool({
 
 export const listManualBusinessExpensesTool = tool({
   name: 'list_manual_business_expenses',
-  description: 'Lista los gastos/costos variables manuales de reportes guardados por día, mes o año. Úsala antes de cambiar "este mes gasté X" para saber si ya existe un monto.',
+  description: 'Lista los gastos del negocio que el usuario escribió para Reportes por día, mes o año. Úsala antes de cambiar "este mes gasté X" para saber si ya existe un monto. Al responder, usa userSummary y no menciones campos internos.',
   parameters: z.object({
     periodType: z.enum(['day', 'month', 'year']).nullable().describe('Periodo a filtrar'),
     startDate: z.string().nullable().describe('Fecha inicial YYYY-MM-DD para filtrar'),
@@ -296,13 +417,13 @@ export const listManualBusinessExpensesTool = tool({
 
 export const setManualBusinessExpenseTool = tool({
   name: 'set_manual_business_expense',
-  description: 'Ajusta los costos variables manuales que afectan reportes. mode=add suma al monto actual; mode=replace reemplaza el monto del periodo; mode=clear borra el override. Pregunta y confirma si el usuario quiere sumar o reemplazar antes de ejecutar.',
+  description: 'Ajusta los gastos del negocio que afectan Reportes. Los valores internos de mode significan: add agrega encima del monto actual; replace deja el monto como total del periodo; clear quita el monto escrito para volver al cálculo automático. No menciones esos valores internos al usuario; usa userMessage.',
   parameters: z.object({
-    periodType: z.enum(['day', 'month', 'year']).describe('day, month o year'),
+    periodType: z.enum(['day', 'month', 'year']).describe('Valor interno: day, month o year. Al usuario dile día, mes o año.'),
     periodStart: z.string().describe('Fecha del periodo. Para mes puede ser YYYY-MM o YYYY-MM-DD; se normaliza al día 01.'),
-    amount: z.number().min(0).nullable().describe('Monto a sumar o reemplazar; null solo para clear'),
-    mode: z.enum(['add', 'replace', 'clear']).describe('add suma al actual, replace reemplaza el total del periodo, clear borra el registro'),
-    resetChildren: z.boolean().nullable().describe('true para borrar overrides hijos (días dentro del mes, meses/días dentro del año) y evitar mezclas raras; default true'),
+    amount: z.number().min(0).nullable().describe('Monto a agregar o dejar como total; null solo cuando se quiere volver al cálculo automático'),
+    mode: z.enum(['add', 'replace', 'clear']).describe('Valor interno: add agrega encima, replace deja como total, clear vuelve al cálculo automático. No lo menciones al usuario.'),
+    resetChildren: z.boolean().nullable().describe('true para limpiar montos más específicos dentro del periodo y evitar mezclas; default true'),
     confirm: z.boolean().describe('true solo cuando el usuario ya confirmó sumar/reemplazar/borrar')
   }),
   execute: async ({ periodType, periodStart, amount, mode, resetChildren, confirm }) => applyManualBusinessExpenseAdjustment({

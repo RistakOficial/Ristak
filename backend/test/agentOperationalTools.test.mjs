@@ -14,6 +14,13 @@ function uniqueId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+function assertBusinessUserText(text) {
+  assert.equal(typeof text, 'string')
+  assert.ok(text.length > 20)
+  assert.doesNotMatch(text, /\b(mode|replace|add|clear|override|periodType|resetChildren|manualBusinessExpenses|payload|schema|query|tool)\b/i)
+  assert.doesNotMatch(text, /gasto manual/i)
+}
+
 test('agente de anuncios busca campañas, conjuntos y anuncios por nombre o ID', async () => {
   const marker = uniqueId('agent_ads_search')
   const campaignId = `${marker}_campaign`
@@ -136,6 +143,9 @@ test('agente de costos variables suma, reemplaza y borra gastos manuales mensual
     assert.equal(replaced.ok, true)
     assert.equal(replaced.previousAmount, 0)
     assert.equal(replaced.newAmount, 1000)
+    assertBusinessUserText(replaced.userMessage)
+    assert.match(replaced.userMessage, /gastos del negocio/i)
+    assert.match(replaced.userMessage, /agosto de 2099/i)
 
     const added = await applyManualBusinessExpenseAdjustment({
       periodType: 'month',
@@ -147,6 +157,7 @@ test('agente de costos variables suma, reemplaza y borra gastos manuales mensual
     assert.equal(added.previousAmount, 1000)
     assert.equal(added.newAmount, 1250.75)
     assert.equal(added.amountDelta, 250.75)
+    assertBusinessUserText(added.userMessage)
 
     const listed = await listManualBusinessExpenseRecords({
       periodType: 'month',
@@ -157,6 +168,24 @@ test('agente de costos variables suma, reemplaza y borra gastos manuales mensual
     assert.equal(listed.total, 1)
     assert.equal(listed.expenses[0].amount, 1250.75)
     assert.equal(listed.effectiveTotal, 1250.75)
+    assertBusinessUserText(listed.userSummary)
+
+    const zeroed = await applyManualBusinessExpenseAdjustment({
+      periodType: 'month',
+      periodStart,
+      amount: 0,
+      mode: 'replace',
+      confirm: true
+    })
+    assert.equal(zeroed.ok, true)
+    assert.equal(zeroed.newAmount, 0)
+    assertBusinessUserText(zeroed.userMessage)
+
+    const zeroRow = await db.get(
+      'SELECT amount FROM report_manual_business_expenses WHERE period_type = ? AND period_start = ?',
+      ['month', periodStart]
+    )
+    assert.equal(Number(zeroRow?.amount), 0)
 
     const cleared = await applyManualBusinessExpenseAdjustment({
       periodType: 'month',
@@ -166,6 +195,7 @@ test('agente de costos variables suma, reemplaza y borra gastos manuales mensual
     })
     assert.equal(cleared.ok, true)
     assert.equal(cleared.newAmount, 0)
+    assertBusinessUserText(cleared.userMessage)
   } finally {
     await db.run(
       'DELETE FROM report_manual_business_expenses WHERE period_type = ? AND period_start = ?',

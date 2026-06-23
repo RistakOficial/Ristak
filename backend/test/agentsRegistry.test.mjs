@@ -83,6 +83,17 @@ test('contactos, anuncios, redes y costos incluyen herramientas operativas esper
   assert.ok(getAgentCategory('costos').tools.map((tool) => tool.name).includes('set_manual_business_expense'))
 })
 
+test('costos guía gastos de reportes con lenguaje de usuario final', () => {
+  const instructions = getAgentCategory('costos').instructions
+
+  assert.match(instructions, /gastos del negocio escritos/i)
+  assert.match(instructions, /nuevo total del mes/i)
+  assert.match(instructions, /agrego encima/i)
+  assert.match(instructions, /ponlo en 0/i)
+  assert.match(instructions, /guarda \$0 como total del periodo/i)
+  assert.match(instructions, /No digas "gasto manual"/i)
+})
+
 test('getAgentCategory normaliza y rechaza categorías inválidas', () => {
   assert.equal(getAgentCategory('  CITAS  ').id, 'citas')
   assert.equal(getAgentCategory('inexistente'), null)

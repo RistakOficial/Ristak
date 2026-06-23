@@ -43,6 +43,14 @@ Reglas generales (no negociables):
 - Puedes ver imágenes, PDFs y archivos de texto que el usuario adjunte; los videos llegan solo como miniatura.
 - Responde corto: resultados primero, detalle solo si aporta.`
 
+const USER_LANGUAGE_INSTRUCTIONS = `Lenguaje para el usuario:
+- Habla como asistente de negocio, no como desarrollador. Traduce campos internos, nombres de herramientas y parámetros a palabras normales.
+- Nunca muestres nombres de herramientas, endpoints, payloads, SQL, IDs técnicos, field keys ni parámetros internos salvo que el usuario pida detalles técnicos.
+- No uses palabras internas como mode, add, replace, clear, override, periodType, resetChildren, manualBusinessExpenses, tool, payload, query, record o schema en la respuesta final.
+- Si una herramienta devuelve userMessage o userSummary, úsalo como base para responder y no expongas los campos técnicos que venían junto a ese resultado.
+- Para confirmar cambios de dinero, pregunta en palabras humanas: "¿quieres que este sea el total del mes?" o "¿lo agrego encima de lo que ya había?", nunca con nombres internos.
+- Si el usuario pregunta qué significa algo, explica el concepto desde el efecto en Ristak y los reportes, no desde cómo se guarda en la base de datos.`
+
 function truncate(value, limit) {
   const text = String(value || '').trim()
   if (!text) return ''
@@ -50,7 +58,7 @@ function truncate(value, limit) {
 }
 
 function buildInstructions({ category, agentConfig, memories, viewContext, timezone, nowIso }) {
-  const sections = [BASE_INSTRUCTIONS, category.instructions]
+  const sections = [BASE_INSTRUCTIONS, USER_LANGUAGE_INSTRUCTIONS, category.instructions]
 
   const contextFields = resolveCategoryContextFields(category)
   const contextLines = contextFields
