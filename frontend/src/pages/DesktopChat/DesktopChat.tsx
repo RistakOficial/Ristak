@@ -281,6 +281,7 @@ const CHAT_CACHE_STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_REFRESH_INTERVAL_MS = 20000
+const CHAT_LIST_PAGE_SIZE = 100
 const BULK_CHAT_ARCHIVE_CONFIRM_WORD = 'archivar'
 const BULK_CHAT_RESTORE_CONFIRM_WORD = 'restaurar'
 const BULK_CHAT_REMOVE_CONFIRM_WORD = 'eliminar'
@@ -926,6 +927,16 @@ function writeCachedChatList(chats: DesktopChatContact[]) {
 function compactCompareValue(value: unknown) {
   if (value === null || value === undefined) return ''
   return String(value)
+}
+
+function dedupeChatsById<T extends { id?: string | null }>(chats: T[]) {
+  const map = new Map<string, T>()
+  chats.forEach((chat) => {
+    const key = String(chat?.id || '').trim()
+    if (!key) return
+    if (!map.has(key)) map.set(key, chat)
+  })
+  return Array.from(map.values())
 }
 
 function getDesktopMessageSignature(message: DesktopChatMessage) {
@@ -2683,13 +2694,24 @@ export const DesktopChat: React.FC = () => {
     const timeoutId = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS)
 
     try {
-      const data = await apiClient.get<DesktopChatContact[]>('/contacts/chats', {
-        params: {
-          limit: '80'
-        },
-        signal: controller.signal
-      })
-      const nextChats = Array.isArray(data) ? data : []
+      let offset = 0
+      let nextChats: DesktopChatContact[] = []
+
+      while (true) {
+        const data = await apiClient.get<DesktopChatContact[]>('/contacts/chats', {
+          params: {
+            limit: String(CHAT_LIST_PAGE_SIZE),
+            offset: String(offset)
+          },
+          signal: controller.signal
+        })
+        const pageChats = Array.isArray(data) ? data : []
+        nextChats = dedupeChatsById([...nextChats, ...pageChats])
+
+        if (pageChats.length < CHAT_LIST_PAGE_SIZE) break
+        offset += pageChats.length
+      }
+
       writeCachedChatList(nextChats)
       setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, nextChats))
       setChats(nextChats)
