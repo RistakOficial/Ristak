@@ -8252,7 +8252,7 @@
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) {
   --tablet-side-rail-width: 62px;
-  --tablet-chat-list-width: clamp(500px, 30vw, 640px);
+  --tablet-chat-list-width: clamp(500px, 30vw, 760px);
 }
 
 .phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .phoneFrame {
