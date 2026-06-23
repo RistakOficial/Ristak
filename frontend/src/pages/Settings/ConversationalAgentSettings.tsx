@@ -29,6 +29,7 @@ import {
   type AgentFilterOptions,
   type AgentCompletionMode,
   type AgentDepositMode,
+  type AgentIdentityMode,
   type AgentFollowUpConfig,
   type AgentFollowUpStepConfig,
   type AgentFollowUpUnit,
@@ -78,6 +79,13 @@ const objectiveOptions: Array<{ value: ConversationalObjective; label: string; d
   { value: 'datos', label: 'Pedir datos', description: 'Debe pedir lo que falte. Ejemplo: nombre, teléfono o correo.' },
   { value: 'filtrar', label: 'Filtrar curiosos', description: 'Debe ver si la persona sí va en serio. Ejemplo: separar quien pregunta nomás por ver.' },
   { value: 'custom', label: 'Objetivo propio', description: 'Escribe tú la meta. Ejemplo: que pida una propuesta formal.' }
+]
+
+const agentIdentityModeOptions: Array<{ value: AgentIdentityMode; label: string; description: string }> = [
+  { value: 'business', label: 'Representante del negocio', description: 'Habla como equipo: nosotros te podemos ayudar.' },
+  { value: 'user', label: 'Persona del equipo', description: 'Se presenta con el nombre de un administrador o usuario.' },
+  { value: 'custom', label: 'Nombre personalizado', description: 'Escribes exactamente cómo debe decir que se llama.' },
+  { value: 'agent', label: 'Nombre del agente', description: 'Usa el nombre configurado arriba para presentarse.' }
 ]
 
 const successActionLabels: Record<ConversationalSuccessAction, { label: string; description: string }> = {
@@ -978,8 +986,19 @@ function getReplyDeliveryError(delivery: AgentReplyDeliveryConfig) {
   return ''
 }
 
+function getAgentIdentityError(agent: ConversationalAgentDef) {
+  if (agent.identityMode === 'custom' && !String(agent.identityCustomName || '').trim()) {
+    return 'Escribe el nombre visible del agente.'
+  }
+  if (agent.identityMode === 'user' && !String(agent.identityUserName || agent.identityUserId || '').trim()) {
+    return 'Elige la persona del equipo con la que se va a identificar.'
+  }
+  return ''
+}
+
 function getAgentValidationError(agent: ConversationalAgentDef) {
-  return getResponseDelayError(getAgentResponseDelay(agent)) ||
+  return getAgentIdentityError(agent) ||
+    getResponseDelayError(getAgentResponseDelay(agent)) ||
     getReplyDeliveryError(getAgentReplyDelivery(agent)) ||
     getFollowUpError(getAgentFollowUp(agent))
 }
@@ -1117,6 +1136,46 @@ function getBusinessPromptBlockerText(status?: ConversationalBusinessPromptStatu
     return 'Vuelve a guardar la descripción del negocio para regenerar la estrategia interna.'
   }
   return 'Ristak está preparando el prompt interno. Espera a que quede listo antes de publicar.'
+}
+
+function getTeamUserDisplayName(user?: TeamUser | null) {
+  if (!user) return ''
+  return user.fullName || user.email || user.phone || user.username || `Usuario ${user.id}`
+}
+
+function getAgentIdentityHelper({
+  mode,
+  agentName,
+  businessName,
+  selectedUserName,
+  customName,
+  teamUsersLoading,
+  hasTeamUsers
+}: {
+  mode: AgentIdentityMode
+  agentName: string
+  businessName: string
+  selectedUserName: string
+  customName: string
+  teamUsersLoading: boolean
+  hasTeamUsers: boolean
+}) {
+  if (mode === 'business') {
+    return `Se presenta como parte de ${businessName || 'el negocio'} y habla en plural cuando corresponda: nosotros te podemos ayudar.`
+  }
+  if (mode === 'user') {
+    if (teamUsersLoading) return 'Cargando usuarios activos para elegir con qué nombre se presenta.'
+    if (!hasTeamUsers) return 'No hay usuarios activos disponibles. Usa nombre personalizado o nombre del agente.'
+    return selectedUserName
+      ? `Se presenta como ${selectedUserName} y habla en primera persona.`
+      : 'Elige la persona del equipo con la que se va a identificar.'
+  }
+  if (mode === 'custom') {
+    return customName
+      ? `Se presenta como ${customName} y responde en primera persona si le preguntan quién es.`
+      : 'Escribe el nombre visible que debe usar. Ejemplo: Marcos, Raúl o Robot 34.'
+  }
+  return `Se presenta como ${agentName || 'el nombre del agente'} y usa ese nombre si le preguntan quién es.`
 }
 
 interface QuestionSelectOption<T extends string> {
@@ -1318,6 +1377,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const responseDelayError = getResponseDelayError(responseDelay)
   const replyDeliveryError = getReplyDeliveryError(replyDelivery)
   const followUpError = getFollowUpError(followUp)
+  const identityError = getAgentIdentityError(agent)
   const requiredDataConfigOpen = guidanceOpen.requiredData || Boolean(String(agent.requiredData || '').trim())
   const handoffRulesConfigOpen = guidanceOpen.handoffRules || Boolean(String(agent.handoffRules || '').trim())
   const extraInstructionsConfigOpen = guidanceOpen.extraInstructions || Boolean(String(agent.extraInstructions || '').trim())
@@ -1339,9 +1399,22 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     { value: '', label: teamUsersLoading ? 'Cargando usuarios...' : 'Elegir usuario' },
     ...teamUsers.map((user) => ({
       value: user.id,
-      label: user.fullName || user.email || user.phone || user.username || `Usuario ${user.id}`
+      label: getTeamUserDisplayName(user)
     }))
   ]
+  const selectedIdentityMode: AgentIdentityMode = agent.identityMode || 'business'
+  const selectedIdentityUser = teamUsers.find((user) => user.id === agent.identityUserId) || null
+  const selectedIdentityUserName = getTeamUserDisplayName(selectedIdentityUser) || agent.identityUserName || ''
+  const businessIdentityName = businessPromptStatus?.businessName || 'el negocio'
+  const identityHelper = getAgentIdentityHelper({
+    mode: selectedIdentityMode,
+    agentName: agent.name,
+    businessName: businessIdentityName,
+    selectedUserName: selectedIdentityUserName,
+    customName: agent.identityCustomName || '',
+    teamUsersLoading,
+    hasTeamUsers: teamUsers.length > 0
+  })
   const goalUrlConfig = agent.objective === 'ventas' ? goalWorkflow.sales : goalWorkflow.appointments
   const goalUrlLabel = agent.objective === 'ventas' ? 'Enlace del pedido' : 'Enlace del calendario'
   const goalUrlPlaceholder = agent.objective === 'ventas' ? 'https://tutienda.com/checkout' : 'https://calendly.com/tu-negocio/cita'
@@ -1485,6 +1558,26 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
   const updateCompletion = (patch: Partial<AgentGoalWorkflowConfig['completion']>) => {
     updateGoalWorkflow({ completion: { ...goalWorkflow.completion, ...patch } })
+  }
+
+  const updateIdentityMode = (identityMode: AgentIdentityMode) => {
+    if (identityMode === 'user') {
+      const user = selectedIdentityUser || teamUsers[0] || null
+      onChange({
+        identityMode,
+        identityUserId: user?.id || '',
+        identityUserName: getTeamUserDisplayName(user),
+        identityCustomName: ''
+      })
+      return
+    }
+
+    onChange({
+      identityMode,
+      identityUserId: '',
+      identityUserName: '',
+      identityCustomName: identityMode === 'custom' ? agent.identityCustomName || '' : ''
+    })
   }
 
   const getTriggerLinkWorkflow = (triggerLink?: TriggerLink | null): AgentGoalWorkflowConfig['triggerLink'] => ({
@@ -2492,6 +2585,58 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 selectLabel={`Modelo de ${selectedProvider.label}`}
                 onChange={(model) => onChange({ model })}
               />
+
+              <QuestionSelectRow
+                question="¿Cómo quieres que se identifique el agente?"
+                helper={identityHelper}
+                error={identityError}
+                value={selectedIdentityMode}
+                options={agentIdentityModeOptions.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                  disabled: option.value === 'user' && (teamUsersLoading || teamUsers.length === 0)
+                }))}
+                selectLabel="Identidad del agente"
+                onChange={updateIdentityMode}
+              >
+                {selectedIdentityMode === 'user' && teamUsers.length > 0 && (
+                  <div className={styles.inlineFields}>
+                    <div className={styles.field}>
+                      <label className={styles.label}>Persona visible</label>
+                      <CustomSelect
+                        value={agent.identityUserId || ''}
+                        onChange={(event) => {
+                          const user = teamUsers.find((item) => item.id === event.target.value) || null
+                          onChange({
+                            identityUserId: user?.id || '',
+                            identityUserName: getTeamUserDisplayName(user),
+                            identityCustomName: ''
+                          })
+                        }}
+                        portal
+                      >
+                        {teamUserOptions.map((option) => (
+                          <option key={option.value || 'identity-empty-user'} value={option.value}>{option.label}</option>
+                        ))}
+                      </CustomSelect>
+                    </div>
+                  </div>
+                )}
+
+                {selectedIdentityMode === 'custom' && (
+                  <div className={styles.inlineFields}>
+                    <div className={styles.field}>
+                      <label className={styles.label}>Nombre visible</label>
+                      <input
+                        className={styles.input}
+                        value={agent.identityCustomName || ''}
+                        placeholder="Ejemplo: Marcos, Raúl o Robot 34"
+                        onChange={(event) => onChange({ identityCustomName: event.target.value })}
+                      />
+                    </div>
+                  </div>
+                )}
+              </QuestionSelectRow>
               <QuestionSelectRow
                 question="¿Cuánto debe esperar antes de contestar?"
                 helper={getResponseDelayHelp(responseDelay)}

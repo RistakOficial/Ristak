@@ -106,6 +106,7 @@ export type AgentGoalOwner = 'human' | 'ai' | 'url'
 export type AgentDepositMode = 'fixed' | 'range'
 export type AgentSalesPaymentMode = 'full_payment' | 'deposit'
 export type AgentCompletionMode = 'notify_only' | 'assign_user'
+export type AgentIdentityMode = 'business' | 'user' | 'custom' | 'agent'
 
 export interface AgentGoalWorkflowConfig {
   appointments: {
@@ -272,6 +273,10 @@ export interface ConversationalAgentDef {
   enabled: boolean
   aiProvider: ConversationalAIProviderId
   model: string
+  identityMode: AgentIdentityMode
+  identityUserId: string
+  identityUserName: string
+  identityCustomName: string
   position: number
   objective: ConversationalObjective
   customObjective: string
@@ -431,6 +436,7 @@ export interface ConversationalAgentLiveCache {
 export const CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT = 'ristak-conversational-agent-live-cache'
 
 const LIVE_CACHE_KEY = 'ristak_conversational_agent_live_cache_v1'
+const VALID_AGENT_IDENTITY_MODES = new Set<AgentIdentityMode>(['business', 'user', 'custom', 'agent'])
 const VALID_CONVERSATIONAL_SUCCESS_ACTIONS = new Set<ConversationalSuccessAction>([
   'book_appointment',
   'ready_for_human',
@@ -530,6 +536,15 @@ function normalizeConversationalAIProvider(value?: unknown): ConversationalAIPro
   return VALID_CONVERSATIONAL_AI_PROVIDERS.has(provider) ? provider : 'openai'
 }
 
+function normalizeAgentIdentityMode(value?: unknown): AgentIdentityMode {
+  const mode = String(value || '').trim() as AgentIdentityMode
+  return VALID_AGENT_IDENTITY_MODES.has(mode) ? mode : 'business'
+}
+
+function normalizeShortText(value?: unknown, maxLength = 160) {
+  return String(value || '').trim().slice(0, maxLength)
+}
+
 function normalizeAgentConfig<T extends ConversationalAgentConfig | null | undefined>(config: T): T {
   if (!config) return config
   return {
@@ -558,6 +573,10 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
   return {
     ...agent,
     aiProvider: normalizeConversationalAIProvider(agent.aiProvider),
+    identityMode: normalizeAgentIdentityMode(agent.identityMode),
+    identityUserId: normalizeShortText(agent.identityUserId),
+    identityUserName: normalizeShortText(agent.identityUserName),
+    identityCustomName: normalizeShortText(agent.identityCustomName),
     successAction: normalizeConversationalSuccessAction(agent.successAction),
     followUp: {
       ...DEFAULT_AGENT_FOLLOW_UP,

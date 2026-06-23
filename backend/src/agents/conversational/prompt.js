@@ -224,6 +224,9 @@ export const DEFAULT_CLOSING_STRATEGY = `# AGENTE CONVERSACIONAL DE CIERRE — V
 
 # 1. QUIÉN ERES
 
+La identidad visible exacta se configura fuera de este guión: puede hablar como representante del negocio en plural, como una persona específica del equipo, con un nombre personalizado o con el nombre del agente.
+Esa configuración manda sobre cualquier ejemplo general de esta sección.
+
 No eres un vendedor.
 No eres un bot.
 No eres un asistente.
@@ -1782,6 +1785,52 @@ ${qualification.questions ? `Preguntas útiles para calificar:\n${qualification.
   return sections.filter(Boolean).join('\n\n')
 }
 
+function cleanAgentIdentityText(value, maxLength = 160) {
+  return String(value || '').trim().slice(0, maxLength)
+}
+
+function resolveAgentIdentity(config = {}, businessName = '') {
+  const mode = cleanAgentIdentityText(config.identityMode, 24)
+  const businessLabel = cleanAgentIdentityText(businessName, 120) || 'el negocio'
+
+  if (mode === 'user') {
+    const userName = cleanAgentIdentityText(config.identityUserName || config.identityUserId, 120)
+    if (userName) return { mode: 'individual', name: userName, source: 'user', businessLabel }
+  }
+
+  if (mode === 'custom') {
+    const customName = cleanAgentIdentityText(config.identityCustomName, 120)
+    if (customName) return { mode: 'individual', name: customName, source: 'custom', businessLabel }
+  }
+
+  if (mode === 'agent') {
+    const agentName = cleanAgentIdentityText(config.name, 120)
+    if (agentName) return { mode: 'individual', name: agentName, source: 'agent', businessLabel }
+  }
+
+  return { mode: 'business', name: businessLabel, source: 'business', businessLabel }
+}
+
+export function buildAgentIdentityInstructions(config = {}, businessName = '') {
+  const identity = resolveAgentIdentity(config, businessName)
+
+  if (identity.mode === 'business') {
+    return `## Identidad configurada del agente
+- Preséntate como representante de ${identity.businessLabel}; habla por el negocio o el equipo.
+- Cuando hables del equipo usa plural natural: "nosotros", "te podemos ayudar", "podemos revisar".
+- Si te preguntan "¿quién eres?", responde que atiendes por parte de ${identity.businessLabel}.
+- No compartas ni inventes un nombre personal cuando la identidad configurada es negocio/equipo.
+- Esta identidad manda aunque el guión de fábrica use ejemplos generales de persona, asistente o bot.`
+  }
+
+  return `## Identidad configurada del agente
+- Preséntate como ${identity.name}; esa es tu identidad visible en esta conversación.
+- Si preguntan "¿tú quién eres?" o "¿cómo te llamas?", responde breve en primera persona: "soy ${identity.name}".
+- Habla en singular cuando te presentes. Puedes usar plural sólo para referirte al negocio/equipo cuando corresponda.
+- No cambies el nombre configurado, no inventes otro y no digas que representas a otra persona.
+- Esta identidad manda aunque el guión de fábrica use ejemplos generales de negocio, asistente o bot.`
+}
+
 function buildEmojiUsageInstruction(config = {}) {
   if (config.allowEmojis) {
     return [
@@ -1818,6 +1867,8 @@ export function buildConversationalInstructions({ config, businessContext, brand
 Tu objetivo principal es llevar la conversación de forma natural hacia: ${describeObjective(config)}.
 
 No estás para vender de forma agresiva. Estás para acompañar, orientar, resolver dudas puntuales, filtrar curiosos y detectar cuándo la persona ya está lista para avanzar.`)
+
+  sections.push(buildAgentIdentityInstructions(config, businessName))
 
   if (businessContext) {
     sections.push(`## Información del negocio\n${businessContext}`)

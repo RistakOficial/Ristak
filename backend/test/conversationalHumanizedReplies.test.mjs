@@ -548,6 +548,46 @@ test('rechaza rangos invertidos al guardar el agente conversacional', async () =
   }
 })
 
+test('guarda la identidad visible del agente conversacional', async () => {
+  const agent = await createConversationalAgent({
+    name: 'Robot 34',
+    enabled: false,
+    identityMode: 'custom',
+    identityCustomName: 'Marcos'
+  })
+
+  try {
+    assert.equal(agent.identityMode, 'custom')
+    assert.equal(agent.identityCustomName, 'Marcos')
+    assert.equal(agent.identityUserId, '')
+    assert.equal(agent.identityUserName, '')
+
+    const assignedUser = await updateConversationalAgent(agent.id, {
+      identityMode: 'user',
+      identityUserId: 'user_admin',
+      identityUserName: 'Raul Admin'
+    })
+    assert.equal(assignedUser.identityMode, 'user')
+    assert.equal(assignedUser.identityUserId, 'user_admin')
+    assert.equal(assignedUser.identityUserName, 'Raul Admin')
+    assert.equal(assignedUser.identityCustomName, '')
+
+    const agentName = await updateConversationalAgent(agent.id, { identityMode: 'agent' })
+    assert.equal(agentName.identityMode, 'agent')
+    assert.equal(agentName.identityUserId, '')
+    assert.equal(agentName.identityUserName, '')
+    assert.equal(agentName.identityCustomName, '')
+
+    const business = await updateConversationalAgent(agent.id, { identityMode: 'business' })
+    assert.equal(business.identityMode, 'business')
+    assert.equal(business.identityUserId, '')
+    assert.equal(business.identityUserName, '')
+    assert.equal(business.identityCustomName, '')
+  } finally {
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+  }
+})
+
 test('normaliza acciones del agente conversacional', () => {
   assert.equal(normalizeConversationalSuccessAction('book_appointment'), 'book_appointment')
   assert.equal(normalizeConversationalSuccessAction('ready_to_buy'), 'ready_to_buy')
@@ -2591,6 +2631,7 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /justo ahorita/i)
   assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /qué te hizo escribirnos/i)
   assert.match(DEFAULT_CLOSING_STRATEGY, /AGENTE CONVERSACIONAL DE CIERRE/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /La identidad visible exacta se configura fuera de este guión/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /PROHIBICIÓN MÁXIMA: NO COPIES/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Todos los ejemplos de este prompt son FILOSOFÍA, no libreto/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /CÓMO PIENSAS ANTES DE CADA MENSAJE/)
@@ -2662,6 +2703,53 @@ test('instrucciones del agente respetan el toggle de emojis', () => {
   assert.match(enabledInstructions, /Control de emojis: ACTIVADO/)
   assert.match(enabledInstructions, /incluye 1 emoji cuando suene natural/)
   assert.match(enabledInstructions, /No uses más de 1 emoji por mensaje/)
+})
+
+test('instrucciones del agente respetan identidad configurada', () => {
+  const baseConfig = {
+    objective: 'citas',
+    customObjective: '',
+    successAction: 'ready_for_human',
+    requiredData: '',
+    handoffRules: '',
+    extraInstructions: '',
+    allowEmojis: false,
+    closingStrategyMode: 'custom',
+    closingStrategyCustom: 'Haz cierre breve y humano.'
+  }
+  const commonContext = {
+    businessContext: '',
+    brandVoice: '',
+    businessName: 'Clinica Sol',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: null,
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  }
+
+  const businessInstructions = buildConversationalInstructions({
+    config: { ...baseConfig, identityMode: 'business' },
+    ...commonContext
+  })
+  assert.match(businessInstructions, /Identidad configurada del agente/)
+  assert.match(businessInstructions, /Preséntate como representante de Clinica Sol/)
+  assert.match(businessInstructions, /"nosotros"/)
+  assert.match(businessInstructions, /No compartas ni inventes un nombre personal/)
+
+  const customInstructions = buildConversationalInstructions({
+    config: { ...baseConfig, identityMode: 'custom', identityCustomName: 'Marcos' },
+    ...commonContext
+  })
+  assert.match(customInstructions, /Preséntate como Marcos/)
+  assert.match(customInstructions, /"soy Marcos"/)
+  assert.match(customInstructions, /Habla en singular cuando te presentes/)
+
+  const agentNameInstructions = buildConversationalInstructions({
+    config: { ...baseConfig, name: 'Robot 34', identityMode: 'agent' },
+    ...commonContext
+  })
+  assert.match(agentNameInstructions, /Preséntate como Robot 34/)
+  assert.match(agentNameInstructions, /"soy Robot 34"/)
 })
 
 test('instrucciones del agente incluyen anticipo y acción final configurados', () => {
