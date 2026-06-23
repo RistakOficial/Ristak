@@ -19,16 +19,76 @@ import { getVerifiedAppBaseUrl } from './sitesService.js'
  */
 
 const DEFAULT_FEATURES = {
+  dashboard: true,
+  contacts: true,
+  chat: true,
+  appointments: true,
+  payments: true,
+  reports: true,
+  analytics: true,
+  campaigns: true,
+  sites: true,
+  forms: true,
+  ai_agent: true,
+  automations: true,
   whatsapp: true,
+  email: true,
+  integrations: true,
+  team_access: true,
+  mobile_app: true,
+  developers: true,
+  premium_modules: true,
   meta_ads: true,
   google_calendar: true,
   ai: true,
   app_assistant_ai: true,
   conversational_ai: true,
-  automations: true,
-  advanced_reports: true,
-  premium_modules: true
+  advanced_reports: true
 }
+
+const FEATURE_DEPENDENCIES = {
+  appointments: ['google_calendar', 'settings_calendars'],
+  payments: ['settings_payments'],
+  reports: ['advanced_reports', 'settings_costs'],
+  campaigns: ['meta_ads'],
+  sites: ['settings_domains', 'settings_tracking', 'settings_media'],
+  forms: ['settings_custom_fields'],
+  ai_agent: ['app_assistant_ai', 'conversational_ai'],
+  whatsapp: ['settings_whatsapp'],
+  email: ['settings_email'],
+  integrations: ['settings_integrations'],
+  team_access: ['settings_users'],
+  mobile_app: ['settings_mobile'],
+  developers: ['settings_api_access']
+}
+
+const FEATURE_ALIAS_TO_CANONICAL = {
+  google_calendar: 'appointments',
+  settings_calendars: 'appointments',
+  advanced_reports: 'reports',
+  settings_costs: 'reports',
+  meta_ads: 'campaigns',
+  settings_domains: 'sites',
+  settings_tracking: 'sites',
+  settings_media: 'sites',
+  settings_custom_fields: 'forms',
+  app_assistant_ai: 'ai_agent',
+  conversational_ai: 'ai_agent',
+  ai: 'ai_agent',
+  settings_whatsapp: 'whatsapp',
+  settings_email: 'email',
+  settings_payments: 'payments',
+  settings_integrations: 'integrations',
+  settings_users: 'team_access',
+  settings_mobile: 'mobile_app',
+  settings_api_access: 'developers'
+}
+
+function normalizeFeatureKey(key) {
+  return FEATURE_ALIAS_TO_CANONICAL[key] || key
+}
+
+const hasOwn = Object.prototype.hasOwnProperty
 
 // Estado cacheado de la última validación (token temporal de licencia)
 let cachedState = null
@@ -164,18 +224,28 @@ function normalizeLicenseFeatures(features = {}) {
     ...source
   }
 
-  if (source.ai !== undefined) {
-    if (source.app_assistant_ai === undefined) {
-      normalized.app_assistant_ai = !!source.ai
+  for (const [alias, canonical] of Object.entries(FEATURE_ALIAS_TO_CANONICAL)) {
+    if (source[canonical] !== undefined || source[alias] === undefined) continue
+    normalized[canonical] = !!source[alias]
+  }
+
+  for (const [featureKey, dependencies] of Object.entries(FEATURE_DEPENDENCIES)) {
+    if (normalized[featureKey] === undefined) continue
+    const hasExplicitFeature = hasOwn.call(source, featureKey)
+    const explicitDependencies = dependencies.filter((dependency) => hasOwn.call(source, dependency))
+    if (!hasExplicitFeature && explicitDependencies.length) {
+      normalized[featureKey] = explicitDependencies.every((dependency) => source[dependency] === true)
     }
-    if (source.conversational_ai === undefined) {
-      normalized.conversational_ai = !!source.ai
+    for (const dependency of dependencies) {
+      if (!hasExplicitFeature && hasOwn.call(source, dependency)) {
+        normalized[dependency] = source[dependency] === true
+      } else {
+        normalized[dependency] = normalized[featureKey] === true
+      }
     }
   }
 
-  if (source.ai === undefined) {
-    normalized.ai = normalized.app_assistant_ai === true && normalized.conversational_ai === true
-  }
+  normalized.ai = normalized.ai_agent === true
 
   return normalized
 }
@@ -292,7 +362,7 @@ export async function hasFeature(featureKey) {
   const state = await getLicenseState()
   if (!state.allowed) return false
   if (!state.enforced) return true
-  return !!state.features?.[featureKey]
+  return !!state.features?.[featureKey] || !!state.features?.[normalizeFeatureKey(featureKey)]
 }
 
 export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/settings/calendars/google' } = {}) {

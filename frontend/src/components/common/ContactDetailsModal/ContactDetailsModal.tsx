@@ -43,6 +43,8 @@ import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/uti
 import { AgentRobot } from '@/components/ai'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { useAuth } from '@/contexts/AuthContext'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import type { ContactCustomField, ContactCustomFieldValue, ContactMetaAttribution, ContactPhoneNumber } from '@/types'
 import styles from './ContactDetailsModal.module.css'
 
@@ -789,6 +791,8 @@ export function ContactDetailsModal({
   whatsappPhoneNumbers = [],
   onUpdatePreferredWhatsAppPhoneNumber
 }: ContactDetailsModalProps) {
+  const { user } = useAuth()
+  const hasEmailAccess = hasLicenseFeature(user, ['email'])
   const [selectedContact, setSelectedContact] = useState<ContactDetail | null>(null)
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -1465,7 +1469,7 @@ export function ContactDetailsModal({
       }
     }
 
-    if (selectedContact.email) {
+    if (hasEmailAccess && selectedContact.email) {
       options.push({
         value: 'email',
         label: `${CONTACT_CHAT_CHANNEL_LABELS.email} · ${selectedContact.email}`,
@@ -1498,12 +1502,17 @@ export function ContactDetailsModal({
   }, [
     availableWhatsAppPhones,
     emailConnected,
+    hasEmailAccess,
     hasDetectedInstagram,
     hasDetectedMessenger,
     highLevelConnected,
     selectedContact,
     whatsappApiSourcesAvailable
   ])
+  useEffect(() => {
+    if (hasEmailAccess || selectedChatChannel !== 'email') return
+    setChatChannelValue('whatsapp')
+  }, [hasEmailAccess, selectedChatChannel])
   const selectedChatChannelOption = chatChannelOptions.find((option) => option.value === chatChannelValue) || chatChannelOptions[0]
   const selectedChatRouteLabel = selectedChatChannelOption?.label || CONTACT_CHAT_CHANNEL_LABELS[selectedChatChannel]
   const selectedContactPhones = useMemo(() => getContactPhoneEntries(selectedContact), [selectedContact])
@@ -1539,7 +1548,7 @@ export function ContactDetailsModal({
     return groups
   }, [agentCompletionEvents, chatMessages, timezone])
   const chatChannelReady = selectedChatChannel === 'email'
-    ? Boolean(selectedContact?.email && emailConnected)
+    ? Boolean(hasEmailAccess && selectedContact?.email && emailConnected)
     : selectedChatChannel === 'whatsapp'
     ? Boolean(selectedContact?.phone && (whatsappConnected || highLevelConnected))
     : selectedChatChannel === 'messenger'
@@ -1556,6 +1565,8 @@ export function ContactDetailsModal({
     ? 'Revisando canales disponibles...'
     : selectedChatChannel === 'none'
     ? 'Este contacto no tiene telefono, correo ni canal social detectado.'
+    : selectedChatChannel === 'email' && !hasEmailAccess
+    ? 'El correo no está incluido en los accesos de esta cuenta.'
     : selectedChatChannel === 'email' && !selectedContact.email
     ? 'Este contacto no tiene correo guardado.'
     : selectedChatChannel === 'email' && !emailConnected

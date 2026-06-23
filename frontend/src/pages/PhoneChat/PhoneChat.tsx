@@ -71,6 +71,7 @@ import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
 import { PhoneFilterChips, PhoneSheet, PhoneTextArea, PhoneTextField } from '@/components/phone/ui'
 import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -3373,7 +3374,12 @@ export const PhoneChat: React.FC = () => {
   const navigate = useNavigate()
   const requestedContactParam = searchParams.get('contact')
   const requestedActionParam = searchParams.get('action')
-  const { locationId, accessToken } = useAuth()
+  const { locationId, accessToken, user } = useAuth()
+  const hasEmailAccess = hasLicenseFeature(user, ['email'])
+  const composerMessageChannelOptions = useMemo(
+    () => COMPOSER_MESSAGE_CHANNEL_OPTIONS.filter((option) => option.value !== 'email' || hasEmailAccess),
+    [hasEmailAccess]
+  )
   const { labels } = useLabels()
   const customerLabel = labels.customer?.trim() || 'Cliente'
   const leadLabel = labels.lead?.trim() || 'Interesado'
@@ -11495,7 +11501,7 @@ export const PhoneChat: React.FC = () => {
     const activeValue: ComposerMessageChannelValue = sendingThroughHighLevel ? activeHighLevelChatChannel : 'whatsapp_api'
     const activeLabel = activeValue === 'sms_qr'
       ? 'SMS'
-      : COMPOSER_MESSAGE_CHANNEL_OPTIONS.find((option) => option.value === activeValue)?.label || 'WhatsApp'
+      : composerMessageChannelOptions.find((option) => option.value === activeValue)?.label || 'WhatsApp'
 
     return (
       <div className={styles.composerChannelHost} ref={composerChannelPickerRef}>
@@ -11519,7 +11525,7 @@ export const PhoneChat: React.FC = () => {
 
         {composerChannelPickerOpen && (
           <div className={styles.composerChannelDropdown} role="menu" aria-label="Elegir canal de envío">
-            {COMPOSER_MESSAGE_CHANNEL_OPTIONS.map((option) => {
+            {composerMessageChannelOptions.map((option) => {
               const disabledReason = getComposerMessageChannelDisabledReason(option.value)
               const disabled = Boolean(disabledReason)
               const active = option.value === activeValue

@@ -30,7 +30,7 @@ export const AIAgent: React.FC = () => {
             <Route
               path="general"
               element={(
-                <AIAgentFeatureRoute featureKeys={['app_assistant_ai', 'ai']}>
+                <AIAgentFeatureRoute featureKeys={['ai_agent', 'app_assistant_ai', 'ai']}>
                   <AIAgentSettings />
                 </AIAgentFeatureRoute>
               )}
@@ -38,7 +38,7 @@ export const AIAgent: React.FC = () => {
             <Route
               path="conversational"
               element={(
-                <AIAgentFeatureRoute featureKeys={['conversational_ai', 'ai']}>
+                <AIAgentFeatureRoute featureKeys={['ai_agent', 'conversational_ai', 'ai']}>
                   <ConversationalAgentSettings />
                 </AIAgentFeatureRoute>
               )}
@@ -46,7 +46,7 @@ export const AIAgent: React.FC = () => {
             <Route
               path="conversational/:agentId"
               element={(
-                <AIAgentFeatureRoute featureKeys={['conversational_ai', 'ai']}>
+                <AIAgentFeatureRoute featureKeys={['ai_agent', 'conversational_ai', 'ai']}>
                   <ConversationalAgentSettings />
                 </AIAgentFeatureRoute>
               )}

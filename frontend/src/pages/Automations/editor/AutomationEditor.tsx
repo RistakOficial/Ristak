@@ -30,6 +30,8 @@ import {
   DropdownMenuTrigger
 } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAuth } from '@/contexts/AuthContext'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import automationsService, {
   AUTOMATION_REVIEW_LABEL,
   automationsCache,
@@ -243,6 +245,7 @@ export const AutomationEditor: React.FC = () => {
   const { automationId = '' } = useParams()
   const navigate = useNavigate()
   const { showToast, showConfirm } = useNotification()
+  const { user } = useAuth()
 
   const [automation, setAutomation] = useState<Automation | null>(null)
   const [loadError, setLoadError] = useState(false)
@@ -781,6 +784,11 @@ export const AutomationEditor: React.FC = () => {
       }
     },
     [commitFlow, openConfigForNode, picker]
+  )
+
+  const canUseNodeDefinition = useCallback(
+    (definition: NodeDefinition) => !definition.requiredFeature || hasLicenseFeature(user, [definition.requiredFeature]),
+    [user]
   )
 
   // ------------------------------------------------------------------
@@ -1794,6 +1802,7 @@ export const AutomationEditor: React.FC = () => {
             onToggleConnect={(enabled) => setPicker({ ...picker, connectEnabled: enabled })}
             showStartStep={picker.showStartStep}
             onSelectStartStep={() => setPicker({ ...picker, kind: 'trigger', showStartStep: false })}
+            definitionFilter={canUseNodeDefinition}
             onSelect={handlePickStep}
             onClose={() => setPicker(null)}
           />

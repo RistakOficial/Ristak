@@ -66,6 +66,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import apiClient from '@/services/apiClient'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
@@ -2028,7 +2029,7 @@ function toChatContact(contact: Contact): DesktopChatContact {
 }
 
 export const DesktopChat: React.FC = () => {
-  const { accessToken, locationId } = useAuth()
+  const { accessToken, locationId, user } = useAuth()
   const { labels } = useLabels()
   const { showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
@@ -2511,6 +2512,7 @@ export const DesktopChat: React.FC = () => {
   }, [agentCompletionEvents, messages, timezone])
   const detectedComposerChannel = normalizeComposerChannel(activeContact?.lastMessageChannel || activeContact?.lastMessageTransport || messages[messages.length - 1]?.transport || '')
   const activeConversationChannel = getHighLevelChannelForComposer(composerChannel)
+  const hasEmailAccess = hasLicenseFeature(user, ['email'])
   const isEmailComposer = composerChannel === 'email'
   const emailPlainText = useMemo(
     () => isEmailComposer ? emailHtmlToPlainText(emailBodyHtml) : '',
@@ -2536,6 +2538,7 @@ export const DesktopChat: React.FC = () => {
       }))
     }
     if (option.value === 'email') {
+      if (!hasEmailAccess) return []
       return [{
         ...option,
         icon: renderComposerChannelIcon(option.value),
@@ -2552,12 +2555,14 @@ export const DesktopChat: React.FC = () => {
     ? `whatsapp:${selectedBusinessPhone.id}`
     : composerChannel
   const composerChannelReady = isEmailComposer
-    ? Boolean(activeContact?.email && emailConnected)
+    ? Boolean(hasEmailAccess && activeContact?.email && emailConnected)
     : composerChannel === 'whatsapp'
     ? Boolean(activeContact?.phone && (whatsappConnected || highLevelConnected))
     : Boolean(highLevelConnected && (composerChannel === 'messenger' ? hasDetectedMessenger : hasDetectedInstagram))
   const composerChannelHint = !activeContact
     ? ''
+    : isEmailComposer && !hasEmailAccess
+    ? 'El correo no está incluido en los accesos de esta cuenta.'
     : isEmailComposer && !activeContact.email
     ? 'Este contacto no tiene correo guardado.'
     : isEmailComposer && !emailConnected
@@ -2575,6 +2580,10 @@ export const DesktopChat: React.FC = () => {
     ? Boolean(emailSubject.trim() && emailPlainText.trim())
     : Boolean(composerText.trim()) || draftAttachments.length > 0 || Boolean(voiceDraft)
   const canSend = Boolean(activeContact && composerChannelReady && hasComposerContent && composerStatus === 'idle' && !voiceRecording && !voiceProcessing)
+  useEffect(() => {
+    if (hasEmailAccess || composerChannel !== 'email') return
+    setComposerChannel('whatsapp')
+  }, [composerChannel, hasEmailAccess])
   useEffect(() => {
     if (!isEmailComposer || emailBodyHtml.trim() || !composerText.trim()) return
     setEmailBodyHtml(plainTextToEmailHtml(composerText))

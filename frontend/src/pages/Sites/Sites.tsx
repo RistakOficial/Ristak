@@ -125,9 +125,11 @@ import {
 } from '@/components/common'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useAIAgentAvailability, useAppConfig, useUrlDateRangeSync } from '@/hooks'
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { setSearchParam } from '@/utils/urlState'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import {
   blockLabels,
   fieldBlockTypes,
@@ -518,6 +520,8 @@ const embeddedFormFreeFieldTypes = embeddedFormFieldTypes.filter(type => type !=
 const embeddedFormContentTypes: SiteBlockType[] = ['title', 'subtitle', 'text', 'image', 'video', 'embed']
 const embeddedFormBlockTypes: SiteBlockType[] = [...embeddedFormFieldTypes, ...embeddedFormContentTypes]
 const embeddedFormBlockTypeSet = new Set<SiteBlockType>(embeddedFormBlockTypes)
+const formFeatureBlockTypes = new Set<SiteBlockType>(['form_embed', ...embeddedFormFieldTypes])
+const appointmentFeatureBlockTypes = new Set<SiteBlockType>(['calendar_embed'])
 const videoFormGateFieldTypes = embeddedFormFieldTypes
 const videoFormGateContentTypes: SiteBlockType[] = ['title', 'subtitle', 'text', 'image']
 const videoFormGateBlockTypes: SiteBlockType[] = [...videoFormGateFieldTypes, ...videoFormGateContentTypes]
@@ -7131,6 +7135,7 @@ const hydrateSitesForBuilder = async (list: PublicSite[]) => {
 
 export const Sites: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
+  const { user } = useAuth()
   const { dateRange, setDateRange } = useDateRange()
   const navigate = useNavigate()
   const location = useLocation()
@@ -7147,6 +7152,8 @@ export const Sites: React.FC = () => {
   const routeAnalyticsVideoId = searchParams.get('videoId') || ''
   const routeHasBlockParam = useMemo(() => new URLSearchParams(location.search).has('block'), [location.search])
   const { configured: aiAgentConfigured } = useAIAgentAvailability()
+  const hasFormsAccess = hasLicenseFeature(user, ['forms'])
+  const hasAppointmentsAccess = hasLicenseFeature(user, ['appointments'])
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const [storedLandingsViewMode, saveStoredLandingsViewMode] = useAppConfig<string>(
     SITES_LANDINGS_VIEW_MODE_CONFIG_KEY,
@@ -7737,6 +7744,15 @@ export const Sites: React.FC = () => {
     )
     : null
   const canvasPalettePreviewBlock = paletteDragging ? palettePreviewBlock : null
+  const canUseSiteBlockType = useCallback((blockType: SiteBlockType) => {
+    if (appointmentFeatureBlockTypes.has(blockType)) return hasAppointmentsAccess
+    if (formFeatureBlockTypes.has(blockType)) return hasFormsAccess
+    return true
+  }, [hasAppointmentsAccess, hasFormsAccess])
+  const filterSiteBlockTypesByAccess = useCallback(
+    (blockTypes: SiteBlockType[]) => blockTypes.filter(canUseSiteBlockType),
+    [canUseSiteBlockType]
+  )
 
   useEffect(() => {
     setSeoModalOpen(false)
@@ -8919,6 +8935,10 @@ export const Sites: React.FC = () => {
   }
 
   const handleStartCreateFlow = () => {
+    if (section === 'forms' && !hasFormsAccess) {
+      showToast('warning', 'Acceso no incluido', 'Los formularios no están disponibles con los accesos actuales.')
+      return
+    }
     requestLeaveEditor(() => {
       markEditorExitInProgress()
       selectedSiteRef.current = null
@@ -9757,6 +9777,10 @@ export const Sites: React.FC = () => {
   }
 
   const handleCreateSite = async (siteType: SiteType, mode: 'blank' | 'template' = 'template', templateId?: SiteTemplateId) => {
+    if (siteType !== 'landing_page' && !hasFormsAccess) {
+      showToast('warning', 'Acceso no incluido', 'Los formularios no están disponibles con los accesos actuales.')
+      return
+    }
     setCreating(true)
     try {
       const isBlank = mode === 'blank'
@@ -10321,6 +10345,10 @@ export const Sites: React.FC = () => {
   const handleAddBlockManually = async (blockType: SiteBlockType, addOptions: AddBlockOptions | number = {}) => {
     const siteForAdd = selectedSiteRef.current || selectedSite
     if (!siteForAdd) return
+    if (!canUseSiteBlockType(blockType)) {
+      showToast('warning', 'Acceso no incluido', 'Este bloque no está disponible con los accesos actuales.')
+      return
+    }
     try {
       const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
       const initialSettings = socialProfileAutoPresetForNewBlock(
@@ -12187,7 +12215,7 @@ export const Sites: React.FC = () => {
                   {formEditMode ? (
                     <Palette
                       title="Formulario"
-                      blockTypes={embeddedFormBlockTypes}
+                      blockTypes={hasFormsAccess ? filterSiteBlockTypesByAccess(embeddedFormBlockTypes) : []}
                       existingBlocks={formEditFields}
                       systemScopeBlocks={formEditFields}
                       elements={formEditVisibleFields}
@@ -12223,7 +12251,7 @@ export const Sites: React.FC = () => {
                   ) : videoFormGateEditMode ? (
                     <Palette
                       title="Formulario de video"
-                      blockTypes={videoFormGateBlockTypes}
+                      blockTypes={hasFormsAccess ? filterSiteBlockTypesByAccess(videoFormGateBlockTypes) : []}
                       existingBlocks={videoFormGateEditBlocks}
                       systemScopeBlocks={videoFormGateEditBlocks}
                       elements={videoFormGateEditBlocks}
@@ -12256,7 +12284,7 @@ export const Sites: React.FC = () => {
                     />
                   ) : (
 	                  <Palette
-		                    blockTypes={popupSurfaceSelected ? getPopupPaletteBlockTypes(editorSite) : isLanding(editorSite) ? landingBlockTypes : formBlockTypes}
+		                    blockTypes={filterSiteBlockTypesByAccess(popupSurfaceSelected ? getPopupPaletteBlockTypes(editorSite) : isLanding(editorSite) ? landingBlockTypes : formBlockTypes)}
 		                    existingBlocks={editableCanvasBlocks}
                         systemScopeBlocks={isFormSite(editorSite) ? blocks : editableCanvasBlocks}
                         elements={paletteElementBlocks}

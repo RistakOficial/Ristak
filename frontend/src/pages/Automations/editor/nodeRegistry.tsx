@@ -311,6 +311,8 @@ export interface NodeDefinition {
   noInput?: boolean
   /** Disponible para flujos existentes, pero no aparece al agregar pasos nuevos */
   hiddenFromPicker?: boolean
+  /** Permiso de producto necesario para crear este nodo nuevo */
+  requiredFeature?: string
   /** Validación específica además de los campos requeridos */
   validate?: (config: Record<string, unknown>) => string[]
   /** Datos que este bloque puede exponer como variables para pasos posteriores */
@@ -698,6 +700,7 @@ const TRIGGERS: NodeDefinition[] = [
     description: 'Se activa cuando alguien envía un formulario',
     icon: ClipboardList,
     accent: 'green',
+    requiredFeature: 'forms',
     addButtonLabel: 'Seleccionar formulario',
     defaultConfig: () => ({ form: '', formName: '' }),
     fields: [
@@ -761,8 +764,9 @@ const TRIGGERS: NodeDefinition[] = [
       description: 'Se activa cuando llega un correo electrónico',
       icon: Mail,
       accent: 'purple',
-      summaryBase: 'Cuando haya correo electrónico'
+    summaryBase: 'Cuando haya correo electrónico'
     }),
+    requiredFeature: 'email',
     allowedChannels: ['email']
   },
   {
@@ -867,6 +871,7 @@ const TRIGGERS: NodeDefinition[] = [
     description: 'Se activa cuando una cita cambia de estado',
     icon: CalendarClock,
     accent: 'green',
+    requiredFeature: 'appointments',
     addButtonLabel: 'Configurar cita',
     defaultConfig: () => ({ status: '', calendar: '', calendarName: '' }),
     fields: [
@@ -1021,6 +1026,7 @@ const TRIGGERS: NodeDefinition[] = [
     description: 'Se activa cuando el contacto agenda una cita',
     icon: CalendarCheck,
     accent: 'green',
+    requiredFeature: 'appointments',
     addButtonLabel: 'Configurar cita',
     defaultConfig: () => ({ calendar: '', calendarName: '', appointmentType: '', assignedUser: '' }),
     fields: [
@@ -1277,6 +1283,7 @@ const TRIGGERS: NodeDefinition[] = [
     description: 'Se activa cuando el contacto llega desde un anuncio',
     icon: Megaphone,
     accent: 'green',
+    requiredFeature: 'campaigns',
     addButtonLabel: 'Configurar anuncio',
     defaultConfig: () => ({ campaign: '', adsetId: '', adId: '' }),
     fields: [
@@ -1450,6 +1457,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
 	    description: 'Envía un correo al contacto',
 	    icon: Mail,
 	    accent: 'purple',
+	    requiredFeature: 'email',
 	    addButtonLabel: 'Agregar correo',
 	    allowedChannels: ['email'],
 	    configComponent: 'email',
@@ -2629,6 +2637,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     description: 'Permite que la IA gestione las conversaciones por ti',
     icon: Sparkles,
     accent: 'dark',
+    requiredFeature: 'ai_agent',
     hiddenFromPicker: true,
     tintedHeader: true,
     addButtonLabel: 'Configurar IA',
@@ -2681,6 +2690,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     description: 'Genera contenido con un modelo GPT',
     icon: Bot,
     accent: 'dark',
+    requiredFeature: 'ai_agent',
     tintedHeader: true,
     addButtonLabel: 'Configurar GPT',
     allowedChannels: [...ALLOWED_CHANNELS, 'any'],

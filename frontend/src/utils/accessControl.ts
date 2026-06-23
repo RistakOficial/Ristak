@@ -203,13 +203,13 @@ export const AI_AGENT_NAV_ITEMS = [
     to: '/ai-agent/general',
     label: 'General',
     exact: true,
-    featureKeys: ['app_assistant_ai', 'ai']
+    featureKeys: ['ai_agent', 'app_assistant_ai', 'ai']
   },
   {
     to: '/ai-agent/conversational',
     label: 'Agente conversacional',
     exact: false,
-    featureKeys: ['conversational_ai', 'ai']
+    featureKeys: ['ai_agent', 'conversational_ai', 'ai']
   }
 ] as const
 export type AIAgentNavItem = typeof AI_AGENT_NAV_ITEMS[number]
@@ -231,20 +231,20 @@ const LICENSE_FEATURES_BY_MODULE: Partial<Record<PermissionKey, LicenseFeatureRu
   automations: { primary: 'automations' },
   sites: { primary: 'sites' },
   ai_agent: { primary: 'ai_agent', legacy: ['app_assistant_ai', 'conversational_ai', 'ai'] },
-  settings_account: { primary: 'settings_account' },
-  settings_mobile: { primary: 'settings_mobile' },
-  settings_calendars: { primary: 'settings_calendars', legacy: ['google_calendar'] },
-  settings_payments: { primary: 'settings_payments' },
-  settings_integrations: { primary: 'settings_integrations' },
-  settings_whatsapp: { primary: 'settings_whatsapp', legacy: ['whatsapp'] },
-  settings_email: { primary: 'settings_email' },
-  settings_tracking: { primary: 'settings_tracking' },
-  settings_domains: { primary: 'settings_domains' },
-  settings_costs: { primary: 'settings_costs', legacy: ['advanced_reports'] },
-  settings_media: { primary: 'settings_media' },
-  settings_custom_fields: { primary: 'settings_custom_fields' },
-  settings_api_access: { primary: 'settings_api_access' },
-  settings_users: { primary: 'settings_users' }
+  settings_account: { primary: 'dashboard' },
+  settings_mobile: { primary: 'mobile_app', legacy: ['settings_mobile'] },
+  settings_calendars: { primary: 'appointments', legacy: ['google_calendar', 'settings_calendars'] },
+  settings_payments: { primary: 'payments', legacy: ['settings_payments'] },
+  settings_integrations: { primary: 'integrations', legacy: ['settings_integrations'] },
+  settings_whatsapp: { primary: 'whatsapp', legacy: ['settings_whatsapp'] },
+  settings_email: { primary: 'email', legacy: ['settings_email'] },
+  settings_tracking: { primary: 'sites', legacy: ['settings_tracking'] },
+  settings_domains: { primary: 'sites', legacy: ['settings_domains'] },
+  settings_costs: { primary: 'reports', legacy: ['advanced_reports', 'settings_costs'] },
+  settings_media: { primary: 'sites', legacy: ['settings_media'] },
+  settings_custom_fields: { primary: 'forms', legacy: ['settings_custom_fields'] },
+  settings_api_access: { primary: 'developers', legacy: ['settings_api_access'] },
+  settings_users: { primary: 'team_access', legacy: ['settings_users'] }
 }
 
 export const DEFAULT_EMPLOYEE_ACCESS: AccessConfig = Object.fromEntries(

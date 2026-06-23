@@ -23,6 +23,8 @@ import {
   WeekdaysPicker
 } from './configPrimitives'
 import { AdvancedConditionBuilder } from './AdvancedConditionBuilder'
+import { useAuth } from '@/contexts/AuthContext'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -68,13 +70,22 @@ const EXPECTED_ACTIONS = [
 ]
 
 export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onChange, messageSources = [] }) => {
+  const { user } = useAuth()
+  const hasAppointmentsAccess = hasLicenseFeature(user, ['appointments'])
+  const hasFormsAccess = hasLicenseFeature(user, ['forms'])
   const set = (patch: Config) => onChange({ ...config, ...patch })
   const mode = str(config.mode)
   const firstMessageSource = messageSources[0]
   const messageSourceOptions = messageSources.map((source) => ({ value: source.value, label: source.label }))
+  const waitModes = WAIT_MODES.filter((candidate) => candidate.id !== 'appointment' || hasAppointmentsAccess)
   const expectedActionOptions = firstMessageSource
     ? EXPECTED_ACTIONS
     : EXPECTED_ACTIONS.filter((action) => action.value !== 'reply_message')
+  const gatedExpectedActionOptions = expectedActionOptions.filter((action) => {
+    if (action.value === 'submit_form') return hasFormsAccess
+    if (action.value === 'book_appointment') return hasAppointmentsAccess
+    return true
+  })
 
   useEffect(() => {
     if (!firstMessageSource) return
@@ -104,7 +115,7 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
         <div className={styles.configLabel} style={{ marginBottom: 8 }}>
           Seleccione el tipo para comenzar
         </div>
-        {WAIT_MODES.map((candidate) => (
+        {waitModes.map((candidate) => (
           <button
             key={candidate.id}
             type="button"
@@ -128,7 +139,7 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
     )
   }
 
-  const activeMode = WAIT_MODES.find((candidate) => candidate.id === mode)
+  const activeMode = waitModes.find((candidate) => candidate.id === mode) || WAIT_MODES.find((candidate) => candidate.id === mode)
   const timeoutApplies = mode === 'reply' || mode === 'action' || mode === 'conditions'
 
   return (
@@ -301,7 +312,7 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
         <>
           <Field label="Acción esperada">
             <CustomSelect
-              options={expectedActionOptions}
+              options={gatedExpectedActionOptions}
               value={str(config.expectedAction) || 'click_link'}
               onValueChange={(next) => {
                 if (next === 'reply_message' && firstMessageSource) {

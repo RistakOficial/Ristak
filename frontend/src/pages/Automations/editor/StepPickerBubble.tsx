@@ -34,6 +34,7 @@ interface StepPickerBubbleProps {
   /** Muestra la sección "Paso inicial" para añadir un disparador */
   showStartStep?: boolean
   onSelectStartStep?: () => void
+  definitionFilter?: (definition: NodeDefinition) => boolean
   onSelect: (definition: NodeDefinition) => void
   onClose: () => void
 }
@@ -59,6 +60,7 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
   onToggleConnect,
   showStartStep,
   onSelectStartStep,
+  definitionFilter,
   onSelect,
   onClose
 }) => {
@@ -81,6 +83,7 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
     getCategoriesForKind(kind).forEach((category) => {
       const items = definitions
         .filter((definition) => definition.category === category.id)
+        .filter((definition) => definitionFilter ? definitionFilter(definition) : true)
         .filter(matches)
       if (items.length > 0) {
         result.push({ id: category.id, label: category.label, items })
@@ -88,7 +91,7 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
     })
 
     return result
-  }, [kind, query])
+  }, [definitionFilter, kind, query])
 
   const flatItems = useMemo(
     () => sections.flatMap((section) => section.items.map((item) => ({ section: section.id, item }))),

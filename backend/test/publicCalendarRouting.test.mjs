@@ -7,17 +7,17 @@ import { dirname, join } from 'node:path'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const backendRoot = join(__dirname, '..')
 
-test('public calendar booking routes mount before the calendar feature gate', async () => {
+test('public calendar booking routes stay behind the calendar feature gate', async () => {
   const serverSource = await readFile(join(backendRoot, 'src/server.js'), 'utf8')
-  const publicMount = "app.use('/api/calendars', publicCalendarsRoutes)"
+  const publicMount = "app.use('/api/calendars', requireFeature('google_calendar'), publicCalendarsRoutes)"
   const gatedMount = "app.use('/api/calendars', requireFeature('google_calendar'), calendarsRoutes)"
 
   assert.ok(serverSource.includes("import calendarsRoutes, { publicCalendarsRoutes }"), 'server imports public calendar routes')
-  assert.ok(serverSource.includes(publicMount), 'server mounts public calendar routes')
+  assert.ok(serverSource.includes(publicMount), 'server gates public calendar routes')
   assert.ok(serverSource.includes(gatedMount), 'server keeps private calendar routes behind the feature gate')
   assert.ok(
     serverSource.indexOf(publicMount) < serverSource.indexOf(gatedMount),
-    'public calendar routes must run before requireFeature(google_calendar)'
+    'public calendar routes must run before the protected calendar router'
   )
 })
 
