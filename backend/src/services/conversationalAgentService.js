@@ -2319,6 +2319,20 @@ export async function getConversationalAgent(agentId) {
   return mapAgentRow(row)
 }
 
+async function refreshAssignedConversationStatesForAgent(agentId, { updatedBy = 'agent_config' } = {}) {
+  const cleanAgentId = String(agentId || '').trim()
+  if (!cleanAgentId) return 0
+  const result = await db.run(`
+    UPDATE conversational_agent_state
+    SET updated_by = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE agent_id = ?
+      AND status = 'active'
+      AND (signal IS NULL OR signal = '')
+  `, [updatedBy, cleanAgentId]).catch(() => null)
+  return Number(result?.changes || result?.rowCount || 0)
+}
+
 function agentInputToRowValues(input, base) {
   assertAgentTimingInput(input)
   const identity = normalizeAgentIdentity(input, base)
@@ -2368,6 +2382,34 @@ function agentInputToRowValues(input, base) {
   }
   return next
 }
+
+const ACTIVE_AGENT_RUNTIME_CONFIG_KEYS = new Set([
+  'enabled',
+  'aiProvider',
+  'model',
+  'identityMode',
+  'identityUserId',
+  'identityUserName',
+  'identityCustomName',
+  'objective',
+  'customObjective',
+  'successAction',
+  'successExtras',
+  'requiredData',
+  'handoffRules',
+  'extraInstructions',
+  'allowEmojis',
+  'hideAttended',
+  'hideAttendedNotifications',
+  'defaultCalendarId',
+  'closingStrategyMode',
+  'closingStrategyCustom',
+  'responseDelay',
+  'replyDelivery',
+  'followUp',
+  'goalWorkflow',
+  'filters'
+])
 
 const DEFAULT_AGENT_BASE = {
   name: 'Agente',
@@ -2694,6 +2736,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
     throw Object.assign(new Error('Agente conversacional no encontrado'), { statusCode: 404 })
   }
   const next = agentInputToRowValues(input, current)
+  const shouldRefreshAssignedStates = Object.keys(input || {}).some((key) => ACTIVE_AGENT_RUNTIME_CONFIG_KEYS.has(key))
   const shouldValidateEntry = next.enabled && (!current.enabled || input.enabled === true || input.filters !== undefined)
   if (shouldValidateEntry) {
     await assertConversationalAgentEntryDoesNotConflict({ ...next, id: agentId }, { excludeAgentId: agentId })
@@ -2723,6 +2766,21 @@ export async function updateConversationalAgent(agentId, input = {}) {
   ])
   if (next.enabled) {
     await enableConversationalAgentRuntime({ reason: 'agent_updated_enabled', agentId })
+  }
+  if (shouldRefreshAssignedStates) {
+    const refreshedCount = await refreshAssignedConversationStatesForAgent(agentId)
+    if (refreshedCount > 0) {
+      await recordConversationalAgentEvent({
+        eventType: 'agent_config_applied_to_active_conversations',
+        detail: {
+          agentId,
+          refreshedCount,
+          hideAttendedNotifications: next.hideAttendedNotifications,
+          aiProvider: next.aiProvider,
+          model: next.model
+        }
+      })
+    }
   }
   return getConversationalAgent(agentId)
 }
@@ -3532,6 +3590,9 @@ async function notifyConversationalCompletion({ contactId, reason = '', summary 
 
 function mapStateRow(row) {
   if (!row) return null
+  const hasAgentEnabled = row.agent_enabled !== undefined && row.agent_enabled !== null
+  const hasAgentHideAttendedNotifications = row.agent_hide_attended_notifications !== undefined ||
+    row.agent_hide_attended !== undefined
   return {
     id: row.id || null,
     contactId: row.contact_id,
@@ -3554,6 +3615,10 @@ function mapStateRow(row) {
     updatedBy: row.updated_by || null,
     agentId: row.agent_id || null,
     agentName: row.agent_name || null,
+    agentEnabled: hasAgentEnabled ? toBoolean(row.agent_enabled) : null,
+    agentHideAttendedNotifications: hasAgentHideAttendedNotifications
+      ? (toBoolean(row.agent_hide_attended_notifications) || toBoolean(row.agent_hide_attended))
+      : null,
     closingContext: normalizeStoredAdvancedClosingContext(row.closing_context_json || '{}'),
     updatedAt: row.updated_at || null
   }
@@ -3581,7 +3646,9 @@ async function loadConversationStateRow(contactId, { agentId = null } = {}) {
   const cleanAgentId = normalizeConversationStateAgentId(agentId)
   if (cleanAgentId) {
     return db.get(`
-      SELECT s.*, a.name AS agent_name
+      SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
+             a.hide_attended AS agent_hide_attended,
+             a.hide_attended_notifications AS agent_hide_attended_notifications
       FROM conversational_agent_state s
       LEFT JOIN conversational_agents a ON a.id = s.agent_id
       WHERE s.contact_id = ? AND s.agent_id = ?
@@ -3590,7 +3657,9 @@ async function loadConversationStateRow(contactId, { agentId = null } = {}) {
   }
 
   return db.get(`
-    SELECT s.*, a.name AS agent_name
+    SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
+           a.hide_attended AS agent_hide_attended,
+           a.hide_attended_notifications AS agent_hide_attended_notifications
     FROM conversational_agent_state s
     LEFT JOIN conversational_agents a ON a.id = s.agent_id
     WHERE s.contact_id = ?
@@ -3602,7 +3671,9 @@ async function loadConversationStateRow(contactId, { agentId = null } = {}) {
 async function loadConversationStateRowById(stateId) {
   if (!stateId) return null
   return db.get(`
-    SELECT s.*, a.name AS agent_name
+    SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
+           a.hide_attended AS agent_hide_attended,
+           a.hide_attended_notifications AS agent_hide_attended_notifications
     FROM conversational_agent_state s
     LEFT JOIN conversational_agents a ON a.id = s.agent_id
     WHERE s.id = ?
@@ -3764,7 +3835,9 @@ export async function listConversationStatesForContact(contactId) {
   if (!contactId) return []
   await expirePausedConversationStates()
   const rows = await db.all(`
-    SELECT s.*, a.name AS agent_name
+    SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
+           a.hide_attended AS agent_hide_attended,
+           a.hide_attended_notifications AS agent_hide_attended_notifications
     FROM conversational_agent_state s
     LEFT JOIN conversational_agents a ON a.id = s.agent_id
     WHERE s.contact_id = ?
@@ -4012,6 +4085,10 @@ export async function shouldSuppressChatNotificationForConversationalAgent(conta
   const states = await listConversationStatesForContact(contactId)
   for (const state of states) {
     if (!state?.agentId || state.status !== 'active' || state.signal) continue
+    if (state.agentEnabled !== null && state.agentHideAttendedNotifications !== null) {
+      if (state.agentEnabled && state.agentHideAttendedNotifications) return true
+      continue
+    }
     const agent = await getConversationalAgent(state.agentId)
     if (agent?.enabled && agent.hideAttendedNotifications) return true
   }
@@ -4126,7 +4203,10 @@ export async function listConversationStates({ signal = null, statuses = null } 
   }
 
 	  const rows = await db.all(`
-	    SELECT s.*, c.full_name AS contact_name, c.phone AS contact_phone, a.name AS agent_name
+	    SELECT s.*, c.full_name AS contact_name, c.phone AS contact_phone,
+             a.name AS agent_name, a.enabled AS agent_enabled,
+             a.hide_attended AS agent_hide_attended,
+             a.hide_attended_notifications AS agent_hide_attended_notifications
 	    FROM conversational_agent_state s
 	    LEFT JOIN contacts c ON c.id = s.contact_id
 	    LEFT JOIN conversational_agents a ON a.id = s.agent_id

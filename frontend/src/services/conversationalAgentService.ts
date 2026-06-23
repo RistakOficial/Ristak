@@ -324,6 +324,8 @@ export interface ConversationAgentState {
   activationSource?: 'manual' | 'automatic' | string | null
   activatedBy?: string | null
   updatedBy: string | null
+  agentEnabled?: boolean | null
+  agentHideAttendedNotifications?: boolean | null
   closingContext?: Record<string, string>
   updatedAt: string | null
   contactName?: string | null
@@ -832,6 +834,25 @@ function updateCachedAgentState(state: ConversationAgentState) {
   }, { notify: true })
 }
 
+function applyCachedAgentUpdate(agent: ConversationalAgentDef) {
+  const current = readConversationalAgentLiveCache()
+  if (!current) return
+
+  writeConversationalAgentLiveCache({
+    agents: current.agents.map((item) => (item.id === agent.id ? agent : item)),
+    states: current.states.map((state) => (
+      state.agentId === agent.id
+        ? {
+            ...state,
+            agentName: agent.name || state.agentName,
+            agentEnabled: agent.enabled,
+            agentHideAttendedNotifications: agent.hideAttendedNotifications
+          }
+        : state
+    ))
+  }, { notify: true })
+}
+
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('auth_token')
   return {
@@ -928,12 +949,7 @@ export const conversationalAgentService = {
       method: 'PUT',
       body: JSON.stringify(input)
     }))
-    const current = readConversationalAgentLiveCache()
-    if (current) {
-      writeConversationalAgentLiveCache({
-        agents: current.agents.map((item) => (item.id === agent.id ? agent : item))
-      }, { notify: true })
-    }
+    applyCachedAgentUpdate(agent)
     return agent
   },
 

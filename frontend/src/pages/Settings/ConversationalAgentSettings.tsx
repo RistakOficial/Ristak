@@ -2759,9 +2759,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>2. Qué debe lograr</h3>
+            <h3 className={styles.sectionTitle}>Chat mientras la IA habla</h3>
             <p className={styles.agentSectionHint}>
-              Define la meta, quién la cumple y qué pasa después. Ejemplo: pedir anticipo antes de agendar.
+              Decide si el equipo recibe avisos mientras este agente atiende. El contacto siempre se queda en la vista del agente.
             </p>
             <div className={styles.configQuestionList}>
               <QuestionSelectRow
@@ -2772,7 +2772,15 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 selectLabel="Qué hace el chat con conversaciones atendidas"
                 onChange={(value) => onChange(getAttendedChatActionPatch(value as AttendedChatActionValue))}
               />
+            </div>
+          </div>
 
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>2. Qué debe lograr</h3>
+            <p className={styles.agentSectionHint}>
+              Define la meta, quién la cumple y qué pasa después. Ejemplo: pedir anticipo antes de agendar.
+            </p>
+            <div className={styles.configQuestionList}>
               <QuestionSelectRow
                 question="¿Cuál es la meta?"
                 helper={selectedObjective.description}

@@ -21,6 +21,7 @@ import {
   getConversationalAgentConfig,
   getConversationGoalLink,
   getConversationState,
+  listConversationStates,
   listConversationStatesForContact,
   getAgentFollowUpStepDelayMs,
   getAgentReplyDeliveryPartDelayMs,
@@ -36,6 +37,7 @@ import {
   setConversationSignal,
   setConversationStatus,
   setConversationalCompletionSummaryGeneratorForTest,
+  shouldSuppressChatNotificationForConversationalAgent,
   shouldMigrateLegacyConversationalAgentConfig,
   updateConversationalAgent
 } from '../src/services/conversationalAgentService.js'
@@ -1631,6 +1633,57 @@ test('ocultar atendidas legacy se guarda como silenciar sin sacar el chat de IA'
     assert.equal(legacyHiddenAgent.hideAttendedNotifications, true)
   } finally {
     await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+  }
+})
+
+test('cambiar a silenciar aplica sobre conversaciones ya asignadas y mantiene el contacto en el chat del agente', async () => {
+  const snapshot = await snapshotRuntimeConfig()
+  const contactId = `contact_agent_mode_${randomUUID()}`
+  let agent = null
+
+  try {
+    await saveConversationalAgentConfig({ enabled: true })
+    agent = await createConversationalAgent({
+      name: 'Agente modo editable',
+      enabled: true,
+      hideAttended: false,
+      hideAttendedNotifications: false
+    })
+
+    await assignAgentToConversation(contactId, agent.id, {
+      activationSource: 'automatic',
+      updatedBy: 'agent'
+    })
+
+    assert.equal(await shouldSuppressChatNotificationForConversationalAgent(contactId), false)
+
+    const mutedAgent = await updateConversationalAgent(agent.id, {
+      hideAttended: false,
+      hideAttendedNotifications: true
+    })
+
+    assert.equal(mutedAgent.hideAttended, false)
+    assert.equal(mutedAgent.hideAttendedNotifications, true)
+    assert.equal(await shouldSuppressChatNotificationForConversationalAgent(contactId), true)
+
+    const contactStates = await listConversationStatesForContact(contactId)
+    assert.equal(contactStates.length, 1)
+    assert.equal(contactStates[0].agentId, agent.id)
+    assert.equal(contactStates[0].agentHideAttendedNotifications, true)
+    assert.equal(contactStates[0].agentEnabled, true)
+
+    const listedStates = await listConversationStates({ statuses: ['active'] })
+    const listedState = listedStates.find((state) => state.contactId === contactId && state.agentId === agent.id)
+    assert.ok(listedState)
+    assert.equal(listedState.agentHideAttendedNotifications, true)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_events WHERE detail_json LIKE ?', [`%${agent.id}%`]).catch(() => undefined)
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+    }
+    await restoreRuntimeConfig(snapshot)
   }
 })
 
