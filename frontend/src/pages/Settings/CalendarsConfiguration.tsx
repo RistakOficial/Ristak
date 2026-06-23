@@ -96,7 +96,7 @@ import pageStyles from './CalendarsConfiguration.module.css'
 
 type CalendarSettingsView = 'calendars' | 'google'
 type CalendarSourcePreference = 'combined' | 'ristak' | 'ghl' | 'google'
-type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'reminders' | 'advanced' | 'events'
+type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'reminders' | 'advanced' | 'events' | 'design'
 type CalendarPreviewStep = 'date' | 'time' | 'details'
 
 const parseCalendarSettingsRoute = (pathname: string) => {
@@ -274,14 +274,15 @@ const CALENDAR_WIZARD_STEPS: Array<{
   label: string
   description: string
 }> = [
-  { id: 'basics', label: 'Detalles', description: 'Nombre, color y estado.' },
+  { id: 'basics', label: 'Detalles', description: 'Nombre, cita y estado.' },
   { id: 'publicUrl', label: 'URL pública', description: 'Link para compartir.' },
   { id: 'availability', label: 'Disponibilidad', description: 'Duración y espacios.' },
   { id: 'rules', label: 'Reglas', description: 'Límites de reserva.' },
   { id: 'form', label: 'Formulario', description: 'Preguntas y cierre.' },
   { id: 'reminders', label: 'Recordatorios', description: 'Mensajes automáticos.' },
   { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' },
-  { id: 'events', label: 'Eventos', description: 'Meta Pixel y WhatsApp.' }
+  { id: 'events', label: 'Eventos', description: 'Meta Pixel y WhatsApp.' },
+  { id: 'design', label: 'Estilos y diseños', description: 'Vista, colores y tipografía.' }
 ]
 const CALENDAR_TEMPLATE_EXTRA_CATEGORIES = [
   { id: 'calendar', label: 'Calendario' }
@@ -2411,7 +2412,7 @@ export const CalendarsConfiguration: React.FC = () => {
                   <section className={pageStyles.editorSection}>
                     <div className={pageStyles.editorSectionHeader}>
                       <strong>Lo básico</strong>
-                      <span>Cómo se llama el calendario y cómo se van a ver sus citas.</span>
+                      <span>Cómo se llama el calendario y cómo se registran sus citas.</span>
                     </div>
                     <div className={pageStyles.editorFields}>
                       <label className={pageStyles.editorField}>
@@ -2430,15 +2431,6 @@ export const CalendarsConfiguration: React.FC = () => {
                         placeholder: 'Ej. Cita con {{contact.full_name}}',
                         help: 'Este texto será el título de cada cita nueva. Puedes meter parámetros.'
                       })}
-
-                      <div className={pageStyles.editorField}>
-                        <span>Color del calendario</span>
-                        {renderCalendarColorPicker(
-                          selectedCalendar.eventColor,
-                          (nextColor) => updateSelectedCalendar({ eventColor: nextColor }),
-                          true
-                        )}
-                      </div>
 
                       <div className={pageStyles.editorField}>
                         <span>Conversión</span>
@@ -2510,77 +2502,6 @@ export const CalendarsConfiguration: React.FC = () => {
                             onChange={(showConfirmation) => updateBookingDisplayConfig({ showConfirmation })}
                             aria-label="Mostrar confirmación de la cita"
                           />
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className={pageStyles.editorSection}>
-                    <div className={pageStyles.editorSectionHeader}>
-                      <strong>Estilo y diseño</strong>
-                      <span>Controla la apariencia de la URL pública: panel izquierdo, textos, colores y tipografía.</span>
-                    </div>
-                    {renderCalendarBookingPreview()}
-                    <div className={pageStyles.editorFields}>
-                      <label className={pageStyles.editorField}>
-                        <span>Vista pública</span>
-                        <CustomSelect
-                          value={bookingDisplayConfig.layout}
-                          onValueChange={(value) => updateBookingDisplayConfig({ layout: normalizeCalendarBookingLayout(value) })}
-                          options={CALENDAR_PUBLIC_LAYOUT_OPTIONS}
-                        />
-                      </label>
-
-                      <label className={pageStyles.editorField}>
-                        <span>Tipografía</span>
-                        <CustomSelect
-                          value={bookingDisplayConfig.fontFamily}
-                          onValueChange={(value) => updateBookingDisplayConfig({ fontFamily: normalizeCalendarBookingFontFamily(value) })}
-                          options={CALENDAR_PUBLIC_FONT_OPTIONS}
-                        />
-                      </label>
-
-                      <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
-                        <span>Qué se muestra</span>
-                        <div className={pageStyles.displayToggleGrid}>
-                          {[
-                            ['showSidebar', 'Panel izquierdo', 'Oculta toda la barra lateral para dejar solo el calendario.'],
-                            ['showIcon', 'Icono o imagen', 'Muestra la inicial o imagen superior.'],
-                            ['showEventTitle', 'Título corto', 'Muestra el texto tipo “Cita”.'],
-                            ['showCalendarName', 'Nombre del calendario', 'Muestra el título grande público.'],
-                            ['showDescription', 'Descripción', 'Muestra el texto descriptivo.'],
-                            ['showDuration', 'Duración', 'Muestra los minutos de la cita.']
-                          ].map(([key, label, description]) => (
-                            <div className={pageStyles.displaySwitchRow} key={key}>
-                              <div>
-                                <strong>{label}</strong>
-                                <small>{description}</small>
-                              </div>
-                              <Switch
-                                checked={Boolean(bookingDisplayConfig[key as keyof CalendarBookingDisplayConfig])}
-                                onChange={(checked) => updateBookingDisplayConfig({ [key]: checked } as Partial<CalendarBookingDisplayConfig>)}
-                                aria-label={`Mostrar ${label}`}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
-                        <span>Colores públicos</span>
-                        <div className={pageStyles.publicColorGrid}>
-                          {CALENDAR_BOOKING_DISPLAY_COLOR_FIELDS.map(field => (
-                            <label className={pageStyles.publicColorField} key={field.key}>
-                              <span>{field.label}</span>
-                              <input
-                                type="color"
-                                value={bookingDisplayConfig.colors[field.key]}
-                                onChange={(event) => updateBookingDisplayColors({ [field.key]: event.target.value } as Partial<CalendarBookingDisplayColors>)}
-                                aria-label={`Color ${field.label}`}
-                              />
-                              <strong>{bookingDisplayConfig.colors[field.key].toUpperCase()}</strong>
-                            </label>
-                          ))}
                         </div>
                       </div>
                     </div>
@@ -3394,6 +3315,88 @@ export const CalendarsConfiguration: React.FC = () => {
                     </div>
                   </section>
                 </>
+              )}
+
+              {currentStep.id === 'design' && (
+                <section className={pageStyles.editorSection}>
+                  <div className={pageStyles.editorSectionHeader}>
+                    <strong>Estilos y diseños</strong>
+                    <span>Controla la apariencia de la URL pública: panel izquierdo, textos, colores y tipografía.</span>
+                  </div>
+                  {renderCalendarBookingPreview()}
+                  <div className={pageStyles.editorFields}>
+                    <label className={pageStyles.editorField}>
+                      <span>Vista pública</span>
+                      <CustomSelect
+                        value={bookingDisplayConfig.layout}
+                        onValueChange={(value) => updateBookingDisplayConfig({ layout: normalizeCalendarBookingLayout(value) })}
+                        options={CALENDAR_PUBLIC_LAYOUT_OPTIONS}
+                      />
+                    </label>
+
+                    <label className={pageStyles.editorField}>
+                      <span>Tipografía</span>
+                      <CustomSelect
+                        value={bookingDisplayConfig.fontFamily}
+                        onValueChange={(value) => updateBookingDisplayConfig({ fontFamily: normalizeCalendarBookingFontFamily(value) })}
+                        options={CALENDAR_PUBLIC_FONT_OPTIONS}
+                      />
+                    </label>
+
+                    <div className={pageStyles.editorField}>
+                      <span>Color del calendario</span>
+                      {renderCalendarColorPicker(
+                        selectedCalendar.eventColor,
+                        (nextColor) => updateSelectedCalendar({ eventColor: nextColor }),
+                        true
+                      )}
+                    </div>
+
+                    <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                      <span>Qué se muestra</span>
+                      <div className={pageStyles.displayToggleGrid}>
+                        {[
+                          ['showSidebar', 'Panel izquierdo', 'Oculta toda la barra lateral para dejar solo el calendario.'],
+                          ['showIcon', 'Icono o imagen', 'Muestra la inicial o imagen superior.'],
+                          ['showEventTitle', 'Título corto', 'Muestra el texto tipo “Cita”.'],
+                          ['showCalendarName', 'Nombre del calendario', 'Muestra el título grande público.'],
+                          ['showDescription', 'Descripción', 'Muestra el texto descriptivo.'],
+                          ['showDuration', 'Duración', 'Muestra los minutos de la cita.']
+                        ].map(([key, label, description]) => (
+                          <div className={pageStyles.displaySwitchRow} key={key}>
+                            <div>
+                              <strong>{label}</strong>
+                              <small>{description}</small>
+                            </div>
+                            <Switch
+                              checked={Boolean(bookingDisplayConfig[key as keyof CalendarBookingDisplayConfig])}
+                              onChange={(checked) => updateBookingDisplayConfig({ [key]: checked } as Partial<CalendarBookingDisplayConfig>)}
+                              aria-label={`Mostrar ${label}`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                      <span>Colores públicos</span>
+                      <div className={pageStyles.publicColorGrid}>
+                        {CALENDAR_BOOKING_DISPLAY_COLOR_FIELDS.map(field => (
+                          <label className={pageStyles.publicColorField} key={field.key}>
+                            <span>{field.label}</span>
+                            <input
+                              type="color"
+                              value={bookingDisplayConfig.colors[field.key]}
+                              onChange={(event) => updateBookingDisplayColors({ [field.key]: event.target.value } as Partial<CalendarBookingDisplayColors>)}
+                              aria-label={`Color ${field.label}`}
+                            />
+                            <strong>{bookingDisplayConfig.colors[field.key].toUpperCase()}</strong>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </section>
               )}
             </div>
             <div className={pageStyles.calendarWizardFooter}>
