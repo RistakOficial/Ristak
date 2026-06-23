@@ -6755,6 +6755,11 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    if (isWideChatDevice && tagDropdownOpen && tagActionContactId === targetContact.id) {
+      setTagDropdownOpen(false)
+      return
+    }
+
     setTagActionContactId(targetContact.id)
     setChatActionContactId(null)
     setChatTagSearch('')
