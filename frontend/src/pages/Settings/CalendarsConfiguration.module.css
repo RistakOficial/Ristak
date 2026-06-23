@@ -1181,6 +1181,376 @@
   font-family: var(--font-mono);
 }
 
+.bookingPreviewPanel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  max-width: 940px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.bookingPreviewHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.bookingPreviewHeader strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.bookingPreviewHeader span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.bookingPreviewActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bookingPreviewFrame {
+  display: grid;
+  grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--calendar-preview-line, var(--border));
+  border-radius: var(--radius-card);
+  background: var(--calendar-preview-bg, var(--bg));
+  color: var(--calendar-preview-text, var(--text));
+  font-family: var(--calendar-preview-font, var(--font-body));
+  box-shadow: var(--shadow-xs);
+}
+
+.bookingPreviewFrame[data-stage='time'] {
+  grid-template-columns: minmax(170px, 220px) minmax(260px, 1fr) minmax(144px, 180px);
+}
+
+.bookingPreviewFrame[data-stage='details'] {
+  grid-template-columns: minmax(170px, 220px) minmax(280px, 460px);
+  justify-content: start;
+}
+
+.bookingPreviewFrame[data-sidebar='hidden'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.bookingPreviewFrame[data-sidebar='hidden'][data-stage='time'] {
+  grid-template-columns: minmax(260px, 1fr) minmax(144px, 180px);
+}
+
+.bookingPreviewFrame[data-sidebar='hidden'][data-stage='details'] {
+  grid-template-columns: minmax(280px, 460px);
+}
+
+.bookingPreviewFrame[data-layout='compact'],
+.bookingPreviewFrame[data-layout='stacked'],
+.bookingPreviewFrame[data-layout='compact'][data-stage='time'],
+.bookingPreviewFrame[data-layout='stacked'][data-stage='time'],
+.bookingPreviewFrame[data-layout='compact'][data-stage='details'],
+.bookingPreviewFrame[data-layout='stacked'][data-stage='details'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.bookingPreviewIntro,
+.bookingPreviewCalendar,
+.bookingPreviewTimes,
+.bookingPreviewForm {
+  min-width: 0;
+  padding: 18px;
+}
+
+.bookingPreviewIntro {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border-right: 1px solid var(--calendar-preview-line, var(--border));
+  background: var(--calendar-preview-surface, var(--surface));
+}
+
+.bookingPreviewFrame[data-layout='compact'] .bookingPreviewIntro,
+.bookingPreviewFrame[data-layout='stacked'] .bookingPreviewIntro {
+  border-right: 0;
+  border-bottom: 1px solid var(--calendar-preview-line, var(--border));
+}
+
+.bookingPreviewAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 62px;
+  height: 62px;
+  border: 1px solid var(--calendar-preview-line, var(--border));
+  border-radius: var(--radius-ctl);
+  background: var(--calendar-preview-control-bg, var(--surface));
+  color: var(--calendar-preview-accent, var(--accent));
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.bookingPreviewIntro > span {
+  color: var(--calendar-preview-muted, var(--text-mute));
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.bookingPreviewIntro h4 {
+  margin: 0;
+  color: var(--calendar-preview-text, var(--text));
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.bookingPreviewIntro p {
+  margin: 0;
+  color: var(--calendar-preview-muted, var(--text-mute));
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.bookingPreviewMeta {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.bookingPreviewMeta small {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--calendar-preview-muted, var(--text-mute));
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.bookingPreviewCalendar {
+  display: grid;
+  gap: 14px;
+  background: var(--calendar-preview-surface, var(--surface));
+}
+
+.bookingPreviewPaneTitle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bookingPreviewPaneTitle strong,
+.bookingPreviewTimes strong,
+.bookingPreviewForm strong {
+  display: block;
+  color: var(--calendar-preview-text, var(--text));
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.bookingPreviewPaneTitle span,
+.bookingPreviewTimes span,
+.bookingPreviewForm span {
+  display: block;
+  margin-top: 2px;
+  color: var(--calendar-preview-muted, var(--text-mute));
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.bookingPreviewMonth {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.bookingPreviewMonth strong {
+  color: var(--calendar-preview-text, var(--text));
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.bookingPreviewMonth button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--calendar-preview-muted, var(--text-mute));
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bookingPreviewWeekdays,
+.bookingPreviewDays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 7px;
+  text-align: center;
+}
+
+.bookingPreviewWeekdays span {
+  color: var(--calendar-preview-text, var(--text));
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.bookingPreviewDays button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: color-mix(in srgb, var(--calendar-preview-muted, var(--text-mute)) 55%, transparent);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.bookingPreviewDays button:disabled {
+  cursor: default;
+}
+
+.bookingPreviewDays .bookingPreviewDayAvailable {
+  color: var(--calendar-preview-slot-text, var(--calendar-preview-accent, var(--accent)));
+  cursor: pointer;
+}
+
+.bookingPreviewDays .bookingPreviewDaySelected {
+  border-color: var(--calendar-preview-accent, var(--accent));
+  background: var(--calendar-preview-accent, var(--accent));
+  color: var(--calendar-preview-selected-text, var(--on-accent));
+}
+
+.bookingPreviewTimezone {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  color: var(--calendar-preview-muted, var(--text-mute));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.bookingPreviewTimezone div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bookingPreviewTimezone span {
+  color: var(--calendar-preview-muted, var(--text-mute));
+}
+
+.bookingPreviewTimezone strong,
+.bookingPreviewTimezone select {
+  min-width: 0;
+  color: var(--calendar-preview-text, var(--text));
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bookingPreviewTimezone select {
+  min-height: 32px;
+  border: 1px solid var(--calendar-preview-field-border, var(--border));
+  border-radius: var(--radius-ctl);
+  background: var(--calendar-preview-field-bg, var(--surface));
+}
+
+.bookingPreviewTimes {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border-left: 1px solid var(--calendar-preview-line, var(--border));
+  background: var(--calendar-preview-bg, var(--bg));
+}
+
+.bookingPreviewSlotList {
+  display: grid;
+  gap: 8px;
+}
+
+.bookingPreviewSlotList button,
+.bookingPreviewForm button {
+  min-height: 36px;
+  border: 1px solid var(--calendar-preview-accent, var(--accent));
+  border-radius: var(--radius-ctl);
+  background: var(--calendar-preview-slot-bg, var(--surface));
+  color: var(--calendar-preview-slot-text, var(--accent));
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.bookingPreviewSlotList .bookingPreviewSlotSelected,
+.bookingPreviewForm button:not(.bookingPreviewSecondaryAction) {
+  background: var(--calendar-preview-accent, var(--accent));
+  color: var(--calendar-preview-button-text, var(--on-accent));
+}
+
+.bookingPreviewForm {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  background: var(--calendar-preview-surface, var(--surface));
+}
+
+.bookingPreviewForm label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bookingPreviewForm label span {
+  color: var(--calendar-preview-muted, var(--text-mute));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.bookingPreviewForm input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--calendar-preview-field-border, var(--border));
+  border-radius: var(--radius-ctl);
+  background: var(--calendar-preview-field-bg, var(--surface));
+  color: var(--calendar-preview-field-text, var(--text));
+  font-size: 12px;
+}
+
+.bookingPreviewSecondaryAction {
+  border-color: var(--calendar-preview-line, var(--border));
+  background: var(--calendar-preview-control-bg, var(--surface));
+  color: var(--calendar-preview-accent, var(--accent));
+}
+
 .editorField > input:not([type='checkbox']):not([type='radio']) {
   box-sizing: border-box;
   height: var(--design-control-height);
@@ -2671,6 +3041,21 @@
   .editorGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .bookingPreviewFrame,
+  .bookingPreviewFrame[data-stage='time'],
+  .bookingPreviewFrame[data-stage='details'],
+  .bookingPreviewFrame[data-sidebar='hidden'][data-stage='time'],
+  .bookingPreviewFrame[data-sidebar='hidden'][data-stage='details'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bookingPreviewIntro,
+  .bookingPreviewTimes {
+    border-right: 0;
+    border-left: 0;
+    border-bottom: 1px solid var(--calendar-preview-line, var(--border));
+  }
 }
 
 @media (max-width: 760px) {
@@ -2816,6 +3201,27 @@
   .displaySwitchRow,
   .publicColorField {
     align-items: start;
+  }
+
+  .bookingPreviewPanel {
+    padding: 10px;
+  }
+
+  .bookingPreviewHeader,
+  .bookingPreviewActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .bookingPreviewActions button {
+    width: 100%;
+  }
+
+  .bookingPreviewIntro,
+  .bookingPreviewCalendar,
+  .bookingPreviewTimes,
+  .bookingPreviewForm {
+    padding: 16px;
   }
 
   .eventSwitchRow,

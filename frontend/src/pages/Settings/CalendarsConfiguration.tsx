@@ -97,6 +97,7 @@ import pageStyles from './CalendarsConfiguration.module.css'
 type CalendarSettingsView = 'calendars' | 'google'
 type CalendarSourcePreference = 'combined' | 'ristak' | 'ghl' | 'google'
 type CalendarWizardStepId = 'basics' | 'publicUrl' | 'availability' | 'rules' | 'form' | 'reminders' | 'advanced' | 'events'
+type CalendarPreviewStep = 'date' | 'time' | 'details'
 
 const parseCalendarSettingsRoute = (pathname: string) => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -212,6 +213,28 @@ const CALENDAR_TIMEZONE_OPTIONS = getSupportedCalendarTimezones().map(timezone =
   label: timezone
 }))
 const CALENDAR_TIMEZONE_VALUES = new Set(CALENDAR_TIMEZONE_OPTIONS.map(option => option.value))
+const CALENDAR_PREVIEW_AVAILABLE_DAYS = new Set([24, 25, 26, 29, 30])
+const CALENDAR_PREVIEW_DAYS = Array.from({ length: 30 }, (_, index) => index + 1)
+const CALENDAR_PREVIEW_DEFAULT_DAY = 24
+const CALENDAR_PREVIEW_SLOTS = [
+  { value: '09:00', label: '9:00 AM' },
+  { value: '10:30', label: '10:30 AM' },
+  { value: '12:00', label: '12:00 PM' },
+  { value: '15:30', label: '3:30 PM' }
+]
+const CALENDAR_PREVIEW_TIMEZONE_OPTIONS = [
+  'America/Ciudad_Juarez',
+  'America/Mexico_City',
+  'America/New_York',
+  'America/Los_Angeles',
+  'Europe/Madrid'
+]
+const CALENDAR_PREVIEW_FONT_STACKS: Record<CalendarBookingFontFamily, string> = {
+  system: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  modern: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  mono: '"SFMono-Regular", "Roboto Mono", "Cascadia Code", monospace'
+}
 const CALENDAR_META_EVENT_OPTIONS = [
   { value: 'Schedule', label: 'Schedule · cita agendada' },
   { value: 'Lead', label: 'Lead · lead nuevo' },
@@ -297,6 +320,14 @@ const normalizeCalendarBookingFontFamily = (value?: string | null): CalendarBook
 const normalizeCalendarTimezoneValue = (value?: string | null) => {
   const raw = String(value || '').trim()
   return CALENDAR_TIMEZONE_VALUES.has(raw) ? raw : ''
+}
+
+const detectCalendarPreviewTimezone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
 }
 
 const normalizeCalendarMatchValue = (value?: string | null) => String(value || '').trim().toLowerCase()
@@ -638,6 +669,10 @@ export const CalendarsConfiguration: React.FC = () => {
   const [expandedCalendarId, setExpandedCalendarId] = useState<string | null>(null)
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarType | null>(null)
   const [calendarWizardStep, setCalendarWizardStep] = useState<CalendarWizardStepId>('basics')
+  const [calendarPreviewStep, setCalendarPreviewStep] = useState<CalendarPreviewStep>('date')
+  const [calendarPreviewDate, setCalendarPreviewDate] = useState(CALENDAR_PREVIEW_DEFAULT_DAY)
+  const [calendarPreviewSlot, setCalendarPreviewSlot] = useState(CALENDAR_PREVIEW_SLOTS[1].value)
+  const [calendarPreviewTimezone, setCalendarPreviewTimezone] = useState(() => detectCalendarPreviewTimezone())
   const [calendarMetaParamsOpen, setCalendarMetaParamsOpen] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
   const [savingActiveCalendarId, setSavingActiveCalendarId] = useState<string | null>(null)
@@ -1292,17 +1327,22 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleOpenCalendarEditor = (calendar: CalendarType) => {
+    const bookingDisplay = normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor)
     setSelectedCalendar({
       ...calendar,
       bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
       bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
-      bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
+      bookingDisplay,
       customEvents: normalizeCalendarCustomEvents(calendar.customEvents),
       antiTrackingEnabled: calendar.antiTrackingEnabled !== false
     })
     setExpandedCalendarId(calendar.id)
     setCalendarWizardStep('basics')
     setCalendarMetaParamsOpen(false)
+    setCalendarPreviewStep('date')
+    setCalendarPreviewDate(CALENDAR_PREVIEW_DEFAULT_DAY)
+    setCalendarPreviewSlot(CALENDAR_PREVIEW_SLOTS[1].value)
+    setCalendarPreviewTimezone(bookingDisplay.defaultTimezone || detectCalendarPreviewTimezone())
     if (googleIntegration?.connected && !loadingGoogleCalendarOptions && !googleCalendarOptions.length) {
       loadGoogleCalendarOptions()
     }
@@ -1314,6 +1354,7 @@ export const CalendarsConfiguration: React.FC = () => {
     setSelectedCalendar(null)
     setCalendarWizardStep('basics')
     setCalendarMetaParamsOpen(false)
+    setCalendarPreviewStep('date')
     navigate(buildCalendarSettingsPath('calendars'), { replace: true })
   }
 
@@ -2092,6 +2133,236 @@ export const CalendarsConfiguration: React.FC = () => {
       )
     }
 
+    const handlePreviewTimezoneChange = (timezone: string) => {
+      const nextTimezone = normalizeCalendarTimezoneValue(timezone)
+      setCalendarPreviewTimezone(nextTimezone || detectCalendarPreviewTimezone())
+    }
+
+    const handleBookingDisplayTimezoneChange = (timezone: string) => {
+      const nextTimezone = normalizeCalendarTimezoneValue(timezone)
+      setCalendarPreviewTimezone(nextTimezone || detectCalendarPreviewTimezone())
+      updateBookingDisplayConfig({ defaultTimezone: nextTimezone })
+    }
+
+    const handlePreviewDayClick = (day: number) => {
+      if (!CALENDAR_PREVIEW_AVAILABLE_DAYS.has(day)) return
+      setCalendarPreviewDate(day)
+      setCalendarPreviewStep('time')
+    }
+
+    const handlePreviewSlotClick = (slot: string) => {
+      setCalendarPreviewSlot(slot)
+      setCalendarPreviewStep('details')
+    }
+
+    const resetCalendarPreview = () => {
+      setCalendarPreviewStep('date')
+      setCalendarPreviewDate(CALENDAR_PREVIEW_DEFAULT_DAY)
+      setCalendarPreviewSlot(CALENDAR_PREVIEW_SLOTS[1].value)
+      setCalendarPreviewTimezone(bookingDisplayConfig.defaultTimezone || detectCalendarPreviewTimezone())
+    }
+
+    const openCalendarWidget = () => {
+      if (!selectedPublicOpenUrl) return
+      window.open(selectedPublicOpenUrl, '_blank', 'noopener,noreferrer')
+    }
+
+    const previewTimezone = bookingDisplayConfig.defaultTimezone || calendarPreviewTimezone || detectCalendarPreviewTimezone()
+    const previewSlotLabel = CALENDAR_PREVIEW_SLOTS.find(slot => slot.value === calendarPreviewSlot)?.label || CALENDAR_PREVIEW_SLOTS[1].label
+    const previewDuration = Math.max(1, Number(selectedCalendar.slotDuration || 60))
+    const previewCalendarName = selectedCalendar.name || 'Mi calendario'
+    const previewEventTitle = selectedCalendar.eventTitle || 'Cita'
+    const previewDescription = selectedCalendar.description || 'Calendario principal creado en Ristak'
+    const previewStyle = {
+      '--calendar-preview-accent': bookingDisplayConfig.colors.accent,
+      '--calendar-preview-bg': bookingDisplayConfig.colors.background,
+      '--calendar-preview-surface': bookingDisplayConfig.colors.surface,
+      '--calendar-preview-text': bookingDisplayConfig.colors.text,
+      '--calendar-preview-muted': bookingDisplayConfig.colors.muted,
+      '--calendar-preview-line': bookingDisplayConfig.colors.line,
+      '--calendar-preview-control-bg': bookingDisplayConfig.colors.controlBg,
+      '--calendar-preview-slot-bg': bookingDisplayConfig.colors.slotBg,
+      '--calendar-preview-slot-text': bookingDisplayConfig.colors.slotText,
+      '--calendar-preview-selected-text': bookingDisplayConfig.colors.selectedText,
+      '--calendar-preview-field-bg': bookingDisplayConfig.colors.fieldBg,
+      '--calendar-preview-field-text': bookingDisplayConfig.colors.fieldText,
+      '--calendar-preview-field-border': bookingDisplayConfig.colors.fieldBorder,
+      '--calendar-preview-button-text': bookingDisplayConfig.colors.buttonText,
+      '--calendar-preview-font': CALENDAR_PREVIEW_FONT_STACKS[bookingDisplayConfig.fontFamily]
+    } as React.CSSProperties
+
+    const renderCalendarBookingPreview = () => (
+      <div className={pageStyles.bookingPreviewPanel}>
+        <div className={pageStyles.bookingPreviewHeader}>
+          <div>
+            <strong>Preview del calendario</strong>
+            <span>{calendarPreviewStep === 'details' ? `Formulario · ${previewSlotLabel}` : calendarPreviewStep === 'time' ? `Horarios · junio ${calendarPreviewDate}` : 'Vista inicial'}</span>
+          </div>
+          <div className={pageStyles.bookingPreviewActions}>
+            <Button
+              variant="ghost"
+              size="small"
+              onClick={resetCalendarPreview}
+            >
+              <RefreshCw size={14} />
+              Reiniciar
+            </Button>
+            <Button
+              variant="secondary"
+              size="small"
+              onClick={openCalendarWidget}
+              disabled={!selectedPublicOpenUrl}
+            >
+              <Globe2 size={14} />
+              Abrir widget
+            </Button>
+          </div>
+        </div>
+
+        <div
+          className={pageStyles.bookingPreviewFrame}
+          style={previewStyle}
+          data-layout={bookingDisplayConfig.layout}
+          data-sidebar={bookingDisplayConfig.showSidebar ? 'visible' : 'hidden'}
+          data-stage={calendarPreviewStep}
+        >
+          {bookingDisplayConfig.showSidebar && (
+            <aside className={pageStyles.bookingPreviewIntro}>
+              {bookingDisplayConfig.showIcon && (
+                <div className={pageStyles.bookingPreviewAvatar}>
+                  {(previewCalendarName.trim()[0] || 'R').toUpperCase()}
+                </div>
+              )}
+              {bookingDisplayConfig.showEventTitle && <span>{previewEventTitle}</span>}
+              {bookingDisplayConfig.showCalendarName && <h4>{previewCalendarName}</h4>}
+              {bookingDisplayConfig.showDescription && <p>{previewDescription}</p>}
+              {(bookingDisplayConfig.showDuration || bookingDisplayConfig.showConfirmation) && (
+                <div className={pageStyles.bookingPreviewMeta}>
+                  {bookingDisplayConfig.showDuration && (
+                    <small>
+                      <Calendar size={14} />
+                      {previewDuration} min
+                    </small>
+                  )}
+                  {bookingDisplayConfig.showConfirmation && (
+                    <small>
+                      <CheckCircle size={14} />
+                      Confirmación {selectedCalendar.autoConfirm ? 'automática' : 'pendiente'}
+                    </small>
+                  )}
+                </div>
+              )}
+            </aside>
+          )}
+
+          {calendarPreviewStep !== 'details' && (
+            <section className={pageStyles.bookingPreviewCalendar}>
+              <div className={pageStyles.bookingPreviewPaneTitle}>
+                <div>
+                  <strong>Selecciona fecha</strong>
+                  <span>Elige un día disponible para continuar.</span>
+                </div>
+              </div>
+              <div className={pageStyles.bookingPreviewMonth}>
+                <button type="button" aria-label="Mes anterior">‹</button>
+                <strong>junio 2026</strong>
+                <button type="button" aria-label="Mes siguiente">›</button>
+              </div>
+              <div className={pageStyles.bookingPreviewWeekdays}>
+                {['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'].map(day => <span key={day}>{day}</span>)}
+              </div>
+              <div className={pageStyles.bookingPreviewDays}>
+                {CALENDAR_PREVIEW_DAYS.map(day => {
+                  const available = CALENDAR_PREVIEW_AVAILABLE_DAYS.has(day)
+                  const selected = calendarPreviewDate === day
+                  return (
+                    <button
+                      type="button"
+                      key={day}
+                      className={`${available ? pageStyles.bookingPreviewDayAvailable : ''} ${selected ? pageStyles.bookingPreviewDaySelected : ''}`}
+                      onClick={() => handlePreviewDayClick(day)}
+                      disabled={!available}
+                      aria-pressed={selected}
+                    >
+                      {day}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className={pageStyles.bookingPreviewTimezone}>
+                <Globe2 size={15} />
+                <div>
+                  <span>Zona horaria</span>
+                  {bookingDisplayConfig.allowTimezoneSelection ? (
+                    <select
+                      value={previewTimezone}
+                      onChange={(event) => handlePreviewTimezoneChange(event.target.value)}
+                      aria-label="Zona horaria del preview"
+                    >
+                      {Array.from(new Set([previewTimezone, ...CALENDAR_PREVIEW_TIMEZONE_OPTIONS])).map(timezone => (
+                        <option value={timezone} key={timezone}>{timezone}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <strong>{previewTimezone}</strong>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {calendarPreviewStep === 'time' && (
+            <section className={pageStyles.bookingPreviewTimes}>
+              <div>
+                <strong>junio {calendarPreviewDate}</strong>
+                <span>Horarios disponibles</span>
+              </div>
+              <div className={pageStyles.bookingPreviewSlotList}>
+                {CALENDAR_PREVIEW_SLOTS.map(slot => (
+                  <button
+                    type="button"
+                    key={slot.value}
+                    className={calendarPreviewSlot === slot.value ? pageStyles.bookingPreviewSlotSelected : ''}
+                    onClick={() => handlePreviewSlotClick(slot.value)}
+                    aria-pressed={calendarPreviewSlot === slot.value}
+                  >
+                    {slot.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {calendarPreviewStep === 'details' && (
+            <section className={pageStyles.bookingPreviewForm}>
+              <div>
+                <strong>Tus datos</strong>
+                <span>{previewSlotLabel} · {previewTimezone}</span>
+              </div>
+              <label>
+                <span>Nombre</span>
+                <input value="Claudia Ruiz" readOnly />
+              </label>
+              <label>
+                <span>Teléfono</span>
+                <input value="+52 656 000 0000" readOnly />
+              </label>
+              <button type="button">
+                Agendar cita
+              </button>
+              <button
+                type="button"
+                className={pageStyles.bookingPreviewSecondaryAction}
+                onClick={() => setCalendarPreviewStep('time')}
+              >
+                Cambiar horario
+              </button>
+            </section>
+          )}
+        </div>
+      </div>
+    )
+
     return (
       <Modal
         isOpen={expandedCalendarId === calendar.id}
@@ -2197,6 +2468,7 @@ export const CalendarsConfiguration: React.FC = () => {
                       <strong>Estilo y diseño</strong>
                       <span>Controla lo que aparece en la URL pública: panel izquierdo, textos, colores, tipografía y zona horaria.</span>
                     </div>
+                    {renderCalendarBookingPreview()}
                     <div className={pageStyles.editorFields}>
                       <label className={pageStyles.editorField}>
                         <span>Vista pública</span>
@@ -2220,7 +2492,7 @@ export const CalendarsConfiguration: React.FC = () => {
                         <span>Zona horaria base</span>
                         <CustomSelect
                           value={bookingDisplayConfig.defaultTimezone}
-                          onValueChange={(value) => updateBookingDisplayConfig({ defaultTimezone: normalizeCalendarTimezoneValue(value) })}
+                          onValueChange={handleBookingDisplayTimezoneChange}
                           options={[
                             { value: '', label: 'Detectar automáticamente' },
                             ...CALENDAR_TIMEZONE_OPTIONS
