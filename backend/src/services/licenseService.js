@@ -125,6 +125,20 @@ function normalizeBaseUrl(value = '') {
   return String(value || '').trim().replace(/\/+$/, '')
 }
 
+function normalizeAppBaseUrl(value = '') {
+  const clean = normalizeBaseUrl(value)
+  if (!clean) return ''
+
+  try {
+    const withProtocol = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`
+    const parsed = new URL(withProtocol)
+    if (!['http:', 'https:'].includes(parsed.protocol)) return ''
+    return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
 async function resolveManagedAppUrl(fallbackUrl = '') {
   try {
     const appBaseUrl = await verifiedAppBaseUrlResolver()
@@ -365,10 +379,17 @@ export async function hasFeature(featureKey) {
   return !!state.features?.[featureKey] || !!state.features?.[normalizeFeatureKey(featureKey)]
 }
 
-export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/settings/calendars/google' } = {}) {
-  const data = await callLicenseServer('/api/license/google-calendar/connect-url', {
+export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/settings/calendars/google', appUrl = '' } = {}) {
+  const payload = {
     return_path: returnPath
-  })
+  }
+
+  const normalizedAppUrl = normalizeAppBaseUrl(appUrl)
+  if (normalizedAppUrl) {
+    payload.app_url = normalizedAppUrl
+  }
+
+  const data = await callLicenseServer('/api/license/google-calendar/connect-url', payload)
   return {
     url: data.url || '',
     mode: data.mode || 'calendar',

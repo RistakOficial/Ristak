@@ -66,6 +66,35 @@ function cleanString(value) {
   return String(value ?? '').trim();
 }
 
+function normalizeBaseUrl(value) {
+  const clean = cleanString(value).replace(/\/+$/, '');
+  if (!clean) return '';
+
+  try {
+    const withProtocol = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+    const parsed = new URL(withProtocol);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
+
+function getRequestBaseUrl(req) {
+  const headers = req.headers || {};
+  const forwardedHost = cleanString(headers['x-forwarded-host']).split(',')[0].trim();
+  const host = forwardedHost || cleanString(headers.host);
+  const forwardedProto = cleanString(headers['x-forwarded-proto']).split(',')[0].trim();
+  const protocol = forwardedProto || cleanString(req.protocol) || 'https';
+  return host ? normalizeBaseUrl(`${protocol}://${host}`) : '';
+}
+
+function getGoogleCalendarOAuthAppUrl(req) {
+  return normalizeBaseUrl(req.headers?.origin)
+    || normalizeBaseUrl(req.body?.appUrl || req.body?.app_url)
+    || getRequestBaseUrl(req);
+}
+
 function getClientIp(req) {
   const forwarded = cleanString(req.headers?.['x-forwarded-for']);
   if (forwarded) return forwarded.split(',')[0].trim();
@@ -420,7 +449,8 @@ export async function getGoogleCalendarConnectUrl(req, res) {
     }
 
     const data = await createCentralGoogleCalendarConnectUrl({
-      returnPath: sanitizeGoogleCalendarReturnPath(req.body?.returnPath || req.body?.return_path)
+      returnPath: sanitizeGoogleCalendarReturnPath(req.body?.returnPath || req.body?.return_path),
+      appUrl: getGoogleCalendarOAuthAppUrl(req)
     });
 
     if (!data.url) {

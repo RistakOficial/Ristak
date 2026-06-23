@@ -315,6 +315,11 @@ function getGoogleCalendarReturnPath() {
   return `${pathname}${window.location.search || ''}${window.location.hash || ''}`;
 }
 
+function getCurrentAppUrl() {
+  if (typeof window === 'undefined') return '';
+  return window.location.origin || '';
+}
+
 /**
  * Servicio para manejar Calendarios de HighLevel
  */
@@ -347,7 +352,8 @@ export const calendarsService = {
 
   async getGoogleConnectUrl(): Promise<GoogleCalendarConnectUrl> {
     return apiClient.post<GoogleCalendarConnectUrl>('/calendars/google-integration/connect-url', {
-      returnPath: getGoogleCalendarReturnPath()
+      returnPath: getGoogleCalendarReturnPath(),
+      appUrl: getCurrentAppUrl()
     });
   },
 

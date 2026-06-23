@@ -235,6 +235,14 @@ test('dominio de app verificado se usa al crear links centrales de Google', asyn
   assert.equal(calendar.url, 'https://central.ristak.test/oauth/google-calendar')
   assert.equal(lastRequestBody.return_path, '/settings/calendars/google')
   assert.equal(lastRequestBody.app_url, 'https://app.ristak.test')
+
+  await licenseService.createCentralGoogleCalendarConnectUrl({
+    returnPath: '/settings/calendars/google',
+    appUrl: 'https://tenant.onrender.com/settings/calendars/google'
+  })
+
+  assert.equal(lastRequestBody.return_path, '/settings/calendars/google')
+  assert.equal(lastRequestBody.app_url, 'https://tenant.onrender.com')
 })
 
 test('licencia suspendida bloquea aunque el password local sea correcto', async () => {

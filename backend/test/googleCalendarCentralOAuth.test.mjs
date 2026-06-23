@@ -255,7 +255,7 @@ test('Google Calendar OAuth conserva return_path de calendarios y bloquea rutas 
     process.env.APP_URL = 'https://demo.onrender.com'
 
     const { getGoogleCalendarConnectUrl } = await import('../src/controllers/calendarsController.js')
-    const callConnectUrl = async (body) => {
+    const callConnectUrl = async (body, headers = { origin: 'https://raulgomez.onrender.com' }) => {
       let statusCode = 200
       let responseBody = null
       const res = {
@@ -269,7 +269,7 @@ test('Google Calendar OAuth conserva return_path de calendarios y bloquea rutas 
         }
       }
 
-      await getGoogleCalendarConnectUrl({ body }, res)
+      await getGoogleCalendarConnectUrl({ body, headers, protocol: 'https' }, res)
       return { statusCode, responseBody }
     }
 
@@ -279,12 +279,27 @@ test('Google Calendar OAuth conserva return_path de calendarios y bloquea rutas 
     assert.equal(ok.responseBody.data.url, 'https://accounts.google.test/calendar-oauth')
     assert.equal(requests[0].path, '/api/license/google-calendar/connect-url')
     assert.equal(requests[0].body.return_path, calendarPath)
+    assert.equal(requests[0].body.app_url, 'https://raulgomez.onrender.com')
 
     await callConnectUrl({ returnPath: '/settings/payments' })
     assert.equal(requests[1].body.return_path, '/settings/calendars/google')
+    assert.equal(requests[1].body.app_url, 'https://raulgomez.onrender.com')
 
     await callConnectUrl({ returnPath: 'https://evil.test/settings/calendars/google' })
     assert.equal(requests[2].body.return_path, '/settings/calendars/google')
+    assert.equal(requests[2].body.app_url, 'https://raulgomez.onrender.com')
+
+    await callConnectUrl(
+      { returnPath: calendarPath, appUrl: 'https://body-tenant.onrender.com/settings/calendars/google' },
+      {}
+    )
+    assert.equal(requests[3].body.app_url, 'https://body-tenant.onrender.com')
+
+    await callConnectUrl(
+      { returnPath: calendarPath },
+      { 'x-forwarded-host': 'proxy-tenant.onrender.com', 'x-forwarded-proto': 'https' }
+    )
+    assert.equal(requests[4].body.app_url, 'https://proxy-tenant.onrender.com')
   } finally {
     server.closeAllConnections?.()
     server.close()
