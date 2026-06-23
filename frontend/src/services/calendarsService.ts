@@ -181,13 +181,10 @@ export interface CalendarEvent {
 }
 
 export interface GoogleCalendarIntegrationStatus {
-  connectionMode?: 'service_account' | 'oauth';
+  connectionMode?: 'oauth';
   configured?: boolean;
   connected: boolean;
   calendarId: string;
-  serviceAccountEmail: string;
-  projectId: string;
-  privateKeyId: string;
   calendarSummary: string;
   calendarTimeZone: string;
   lastTestAt: string | null;
@@ -206,10 +203,6 @@ export interface GoogleCalendarIntegrationStatus {
   scopes?: string[];
   canManageEvents?: boolean;
   canListCalendars?: boolean;
-}
-
-export interface GoogleCalendarServiceAccountReveal {
-  serviceAccountJson: string;
 }
 
 export interface GoogleCalendarConnectUrl {
@@ -319,20 +312,9 @@ export const calendarsService = {
     });
   },
 
-  async revealGoogleServiceAccount(): Promise<GoogleCalendarServiceAccountReveal> {
-    return apiClient.get<GoogleCalendarServiceAccountReveal>('/calendars/google-integration/reveal/service-account');
-  },
-
   async getGoogleCalendarOptions(): Promise<GoogleCalendarOption[]> {
     const data = await apiClient.get<GoogleCalendarOption[]>('/calendars/google-integration/calendars');
     return Array.isArray(data) ? data : [];
-  },
-
-  async saveGoogleIntegration(payload: {
-    calendarId?: string;
-    serviceAccountJson: string;
-  }): Promise<GoogleCalendarIntegrationStatus> {
-    return apiClient.put<GoogleCalendarIntegrationStatus>('/calendars/google-integration', payload);
   },
 
   async testGoogleIntegration(): Promise<GoogleCalendarIntegrationStatus> {

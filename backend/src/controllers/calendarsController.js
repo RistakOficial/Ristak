@@ -267,19 +267,11 @@ function getCustomEventsForResolvedChannel(customEvents = {}, channel = 'site') 
 }
 
 function googleCalendarIntegrationStatus(config = {}) {
-  if (isLicenseEnforced()) {
-    return {
-      ...config,
-      connectionMode: 'oauth',
-      configured: true,
-      connected: config.connectionMode === 'oauth' ? Boolean(config.connected) : false
-    };
-  }
-
   return {
-    connectionMode: 'service_account',
-    configured: true,
-    ...config
+    ...config,
+    connectionMode: 'oauth',
+    configured: isLicenseEnforced(),
+    connected: config.connectionMode === 'oauth' ? Boolean(config.connected) : false
   };
 }
 
@@ -405,7 +397,7 @@ export async function getGoogleCalendarConnectUrl(req, res) {
     if (!isLicenseEnforced()) {
       return res.status(400).json({
         success: false,
-        error: 'Esta instalación usa conexión manual por Service Account.'
+        error: 'OAuth de Google Calendar requiere el portal de Ristak configurado.'
       });
     }
 
@@ -453,70 +445,6 @@ export async function claimGoogleCalendarOAuth(req, res) {
   } catch (error) {
     logger.warn(`[Calendars Controller] No se pudo reclamar OAuth Google Calendar: ${error.message}`);
     res.status(error.status || 400).json({
-      success: false,
-      error: error.message
-    });
-  }
-}
-
-/**
- * GET /api/calendars/google-integration/reveal/service-account
- * Devuelve el JSON del Service Account para edición en Settings.
- */
-export async function revealGoogleCalendarServiceAccount(req, res) {
-  try {
-    if (isLicenseEnforced()) {
-      return res.status(404).json({
-        success: false,
-        error: 'Esta instalación usa la conexión segura de Google Calendar desde el portal.'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        serviceAccountJson: await googleCalendarService.getGoogleServiceAccountJson()
-      }
-    });
-  } catch (error) {
-    logger.warn(`[Calendars Controller] No se pudo revelar JSON Google Calendar: ${error.message}`);
-    res.status(404).json({
-      success: false,
-      error: error.message
-    });
-  }
-}
-
-/**
- * PUT /api/calendars/google-integration
- * Guarda credenciales cifradas de Service Account y Calendar ID.
- */
-export async function saveGoogleCalendarIntegration(req, res) {
-  try {
-    if (isLicenseEnforced()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Esta instalación usa la conexión segura del portal. Conecta Google Calendar desde el botón de Google.'
-      });
-    }
-
-    const body = req.body || {};
-    const config = await googleCalendarService.saveGoogleCalendarConfig({
-      calendarId: body.calendarId ?? body.calendar_id ?? '',
-      credentials: body.credentials || body.serviceAccountJson || body.service_account_json
-    });
-
-    await localCalendarService.reconcileCalendarDefaults().catch(error => {
-      logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras guardar Google: ${error.message}`);
-    });
-
-    res.json({
-      success: true,
-      data: config
-    });
-  } catch (error) {
-    logger.warn(`[Calendars Controller] Error guardando Google Calendar: ${error.message}`);
-    res.status(400).json({
       success: false,
       error: error.message
     });
@@ -1919,7 +1847,6 @@ export default {
   getGoogleCalendarIntegration,
   getGoogleCalendarConnectUrl,
   listGoogleCalendarOptions,
-  saveGoogleCalendarIntegration,
   testGoogleCalendarIntegration,
   syncGoogleCalendarIntegration,
   getGoogleCalendarMergePreview,

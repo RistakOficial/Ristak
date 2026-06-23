@@ -484,9 +484,10 @@ async function getConnectedSourceFlags() {
   const googleConfigValue = sanitizeCalendarConfigValue(googleConfig?.config_value, '').trim()
   const googleConfigData = parseJson(googleConfigValue, {})
   const googleCalendarId = cleanString(googleConfigData?.calendarId)
+  const googleConnected = googleConfigData?.connectionMode === 'oauth' && Boolean(googleConfigData?.refreshTokenEncrypted)
 
   return {
-    google: Boolean(googleConfigData?.credentialsEncrypted),
+    google: googleConnected,
     googleCalendarId,
     ghl: Boolean(highlevelConfig)
   }

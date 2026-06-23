@@ -13,6 +13,7 @@ const ENV_KEYS = [
   'APP_VERSION',
   'OWNER_EMAIL'
 ]
+const GOOGLE_CALENDAR_CONFIG_KEY = 'google_calendar_service_account_config'
 
 function snapshotEnv() {
   return Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]))
@@ -268,6 +269,52 @@ test('estado Google Calendar en instalación licenciada muestra OAuth central an
   } finally {
     await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
     restoreEnv(previousEnv)
+  }
+})
+
+test('Google Calendar ignora configuración manual legacy y exige OAuth local', async () => {
+  let db = null
+  let previousConfig = null
+
+  try {
+    ;({ db } = await import('../src/config/database.js'))
+    const googleCalendarService = await import('../src/services/googleCalendarService.js')
+    previousConfig = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', [GOOGLE_CALENDAR_CONFIG_KEY])
+
+    await db.run(`
+      INSERT INTO app_config (config_key, config_value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(config_key) DO UPDATE SET
+        config_value = excluded.config_value,
+        updated_at = CURRENT_TIMESTAMP
+    `, [GOOGLE_CALENDAR_CONFIG_KEY, JSON.stringify({
+      connectionMode: 'service_account',
+      credentialsEncrypted: 'legacy-json',
+      calendarId: 'legacy@test.com',
+      connectedAt: '2026-06-20T00:00:00.000Z'
+    })])
+
+    const publicConfig = await googleCalendarService.getGoogleCalendarConfig()
+    assert.equal(publicConfig.connectionMode, 'oauth')
+    assert.equal(publicConfig.connected, false)
+    assert.equal(publicConfig.calendarId, 'legacy@test.com')
+
+    const privateConfig = await googleCalendarService.getGoogleCalendarConfig({ includeCredentials: true })
+    assert.equal(privateConfig, null)
+  } finally {
+    if (db) {
+      if (previousConfig) {
+        await db.run(`
+          INSERT INTO app_config (config_key, config_value, updated_at)
+          VALUES (?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(config_key) DO UPDATE SET
+            config_value = excluded.config_value,
+            updated_at = CURRENT_TIMESTAMP
+        `, [GOOGLE_CALENDAR_CONFIG_KEY, previousConfig.config_value]).catch(() => undefined)
+      } else {
+        await db.run('DELETE FROM app_config WHERE config_key = ?', [GOOGLE_CALENDAR_CONFIG_KEY]).catch(() => undefined)
+      }
+    }
   }
 })
 

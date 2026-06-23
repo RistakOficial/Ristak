@@ -11,9 +11,7 @@ import {
 } from './licenseService.js'
 
 const CONFIG_KEY = 'google_calendar_service_account_config'
-const GOOGLE_TOKEN_URI = 'https://oauth2.googleapis.com/token'
 const GOOGLE_CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3'
-const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar'
 const REQUEST_TIMEOUT = 15000
 const MANUAL_SYNC_PAST_DAYS = 30
 const MANUAL_SYNC_FUTURE_DAYS = 365
@@ -22,14 +20,6 @@ let tokenCache = null
 
 function cleanString(value) {
   return String(value ?? '').trim()
-}
-
-function base64Url(input) {
-  return Buffer.from(input)
-    .toString('base64')
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
 }
 
 function parseJson(value, fallback = null) {
@@ -72,10 +62,6 @@ function normalizeGoogleEventTimeRange({ startTime = '', endTime = '' } = {}) {
   return { timeMin, timeMax }
 }
 
-function normalizePrivateKey(privateKey) {
-  return cleanString(privateKey).replace(/\\n/g, '\n')
-}
-
 function decodeBase64Url(value) {
   const normalized = cleanString(value).replace(/-/g, '+').replace(/_/g, '/')
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
@@ -104,39 +90,6 @@ function normalizeGoogleCalendarIdInput(value) {
   }
 
   return raw
-}
-
-export function normalizeServiceAccountCredentials(input) {
-  const credentials = typeof input === 'string' ? parseJson(input) : input
-  if (!credentials || typeof credentials !== 'object') {
-    throw new Error('Pega el JSON completo del Service Account')
-  }
-
-  const clientEmail = cleanString(credentials.client_email).toLowerCase()
-  const privateKey = normalizePrivateKey(credentials.private_key)
-  const tokenUri = cleanString(credentials.token_uri) || GOOGLE_TOKEN_URI
-
-  if (!clientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
-    throw new Error('El JSON del Service Account no trae client_email válido')
-  }
-
-  if (!privateKey.includes('BEGIN PRIVATE KEY')) {
-    throw new Error('El JSON del Service Account no trae private_key válida')
-  }
-
-  return {
-    type: cleanString(credentials.type) || 'service_account',
-    project_id: cleanString(credentials.project_id),
-    private_key_id: cleanString(credentials.private_key_id),
-    private_key: privateKey,
-    client_email: clientEmail,
-    client_id: cleanString(credentials.client_id),
-    auth_uri: cleanString(credentials.auth_uri),
-    token_uri: tokenUri,
-    auth_provider_x509_cert_url: cleanString(credentials.auth_provider_x509_cert_url),
-    client_x509_cert_url: cleanString(credentials.client_x509_cert_url),
-    universe_domain: cleanString(credentials.universe_domain)
-  }
 }
 
 async function fetchWithTimeout(url, options = {}, timeout = REQUEST_TIMEOUT) {
@@ -171,17 +124,12 @@ async function persistConfig(config) {
 }
 
 function publicConfig(config = {}) {
-  const connectionMode = config.connectionMode === 'oauth' ? 'oauth' : 'service_account'
-  const connected = connectionMode === 'oauth'
-    ? Boolean(config.refreshTokenEncrypted)
-    : Boolean(config.credentialsEncrypted)
+  const scopes = Array.isArray(config.scopes) ? config.scopes : []
+  const connected = config.connectionMode === 'oauth' && Boolean(config.refreshTokenEncrypted)
   return {
-    connectionMode,
+    connectionMode: 'oauth',
     connected,
     calendarId: config.calendarId || '',
-    serviceAccountEmail: config.serviceAccountEmail || '',
-    projectId: config.projectId || '',
-    privateKeyId: config.privateKeyId || '',
     calendarSummary: config.calendarSummary || '',
     calendarTimeZone: config.calendarTimeZone || '',
     lastTestAt: config.lastTestAt || null,
@@ -197,9 +145,9 @@ function publicConfig(config = {}) {
     googleAccountEmail: config.googleAccountEmail || '',
     googleAccountName: config.googleAccountName || '',
     googleAccountPictureUrl: config.googleAccountPictureUrl || '',
-    scopes: Array.isArray(config.scopes) ? config.scopes : [],
-    canManageEvents: connectionMode === 'oauth' ? (config.scopes || []).includes('https://www.googleapis.com/auth/calendar.events') : connected,
-    canListCalendars: connectionMode === 'oauth' ? (config.scopes || []).includes('https://www.googleapis.com/auth/calendar.calendarlist.readonly') : connected
+    scopes,
+    canManageEvents: scopes.includes('https://www.googleapis.com/auth/calendar.events'),
+    canListCalendars: scopes.includes('https://www.googleapis.com/auth/calendar.calendarlist.readonly')
   }
 }
 
@@ -211,94 +159,25 @@ export async function getGoogleCalendarConfig({ includeCredentials = false } = {
     return publicConfig(config)
   }
 
-  if (config.connectionMode === 'oauth') {
-    if (!config.refreshTokenEncrypted) return null
-    try {
-      const encryptedValue = config.refreshTokenEncrypted
-      const refreshToken = isEncrypted(encryptedValue)
-        ? decrypt(encryptedValue)
-        : encryptedValue
-      return {
-        ...config,
-        connectionMode: 'oauth',
-        refreshToken,
-        calendarId: cleanString(config.calendarId)
-      }
-    } catch (error) {
-      logger.warn(`[Google Calendar] No se pudo desencriptar OAuth local: ${error.message}`)
-      return null
-    }
-  }
-
-  if (!config.credentialsEncrypted) {
+  if (config.connectionMode !== 'oauth' || !config.refreshTokenEncrypted) {
     return null
   }
 
   try {
-    const encryptedValue = config.credentialsEncrypted
-    const credentialsJson = isEncrypted(encryptedValue)
+    const encryptedValue = config.refreshTokenEncrypted
+    const refreshToken = isEncrypted(encryptedValue)
       ? decrypt(encryptedValue)
       : encryptedValue
-    const credentials = normalizeServiceAccountCredentials(parseJson(credentialsJson, null))
     return {
       ...config,
-      credentials,
+      connectionMode: 'oauth',
+      refreshToken,
       calendarId: cleanString(config.calendarId)
     }
   } catch (error) {
-    logger.warn(`[Google Calendar] No se pudo desencriptar la configuración: ${error.message}`)
+    logger.warn(`[Google Calendar] No se pudo desencriptar OAuth local: ${error.message}`)
     return null
   }
-}
-
-export async function getGoogleServiceAccountJson() {
-  const config = await getGoogleCalendarConfig({ includeCredentials: true })
-  if (!config?.credentials) {
-    throw new Error('Google Calendar no está configurado')
-  }
-
-  return JSON.stringify(config.credentials, null, 2)
-}
-
-export async function saveGoogleCalendarConfig({ calendarId, credentials }) {
-  const existing = await getStoredConfig()
-  const receivedCalendarId = calendarId !== undefined && calendarId !== null
-  const normalizedCalendarId = receivedCalendarId
-    ? normalizeGoogleCalendarIdInput(calendarId)
-    : cleanString(existing?.calendarId)
-  const hasNewCredentials = Boolean(
-    typeof credentials === 'string'
-      ? cleanString(credentials)
-      : credentials
-  )
-
-  if (!hasNewCredentials && !existing?.credentialsEncrypted) {
-    throw new Error('Pega el JSON completo del Service Account')
-  }
-
-  const normalizedCredentials = hasNewCredentials
-    ? normalizeServiceAccountCredentials(credentials)
-    : null
-  const credentialsEncrypted = normalizedCredentials
-    ? encrypt(JSON.stringify(normalizedCredentials))
-    : existing.credentialsEncrypted
-
-  const config = {
-    ...existing,
-    connectionMode: 'service_account',
-    calendarId: normalizedCalendarId,
-    credentialsEncrypted,
-    serviceAccountEmail: normalizedCredentials?.client_email || existing?.serviceAccountEmail || '',
-    projectId: normalizedCredentials?.project_id || existing?.projectId || '',
-    privateKeyId: normalizedCredentials?.private_key_id || existing?.privateKeyId || '',
-    connectedAt: existing?.connectedAt || new Date().toISOString(),
-    lastTestStatus: existing?.lastTestStatus || null,
-    lastTestMessage: existing?.lastTestMessage || ''
-  }
-
-  await persistConfig(config)
-  tokenCache = null
-  return publicConfig(config)
 }
 
 export async function saveGoogleCalendarOAuthConnection(connection = {}) {
@@ -318,9 +197,9 @@ export async function saveGoogleCalendarOAuthConnection(connection = {}) {
     credentialsEncrypted: '',
     refreshTokenEncrypted: encrypt(refreshToken),
     calendarId: cleanString(existing?.calendarId),
-    serviceAccountEmail: '',
-    projectId: '',
-    privateKeyId: '',
+    serviceAccountEmail: undefined,
+    projectId: undefined,
+    privateKeyId: undefined,
     googleAccountEmail: cleanString(connection.email),
     googleAccountName: cleanString(connection.name),
     googleAccountPictureUrl: cleanString(connection.picture_url || connection.pictureUrl),
@@ -349,73 +228,19 @@ export async function deleteGoogleCalendarConfig() {
   tokenCache = null
 }
 
-function createServiceAccountAssertion(credentials) {
-  const now = Math.floor(Date.now() / 1000)
-  const header = {
-    alg: 'RS256',
-    typ: 'JWT',
-    ...(credentials.private_key_id ? { kid: credentials.private_key_id } : {})
-  }
-  const claims = {
-    iss: credentials.client_email,
-    scope: GOOGLE_CALENDAR_SCOPE,
-    aud: credentials.token_uri || GOOGLE_TOKEN_URI,
-    iat: now,
-    exp: now + 3600
-  }
-
-  const unsigned = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(claims))}`
-  const signature = crypto
-    .createSign('RSA-SHA256')
-    .update(unsigned)
-    .sign(credentials.private_key)
-
-  return `${unsigned}.${base64Url(signature)}`
-}
-
 async function getAccessToken(config) {
-  if (config.connectionMode === 'oauth') {
-    const cacheKey = `oauth:${config.googleAccountEmail || ''}:${config.refreshToken ? crypto.createHash('sha1').update(config.refreshToken).digest('hex') : ''}`
-    if (tokenCache?.cacheKey === cacheKey && tokenCache.expiresAt > Date.now() + 60000) {
-      return tokenCache.accessToken
-    }
-
-    const payload = await refreshCentralGoogleCalendarToken({ refreshToken: config.refreshToken })
-    if (!payload?.access_token) {
-      throw new Error('Google Calendar no devolvió access token.')
-    }
-
-    tokenCache = {
-      cacheKey,
-      accessToken: payload.access_token,
-      expiresAt: Date.now() + Math.max(1, Number(payload.expires_in || 3600) - 30) * 1000
-    }
-
-    return tokenCache.accessToken
+  if (config.connectionMode !== 'oauth' || !config.refreshToken) {
+    throw new Error('Conecta Google Calendar con OAuth antes de sincronizar.')
   }
 
-  const credentials = config.credentials
-  const cacheKey = `${credentials.client_email}:${credentials.private_key_id || ''}`
+  const cacheKey = `oauth:${config.googleAccountEmail || ''}:${crypto.createHash('sha1').update(config.refreshToken).digest('hex')}`
   if (tokenCache?.cacheKey === cacheKey && tokenCache.expiresAt > Date.now() + 60000) {
     return tokenCache.accessToken
   }
 
-  const assertion = createServiceAccountAssertion(credentials)
-  const response = await fetchWithTimeout(credentials.token_uri || GOOGLE_TOKEN_URI, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion
-    }).toString()
-  })
-
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const message = payload.error_description || payload.error || `HTTP ${response.status}`
-    throw new Error(`No se pudo autenticar el Service Account: ${message}`)
+  const payload = await refreshCentralGoogleCalendarToken({ refreshToken: config.refreshToken })
+  if (!payload?.access_token) {
+    throw new Error('Google Calendar no devolvió access token.')
   }
 
   tokenCache = {
@@ -1215,7 +1040,7 @@ export async function deleteGoogleEventForAppointment(appointmentOrId) {
 export async function testGoogleCalendarConnection() {
   const config = await getGoogleCalendarConfig({ includeCredentials: true })
   if (!config) {
-    throw new Error('Guarda primero las credenciales de Google Calendar')
+    throw new Error('Conecta primero Google Calendar con OAuth')
   }
 
   const existing = await getStoredConfig()
@@ -1263,14 +1088,11 @@ export default {
   getGoogleCalendarConfig,
   getGoogleCalendarMergePreview,
   getGoogleCalendarMetadata,
-  getGoogleServiceAccountJson,
   listGoogleCalendarOptions,
   listGoogleCalendars,
   listGoogleEvents,
   mergeRistakAppointmentsIntoGoogle,
-  normalizeServiceAccountCredentials,
   saveGoogleCalendarOAuthConnection,
-  saveGoogleCalendarConfig,
   syncAppointmentToGoogle,
   syncLocalAppointmentsToGoogle,
   syncGoogleCalendarsToLocal,
