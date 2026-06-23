@@ -13,7 +13,7 @@ export interface RistakRobotProps {
 }
 
 /**
- * RistakRobot — the animated mascot for the Ristak AI agent.
+ * RistakRobot — the animated mascot for the personal AI assistant.
  *
  * A friendly, always-happy floating robot rendered as a self contained SVG with
  * CSS-driven life: it bobs, sways, blinks, its antenna glows and it keeps a warm
@@ -24,7 +24,7 @@ export const RistakRobot: React.FC<RistakRobotProps> = ({
   size,
   thinking = false,
   className,
-  label = 'Ristak AI',
+  label = 'asistente personal AI',
 }) => {
   const uid = useId().replace(/:/g, '')
   const headGrad = `rk-head-${uid}`

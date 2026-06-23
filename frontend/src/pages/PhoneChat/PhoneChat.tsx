@@ -147,18 +147,19 @@ const CHAT_FAST_START_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
-const AI_AGENT_CHAT_DISPLAY_NAME = 'Ristak AI'
+const AI_AGENT_CHAT_DISPLAY_NAME = 'asistente personal AI'
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak'
-const AI_AGENT_CHAT_SEARCH_TEXT = 'ristak ai agente inteligencia artificial ia'
+const AI_AGENT_CHAT_SEARCH_TEXT = 'asistente personal ai ristak ai agente inteligencia artificial ia'
 const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
-const AI_AGENT_MOBILE_CHAT_CONTEXT_NOTE = 'Este mensaje viene del chat movil de Ristak AI. Responde como burbuja de chat: texto plano, natural, sin Markdown, sin negritas con asteriscos, sin encabezados y sin listas numeradas salvo que el usuario las pida.'
+const AI_AGENT_MOBILE_CHAT_CONTEXT_NOTE = `Este mensaje viene del chat movil de ${AI_AGENT_CHAT_DISPLAY_NAME}. Responde como burbuja de chat: texto plano, natural, sin Markdown, sin negritas con asteriscos, sin encabezados y sin listas numeradas salvo que el usuario las pida.`
 const AGENT_STATUS_PHRASE_ROTATION_MS = 4400
 type AgentStatusPhraseLabels = {
   customers: string
   leads: string
 }
 
-const AI_AGENT_WELCOME_PREFIX = 'Hola, soy Ristak AI. Puedes preguntarme por tus '
+const AI_AGENT_WELCOME_PREFIX = `Hola, soy tu ${AI_AGENT_CHAT_DISPLAY_NAME}. Puedes preguntarme por tus `
+const LEGACY_AI_AGENT_WELCOME_PREFIX = 'Hola, soy Ristak AI. Puedes preguntarme por tus '
 const AI_AGENT_WELCOME_SUFFIX = ', pagos, citas, campañas o pedir ayuda para responder mejor.'
 
 function formatSentenceLabel(label: string) {
@@ -211,7 +212,10 @@ function buildAIAgentWelcomeContent(customersLabel: string) {
 }
 
 function isAIAgentWelcomeContent(content: string) {
-  return content.startsWith(AI_AGENT_WELCOME_PREFIX) && content.endsWith(AI_AGENT_WELCOME_SUFFIX)
+  return (
+    (content.startsWith(AI_AGENT_WELCOME_PREFIX) || content.startsWith(LEGACY_AI_AGENT_WELCOME_PREFIX)) &&
+    content.endsWith(AI_AGENT_WELCOME_SUFFIX)
+  )
 }
 const CHAT_SWIPE_ACTION_WIDTH = 184
 const CHAT_SWIPE_TRANSITION_MS = 260

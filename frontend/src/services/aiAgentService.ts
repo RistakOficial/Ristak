@@ -243,7 +243,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   if (!response.ok) {
-    throw createAIAgentRequestError(payload, response.status, 'Error en Ristak AI')
+    throw createAIAgentRequestError(payload, response.status, 'Error en asistente personal AI')
   }
 
   return (payload?.data ?? payload) as T

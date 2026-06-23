@@ -15,6 +15,7 @@ const VOICE_WAVE_MAX_HEIGHT = 30
 const VOICE_WAVE_SILENCE_THRESHOLD = 4
 const VOICE_WAVE_SIGNAL_RANGE = 30
 const DEFAULT_AI_MODEL = 'gpt-5.4-nano'
+const PERSONAL_ASSISTANT_AI_LABEL = 'asistente personal AI'
 
 const FALLBACK_AGENT_CATEGORIES: AIAgentCategory[] = [
   { id: 'citas', label: 'Citas', icon: 'calendar', description: 'Agendar, reprogramar, cancelar y consultar citas y calendarios.' },
@@ -873,7 +874,7 @@ function buildChatTranscript(
   ]
 
   messages.forEach((message, index) => {
-    const roleLabel = message.role === 'user' ? 'Usuario' : 'Ristak AI'
+    const roleLabel = message.role === 'user' ? 'Usuario' : PERSONAL_ASSISTANT_AI_LABEL
     const timestamp = formatTranscriptTimestamp(message.createdAt)
     const rawContent = getDisplayMessageContent(message).trim()
     const content = rawContent || '[Mensaje vacío]'
@@ -2123,7 +2124,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
         ...current,
         createMessage(
           'assistant',
-          `No pude responder ahorita. ${error?.message || 'Revisa la configuración de Ristak AI.'}`,
+          `No pude responder ahorita. ${error?.message || `Revisa la configuración de ${PERSONAL_ASSISTANT_AI_LABEL}.`}`,
           undefined,
           undefined,
           undefined,
@@ -2460,8 +2461,8 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
 
   const floatingButtonClassName = `${styles.floatingButton} ${unreadReplies ? styles.floatingButtonUnread : ''}`
   const closedButtonLabel = unreadReplies
-    ? `Abrir Ristak AI, ${unreadReplies} respuesta nueva`
-    : 'Abrir Ristak AI'
+    ? `Abrir ${PERSONAL_ASSISTANT_AI_LABEL}, ${unreadReplies} respuesta nueva`
+    : `Abrir ${PERSONAL_ASSISTANT_AI_LABEL}`
   const rootClassName = embedded ? styles.embeddedRoot : docked ? styles.dockedRoot : styles.floatingRoot
   const windowClassName = embedded
     ? `${styles.window} ${styles.embeddedWindow}`
@@ -2471,7 +2472,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const textComposerClassName = attachments.length
     ? `${styles.textComposer} ${styles.textComposerWithAttachments}`
     : styles.textComposer
-  const panelTitle = sitesCreationMode ? 'Creador HTML con IA' : 'Ristak AI'
+  const panelTitle = sitesCreationMode ? 'Creador HTML con IA' : PERSONAL_ASSISTANT_AI_LABEL
   const needsReconnect = Boolean(status.needsReconnect)
   const activeAgentLabel = selectedAgentCategory
     ? agentCategories.find((c) => c.id === selectedAgentCategory)?.label || null
