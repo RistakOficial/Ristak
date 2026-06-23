@@ -82,6 +82,41 @@ export interface CalendarCustomEventsConfig {
   parameters: CalendarCustomEventParameters;
 }
 
+export type CalendarBookingLayout = 'classic' | 'compact' | 'stacked';
+export type CalendarBookingFontFamily = 'system' | 'modern' | 'serif' | 'mono';
+
+export interface CalendarBookingDisplayColors {
+  accent: string;
+  background: string;
+  surface: string;
+  text: string;
+  muted: string;
+  line: string;
+  controlBg: string;
+  slotBg: string;
+  slotText: string;
+  selectedText: string;
+  fieldBg: string;
+  fieldText: string;
+  fieldBorder: string;
+  buttonText: string;
+}
+
+export interface CalendarBookingDisplayConfig {
+  showSidebar: boolean;
+  showIcon: boolean;
+  showEventTitle: boolean;
+  showCalendarName: boolean;
+  showDescription: boolean;
+  showDuration: boolean;
+  showConfirmation: boolean;
+  layout: CalendarBookingLayout;
+  fontFamily: CalendarBookingFontFamily;
+  allowTimezoneSelection: boolean;
+  defaultTimezone: string;
+  colors: CalendarBookingDisplayColors;
+}
+
 export interface Calendar {
   id: string;
   ghlCalendarId?: string | null;
@@ -121,6 +156,7 @@ export interface Calendar {
   formId?: string;
   bookingForm?: CalendarBookingFormConfig;
   bookingCompletion?: CalendarBookingCompletionConfig;
+  bookingDisplay?: CalendarBookingDisplayConfig;
   customEvents?: CalendarCustomEventsConfig;
   stickyContact?: boolean;
   isLivePaymentMode?: boolean;

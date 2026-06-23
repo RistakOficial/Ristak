@@ -50,8 +50,12 @@ import {
   calendarsService,
   type Calendar as CalendarType,
   type CalendarBookingCompletionConfig,
+  type CalendarBookingDisplayColors,
+  type CalendarBookingDisplayConfig,
+  type CalendarBookingFontFamily,
   type CalendarBookingDefaultFields,
   type CalendarBookingFormConfig,
+  type CalendarBookingLayout,
   type CalendarCustomEventChannel,
   type CalendarCustomEventParameter,
   type CalendarCustomEventParameters,
@@ -132,6 +136,70 @@ const CALENDAR_DEFAULT_COMPLETION_MESSAGE = 'Listo. Tu cita quedó agendada.'
 const CALENDAR_DEFAULT_META_EVENT_NAME = 'Schedule'
 const CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i
+const CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS: CalendarBookingDisplayColors = {
+  accent: '#3b82f6',
+  background: '#f8fafc',
+  surface: '#ffffff',
+  text: '#111827',
+  muted: '#6b7280',
+  line: '#e5e7eb',
+  controlBg: '#ffffff',
+  slotBg: '#ffffff',
+  slotText: '#3b82f6',
+  selectedText: '#ffffff',
+  fieldBg: '#ffffff',
+  fieldText: '#1f2937',
+  fieldBorder: '#e5e7eb',
+  buttonText: '#ffffff'
+}
+const CALENDAR_BOOKING_DISPLAY_COLOR_FIELDS: Array<{
+  key: keyof CalendarBookingDisplayColors
+  label: string
+}> = [
+  { key: 'accent', label: 'Acento' },
+  { key: 'background', label: 'Fondo' },
+  { key: 'surface', label: 'Superficie' },
+  { key: 'text', label: 'Texto' },
+  { key: 'muted', label: 'Texto secundario' },
+  { key: 'line', label: 'Líneas' }
+]
+const CALENDAR_PUBLIC_LAYOUT_OPTIONS: Array<{ value: CalendarBookingLayout; label: string }> = [
+  { value: 'classic', label: 'Panel izquierdo y calendario' },
+  { value: 'compact', label: 'Encabezado compacto' },
+  { value: 'stacked', label: 'Una columna' }
+]
+const CALENDAR_PUBLIC_FONT_OPTIONS: Array<{ value: CalendarBookingFontFamily; label: string }> = [
+  { value: 'system', label: 'Sistema' },
+  { value: 'modern', label: 'Moderna' },
+  { value: 'serif', label: 'Editorial' },
+  { value: 'mono', label: 'Monoespaciada' }
+]
+const CALENDAR_FALLBACK_TIMEZONES = [
+  'America/Mexico_City',
+  'America/Ciudad_Juarez',
+  'America/Monterrey',
+  'America/Tijuana',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Bogota',
+  'America/Lima',
+  'America/Santiago',
+  'America/Argentina/Buenos_Aires',
+  'Europe/Madrid'
+]
+const getSupportedCalendarTimezones = () => {
+  const supported = typeof Intl !== 'undefined' && typeof (Intl as any).supportedValuesOf === 'function'
+    ? (Intl as any).supportedValuesOf('timeZone') as string[]
+    : []
+  return Array.from(new Set([...(supported || []), ...CALENDAR_FALLBACK_TIMEZONES])).sort((a, b) => a.localeCompare(b))
+}
+const CALENDAR_TIMEZONE_OPTIONS = getSupportedCalendarTimezones().map(timezone => ({
+  value: timezone,
+  label: timezone
+}))
+const CALENDAR_TIMEZONE_VALUES = new Set(CALENDAR_TIMEZONE_OPTIONS.map(option => option.value))
 const CALENDAR_META_EVENT_OPTIONS = [
   { value: 'Schedule', label: 'Schedule · cita agendada' },
   { value: 'Lead', label: 'Lead · lead nuevo' },
@@ -195,6 +263,28 @@ const normalizeCalendarColor = (value?: string | null) => {
   const raw = String(value || '').trim()
   if (HEX_COLOR_PATTERN.test(raw)) return raw.toLowerCase()
   return CALENDAR_DEFAULT_COLOR
+}
+
+const normalizeCalendarDisplayColor = (
+  value: unknown,
+  fallback: string
+) => {
+  const raw = String(value || '').trim()
+  if (HEX_COLOR_PATTERN.test(raw)) return raw.toLowerCase()
+  return fallback
+}
+
+const normalizeCalendarBookingLayout = (value?: string | null): CalendarBookingLayout => (
+  value === 'compact' || value === 'stacked' ? value : 'classic'
+)
+
+const normalizeCalendarBookingFontFamily = (value?: string | null): CalendarBookingFontFamily => (
+  value === 'modern' || value === 'serif' || value === 'mono' ? value : 'system'
+)
+
+const normalizeCalendarTimezoneValue = (value?: string | null) => {
+  const raw = String(value || '').trim()
+  return CALENDAR_TIMEZONE_VALUES.has(raw) ? raw : ''
 }
 
 const normalizeCalendarMatchValue = (value?: string | null) => String(value || '').trim().toLowerCase()
@@ -261,6 +351,56 @@ const normalizeCalendarBookingCompletion = (value?: Partial<CalendarBookingCompl
     action,
     message,
     redirectUrl
+  }
+}
+
+const createDefaultCalendarBookingDisplay = (): CalendarBookingDisplayConfig => ({
+  showSidebar: true,
+  showIcon: true,
+  showEventTitle: true,
+  showCalendarName: true,
+  showDescription: true,
+  showDuration: true,
+  showConfirmation: true,
+  layout: 'classic',
+  fontFamily: 'system',
+  allowTimezoneSelection: true,
+  defaultTimezone: '',
+  colors: { ...CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS }
+})
+
+const normalizeCalendarBookingDisplay = (
+  value?: Partial<CalendarBookingDisplayConfig> | null,
+  fallbackAccent = CALENDAR_DEFAULT_COLOR
+): CalendarBookingDisplayConfig => {
+  const defaults = createDefaultCalendarBookingDisplay()
+  const source = value || {}
+  const sourceColors = (source.colors || {}) as Partial<CalendarBookingDisplayColors>
+  const colorDefaults = {
+    ...CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS,
+    accent: normalizeCalendarDisplayColor(fallbackAccent, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.accent),
+    slotText: normalizeCalendarDisplayColor(fallbackAccent, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.slotText)
+  }
+
+  const colors = (Object.keys(CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS) as Array<keyof CalendarBookingDisplayColors>)
+    .reduce((next, key) => ({
+      ...next,
+      [key]: normalizeCalendarDisplayColor(sourceColors[key], colorDefaults[key])
+    }), {} as CalendarBookingDisplayColors)
+
+  return {
+    showSidebar: source.showSidebar !== false,
+    showIcon: source.showIcon !== false,
+    showEventTitle: source.showEventTitle !== false,
+    showCalendarName: source.showCalendarName !== false,
+    showDescription: source.showDescription !== false,
+    showDuration: source.showDuration !== false,
+    showConfirmation: source.showConfirmation !== false,
+    layout: normalizeCalendarBookingLayout(source.layout || defaults.layout),
+    fontFamily: normalizeCalendarBookingFontFamily(source.fontFamily || defaults.fontFamily),
+    allowTimezoneSelection: source.allowTimezoneSelection !== false,
+    defaultTimezone: normalizeCalendarTimezoneValue(source.defaultTimezone),
+    colors
   }
 }
 
@@ -477,6 +617,7 @@ export const CalendarsConfiguration: React.FC = () => {
     allowBookingForUnit: 'days',
     bookingForm: createDefaultCalendarBookingForm(),
     bookingCompletion: createDefaultCalendarBookingCompletion(),
+    bookingDisplay: createDefaultCalendarBookingDisplay(),
     customEvents: createDefaultCalendarCustomEvents(),
     antiTrackingEnabled: true
   })
@@ -596,6 +737,7 @@ export const CalendarsConfiguration: React.FC = () => {
           ...calendar,
           bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
           bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+          bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
           customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
         })
         if (expandedCalendarId !== calendar.id) {
@@ -639,6 +781,7 @@ export const CalendarsConfiguration: React.FC = () => {
         ...calendar,
         bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
         bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+        bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
         customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
       }))
       setCalendars(normalizedCalendars)
@@ -1142,6 +1285,7 @@ export const CalendarsConfiguration: React.FC = () => {
       ...calendar,
       bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
       bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
+      bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
       customEvents: normalizeCalendarCustomEvents(calendar.customEvents),
       antiTrackingEnabled: calendar.antiTrackingEnabled !== false
     })
@@ -1175,6 +1319,7 @@ export const CalendarsConfiguration: React.FC = () => {
       // Construir payload con todos los campos editables
       const bookingForm = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
       const bookingCompletion = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
+      const bookingDisplay = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
       const customEvents = getSavableCalendarCustomEvents(selectedCalendar.customEvents, accountCurrency)
       const nextSlug = normalizeCalendarSlugInput(selectedCalendar.slug || selectedCalendar.widgetSlug || selectedCalendar.name || selectedCalendar.id)
       const slugConflict = calendars.some(item => (
@@ -1221,6 +1366,7 @@ export const CalendarsConfiguration: React.FC = () => {
         appoinmentPerDay: selectedCalendar.appoinmentPerDay,
         bookingForm,
         bookingCompletion,
+        bookingDisplay,
         customEvents,
         antiTrackingEnabled: selectedCalendar.antiTrackingEnabled !== false
       }
@@ -1312,6 +1458,7 @@ export const CalendarsConfiguration: React.FC = () => {
         allowBookingForUnit: 'days',
         bookingForm: createDefaultCalendarBookingForm(),
         bookingCompletion: createDefaultCalendarBookingCompletion(),
+        bookingDisplay: createDefaultCalendarBookingDisplay(),
         customEvents: createDefaultCalendarCustomEvents(),
         antiTrackingEnabled: true
       })
@@ -1757,6 +1904,7 @@ export const CalendarsConfiguration: React.FC = () => {
     const customFormSites = formSites.filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
     const bookingFormConfig = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
     const bookingCompletionConfig = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
+    const bookingDisplayConfig = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
     const customEventsConfig = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
     const customEventsHasParameters = hasCalendarCustomEventParameters(customEventsConfig.parameters)
     const selectedCalendarAttributed = attributionCalendarIds.includes(selectedCalendar.id)
@@ -1789,6 +1937,24 @@ export const CalendarsConfiguration: React.FC = () => {
           ...bookingCompletionConfig,
           ...nextConfig
         })
+      })
+    }
+
+    const updateBookingDisplayConfig = (nextConfig: Partial<CalendarBookingDisplayConfig>) => {
+      updateSelectedCalendar({
+        bookingDisplay: normalizeCalendarBookingDisplay({
+          ...bookingDisplayConfig,
+          ...nextConfig
+        }, selectedCalendar.eventColor)
+      })
+    }
+
+    const updateBookingDisplayColors = (nextColors: Partial<CalendarBookingDisplayColors>) => {
+      updateBookingDisplayConfig({
+        colors: {
+          ...bookingDisplayConfig.colors,
+          ...nextColors
+        }
       })
     }
 
@@ -1959,60 +2125,162 @@ export const CalendarsConfiguration: React.FC = () => {
 
             <div className={pageStyles.calendarWizardBody}>
               {currentStep.id === 'basics' && (
-                <section className={pageStyles.editorSection}>
-            <div className={pageStyles.editorSectionHeader}>
-              <strong>Lo básico</strong>
-              <span>Cómo se llama el calendario y cómo se van a ver sus citas.</span>
-            </div>
-            <div className={pageStyles.editorFields}>
-              <label className={pageStyles.editorField}>
-                <span>Nombre del calendario</span>
-                <input
-                  value={selectedCalendar.name || ''}
-                  onChange={(event) => updateSelectedCalendar({ name: event.target.value })}
-                />
-              </label>
+                <>
+                  <section className={pageStyles.editorSection}>
+                    <div className={pageStyles.editorSectionHeader}>
+                      <strong>Lo básico</strong>
+                      <span>Cómo se llama el calendario y cómo se van a ver sus citas.</span>
+                    </div>
+                    <div className={pageStyles.editorFields}>
+                      <label className={pageStyles.editorField}>
+                        <span>Nombre del calendario</span>
+                        <input
+                          value={selectedCalendar.name || ''}
+                          onChange={(event) => updateSelectedCalendar({ name: event.target.value })}
+                        />
+                      </label>
 
-              {renderCalendarTemplateField({
-                id: `calendar-event-title-${calendar.id}`,
-                label: 'Título de la cita',
-                value: selectedCalendar.eventTitle || '',
-                onChange: (nextValue) => updateSelectedCalendar({ eventTitle: nextValue }),
-                placeholder: 'Ej. Cita con {{contact.full_name}}',
-                help: 'Este texto será el título de cada cita nueva. Puedes meter parámetros.'
-              })}
+                      {renderCalendarTemplateField({
+                        id: `calendar-event-title-${calendar.id}`,
+                        label: 'Título de la cita',
+                        value: selectedCalendar.eventTitle || '',
+                        onChange: (nextValue) => updateSelectedCalendar({ eventTitle: nextValue }),
+                        placeholder: 'Ej. Cita con {{contact.full_name}}',
+                        help: 'Este texto será el título de cada cita nueva. Puedes meter parámetros.'
+                      })}
 
-              <div className={pageStyles.editorField}>
-                <span>Color del calendario</span>
-                {renderCalendarColorPicker(
-                  selectedCalendar.eventColor,
-                  (nextColor) => updateSelectedCalendar({ eventColor: nextColor }),
-                  true
-                )}
-              </div>
+                      <div className={pageStyles.editorField}>
+                        <span>Color del calendario</span>
+                        {renderCalendarColorPicker(
+                          selectedCalendar.eventColor,
+                          (nextColor) => updateSelectedCalendar({ eventColor: nextColor }),
+                          true
+                        )}
+                      </div>
 
-              <div className={pageStyles.editorField}>
-                <span>Conversión</span>
-                <div className={styles.toggleContainer}>
-                  <button
-                    type="button"
-                    className={`${styles.toggle} ${selectedCalendarAttributed ? styles.toggleActive : ''}`}
-                    onClick={() => handleAttributionToggle(selectedCalendar.id)}
-                    aria-pressed={selectedCalendarAttributed}
-                    aria-label={selectedCalendarAttributed ? 'Quitar calendario de conversión' : 'Marcar calendario como conversión'}
-                  >
-                    <span className={styles.toggleThumb} />
-                  </button>
-                  <span className={`${styles.toggleLabel} ${selectedCalendarAttributed ? styles.toggleLabelActive : ''}`}>
-                    {selectedCalendarAttributed ? 'Cuenta como conversión' : 'No cuenta como conversión'}
-                  </span>
-                </div>
-                <small>
-                  Enciéndelo para que las citas de este calendario alimenten reportes, campañas y eventos de Meta/WhatsApp. Si no marcas ninguno, Ristak toma todos los calendarios.
-                </small>
-              </div>
-            </div>
-          </section>
+                      <div className={pageStyles.editorField}>
+                        <span>Conversión</span>
+                        <div className={styles.toggleContainer}>
+                          <button
+                            type="button"
+                            className={`${styles.toggle} ${selectedCalendarAttributed ? styles.toggleActive : ''}`}
+                            onClick={() => handleAttributionToggle(selectedCalendar.id)}
+                            aria-pressed={selectedCalendarAttributed}
+                            aria-label={selectedCalendarAttributed ? 'Quitar calendario de conversión' : 'Marcar calendario como conversión'}
+                          >
+                            <span className={styles.toggleThumb} />
+                          </button>
+                          <span className={`${styles.toggleLabel} ${selectedCalendarAttributed ? styles.toggleLabelActive : ''}`}>
+                            {selectedCalendarAttributed ? 'Cuenta como conversión' : 'No cuenta como conversión'}
+                          </span>
+                        </div>
+                        <small>
+                          Enciéndelo para que las citas de este calendario alimenten reportes, campañas y eventos de Meta/WhatsApp. Si no marcas ninguno, Ristak toma todos los calendarios.
+                        </small>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className={pageStyles.editorSection}>
+                    <div className={pageStyles.editorSectionHeader}>
+                      <strong>Estilo y diseño</strong>
+                      <span>Controla lo que aparece en la URL pública: panel izquierdo, textos, colores, tipografía y zona horaria.</span>
+                    </div>
+                    <div className={pageStyles.editorFields}>
+                      <label className={pageStyles.editorField}>
+                        <span>Vista pública</span>
+                        <CustomSelect
+                          value={bookingDisplayConfig.layout}
+                          onValueChange={(value) => updateBookingDisplayConfig({ layout: normalizeCalendarBookingLayout(value) })}
+                          options={CALENDAR_PUBLIC_LAYOUT_OPTIONS}
+                        />
+                      </label>
+
+                      <label className={pageStyles.editorField}>
+                        <span>Tipografía</span>
+                        <CustomSelect
+                          value={bookingDisplayConfig.fontFamily}
+                          onValueChange={(value) => updateBookingDisplayConfig({ fontFamily: normalizeCalendarBookingFontFamily(value) })}
+                          options={CALENDAR_PUBLIC_FONT_OPTIONS}
+                        />
+                      </label>
+
+                      <label className={pageStyles.editorField}>
+                        <span>Zona horaria base</span>
+                        <CustomSelect
+                          value={bookingDisplayConfig.defaultTimezone}
+                          onValueChange={(value) => updateBookingDisplayConfig({ defaultTimezone: normalizeCalendarTimezoneValue(value) })}
+                          options={[
+                            { value: '', label: 'Detectar automáticamente' },
+                            ...CALENDAR_TIMEZONE_OPTIONS
+                          ]}
+                          dropdownMinHeight={320}
+                        />
+                        <small>Si la dejas automática, el calendario abre con la zona horaria detectada del visitante.</small>
+                      </label>
+
+                      <div className={pageStyles.editorField}>
+                        <span>Zona horaria del visitante</span>
+                        <div className={pageStyles.displaySwitchRow}>
+                          <div>
+                            <strong>Permitir cambio</strong>
+                            <small>La persona que agenda podrá cambiar su zona antes de elegir horario.</small>
+                          </div>
+                          <Switch
+                            checked={bookingDisplayConfig.allowTimezoneSelection}
+                            onChange={(allowTimezoneSelection) => updateBookingDisplayConfig({ allowTimezoneSelection })}
+                            aria-label="Permitir cambio de zona horaria"
+                          />
+                        </div>
+                      </div>
+
+                      <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                        <span>Qué se muestra</span>
+                        <div className={pageStyles.displayToggleGrid}>
+                          {[
+                            ['showSidebar', 'Panel izquierdo', 'Oculta toda la barra lateral para dejar solo el calendario.'],
+                            ['showIcon', 'Icono o imagen', 'Muestra la inicial o imagen superior.'],
+                            ['showEventTitle', 'Título corto', 'Muestra el texto tipo “Cita”.'],
+                            ['showCalendarName', 'Nombre del calendario', 'Muestra el título grande público.'],
+                            ['showDescription', 'Descripción', 'Muestra el texto descriptivo.'],
+                            ['showDuration', 'Duración', 'Muestra los minutos de la cita.'],
+                            ['showConfirmation', 'Confirmación', 'Muestra si la confirmación es automática o pendiente.']
+                          ].map(([key, label, description]) => (
+                            <div className={pageStyles.displaySwitchRow} key={key}>
+                              <div>
+                                <strong>{label}</strong>
+                                <small>{description}</small>
+                              </div>
+                              <Switch
+                                checked={Boolean(bookingDisplayConfig[key as keyof CalendarBookingDisplayConfig])}
+                                onChange={(checked) => updateBookingDisplayConfig({ [key]: checked } as Partial<CalendarBookingDisplayConfig>)}
+                                aria-label={`Mostrar ${label}`}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                        <span>Colores públicos</span>
+                        <div className={pageStyles.publicColorGrid}>
+                          {CALENDAR_BOOKING_DISPLAY_COLOR_FIELDS.map(field => (
+                            <label className={pageStyles.publicColorField} key={field.key}>
+                              <span>{field.label}</span>
+                              <input
+                                type="color"
+                                value={bookingDisplayConfig.colors[field.key]}
+                                onChange={(event) => updateBookingDisplayColors({ [field.key]: event.target.value } as Partial<CalendarBookingDisplayColors>)}
+                                aria-label={`Color ${field.label}`}
+                              />
+                              <strong>{bookingDisplayConfig.colors[field.key].toUpperCase()}</strong>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </>
               )}
 
               {currentStep.id === 'publicUrl' && (

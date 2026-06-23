@@ -17,6 +17,24 @@ const DEFAULT_BOOKING_COMPLETION_MESSAGE = 'Listo. Tu cita quedo agendada.'
 const DEFAULT_CALENDAR_META_EVENT_NAME = 'Schedule'
 const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
 const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp', 'smart'])
+const CALENDAR_BOOKING_LAYOUTS = new Set(['classic', 'compact', 'stacked'])
+const CALENDAR_BOOKING_FONT_FAMILIES = new Set(['system', 'modern', 'serif', 'mono'])
+const DEFAULT_CALENDAR_BOOKING_DISPLAY_COLORS = {
+  accent: DEFAULT_EVENT_COLOR,
+  background: '#f8fafc',
+  surface: '#ffffff',
+  text: '#111827',
+  muted: '#6b7280',
+  line: '#e5e7eb',
+  controlBg: '#ffffff',
+  slotBg: '#ffffff',
+  slotText: DEFAULT_EVENT_COLOR,
+  selectedText: '#ffffff',
+  fieldBg: '#ffffff',
+  fieldText: '#1f2937',
+  fieldBorder: '#e5e7eb',
+  buttonText: '#ffffff'
+}
 const CALENDAR_SITE_META_EVENTS = new Set([
   'Lead',
   'Schedule',
@@ -101,6 +119,14 @@ function safeCssNumber(value, fallback, min, max) {
 function normalizeCalendarEmbedLayout(value) {
   const raw = cleanString(value).toLowerCase()
   return ['classic', 'compact', 'stacked'].includes(raw) ? raw : 'classic'
+}
+
+function getCalendarBookingFontStack(value) {
+  const family = normalizeCalendarBookingFontFamily(value)
+  if (family === 'modern') return '"Inter","SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif'
+  if (family === 'serif') return 'Georgia,"Times New Roman",serif'
+  if (family === 'mono') return '"SFMono-Regular","Roboto Mono","Cascadia Code",monospace'
+  return '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif'
 }
 
 function safeCalendarImageUrl(value, fallback = '') {
@@ -223,6 +249,82 @@ export function normalizeCalendarBookingCompletionConfig(value = {}) {
     action: action === 'redirect' && redirectUrl ? 'redirect' : 'message',
     message: message || DEFAULT_BOOKING_COMPLETION_MESSAGE,
     redirectUrl
+  }
+}
+
+function normalizeCalendarBookingLayout(value) {
+  const raw = cleanString(value).toLowerCase()
+  return CALENDAR_BOOKING_LAYOUTS.has(raw) ? raw : 'classic'
+}
+
+function normalizeCalendarBookingFontFamily(value) {
+  const raw = cleanString(value).toLowerCase()
+  return CALENDAR_BOOKING_FONT_FAMILIES.has(raw) ? raw : 'system'
+}
+
+function normalizeCalendarBookingDisplayConfig(value = {}, fallback = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const displaySource = source.bookingDisplay && typeof source.bookingDisplay === 'object'
+    ? source.bookingDisplay
+    : source.booking_display && typeof source.booking_display === 'object'
+      ? source.booking_display
+      : source.publicDisplay && typeof source.publicDisplay === 'object'
+        ? source.publicDisplay
+        : source.public_display && typeof source.public_display === 'object'
+          ? source.public_display
+          : source
+  const colorSource = displaySource.colors && typeof displaySource.colors === 'object'
+    ? displaySource.colors
+    : {}
+  const fallbackAccent = safeCssColor(
+    fallback.accent || fallback.eventColor || fallback.event_color || source.eventColor || source.event_color,
+    DEFAULT_EVENT_COLOR
+  )
+  const colorFallbacks = {
+    ...DEFAULT_CALENDAR_BOOKING_DISPLAY_COLORS,
+    accent: fallbackAccent,
+    slotText: fallbackAccent
+  }
+  const pickColor = (key, ...aliases) => safeCssColor(
+    [colorSource[key], ...aliases.map(alias => colorSource[alias]), displaySource[key], ...aliases.map(alias => displaySource[alias])]
+      .find(value => value !== undefined && value !== null && value !== ''),
+    colorFallbacks[key]
+  )
+  const defaultTimezone = cleanString(
+    displaySource.defaultTimezone ||
+    displaySource.default_timezone ||
+    displaySource.timezone ||
+    displaySource.timeZone
+  )
+
+  return {
+    showSidebar: parseBoolean(displaySource.showSidebar ?? displaySource.show_sidebar, true),
+    showIcon: parseBoolean(displaySource.showIcon ?? displaySource.show_icon, true),
+    showEventTitle: parseBoolean(displaySource.showEventTitle ?? displaySource.show_event_title, true),
+    showCalendarName: parseBoolean(displaySource.showCalendarName ?? displaySource.show_calendar_name, true),
+    showDescription: parseBoolean(displaySource.showDescription ?? displaySource.show_description, true),
+    showDuration: parseBoolean(displaySource.showDuration ?? displaySource.show_duration, true),
+    showConfirmation: parseBoolean(displaySource.showConfirmation ?? displaySource.show_confirmation, true),
+    layout: normalizeCalendarBookingLayout(displaySource.layout),
+    fontFamily: normalizeCalendarBookingFontFamily(displaySource.fontFamily || displaySource.font_family),
+    allowTimezoneSelection: parseBoolean(displaySource.allowTimezoneSelection ?? displaySource.allow_timezone_selection, true),
+    defaultTimezone: defaultTimezone && isValidTimezone(defaultTimezone) ? defaultTimezone : '',
+    colors: {
+      accent: pickColor('accent', 'accentColor', 'accent_color'),
+      background: pickColor('background', 'backgroundColor', 'background_color'),
+      surface: pickColor('surface', 'surfaceColor', 'surface_color'),
+      text: pickColor('text', 'textColor', 'text_color'),
+      muted: pickColor('muted', 'mutedColor', 'muted_color'),
+      line: pickColor('line', 'lineColor', 'line_color'),
+      controlBg: pickColor('controlBg', 'control_bg', 'controlBackground', 'control_background'),
+      slotBg: pickColor('slotBg', 'slot_bg', 'slotBackground', 'slot_background'),
+      slotText: pickColor('slotText', 'slot_text'),
+      selectedText: pickColor('selectedText', 'selected_text'),
+      fieldBg: pickColor('fieldBg', 'field_bg', 'fieldBackground', 'field_background'),
+      fieldText: pickColor('fieldText', 'field_text'),
+      fieldBorder: pickColor('fieldBorder', 'field_border'),
+      buttonText: pickColor('buttonText', 'button_text')
+    }
   }
 }
 
@@ -384,6 +486,14 @@ function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
       baseRaw.bookingCompletion ||
       baseRaw.booking_completion ||
       calendar
+    ),
+    bookingDisplay: normalizeCalendarBookingDisplayConfig(
+      calendar.bookingDisplay ||
+      calendar.booking_display ||
+      baseRaw.bookingDisplay ||
+      baseRaw.booking_display ||
+      calendar,
+      { eventColor: calendar.eventColor || calendar.event_color || baseRaw.eventColor || baseRaw.event_color }
     ),
     customEvents: normalizeCalendarCustomEventsConfig(
       calendar.customEvents ||
@@ -895,6 +1005,7 @@ function calendarRowToApi(row = {}) {
     notes: row.notes || '',
     bookingForm: normalizeCalendarBookingFormConfig(rawJson.bookingForm || rawJson.booking_form || rawJson),
     bookingCompletion: normalizeCalendarBookingCompletionConfig(rawJson.bookingCompletion || rawJson.booking_completion || rawJson),
+    bookingDisplay: normalizeCalendarBookingDisplayConfig(rawJson.bookingDisplay || rawJson.booking_display || rawJson, { eventColor: row.event_color }),
     customEvents: normalizeCalendarCustomEventsConfig(rawJson.customEvents || rawJson.custom_events || rawJson.metaEvent || rawJson.meta_event || {}),
     availabilityType: toInt(row.availability_type, 0),
     antiTrackingEnabled: row.anti_tracking_enabled !== 0,
@@ -1508,28 +1619,36 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   const slug = publicCalendarSlug(calendar)
   const duration = Math.max(1, toInt(calendar.slotDuration, 60))
   const title = calendar.eventTitle || calendar.name || 'Cita'
+  const bookingDisplay = normalizeCalendarBookingDisplayConfig(calendar.bookingDisplay || calendar.booking_display || {}, {
+    eventColor: calendar.eventColor || calendar.event_color
+  })
+  const displayColors = bookingDisplay.colors || DEFAULT_CALENDAR_BOOKING_DISPLAY_COLORS
   const designMode = cleanString(style.designMode).toLowerCase() === 'original' ? 'original' : 'custom'
   const useCustomStyle = designMode === 'custom'
-  const accent = useCustomStyle ? safeCssColor(style.accent, safeCssColor(calendar.eventColor, DEFAULT_EVENT_COLOR)) : safeCssColor(calendar.eventColor, DEFAULT_EVENT_COLOR)
-  const textColor = useCustomStyle ? safeCssColor(style.text, '#111827') : '#111827'
-  const mutedColor = useCustomStyle ? safeCssColor(style.muted, '#6b7280') : '#6b7280'
-  const lineColor = useCustomStyle ? safeCssColor(style.line, '#e5e7eb') : '#e5e7eb'
+  const accent = useCustomStyle ? safeCssColor(style.accent, displayColors.accent) : displayColors.accent
+  const backgroundColor = useCustomStyle ? safeCssColor(style.background, displayColors.background) : displayColors.background
+  const surfaceColor = useCustomStyle ? safeCssColor(style.surface, displayColors.surface) : displayColors.surface
+  const textColor = useCustomStyle ? safeCssColor(style.text, displayColors.text) : displayColors.text
+  const mutedColor = useCustomStyle ? safeCssColor(style.muted, displayColors.muted) : displayColors.muted
+  const lineColor = useCustomStyle ? safeCssColor(style.line, displayColors.line) : displayColors.line
   const embeddedControlBg = 'rgba(255, 255, 255, 0)'
-  const defaultControlBg = embedded ? embeddedControlBg : '#ffffff'
+  const defaultControlBg = embedded ? embeddedControlBg : displayColors.controlBg
   const controlBg = useCustomStyle ? safeCssColor(style.controlBg, defaultControlBg) : defaultControlBg
-  const slotBg = useCustomStyle ? safeCssColor(style.slotBg, defaultControlBg) : defaultControlBg
-  const slotText = useCustomStyle ? safeCssColor(style.slotText, accent) : accent
-  const selectedText = useCustomStyle ? safeCssColor(style.selectedText, '#ffffff') : '#ffffff'
-  const fieldBg = useCustomStyle ? safeCssColor(style.fieldBg, defaultControlBg) : defaultControlBg
-  const fieldText = useCustomStyle ? safeCssColor(style.fieldText, '#1f2937') : '#1f2937'
-  const fieldBorder = useCustomStyle ? safeCssColor(style.fieldBorder, lineColor) : lineColor
+  const slotBg = useCustomStyle ? safeCssColor(style.slotBg, displayColors.slotBg || defaultControlBg) : displayColors.slotBg
+  const slotText = useCustomStyle ? safeCssColor(style.slotText, displayColors.slotText || accent) : displayColors.slotText
+  const selectedText = useCustomStyle ? safeCssColor(style.selectedText, displayColors.selectedText) : displayColors.selectedText
+  const fieldBg = useCustomStyle ? safeCssColor(style.fieldBg, displayColors.fieldBg || defaultControlBg) : displayColors.fieldBg
+  const fieldText = useCustomStyle ? safeCssColor(style.fieldText, displayColors.fieldText) : displayColors.fieldText
+  const fieldBorder = useCustomStyle ? safeCssColor(style.fieldBorder, displayColors.fieldBorder || lineColor) : displayColors.fieldBorder
   const buttonText = useCustomStyle ? safeCssColor(style.buttonText, selectedText) : selectedText
   const slotRadius = useCustomStyle ? safeCssNumber(style.slotRadius, 8, 0, 32) : 8
   const fieldRadius = useCustomStyle ? safeCssNumber(style.fieldRadius, 8, 0, 32) : 8
-  const layout = normalizeCalendarEmbedLayout(style.layout)
+  const layout = normalizeCalendarEmbedLayout(style.layout || bookingDisplay.layout)
+  const fontStack = getCalendarBookingFontStack(style.fontFamily || style.font_family || bookingDisplay.fontFamily)
   const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
   const bookingCompletion = normalizeCalendarBookingCompletionConfig(calendar.bookingCompletion || calendar.booking_completion || {})
   const customEvents = normalizeCalendarCustomEventsConfig(calendar.customEvents || calendar.custom_events || calendar.metaEvent || calendar.meta_event || {})
+  const showSidebar = bookingDisplay.showSidebar !== false
   const payload = {
     slug,
     name: calendar.name || 'Calendario',
@@ -1542,9 +1661,12 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     layout,
     coverImage,
     bookingCompletion,
+    bookingDisplay,
     customEvents,
     styleDefaults: {
       accent,
+      background: backgroundColor,
+      surface: surfaceColor,
       text: textColor,
       muted: mutedColor,
       line: lineColor,
@@ -1559,7 +1681,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       slotRadius,
       fieldRadius,
       layout,
-      coverImage
+      coverImage,
+      fontFamily: bookingDisplay.fontFamily
     },
     bookingForm: bookingForm || {
       mode: 'default',
@@ -1570,6 +1693,24 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     }
   }
 
+  const introMetaItems = [
+    bookingDisplay.showDuration
+      ? `<span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>${duration} min</span>`
+      : '',
+    bookingDisplay.showConfirmation
+      ? `<span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Confirmación ${calendar.autoConfirm ? 'automática' : 'pendiente'}</span>`
+      : ''
+  ].filter(Boolean).join('')
+  const introHtml = showSidebar
+    ? `<section class="intro">
+        ${bookingDisplay.showIcon ? `<div class="avatar" aria-hidden="true" data-calendar-avatar>${coverImage ? `<img src="${escapeHtml(coverImage)}" alt="">` : `<span data-calendar-initial>${escapeHtml((calendar.name || 'R').trim()[0] || 'R')}</span>`}</div>` : ''}
+        ${bookingDisplay.showEventTitle ? `<p class="host">${escapeHtml(calendar.eventTitle || 'Evento')}</p>` : ''}
+        ${bookingDisplay.showCalendarName ? `<h1>${escapeHtml(calendar.name || 'Agenda tu cita')}</h1>` : ''}
+        ${bookingDisplay.showDescription ? `<p class="description">${escapeHtml(calendar.description || 'Selecciona una fecha y horario disponible para confirmar tu cita.')}</p>` : ''}
+        ${introMetaItems ? `<div class="meta">${introMetaItems}</div>` : ''}
+      </section>`
+    : ''
+
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -1579,9 +1720,9 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   <meta name="description" content="${escapeHtml(calendar.description || `Agenda ${title}`)}">
   ${metaPixelSnippet || ''}
   <style>
-    :root{--accent:${escapeHtml(accent)};--accent-soft:color-mix(in srgb,var(--accent) 10%,transparent);--ink:${escapeHtml(fieldText)};--heading:${escapeHtml(textColor)};--muted:${escapeHtml(mutedColor)};--line:${escapeHtml(lineColor)};--bg:${embedded ? 'transparent' : '#f8fafc'};--surface:${embedded ? 'transparent' : '#fff'};--control-bg:${escapeHtml(controlBg)};--slot-bg:${escapeHtml(slotBg)};--slot-text:${escapeHtml(slotText)};--selected-text:${escapeHtml(selectedText)};--field-bg:${escapeHtml(fieldBg)};--field-text:${escapeHtml(fieldText)};--field-border:${escapeHtml(fieldBorder)};--button-text:${escapeHtml(buttonText)};--slot-radius:${slotRadius}px;--field-radius:${fieldRadius}px;--danger:#b42318;--ok:#047857}
+    :root{--accent:${escapeHtml(accent)};--accent-soft:color-mix(in srgb,var(--accent) 10%,transparent);--ink:${escapeHtml(fieldText)};--heading:${escapeHtml(textColor)};--muted:${escapeHtml(mutedColor)};--line:${escapeHtml(lineColor)};--bg:${embedded ? 'transparent' : escapeHtml(backgroundColor)};--surface:${embedded ? 'transparent' : escapeHtml(surfaceColor)};--control-bg:${escapeHtml(controlBg)};--slot-bg:${escapeHtml(slotBg)};--slot-text:${escapeHtml(slotText)};--selected-text:${escapeHtml(selectedText)};--field-bg:${escapeHtml(fieldBg)};--field-text:${escapeHtml(fieldText)};--field-border:${escapeHtml(fieldBorder)};--button-text:${escapeHtml(buttonText)};--slot-radius:${slotRadius}px;--field-radius:${fieldRadius}px;--font-family:${fontStack};--danger:#b42318;--ok:#047857}
     *{box-sizing:border-box}
-    body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;letter-spacing:0;line-height:1.5}
+    body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:var(--font-family);letter-spacing:0;line-height:1.5}
     body.rstk-calendar-embedded{min-height:0;background:transparent}
     button,input,textarea{font:inherit}
     .page{min-height:100vh;width:min(1180px,calc(100% - 32px));margin:0 auto;padding:clamp(24px,4vw,54px) 0;display:grid;place-items:center}
@@ -1590,6 +1731,10 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     body.rstk-calendar-embedded .shell{min-height:100vh;min-width:0;border:0;border-radius:0;box-shadow:none}
     body.rstk-calendar-embedded.rstk-calendar-layout-stacked .page{place-items:start center}
     .shell.dateSelected{grid-template-columns:340px minmax(390px,1fr) minmax(260px,300px)}
+    .shell.noIntro,.shell.noIntro.dateSelected{grid-template-columns:minmax(390px,1fr)}
+    .shell.noIntro.dateSelected{grid-template-columns:minmax(390px,1fr) minmax(260px,300px)}
+    .shell.noIntro.bookingActive{grid-template-columns:minmax(320px,520px)}
+    .shell.noIntro .intro{display:none}
     .shell:not(.dateSelected):not(.bookingActive) .timesPane{display:none}
     .shell.layout-compact{grid-template-columns:minmax(0,1fr)}
     .shell.layout-compact.dateSelected{grid-template-columns:minmax(0,1fr) minmax(240px,320px)}
@@ -1640,6 +1785,9 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .day.outside{visibility:hidden}
     .day:disabled{opacity:.34}
     .timezone{display:flex;align-items:flex-start;gap:10px;color:var(--muted);font-size:.92rem;font-weight:650}
+    .timezoneControl{display:grid;gap:8px;min-width:0}
+    .timezoneControl strong{color:var(--ink)}
+    .timezoneControl select{min-height:38px;max-width:min(320px,100%);font-size:.88rem}
     .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:18px}
     .selectedDate{display:grid;gap:6px;min-height:58px}
     .changeSlot{display:none;justify-self:start;min-height:34px;border:1px solid var(--line);border-radius:var(--slot-radius);background:var(--control-bg);color:var(--accent);font-size:.86rem;font-weight:800;padding:0 12px;cursor:pointer}
@@ -1678,22 +1826,13 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .message.preview{color:var(--muted)}
     .loading{opacity:.62;pointer-events:none}
     @media (max-width:1020px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}.shell.bookingActive .timesPane{border-left:0;max-width:none}}
-    @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:1fr;min-height:0;border-radius:14px}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
+    @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:0;border-radius:14px}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
   </style>
 </head>
 <body class="${[embedded ? 'rstk-calendar-embedded' : '', preview ? 'rstk-calendar-preview' : '', `rstk-calendar-layout-${layout}`].filter(Boolean).join(' ')}">
   <main class="page">
-    <div class="shell layout-${escapeHtml(layout)}">
-      <section class="intro">
-        <div class="avatar" aria-hidden="true" data-calendar-avatar>${coverImage ? `<img src="${escapeHtml(coverImage)}" alt="">` : `<span data-calendar-initial>${escapeHtml((calendar.name || 'R').trim()[0] || 'R')}</span>`}</div>
-        <p class="host">${escapeHtml(calendar.eventTitle || 'Evento')}</p>
-        <h1>${escapeHtml(calendar.name || 'Agenda tu cita')}</h1>
-        <p class="description">${escapeHtml(calendar.description || 'Selecciona una fecha y horario disponible para confirmar tu cita.')}</p>
-        <div class="meta">
-          <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>${duration} min</span>
-          <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Confirmación ${calendar.autoConfirm ? 'automática' : 'pendiente'}</span>
-        </div>
-      </section>
+    <div class="shell layout-${escapeHtml(layout)}${showSidebar ? '' : ' noIntro'}">
+      ${introHtml}
 
       <section class="calendarPane" data-calendar-pane>
         <div class="paneTitle">
@@ -1715,7 +1854,11 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         <div class="days" data-days></div>
         <div class="timezone">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-          <span>Zona horaria<br><strong data-timezone></strong></span>
+          <span class="timezoneControl">
+            <span>Zona horaria</span>
+            <strong data-timezone></strong>
+            ${bookingDisplay.allowTimezoneSelection ? '<select data-timezone-select aria-label="Cambiar zona horaria"></select>' : ''}
+          </span>
         </div>
       </section>
 
@@ -1741,6 +1884,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const styleDefaults = calendar.styleDefaults || {};
       const styleVarMap = {
         accent: '--accent',
+        background: '--bg',
+        surface: '--surface',
         text: '--heading',
         muted: '--muted',
         line: '--line',
@@ -1761,6 +1906,16 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const cleanLayout = (value) => {
         const text = String(value || '').trim().toLowerCase();
         return styleLayouts.includes(text) ? text : 'classic';
+      };
+      const fontStacks = {
+        system: '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
+        modern: '"Inter","SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
+        serif: 'Georgia,"Times New Roman",serif',
+        mono: '"SFMono-Regular","Roboto Mono","Cascadia Code",monospace'
+      };
+      const cleanFontFamily = (value) => {
+        const text = String(value || '').trim().toLowerCase();
+        return fontStacks[text] || fontStacks.system;
       };
       const cleanImageUrl = (value) => {
         const text = String(value || '').trim();
@@ -1804,7 +1959,10 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       };
       const applyEmbedStyle = (style = {}) => {
         const designMode = style.designMode === 'original' ? 'original' : 'custom';
+        const isEmbeddedCalendar = document.body.classList.contains('rstk-calendar-embedded');
         Object.entries(styleVarMap).forEach(([key, variable]) => {
+          const hasExplicitValue = Object.prototype.hasOwnProperty.call(style, key);
+          if (isEmbeddedCalendar && (key === 'background' || key === 'surface') && !hasExplicitValue) return;
           const fallback = cleanStyleValue(styleDefaults[key]);
           const value = designMode === 'custom' ? cleanStyleValue(style[key]) || fallback : fallback;
           if (value) rootStyle.setProperty(variable, value);
@@ -1813,6 +1971,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         const fieldRadius = designMode === 'custom' ? Number(style.fieldRadius || styleDefaults.fieldRadius || 8) : Number(styleDefaults.fieldRadius || 8);
         rootStyle.setProperty('--slot-radius', Math.min(32, Math.max(0, Number.isFinite(slotRadius) ? slotRadius : 8)) + 'px');
         rootStyle.setProperty('--field-radius', Math.min(32, Math.max(0, Number.isFinite(fieldRadius) ? fieldRadius : 8)) + 'px');
+        rootStyle.setProperty('--font-family', cleanFontFamily(style.fontFamily || style.font_family || styleDefaults.fontFamily));
         const layout = cleanLayout(style.layout || styleDefaults.layout || calendar.layout);
         if (shell) {
           styleLayouts.forEach(name => shell.classList.toggle('layout-' + name, name === layout));
@@ -1826,6 +1985,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const prevButton = document.querySelector('[data-prev]');
       const nextButton = document.querySelector('[data-next]');
       const timezoneLabel = document.querySelector('[data-timezone]');
+      const timezoneSelect = document.querySelector('[data-timezone-select]');
       const selectedTitle = document.querySelector('[data-selected-title]');
       const selectedSubtitle = document.querySelector('[data-selected-subtitle]');
       const changeSlotButton = document.querySelector('[data-change-slot]');
@@ -1843,7 +2003,21 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       let formPageIndex = 0;
       visibleMonth.setDate(1);
       let slotsByDate = new Map();
-      let timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const displayConfig = calendar.bookingDisplay || {};
+      const fallbackTimezones = ['America/Mexico_City','America/Ciudad_Juarez','America/Monterrey','America/Tijuana','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Bogota','America/Lima','America/Santiago','America/Argentina/Buenos_Aires','Europe/Madrid','UTC'];
+      const isSupportedTimezone = (value) => {
+        try {
+          if (!value) return false;
+          new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      let timezone = isSupportedTimezone(displayConfig.defaultTimezone)
+        ? displayConfig.defaultTimezone
+        : isSupportedTimezone(browserTimezone) ? browserTimezone : 'UTC';
 
       const pad = (value) => String(value).padStart(2, '0');
       const dateKey = (date) => date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
@@ -1854,6 +2028,30 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const setMessage = (text, type = '') => {
         message.textContent = text || '';
         message.className = 'message' + (type ? ' ' + type : '');
+      };
+
+      const getSupportedTimezones = () => {
+        let supported = [];
+        try {
+          supported = typeof Intl.supportedValuesOf === 'function'
+            ? Intl.supportedValuesOf('timeZone')
+            : [];
+        } catch {
+          supported = [];
+        }
+        return Array.from(new Set([timezone, browserTimezone, ...supported, ...fallbackTimezones]))
+          .filter(isSupportedTimezone)
+          .sort((a, b) => a.localeCompare(b));
+      };
+
+      const renderTimezoneControl = () => {
+        if (timezoneLabel) timezoneLabel.textContent = timezone;
+        if (!timezoneSelect) return;
+        const options = getSupportedTimezones();
+        timezoneSelect.innerHTML = options
+          .map(option => '<option value="' + option + '"' + (option === timezone ? ' selected' : '') + '>' + option + '</option>')
+          .join('');
+        timezoneSelect.value = timezone;
       };
 
       const setStep = (step = 'calendar') => {
@@ -2055,7 +2253,6 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const ingestSlots = (days) => {
         const next = new Map();
         (Array.isArray(days) ? days : []).forEach(day => {
-          if (day.timezone) timezone = day.timezone;
           (Array.isArray(day.slots) ? day.slots : []).forEach(slot => {
             const key = getZonedParts(slot);
             if (!next.has(key)) next.set(key, []);
@@ -2063,7 +2260,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           });
         });
         slotsByDate = next;
-        timezoneLabel.textContent = timezone;
+        renderTimezoneControl();
       };
       const readCookie = (name) => {
         const prefix = name + '=';
@@ -2186,6 +2383,16 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         loadSlots();
       });
 
+      timezoneSelect && timezoneSelect.addEventListener('change', () => {
+        const nextTimezone = timezoneSelect.value;
+        if (!isSupportedTimezone(nextTimezone) || nextTimezone === timezone) return;
+        timezone = nextTimezone;
+        selectedDateKey = '';
+        selectedSlot = '';
+        renderTimezoneControl();
+        loadSlots();
+      });
+
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!selectedSlot) {
@@ -2252,6 +2459,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         }
       });
 
+      renderTimezoneControl();
       loadSlots();
     })();
   </script>

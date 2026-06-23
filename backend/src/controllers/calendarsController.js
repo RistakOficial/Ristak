@@ -1139,6 +1139,7 @@ export async function createPublicAppointment(req, res) {
       status: calendar.autoConfirm ? 'confirmed' : 'pending',
       startTime: start.toISOString(),
       endTime: end.toISOString(),
+      timeZone: timezone,
       notes: submittedNotes,
       formId: bookingSubmission.formId,
       formName: bookingSubmission.formName,
