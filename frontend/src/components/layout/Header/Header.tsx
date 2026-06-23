@@ -186,7 +186,7 @@ export const Header: React.FC<HeaderProps> = ({ sitesEditorActive = false }) => 
 
   const handleOpenSimpleChatView = () => {
     if (typeof window === 'undefined') return
-    navigate(PHONE_APP_HOME_PATH)
+    navigate(PHONE_APP_HOME_PATH, { state: { chatViewTransition: 'to-simple' } })
   }
 
   const unreadNotifications = notifications.filter((notification) => !seenNotificationIds.has(notification.id))
@@ -219,7 +219,7 @@ export const Header: React.FC<HeaderProps> = ({ sitesEditorActive = false }) => 
             className="hidden lg:inline-flex shrink-0 whitespace-nowrap"
             leftIcon={<MessageCircle size={16} aria-hidden="true" />}
             onClick={handleOpenSimpleChatView}
-            aria-label="Abrir vista sencilla del chat en una nueva pestaña"
+            aria-label="Abrir vista sencilla del chat"
             title="Abrir vista sencilla del chat"
           >
             Vista sencilla del chat

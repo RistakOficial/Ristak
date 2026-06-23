@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowRight,
   Banknote,
@@ -3372,6 +3372,8 @@ function buildClabeMessage(account: BankClabeAccount) {
 export const PhoneChat: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const locationTransition = (location.state as { chatViewTransition?: 'to-desktop' | 'to-simple' } | null)?.chatViewTransition
   const requestedContactParam = searchParams.get('contact')
   const requestedActionParam = searchParams.get('action')
   const { locationId, accessToken, user } = useAuth()
@@ -3680,7 +3682,7 @@ export const PhoneChat: React.FC = () => {
   }, [navigate])
 
   const handleOpenDesktopChat = useCallback(() => {
-    navigate('/chat')
+    navigate('/chat', { state: { chatViewTransition: 'to-desktop' } })
   }, [navigate])
   const actionSheetDismiss = useBottomSheetDismiss({
     isOpen: Boolean(sheet),
@@ -9460,7 +9462,7 @@ export const PhoneChat: React.FC = () => {
         key={AI_AGENT_CHAT_ID}
         role="button"
         tabIndex={0}
-        className={`${styles.chatItem} ${styles.aiAgentChatItem}`}
+        className={`${styles.chatItem} ${styles.aiAgentChatItem} ${activeContactId === AI_AGENT_CHAT_ID ? styles.chatItemActive : ''}`}
         onClick={handleOpenAIAgentChat}
         onKeyDown={(event) => handleChatRowKeyDown(event, handleOpenAIAgentChat)}
       >
@@ -9496,6 +9498,7 @@ export const PhoneChat: React.FC = () => {
     const isAgentActionChat = Boolean(agentState?.signal && agentState.signal !== 'discarded')
     const canSelectChat = source === 'chat' && contact.id !== AI_AGENT_CHAT_ID
     const isSelectedChat = canSelectChat && selectedChatIdSet.has(contact.id)
+    const isActiveChat = activeContactId === contact.id
     const showChatSelectionControl = canSelectChat && chatSelectionActive
 
     const content = (
@@ -9528,7 +9531,7 @@ export const PhoneChat: React.FC = () => {
           key={contact.id}
           role="button"
           tabIndex={0}
-          className={`${styles.chatItem} ${activeContact?.id === contact.id ? styles.chatItemActive : ''}`}
+          className={`${styles.chatItem} ${isActiveChat ? styles.chatItemActive : ''}`}
           onClick={() => handleSelectContact(contact)}
           onKeyDown={(event) => handleChatRowKeyDown(event, () => handleSelectContact(contact))}
         >
@@ -9555,7 +9558,7 @@ export const PhoneChat: React.FC = () => {
     return (
       <div
         key={contact.id}
-        className={`${styles.chatSwipeRow} ${swipeOffset > 0 ? styles.chatSwipeRowOpen : ''} ${isDraggingSwipe ? styles.chatSwipeRowDragging : ''} ${isSelectedChat ? styles.chatSwipeRowSelected : ''}`}
+        className={`${styles.chatSwipeRow} ${swipeOffset > 0 ? styles.chatSwipeRowOpen : ''} ${isDraggingSwipe ? styles.chatSwipeRowDragging : ''} ${isSelectedChat ? styles.chatSwipeRowSelected : ''} ${isActiveChat ? styles.chatSwipeRowActive : ''}`}
         onTouchStart={swipeLocked ? undefined : (event) => handleChatTouchStart(contact.id, event)}
         onTouchMove={swipeLocked ? undefined : handleChatTouchMove}
         onTouchEnd={swipeLocked ? undefined : handleChatTouchEnd}
@@ -9598,7 +9601,7 @@ export const PhoneChat: React.FC = () => {
         <div
           role="button"
           tabIndex={0}
-          className={`${styles.chatItem} ${styles.chatSwipeContent} ${showChatSelectionControl ? styles.chatItemSelecting : ''} ${isSelectedChat ? styles.chatItemSelected : ''} ${hasUnread ? styles.chatItemUnread : ''} ${isAgentActionChat ? styles.chatItemAgentAction : ''}`}
+          className={`${styles.chatItem} ${styles.chatSwipeContent} ${showChatSelectionControl ? styles.chatItemSelecting : ''} ${isSelectedChat ? styles.chatItemSelected : ''} ${isActiveChat ? styles.chatItemActive : ''} ${hasUnread ? styles.chatItemUnread : ''} ${isAgentActionChat ? styles.chatItemAgentAction : ''}`}
           style={{ transform: `translate3d(-${swipeOffset}px, 0, 0)` }}
           onTransitionEnd={(event) => handleChatSwipeContentTransitionEnd(contact.id, event)}
           onClick={() => handleChatItemPress(contact)}
@@ -15182,9 +15185,15 @@ export const PhoneChat: React.FC = () => {
   } as React.CSSProperties
   const popoverSheetUsesCssClose = isWideChatDevice && (sheet === 'attachments' || sheet === 'schedule')
 
+  const pageTransitionClass = locationTransition === 'to-desktop'
+    ? styles.phoneChatTransitionFromSimple
+    : locationTransition === 'to-simple'
+      ? styles.phoneChatTransitionFromDesktop
+      : ''
+
   return (
     <main
-      className={`${styles.phoneChatPage} ${conversationVisible ? styles.conversationOpen : ''} ${sheet ? styles.sheetOpen : ''}`}
+      className={`${styles.phoneChatPage} ${conversationVisible ? styles.conversationOpen : ''} ${sheet ? styles.sheetOpen : ''} ${pageTransitionClass}`}
       data-phone-chat-tone={resolvedPhoneChatTheme}
       data-phone-chat-mode={safeChatThemePreference}
       data-phone-chat-device={deviceMode}

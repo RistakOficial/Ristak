@@ -36,6 +36,7 @@ import {
   X
 } from 'lucide-react'
 import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
+import { useLocation } from 'react-router-dom'
 import {
   AppointmentModal,
   Button,
@@ -2029,6 +2030,8 @@ function toChatContact(contact: Contact): DesktopChatContact {
 }
 
 export const DesktopChat: React.FC = () => {
+  const location = useLocation()
+  const locationTransition = (location.state as { chatViewTransition?: 'to-desktop' | 'to-simple' } | null)?.chatViewTransition
   const { accessToken, locationId, user } = useAuth()
   const { labels } = useLabels()
   const { showToast } = useNotification()
@@ -2054,6 +2057,12 @@ export const DesktopChat: React.FC = () => {
   const archivedChatIdSetRef = useRef<Set<string>>(new Set())
   const removedChatStatesRef = useRef<RemovedChatState[]>([])
   const agentPriorityChatIdSetRef = useRef<Set<string>>(new Set())
+  const pageTransitionClass =
+    locationTransition === 'to-desktop'
+      ? styles.desktopChatTransitionFromSimple
+      : locationTransition === 'to-simple'
+        ? styles.desktopChatTransitionFromDesktop
+        : ''
 
   const [initialChatCache] = useState<ChatListCacheSnapshot>(() => readCachedChatList())
   const [chats, setChats] = useState<DesktopChatContact[]>(() => initialChatCache.chats)
@@ -5315,7 +5324,7 @@ export const DesktopChat: React.FC = () => {
 
   return (
     <div
-      className={`${styles.page} ${agentAssignedViewOpen ? styles.pageAgentInbox : ''}`}
+      className={`${styles.page} ${agentAssignedViewOpen ? styles.pageAgentInbox : ''} ${pageTransitionClass}`}
       data-ristak-page
       data-fullbleed="true"
       data-desktop-chat-agent-view={agentAssignedViewOpen ? 'true' : undefined}
