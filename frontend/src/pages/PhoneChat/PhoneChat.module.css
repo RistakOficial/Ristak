@@ -750,14 +750,6 @@
   background: var(--phone-chat-border);
 }
 
-.chatItemActive,
-.chatSwipeRowActive .chatSwipeContent {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--phone-chat-accent) 10%, transparent), transparent 58%),
-    color-mix(in srgb, var(--phone-chat-accent-soft) 82%, var(--phone-chat-surface) 18%);
-  box-shadow: inset 3px 0 0 var(--phone-chat-accent);
-}
-
 .chatItemSelecting {
   grid-template-columns: 34px 52px minmax(0, 1fr) auto;
   padding-left: 10px;
@@ -900,36 +892,43 @@
     var(--phone-chat-bg);
 }
 
-.chatItemActive.chatSwipeContent,
-.chatItemActive.chatItemUnread.chatSwipeContent,
-.chatItemActive.chatItemAgentAction.chatSwipeContent,
-.chatSwipeRowActive .chatSwipeContent {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--phone-chat-accent) 12%, transparent), transparent 58%),
-    color-mix(in srgb, var(--phone-chat-accent-soft) 86%, var(--phone-chat-surface) 14%);
-  box-shadow:
-    inset 3px 0 0 var(--phone-chat-accent),
-    inset 0 -1px 0 color-mix(in srgb, var(--phone-chat-accent) 30%, var(--phone-chat-border));
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatItemActive,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatItemActive.chatSwipeContent,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatItemActive.chatItemUnread.chatSwipeContent,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatItemActive.chatItemAgentAction.chatSwipeContent,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatSwipeRowActive .chatSwipeContent {
+  background: color-mix(in srgb, var(--phone-chat-muted) 11%, var(--phone-chat-surface) 89%);
 }
 
-.phoneChatPage[data-phone-chat-tone="dark"] .chatItemActive,
-.phoneChatPage[data-phone-chat-tone="dark"] .chatItemActive.chatSwipeContent,
-.phoneChatPage[data-phone-chat-tone="dark"] .chatItemActive.chatItemUnread.chatSwipeContent,
-.phoneChatPage[data-phone-chat-tone="dark"] .chatItemActive.chatItemAgentAction.chatSwipeContent,
-.phoneChatPage[data-phone-chat-tone="dark"] .chatSwipeRowActive .chatSwipeContent {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--phone-chat-accent) 18%, transparent), transparent 56%),
-    color-mix(in srgb, var(--phone-chat-surface) 78%, var(--phone-chat-bg) 22%);
-  box-shadow:
-    inset 3px 0 0 var(--phone-chat-accent),
-    inset 0 1px 0 color-mix(in srgb, var(--phone-chat-accent) 18%, var(--phone-chat-border)),
-    inset 0 -1px 0 color-mix(in srgb, var(--phone-chat-accent) 22%, var(--phone-chat-border));
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive.chatSwipeContent,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive.chatItemUnread.chatSwipeContent,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive.chatItemAgentAction.chatSwipeContent,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatSwipeRowActive .chatSwipeContent {
+  background: color-mix(in srgb, var(--phone-chat-muted) 10%, var(--phone-chat-surface) 90%);
 }
 
-.phoneChatPage[data-phone-chat-tone="dark"] .chatItemActive .chatMain strong,
-.phoneChatPage[data-phone-chat-tone="dark"] .chatItemActive .chatMain small,
-.phoneChatPage[data-phone-chat-tone="dark"] .chatItemActive .chatMeta small {
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive .chatMain strong,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive .chatMain small,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive .chatMeta small {
   color: var(--phone-chat-text);
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatItemActive::before,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"]) .chatSwipeRowActive .chatSwipeContent::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: color-mix(in srgb, var(--phone-chat-muted) 62%, var(--phone-chat-border) 38%);
+}
+
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatItemActive::before,
+.phoneChatPage:is([data-phone-chat-device="tablet"], [data-phone-chat-device="desktop"])[data-phone-chat-tone="dark"] .chatSwipeRowActive .chatSwipeContent::before {
+  background: color-mix(in srgb, var(--phone-chat-muted) 78%, var(--phone-chat-border) 22%);
 }
 
 .chatSelectionPanel {
@@ -1214,6 +1213,57 @@
 .chatItem > .avatar .avatarChannelBadgeWhatsapp svg {
   width: 16px;
   height: 16px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .archiveRow,
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem {
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  min-height: 74px;
+  padding: 8px 13px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .chatSwipeRow,
+.phoneChatPage[data-phone-chat-device="phone"] .chatSwipeActions {
+  min-height: 74px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem::after {
+  left: 76px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .chatItemSelecting {
+  grid-template-columns: 30px 48px minmax(0, 1fr) auto;
+  padding-left: 9px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .chatItemSelecting::after {
+  left: 100px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar {
+  width: 48px;
+  height: 48px;
+  font-size: 15px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar > svg {
+  width: 23px;
+  height: 23px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadge {
+  width: 19px;
+  height: 19px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadge svg {
+  width: 11px;
+  height: 11px;
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadgeWhatsapp svg {
+  width: 13px;
+  height: 13px;
 }
 
 .avatarChannelBadgeWhatsappGlyph {

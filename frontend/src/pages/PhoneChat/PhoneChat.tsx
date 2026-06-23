@@ -9462,7 +9462,7 @@ export const PhoneChat: React.FC = () => {
         key={AI_AGENT_CHAT_ID}
         role="button"
         tabIndex={0}
-        className={`${styles.chatItem} ${styles.aiAgentChatItem} ${activeContactId === AI_AGENT_CHAT_ID ? styles.chatItemActive : ''}`}
+        className={`${styles.chatItem} ${styles.aiAgentChatItem} ${isWideChatDevice && activeContactId === AI_AGENT_CHAT_ID ? styles.chatItemActive : ''}`}
         onClick={handleOpenAIAgentChat}
         onKeyDown={(event) => handleChatRowKeyDown(event, handleOpenAIAgentChat)}
       >
@@ -9498,7 +9498,7 @@ export const PhoneChat: React.FC = () => {
     const isAgentActionChat = Boolean(agentState?.signal && agentState.signal !== 'discarded')
     const canSelectChat = source === 'chat' && contact.id !== AI_AGENT_CHAT_ID
     const isSelectedChat = canSelectChat && selectedChatIdSet.has(contact.id)
-    const isActiveChat = activeContactId === contact.id
+    const isActiveChat = isWideChatDevice && activeContactId === contact.id
     const showChatSelectionControl = canSelectChat && chatSelectionActive
 
     const content = (
