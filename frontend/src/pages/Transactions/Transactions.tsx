@@ -637,6 +637,8 @@ export const Transactions: React.FC = () => {
   const [recordPaymentInitialMode, setRecordPaymentInitialMode] = useState<'single' | 'partial'>('single')
   const [isClient, setIsClient] = useState(false)
   const [hasLoadedTransactions, setHasLoadedTransactions] = useState(false)
+  const [transactionSearchTerm, setTransactionSearchTerm] = useState('')
+  const [debouncedTransactionSearch, setDebouncedTransactionSearch] = useState('')
   const handledOpenPaymentRef = useRef<string | null>(null)
   const handledOpenPaymentPlanRef = useRef<string | null>(null)
   const paymentPlansUnavailableRedirectedRef = useRef(false)
@@ -733,10 +735,17 @@ export const Transactions: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedTransactionSearch(transactionSearchTerm.trim())
+    }, 300)
+    return () => window.clearTimeout(handle)
+  }, [transactionSearchTerm])
+
+  useEffect(() => {
     if (paymentTableTab === 'transactions') {
       fetchData()
     }
-  }, [dateRange, viewMode, paymentTableTab])
+  }, [dateRange, viewMode, paymentTableTab, debouncedTransactionSearch])
 
   useEffect(() => {
     if (paymentTableTab !== 'payment-plans') return
@@ -805,6 +814,7 @@ export const Transactions: React.FC = () => {
     try {
       let startDate: string | undefined
       let endDate: string | undefined
+      const search = debouncedTransactionSearch.trim()
 
       // Solo usar fechas si está en modo 'by-date'
       if (viewMode === 'by-date') {
@@ -817,7 +827,7 @@ export const Transactions: React.FC = () => {
       // Si viewMode === 'all', no enviamos fechas para obtener TODOS los pagos
 
       const [transactionsData, summaryData] = await Promise.all([
-        transactionsService.getTransactions(startDate, endDate, forceSync),
+        transactionsService.getTransactions(startDate, endDate, forceSync, search),
         transactionsService.getSummary(startDate, endDate)
       ])
 
@@ -872,7 +882,7 @@ export const Transactions: React.FC = () => {
 
       // Llamar al endpoint con sync=true para sincronización completa
       const [transactionsData, summaryData] = await Promise.all([
-        transactionsService.getTransactions(startDate, endDate, true), // sync=true
+        transactionsService.getTransactions(startDate, endDate, true, debouncedTransactionSearch.trim()), // sync=true
         transactionsService.getSummary(startDate, endDate)
       ])
 
@@ -2766,6 +2776,9 @@ export const Transactions: React.FC = () => {
             loading={transactionsRefreshing}
             searchable={true}
             searchPlaceholder="Buscar pagos..."
+            serverSideSearch={true}
+            searchTerm={transactionSearchTerm}
+            onSearchTermChange={setTransactionSearchTerm}
             paginated={true}
             pageSize={20}
             searchPosition="left"

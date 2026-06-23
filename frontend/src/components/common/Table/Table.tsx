@@ -167,6 +167,9 @@ interface TableProps<T> {
   selectionActions?: React.ReactNode
   searchPosition?: 'left' | 'right'
   rowSelection?: RowSelection<T>
+  serverSideSearch?: boolean
+  searchTerm?: string
+  onSearchTermChange?: (nextSearchTerm: string) => void
 }
 
 export function Table<T extends Record<string, any>>({
@@ -192,12 +195,15 @@ export function Table<T extends Record<string, any>>({
   toolbarStart,
   selectionActions,
   searchPosition = 'left',
-  rowSelection
+  rowSelection,
+  serverSideSearch = false,
+  searchTerm,
+  onSearchTermChange
 }: TableProps<T>) {
   // Sistema híbrido de configuración de tablas
   const [savedTableConfig, updateTableConfig] = useTableConfig(tableId || 'default')
 
-  const [searchTerm, setSearchTerm] = useState('')
+  const [localSearchTerm, setLocalSearchTerm] = useState('')
   const [sortBy, setSortBy] = useState<string | null>(initialSortBy || null)
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(initialSortOrder)
   const [currentPage, setCurrentPage] = useState(1)
@@ -360,12 +366,14 @@ export function Table<T extends Record<string, any>>({
 
   const visibleColumns = columns.filter(col => col.visible !== false)
   const hiddenColumns = columns.filter(col => !col.fixed && col.visible === false)
-  const preparedSearchTerm = useMemo(() => prepareSearchQuery(searchTerm), [searchTerm])
+  const hasControlledSearchTerm = typeof searchTerm === 'string'
+  const resolvedSearchTerm = hasControlledSearchTerm ? searchTerm : localSearchTerm
+  const resolvedSearchTermPrepared = useMemo(() => prepareSearchQuery(resolvedSearchTerm), [resolvedSearchTerm])
   const rowSearchIndexes = useMemo(() => {
-    if (!Array.isArray(data)) return []
+    if (serverSideSearch || !Array.isArray(data)) return []
 
     return data.map(item => buildSearchIndex(getSearchValues(item, columns)))
-  }, [columns, data])
+  }, [columns, data, serverSideSearch])
 
   const filteredData = useMemo(() => {
     if (!Array.isArray(data)) {
@@ -375,9 +383,12 @@ export function Table<T extends Record<string, any>>({
 
     let filtered = [...data]
 
-    if (searchTerm) {
+    if (!serverSideSearch && resolvedSearchTerm) {
       filtered = filtered.filter((item, index) =>
-        searchIndexIncludes(rowSearchIndexes[index] ?? buildSearchIndex(getSearchValues(item, columns)), preparedSearchTerm)
+        searchIndexIncludes(
+          rowSearchIndexes[index] ?? buildSearchIndex(getSearchValues(item, columns)),
+          resolvedSearchTermPrepared
+        )
       )
     }
 
@@ -397,7 +408,17 @@ export function Table<T extends Record<string, any>>({
     }
 
     return filtered
-  }, [columns, data, preparedSearchTerm, rowSearchIndexes, searchTerm, sortBy, sortOrder])
+  }, [columns, data, resolvedSearchTermPrepared, rowSearchIndexes, resolvedSearchTerm, serverSideSearch, sortBy, sortOrder])
+
+  const handleSearchTermChange = (nextSearchTerm: string) => {
+    if (!hasControlledSearchTerm) {
+      setLocalSearchTerm(nextSearchTerm)
+    }
+
+    if (serverSideSearch && onSearchTermChange) {
+      onSearchTermChange(nextSearchTerm)
+    }
+  }
 
   const paginatedData = useMemo(() => {
     if (!paginated) return filteredData
@@ -490,9 +511,9 @@ export function Table<T extends Record<string, any>>({
         className={styles.searchField}
         size="sm"
         placeholder={searchPlaceholder}
-        value={searchTerm}
-        onChange={(nextTerm) => setSearchTerm(nextTerm)}
-        onClear={() => setSearchTerm('')}
+        value={resolvedSearchTerm}
+        onChange={handleSearchTermChange}
+        onClear={() => handleSearchTermChange('')}
       />
     </div>
   ) : null

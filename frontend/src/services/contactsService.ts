@@ -75,6 +75,7 @@ interface ContactsPageParams {
   endDate?: string
   page?: number
   limit?: number
+  search?: string
   sortBy?: string
   sortOrder?: 'ASC' | 'DESC'
   signal?: AbortSignal
@@ -175,6 +176,7 @@ const requestContactsPage = async ({
   endDate,
   page = 1,
   limit = 100,
+  search,
   sortBy = 'created_at',
   sortOrder = 'DESC',
   signal
@@ -186,6 +188,7 @@ const requestContactsPage = async ({
   params.append('sortOrder', sortOrder)
   if (startDate) params.append('startDate', startDate)
   if (endDate) params.append('endDate', endDate)
+  if (search) params.append('search', search)
 
   const url = apiUrl(`/api/contacts?${params.toString()}`)
   const response = await fetch(url, {

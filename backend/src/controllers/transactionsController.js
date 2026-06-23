@@ -19,6 +19,7 @@ import {
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
 import { findContactByPhoneCandidates } from '../services/contactIdentityService.js'
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
+import { buildContactSearchClause, containsPattern, normalizePhoneDigits } from '../utils/searchText.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
@@ -613,6 +614,7 @@ export const getTransactions = async (req, res) => {
       page = 1,
       limit,
       status = '',
+      q = '',
       startDate,
       endDate,
       sortBy = 'date',
@@ -620,13 +622,17 @@ export const getTransactions = async (req, res) => {
       sync = 'false' // Por defecto NO sincroniza (más rápido)
     } = req.query
 
+    const searchTerm = cleanString(q)
+    const searchPattern = containsPattern(searchTerm, 500)
+    const searchDigits = normalizePhoneDigits(searchTerm)
+    const hasSearch = Boolean(searchPattern && searchPattern !== '__no_text_match__')
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const rangeLabel = range.isFiltered
       ? `${range.startUtc || '---'} -> ${range.endUtc || '---'}`
       : 'todos'
 
     // Si NO hay filtro de fechas (modo "TODOS"), traer TODOS los registros sin límite
-    const usePagination = range.isFiltered || limit
+    const usePagination = (range.isFiltered || limit) && !hasSearch
     const limitNumber = usePagination ? Math.min(Number(limit) || 50, 5000) : 999999
     const pageNumber = usePagination ? (Number(page) || 1) : 1
     const offset = usePagination ? Math.max((pageNumber - 1) * limitNumber, 0) : 0
@@ -691,6 +697,38 @@ export const getTransactions = async (req, res) => {
           AND LOWER(COALESCE(p.status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')
       )
     `)
+
+    if (hasSearch) {
+      const contactSearch = buildContactSearchClause('c', searchTerm, { includeSource: true })
+      const paymentSearch = `(
+        LOWER(COALESCE(p.reference, '')) LIKE ?
+        OR LOWER(COALESCE(p.title, '')) LIKE ?
+        OR LOWER(COALESCE(p.description, '')) LIKE ?
+        OR LOWER(COALESCE(p.invoice_number, '')) LIKE ?
+        OR LOWER(COALESCE(p.public_payment_id, '')) LIKE ?
+        OR LOWER(COALESCE(p.payment_provider, '')) LIKE ?
+        OR LOWER(COALESCE(p.payment_method, '')) LIKE ?
+        OR LOWER(COALESCE(p.status, '')) LIKE ?
+        OR COALESCE(p.id, '') LIKE ?
+        OR ${searchDigits ? `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.id, ''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '') LIKE ?` : '1 = 0'}
+      )`
+      const paymentSearchParams = [
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchDigits ? `%${searchDigits}%` : '__no_phone_match__',
+        searchDigits ? `%${searchDigits}%` : '__no_phone_match__'
+      ]
+      filters.push(`(${contactSearch.condition} OR ${paymentSearch})`)
+      params.push(...contactSearch.params)
+      params.push(...paymentSearchParams)
+    }
 
     const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
     const countResult = await db.get(`SELECT COUNT(*) as total FROM payments p ${whereClause}`, params)

@@ -66,11 +66,18 @@ export interface PaymentPlan {
 }
 
 export const transactionsService = {
-  async getTransactions(startDate?: string, endDate?: string, forceSync?: boolean): Promise<Transaction[]> {
+  async getTransactions(
+    startDate?: string,
+    endDate?: string,
+    forceSync?: boolean,
+    searchTerm?: string
+  ): Promise<Transaction[]> {
     try {
       const params: Record<string, string> = {}
       if (startDate) params.startDate = startDate
       if (endDate) params.endDate = endDate
+      if (searchTerm && searchTerm.trim()) params.q = searchTerm.trim()
+
       // Forzar sincronización cuando se especifica (después de crear invoice)
       if (forceSync) params.sync = 'true'
 

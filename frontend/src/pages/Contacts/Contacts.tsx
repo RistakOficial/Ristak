@@ -634,6 +634,8 @@ const ContactsTable: React.FC = () => {
   })
   const [customFieldDefinitions, setCustomFieldDefinitions] = useState<ContactCustomFieldDefinition[]>([])
   const [hasLoadedContacts, setHasLoadedContacts] = useState(false)
+  const [contactSearchTerm, setContactSearchTerm] = useState('')
+  const [debouncedContactSearch, setDebouncedContactSearch] = useState('')
   const handledOpenContactRef = useRef<string | null>(null)
   const fetchRequestRef = useRef(0)
 
@@ -729,8 +731,15 @@ const ContactsTable: React.FC = () => {
   }, [routeState.contactId, routeState.filter, routeState.viewMode, selectedContact])
 
   useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedContactSearch(contactSearchTerm.trim())
+    }, 300)
+    return () => window.clearTimeout(handle)
+  }, [contactSearchTerm])
+
+  useEffect(() => {
     fetchData()
-  }, [dateRange, viewMode])
+  }, [dateRange, viewMode, debouncedContactSearch])
 
   useEffect(() => {
     setShowNewContactModal(routeState.create)
@@ -1169,6 +1178,7 @@ const ContactsTable: React.FC = () => {
   const fetchData = async () => {
     const requestId = fetchRequestRef.current + 1
     fetchRequestRef.current = requestId
+    const normalizedSearch = debouncedContactSearch.trim()
     setLoading(true)
     try {
       let startDate: string | undefined
@@ -1202,7 +1212,8 @@ const ContactsTable: React.FC = () => {
         page: 1,
         limit: CONTACTS_PAGE_SIZE,
         sortBy: 'created_at',
-        sortOrder: 'DESC'
+        sortOrder: 'DESC',
+        ...(normalizedSearch ? { search: normalizedSearch } : {})
       })
 
       if (fetchRequestRef.current !== requestId) {
@@ -1223,7 +1234,7 @@ const ContactsTable: React.FC = () => {
 
           while (
             hasMore &&
-            page <= MAX_CONTACTS_BACKGROUND_PAGES &&
+            (normalizedSearch || page <= MAX_CONTACTS_BACKGROUND_PAGES) &&
             fetchRequestRef.current === requestId
           ) {
             const nextPage = await contactsService.getContactsPage({
@@ -1232,7 +1243,8 @@ const ContactsTable: React.FC = () => {
               page,
               limit: CONTACTS_PAGE_SIZE,
               sortBy: 'created_at',
-              sortOrder: 'DESC'
+              sortOrder: 'DESC',
+              ...(normalizedSearch ? { search: normalizedSearch } : {})
             })
 
             if (fetchRequestRef.current !== requestId) {
@@ -2098,6 +2110,9 @@ const ContactsTable: React.FC = () => {
           loading={contactsRefreshing || loadingEvents}
           searchable={true}
           searchPlaceholder="Buscar contactos..."
+          serverSideSearch={true}
+          searchTerm={contactSearchTerm}
+          onSearchTermChange={setContactSearchTerm}
           paginated={true}
           pageSize={20}
           filters={filterOptions}
