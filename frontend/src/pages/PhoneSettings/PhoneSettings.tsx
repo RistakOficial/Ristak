@@ -65,7 +65,7 @@ const BUSINESS_VOICE_MIME_CANDIDATES = [
 const EMPTY_BUSINESS_CONTEXT_TEXT = new Set([
   'No se proporcionaron detalles del negocio.'
 ])
-const PERSONAL_ASSISTANT_AI_LABEL = 'asistente personal AI'
+const PERSONAL_ASSISTANT_AI_LABEL = 'Asistente Personal AI'
 
 function getBusinessVoiceMimeType() {
   if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') return ''

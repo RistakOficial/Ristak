@@ -12,7 +12,7 @@ export interface AgentRobotProps {
 export const AgentRobot: React.FC<AgentRobotProps> = ({
   active = true,
   className = '',
-  label = 'asistente personal AI',
+  label = 'Asistente Personal AI',
   scene = 'compact',
   size
 }) => {
