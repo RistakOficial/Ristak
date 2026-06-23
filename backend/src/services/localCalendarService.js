@@ -1499,10 +1499,13 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     button,input,textarea{font:inherit}
     .page{min-height:100vh;width:min(1180px,calc(100% - 32px));margin:0 auto;padding:clamp(24px,4vw,54px) 0;display:grid;place-items:center}
     body.rstk-calendar-embedded .page{width:100%;padding:0;place-items:stretch}
-    .shell{width:100%;min-height:min(760px,calc(100vh - 80px));display:grid;grid-template-columns:340px minmax(390px,1fr) minmax(260px,300px);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 32px 90px -60px rgba(15,23,42,.45);overflow:hidden}
+    .shell{width:100%;min-height:min(760px,calc(100vh - 80px));display:grid;grid-template-columns:340px minmax(390px,1fr);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 32px 90px -60px rgba(15,23,42,.45);overflow:hidden}
     body.rstk-calendar-embedded .shell{min-height:100vh;min-width:0;border:0;border-radius:0;box-shadow:none}
     body.rstk-calendar-embedded.rstk-calendar-layout-stacked .page{place-items:start center}
-    .shell.layout-compact{grid-template-columns:minmax(0,1fr) minmax(240px,320px)}
+    .shell.dateSelected{grid-template-columns:340px minmax(390px,1fr) minmax(260px,300px)}
+    .shell:not(.dateSelected):not(.bookingActive) .timesPane{display:none}
+    .shell.layout-compact{grid-template-columns:minmax(0,1fr)}
+    .shell.layout-compact.dateSelected{grid-template-columns:minmax(0,1fr) minmax(240px,320px)}
     .shell.layout-compact .intro{grid-column:1/-1;grid-template-columns:auto minmax(0,1fr);align-items:center;border-right:0;border-bottom:1px solid var(--line);padding:26px 30px}
     .shell.layout-compact .avatar{width:78px;height:78px;font-size:2.2rem}
     .shell.layout-compact .calendarPane,.shell.layout-compact .timesPane{min-width:0}
@@ -1523,7 +1526,6 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .shell.layout-compact.bookingActive .intro,.shell.layout-compact.bookingActive .timesPane,.shell.layout-stacked.bookingActive .timesPane{border-left:0}
     .shell.bookingActive .slotList{display:none}
     .intro{position:relative;padding:38px 34px;border-right:1px solid var(--line);display:grid;align-content:start;gap:20px}
-    .back{width:42px;height:42px;border:1px solid var(--line);border-radius:999px;background:var(--control-bg);color:var(--accent);display:grid;place-items:center;cursor:pointer}
     .avatar{width:104px;height:104px;border-radius:4px;background:linear-gradient(135deg,var(--accent-soft),var(--control-bg));border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-size:3rem;font-weight:850;overflow:hidden}
     .avatar img{width:100%;height:100%;display:block;object-fit:cover}
     .host{margin:8px 0 0;color:var(--muted);font-size:.95rem;font-weight:750}
@@ -1554,7 +1556,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:18px}
     .selectedDate{display:grid;gap:6px;min-height:58px}
     .changeSlot{display:none;justify-self:start;min-height:34px;border:1px solid var(--line);border-radius:var(--slot-radius);background:var(--control-bg);color:var(--accent);font-size:.86rem;font-weight:800;padding:0 12px;cursor:pointer}
-    .shell.bookingActive .changeSlot{display:inline-flex;align-items:center;justify-content:center}
+    .shell.dateSelected .changeSlot,.shell.bookingActive .changeSlot{display:inline-flex;align-items:center;justify-content:center}
     .slotList{display:grid;align-content:start;gap:10px;max-height:330px;overflow:auto;padding-right:2px}
     .slot{width:100%;min-height:46px;border:1px solid var(--accent);border-radius:var(--slot-radius);background:var(--slot-bg);color:var(--slot-text);font-weight:800;cursor:pointer}
     .slot:hover,.slot.selected{background:var(--accent);color:var(--selected-text)}
@@ -1588,17 +1590,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .message.ok{color:var(--ok)}
     .message.preview{color:var(--muted)}
     .loading{opacity:.62;pointer-events:none}
-    @media (max-width:1020px){.shell,.shell.bookingActive{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}.shell.bookingActive .timesPane{border-left:0;max-width:none}}
-    @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell,.shell.bookingActive{grid-template-columns:1fr;min-height:0;border-radius:14px}.shell.bookingActive .timesPane{grid-column:auto}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
+    @media (max-width:1020px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}.shell.bookingActive .timesPane{border-left:0;max-width:none}}
+    @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:1fr;min-height:0;border-radius:14px}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
   </style>
 </head>
 <body class="${[embedded ? 'rstk-calendar-embedded' : '', preview ? 'rstk-calendar-preview' : '', `rstk-calendar-layout-${layout}`].filter(Boolean).join(' ')}">
   <main class="page">
     <div class="shell layout-${escapeHtml(layout)}">
       <section class="intro">
-        <button class="back" type="button" onclick="history.length > 1 ? history.back() : null" aria-label="Regresar">
-          <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><path d="M15 18 9 12l6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
         <div class="avatar" aria-hidden="true" data-calendar-avatar>${coverImage ? `<img src="${escapeHtml(coverImage)}" alt="">` : `<span data-calendar-initial>${escapeHtml((calendar.name || 'R').trim()[0] || 'R')}</span>`}</div>
         <p class="host">${escapeHtml(calendar.eventTitle || 'Evento')}</p>
         <h1>${escapeHtml(calendar.name || 'Agenda tu cita')}</h1>
@@ -1611,8 +1610,8 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
 
       <section class="calendarPane" data-calendar-pane>
         <div class="paneTitle">
-          <h2>Selecciona fecha y hora</h2>
-          <p>Elige un día disponible para ver horarios.</p>
+          <h2>Selecciona fecha</h2>
+          <p>Elige un día disponible para continuar.</p>
         </div>
         <div class="monthBar">
           <button class="navBtn" type="button" data-prev aria-label="Mes anterior">
@@ -1692,7 +1691,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         if (completion.action !== 'redirect') return '';
         const text = String(completion.redirectUrl || '').trim();
         if (!text) return '';
-        if (/^\/(?!\/)/.test(text)) return text;
+        if (/^\\/(?!\\/)/.test(text)) return text;
         try {
           const parsed = new URL(text, window.location.origin);
           return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
@@ -1768,6 +1767,17 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const setMessage = (text, type = '') => {
         message.textContent = text || '';
         message.className = 'message' + (type ? ' ' + type : '');
+      };
+
+      const setStep = (step = 'calendar') => {
+        if (!shell) return;
+        shell.classList.toggle('dateSelected', step === 'slots');
+        shell.classList.toggle('bookingActive', step === 'form');
+        if (changeSlotButton) {
+          const label = step === 'form' ? 'Cambiar horario' : 'Ver meses';
+          changeSlotButton.textContent = label;
+          changeSlotButton.setAttribute('aria-label', label);
+        }
       };
 
       const getFieldValue = (field) => {
@@ -1892,9 +1902,9 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         slotsEl.classList.toggle('loading', loading);
       };
 
-      const resetForm = () => {
+      const resetForm = (step = 'calendar') => {
         selectedSlot = '';
-        shell && shell.classList.remove('bookingActive');
+        setStep(step);
         form.classList.remove('visible');
         form.reset();
         formPageIndex = 0;
@@ -1933,7 +1943,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
 
       const renderSlotsForDate = (key) => {
         const slots = slotsByDate.get(key) || [];
-        resetForm();
+        resetForm(key ? 'slots' : 'calendar');
 
         if (!key) {
           selectedTitle.textContent = 'Selecciona una fecha';
@@ -2002,7 +2012,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         selectedSlot = button.getAttribute('data-slot') || '';
         slotsEl.querySelectorAll('.slot').forEach(item => item.classList.remove('selected'));
         button.classList.add('selected');
-        shell && shell.classList.add('bookingActive');
+        setStep('form');
         form.classList.add('visible');
         formPageIndex = 0;
         renderFormPage();
@@ -2014,14 +2024,17 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       });
 
       changeSlotButton && changeSlotButton.addEventListener('click', () => {
-        shell && shell.classList.remove('bookingActive');
-        form.classList.remove('visible');
         setMessage('');
-        if (selectedDateKey) {
-          renderSlotsForDate(selectedDateKey);
-        } else {
-          renderSlotsForDate('');
+        if (shell && shell.classList.contains('bookingActive')) {
+          form.classList.remove('visible');
+          if (selectedDateKey) {
+            renderSlotsForDate(selectedDateKey);
+          } else {
+            renderSlotsForDate('');
+          }
+          return;
         }
+        resetForm('calendar');
       });
 
       formNextButton && formNextButton.addEventListener('click', () => {
@@ -2134,7 +2147,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           selectedSlot = '';
           form.reset();
           form.classList.remove('visible');
-          shell && shell.classList.remove('bookingActive');
+          setStep('calendar');
           formPageIndex = 0;
           renderFormPage();
           await loadSlots();

@@ -129,6 +129,30 @@ test('public calendar carries booking completion behavior into the booking widge
   assert.match(html, /window\.location\.assign\(completionRedirectUrl\)/)
 })
 
+test('public calendar opens date-first and steps into slots then form', () => {
+  const html = renderPublicCalendarHtml({
+    id: 'calendar-step-flow',
+    slug: 'agenda-step-flow',
+    name: 'Agenda step flow',
+    slotDuration: 45,
+    eventColor: '#146FC5'
+  })
+
+  assert.equal(html.includes('class="back"'), false)
+  assert.equal(html.includes('history.length'), false)
+  assert.equal(html.includes('if (/^/(?!/)/.test(text)) return text;'), false)
+  assert.ok(html.includes('if (/^\\/(?!\\/)/.test(text)) return text;'))
+  assert.match(html, /<h2>Selecciona fecha<\/h2>/)
+  assert.match(html, /\.shell:not\(\.dateSelected\):not\(\.bookingActive\) \.timesPane\{display:none\}/)
+  assert.match(html, /shell\.classList\.toggle\('dateSelected', step === 'slots'\)/)
+  assert.match(html, /shell\.classList\.toggle\('bookingActive', step === 'form'\)/)
+  assert.match(html, /resetForm\(key \? 'slots' : 'calendar'\)/)
+  assert.match(html, /setStep\('form'\)/)
+  assert.match(html, /\.shell\.dateSelected \.intro,\.shell\.dateSelected \.calendarPane/)
+  assert.match(html, /Ver meses/)
+  assert.match(html, /Cambiar horario/)
+})
+
 test('public calendar normalizes custom Meta events for site appointments', () => {
   const customEvents = normalizeCalendarCustomEventsConfig({
     customEvents: {
