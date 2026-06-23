@@ -15219,7 +15219,7 @@ export const PhoneChat: React.FC = () => {
               aria-label="Volver a la vista completa de chat"
               title="Regresar a chat normal"
             >
-              <MessageCircle size={21} aria-hidden="true" />
+              <ChevronLeft size={21} aria-hidden="true" />
             </button>
           </aside>
         )}
