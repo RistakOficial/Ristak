@@ -136,6 +136,16 @@ async function startLicenseServer(requests) {
       })
     }
 
+    if (req.url === '/api/license/google-calendar/connect-url') {
+      requests.push({ path: req.url, body: payload })
+      return json(res, 200, {
+        success: true,
+        url: 'https://accounts.google.test/calendar-oauth',
+        mode: 'calendar',
+        redirect_uri: 'https://portal.test/api/license/google-calendar/callback'
+      })
+    }
+
     if (req.url === '/api/license/oauth-handoff/claim') {
       requests.push({ path: req.url, body: payload })
       assert.equal(payload.provider, 'google_calendar')
@@ -225,6 +235,56 @@ test('Google Login central conserva return_path móvil y limpia rutas inseguras'
 
     await callStart({ return_path: 'https://evil.test/steal' })
     assert.equal(requests[1].body.return_path, '/dashboard')
+  } finally {
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('Google Calendar OAuth conserva return_path de calendarios y bloquea rutas ajenas', async () => {
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const { server, baseUrl } = await startLicenseServer(requests)
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+
+    const { getGoogleCalendarConnectUrl } = await import('../src/controllers/calendarsController.js')
+    const callConnectUrl = async (body) => {
+      let statusCode = 200
+      let responseBody = null
+      const res = {
+        status(code) {
+          statusCode = code
+          return this
+        },
+        json(payload) {
+          responseBody = payload
+          return this
+        }
+      }
+
+      await getGoogleCalendarConnectUrl({ body }, res)
+      return { statusCode, responseBody }
+    }
+
+    const calendarPath = '/settings/calendars/google?panel=sync'
+    const ok = await callConnectUrl({ returnPath: calendarPath })
+    assert.equal(ok.statusCode, 200)
+    assert.equal(ok.responseBody.data.url, 'https://accounts.google.test/calendar-oauth')
+    assert.equal(requests[0].path, '/api/license/google-calendar/connect-url')
+    assert.equal(requests[0].body.return_path, calendarPath)
+
+    await callConnectUrl({ returnPath: '/settings/payments' })
+    assert.equal(requests[1].body.return_path, '/settings/calendars/google')
+
+    await callConnectUrl({ returnPath: 'https://evil.test/settings/calendars/google' })
+    assert.equal(requests[2].body.return_path, '/settings/calendars/google')
   } finally {
     server.closeAllConnections?.()
     server.close()

@@ -302,6 +302,19 @@ export interface BlockedSlot {
   blockedBy?: string;
 }
 
+function isCalendarSettingsPath(pathname = '') {
+  return pathname === '/settings/calendars' || pathname.startsWith('/settings/calendars/');
+}
+
+function getGoogleCalendarReturnPath() {
+  if (typeof window === 'undefined') return '/settings/calendars/google';
+
+  const pathname = isCalendarSettingsPath(window.location.pathname)
+    ? window.location.pathname
+    : '/settings/calendars/google';
+  return `${pathname}${window.location.search || ''}${window.location.hash || ''}`;
+}
+
 /**
  * Servicio para manejar Calendarios de HighLevel
  */
@@ -333,12 +346,8 @@ export const calendarsService = {
   },
 
   async getGoogleConnectUrl(): Promise<GoogleCalendarConnectUrl> {
-    const returnPath = typeof window !== 'undefined'
-      ? `${window.location.pathname}${window.location.search || ''}`
-      : '/settings/calendars/google';
-
     return apiClient.post<GoogleCalendarConnectUrl>('/calendars/google-integration/connect-url', {
-      returnPath
+      returnPath: getGoogleCalendarReturnPath()
     });
   },
 

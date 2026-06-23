@@ -275,6 +275,24 @@ function googleCalendarIntegrationStatus(config = {}) {
   };
 }
 
+function sanitizeGoogleCalendarReturnPath(value, fallbackPath = '/settings/calendars/google') {
+  const fallback = cleanString(fallbackPath) || '/settings/calendars/google';
+  const rawPath = cleanString(value);
+
+  if (!rawPath || !rawPath.startsWith('/') || rawPath.startsWith('//') || rawPath.startsWith('/api/')) {
+    return fallback;
+  }
+
+  try {
+    const url = new URL(rawPath.slice(0, 700), 'https://ristak.local');
+    const isCalendarsPath = url.pathname === '/settings/calendars' || url.pathname.startsWith('/settings/calendars/');
+    if (!isCalendarsPath) return fallback;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
 function normalizeEmail(value) {
   const email = cleanString(value).toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
@@ -402,7 +420,7 @@ export async function getGoogleCalendarConnectUrl(req, res) {
     }
 
     const data = await createCentralGoogleCalendarConnectUrl({
-      returnPath: req.body?.returnPath || req.body?.return_path || '/settings/calendars/google'
+      returnPath: sanitizeGoogleCalendarReturnPath(req.body?.returnPath || req.body?.return_path)
     });
 
     if (!data.url) {

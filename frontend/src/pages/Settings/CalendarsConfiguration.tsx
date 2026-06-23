@@ -115,6 +115,18 @@ const buildCalendarSettingsPath = (view: CalendarSettingsView, calendarId?: stri
   view === 'google' ? '/settings/calendars/google' : calendarId ? `/settings/calendars/${encodeURIComponent(calendarId)}` : '/settings/calendars'
 )
 
+const GOOGLE_OAUTH_RETURN_PARAMS = ['google_handoff_token', 'connected']
+
+const cleanGoogleOAuthReturnPath = (pathname: string, search: string, hash = '') => {
+  const safePathname = pathname === '/settings/calendars' || pathname.startsWith('/settings/calendars/')
+    ? pathname
+    : '/settings/calendars/google'
+  const params = new URLSearchParams(search)
+  GOOGLE_OAUTH_RETURN_PARAMS.forEach(param => params.delete(param))
+  const cleanedSearch = params.toString()
+  return `${safePathname}${cleanedSearch ? `?${cleanedSearch}` : ''}${hash || ''}`
+}
+
 const CALENDAR_COLOR_PALETTE = [
   { label: 'Azul', value: '#3b82f6' },
   { label: 'Cielo', value: '#38bdf8' },
@@ -694,7 +706,6 @@ export const CalendarsConfiguration: React.FC = () => {
     if (!handoffToken && !connected) return
 
     const finishGoogleReturn = async () => {
-      setActiveView('google')
       setSavingGoogleIntegration(true)
       try {
         if (!handoffToken) {
@@ -711,12 +722,12 @@ export const CalendarsConfiguration: React.FC = () => {
         showToast('warning', 'Google autorizó, falta guardar', error.message || 'Vuelve a conectar Google Calendar desde esta pantalla.')
       } finally {
         setSavingGoogleIntegration(false)
-        navigate('/settings/calendars/google', { replace: true })
+        navigate(cleanGoogleOAuthReturnPath(location.pathname, location.search, location.hash), { replace: true })
       }
     }
 
     void finishGoogleReturn()
-  }, [location.search, navigate, showToast])
+  }, [location.hash, location.pathname, location.search, navigate, showToast])
 
   useEffect(() => {
     if (googleIntegration?.connected) {
