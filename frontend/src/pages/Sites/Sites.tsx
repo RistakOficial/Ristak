@@ -6605,6 +6605,122 @@ function FormModePalette({
   )
 }
 
+// Selector that matches the currently-selected element on the form canvas.
+// Embedded/video-gate forms render fields via EmbeddedFormCanvasFields; the
+// standalone form canvas selects top-level blocks with .rstkSelActive.
+const FORM_ELEMENT_POPOVER_ANCHOR_EMBEDDED =
+  '.rstkEmbeddedFormFieldActive, .rstkEmbeddedFormItemActive, .rstkEmbeddedFormSubmitActive'
+const FORM_ELEMENT_POPOVER_ANCHOR_BLOCK = '.rstkSelActive'
+const NOOP = () => {}
+
+const computeFormElementPopoverPosition = (anchorSelector: string): { left: number; top: number } | null => {
+  const anchor = document.querySelector<HTMLElement>(anchorSelector)
+  if (!anchor) return null
+  const rect = anchor.getBoundingClientRect()
+  const pad = 12
+  const popoverWidth = Math.min(430, Math.max(320, window.innerWidth - pad * 2))
+  const popoverHeightEstimate = Math.min(620, Math.max(280, window.innerHeight - pad * 2))
+  const rightSideLeft = rect.right + 14
+  const leftSideLeft = rect.left - popoverWidth - 14
+  const hasRoomRight = rightSideLeft + popoverWidth <= window.innerWidth - pad
+  const rawLeft = hasRoomRight ? rightSideLeft : leftSideLeft
+  const rawTop = rect.top - 4
+  return {
+    left: Math.max(pad, Math.min(rawLeft, window.innerWidth - popoverWidth - pad)),
+    top: Math.max(pad, Math.min(rawTop, window.innerHeight - popoverHeightEstimate - pad))
+  }
+}
+
+// Pins a floating box next to the currently-selected element on the form
+// canvas. selectionKey changes when the selection changes (empty = nothing
+// selected); anchorSelector picks the active node; onDeselect closes on Escape.
+const useFormElementPopover = (selectionKey: string, anchorSelector: string, onDeselect: () => void) => {
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+
+  const recompute = useCallback(() => {
+    if (!selectionKey) {
+      setPosition(null)
+      return
+    }
+    const next = computeFormElementPopoverPosition(anchorSelector)
+    if (next) setPosition(next)
+  }, [selectionKey, anchorSelector])
+
+  // Recompute on selection change (deferred a frame so the canvas applied the
+  // active class) and gently bring the element into view.
+  useLayoutEffect(() => {
+    if (!selectionKey) {
+      setPosition(null)
+      return undefined
+    }
+    const raf = window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(anchorSelector)?.scrollIntoView({ block: 'nearest' })
+      recompute()
+    })
+    return () => window.cancelAnimationFrame(raf)
+  }, [selectionKey, anchorSelector, recompute])
+
+  // Keep it pinned while scrolling/resizing, and close it with Escape.
+  useEffect(() => {
+    if (!selectionKey) return undefined
+    let frame = 0
+    const handleReflow = () => {
+      if (frame) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        recompute()
+      })
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onDeselect()
+    }
+    window.addEventListener('scroll', handleReflow, true)
+    window.addEventListener('resize', handleReflow)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('scroll', handleReflow, true)
+      window.removeEventListener('resize', handleReflow)
+      window.removeEventListener('keydown', handleKeyDown)
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [selectionKey, recompute, onDeselect])
+
+  const style = position
+    ? ({
+      ['--imported-element-popover-left' as string]: `${position.left}px`,
+      ['--imported-element-popover-top' as string]: `${position.top}px`
+    } as React.CSSProperties)
+    : undefined
+
+  return { position, style }
+}
+
+// The floating box itself: same visual shell as the site builder's inline
+// element editor, with a small header bar + close button. Holds the element's
+// behaviour/logic controls while the right inspector keeps design only.
+const FormElementLogicPopover: React.FC<{
+  style?: React.CSSProperties
+  title: string
+  onDeselect: () => void
+  children: React.ReactNode
+}> = ({ style, title, onDeselect, children }) => (
+  <div
+    className={`${styles.importedElementPopoverShell} ${styles.formElementLogicPopover}`}
+    style={style}
+    role="dialog"
+    aria-label="Configurar elemento del formulario"
+    onPointerDown={(event) => event.stopPropagation()}
+  >
+    <div className={styles.formElementLogicBar}>
+      <span>{title}</span>
+      <button type="button" onClick={onDeselect} aria-label="Cerrar configuración del elemento">
+        <X size={15} />
+      </button>
+    </div>
+    <div className={styles.importedButtonActionBox}>{children}</div>
+  </div>
+)
+
 function FormEmbedEditorPanel({
   site,
   block,
@@ -6705,84 +6821,14 @@ function FormEmbedEditorPanel({
   // Floating element editor: the behaviour/logic of the selected form element
   // (label, type, rules, option actions…) lives in a small box pinned next to
   // the element on the canvas instead of the right inspector. The right panel
-  // keeps only the design controls. Anchored to the selected element's box.
+  // keeps only the design controls.
   const showElementPopover = isSubmitSelected || Boolean(activeField)
   const elementPopoverSelectionKey = isSubmitSelected ? 'submit' : (activeField?.id || '')
-  const [elementPopoverPosition, setElementPopoverPosition] = useState<{ left: number; top: number } | null>(null)
-
-  const recomputeElementPopover = useCallback(() => {
-    if (!elementPopoverSelectionKey) {
-      setElementPopoverPosition(null)
-      return
-    }
-    const anchor = document.querySelector<HTMLElement>(
-      '.rstkEmbeddedFormFieldActive, .rstkEmbeddedFormItemActive, .rstkEmbeddedFormSubmitActive'
-    )
-    if (!anchor) return
-    const rect = anchor.getBoundingClientRect()
-    const pad = 12
-    const popoverWidth = Math.min(430, Math.max(320, window.innerWidth - pad * 2))
-    const popoverHeightEstimate = Math.min(620, Math.max(280, window.innerHeight - pad * 2))
-    const rightSideLeft = rect.right + 14
-    const leftSideLeft = rect.left - popoverWidth - 14
-    const hasRoomRight = rightSideLeft + popoverWidth <= window.innerWidth - pad
-    const rawLeft = hasRoomRight ? rightSideLeft : leftSideLeft
-    const rawTop = rect.top - 4
-    setElementPopoverPosition({
-      left: Math.max(pad, Math.min(rawLeft, window.innerWidth - popoverWidth - pad)),
-      top: Math.max(pad, Math.min(rawTop, window.innerHeight - popoverHeightEstimate - pad))
-    })
-  }, [elementPopoverSelectionKey])
-
-  // Recompute when the selection changes (defer one frame so the canvas has
-  // applied the active class) and gently bring the element into view.
-  useLayoutEffect(() => {
-    if (!elementPopoverSelectionKey) {
-      setElementPopoverPosition(null)
-      return undefined
-    }
-    const raf = window.requestAnimationFrame(() => {
-      const anchor = document.querySelector<HTMLElement>(
-        '.rstkEmbeddedFormFieldActive, .rstkEmbeddedFormItemActive, .rstkEmbeddedFormSubmitActive'
-      )
-      anchor?.scrollIntoView({ block: 'nearest' })
-      recomputeElementPopover()
-    })
-    return () => window.cancelAnimationFrame(raf)
-  }, [elementPopoverSelectionKey, recomputeElementPopover])
-
-  // Keep the box pinned to the element while scrolling/resizing, and close it
-  // with Escape — mirrors the inline element editor of the site builder.
-  useEffect(() => {
-    if (!elementPopoverSelectionKey) return undefined
-    let frame = 0
-    const handleReflow = () => {
-      if (frame) return
-      frame = window.requestAnimationFrame(() => {
-        frame = 0
-        recomputeElementPopover()
-      })
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onDeselect()
-    }
-    window.addEventListener('scroll', handleReflow, true)
-    window.addEventListener('resize', handleReflow)
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('scroll', handleReflow, true)
-      window.removeEventListener('resize', handleReflow)
-      window.removeEventListener('keydown', handleKeyDown)
-      if (frame) window.cancelAnimationFrame(frame)
-    }
-  }, [elementPopoverSelectionKey, recomputeElementPopover, onDeselect])
-
-  const elementPopoverStyle = elementPopoverPosition
-    ? ({
-      ['--imported-element-popover-left' as string]: `${elementPopoverPosition.left}px`,
-      ['--imported-element-popover-top' as string]: `${elementPopoverPosition.top}px`
-    } as React.CSSProperties)
-    : undefined
+  const { position: elementPopoverPosition, style: elementPopoverStyle } = useFormElementPopover(
+    elementPopoverSelectionKey,
+    FORM_ELEMENT_POPOVER_ANCHOR_EMBEDDED,
+    onDeselect
+  )
 
   const renderActiveContentControls = () => {
     if (!activeField) return null
@@ -7181,23 +7227,13 @@ function FormEmbedEditorPanel({
   return (
     <>
       {showElementPopover && elementPopoverPosition && (
-        <div
-          className={`${styles.importedElementPopoverShell} ${styles.formElementLogicPopover}`}
+        <FormElementLogicPopover
           style={elementPopoverStyle}
-          role="dialog"
-          aria-label="Configurar elemento del formulario"
-          onPointerDown={(event) => event.stopPropagation()}
+          title={isSubmitSelected ? 'Botón de envío' : 'Configuración del elemento'}
+          onDeselect={onDeselect}
         >
-          <div className={styles.formElementLogicBar}>
-            <span>{isSubmitSelected ? 'Botón de envío' : 'Configuración del elemento'}</span>
-            <button type="button" onClick={onDeselect} aria-label="Cerrar configuración del elemento">
-              <X size={15} />
-            </button>
-          </div>
-          <div className={styles.importedButtonActionBox}>
-            {editContent}
-          </div>
-        </div>
+          {editContent}
+        </FormElementLogicPopover>
       )}
       <InspectorTabbedPanel
         title="Componente de formulario"
@@ -11794,6 +11830,11 @@ export const Sites: React.FC = () => {
     setActiveEmbeddedFormFieldId('')
   }, [])
 
+  // Deselect the standalone-form canvas block (closes its floating logic box).
+  const handleCanvasBlockDeselect = useCallback(() => {
+    selectEditorBlock(PAGE_SELECTED_ID)
+  }, [selectEditorBlock])
+
   const embeddedFormEditorBridge: EmbeddedFormCanvasEditorBridge | null = formEditBlock ? {
     parentBlockId: formEditBlock.id,
     activeFieldId: activeEmbeddedFormFieldId,
@@ -12683,6 +12724,7 @@ export const Sites: React.FC = () => {
                     }}
                     onVideoFormGateSubmitSelect={() => setActiveVideoFormGateSubmitSelected(true)}
                     onSave={() => handleSaveBlock()}
+                    onDeselect={handleCanvasBlockDeselect}
                   />
                 )}
 
@@ -31255,6 +31297,7 @@ interface PropertiesPanelProps {
   onVideoFormGateActiveBlockChange?: (blockId: string) => void
   onVideoFormGateSubmitSelect?: () => void
   onSave: () => void
+  onDeselect?: () => void
 }
 
 const FormTypographyGlobalControls: React.FC<{
@@ -33638,8 +33681,21 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   videoFormGateActiveElement,
   onVideoFormGateActiveBlockChange,
   onVideoFormGateSubmitSelect,
-  onSave
+  onSave,
+  onDeselect
 }) => {
+  // For form sites the selected element's behaviour/logic moves to a floating
+  // box pinned to the block on the canvas; landings keep the inspector intact.
+  // Video blocks are excluded: their form gate has its own floating editor.
+  // Hook runs unconditionally (before the early returns) per the rules of hooks.
+  const formElementPopoverSelectionKey =
+    isFormSite(site) && block && block.blockType !== 'video' ? block.id : ''
+  const { position: elementPopoverPosition, style: elementPopoverStyle } = useFormElementPopover(
+    formElementPopoverSelectionKey,
+    FORM_ELEMENT_POPOVER_ANCHOR_BLOCK,
+    onDeselect || NOOP
+  )
+
   if (surfaceSelectionId === POPUP_SELECTED_ID) {
     return (
       <PopupInspector
@@ -33990,20 +34046,43 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     />
   ) : null
 
-  const inspectorTabs: InspectorTab[] = [
-    { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
-    { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
-    ...(videoActionsContent ? [{ value: 'videoActions' as InspectorTabId, label: 'Acciones de video', icon: <Clock3 size={14} />, content: videoActionsContent }] : [])
-  ]
+  // On form sites the element's content/logic ("Editar") moves to the floating
+  // box; the inspector keeps design only. Landings keep the full Editar/Diseño.
+  // Video blocks keep the inspector (their gate has its own floating editor).
+  const useFormElementBox = isFormSite(site) && block.blockType !== 'video'
+  const videoActionsTab = videoActionsContent
+    ? [{ value: 'videoActions' as InspectorTabId, label: 'Acciones de video', icon: <Clock3 size={14} />, content: videoActionsContent }]
+    : []
+  const inspectorTabs: InspectorTab[] = useFormElementBox
+    ? [
+        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
+        ...videoActionsTab
+      ]
+    : [
+        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
+        { value: 'design', label: 'Diseño', icon: <Sparkles size={14} />, content: designContent },
+        ...videoActionsTab
+      ]
 
   return (
-    <InspectorTabbedPanel
-      key={`${block.id}:${block.blockType}`}
-      title="Propiedades"
-      subtitle={blockLabels[block.blockType]}
-      defaultTab="edit"
-      tabs={inspectorTabs}
-    />
+    <>
+      {useFormElementBox && elementPopoverPosition && (
+        <FormElementLogicPopover
+          style={elementPopoverStyle}
+          title="Configuración del elemento"
+          onDeselect={onDeselect || NOOP}
+        >
+          {editContent}
+        </FormElementLogicPopover>
+      )}
+      <InspectorTabbedPanel
+        key={`${block.id}:${block.blockType}`}
+        title="Propiedades"
+        subtitle={blockLabels[block.blockType]}
+        defaultTab={useFormElementBox ? 'design' : 'edit'}
+        tabs={inspectorTabs}
+      />
+    </>
   )
 }
 
@@ -34508,6 +34587,19 @@ const VideoFormGateSettingsPanel: React.FC<{
   const selectSubmit = () => {
     onSubmitSelect?.()
   }
+
+  // Floating element editor for the video form: the selected element's config
+  // pins to its node on the video-gate canvas when one is visible (otherwise it
+  // falls back to rendering inline in this panel).
+  const handleVideoGateDeselect = useCallback(() => {
+    onActiveBlockChange?.('')
+  }, [onActiveBlockChange])
+  const videoGatePopoverSelectionKey = activeElement === 'submit' ? 'submit' : (activeQuestion?.id || '')
+  const { position: elementPopoverPosition, style: elementPopoverStyle } = useFormElementPopover(
+    videoGatePopoverSelectionKey,
+    FORM_ELEMENT_POPOVER_ANCHOR_EMBEDDED,
+    handleVideoGateDeselect
+  )
 
   useEffect(() => {
     if (!enabled) return
@@ -35178,7 +35270,8 @@ const VideoFormGateSettingsPanel: React.FC<{
               </button>
             </div>
 
-            {activeElement === 'submit' ? selectedSubmitContent : activeQuestion ? (
+            {(() => {
+              const videoFormGateElementEditor = activeElement === 'submit' ? selectedSubmitContent : activeQuestion ? (
               <div className={styles.videoFormGateQuestionEditor}>
                 <div className={styles.formFieldEditorHeader}>
                   <div>
@@ -35278,9 +35371,20 @@ const VideoFormGateSettingsPanel: React.FC<{
                   </>
                 )}
               </div>
-            ) : (
-              <p className={styles.muted}>Arrastra un elemento desde la barra izquierda para configurar el formulario de video.</p>
-            )}
+              ) : null
+              if (!videoFormGateElementEditor) {
+                return <p className={styles.muted}>Arrastra un elemento desde la barra izquierda para configurar el formulario de video.</p>
+              }
+              return elementPopoverPosition ? (
+                <FormElementLogicPopover
+                  style={elementPopoverStyle}
+                  title={activeElement === 'submit' ? 'Botón del formulario' : 'Configuración del elemento'}
+                  onDeselect={handleVideoGateDeselect}
+                >
+                  {videoFormGateElementEditor}
+                </FormElementLogicPopover>
+              ) : videoFormGateElementEditor
+            })()}
           </div>
 
           {showDesignControls && (
