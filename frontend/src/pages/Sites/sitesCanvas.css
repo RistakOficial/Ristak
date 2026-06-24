@@ -376,6 +376,11 @@
 .rstkCanvas .rstk-media img, .rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { width: 100%; display: block; border: 0; }
 .rstkCanvas .rstk-video { aspect-ratio: var(--rstk-video-aspect-ratio, 16/9); position: relative; border-width: var(--rstk-video-border-width, var(--rstk-block-border-width, 1px)); border-color: var(--rstk-video-border-color, var(--rstk-block-border, var(--rstk-border))); border-radius: var(--rstk-video-radius, var(--rstk-media-radius, var(--rstk-block-radius, var(--rstk-radius)))); background: var(--rstk-video-bg, var(--rstk-block-bg, var(--rstk-surface2))); }
 .rstkCanvas .rstk-video-portrait { aspect-ratio: var(--rstk-video-aspect-ratio, 9/16); }
+/* Video vertical: en contenedores angostos (formularios) ocupa todo el ancho del bloque;
+   la protección de ancho reducido solo aplica en páginas anchas (landing). Modo "Automático". */
+.rstkCanvas.rstk-kind-form .rstk-block-style .rstk-video.rstk-video-portrait.rstk-video-wauto:not(.rstk-video-form-gate-fit-wide) { width: 100%; margin-left: auto; margin-right: auto; }
+/* Modo "Ocupar todo el bloque": llena el ancho en cualquier contenedor. */
+.rstkCanvas .rstk-block-style .rstk-video.rstk-video-portrait.rstk-video-fill-width:not(.rstk-video-form-gate-fit-wide) { width: 100%; margin-left: auto; margin-right: auto; }
 .rstkCanvas .rstk-video iframe, .rstkCanvas .rstk-video video { height: 100%; }
 .rstkCanvas .rstk-video video { background: var(--rstk-video-bg, #000); object-fit: cover; }
 .rstkCanvas .rstk-video-player {

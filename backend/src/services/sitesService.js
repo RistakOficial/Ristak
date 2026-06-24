@@ -15842,6 +15842,15 @@ function shouldUseDefaultPortraitMediaWidth(settings = {}, orientation = '') {
   return orientation === 'portrait' && !Number.isFinite(mediaWidth)
 }
 
+function getVideoPortraitWidthMode(settings = {}) {
+  const value = cleanString(settings.videoPortraitWidthMode)
+  return value === 'fill' || value === 'framed' ? value : 'auto'
+}
+
+function getVideoPortraitWidthModeClass(mode) {
+  return mode === 'fill' ? 'rstk-video-fill-width' : mode === 'auto' ? 'rstk-video-wauto' : ''
+}
+
 function getVideoFrameStyleVars(settings = {}, detectedOrientation = '') {
   const orientation = normalizeVideoOrientation(settings, detectedOrientation)
   const playerBackground = normalizeCssPaint(settings.videoPlayerBackground, DEFAULT_VIDEO_PLAYER_BACKGROUND) || DEFAULT_VIDEO_PLAYER_BACKGROUND
@@ -16581,6 +16590,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     showSoundNotice ? 'rstk-video-sound-hint' : '',
     muted ? 'rstk-video-is-muted' : '',
     `rstk-video-${orientation}`,
+    getVideoPortraitWidthModeClass(getVideoPortraitWidthMode(settings)),
     `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`
   ].filter(Boolean).join(' ')
@@ -18134,6 +18144,8 @@ const RSTK_BASE_CSS = `
   .rstk-media img,.rstk-video iframe,.rstk-video video{width:100%;display:block;border:0}
   .rstk-video{aspect-ratio:var(--rstk-video-aspect-ratio,16/9);position:relative;border-width:var(--rstk-video-border-width,var(--rstk-block-border-width,1px));border-color:var(--rstk-video-border-color,var(--rstk-block-border,var(--rstk-border)));border-radius:var(--rstk-video-radius,var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius))));background:var(--rstk-video-bg,var(--rstk-block-bg,var(--rstk-surface2)))}
 	  .rstk-video-portrait{aspect-ratio:var(--rstk-video-aspect-ratio,9/16)}
+	  .rstk-kind-form .rstk-block-style .rstk-video.rstk-video-portrait.rstk-video-wauto:not(.rstk-video-form-gate-fit-wide){width:100%;margin-left:auto;margin-right:auto}
+	  .rstk-block-style .rstk-video.rstk-video-portrait.rstk-video-fill-width:not(.rstk-video-form-gate-fit-wide){width:100%;margin-left:auto;margin-right:auto}
 	  .rstk-video iframe,.rstk-video video{height:100%}
 	  .rstk-video video{background:var(--rstk-video-bg,#000);object-fit:cover}
 	  .rstk-video-player{container-type:inline-size;isolation:isolate}

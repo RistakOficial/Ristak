@@ -808,6 +808,13 @@ const videoOrientationOptions = [
   { value: 'portrait', label: 'Vertical' }
 ] as const
 type VideoOrientation = typeof videoOrientationOptions[number]['value']
+const videoPortraitWidthModeOptions = [
+  { value: 'auto', label: 'Automático' },
+  { value: 'fill', label: 'Ocupar todo el bloque' },
+  { value: 'framed', label: 'Mantener márgenes' }
+] as const
+type VideoPortraitWidthMode = typeof videoPortraitWidthModeOptions[number]['value']
+const DEFAULT_VIDEO_PORTRAIT_WIDTH_MODE: VideoPortraitWidthMode = 'auto'
 const videoPlayIconOptions = [
   { value: 'solid', label: 'Triángulo sólido' },
   { value: 'outline', label: 'Círculo lineal' },
@@ -3012,6 +3019,14 @@ const getVideoOrientation = (settings: Record<string, unknown> = {}): VideoOrien
   const value = getSettingString(settings, 'videoOrientation')
   return isVideoOrientation(value) ? value : DEFAULT_VIDEO_ORIENTATION
 }
+
+const getVideoPortraitWidthMode = (settings: Record<string, unknown> = {}): VideoPortraitWidthMode => {
+  const value = getSettingString(settings, 'videoPortraitWidthMode')
+  return value === 'fill' || value === 'framed' ? value : DEFAULT_VIDEO_PORTRAIT_WIDTH_MODE
+}
+
+const getVideoPortraitWidthModeClass = (mode: VideoPortraitWidthMode): string =>
+  mode === 'fill' ? 'rstk-video-fill-width' : mode === 'auto' ? 'rstk-video-wauto' : ''
 
 const getResolvedVideoOrientation = (
   settings: Record<string, unknown> = {},
@@ -28687,6 +28702,23 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
           </div>
+          {block.blockType === 'video' && (
+            <label className={styles.field}>
+              <span>Video vertical (ancho)</span>
+              <CustomSelect
+                value={getVideoPortraitWidthMode(settings)}
+                onChange={(event) => {
+                  const next = event.target.value === 'fill' || event.target.value === 'framed' ? event.target.value : DEFAULT_VIDEO_PORTRAIT_WIDTH_MODE
+                  onPatchSettings({ videoPortraitWidthMode: next })
+                }}
+                onBlur={onSave}
+              >
+                {videoPortraitWidthModeOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          )}
         </>
       )}
 
@@ -29595,6 +29627,7 @@ const VideoPlayerPreview: React.FC<{
     isPreviewLooping ? 'rstk-video-is-previewing' : '',
     isMuted ? 'rstk-video-is-muted' : '',
     `rstk-video-${resolvedOrientation}`,
+    getVideoPortraitWidthModeClass(getVideoPortraitWidthMode(settings)),
     `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`,
     showGatePreview ? 'rstk-video-form-gate-previewing' : '',
