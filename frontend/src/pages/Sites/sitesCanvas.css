@@ -1779,6 +1779,86 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   opacity: .62;
 }
 
+/* Inline "save answer in a custom field" prompt under a field block. */
+.rstkCanvas .rstk-field-bind {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--rstk-border);
+  border-radius: var(--rstk-form-field-radius, var(--rstk-radius));
+  background: transparent;
+  text-align: left;
+}
+.rstkCanvas .rstk-field-bind-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--rstk-muted);
+  font-size: .85rem;
+  line-height: 1.3;
+}
+.rstkCanvas .rstk-field-bind-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--rstk-muted);
+}
+.rstkCanvas .rstk-field-bind-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+}
+.rstkCanvas .rstk-field-bind-select {
+  flex: 1 1 200px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--rstk-border);
+  border-radius: var(--rstk-form-field-radius, var(--rstk-radius));
+  background: var(--rstk-surface);
+  color: var(--rstk-ink);
+  font: inherit;
+  pointer-events: auto;
+}
+.rstkCanvas .rstk-field-bind-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--rstk-border);
+  border-radius: var(--rstk-form-field-radius, var(--rstk-radius));
+  background: var(--rstk-surface);
+  color: var(--rstk-ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.rstkCanvas .rstk-field-bind-skip {
+  justify-self: start;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--rstk-muted);
+  font: inherit;
+  font-size: .82rem;
+  text-decoration: underline;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.rstkCanvas .rstk-field-bind-select:disabled,
+.rstkCanvas .rstk-field-bind-button:disabled,
+.rstkCanvas .rstk-field-bind-skip:disabled {
+  cursor: not-allowed;
+  opacity: .62;
+}
+
 .rstkCanvas .rstk-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
 .rstkCanvas .rstk-actions [data-submit], .rstkCanvas .rstk-actions [data-next] { flex: 1 1 auto; }
 .rstkCanvas.rstk-kind-form .rstk-actions,

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   DndContext,
@@ -7135,6 +7135,15 @@ const hydrateSitesForBuilder = async (list: PublicSite[]) => {
   return list.map(site => hydratedById.get(site.id) || site)
 }
 
+// Lets a field block's canvas preview offer an inline "save this answer in a
+// custom field" prompt without threading the catalog through every canvas layer.
+type FormFieldBindingContextValue = {
+  customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
+  onCustomFieldCreated: (field: CustomFieldDefinition) => void
+}
+const FormFieldBindingContext = React.createContext<FormFieldBindingContextValue | null>(null)
+
 export const Sites: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const { user } = useAuth()
@@ -8569,6 +8578,12 @@ export const Sites: React.FC = () => {
       ))
     })
   }, [])
+
+  const fieldBindingContextValue = useMemo<FormFieldBindingContextValue>(() => ({
+    customFields,
+    customFieldFolders,
+    onCustomFieldCreated: handleCustomFieldCreated
+  }), [customFields, customFieldFolders, handleCustomFieldCreated])
 
   const loadFormResponses = async (formId = selectedResponsesFormId) => {
     if (!formId) {
@@ -11787,6 +11802,7 @@ export const Sites: React.FC = () => {
   }
 
   return (
+    <FormFieldBindingContext.Provider value={fieldBindingContextValue}>
     <div className={styles.pageFrame}>
       <input
         ref={importFileInputRef}
@@ -12593,6 +12609,7 @@ export const Sites: React.FC = () => {
       </div>
     </div>
     </div>
+    </FormFieldBindingContext.Provider>
   )
 }
 
@@ -30686,7 +30703,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     return <EmbedPreview rawCode={block.content} />
   }
 
-  return <FieldPreview block={block} editable={editable} onPatchBlock={patchBlock} onSave={save} />
+  return <FieldPreview block={block} editable={editable} bindingEnabled={editable} onPatchBlock={patchBlock} onSave={save} />
 }
 
 const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
@@ -30921,6 +30938,7 @@ const EmbeddedFormCanvasFields: React.FC<{
                   <FieldPreview
                     block={field}
                     editable={false}
+                    bindingEnabled
                     onPatchBlock={(patch) => editor.onPatchField(field.id, patch)}
                     onSave={editor.onSaveField}
                   />
@@ -30951,14 +30969,102 @@ const EmbeddedFormCanvasFields: React.FC<{
   </div>
 )
 
+// Inline prompt shown inside a freshly added field block: associate the answer
+// with a custom field (existing or new) right on the canvas — same idea as the
+// calendar/form blocks asking what to embed. Dismissible with "Por ahora no".
+const FieldCustomFieldPrompt: React.FC<{
+  block: SiteBlock
+  binding: FormFieldBindingContextValue
+  onPatchBlock: (patch: Partial<SiteBlock>) => void
+  onSave: () => void
+}> = ({ block, binding, onPatchBlock, onSave }) => {
+  const { showToast } = useNotification()
+  const [creating, setCreating] = useState(false)
+  const availableFields = matchingCustomFieldsForBlock(binding.customFields, block)
+
+  const bindTo = (field: CustomFieldDefinition | null) => {
+    onPatchBlock(customFieldBindingPatch(block, field))
+    window.setTimeout(onSave, 0)
+  }
+
+  const skip = () => {
+    onPatchBlock({ settings: { ...(block.settings || {}), customFieldSkip: true } })
+    window.setTimeout(onSave, 0)
+  }
+
+  const createAndBind = async () => {
+    const draft = makeCustomFieldDraftForBlock(block)
+    const payload = buildCustomFieldPayload(draft, binding.customFieldFolders, (title, message) => showToast('warning', title, message))
+    if (!payload) return
+    setCreating(true)
+    try {
+      const field = await customFieldsService.createField(payload)
+      binding.onCustomFieldCreated(field)
+      bindTo(field)
+      showToast('success', 'Campo creado', 'La respuesta se guardará en este campo.')
+    } catch (error) {
+      showToast('error', 'No se pudo crear', error instanceof Error ? error.message : 'Intenta de nuevo')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  // Keep clicks/drags on the controls from selecting or dragging the block.
+  const stop = (event: React.SyntheticEvent) => event.stopPropagation()
+
+  return (
+    <div className="rstk-field-bind" onPointerDown={stop} onClick={stop}>
+      <div className="rstk-field-bind-copy">
+        <span className="rstk-field-bind-icon" aria-hidden="true"><Link2 size={14} /></span>
+        <span>¿Guardar esta respuesta en un campo personalizado?</span>
+      </div>
+      <div className="rstk-field-bind-row">
+        <select
+          className="rstk-field-bind-select"
+          value=""
+          aria-label="Asociar a un campo personalizado existente"
+          disabled={creating || availableFields.length === 0}
+          onChange={(event) => {
+            const field = availableFields.find(item => item.definitionId === event.target.value)
+            if (field) bindTo(field)
+          }}
+        >
+          <option value="">{availableFields.length ? 'Usar un campo existente' : 'No hay campos de este tipo'}</option>
+          {availableFields.map(field => (
+            <option key={field.definitionId} value={field.definitionId}>{field.label}</option>
+          ))}
+        </select>
+        <button type="button" className="rstk-field-bind-button" onClick={() => void createAndBind()} disabled={creating}>
+          <Plus size={13} />
+          {creating ? 'Creando…' : 'Crear y asociar'}
+        </button>
+      </div>
+      <button type="button" className="rstk-field-bind-skip" onClick={skip} disabled={creating}>
+        Por ahora no
+      </button>
+    </div>
+  )
+}
+
 // Field blocks: rstk-field markup with inline-editable label/help. The input is
 // a non-interactive preview; placeholder/validation/options are edited in the panel.
 const FieldPreview: React.FC<{
   block: SiteBlock
   editable: boolean
+  bindingEnabled?: boolean
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onSave: () => void
-}> = ({ block, editable, onPatchBlock, onSave }) => {
+}> = ({ block, editable, bindingEnabled = false, onPatchBlock, onSave }) => {
+  const binding = useContext(FormFieldBindingContext)
+  const settings = block.settings || {}
+  const showPrompt = Boolean(
+    bindingEnabled &&
+    binding &&
+    fieldBlockTypes.has(block.blockType) &&
+    !getSystemFormFieldPresetForBlock(block) &&
+    !getSettingString(settings, 'customFieldDefinitionId') &&
+    settings.customFieldSkip !== true
+  )
   return (
     <section className="rstk-field">
       <label>
@@ -30969,6 +31075,9 @@ const FieldPreview: React.FC<{
         <InlineEditable as="p" className="rstk-help" multiline value={block.content} placeholder="Texto de ayuda (opcional)" disabled={!editable} onChange={(value) => onPatchBlock({ content: value })} onCommit={onSave} />
       )}
       <FieldControlPreview block={block} />
+      {showPrompt && binding && (
+        <FieldCustomFieldPrompt block={block} binding={binding} onPatchBlock={onPatchBlock} onSave={onSave} />
+      )}
     </section>
   )
 }
@@ -32307,6 +32416,44 @@ const buildBlockOptionsFromCustomField = (block: SiteBlock, field: CustomFieldDe
     })
 }
 
+// Custom fields a given field block may bind to: not archived, not a system
+// field, and of the same data type as the block (radio→radio, etc.).
+const matchingCustomFieldsForBlock = (customFields: CustomFieldDefinition[], block: SiteBlock): CustomFieldDefinition[] => {
+  const target = normalizeCustomFieldDataType(customFieldDataTypeForBlock(block.blockType))
+  return customFields
+    .filter(field => !field.archived && !isSystemCustomFieldDefinition(field))
+    .filter(field => normalizeCustomFieldDataType(field.dataType) === target)
+    .sort((a, b) => (
+      String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
+      String(a.label || '').localeCompare(String(b.label || ''))
+    ))
+}
+
+// Single block patch that links the block to a custom field (or clears it when
+// field is null) and, for choice blocks, mirrors the field's predefined options
+// into the block. Sent as one patch so settings + options never clobber.
+const customFieldBindingPatch = (block: SiteBlock, field: CustomFieldDefinition | null): Partial<SiteBlock> => {
+  const settingsPatch = field
+    ? {
+      customFieldDefinitionId: field.definitionId,
+      customFieldKey: field.fieldKey || field.key,
+      customFieldLabel: field.label,
+      customFieldDataType: field.dataType
+    }
+    : {
+      customFieldDefinitionId: '',
+      customFieldKey: '',
+      customFieldLabel: '',
+      customFieldDataType: ''
+    }
+
+  const patch: Partial<SiteBlock> = { settings: { ...(block.settings || {}), ...settingsPatch } }
+  if (field && isChoiceBlock(block.blockType) && field.options?.length) {
+    patch.options = buildBlockOptionsFromCustomField(block, field)
+  }
+  return patch
+}
+
 const buildCustomFieldPayload = (
   draft: CustomFieldQuickDraft,
   folders: CustomFieldFolder[],
@@ -32430,31 +32577,11 @@ const CustomFieldBindingControl: React.FC<{
   // Settings + options travel in a single block patch (when available) so neither
   // patch clobbers the other across the different editor contexts.
   const applyFieldBinding = (field: CustomFieldDefinition | null) => {
-    const settingsPatch = field
-      ? {
-        customFieldDefinitionId: field.definitionId,
-        customFieldKey: field.fieldKey || field.key,
-        customFieldLabel: field.label,
-        customFieldDataType: field.dataType
-      }
-      : {
-        customFieldDefinitionId: '',
-        customFieldKey: '',
-        customFieldLabel: '',
-        customFieldDataType: ''
-      }
-
-    const nextOptions = field && isChoiceBlock(block.blockType) && field.options?.length
-      ? buildBlockOptionsFromCustomField(block, field)
-      : null
-
+    const patch = customFieldBindingPatch(block, field)
     if (onPatchBlock) {
-      onPatchBlock({
-        settings: { ...(block.settings || {}), ...settingsPatch },
-        ...(nextOptions ? { options: nextOptions } : {})
-      })
+      onPatchBlock(patch)
     } else {
-      onPatchSettings(settingsPatch)
+      onPatchSettings((patch.settings || {}) as Record<string, unknown>)
     }
   }
 
@@ -32495,13 +32622,7 @@ const CustomFieldBindingControl: React.FC<{
   }
 
   const currentDefinitionId = getSettingString(settings, 'customFieldDefinitionId')
-  const availableFields = customFields
-    .filter(field => !field.archived && !isSystemCustomFieldDefinition(field))
-    .filter(field => normalizeCustomFieldDataType(field.dataType) === normalizeCustomFieldDataType(customFieldDataTypeForBlock(block.blockType)))
-    .sort((a, b) => (
-      String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
-      String(a.label || '').localeCompare(String(b.label || ''))
-    ))
+  const availableFields = matchingCustomFieldsForBlock(customFields, block)
   const selectedField = availableFields.find(field => field.definitionId === currentDefinitionId) ||
     customFields.find(field => field.definitionId === currentDefinitionId && !isSystemCustomFieldDefinition(field))
   const groups = availableFields.reduce((acc, field) => {
