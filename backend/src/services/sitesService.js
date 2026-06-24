@@ -8,6 +8,7 @@ import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { NO_TRACK_REASON, shouldSkipTracking } from '../utils/noTracking.js'
+import { getActiveMetaTestEventCode, isMetaTestModeActive } from '../utils/metaTestCode.js'
 import {
   mergeContactCustomFields,
   parseContactCustomFields,
@@ -18752,7 +18753,10 @@ function buildMetaPixelBaseScript(pixelId) {
 
 async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
   const empty = { head: '', body: '' }
-  if (!trackingEnabled || !site.metaCapiEnabled) return empty
+  // Con un código de Test Events activo forzamos el pixel aunque la página esté en
+  // anti-tracking, para poder verificar en vivo (el modo test expira solo a los 30 min).
+  const testMode = await isMetaTestModeActive()
+  if ((!trackingEnabled && !testMode) || !site.metaCapiEnabled) return empty
 
   const metaConfig = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer Pixel ID de Meta para snippet de Site: ${error.message}`)
@@ -18939,7 +18943,9 @@ export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEna
   const config = getCalendarSiteMetaEventConfig(calendar)
   // El pixel base (init + PageView) solo necesita que el Meta del calendario esté
   // activado, aunque no haya un evento de conversión configurado (solo PageView).
-  if (!trackingEnabled || preview || !config.enabled) return ''
+  // Con código de Test Events activo se fuerza aunque esté en anti-tracking (no en preview).
+  const testMode = await isMetaTestModeActive()
+  if ((!trackingEnabled && !testMode) || preview || !config.enabled) return ''
 
   const metaConfig = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer Pixel ID de Meta para snippet de calendario: ${error.message}`)
@@ -22476,7 +22482,8 @@ async function logMetaEvent({ contactId, eventType, metaEventName, eventId, stat
 }
 
 async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, contactId, contact, requestMeta }) {
-  if (shouldSkipTracking({ meta: requestMeta?.meta })) {
+  const testModeActive = await isMetaTestModeActive()
+  if (shouldSkipTracking({ meta: requestMeta?.meta }) && !testModeActive) {
     return { sent: false, reason: NO_TRACK_REASON, eventId: `site_${site.id}_${submissionId}` }
   }
 
@@ -22578,7 +22585,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     ]
   }
 
-  const testEventCode = cleanString(await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE)
+  const testEventCode = await getActiveMetaTestEventCode()
   if (testEventCode) {
     payload.test_event_code = testEventCode
   }
@@ -22621,7 +22628,8 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
 }
 
 async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId, requestMeta }) {
-  if (shouldSkipTracking({ meta: requestMeta?.meta })) {
+  const testModeActive = await isMetaTestModeActive()
+  if (shouldSkipTracking({ meta: requestMeta?.meta }) && !testModeActive) {
     return { sent: false, reason: NO_TRACK_REASON, eventId, eventName }
   }
 
@@ -22681,7 +22689,7 @@ async function sendSitePageMetaEvent({ site, page, eventName, eventId, contactId
     ]
   }
 
-  const testEventCode = cleanString(await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE)
+  const testEventCode = await getActiveMetaTestEventCode()
   if (testEventCode) {
     payload.test_event_code = testEventCode
   }
@@ -22727,7 +22735,8 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
   const config = getCalendarSiteMetaEventConfig(calendar)
   const eventId = `calendar_${cleanString(calendar?.id) || 'unknown'}_${cleanString(appointment?.id) || crypto.randomUUID()}`
 
-  if (shouldSkipTracking({ meta: requestMeta?.meta })) {
+  const testModeActive = await isMetaTestModeActive()
+  if (shouldSkipTracking({ meta: requestMeta?.meta }) && !testModeActive) {
     return { sent: false, reason: NO_TRACK_REASON, eventId, eventName: config.eventName }
   }
 
@@ -22811,7 +22820,7 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
     ]
   }
 
-  const testEventCode = cleanString(await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE)
+  const testEventCode = await getActiveMetaTestEventCode()
   if (testEventCode) {
     payload.test_event_code = testEventCode
   }
@@ -22861,7 +22870,8 @@ export async function sendCalendarBookingSiteMetaEvent({ calendar, appointment, 
 }
 
 async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, parameters, eventId, contactId, requestMeta }) {
-  if (shouldSkipTracking({ meta: requestMeta?.meta })) {
+  const testModeActive = await isMetaTestModeActive()
+  if (shouldSkipTracking({ meta: requestMeta?.meta }) && !testModeActive) {
     return { sent: false, reason: NO_TRACK_REASON, eventId, eventName }
   }
 
@@ -22927,7 +22937,7 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
     ]
   }
 
-  const testEventCode = cleanString(await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE)
+  const testEventCode = await getActiveMetaTestEventCode()
   if (testEventCode) {
     payload.test_event_code = testEventCode
   }
@@ -23760,7 +23770,9 @@ export async function createMetaPageEventFromRequest(req, body = {}, options = {
 
   site.domain = domainResolution.domain || host
 
-  if (shouldSkipTracking({ req, body, previewContext })) {
+  // Modo test (código de Test Events activo) fuerza el evento aunque la página
+  // esté en anti-tracking, para poder verificarlo en vivo.
+  if (shouldSkipTracking({ req, body, previewContext }) && !(await isMetaTestModeActive())) {
     return { sent: false, reason: NO_TRACK_REASON }
   }
 

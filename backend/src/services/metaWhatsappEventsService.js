@@ -4,6 +4,7 @@ import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { getMetaConfig } from './metaAdsService.js'
+import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
 
@@ -443,10 +444,7 @@ async function getMetaCapiConfig() {
     metaConfig?.access_token
   )
 
-  const testEventCode = cleanString(
-    await getAppConfig(CONFIG_KEYS.testEventCode) ||
-    process.env.META_TEST_EVENT_CODE
-  )
+  const testEventCode = cleanString(await getActiveMetaTestEventCode())
 
   const pageId = cleanString(
     metaConfig?.page_id ||

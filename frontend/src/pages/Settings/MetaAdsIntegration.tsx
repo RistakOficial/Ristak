@@ -302,6 +302,20 @@ export const MetaAdsIntegration: React.FC = () => {
   const [messengerMessagingEnabled, setMessengerMessagingEnabled, savingMessengerMessaging] = useAppConfig('meta_messenger_messaging_enabled', false)
   const [instagramMessagingEnabled, setInstagramMessagingEnabled, savingInstagramMessaging] = useAppConfig('meta_instagram_messaging_enabled', false)
   const [metaTestEventCode, setMetaTestEventCode, savingMetaTestEventCode] = useAppConfig('meta_test_event_code', '')
+  const [metaTestEventCodeSetAt] = useAppConfig('meta_test_event_code_set_at', '')
+
+  // El código de Test Events se auto-desactiva 30 min después de ponerse, para que
+  // al lanzar publicidad no queden conversiones reales atrapadas en modo prueba.
+  const META_TEST_CODE_TTL_MS = 30 * 60 * 1000
+  const metaTestCodeSetAtMs = Number(metaTestEventCodeSetAt) || 0
+  const metaTestCodeRemainingMs = metaTestCodeSetAtMs
+    ? Math.max(0, META_TEST_CODE_TTL_MS - (Date.now() - metaTestCodeSetAtMs))
+    : 0
+  const metaTestCodeRemainingMin = Math.ceil(metaTestCodeRemainingMs / 60000)
+  const metaTestCodeActive = Boolean(metaTestEventCode) && (!metaTestCodeSetAtMs || metaTestCodeRemainingMs > 0)
+  const metaTestCodeExpiresAtLabel = metaTestCodeSetAtMs
+    ? new Date(metaTestCodeSetAtMs + META_TEST_CODE_TTL_MS).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : ''
 
   useEffect(() => {
     loadCredentials()
@@ -2179,8 +2193,16 @@ export const MetaAdsIntegration: React.FC = () => {
       >
         <div className={styles.metaTestPanel}>
           <p className={styles.metaTestHelp}>
-            Pega el código de la pestaña Test Events. Mientras esté guardado, los eventos CAPI se mandan como prueba.
+            Pega el código de la pestaña Test Events. Mientras esté activo, los eventos de tus páginas (navegador + servidor) se mandan como prueba, incluso si la página está en anti-tracking. Se <strong>desactiva solo a los 30 minutos</strong> para que, al lanzar publicidad, no queden conversiones reales atrapadas en modo prueba.
           </p>
+          {metaTestCodeActive && (
+            <p className={styles.metaTestHelp}>
+              <Badge variant="warning">Modo prueba activo</Badge>{' '}
+              {metaTestCodeSetAtMs
+                ? `Se desactiva solo en ~${metaTestCodeRemainingMin} min${metaTestCodeExpiresAtLabel ? ` (a las ${metaTestCodeExpiresAtLabel})` : ''}. Quítalo con "Limpiar" cuando termines de probar.`
+                : 'Recuerda quitarlo con "Limpiar" cuando termines de probar para no perder conversiones reales.'}
+            </p>
+          )}
 
           <div className={styles.metaTestGrid}>
             <label className={styles.formGroup}>

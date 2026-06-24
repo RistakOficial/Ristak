@@ -67,13 +67,23 @@ export async function getConfig(req, res) {
  * Body: { key: 'visitor_source', value: 'tracking' }
  * Body: { config: { visitor_source: 'tracking', show_analytics: '1' } }
  */
+// Al guardar el código de Test Events de Meta, estampamos cuándo se puso para
+// que expire solo a los 30 min (ver utils/metaTestCode.js). Si se borra, también
+// limpiamos el timestamp.
+async function setAppConfigStamped(k, v) {
+  await setAppConfig(k, v)
+  if (k === 'meta_test_event_code') {
+    await setAppConfig('meta_test_event_code_set_at', String(v ?? '').trim() ? String(Date.now()) : '')
+  }
+}
+
 export async function saveConfig(req, res) {
   try {
     const { key, value, config } = req.body
 
     // Modo 1: Guardar una sola key
     if (key && value !== undefined) {
-      await setAppConfig(key, value)
+      await setAppConfigStamped(key, value)
       logger.info(`Configuración guardada: ${key} = ${getSafeLogValue(key, value)}`)
 
       return res.json({
@@ -85,7 +95,7 @@ export async function saveConfig(req, res) {
     // Modo 2: Guardar múltiples keys
     if (config && typeof config === 'object') {
       for (const [k, v] of Object.entries(config)) {
-        await setAppConfig(k, v)
+        await setAppConfigStamped(k, v)
       }
 
       logger.info(`${Object.keys(config).length} configuraciones guardadas`)

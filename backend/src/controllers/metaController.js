@@ -35,6 +35,7 @@ import { getMetaWebhookVerifyToken } from '../services/metaSocialMessagingServic
 import { clearMetaIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
 import { getVisitorIdentityExpression } from '../services/trackingService.js';
 import { signScopedToken, verifyScopedToken } from '../utils/auth.js';
+import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -709,7 +710,7 @@ async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParam
 export const sendMetaTestEvent = async (req, res) => {
   try {
     const metaConfig = await getMetaConfig();
-    const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE).replace(/\s+/g, '');
+    const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getActiveMetaTestEventCode()).replace(/\s+/g, '');
     const eventName = normalizeMetaTestEventName(req.body?.eventName || req.body?.event_name);
     const eventParameters = normalizeMetaTestEventParameters(req.body?.eventParameters || req.body?.event_parameters);
     const eventId = `ristak_meta_test_${Date.now()}_${crypto.randomUUID()}`;
@@ -760,7 +761,7 @@ export const createMetaPixelTestLink = async (req, res) => {
     if (!eventName) {
       return res.status(400).json({ success: false, error: 'Usa un nombre de evento válido, por ejemplo LeadSubmitted' });
     }
-    const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE).replace(/\s+/g, '');
+    const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getActiveMetaTestEventCode()).replace(/\s+/g, '');
     const eventParameters = normalizeMetaTestEventParameters(req.body?.eventParameters || req.body?.event_parameters);
 
     const token = signScopedToken(META_PIXEL_TEST_SCOPE, {
