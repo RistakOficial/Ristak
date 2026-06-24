@@ -14592,6 +14592,11 @@
   display: grid;
   gap: 7px;
   overflow: visible;
+  /* Query container so the top toolbar reacts to ITS OWN width, not the
+     viewport. The editor keeps the global sidebar mounted, so viewport
+     breakpoints over-estimate the room the toolbar has; see the
+     "@container editorbar" block at the end of this file. */
+  container: editorbar / inline-size;
 }
 
 .editorToolbarTop {
@@ -20750,4 +20755,144 @@
   font-size: 0.88rem;
   font-weight: 500;
   line-height: 1.45;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   SITES / FORMS EDITOR · responsive top toolbar (container-query driven)
+
+   The editor toolbar (Volver · nombre · página · Pop up · Ajustes · device ·
+   Previsualizar · Guardar · Publicar) was sized by @media viewport tiers, but
+   the editor keeps the global sidebar mounted (~224px / ~80px collapsed), so
+   the toolbar always has LESS room than the viewport. The result: the rigid
+   3-column grid + the vertical separator around the tools group stayed static,
+   the action cluster overflowed behind an invisible scroll and buttons got
+   clipped instead of reflowing.
+
+   These rules measure the toolbar's OWN width (`container: editorbar`) so the
+   layout adapts to the real available space in any sidebar state. They sit
+   last in the file → they win by source order over the @media tiers above.
+   Ordered widest → narrowest so the most collapsed state wins when several
+   match. Selectors keep the `.pageFrame .containerFocused:has(.builder)` prefix
+   to match/beat the specificity of the viewport rules they replace.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Form mode carries an extra cluster of controls in the middle, so its base
+   grid demands ~1600px. Below that, let the middle track shrink and scroll
+   internally (it already has overflow-x:auto) instead of forcing overflow. */
+@container editorbar (max-width: 1500px) {
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, max-content);
+  }
+}
+
+/* Tight single row: drop the action-button text labels (icons keep their
+   title tooltips) and shrink the save-status chip to its icon. Publicar keeps
+   its label as the primary CTA. */
+@container editorbar (max-width: 1420px) {
+  .pageFrame .containerFocused:has(.builder) .editorActionButton {
+    width: var(--editor-control-h, 36px);
+    min-width: var(--editor-control-h, 36px);
+    justify-content: center;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorActionButton .editorActionLabel {
+    display: none;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorPublishButton {
+    min-width: 96px;
+    padding-inline: 10px !important;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorSaveStatus {
+    flex: 0 0 30px;
+    width: 30px;
+    min-width: 30px;
+    max-width: 30px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorSaveStatus > span {
+    display: none;
+  }
+}
+
+/* Landing/site mode · two rows: context + tools on top, actions below.
+   Kills the vertical separator that was pinching the tools group. */
+@container editorbar (max-width: 1180px) {
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    grid-template-areas:
+      "context tools"
+      "primary primary";
+    row-gap: 8px;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarContext {
+    grid-area: context;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools {
+    grid-area: tools;
+    justify-content: flex-end;
+    padding-inline: 0;
+    border-inline: 0;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    grid-area: primary;
+    justify-content: flex-end;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarActionsCluster {
+    margin-left: auto;
+  }
+
+  /* Form mode goes straight to a stacked layout here — its tools row is too
+     wide to share a line with the context group. */
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarTop {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "context"
+      "tools"
+      "primary";
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarFormControls,
+  .pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarPrimary {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+}
+
+/* Very narrow: stack every group on its own scrollable row. */
+@container editorbar (max-width: 820px) {
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "context"
+      "tools"
+      "primary";
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarContext,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools,
+  .pageFrame .containerFocused:has(.builder) .editorToolbarPrimary {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .editorToolbarTools {
+    border-inline: 0;
+    padding-inline: 0;
+  }
 }
