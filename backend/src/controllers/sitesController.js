@@ -879,6 +879,9 @@ export async function publicSiteHostMiddleware(req, res, next) {
         preview: isPreview
       })
 
+      // No cachear el HTML público: cambios de pixel/tracking deben reflejarse
+      // siempre tras un refresh (los assets sí se cachean por separado).
+      res.set('Cache-Control', 'no-store')
       return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, {
         host,
         embedded: req.query?.embed === '1' || req.query?.test === '1',
@@ -905,6 +908,9 @@ export async function publicSiteHostMiddleware(req, res, next) {
       const pagePath = pathSegments.slice(1)
       if (pagePath.length && pagePath[pagePath.length - 1].toLowerCase() === 'test') pagePath.pop()
 
+      // No cachear el HTML público: cambios de pixel/tracking deben reflejarse
+      // siempre tras un refresh (los assets sí se cachean por separado).
+      res.set('Cache-Control', 'no-store')
       return res.status(200).type('html').send(await renderPublicSiteHtml(resolution.site, {
         pageId: req.query?.page,
         pagePath,
