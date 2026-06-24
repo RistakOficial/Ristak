@@ -28,7 +28,8 @@ import {
   getSocialProfiles,
   deleteMetaConfig,
   savePixelToken,
-  sendMetaTestEvent
+  sendMetaTestEvent,
+  createMetaPixelTestLink
 } from '../controllers/metaController.js'
 import {
   createCampaignBuilderDraft,
@@ -57,6 +58,7 @@ router.get('/config/reveal/pixel_api_token', revealMetaPixelApiToken)
 router.get('/webhook-info', getMetaWebhookInfo)
 router.get('/verify-token', verifyToken)
 router.post('/test-event', sendMetaTestEvent)
+router.post('/pixel-test/link', createMetaPixelTestLink)
 
 // Obtener datos de Meta para dropdowns
 router.get('/ad-accounts', getAdAccounts)

@@ -280,6 +280,14 @@ class CampaignsService {
     return apiClient.post<MetaTestEventResponse>('/meta/test-event', payload)
   }
 
+  async createMetaPixelTestLink(payload: {
+    testEventCode?: string
+    eventName?: string
+    eventParameters?: MetaTestEventParameters
+  }): Promise<{ success: boolean; url: string }> {
+    return apiClient.post<{ success: boolean; url: string }>('/meta/pixel-test/link', payload)
+  }
+
   async getSpendOverTime(startDate: string, endDate: string): Promise<{ label: string; value: number; value2: number }[]> {
     try {
       const data = await apiClient.get<{ label: string; value: number; value2: number }[]>('/meta/spend-over-time', {

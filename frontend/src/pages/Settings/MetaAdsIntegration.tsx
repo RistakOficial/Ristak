@@ -291,6 +291,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [metaTestEventParameters, setMetaTestEventParameters] = useState<MetaTestEventParameters>({})
   const [isMetaTestParametersOpen, setIsMetaTestParametersOpen] = useState(false)
   const [isSendingMetaTestEvent, setIsSendingMetaTestEvent] = useState(false)
+  const [isOpeningMetaPixelTest, setIsOpeningMetaPixelTest] = useState(false)
   const [metaTestResult, setMetaTestResult] = useState<MetaTestEventResponse | null>(null)
   const [activeStep, setActiveStep] = useState(routeStep)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
@@ -1195,6 +1196,55 @@ export const MetaAdsIntegration: React.FC = () => {
       showToast('error', 'Error al probar', message)
     } finally {
       setIsSendingMetaTestEvent(false)
+    }
+  }
+
+  const handleOpenMetaPixelTest = async () => {
+    if (!hasPixel) {
+      showToast('warning', 'Pixel requerido', 'Configura un Meta Pixel antes de probarlo')
+      return
+    }
+
+    const testEventCode = normalizeMetaTestCode(metaTestDraftCode)
+    const eventName = normalizeMetaTestEventName(metaTestEventName)
+    const eventParameters = pruneMetaTestEventParametersForEvent(metaTestEventParameters, eventName)
+
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(eventName)) {
+      showToast('warning', 'Evento inválido', 'Usa letras, números y guion bajo; por ejemplo LeadSubmitted')
+      return
+    }
+
+    // Abrimos la pestaña de forma síncrona en el click para evitar el bloqueo de
+    // pop-ups; luego la redirigimos al enlace firmado que devuelve el backend.
+    const testWindow = window.open('', '_blank')
+    setIsOpeningMetaPixelTest(true)
+
+    try {
+      if (testEventCode && testEventCode !== normalizeMetaTestCode(metaTestEventCode)) {
+        await setMetaTestEventCode(testEventCode)
+      }
+
+      const result = await campaignsService.createMetaPixelTestLink({
+        testEventCode,
+        eventName,
+        eventParameters
+      })
+
+      if (!result?.url) {
+        throw new Error('No se pudo generar el enlace de prueba')
+      }
+
+      if (testWindow) {
+        testWindow.location.href = result.url
+      } else {
+        window.open(result.url, '_blank')
+      }
+    } catch (error) {
+      if (testWindow) testWindow.close()
+      const message = error instanceof Error ? error.message : 'No se pudo abrir la prueba del pixel'
+      showToast('error', 'Error al abrir la prueba', message)
+    } finally {
+      setIsOpeningMetaPixelTest(false)
     }
   }
 
@@ -2272,16 +2322,29 @@ export const MetaAdsIntegration: React.FC = () => {
             </Button>
             <Button
               type="button"
-              variant="primary"
+              variant="secondary"
               onClick={() => void handleSendMetaTestEvent()}
-              disabled={savingMetaTestEventCode || isSendingMetaTestEvent}
+              disabled={savingMetaTestEventCode || isSendingMetaTestEvent || isOpeningMetaPixelTest}
             >
               {isSendingMetaTestEvent ? (
                 <RefreshCw size={16} className={styles.spinning} />
               ) : (
                 <Send size={16} />
               )}
-              {isSendingMetaTestEvent ? 'Enviando' : 'Enviar prueba'}
+              {isSendingMetaTestEvent ? 'Enviando' : 'Solo servidor'}
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => void handleOpenMetaPixelTest()}
+              disabled={savingMetaTestEventCode || isOpeningMetaPixelTest || isSendingMetaTestEvent}
+            >
+              {isOpeningMetaPixelTest ? (
+                <RefreshCw size={16} className={styles.spinning} />
+              ) : (
+                <ExternalLink size={16} />
+              )}
+              {isOpeningMetaPixelTest ? 'Abriendo' : 'Abrir prueba completa'}
             </Button>
           </div>
         </div>

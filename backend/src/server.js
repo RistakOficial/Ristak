@@ -29,6 +29,7 @@ import { repairDefaultMessageTemplatesForCurrentConnection } from './services/me
 // Routes
 import highlevelRoutes from './routes/highlevel.routes.js'
 import metaRoutes from './routes/meta.routes.js'
+import { renderMetaPixelTestPage, runMetaPixelTestServerEvent } from './controllers/metaController.js'
 import dashboardRoutes from './routes/dashboard.routes.js'
 import webhooksRoutes from './routes/webhooks.routes.js'
 import reportsRoutes from './routes/reports.routes.js'
@@ -224,6 +225,11 @@ app.use('/api/subscriptions', subscriptionsRoutes)
 app.use('/api/stripe', stripeRoutes)
 app.use('/api/mercadopago', mercadoPagoRoutes)
 app.use('/api/conekta', conektaRoutes)
+// Página de prueba del Meta Pixel (navegador + servidor). Pública pero protegida
+// por un token corto firmado; va antes del router autenticado para que se pueda
+// abrir en una pestaña nueva sin el header Authorization.
+app.get('/api/meta/pixel-test', renderMetaPixelTestPage)
+app.post('/api/meta/pixel-test/event', runMetaPixelTestServerEvent)
 app.use('/api/meta', requireFeature('meta_ads'), metaRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/webhook-config', webhookConfigRoutes)

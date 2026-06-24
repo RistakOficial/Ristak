@@ -161,3 +161,55 @@ export function verifyToken(token) {
     return null
   }
 }
+
+/**
+ * Firma un token corto y con propósito acotado (scope). NO es un token de sesión:
+ * se firma sobre `${scope}.${body}` (esquema distinto al JWT de auth), por lo que
+ * verifyToken() lo rechaza y no sirve para autenticar ninguna ruta protegida.
+ * Úsalo para enlaces de un solo propósito y corta duración (ej. página de prueba).
+ * @param {string} scope - Propósito del token, p.ej. 'meta_pixel_test'
+ * @param {object} data - Datos a embeber (no secretos sensibles del servidor)
+ * @param {number} ttlSeconds - Validez en segundos (por defecto 10 min)
+ * @returns {string} token `${body}.${signature}`
+ */
+export function signScopedToken(scope, data = {}, ttlSeconds = 600) {
+  const secret = getJwtSecret()
+  const body = Buffer.from(JSON.stringify({
+    ...data,
+    scope,
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds
+  })).toString('base64url')
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(`${scope}.${body}`)
+    .digest('base64url')
+  return `${body}.${signature}`
+}
+
+/**
+ * Verifica un token acotado emitido por signScopedToken. Devuelve el payload o
+ * null si la firma no coincide, el scope no es el esperado o ya expiró.
+ */
+export function verifyScopedToken(scope, token) {
+  if (!token || typeof token !== 'string') return null
+  try {
+    const [body, signature] = token.split('.')
+    if (!body || !signature) return null
+    const secret = getJwtSecret()
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(`${scope}.${body}`)
+      .digest('base64url')
+    const provided = Buffer.from(signature)
+    const expectedBuf = Buffer.from(expected)
+    if (provided.length !== expectedBuf.length || !crypto.timingSafeEqual(provided, expectedBuf)) {
+      return null
+    }
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString())
+    if (payload.scope !== scope) return null
+    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null
+    return payload
+  } catch (error) {
+    return null
+  }
+}

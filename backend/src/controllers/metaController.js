@@ -34,6 +34,7 @@ import fetch from 'node-fetch';
 import { getMetaWebhookVerifyToken } from '../services/metaSocialMessagingService.js';
 import { clearMetaIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
 import { getVisitorIdentityExpression } from '../services/trackingService.js';
+import { signScopedToken, verifyScopedToken } from '../utils/auth.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -597,90 +598,142 @@ export const getConfig = async (req, res) => {
 /**
  * Envía un evento CAPI controlado para validar el Test Event Code de Meta.
  */
-export const sendMetaTestEvent = async (req, res) => {
-  try {
-    const metaConfig = await getMetaConfig();
-    const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID);
-    const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token);
-    const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE).replace(/\s+/g, '');
-    const eventName = normalizeMetaTestEventName(req.body?.eventName || req.body?.event_name);
-    const eventParameters = normalizeMetaTestEventParameters(req.body?.eventParameters || req.body?.event_parameters);
+const META_PIXEL_TEST_SCOPE = 'meta_pixel_test';
+const META_STANDARD_BROWSER_EVENTS = ['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'];
 
-    if (!datasetId || !accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Configura Meta Pixel y Pixel API Token antes de enviar una prueba'
-      });
-    }
+function escapeMetaTestHtml(value) {
+  return cleanString(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-    if (!testEventCode) {
-      return res.status(400).json({
-        success: false,
-        error: 'Pega el código de Test Events de Meta'
-      });
-    }
+// JSON seguro para embeber dentro de un <script> inline: neutraliza </script>,
+// HTML y los separadores de línea U+2028/U+2029 que rompen literales JS.
+function safeJsonForScript(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
 
-    if (!eventName) {
-      return res.status(400).json({
-        success: false,
-        error: 'Usa un nombre de evento válido, por ejemplo LeadSubmitted'
-      });
-    }
+// Límite simple en memoria de envíos CAPI por token de prueba (defensa contra
+// replay del enlace público durante su TTL). Se limpia perezosamente por expiración.
+const META_PIXEL_TEST_SEND_CAP = 20;
+const metaPixelTestSendCounts = new Map();
+function registerMetaPixelTestSend(token, expSeconds) {
+  const now = Date.now();
+  for (const [key, value] of metaPixelTestSendCounts) {
+    if (value.exp < now) metaPixelTestSendCounts.delete(key);
+  }
+  const entry = metaPixelTestSendCounts.get(token) || {
+    count: 0,
+    exp: expSeconds ? expSeconds * 1000 : now + 600000
+  };
+  entry.count += 1;
+  metaPixelTestSendCounts.set(token, entry);
+  return entry.count;
+}
 
-    const eventId = `ristak_meta_test_${Date.now()}_${crypto.randomUUID()}`;
-    const eventSourceUrl = cleanString(req.body?.eventSourceUrl || req.body?.event_source_url) || `${getPublicBaseUrl(req)}/settings/meta-ads`;
-    const payload = {
-      test_event_code: testEventCode,
-      data: [
-        {
-          event_name: eventName,
-          event_time: Math.floor(Date.now() / 1000),
-          action_source: 'website',
-          event_source_url: eventSourceUrl,
-          event_id: eventId,
-          user_data: {
-            client_ip_address: getRequestIp(req) || undefined,
-            client_user_agent: cleanString(req.headers?.['user-agent']) || 'Ristak Meta CAPI Test',
-            external_id: hashMetaTestValue(`ristak_meta_test_${datasetId}`)
-          },
-          custom_data: {
-            source: 'ristak_settings',
-            conversion_type: 'settings_test_event',
-            content_name: 'Ristak Meta CAPI test',
-            ...buildMetaTestCustomData(eventParameters, eventName)
-          }
+/**
+ * Construye y envía un evento CAPI de prueba a Meta. Reutilizado por el botón
+ * "Solo servidor" (sendMetaTestEvent) y por la página de prueba combinada
+ * (navegador + servidor). Devuelve un resultado normalizado, no escribe la
+ * respuesta HTTP.
+ */
+async function performMetaCapiTestEvent({ req, metaConfig, eventName, eventParameters = {}, testEventCode, eventId, eventSourceUrl }) {
+  const datasetId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID);
+  const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token);
+
+  if (!datasetId || !accessToken) {
+    return { ok: false, status: 400, error: 'Configura Meta Pixel y Pixel API Token antes de enviar una prueba', eventId, eventName };
+  }
+  if (!testEventCode) {
+    return { ok: false, status: 400, error: 'Pega el código de Test Events de Meta', eventId, eventName };
+  }
+  if (!eventName) {
+    return { ok: false, status: 400, error: 'Usa un nombre de evento válido, por ejemplo LeadSubmitted', eventId, eventName };
+  }
+
+  const userData = {
+    client_ip_address: getRequestIp(req) || undefined,
+    client_user_agent: cleanString(req.headers?.['user-agent']) || 'Ristak Meta CAPI Test',
+    external_id: hashMetaTestValue(`ristak_meta_test_${datasetId}`)
+  };
+  Object.keys(userData).forEach(key => { if (!userData[key]) delete userData[key]; });
+
+  const payload = {
+    test_event_code: testEventCode,
+    data: [
+      {
+        event_name: eventName,
+        event_time: Math.floor(Date.now() / 1000),
+        action_source: 'website',
+        event_source_url: eventSourceUrl,
+        event_id: eventId,
+        user_data: userData,
+        custom_data: {
+          source: 'ristak_settings',
+          conversion_type: 'settings_test_event',
+          content_name: 'Ristak Meta CAPI test',
+          ...buildMetaTestCustomData(eventParameters, eventName)
         }
-      ]
-    };
+      }
+    ]
+  };
 
-    Object.keys(payload.data[0].user_data).forEach(key => {
-      if (!payload.data[0].user_data[key]) delete payload.data[0].user_data[key];
-    });
-
+  try {
     const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(datasetId)}/events?access_token=${encodeURIComponent(accessToken)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     const responsePayload = await response.json().catch(() => ({}));
-
     if (!response.ok || responsePayload?.error) {
-      return res.status(response.ok ? 400 : response.status).json({
+      return { ok: false, status: response.ok ? 400 : response.status, error: responsePayload?.error?.message || `Meta CAPI ${response.status}`, eventId, eventName, responsePayload };
+    }
+    return { ok: true, eventId, eventName, testEventCode, responsePayload };
+  } catch (error) {
+    logger.error(`Error enviando evento CAPI de prueba: ${error.message}`);
+    return { ok: false, status: 500, error: 'Error al enviar evento de prueba a Meta', eventId, eventName };
+  }
+}
+
+/**
+ * Envía un evento CAPI controlado para validar el Test Event Code de Meta.
+ */
+export const sendMetaTestEvent = async (req, res) => {
+  try {
+    const metaConfig = await getMetaConfig();
+    const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE).replace(/\s+/g, '');
+    const eventName = normalizeMetaTestEventName(req.body?.eventName || req.body?.event_name);
+    const eventParameters = normalizeMetaTestEventParameters(req.body?.eventParameters || req.body?.event_parameters);
+    const eventId = `ristak_meta_test_${Date.now()}_${crypto.randomUUID()}`;
+    const eventSourceUrl = cleanString(req.body?.eventSourceUrl || req.body?.event_source_url) || `${getPublicBaseUrl(req)}/settings/meta-ads`;
+
+    const result = await performMetaCapiTestEvent({ req, metaConfig, eventName, eventParameters, testEventCode, eventId, eventSourceUrl });
+
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
         success: false,
-        error: responsePayload?.error?.message || `Meta CAPI ${response.status}`,
-        eventId,
-        eventName,
-        responsePayload
+        error: result.error,
+        eventId: result.eventId,
+        eventName: result.eventName,
+        responsePayload: result.responsePayload
       });
     }
 
     res.json({
       success: true,
       message: 'Evento de prueba enviado a Meta',
-      eventId,
-      eventName,
-      testEventCode,
-      responsePayload
+      eventId: result.eventId,
+      eventName: result.eventName,
+      testEventCode: result.testEventCode,
+      responsePayload: result.responsePayload
     });
   } catch (error) {
     logger.error(`Error en sendMetaTestEvent: ${error.message}`);
@@ -690,6 +743,280 @@ export const sendMetaTestEvent = async (req, res) => {
     });
   }
 };
+
+/**
+ * Genera un enlace corto y firmado para abrir la página de prueba del pixel
+ * (navegador + servidor) en una pestaña nueva. Requiere auth; caduca en 10 min.
+ */
+export const createMetaPixelTestLink = async (req, res) => {
+  try {
+    const metaConfig = await getMetaConfig();
+    const pixelId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID);
+    if (!pixelId) {
+      return res.status(400).json({ success: false, error: 'Configura un Meta Pixel antes de abrir la prueba' });
+    }
+    const accessToken = cleanString(metaConfig?.pixel_api_token || process.env.META_ACCESS_TOKEN || metaConfig?.access_token);
+    const eventName = normalizeMetaTestEventName(req.body?.eventName || req.body?.event_name);
+    if (!eventName) {
+      return res.status(400).json({ success: false, error: 'Usa un nombre de evento válido, por ejemplo LeadSubmitted' });
+    }
+    const testEventCode = cleanString(req.body?.testEventCode || req.body?.test_event_code || await getAppConfig('meta_test_event_code') || process.env.META_TEST_EVENT_CODE).replace(/\s+/g, '');
+    const eventParameters = normalizeMetaTestEventParameters(req.body?.eventParameters || req.body?.event_parameters);
+
+    const token = signScopedToken(META_PIXEL_TEST_SCOPE, {
+      eventName,
+      testEventCode,
+      eventParameters,
+      hasServer: Boolean(accessToken && testEventCode)
+    }, 600);
+
+    const url = `${getPublicBaseUrl(req)}/api/meta/pixel-test?t=${encodeURIComponent(token)}`;
+    res.json({ success: true, url });
+  } catch (error) {
+    logger.error(`Error en createMetaPixelTestLink: ${error.message}`);
+    res.status(500).json({ success: false, error: 'No se pudo generar la prueba del pixel' });
+  }
+};
+
+/**
+ * Página pública (protegida por token corto) que carga el Meta Pixel real en el
+ * <head>, dispara el evento por navegador y por servidor con el mismo event_id,
+ * y muestra en vivo si jaló o no por cada lado.
+ */
+export const renderMetaPixelTestPage = async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const data = verifyScopedToken(META_PIXEL_TEST_SCOPE, req.query?.t);
+  if (!data) {
+    return res.status(401).type('html').send(renderMetaPixelTestShell({
+      title: 'Enlace inválido',
+      message: 'Este enlace de prueba ya expiró o no es válido. Vuelve a abrirlo desde Ajustes → Meta.'
+    }));
+  }
+
+  const metaConfig = await getMetaConfig().catch(() => null);
+  const pixelId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID);
+  if (!pixelId) {
+    return res.status(400).type('html').send(renderMetaPixelTestShell({
+      title: 'Sin Meta Pixel',
+      message: 'No hay un Meta Pixel configurado en esta cuenta. Conéctalo en Ajustes → Meta.'
+    }));
+  }
+
+  const eventName = normalizeMetaTestEventName(data.eventName) || 'LeadSubmitted';
+  const method = META_STANDARD_BROWSER_EVENTS.includes(eventName) ? 'track' : 'trackCustom';
+  return res.status(200).type('html').send(renderMetaPixelTestPageHtml({
+    pixelId,
+    eventName,
+    method,
+    hasServer: Boolean(data.hasServer),
+    token: cleanString(req.query?.t),
+    testEventCode: cleanString(data.testEventCode),
+    eventParameters: normalizeMetaTestEventParameters(data.eventParameters)
+  }));
+};
+
+/**
+ * Envía el lado servidor (CAPI) de la página de prueba, usando el mismo event_id
+ * que disparó el navegador para que Meta deduplique. Protegido por token corto.
+ */
+export const runMetaPixelTestServerEvent = async (req, res) => {
+  try {
+    const token = req.query?.t || req.body?.t;
+    const data = verifyScopedToken(META_PIXEL_TEST_SCOPE, token);
+    if (!data) {
+      return res.status(401).json({ success: false, error: 'Enlace de prueba inválido o expirado' });
+    }
+
+    if (registerMetaPixelTestSend(token, data.exp) > META_PIXEL_TEST_SEND_CAP) {
+      return res.status(429).json({ success: false, error: 'Demasiados intentos con este enlace. Vuelve a abrir la prueba desde Ajustes → Meta.' });
+    }
+
+    const metaConfig = await getMetaConfig();
+    const eventName = normalizeMetaTestEventName(data.eventName);
+    const eventParameters = normalizeMetaTestEventParameters(data.eventParameters);
+    const testEventCode = cleanString(data.testEventCode).replace(/\s+/g, '');
+    const eventId = cleanString(req.body?.eventId) || `ristak_meta_test_${Date.now()}_${crypto.randomUUID()}`;
+    const eventSourceUrl = `${getPublicBaseUrl(req)}/api/meta/pixel-test`;
+
+    const result = await performMetaCapiTestEvent({ req, metaConfig, eventName, eventParameters, testEventCode, eventId, eventSourceUrl });
+
+    if (!result.ok) {
+      // Endpoint público: no reenviamos la respuesta cruda de Meta, solo lo necesario.
+      return res.status(result.status || 400).json({
+        success: false,
+        error: result.error,
+        eventId: result.eventId,
+        eventName: result.eventName
+      });
+    }
+
+    res.json({
+      success: true,
+      eventId: result.eventId,
+      eventName: result.eventName,
+      eventsReceived: result.responsePayload?.events_received,
+      fbtraceId: result.responsePayload?.fbtrace_id
+    });
+  } catch (error) {
+    logger.error(`Error en runMetaPixelTestServerEvent: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Error al enviar el evento de prueba al servidor' });
+  }
+};
+
+const META_PIXEL_TEST_STYLES = `
+  *{box-sizing:border-box}
+  body{margin:0;background:#0b0f17;color:#e7ecf3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{width:100%;max-width:560px;background:#121826;border:1px solid #1f2937;border-radius:18px;padding:28px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+  .logo{font-weight:800;letter-spacing:.2px;color:#9db2d3;font-size:13px;text-transform:uppercase}
+  h1{margin:6px 0 4px;font-size:22px}
+  .sub{margin:0 0 18px;color:#9aa7bd;font-size:14px}
+  .sub b{color:#e7ecf3}
+  .verdict{border-radius:12px;padding:13px 15px;font-weight:600;font-size:14px;margin-bottom:16px;border:1px solid #243044;background:#0e1422;color:#cdd8ea}
+  .verdict[data-state=ok]{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.4);color:#86efac}
+  .verdict[data-state=warn]{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.4);color:#fcd34d}
+  .verdict[data-state=err]{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.4);color:#fca5a5}
+  .rows{display:flex;flex-direction:column;gap:10px}
+  .row{display:flex;gap:12px;align-items:flex-start;border:1px solid #1f2937;border-radius:12px;padding:13px 14px;background:#0e1422}
+  .row .ic{flex:0 0 22px;height:22px;border-radius:50%;border:2px solid #334155;position:relative;margin-top:1px}
+  .row[data-state=loading] .ic{border-color:#3b82f6;border-right-color:transparent;animation:spin .8s linear infinite}
+  .row[data-state=ok] .ic{border-color:#22c55e;background:#22c55e}
+  .row[data-state=ok] .ic:after{content:'';position:absolute;left:6px;top:2px;width:5px;height:10px;border:solid #06210f;border-width:0 2px 2px 0;transform:rotate(45deg)}
+  .row[data-state=err] .ic{border-color:#ef4444;background:#ef4444}
+  .row[data-state=err] .ic:after{content:'';position:absolute;left:9px;top:4px;width:2px;height:12px;background:#2a0606}
+  .row[data-state=skip] .ic{border-color:#64748b;background:#1e293b}
+  .row .title{font-weight:600;font-size:14px}
+  .row .text{color:#9aa7bd;font-size:13px;margin-top:3px;word-break:break-word}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .meta{margin-top:16px;padding-top:14px;border-top:1px solid #1f2937;display:flex;flex-direction:column;gap:5px}
+  .meta .lbl{font-size:12px;color:#7c8aa3;text-transform:uppercase;letter-spacing:.3px}
+  .meta code{font-size:12px;color:#cbd5e1;background:#0b0f17;border:1px solid #1f2937;border-radius:8px;padding:8px 10px;word-break:break-all}
+  .actions{margin-top:16px}
+  .btn{appearance:none;border:1px solid #2b3850;background:#1b2740;color:#e7ecf3;border-radius:10px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer}
+  .btn:hover{background:#22304d}
+  .hint{margin:14px 0 0;font-size:12px;color:#7c8aa3;line-height:1.5}
+`;
+
+function renderMetaPixelTestShell({ title, message }) {
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeMetaTestHtml(title)} · Ristak</title><style>${META_PIXEL_TEST_STYLES}</style></head><body><div class="card"><div class="logo">Ristak</div><h1>${escapeMetaTestHtml(title)}</h1><p class="sub">${escapeMetaTestHtml(message)}</p></div></body></html>`;
+}
+
+function renderMetaPixelTestPageHtml({ pixelId, eventName, method, hasServer, token, testEventCode, eventParameters = {} }) {
+  // Mismos parámetros que el evento de servidor, para que navegador y CAPI
+  // manden el mismo custom_data.
+  const customData = {
+    source: 'ristak_settings',
+    conversion_type: 'settings_test_event',
+    ...buildMetaTestCustomData(eventParameters, eventName)
+  };
+  const cfg = safeJsonForScript({ pixelId, eventName, method, hasServer, token, customData });
+  return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Prueba de Meta Pixel · Ristak</title>
+  <script>
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
+    (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', ${safeJsonForScript(pixelId)});
+    fbq('track', 'PageView');
+  </script>
+  <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>
+  <style>${META_PIXEL_TEST_STYLES}</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">Ristak · Diagnóstico</div>
+    <h1>Prueba de Meta Pixel</h1>
+    <p class="sub">Pixel <b>${escapeMetaTestHtml(pixelId)}</b> · Evento <b>${escapeMetaTestHtml(eventName)}</b>${testEventCode ? ` · Test code <b>${escapeMetaTestHtml(testEventCode)}</b>` : ''}</p>
+    <div id="verdict" class="verdict" data-state="loading">Probando el pixel…</div>
+    <div class="rows">
+      <div class="row" id="browserRow" data-state="loading">
+        <div class="ic"></div>
+        <div class="body"><div class="title">Pixel del navegador</div><div class="text" data-text>Disparando el evento en el navegador…</div></div>
+      </div>
+      <div class="row" id="serverRow" data-state="loading">
+        <div class="ic"></div>
+        <div class="body"><div class="title">Conversions API (servidor)</div><div class="text" data-text>Enviando el evento al servidor…</div></div>
+      </div>
+    </div>
+    <div class="meta">
+      <span class="lbl">Event ID (deduplica navegador + servidor)</span>
+      <code id="eventId">—</code>
+    </div>
+    <div class="actions"><button class="btn" type="button" onclick="location.reload()">Repetir prueba</button></div>
+    <p class="hint">Busca este Event ID en Meta Events Manager → Eventos de prueba. El navegador y el servidor mandan el mismo ID, así Meta los cuenta como un solo evento.</p>
+  </div>
+  <script>
+    (function(){
+      var CFG = ${cfg};
+      function row(id){ return document.getElementById(id); }
+      function setRow(id, state, text){ var r = row(id); if(!r) return; r.setAttribute('data-state', state); var t = r.querySelector('[data-text]'); if(t) t.textContent = text; }
+      function setVerdict(state, text){ var v = row('verdict'); if(!v) return; v.setAttribute('data-state', state); v.textContent = text; }
+      var eventId = 'ristak_meta_test_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+      row('eventId').textContent = eventId;
+
+      var browserDone = false, browserOk = false, serverDone = false, serverOk = false;
+      function recompute(){
+        if(!browserDone || !serverDone) return;
+        if(browserOk && serverOk) setVerdict('ok', 'Todo jaló: el pixel del navegador y el servidor (CAPI) enviaron el evento.');
+        else if(browserOk && !CFG.hasServer) setVerdict('warn', 'El pixel del navegador disparó. El servidor (CAPI) quedó omitido (agrega el Pixel API Token y el código de Test Events).');
+        else if(browserOk && !serverOk) setVerdict('warn', 'El navegador disparó pero el servidor (CAPI) falló. Revisa el detalle de abajo.');
+        else if(!browserOk && serverOk) setVerdict('warn', 'El servidor (CAPI) jaló pero el navegador no (probable bloqueador). Prueba en incógnito o sin ad-blocker.');
+        else if(!browserOk && !CFG.hasServer) setVerdict('err', 'El navegador no pudo enviar el evento (probable bloqueador). El servidor (CAPI) quedó omitido.');
+        else setVerdict('err', 'No jaló por ninguno de los dos lados. Revisa el detalle de abajo.');
+      }
+      function markBrowser(ok, text){ if(browserDone) return; browserDone = true; browserOk = ok; setRow('browserRow', ok ? 'ok' : 'err', text); recompute(); }
+
+      try {
+        if (window.fbq) {
+          window.fbq(CFG.method, CFG.eventName, CFG.customData, { eventID: eventId });
+        }
+      } catch (e) {}
+
+      var img = new Image();
+      img.onload = function(){ markBrowser(true, 'Pixel ' + CFG.pixelId + ' cargado y evento "' + CFG.eventName + '" enviado a Meta desde el navegador.'); };
+      img.onerror = function(){ markBrowser(false, 'No se pudo alcanzar facebook.com/tr (probable bloqueador de anuncios o red).'); };
+      img.src = 'https://www.facebook.com/tr?id=' + encodeURIComponent(CFG.pixelId) + '&ev=' + encodeURIComponent(CFG.eventName) + '&eid=' + encodeURIComponent(eventId) + '&noscript=1&rdt=' + Date.now();
+      setTimeout(function(){ if(!browserDone){ var loaded = !!(window.fbq && window.fbq.loaded); markBrowser(loaded, loaded ? 'Pixel cargado y evento disparado (sin confirmación de red).' : 'El script del pixel no cargó (probable bloqueador de anuncios).'); } }, 4500);
+
+      if (!CFG.hasServer) {
+        serverDone = true; serverOk = false;
+        setRow('serverRow', 'skip', 'Omitido: agrega el Pixel API Token y el código de Test Events para probar el servidor.');
+        recompute();
+      } else {
+        fetch('/api/meta/pixel-test/event?t=' + encodeURIComponent(CFG.token), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventId: eventId })
+        }).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return { ok: r.ok, j: j }; }); })
+        .then(function(res){
+          serverDone = true;
+          if (res.ok && res.j && res.j.success) {
+            serverOk = true;
+            var recv = (res.j.eventsReceived != null) ? res.j.eventsReceived : ((res.j.responsePayload && res.j.responsePayload.events_received) != null ? res.j.responsePayload.events_received : 1);
+            var trace = res.j.fbtraceId || (res.j.responsePayload && res.j.responsePayload.fbtrace_id) || '';
+            setRow('serverRow', 'ok', 'Meta recibió el evento (events_received: ' + recv + ')' + (trace ? ' · fbtrace_id: ' + trace : ''));
+          } else {
+            serverOk = false;
+            setRow('serverRow', 'err', (res.j && res.j.error) ? res.j.error : 'El servidor no pudo enviar el evento a Meta.');
+          }
+          recompute();
+        }).catch(function(){
+          serverDone = true; serverOk = false;
+          setRow('serverRow', 'err', 'Error de red al contactar el servidor de Ristak.');
+          recompute();
+        });
+      }
+    })();
+  </script>
+</body>
+</html>`;
+}
 
 /**
  * Revela el access token completo (desencriptado) para uso interno del frontend
