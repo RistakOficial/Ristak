@@ -34,7 +34,7 @@ type FieldDraft = {
   fieldKey: string
   dataType: CustomFieldDataType
   folderId: string
-  optionsText: string
+  options: string[]
 }
 
 type FolderDraft = {
@@ -62,7 +62,7 @@ const emptyDraft = (folderId = ''): FieldDraft => ({
   fieldKey: '',
   dataType: 'text',
   folderId,
-  optionsText: ''
+  options: []
 })
 
 const normalizeFieldKey = (value: string) => {
@@ -76,16 +76,15 @@ const normalizeFieldKey = (value: string) => {
   return normalized || 'campo_personalizado'
 }
 
-const optionLinesToOptions = (value: string): CustomFieldOption[] => (
-  value
-    .split('\n')
-    .map(line => line.trim())
+const labelsToOptions = (labels: string[]): CustomFieldOption[] => (
+  labels
+    .map(label => label.trim())
     .filter(Boolean)
-    .map(line => ({ label: line, value: normalizeFieldKey(line) }))
+    .map(label => ({ label, value: normalizeFieldKey(label) }))
 )
 
-const optionsToText = (options: CustomFieldOption[] = []) => (
-  options.map(option => option.label || option.value).filter(Boolean).join('\n')
+const optionsToLabels = (options: CustomFieldOption[] = []) => (
+  options.map(option => option.label || option.value).filter(Boolean)
 )
 
 const getTypeLabel = (type: string) => (
@@ -221,7 +220,7 @@ export const CustomFields: React.FC = () => {
       fieldKey: field.fieldKey || field.key,
       dataType: field.dataType,
       folderId: field.folderId || '',
-      optionsText: optionsToText(field.options)
+      options: optionsToLabels(field.options)
     })
     setEditorOpen(true)
   }
@@ -249,6 +248,24 @@ export const CustomFields: React.FC = () => {
     setDraft(current => ({ ...current, ...patch }))
   }
 
+  const addDraftOption = () => {
+    setDraft(current => ({ ...current, options: [...current.options, ''] }))
+  }
+
+  const updateDraftOption = (index: number, value: string) => {
+    setDraft(current => ({
+      ...current,
+      options: current.options.map((option, optionIndex) => optionIndex === index ? value : option)
+    }))
+  }
+
+  const removeDraftOption = (index: number) => {
+    setDraft(current => ({
+      ...current,
+      options: current.options.filter((_, optionIndex) => optionIndex !== index)
+    }))
+  }
+
   const copyText = async (value: string, label: string) => {
     try {
       await navigator.clipboard.writeText(value)
@@ -269,7 +286,7 @@ export const CustomFields: React.FC = () => {
   const buildPayload = (): SaveCustomFieldInput | null => {
     const label = draft.label.trim()
     const fieldKey = editingField ? normalizeFieldKey(draft.fieldKey) : normalizeFieldKey(label)
-    const options = choiceTypes.has(draft.dataType) ? optionLinesToOptions(draft.optionsText) : []
+    const options = choiceTypes.has(draft.dataType) ? labelsToOptions(draft.options) : []
 
     if (!label) {
       showToast('warning', 'Falta nombre', 'Ponle un nombre al campo.')
@@ -795,7 +812,13 @@ export const CustomFields: React.FC = () => {
                   portal
                   value={draft.dataType}
                   disabled={Boolean(editingField)}
-                  onChange={(event) => patchDraft({ dataType: event.target.value as CustomFieldDataType })}
+                  onChange={(event) => {
+                    const dataType = event.target.value as CustomFieldDataType
+                    patchDraft({
+                      dataType,
+                      options: choiceTypes.has(dataType) && draft.options.length === 0 ? [''] : draft.options
+                    })
+                  }}
                 >
                   {fieldTypes.map(type => (
                     <option key={type.value} value={type.value}>{type.label}</option>
@@ -821,16 +844,32 @@ export const CustomFields: React.FC = () => {
               )}
 
               {!editingField && choiceTypes.has(draft.dataType) && (
-                <label className={styles.field}>
+                <div className={styles.field}>
                   <span>Opciones</span>
-                  <textarea
-                    rows={5}
-                    value={draft.optionsText}
-                    placeholder={'Opción 1\nOpción 2\nOpción 3'}
-                    onChange={(event) => patchDraft({ optionsText: event.target.value })}
-                  />
-                  <small>Una opción por línea.</small>
-                </label>
+                  <div className={styles.optionList}>
+                    {draft.options.map((option, index) => (
+                      <div key={index} className={styles.optionRow}>
+                        <input
+                          value={option}
+                          placeholder={`Opción ${index + 1}`}
+                          onChange={(event) => updateDraftOption(index, event.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className={styles.optionRemove}
+                          onClick={() => removeDraftOption(index)}
+                          aria-label={`Quitar opción ${index + 1}`}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={addDraftOption}>
+                    Agregar opción
+                  </Button>
+                  <small>Cada opción es una respuesta que el contacto podrá elegir.</small>
+                </div>
               )}
             </div>
 

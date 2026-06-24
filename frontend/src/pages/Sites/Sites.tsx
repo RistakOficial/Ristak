@@ -6933,6 +6933,7 @@ function FormEmbedEditorPanel({
             onPatchSettings={patchActiveFieldSettings}
             onCustomFieldCreated={onCustomFieldCreated}
             onSave={onSave}
+            onPatchBlock={patchActiveField}
           />
 
           {isChoiceBlock(activeField.blockType) && (
@@ -32216,7 +32217,7 @@ type CustomFieldQuickDraft = {
   fieldKey: string
   dataType: CustomFieldDataType
   folderId: string
-  optionsText: string
+  options: string[]
 }
 
 const customFieldEditorTypes: Array<{ value: CustomFieldDataType; label: string; detail: string }> = [
@@ -32245,12 +32246,11 @@ const normalizeCustomFieldKey = (value: string) => {
   return normalized || 'campo_personalizado'
 }
 
-const customFieldOptionsFromText = (value: string): CustomFieldOption[] => (
-  value
-    .split('\n')
-    .map(line => line.trim())
+const customFieldOptionsFromLabels = (labels: string[]): CustomFieldOption[] => (
+  labels
+    .map(label => label.trim())
     .filter(Boolean)
-    .map(line => ({ label: line, value: normalizeCustomFieldKey(line) }))
+    .map(label => ({ label, value: normalizeCustomFieldKey(label) }))
 )
 
 const customFieldTokenPreview = (fieldKey: string) => `{{custom.${fieldKey || 'campo_personalizado'}}}`
@@ -32275,17 +32275,36 @@ const customFieldDataTypeForBlock = (blockType: SiteBlockType): CustomFieldDataT
 const makeCustomFieldDraftForBlock = (block: SiteBlock): CustomFieldQuickDraft => {
   const label = block.label || 'Campo personalizado'
   const dataType = customFieldDataTypeForBlock(block.blockType)
-  const optionsText = isChoiceBlock(block.blockType)
-    ? getOptions(block).map(option => option.label || option.value).filter(Boolean).join('\n')
-    : ''
+  const options = isChoiceBlock(block.blockType)
+    ? getOptions(block).map(option => String(option.label || option.value || '')).filter(Boolean)
+    : []
 
   return {
     label,
     fieldKey: normalizeCustomFieldKey(label),
     dataType,
     folderId: '',
-    optionsText
+    options
   }
+}
+
+// Builds the block's answer options from a custom field's predefined options,
+// keeping any per-option rules (jump/disqualify) when the label still matches.
+const buildBlockOptionsFromCustomField = (block: SiteBlock, field: CustomFieldDefinition): SiteBlockOption[] => {
+  const existing = getOptions(block)
+  return (field.options || [])
+    .map(option => String(option.label || option.value || '').trim())
+    .filter(Boolean)
+    .map((label, index) => {
+      const prior = existing.find(item => String(item.label || '').trim().toLowerCase() === label.toLowerCase())
+      return {
+        ...(prior || {}),
+        id: prior?.id || `option-${index}-${normalizeCustomFieldKey(label)}`,
+        label,
+        value: label,
+        action: prior?.action || 'continue'
+      }
+    })
 }
 
 const buildCustomFieldPayload = (
@@ -32296,7 +32315,7 @@ const buildCustomFieldPayload = (
   const label = draft.label.trim()
   const fieldKey = normalizeCustomFieldKey(draft.fieldKey || label)
   const options = customFieldChoiceTypes.has(draft.dataType)
-    ? customFieldOptionsFromText(draft.optionsText)
+    ? customFieldOptionsFromLabels(draft.options)
     : []
 
   if (!label) {
@@ -32353,7 +32372,8 @@ const CustomFieldBindingControl: React.FC<{
   onPatchSettings: (patch: Record<string, unknown>) => void
   onCustomFieldCreated: (field: CustomFieldDefinition) => void
   onSave: () => void
-}> = ({ block, customFields, customFieldFolders, onPatchSettings, onCustomFieldCreated, onSave }) => {
+  onPatchBlock?: (patch: Partial<SiteBlock>) => void
+}> = ({ block, customFields, customFieldFolders, onPatchSettings, onCustomFieldCreated, onSave, onPatchBlock }) => {
   const { showToast } = useNotification()
   const settings = block.settings || {}
   const [creatorOpen, setCreatorOpen] = useState(false)
@@ -32379,12 +32399,63 @@ const CustomFieldBindingControl: React.FC<{
     setCreatorDraft(current => ({ ...current, ...patch }))
   }
 
+  const addCreatorOption = () => {
+    setCreatorDraft(current => ({ ...current, options: [...current.options, ''] }))
+  }
+
+  const updateCreatorOption = (index: number, value: string) => {
+    setCreatorDraft(current => ({
+      ...current,
+      options: current.options.map((option, optionIndex) => optionIndex === index ? value : option)
+    }))
+  }
+
+  const removeCreatorOption = (index: number) => {
+    setCreatorDraft(current => ({
+      ...current,
+      options: current.options.filter((_, optionIndex) => optionIndex !== index)
+    }))
+  }
+
   const handleCreatorLabelChange = (value: string) => {
     setCreatorDraft(current => ({
       ...current,
       label: value,
       fieldKey: normalizeCustomFieldKey(value)
     }))
+  }
+
+  // Links the block to a custom field. For choice blocks, the field's predefined
+  // options are mirrored into the block so the answers come ready from the field.
+  // Settings + options travel in a single block patch (when available) so neither
+  // patch clobbers the other across the different editor contexts.
+  const applyFieldBinding = (field: CustomFieldDefinition | null) => {
+    const settingsPatch = field
+      ? {
+        customFieldDefinitionId: field.definitionId,
+        customFieldKey: field.fieldKey || field.key,
+        customFieldLabel: field.label,
+        customFieldDataType: field.dataType
+      }
+      : {
+        customFieldDefinitionId: '',
+        customFieldKey: '',
+        customFieldLabel: '',
+        customFieldDataType: ''
+      }
+
+    const nextOptions = field && isChoiceBlock(block.blockType) && field.options?.length
+      ? buildBlockOptionsFromCustomField(block, field)
+      : null
+
+    if (onPatchBlock) {
+      onPatchBlock({
+        settings: { ...(block.settings || {}), ...settingsPatch },
+        ...(nextOptions ? { options: nextOptions } : {})
+      })
+    } else {
+      onPatchSettings(settingsPatch)
+    }
   }
 
   const handleCreateField = async () => {
@@ -32397,12 +32468,7 @@ const CustomFieldBindingControl: React.FC<{
     try {
       const field = await customFieldsService.createField(payload)
       onCustomFieldCreated(field)
-      onPatchSettings({
-        customFieldDefinitionId: field.definitionId,
-        customFieldKey: field.fieldKey || field.key,
-        customFieldLabel: field.label,
-        customFieldDataType: field.dataType
-      })
+      applyFieldBinding(field)
       setCreatorOpen(false)
       showToast('success', 'Campo creado', 'Ya quedó ligado a esta pregunta.')
       window.setTimeout(onSave, 0)
@@ -32454,26 +32520,8 @@ const CustomFieldBindingControl: React.FC<{
         <CustomSelect
           value={currentDefinitionId}
           onChange={(event) => {
-            const definitionId = event.target.value
-            const field = availableFields.find(item => item.definitionId === definitionId)
-
-            if (!field) {
-              onPatchSettings({
-                customFieldDefinitionId: '',
-                customFieldKey: '',
-                customFieldLabel: '',
-                customFieldDataType: ''
-              })
-              window.setTimeout(onSave, 0)
-              return
-            }
-
-            onPatchSettings({
-              customFieldDefinitionId: field.definitionId,
-              customFieldKey: field.fieldKey || field.key,
-              customFieldLabel: field.label,
-              customFieldDataType: field.dataType
-            })
+            const field = availableFields.find(item => item.definitionId === event.target.value) || null
+            applyFieldBinding(field)
             window.setTimeout(onSave, 0)
           }}
           onBlur={onSave}
@@ -32537,7 +32585,13 @@ const CustomFieldBindingControl: React.FC<{
                 <CustomSelect
                   portal
                   value={creatorDraft.dataType}
-                  onChange={(event) => patchCreatorDraft({ dataType: event.target.value as CustomFieldDataType })}
+                  onChange={(event) => {
+                    const dataType = event.target.value as CustomFieldDataType
+                    patchCreatorDraft({
+                      dataType,
+                      options: customFieldChoiceTypes.has(dataType) && creatorDraft.options.length === 0 ? [''] : creatorDraft.options
+                    })
+                  }}
                 >
                   {customFieldEditorTypes.map(type => (
                     <option key={type.value} value={type.value}>{type.label}</option>
@@ -32561,16 +32615,32 @@ const CustomFieldBindingControl: React.FC<{
               </label>
 
               {customFieldChoiceTypes.has(creatorDraft.dataType) && (
-                <label className={customFieldModalStyles.field}>
+                <div className={customFieldModalStyles.field}>
                   <span>Opciones</span>
-                  <textarea
-                    rows={5}
-                    value={creatorDraft.optionsText}
-                    placeholder={'Opción 1\nOpción 2\nOpción 3'}
-                    onChange={(event) => patchCreatorDraft({ optionsText: event.target.value })}
-                  />
-                  <small>Una opción por línea.</small>
-                </label>
+                  <div className={customFieldModalStyles.optionList}>
+                    {creatorDraft.options.map((option, index) => (
+                      <div key={index} className={customFieldModalStyles.optionRow}>
+                        <input
+                          value={option}
+                          placeholder={`Opción ${index + 1}`}
+                          onChange={(event) => updateCreatorOption(index, event.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className={customFieldModalStyles.optionRemove}
+                          onClick={() => removeCreatorOption(index)}
+                          aria-label={`Quitar opción ${index + 1}`}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <Button type="button" variant="secondary" size="sm" leftIcon={<Plus size={14} />} onClick={addCreatorOption}>
+                    Agregar opción
+                  </Button>
+                  <small>Cada opción es una respuesta que el contacto podrá elegir.</small>
+                </div>
               )}
             </div>
 
@@ -33488,6 +33558,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         onPatchSettings={onPatchSettings}
         onCustomFieldCreated={onCustomFieldCreated}
         onSave={onSave}
+        onPatchBlock={onPatchBlock}
       />
     </>
   ) : null
@@ -34928,6 +34999,7 @@ const VideoFormGateSettingsPanel: React.FC<{
                       onPatchSettings={(patch) => patchQuestionSettings(activeQuestion, patch)}
                       onCustomFieldCreated={onCustomFieldCreated}
                       onSave={onSave}
+                      onPatchBlock={(patch) => patchQuestion(activeQuestion.id, patch)}
                     />
 
                     {isChoiceBlock(activeQuestion.blockType) && (
