@@ -165,6 +165,22 @@
   color: rgba(248, 250, 252, 0.86);
 }
 
+.linkButton {
+  margin: 2px auto 0;
+  padding: 8px 4px;
+  background: none;
+  border: 0;
+  color: rgba(248, 250, 252, 0.7);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: center;
+}
+
+.linkButton:hover {
+  color: #fff;
+}
+
 .spinner {
   animation: spin 0.9s linear infinite;
 }
