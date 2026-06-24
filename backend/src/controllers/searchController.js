@@ -178,7 +178,7 @@ export const globalSearch = async (req, res) => {
           ${textFoldExpression('p.description')} LIKE ? OR
           CAST(p.amount AS TEXT) LIKE ? OR
           CAST(p.date AS TEXT) LIKE ?
-        ORDER BY p.date DESC
+        ORDER BY p.date DESC, p.created_at DESC, p.id DESC
         LIMIT ?`,
         [...basicContactSearchClause.params, foldedLike, foldedLike, foldedLike, foldedLike, like, like, CATEGORY_LIMIT]
       )),

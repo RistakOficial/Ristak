@@ -2406,7 +2406,7 @@ ${CONTACT_META_PROFILE_SELECT},
       `SELECT * FROM payments
        WHERE contact_id = ?
        AND LOWER(COALESCE(status, '')) != 'deleted'
-       ORDER BY date DESC`,
+       ORDER BY date DESC, created_at DESC, id DESC`,
       [id]
     )
 
@@ -4429,7 +4429,7 @@ export const getContactJourney = async (req, res) => {
     const payments = await db.all(
       `SELECT * FROM payments
        WHERE ${successfulPaymentsCondition}
-       ORDER BY date ASC`,
+       ORDER BY date ASC, created_at ASC, id ASC`,
       [id]
     )
 

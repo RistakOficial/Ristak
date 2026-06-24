@@ -365,7 +365,7 @@ export const getTransactionsList = async (req, res) => {
       FROM payments p
       LEFT JOIN contacts c ON c.id = p.contact_id
       ${whereClause}
-      ORDER BY p.date DESC
+      ORDER BY p.date DESC, p.created_at DESC, p.id DESC
     `
 
     const transactions = await db.all(query, params)

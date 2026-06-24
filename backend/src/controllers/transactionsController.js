@@ -311,6 +311,54 @@ const toDateOnly = (dateValue) => {
   return String(dateValue).split('T')[0]
 }
 
+/**
+ * Normaliza la fecha de un pago a un timestamp ISO COMPLETO, para poder ordenar las
+ * transacciones por el momento EXACTO en que se hizo/registró el pago.
+ *
+ * - Sin valor             -> ahora mismo (timestamp completo con hora).
+ * - Ya trae hora (ISO/T)  -> se respeta tal cual.
+ * - Solo fecha YYYY-MM-DD:
+ *     · si es HOY         -> ahora mismo (captura la hora real del registro).
+ *     · si es otra fecha  -> esa fecha a mediodía UTC. Mediodía evita que la zona
+ *                            horaria mueva el pago al día anterior/siguiente; el
+ *                            desempate por created_at conserva el orden de registro.
+ */
+const resolvePaymentTimestamp = (rawDate) => {
+  const now = new Date()
+  const value = cleanString(rawDate)
+  if (!value) return now.toISOString()
+
+  // Ya viene con hora (timestamp ISO o "YYYY-MM-DD HH:mm:ss") -> respetar.
+  if (value.includes('T') || value.includes(' ')) {
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? now.toISOString() : parsed.toISOString()
+  }
+
+  // Solo fecha (YYYY-MM-DD).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const todayUtc = now.toISOString().slice(0, 10)
+    if (value === todayUtc) return now.toISOString()
+    return `${value}T12:00:00.000Z`
+  }
+
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? now.toISOString() : parsed.toISOString()
+}
+
+/**
+ * Para edición: si el usuario deja la MISMA fecha (día) ya guardada, conservamos el
+ * timestamp original para no perder la hora exacta del registro. Si cambia el día,
+ * se recalcula como pago fechado en ese nuevo día.
+ */
+const resolvePaymentUpdateDate = (rawDate, currentDate) => {
+  const value = cleanString(rawDate)
+  if (!value) return undefined
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value) && currentDate) {
+    if (value === String(currentDate).slice(0, 10)) return currentDate
+  }
+  return resolvePaymentTimestamp(value)
+}
+
 const mapTransactionRow = (t, baseUrl = '') => ({
   id: t.id,
   date: t.date,
@@ -533,7 +581,7 @@ export const createTransaction = async (req, res) => {
     const finalMethod = cleanString(paymentMethod || method || 'cash') || 'cash'
     const finalTitle = cleanString(title || description || 'Pago')
     const finalDescription = cleanString(description || title || 'Pago')
-    const finalDate = date || new Date().toISOString()
+    const finalDate = resolvePaymentTimestamp(date)
     const finalPaymentMode = normalizePaymentMode(paymentMode)
     const metadataJson = metadata && typeof metadata === 'object' ? JSON.stringify(metadata) : null
 
@@ -743,6 +791,9 @@ export const getTransactions = async (req, res) => {
 
     const safeSortBy = sortableMap[sortBy] || 'p.date'
     const orderDirection = String(sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
+    // Desempate estable por el momento real de registro: si dos pagos comparten la
+    // misma fecha, gana el registrado más recientemente (orden descendente correcto).
+    const orderTieBreaker = `p.created_at ${orderDirection}, p.id ${orderDirection}`
 
     const transactionsQuery = `
       SELECT
@@ -774,7 +825,7 @@ export const getTransactions = async (req, res) => {
       FROM payments p
       LEFT JOIN contacts c ON p.contact_id = c.id
       ${whereClause}
-      ORDER BY ${safeSortBy} ${orderDirection}
+      ORDER BY ${safeSortBy} ${orderDirection}, ${orderTieBreaker}
       LIMIT ? OFFSET ?
     `
 
@@ -1023,7 +1074,7 @@ export const updateTransaction = async (req, res) => {
       reference: reference !== undefined ? String(reference || '') : undefined,
       title: title !== undefined ? String(title || '') : undefined,
       description: description !== undefined ? String(description || '') : undefined,
-      date: date || undefined,
+      date: resolvePaymentUpdateDate(date, transaction.date),
       dueDate: dueDate || undefined,
       contactId: contactId || undefined,
       contactName: contactName || undefined,
@@ -1451,6 +1502,12 @@ export const recordPayment = async (req, res) => {
       return sendStripePlanAuthorizationManualPaymentError(res)
     }
 
+    // Timestamp completo del pago: si el usuario eligió fecha la respetamos
+    // (hoy -> hora exacta; otra fecha -> ese día); si no, el momento actual.
+    const resolvedPaymentDate = paymentDate
+      ? resolvePaymentTimestamp(paymentDate)
+      : (transaction.date || new Date().toISOString())
+
     // Marcar como pagado en HighLevel si tiene invoice asociado
     const liveMode = await getGhlInvoiceLiveMode()
     const paymentMode = liveMode ? 'live' : 'test'
@@ -1460,7 +1517,7 @@ export const recordPayment = async (req, res) => {
       await ghlClient.recordPayment(transaction.ghl_invoice_id, {
         amount: amount || transaction.amount,
         currency: transaction.currency || 'MXN',
-        fulfilledAt: paymentDate || new Date().toISOString(),
+        fulfilledAt: resolvedPaymentDate,
         mode: paymentMethod || 'cash',
         note: paymentMode === 'test' ? 'Pago registrado manualmente\nModo: prueba' : 'Pago registrado manualmente',
         liveMode
@@ -1470,7 +1527,7 @@ export const recordPayment = async (req, res) => {
     // Actualizar estado en BD
     await db.run(
       'UPDATE payments SET status = ?, amount = ?, payment_method = ?, payment_mode = ?, date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      ['paid', amount || transaction.amount, paymentMethod || transaction.payment_method, paymentMode, paymentDate || transaction.date, id]
+      ['paid', amount || transaction.amount, paymentMethod || transaction.payment_method, paymentMode, resolvedPaymentDate, id]
     )
     if (isStripeBackedTransaction(transaction)) {
       await syncStripePaymentPlanFromLocalPayment(id)

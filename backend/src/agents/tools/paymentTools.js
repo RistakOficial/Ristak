@@ -76,7 +76,7 @@ export const listPaymentsTool = tool({
       sql += ' AND p.date <= ?'
       params.push(normalizePaymentDateParam(endDate, { endOfDay: true }))
     }
-    sql += ' ORDER BY p.date DESC LIMIT ?'
+    sql += ' ORDER BY p.date DESC, p.created_at DESC, p.id DESC LIMIT ?'
     params.push(limit || 30)
 
     const rows = await db.all(sql, params)

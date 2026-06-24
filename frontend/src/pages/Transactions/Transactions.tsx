@@ -36,6 +36,7 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAccountCurrency, useHighLevelConnected, useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString, formatName } from '@/utils/format'
+import { buildPaymentTimestamp } from '@/utils/paymentDate'
 import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan } from '@/services/transactionsService'
 import { highLevelService } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -1778,7 +1779,12 @@ export const Transactions: React.FC = () => {
 
     try {
       if (modal.type === 'create') {
-        const newTransaction = await transactionsService.createTransaction(transaction)
+        // En alta capturamos el momento exacto (hoy -> ahora; otra fecha -> ese día),
+        // para que el orden descendente refleje cuándo se registró el pago.
+        const newTransaction = await transactionsService.createTransaction({
+          ...transaction,
+          date: buildPaymentTimestamp(transaction.date)
+        })
         setTransactions(prev => [...prev, newTransaction])
         showToast('success', '¡Pago registrado exitosamente!', `Se registró el pago de ${formatCurrency(transaction.amount, accountCurrency)} para ${contactSnapshot.name}`)
       } else if (modal.type === 'edit') {

@@ -35,6 +35,7 @@ import { useAccountCurrency } from '@/hooks'
 import { apiUrl } from '@/services/apiBaseUrl'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import { formatCurrency as formatMxCurrency } from '@/utils/format'
+import { buildPaymentTimestamp } from '@/utils/paymentDate'
 import { highLevelService } from '@/services/highLevelService'
 import { transactionsService } from '@/services/transactionsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
@@ -2406,7 +2407,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       try {
         await transactionsService.createTransaction({
-          date: manualPaymentData.paymentDate || new Date().toISOString(),
+          date: buildPaymentTimestamp(manualPaymentData.paymentDate),
           contactId: selectedContact.id,
           contactName: selectedContact.name,
           email: selectedContact.email || '',
@@ -2582,7 +2583,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             body: JSON.stringify({
               amount: invoiceSummary.amount,
               currency: invoiceSummary.currency,
-              paymentDate: manualPaymentData.paymentDate,
+              paymentDate: buildPaymentTimestamp(manualPaymentData.paymentDate),
               paymentMethod: manualPaymentData.paymentMethod,
               reference: manualPaymentData.reference,
               notes: manualPaymentData.notes
@@ -2618,7 +2619,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       if (canSaveManualPaymentLocally && selectedContact) {
         try {
           await transactionsService.createTransaction({
-            date: manualPaymentData.paymentDate || new Date().toISOString(),
+            date: buildPaymentTimestamp(manualPaymentData.paymentDate),
             contactId: selectedContact.id,
             contactName: selectedContact.name,
             email: selectedContact.email || '',
