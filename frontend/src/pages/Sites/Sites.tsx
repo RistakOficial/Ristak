@@ -6629,7 +6629,8 @@ function FormEmbedEditorPanel({
   onAddPage,
   onPatchPage,
   onRenamePage,
-  onDeletePage
+  onDeletePage,
+  onDeselect
 }: {
   site: PublicSite
   block: SiteBlock
@@ -6656,6 +6657,7 @@ function FormEmbedEditorPanel({
   onPatchPage: (pageId: string, patch: Partial<SitePage>) => void
   onRenamePage: (pageId: string, title: string) => void
   onDeletePage: (pageId: string) => void
+  onDeselect: () => void
 }) {
   const settings = block.settings || {}
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
@@ -6699,6 +6701,88 @@ function FormEmbedEditorPanel({
   const isSubmitSelected = activeElement === 'submit'
   const isFormSurfaceSelected = activeElement === 'form'
   const activePageButtonPlaceholder = activePage ? getFormPageActionLabel(site, pages, activePage.id) : ''
+
+  // Floating element editor: the behaviour/logic of the selected form element
+  // (label, type, rules, option actions…) lives in a small box pinned next to
+  // the element on the canvas instead of the right inspector. The right panel
+  // keeps only the design controls. Anchored to the selected element's box.
+  const showElementPopover = isSubmitSelected || Boolean(activeField)
+  const elementPopoverSelectionKey = isSubmitSelected ? 'submit' : (activeField?.id || '')
+  const [elementPopoverPosition, setElementPopoverPosition] = useState<{ left: number; top: number } | null>(null)
+
+  const recomputeElementPopover = useCallback(() => {
+    if (!elementPopoverSelectionKey) {
+      setElementPopoverPosition(null)
+      return
+    }
+    const anchor = document.querySelector<HTMLElement>(
+      '.rstkEmbeddedFormFieldActive, .rstkEmbeddedFormItemActive, .rstkEmbeddedFormSubmitActive'
+    )
+    if (!anchor) return
+    const rect = anchor.getBoundingClientRect()
+    const pad = 12
+    const popoverWidth = Math.min(430, Math.max(320, window.innerWidth - pad * 2))
+    const popoverHeightEstimate = Math.min(620, Math.max(280, window.innerHeight - pad * 2))
+    const rightSideLeft = rect.right + 14
+    const leftSideLeft = rect.left - popoverWidth - 14
+    const hasRoomRight = rightSideLeft + popoverWidth <= window.innerWidth - pad
+    const rawLeft = hasRoomRight ? rightSideLeft : leftSideLeft
+    const rawTop = rect.top - 4
+    setElementPopoverPosition({
+      left: Math.max(pad, Math.min(rawLeft, window.innerWidth - popoverWidth - pad)),
+      top: Math.max(pad, Math.min(rawTop, window.innerHeight - popoverHeightEstimate - pad))
+    })
+  }, [elementPopoverSelectionKey])
+
+  // Recompute when the selection changes (defer one frame so the canvas has
+  // applied the active class) and gently bring the element into view.
+  useLayoutEffect(() => {
+    if (!elementPopoverSelectionKey) {
+      setElementPopoverPosition(null)
+      return undefined
+    }
+    const raf = window.requestAnimationFrame(() => {
+      const anchor = document.querySelector<HTMLElement>(
+        '.rstkEmbeddedFormFieldActive, .rstkEmbeddedFormItemActive, .rstkEmbeddedFormSubmitActive'
+      )
+      anchor?.scrollIntoView({ block: 'nearest' })
+      recomputeElementPopover()
+    })
+    return () => window.cancelAnimationFrame(raf)
+  }, [elementPopoverSelectionKey, recomputeElementPopover])
+
+  // Keep the box pinned to the element while scrolling/resizing, and close it
+  // with Escape — mirrors the inline element editor of the site builder.
+  useEffect(() => {
+    if (!elementPopoverSelectionKey) return undefined
+    let frame = 0
+    const handleReflow = () => {
+      if (frame) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        recomputeElementPopover()
+      })
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onDeselect()
+    }
+    window.addEventListener('scroll', handleReflow, true)
+    window.addEventListener('resize', handleReflow)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('scroll', handleReflow, true)
+      window.removeEventListener('resize', handleReflow)
+      window.removeEventListener('keydown', handleKeyDown)
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [elementPopoverSelectionKey, recomputeElementPopover, onDeselect])
+
+  const elementPopoverStyle = elementPopoverPosition
+    ? ({
+      ['--imported-element-popover-left' as string]: `${elementPopoverPosition.left}px`,
+      ['--imported-element-popover-top' as string]: `${elementPopoverPosition.top}px`
+    } as React.CSSProperties)
+    : undefined
 
   const renderActiveContentControls = () => {
     if (!activeField) return null
@@ -7095,27 +7179,48 @@ function FormEmbedEditorPanel({
   )
 
   return (
-    <InspectorTabbedPanel
-      title="Componente de formulario"
-      subtitle="Se guarda con el sitio web"
-      className={styles.formModePanel}
-      ariaLabel="Editor de componente de formulario"
-      header={(
-        <div className={styles.formModePanelHeader}>
-          <span className={styles.formModeIcon}><FormInput size={18} /></span>
-          <div>
-            <strong>Componente de formulario</strong>
-            <small>Edita elementos y páginas</small>
+    <>
+      {showElementPopover && elementPopoverPosition && (
+        <div
+          className={`${styles.importedElementPopoverShell} ${styles.formElementLogicPopover}`}
+          style={elementPopoverStyle}
+          role="dialog"
+          aria-label="Configurar elemento del formulario"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className={styles.formElementLogicBar}>
+            <span>{isSubmitSelected ? 'Botón de envío' : 'Configuración del elemento'}</span>
+            <button type="button" onClick={onDeselect} aria-label="Cerrar configuración del elemento">
+              <X size={15} />
+            </button>
+          </div>
+          <div className={styles.importedButtonActionBox}>
+            {editContent}
           </div>
         </div>
       )}
-      tabs={[
-        { value: 'edit', label: 'Editar', icon: <Pencil size={14} />, content: editContent },
-        { value: 'settings', label: 'Páginas', icon: <FileText size={14} />, content: pagesContent },
-        { value: 'formDesign', label: 'Formulario', icon: <Sparkles size={14} />, content: formDesignContent },
-        { value: 'blockDesign', label: 'Bloque', icon: <LayoutTemplate size={14} />, content: blockDesignContent }
-      ]}
-    />
+      <InspectorTabbedPanel
+        title="Componente de formulario"
+        subtitle="Se guarda con el sitio web"
+        className={styles.formModePanel}
+        defaultTab="formDesign"
+        ariaLabel="Editor de componente de formulario"
+        header={(
+          <div className={styles.formModePanelHeader}>
+            <span className={styles.formModeIcon}><FormInput size={18} /></span>
+            <div>
+              <strong>Componente de formulario</strong>
+              <small>{showElementPopover ? 'Diseño del elemento seleccionado' : 'Diseño y páginas del formulario'}</small>
+            </div>
+          </div>
+        )}
+        tabs={[
+          { value: 'formDesign', label: 'Diseño', icon: <Sparkles size={14} />, content: formDesignContent },
+          { value: 'blockDesign', label: 'Bloque', icon: <LayoutTemplate size={14} />, content: blockDesignContent },
+          { value: 'settings', label: 'Páginas', icon: <FileText size={14} />, content: pagesContent }
+        ]}
+      />
+    </>
   )
 }
 
@@ -11682,6 +11787,13 @@ export const Sites: React.FC = () => {
     }
   }
 
+  // Stable reference so the floating element editor doesn't re-subscribe its
+  // scroll/resize/keydown listeners on every parent render.
+  const handleEmbeddedFormDeselect = useCallback(() => {
+    setActiveEmbeddedFormSubmitSelected(false)
+    setActiveEmbeddedFormFieldId('')
+  }, [])
+
   const embeddedFormEditorBridge: EmbeddedFormCanvasEditorBridge | null = formEditBlock ? {
     parentBlockId: formEditBlock.id,
     activeFieldId: activeEmbeddedFormFieldId,
@@ -12533,6 +12645,7 @@ export const Sites: React.FC = () => {
                     onPatchPage={patchEmbeddedFormPage}
                     onRenamePage={renameEmbeddedFormPage}
                     onDeletePage={deleteEmbeddedFormPage}
+                    onDeselect={handleEmbeddedFormDeselect}
                   />
                 ) : (
                   <PropertiesPanel
