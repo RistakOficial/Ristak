@@ -121,7 +121,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
   MediaUploadTray
 } from '@/components/common'
@@ -22189,7 +22188,6 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <FolderInput size={15} />
           Mover
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
         <DropdownMenuItem className={styles.pageMenuDanger} onSelect={(event) => { event.stopPropagation(); onDelete(site) }}>
           <Trash2 size={15} />
           Eliminar {siteKindLabel}
