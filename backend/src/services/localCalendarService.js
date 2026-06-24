@@ -1215,7 +1215,7 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
       notes = excluded.notes,
       availability_type = excluded.availability_type,
       anti_tracking_enabled = CASE
-        WHEN ? IS NULL THEN COALESCE(calendars.anti_tracking_enabled, 1)
+        WHEN CAST(? AS INTEGER) IS NULL THEN COALESCE(calendars.anti_tracking_enabled, 1)
         ELSE excluded.anti_tracking_enabled
       END,
       source = excluded.source,
