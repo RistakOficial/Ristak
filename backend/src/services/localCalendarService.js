@@ -2932,6 +2932,28 @@ export async function deleteLocalAppointment(appointmentId, { markPendingDelete 
   return true
 }
 
+// (GCAL-001) Marca una cita como cancelada SIN borrarla. Se usa cuando un evento de
+// Google se cancela: conservamos el registro local (notas, contacto, trazabilidad) en
+// lugar de hacer hard-delete. No reescribe Google (el evento ya viene cancelado de allá).
+export async function cancelLocalAppointment(appointmentId) {
+  const existing = await getLocalAppointment(appointmentId)
+  if (!existing) return false
+
+  await db.run(`
+    UPDATE appointments
+    SET appointment_status = 'cancelled',
+        status = 'cancelled',
+        date_updated = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [existing.id])
+
+  if (existing.contactId) {
+    await updateContactAppointmentDate(existing.contactId)
+  }
+
+  return true
+}
+
 export async function updateContactAppointmentDate(contactId) {
   if (!contactId) return
 

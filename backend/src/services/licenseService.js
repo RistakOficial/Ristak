@@ -46,6 +46,22 @@ const DEFAULT_FEATURES = {
   advanced_reports: true
 }
 
+// (LIC-003) Features de pago que el backend candaduea con requireFeature(...). Si el
+// portal responde enforced 'allowed' pero SIN un objeto features válido, NO se abren
+// éstas (fail-closed): la base del CRM sigue, el premium queda apagado hasta que el
+// servidor envíe features explícitas.
+const PREMIUM_GATED_FEATURES = [
+  'whatsapp', 'email', 'meta_ads', 'google_calendar', 'automations',
+  'advanced_reports', 'app_assistant_ai', 'conversational_ai', 'ai',
+  'ai_agent', 'premium_modules'
+]
+
+function closedRemoteFeatures() {
+  const closed = { ...DEFAULT_FEATURES }
+  for (const key of PREMIUM_GATED_FEATURES) closed[key] = false
+  return closed
+}
+
 const FEATURE_DEPENDENCIES = {
   appointments: ['google_calendar', 'settings_calendars'],
   payments: ['settings_payments'],
@@ -317,11 +333,17 @@ export async function verifyLicenseWithServer(email) {
   }
 
   if (data && data.allowed) {
+    // (LIC-003) Fail-closed: solo confiamos en un objeto features no vacío. Una
+    // respuesta 'allowed' sin features es un error del portal y NO debe abrir premium.
+    const hasValidFeatures = data.features && typeof data.features === 'object' && Object.keys(data.features).length > 0
+    if (!hasValidFeatures) {
+      logger.warn('[Licencia] El servidor respondió allowed sin un objeto "features" válido: se aplican features mínimas (premium apagado).')
+    }
     cachedState = {
       allowed: true,
       enforced: true,
       plan: data.plan || null,
-      features: normalizeLicenseFeatures(data.features),
+      features: hasValidFeatures ? normalizeLicenseFeatures(data.features) : closedRemoteFeatures(),
       licenseToken: data.license_token || null,
       expiresAt: data.expires_at || null,
       verifiedAt: new Date().toISOString()

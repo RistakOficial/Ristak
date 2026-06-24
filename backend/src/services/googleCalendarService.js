@@ -521,7 +521,9 @@ async function deleteLocalAppointmentForCancelledGoogleEvent(event = {}) {
   for (const candidateId of [...new Set(candidateIds)]) {
     const existing = await localCalendarService.getLocalAppointment(candidateId).catch(() => null)
     if (existing?.id) {
-      await localCalendarService.deleteLocalAppointment(existing.id)
+      // (GCAL-001) Soft-cancel en vez de hard-delete: un evento cancelado en Google
+      // NO debe borrar la cita de Ristak (perdería contacto, notas y trazabilidad).
+      await localCalendarService.cancelLocalAppointment(existing.id)
       return true
     }
   }

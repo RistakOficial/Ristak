@@ -3630,6 +3630,18 @@ export async function processDueResumes() {
     const automations = await listPublishedAutomations()
 
     for (const row of rows) {
+      // (AUTO-003/CRON-004) Claim atómico antes de actuar: solo procesamos esta espera
+      // si la reclamamos nosotros (status pasa de 'waiting' a 'active'). Sin esto, dos
+      // ticks solapados o dos réplicas/deploy ejecutan la misma rama y duplican el
+      // WhatsApp/acción visible al contacto.
+      const claimed = await db.run(
+        `UPDATE automation_enrollments
+         SET status = 'active', resume_at = NULL
+         WHERE id = ? AND status = 'waiting'`,
+        [row.id]
+      )
+      if (Number(claimed?.changes || 0) === 0) continue
+
       const automation = automations.find((candidate) => candidate.id === row.automation_id)
       const enrollment = {
         id: row.id,
@@ -3688,6 +3700,7 @@ export async function processDueResumes() {
 }
 
 let schedulerStarted = false
+let schedulerTickRunning = false
 
 /** Arranca el tick del programador (idempotente) */
 export function startAutomationScheduler(intervalMs = 20000) {
@@ -3695,13 +3708,19 @@ export function startAutomationScheduler(intervalMs = 20000) {
   schedulerStarted = true
   setInterval(() => {
     if (isDeployShutdownStarted()) return
+    // (CRON) Guard anti-solape intra-proceso: si el tick anterior aún corre (una
+    // corrida tardó más que el intervalo), no encimamos otra ejecución.
+    if (schedulerTickRunning) return
+    schedulerTickRunning = true
     trackDeployDrainWork('cron:automation-scheduler', async () => {
       await Promise.all([
         processDueResumes(),
         processScheduledTriggers(),
         processScheduledContactEnrollments()
       ])
-    }).catch(() => undefined)
+    })
+      .catch(() => undefined)
+      .finally(() => { schedulerTickRunning = false })
   }, intervalMs)
   logger.info('⚙️ Motor de automatizaciones activo (tick cada 20s)')
 }
