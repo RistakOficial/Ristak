@@ -140,13 +140,15 @@ async function uploadInputFromRequest(req) {
   }
 
   if (req.file?.path) {
-    const buffer = await fs.readFile(req.file.path)
-    await fs.rm(req.file.path, { force: true }).catch(() => undefined)
+    // No leemos el archivo a memoria: pasamos la ruta temporal en disco para que
+    // el servicio transmita los archivos grandes/videos directo a Bunny (sin OOM).
+    // El servicio se encarga de borrar el temporal al terminar.
     return {
       mode: 'buffer',
       input: {
         ...common,
-        buffer,
+        filePath: req.file.path,
+        size: req.file.size,
         filename: req.file.originalname,
         mimeType: req.file.mimetype
       }

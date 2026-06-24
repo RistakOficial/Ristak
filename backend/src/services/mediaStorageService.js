@@ -33,6 +33,20 @@ const BUNNY_STREAM_TIMEOUT_MS = Math.max(
   10_000,
   Number(process.env.BUNNY_STREAM_TIMEOUT_MS || 120_000) || 120_000
 )
+// A partir de este tamaño (y SIEMPRE para video) la subida se transmite a Bunny
+// directo desde disco, sin cargar el archivo completo en RAM ni recomprimir con
+// ffmpeg. Esto evita los crashes/OOM (502) en instancias con poca memoria.
+const MEDIA_STREAMING_THRESHOLD_BYTES = Math.max(
+  4 * 1024 * 1024,
+  Number(process.env.MEDIA_STREAMING_THRESHOLD_BYTES || 48 * 1024 * 1024) || 48 * 1024 * 1024
+)
+const BUNNY_FILE_UPLOAD_BASE_TIMEOUT_MS = Math.max(
+  120_000,
+  Number(process.env.BUNNY_FILE_UPLOAD_TIMEOUT_MS || 0) || 0
+)
+const BUNNY_FILE_UPLOAD_MAX_TIMEOUT_MS = 30 * 60_000
+// Solo necesitamos los primeros bytes para detectar el tipo real del archivo.
+const MEDIA_HEADER_SAMPLE_BYTES = 64 * 1024
 
 let centralStorageConfigCache = {
   expiresAt: 0,
@@ -760,22 +774,35 @@ async function parseBunnyResponse(response) {
   }
 }
 
+function isReadableStream(value) {
+  return Boolean(value) && typeof value === 'object' && typeof value.pipe === 'function'
+}
+
+// Las subidas por streaming pueden tardar según el tamaño; damos un margen amplio
+// (proporcional al peso) para no abortar transferencias legítimas de archivos grandes.
+function bunnyFileUploadTimeoutMs(size = 0) {
+  const sizeAllowance = Math.ceil(numberValue(size) / (1024 * 1024)) * 3_000
+  return Math.min(BUNNY_FILE_UPLOAD_MAX_TIMEOUT_MS, Math.max(BUNNY_FILE_UPLOAD_BASE_TIMEOUT_MS, sizeAllowance))
+}
+
 async function bunnyStreamRequest(config, pathname, {
   method = 'GET',
   query = {},
   body,
   headers = {},
-  okStatuses = [200]
+  okStatuses = [200],
+  timeoutMs = BUNNY_STREAM_TIMEOUT_MS
 } = {}) {
+  const isRawBody = Buffer.isBuffer(body) || isReadableStream(body)
   const response = await fetch(bunnyStreamUrl(config, pathname, query), {
     method,
     headers: {
       AccessKey: config.bunnyStreamApiKey,
-      ...(body !== undefined && !(Buffer.isBuffer(body)) ? { 'Content-Type': 'application/json' } : {}),
+      ...(body !== undefined && !isRawBody ? { 'Content-Type': 'application/json' } : {}),
       ...headers
     },
-    body: body === undefined ? undefined : Buffer.isBuffer(body) ? body : JSON.stringify(body),
-    signal: AbortSignal.timeout(BUNNY_STREAM_TIMEOUT_MS)
+    body: body === undefined ? undefined : isRawBody ? body : JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs)
   })
   const payload = await parseBunnyResponse(response)
 
@@ -1039,7 +1066,24 @@ async function uploadBunnyStreamVideo(config, { videoId, buffer }) {
         'Content-Type': 'application/octet-stream',
         'Content-Length': String(buffer.length)
       },
-      body: buffer
+      body: buffer,
+      timeoutMs: bunnyFileUploadTimeoutMs(buffer.length)
+    }
+  )
+}
+
+async function uploadBunnyStreamVideoFromFile(config, { videoId, filePath, size }) {
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos/${encodeURIComponent(videoId)}`,
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(size)
+      },
+      body: createReadStream(filePath),
+      timeoutMs: bunnyFileUploadTimeoutMs(size)
     }
   )
 }
@@ -1100,6 +1144,8 @@ async function syncVideoToBunnyStream({
   publicUrl,
   mimeType,
   buffer,
+  filePath,
+  size,
   clientAccount
 }) {
   const account = normalizeClientAccountContext(clientAccount || { id: businessId })
@@ -1130,7 +1176,9 @@ async function syncVideoToBunnyStream({
     if (!videoId) {
       throw errorWithStatus('Bunny Stream creó el video pero no regresó un videoId usable.', 502, 'bunny_stream_video_missing')
     }
-    const uploadResult = await uploadBunnyStreamVideo(config, { videoId, buffer })
+    const uploadResult = cleanString(filePath)
+      ? await uploadBunnyStreamVideoFromFile(config, { videoId, filePath, size })
+      : await uploadBunnyStreamVideo(config, { videoId, buffer })
     const video = await getBunnyStreamVideo(config, videoId).catch((error) => {
       logger.warn(`[MediaStorage] Bunny Stream subió ${videoId}, pero no se pudo leer metadata inicial: ${error.message}`)
       return created
@@ -1199,6 +1247,12 @@ function scheduleDeferredBunnyStreamSync(syncInput) {
       .catch((error) => {
         logger.warn(`[MediaStorage] Bunny Stream sync diferida falló para ${syncInput.id}: ${error.message}`)
       })
+      .finally(() => {
+        const cleanupFilePath = cleanString(syncInput.cleanupFilePath)
+        if (cleanupFilePath) {
+          fs.rm(cleanupFilePath, { force: true }).catch(() => undefined)
+        }
+      })
   })
 }
 
@@ -1239,7 +1293,8 @@ async function uploadToBunny({ config, objectPath, buffer, mimeType }) {
       'Content-Type': mimeType || 'application/octet-stream',
       'Content-Length': String(buffer.length)
     },
-    body: buffer
+    body: buffer,
+    signal: AbortSignal.timeout(bunnyFileUploadTimeoutMs(buffer.length))
   })
 
   if (!response.ok) {
@@ -1248,6 +1303,40 @@ async function uploadToBunny({ config, objectPath, buffer, mimeType }) {
   }
 
   logger.info(`[MediaStorage] Subida a Bunny completada: ${objectPath}`)
+}
+
+// Sube el archivo a Bunny transmitiéndolo desde disco (sin cargarlo en RAM).
+async function uploadFileToBunny({ config, objectPath, filePath, size, mimeType }) {
+  logger.info(`[MediaStorage] Subida (streaming) a Bunny iniciada: ${objectPath} (${size} bytes)`)
+  const response = await fetch(bunnyObjectUrl(config, objectPath), {
+    method: 'PUT',
+    headers: {
+      AccessKey: config.bunnyStorageApiKey,
+      'Content-Type': mimeType || 'application/octet-stream',
+      'Content-Length': String(size)
+    },
+    body: createReadStream(filePath),
+    signal: AbortSignal.timeout(bunnyFileUploadTimeoutMs(size))
+  })
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw errorWithStatus(`Bunny rechazó la subida (${response.status}): ${detail.slice(0, 180) || response.statusText}`, 502, 'bunny_upload_failed')
+  }
+
+  logger.info(`[MediaStorage] Subida (streaming) a Bunny completada: ${objectPath}`)
+}
+
+// Lee solo los primeros bytes del archivo para detectar su tipo real sin cargarlo entero.
+async function readFileHeaderSample(filePath, bytes = MEDIA_HEADER_SAMPLE_BYTES) {
+  const handle = await fs.open(filePath, 'r')
+  try {
+    const buffer = Buffer.alloc(bytes)
+    const { bytesRead } = await handle.read(buffer, 0, bytes, 0)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    await handle.close().catch(() => undefined)
+  }
 }
 
 async function deleteFromBunny({ config, objectPath }) {
@@ -1514,6 +1603,13 @@ async function saveLocalFile({ objectPath, buffer }) {
   return localPath
 }
 
+async function saveLocalFileFromPath({ objectPath, filePath }) {
+  const localPath = join(LOCAL_MEDIA_ROOT, objectPath)
+  await fs.mkdir(dirname(localPath), { recursive: true })
+  await fs.copyFile(filePath, localPath)
+  return localPath
+}
+
 function sanitizeFolderSegment(value = '') {
   const clean = cleanString(value)
     .replace(/[/\\?%*:|"<>]/g, '-')
@@ -1581,63 +1677,277 @@ async function moveLocalFile(currentPath, nextObjectPath) {
 }
 
 export async function uploadMediaAsset(input = {}) {
-  const originalBuffer = Buffer.isBuffer(input.buffer)
-    ? input.buffer
-    : Buffer.from(input.buffer || '')
-  if (!originalBuffer.length) {
-    throw errorWithStatus('El archivo está vacío.', 400, 'empty_media')
+  const tempFilePath = cleanString(input.filePath)
+  const hasTempFile = Boolean(tempFilePath)
+  let tempFileHandedOff = false
+
+  try {
+    let originalBuffer = null
+    let sizeBytes = 0
+    let headerSample = null
+
+    if (hasTempFile) {
+      const stat = await fs.stat(tempFilePath).catch(() => null)
+      sizeBytes = numberValue(stat?.size)
+      if (!sizeBytes) {
+        throw errorWithStatus('El archivo está vacío.', 400, 'empty_media')
+      }
+      headerSample = await readFileHeaderSample(tempFilePath)
+    } else {
+      originalBuffer = Buffer.isBuffer(input.buffer)
+        ? input.buffer
+        : Buffer.from(input.buffer || '')
+      if (!originalBuffer.length) {
+        throw errorWithStatus('El archivo está vacío.', 400, 'empty_media')
+      }
+      sizeBytes = originalBuffer.length
+      headerSample = originalBuffer
+    }
+
+    const config = await getStorageRuntimeConfig()
+    if (!config.storageEnabled) {
+      throw errorWithStatus('El almacenamiento multimedia está deshabilitado.', 503, 'storage_disabled')
+    }
+
+    const originalFilename = sanitizeFilename(input.filename || input.originalFilename || 'archivo')
+    const businessId = normalizeBusinessId(input.businessId)
+    const clientAccount = await resolveClientAccountContext({ ...input, businessId })
+    const userId = input.userId ? String(input.userId) : null
+    const module = normalizeModule(input.module)
+    const moduleEntityId = input.moduleEntityId ? String(input.moduleEntityId) : null
+    const isPublic = input.isPublic !== undefined ? boolValue(input.isPublic) : true
+    const clientUploadId = normalizeClientUploadId(
+      input.clientUploadId ||
+      input.client_upload_id ||
+      input.uploadSessionId ||
+      input.upload_session_id ||
+      input.metadata?.clientUploadId ||
+      input.metadata?.client_upload_id
+    )
+
+    const existingAsset = await findMediaAssetByClientUploadId({ businessId, clientUploadId })
+    if (existingAsset) {
+      logger.info(`[MediaStorage] Reutilizando subida existente por clientUploadId: ${existingAsset.id}`)
+      return existingAsset
+    }
+
+    const detected = await detectMimeType(headerSample, input.mimeType || input.contentType || '', originalFilename)
+    const mediaType = mediaTypeFromMime(detected.mimeType)
+    validateMediaType({ mimeType: detected.mimeType, mediaType, sizeBytes, settings: config })
+
+    await assertQuotaAvailable({ businessId, quotaSize: sizeBytes, config })
+
+    // Video (siempre) y archivos grandes se transmiten directo a Bunny desde disco,
+    // sin cargarlos en RAM ni recomprimir con ffmpeg (Bunny Stream ya transcodifica
+    // el video). Esto elimina el OOM/502 en instancias con poca memoria.
+    const useStreaming = hasTempFile && (mediaType === 'video' || sizeBytes > MEDIA_STREAMING_THRESHOLD_BYTES)
+    if (useStreaming) {
+      const asset = await finalizeStreamingMediaUpload({
+        config,
+        input,
+        tempFilePath,
+        sizeBytes,
+        detected,
+        mediaType,
+        originalFilename,
+        businessId,
+        clientAccount,
+        userId,
+        module,
+        moduleEntityId,
+        isPublic,
+        clientUploadId,
+        onTempFileHandedOff: () => { tempFileHandedOff = true }
+      })
+      return asset
+    }
+
+    if (!originalBuffer) {
+      originalBuffer = await fs.readFile(tempFilePath)
+    }
+
+    const processed = await processMedia({
+      buffer: originalBuffer,
+      mimeType: detected.mimeType,
+      mediaType,
+      config,
+      skipCompression: boolValue(input.skipCompression)
+    })
+    const processedDetected = await detectMimeType(processed.buffer, processed.mimeType, originalFilename)
+    const finalMimeType = processedDetected.mimeType
+    const finalMediaType = mediaTypeFromMime(finalMimeType)
+    const extension = extensionForMime(finalMimeType, originalFilename)
+    const dimensions = await getImageMetadata(processed.buffer, finalMimeType)
+    const thumbnail = await createImageThumbnail(processed.buffer, finalMimeType)
+    const quotaSize = processed.buffer.length
+
+    await assertQuotaAvailable({ businessId, quotaSize, config })
+
+    const id = `media_${crypto.randomUUID()}`
+    const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
+    const objectPath = buildObjectPath({
+      businessId,
+      clientAccount,
+      mediaType: finalMediaType,
+      module,
+      id,
+      filename: originalFilename,
+      extension
+    })
+    const thumbnailPath = thumbnail ? buildObjectPath({
+      businessId,
+      clientAccount,
+      mediaType: finalMediaType,
+      module,
+      id,
+      filename: originalFilename,
+      extension: thumbnail.extension,
+      variant: 'thumb'
+    }) : ''
+
+    let storageProvider = 'local'
+    let publicUrl = buildAppPublicUrl(`/media/assets/${id}/file`)
+    let deferredStreamSync = null
+    const inputMetadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {}
+    const uploadMetadata = inputMetadata.upload && typeof inputMetadata.upload === 'object' ? inputMetadata.upload : {}
+    let metadata = {
+      ...inputMetadata,
+      ...(clientUploadId ? {
+        clientUploadId,
+        upload: {
+          ...uploadMetadata,
+          clientUploadId
+        }
+      } : {}),
+      mimeDetection: detected.source,
+      compression: processed.compression,
+      storageStatus: config.storageStatus,
+      clientAccount,
+      variants: {}
+    }
+
+    if (config.provider === 'bunny' && config.bunnyConfigured) {
+      await uploadToBunny({ config, objectPath, buffer: processed.buffer, mimeType: finalMimeType })
+      if (thumbnail) {
+        await uploadToBunny({ config, objectPath: thumbnailPath, buffer: thumbnail.buffer, mimeType: thumbnail.mimeType })
+        metadata.variants.thumbnail = {
+          path: thumbnailPath,
+          publicUrl: bunnyPublicUrl(config, thumbnailPath),
+          mimeType: thumbnail.mimeType,
+          sizeBytes: thumbnail.sizeBytes
+        }
+      }
+      storageProvider = 'bunny'
+      publicUrl = bunnyPublicUrl(config, objectPath)
+    } else {
+      if (config.provider === 'bunny' && config.requireBunny) {
+        throw errorWithStatus(`Bunny.net está activo pero falta configuración: ${config.missingEnvironment.join(', ')}`, 503, 'bunny_not_configured')
+      }
+      const localPath = await saveLocalFile({ objectPath, buffer: processed.buffer })
+      metadata.localPath = localPath
+      metadata.localFallback = true
+      if (thumbnail) {
+        const localThumbPath = await saveLocalFile({ objectPath: thumbnailPath, buffer: thumbnail.buffer })
+        metadata.variants.thumbnail = {
+          path: thumbnailPath,
+          localPath: localThumbPath,
+          mimeType: thumbnail.mimeType,
+          sizeBytes: thumbnail.sizeBytes
+        }
+      }
+      logger.warn(`[MediaStorage] Bunny no configurado; archivo guardado por fallback local: ${objectPath}`)
+    }
+
+    if (isBunnyStreamEligibleVideo({ mediaType: finalMediaType, module })) {
+      const streamSyncInput = {
+        config,
+        id,
+        businessId,
+        module,
+        moduleEntityId,
+        originalFilename,
+        objectPath,
+        publicUrl,
+        mimeType: finalMimeType,
+        buffer: processed.buffer,
+        clientAccount
+      }
+      if (boolValue(input.deferStreamSync) && config.bunnyStreamEnabled && config.bunnyStreamConfigured) {
+        metadata.stream = buildPendingBunnyStreamMetadata(config, streamSyncInput)
+        deferredStreamSync = streamSyncInput
+      } else {
+        metadata.stream = await syncVideoToBunnyStream(streamSyncInput)
+      }
+    }
+
+    const streamDimensions = dimensionsFromStreamMetadata(metadata.stream)
+
+    await insertMediaAsset({
+      id,
+      businessId,
+      userId,
+      originalFilename,
+      storedFilename,
+      bunnyPath: objectPath,
+      publicUrl,
+      privateUrl: isPublic ? null : publicUrl,
+      mimeType: finalMimeType,
+      mediaType: finalMediaType,
+      extension,
+      sizeOriginal: sizeBytes,
+      sizeProcessed: processed.buffer.length,
+      quotaSize,
+      width: streamDimensions.width || dimensions.width,
+      height: streamDimensions.height || dimensions.height,
+      duration: streamDimensions.duration || null,
+      status: 'ready',
+      storageProvider,
+      storageZone: storageProvider === 'bunny' ? config.bunnyStorageZone : null,
+      cdnBaseUrl: storageProvider === 'bunny' ? config.bunnyCdnBaseUrl : null,
+      module,
+      moduleEntityId,
+      isPublic,
+      metadata
+    })
+
+    await refreshQuotaUsage(businessId)
+    if (deferredStreamSync) {
+      scheduleDeferredBunnyStreamSync(deferredStreamSync)
+    }
+    logger.info(`[MediaStorage] Archivo listo: ${id} (${finalMediaType}, ${quotaSize} bytes)`)
+
+    return await getMediaAsset(id)
+  } finally {
+    if (hasTempFile && !tempFileHandedOff) {
+      await fs.rm(tempFilePath, { force: true }).catch(() => undefined)
+    }
   }
+}
 
-  const config = await getStorageRuntimeConfig()
-  if (!config.storageEnabled) {
-    throw errorWithStatus('El almacenamiento multimedia está deshabilitado.', 503, 'storage_disabled')
-  }
-
-  const originalFilename = sanitizeFilename(input.filename || input.originalFilename || 'archivo')
-  const businessId = normalizeBusinessId(input.businessId)
-  const clientAccount = await resolveClientAccountContext({ ...input, businessId })
-  const userId = input.userId ? String(input.userId) : null
-  const module = normalizeModule(input.module)
-  const moduleEntityId = input.moduleEntityId ? String(input.moduleEntityId) : null
-  const isPublic = input.isPublic !== undefined ? boolValue(input.isPublic) : true
-  const clientUploadId = normalizeClientUploadId(
-    input.clientUploadId ||
-    input.client_upload_id ||
-    input.uploadSessionId ||
-    input.upload_session_id ||
-    input.metadata?.clientUploadId ||
-    input.metadata?.client_upload_id
-  )
-
-  const existingAsset = await findMediaAssetByClientUploadId({ businessId, clientUploadId })
-  if (existingAsset) {
-    logger.info(`[MediaStorage] Reutilizando subida existente por clientUploadId: ${existingAsset.id}`)
-    return existingAsset
-  }
-
-  const detected = await detectMimeType(originalBuffer, input.mimeType || input.contentType || '', originalFilename)
-  const mediaType = mediaTypeFromMime(detected.mimeType)
-  validateMediaType({ mimeType: detected.mimeType, mediaType, sizeBytes: originalBuffer.length, settings: config })
-
-  await assertQuotaAvailable({ businessId, quotaSize: originalBuffer.length, config })
-
-  const processed = await processMedia({
-    buffer: originalBuffer,
-    mimeType: detected.mimeType,
-    mediaType,
-    config,
-    skipCompression: boolValue(input.skipCompression)
-  })
-  const processedDetected = await detectMimeType(processed.buffer, processed.mimeType, originalFilename)
-  const finalMimeType = processedDetected.mimeType
-  const finalMediaType = mediaTypeFromMime(finalMimeType)
+// Subida por streaming (video y archivos grandes): nunca carga el archivo completo
+// en RAM. Transmite el original a Bunny Storage desde disco y, si aplica, deja que
+// Bunny Stream transcodifique el video (sincronización diferida que reusa el mismo
+// temporal y lo borra al terminar).
+async function finalizeStreamingMediaUpload({
+  config,
+  input,
+  tempFilePath,
+  sizeBytes,
+  detected,
+  mediaType,
+  originalFilename,
+  businessId,
+  clientAccount,
+  userId,
+  module,
+  moduleEntityId,
+  isPublic,
+  clientUploadId,
+  onTempFileHandedOff
+}) {
+  const finalMimeType = detected.mimeType
+  const finalMediaType = mediaType
   const extension = extensionForMime(finalMimeType, originalFilename)
-  const dimensions = await getImageMetadata(processed.buffer, finalMimeType)
-  const thumbnail = await createImageThumbnail(processed.buffer, finalMimeType)
-  const quotaSize = processed.buffer.length
-
-  await assertQuotaAvailable({ businessId, quotaSize, config })
-
   const id = `media_${crypto.randomUUID()}`
   const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
   const objectPath = buildObjectPath({
@@ -1649,23 +1959,13 @@ export async function uploadMediaAsset(input = {}) {
     filename: originalFilename,
     extension
   })
-  const thumbnailPath = thumbnail ? buildObjectPath({
-    businessId,
-    clientAccount,
-    mediaType: finalMediaType,
-    module,
-    id,
-    filename: originalFilename,
-    extension: thumbnail.extension,
-    variant: 'thumb'
-  }) : ''
 
   let storageProvider = 'local'
   let publicUrl = buildAppPublicUrl(`/media/assets/${id}/file`)
   let deferredStreamSync = null
   const inputMetadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {}
   const uploadMetadata = inputMetadata.upload && typeof inputMetadata.upload === 'object' ? inputMetadata.upload : {}
-  let metadata = {
+  const metadata = {
     ...inputMetadata,
     ...(clientUploadId ? {
       clientUploadId,
@@ -1675,41 +1975,23 @@ export async function uploadMediaAsset(input = {}) {
       }
     } : {}),
     mimeDetection: detected.source,
-    compression: processed.compression,
+    compression: 'streamed',
     storageStatus: config.storageStatus,
     clientAccount,
     variants: {}
   }
 
   if (config.provider === 'bunny' && config.bunnyConfigured) {
-    await uploadToBunny({ config, objectPath, buffer: processed.buffer, mimeType: finalMimeType })
-    if (thumbnail) {
-      await uploadToBunny({ config, objectPath: thumbnailPath, buffer: thumbnail.buffer, mimeType: thumbnail.mimeType })
-      metadata.variants.thumbnail = {
-        path: thumbnailPath,
-        publicUrl: bunnyPublicUrl(config, thumbnailPath),
-        mimeType: thumbnail.mimeType,
-        sizeBytes: thumbnail.sizeBytes
-      }
-    }
+    await uploadFileToBunny({ config, objectPath, filePath: tempFilePath, size: sizeBytes, mimeType: finalMimeType })
     storageProvider = 'bunny'
     publicUrl = bunnyPublicUrl(config, objectPath)
   } else {
     if (config.provider === 'bunny' && config.requireBunny) {
       throw errorWithStatus(`Bunny.net está activo pero falta configuración: ${config.missingEnvironment.join(', ')}`, 503, 'bunny_not_configured')
     }
-    const localPath = await saveLocalFile({ objectPath, buffer: processed.buffer })
+    const localPath = await saveLocalFileFromPath({ objectPath, filePath: tempFilePath })
     metadata.localPath = localPath
     metadata.localFallback = true
-    if (thumbnail) {
-      const localThumbPath = await saveLocalFile({ objectPath: thumbnailPath, buffer: thumbnail.buffer })
-      metadata.variants.thumbnail = {
-        path: thumbnailPath,
-        localPath: localThumbPath,
-        mimeType: thumbnail.mimeType,
-        sizeBytes: thumbnail.sizeBytes
-      }
-    }
     logger.warn(`[MediaStorage] Bunny no configurado; archivo guardado por fallback local: ${objectPath}`)
   }
 
@@ -1724,12 +2006,17 @@ export async function uploadMediaAsset(input = {}) {
       objectPath,
       publicUrl,
       mimeType: finalMimeType,
-      buffer: processed.buffer,
+      filePath: tempFilePath,
+      size: sizeBytes,
       clientAccount
     }
     if (boolValue(input.deferStreamSync) && config.bunnyStreamEnabled && config.bunnyStreamConfigured) {
       metadata.stream = buildPendingBunnyStreamMetadata(config, streamSyncInput)
-      deferredStreamSync = streamSyncInput
+      // El temporal sobrevive a la respuesta para que la sync diferida lo transmita;
+      // se borra al terminar (ver scheduleDeferredBunnyStreamSync). El "handoff" se
+      // marca hasta justo antes de agendarla (tras el insert), para que si algo falla
+      // antes, el finally de uploadMediaAsset limpie el temporal y no se quede huérfano.
+      deferredStreamSync = { ...streamSyncInput, cleanupFilePath: tempFilePath }
     } else {
       metadata.stream = await syncVideoToBunnyStream(streamSyncInput)
     }
@@ -1749,11 +2036,11 @@ export async function uploadMediaAsset(input = {}) {
     mimeType: finalMimeType,
     mediaType: finalMediaType,
     extension,
-    sizeOriginal: originalBuffer.length,
-    sizeProcessed: processed.buffer.length,
-    quotaSize,
-    width: streamDimensions.width || dimensions.width,
-    height: streamDimensions.height || dimensions.height,
+    sizeOriginal: sizeBytes,
+    sizeProcessed: sizeBytes,
+    quotaSize: sizeBytes,
+    width: streamDimensions.width || null,
+    height: streamDimensions.height || null,
     duration: streamDimensions.duration || null,
     status: 'ready',
     storageProvider,
@@ -1766,12 +2053,17 @@ export async function uploadMediaAsset(input = {}) {
   })
 
   await refreshQuotaUsage(businessId)
+  // Leemos el asset ANTES de agendar la sync diferida: así, una vez que el temporal
+  // pasa a manos de la sync diferida, ya no queda ningún await que pueda tronar y
+  // disparar el catch del controlador (que borraría el temporal que aún se necesita).
+  const asset = await getMediaAsset(id)
   if (deferredStreamSync) {
+    onTempFileHandedOff?.()
     scheduleDeferredBunnyStreamSync(deferredStreamSync)
   }
-  logger.info(`[MediaStorage] Archivo listo: ${id} (${finalMediaType}, ${quotaSize} bytes)`)
+  logger.info(`[MediaStorage] Archivo listo (streaming): ${id} (${finalMediaType}, ${sizeBytes} bytes)`)
 
-  return await getMediaAsset(id)
+  return asset
 }
 
 export async function uploadMediaAssetFromDataUrl(input = {}) {
