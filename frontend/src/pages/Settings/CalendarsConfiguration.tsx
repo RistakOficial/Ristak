@@ -145,6 +145,16 @@ const CALENDAR_COLOR_PALETTE = [
 ]
 
 const CALENDAR_DEFAULT_COLOR = '#3b82f6'
+const CALENDAR_BACKGROUND_PALETTE = [
+  { label: 'Blanco', value: '#ffffff' },
+  { label: 'Niebla', value: '#f8fafc' },
+  { label: 'Arena', value: '#f5f0e8' },
+  { label: 'Gris', value: '#eef1f5' },
+  { label: 'Pizarra', value: '#1f2937' },
+  { label: 'Carbón', value: '#0f172a' },
+  { label: 'Marino', value: '#0b1f3a' },
+  { label: 'Negro', value: '#111827' }
+]
 const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
 const CALENDAR_DEFAULT_COMPLETION_MESSAGE = 'Listo. Tu cita quedó agendada.'
 const CALENDAR_DEFAULT_META_EVENT_NAME = 'Schedule'
@@ -166,17 +176,6 @@ const CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS: CalendarBookingDisplayColors = {
   fieldBorder: '#e5e7eb',
   buttonText: '#ffffff'
 }
-const CALENDAR_BOOKING_DISPLAY_COLOR_FIELDS: Array<{
-  key: keyof CalendarBookingDisplayColors
-  label: string
-}> = [
-  { key: 'accent', label: 'Acento' },
-  { key: 'background', label: 'Fondo' },
-  { key: 'surface', label: 'Superficie' },
-  { key: 'text', label: 'Texto' },
-  { key: 'muted', label: 'Texto secundario' },
-  { key: 'line', label: 'Líneas' }
-]
 const CALENDAR_PUBLIC_LAYOUT_OPTIONS: Array<{ value: CalendarBookingLayout; label: string }> = [
   { value: 'classic', label: 'Panel izquierdo y calendario' },
   { value: 'compact', label: 'Encabezado compacto' },
@@ -311,6 +310,89 @@ const normalizeCalendarDisplayColor = (
   return fallback
 }
 
+const parseHexColor = (value: unknown): { r: number; g: number; b: number } | null => {
+  const match = /^#?([0-9a-f]{6})$/i.exec(String(value || '').trim())
+  if (!match) return null
+  const int = parseInt(match[1], 16)
+  return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 }
+}
+
+const rgbToHex = ({ r, g, b }: { r: number; g: number; b: number }) => {
+  const channel = (value: number) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0')
+  return `#${channel(r)}${channel(g)}${channel(b)}`
+}
+
+const colorLuminance = (rgb: { r: number; g: number; b: number }) => {
+  const transform = (value: number) => {
+    const channel = value / 255
+    return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4)
+  }
+  return 0.2126 * transform(rgb.r) + 0.7152 * transform(rgb.g) + 0.0722 * transform(rgb.b)
+}
+
+const mixHexColors = (fromHex: string, toHex: string, ratio: number) => {
+  const from = parseHexColor(fromHex)
+  const to = parseHexColor(toHex)
+  if (!from || !to) return fromHex
+  return rgbToHex({
+    r: from.r + (to.r - from.r) * ratio,
+    g: from.g + (to.g - from.g) * ratio,
+    b: from.b + (to.b - from.b) * ratio
+  })
+}
+
+// Texto de la página según el fondo: elige el de mayor contraste real (claro u oscuro).
+const readableTextOn = (hex: string, darkText = '#111827', lightText = '#f8fafc') => {
+  const rgb = parseHexColor(hex)
+  if (!rgb) return darkText
+  const base = colorLuminance(rgb)
+  const contrast = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+  const darkRgb = parseHexColor(darkText)
+  const lightRgb = parseHexColor(lightText)
+  const darkContrast = contrast(base, darkRgb ? colorLuminance(darkRgb) : 0)
+  const lightContrast = contrast(base, lightRgb ? colorLuminance(lightRgb) : 1)
+  return darkContrast >= lightContrast ? darkText : lightText
+}
+
+// Texto sobre el acento (botones, día/horario seleccionado): los acentos de marca
+// conservan blanco; solo los claros (ámbar, lima, cian) usan texto oscuro.
+const onAccentText = (hex: string) => {
+  const rgb = parseHexColor(hex)
+  if (!rgb) return '#ffffff'
+  return colorLuminance(rgb) > 0.42 ? '#111827' : '#ffffff'
+}
+
+// Deriva los 14 colores del widget a partir de solo dos: acento + fondo.
+const deriveCalendarBookingPalette = (
+  accentInput: string,
+  backgroundInput: string
+): CalendarBookingDisplayColors => {
+  const accent = normalizeCalendarDisplayColor(accentInput, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.accent)
+  const background = normalizeCalendarDisplayColor(backgroundInput, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.background)
+  const text = readableTextOn(background, '#111827', '#f8fafc')
+  const isDark = text !== '#111827'
+  const muted = isDark ? mixHexColors(text, background, 0.42) : '#6b7280'
+  const surface = isDark ? mixHexColors(background, '#ffffff', 0.08) : '#ffffff'
+  const line = isDark ? mixHexColors(background, '#ffffff', 0.16) : '#e5e7eb'
+  const onAccent = onAccentText(accent)
+  return {
+    accent,
+    background,
+    surface,
+    text,
+    muted,
+    line,
+    controlBg: surface,
+    slotBg: surface,
+    slotText: accent,
+    selectedText: onAccent,
+    fieldBg: surface,
+    fieldText: text,
+    fieldBorder: line,
+    buttonText: onAccent
+  }
+}
+
 const normalizeCalendarBookingLayout = (value?: string | null): CalendarBookingLayout => (
   value === 'compact' || value === 'stacked' ? value : 'classic'
 )
@@ -421,17 +503,9 @@ const normalizeCalendarBookingDisplay = (
   const defaults = createDefaultCalendarBookingDisplay()
   const source = value || {}
   const sourceColors = (source.colors || {}) as Partial<CalendarBookingDisplayColors>
-  const colorDefaults = {
-    ...CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS,
-    accent: normalizeCalendarDisplayColor(fallbackAccent, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.accent),
-    slotText: normalizeCalendarDisplayColor(fallbackAccent, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.slotText)
-  }
-
-  const colors = (Object.keys(CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS) as Array<keyof CalendarBookingDisplayColors>)
-    .reduce((next, key) => ({
-      ...next,
-      [key]: normalizeCalendarDisplayColor(sourceColors[key], colorDefaults[key])
-    }), {} as CalendarBookingDisplayColors)
+  const accent = normalizeCalendarDisplayColor(fallbackAccent, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.accent)
+  const background = normalizeCalendarDisplayColor(sourceColors.background, CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS.background)
+  const colors = deriveCalendarBookingPalette(accent, background)
 
   return {
     showSidebar: source.showSidebar !== false,
@@ -1591,7 +1665,8 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarColorPicker = (
     value: string | undefined,
     onChange: (nextColor: string) => void,
-    compact = false
+    compact = false,
+    palette: ReadonlyArray<{ label: string; value: string }> = CALENDAR_COLOR_PALETTE
   ) => {
     const currentColor = normalizeCalendarColor(value)
     const inputValue = value || currentColor
@@ -1622,7 +1697,7 @@ export const CalendarsConfiguration: React.FC = () => {
         </div>
 
         <div className={pageStyles.calendarPalette} aria-label="Paleta de colores del calendario">
-          {CALENDAR_COLOR_PALETTE.map((color) => {
+          {palette.map((color) => {
             const selected = currentColor === color.value
             return (
               <button
@@ -3343,11 +3418,23 @@ export const CalendarsConfiguration: React.FC = () => {
                     </label>
 
                     <div className={pageStyles.editorField}>
-                      <span>Color del calendario</span>
+                      <span>Color principal</span>
+                      <small>Acento de fechas, día y horario seleccionado, botones y resaltados.</small>
                       {renderCalendarColorPicker(
                         selectedCalendar.eventColor,
                         (nextColor) => updateSelectedCalendar({ eventColor: nextColor }),
                         true
+                      )}
+                    </div>
+
+                    <div className={pageStyles.editorField}>
+                      <span>Color de fondo</span>
+                      <small>El texto se ajusta solo a claro u oscuro para mantener el contraste.</small>
+                      {renderCalendarColorPicker(
+                        bookingDisplayConfig.colors.background,
+                        (nextColor) => updateBookingDisplayColors({ background: nextColor }),
+                        true,
+                        CALENDAR_BACKGROUND_PALETTE
                       )}
                     </div>
 
@@ -3377,23 +3464,6 @@ export const CalendarsConfiguration: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
-                      <span>Colores públicos</span>
-                      <div className={pageStyles.publicColorGrid}>
-                        {CALENDAR_BOOKING_DISPLAY_COLOR_FIELDS.map(field => (
-                          <label className={pageStyles.publicColorField} key={field.key}>
-                            <span>{field.label}</span>
-                            <input
-                              type="color"
-                              value={bookingDisplayConfig.colors[field.key]}
-                              onChange={(event) => updateBookingDisplayColors({ [field.key]: event.target.value } as Partial<CalendarBookingDisplayColors>)}
-                              aria-label={`Color ${field.label}`}
-                            />
-                            <strong>{bookingDisplayConfig.colors[field.key].toUpperCase()}</strong>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
                   </div>
                 </section>
               )}

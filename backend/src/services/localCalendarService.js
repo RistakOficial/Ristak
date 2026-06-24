@@ -116,6 +116,91 @@ function safeCssNumber(value, fallback, min, max) {
   return Math.min(max, Math.max(min, parsed))
 }
 
+function parseHexColor(value) {
+  const match = /^#?([0-9a-f]{6})$/i.exec(cleanString(value))
+  if (!match) return null
+  const int = parseInt(match[1], 16)
+  return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 }
+}
+
+function rgbToHex({ r, g, b }) {
+  const channel = (value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0')
+  return `#${channel(r)}${channel(g)}${channel(b)}`
+}
+
+function colorLuminance(rgb) {
+  const transform = (value) => {
+    const channel = value / 255
+    return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4)
+  }
+  return 0.2126 * transform(rgb.r) + 0.7152 * transform(rgb.g) + 0.0722 * transform(rgb.b)
+}
+
+function mixHexColors(fromHex, toHex, ratio) {
+  const from = parseHexColor(fromHex)
+  const to = parseHexColor(toHex)
+  if (!from || !to) return fromHex
+  return rgbToHex({
+    r: from.r + (to.r - from.r) * ratio,
+    g: from.g + (to.g - from.g) * ratio,
+    b: from.b + (to.b - from.b) * ratio
+  })
+}
+
+// Elige el color de texto (oscuro o claro) que da mayor contraste sobre `hex`,
+// comparando la relación de contraste real WCAG en vez de un umbral fijo.
+function readableTextOn(hex, darkText = '#111827', lightText = '#ffffff') {
+  const rgb = parseHexColor(hex)
+  if (!rgb) return darkText
+  const base = colorLuminance(rgb)
+  const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+  const darkRgb = parseHexColor(darkText)
+  const lightRgb = parseHexColor(lightText)
+  const darkContrast = contrast(base, darkRgb ? colorLuminance(darkRgb) : 0)
+  const lightContrast = contrast(base, lightRgb ? colorLuminance(lightRgb) : 1)
+  return darkContrast >= lightContrast ? darkText : lightText
+}
+
+// Texto sobre el color de acento (botones, día/horario seleccionado). Los acentos
+// de marca (azul, rojo, violeta) conservan texto blanco; solo los acentos claros
+// (ámbar, verde, lima, cian) usan texto oscuro para mantener legibilidad.
+function onAccentText(hex) {
+  const rgb = parseHexColor(hex)
+  if (!rgb) return '#ffffff'
+  return colorLuminance(rgb) > 0.42 ? '#111827' : '#ffffff'
+}
+
+// Deriva la paleta completa del widget a partir de solo dos colores: el acento
+// (bolita seleccionada, fechas, horarios, botones) y el fondo. El resto de colores
+// (texto, superficie, líneas, campos) se calculan para mantener contraste y se
+// invierten automáticamente cuando el fondo es claro u oscuro.
+function deriveCalendarBookingPalette(accentInput, backgroundInput) {
+  const accent = safeCssColor(accentInput, DEFAULT_EVENT_COLOR)
+  const background = safeCssColor(backgroundInput, DEFAULT_CALENDAR_BOOKING_DISPLAY_COLORS.background)
+  const text = readableTextOn(background, '#111827', '#f8fafc')
+  const isDark = text !== '#111827'
+  const muted = isDark ? mixHexColors(text, background, 0.42) : '#6b7280'
+  const surface = isDark ? mixHexColors(background, '#ffffff', 0.08) : '#ffffff'
+  const line = isDark ? mixHexColors(background, '#ffffff', 0.16) : '#e5e7eb'
+  const onAccent = onAccentText(accent)
+  return {
+    accent,
+    background,
+    surface,
+    text,
+    muted,
+    line,
+    controlBg: surface,
+    slotBg: surface,
+    slotText: accent,
+    selectedText: onAccent,
+    fieldBg: surface,
+    fieldText: text,
+    fieldBorder: line,
+    buttonText: onAccent
+  }
+}
+
 function normalizeCalendarEmbedLayout(value) {
   const raw = cleanString(value).toLowerCase()
   return ['classic', 'compact', 'stacked'].includes(raw) ? raw : 'classic'
@@ -280,15 +365,10 @@ function normalizeCalendarBookingDisplayConfig(value = {}, fallback = {}) {
     fallback.accent || fallback.eventColor || fallback.event_color || source.eventColor || source.event_color,
     DEFAULT_EVENT_COLOR
   )
-  const colorFallbacks = {
-    ...DEFAULT_CALENDAR_BOOKING_DISPLAY_COLORS,
-    accent: fallbackAccent,
-    slotText: fallbackAccent
-  }
   const pickColor = (key, ...aliases) => safeCssColor(
     [colorSource[key], ...aliases.map(alias => colorSource[alias]), displaySource[key], ...aliases.map(alias => displaySource[alias])]
       .find(value => value !== undefined && value !== null && value !== ''),
-    colorFallbacks[key]
+    DEFAULT_CALENDAR_BOOKING_DISPLAY_COLORS[key]
   )
   const defaultTimezone = cleanString(
     displaySource.defaultTimezone ||
@@ -309,22 +389,10 @@ function normalizeCalendarBookingDisplayConfig(value = {}, fallback = {}) {
     fontFamily: normalizeCalendarBookingFontFamily(displaySource.fontFamily || displaySource.font_family),
     allowTimezoneSelection: parseBoolean(displaySource.allowTimezoneSelection ?? displaySource.allow_timezone_selection, true),
     defaultTimezone: defaultTimezone && isValidTimezone(defaultTimezone) ? defaultTimezone : '',
-    colors: {
-      accent: pickColor('accent', 'accentColor', 'accent_color'),
-      background: pickColor('background', 'backgroundColor', 'background_color'),
-      surface: pickColor('surface', 'surfaceColor', 'surface_color'),
-      text: pickColor('text', 'textColor', 'text_color'),
-      muted: pickColor('muted', 'mutedColor', 'muted_color'),
-      line: pickColor('line', 'lineColor', 'line_color'),
-      controlBg: pickColor('controlBg', 'control_bg', 'controlBackground', 'control_background'),
-      slotBg: pickColor('slotBg', 'slot_bg', 'slotBackground', 'slot_background'),
-      slotText: pickColor('slotText', 'slot_text'),
-      selectedText: pickColor('selectedText', 'selected_text'),
-      fieldBg: pickColor('fieldBg', 'field_bg', 'fieldBackground', 'field_background'),
-      fieldText: pickColor('fieldText', 'field_text'),
-      fieldBorder: pickColor('fieldBorder', 'field_border'),
-      buttonText: pickColor('buttonText', 'button_text')
-    }
+    colors: deriveCalendarBookingPalette(
+      fallbackAccent,
+      pickColor('background', 'backgroundColor', 'background_color')
+    )
   }
 }
 
