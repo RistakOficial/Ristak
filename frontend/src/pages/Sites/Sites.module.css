@@ -15291,6 +15291,83 @@
   white-space: nowrap;
 }
 
+.moveFolderModal {
+  display: grid;
+  gap: 16px;
+}
+
+.moveFolderHint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.moveFolderHint strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.moveFolderList {
+  display: grid;
+  gap: 4px;
+  max-height: min(48dvh, 340px);
+  overflow-y: auto;
+  margin: 0 -4px;
+  padding: 2px 4px;
+}
+
+.moveFolderOption {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.moveFolderOption:hover {
+  background: var(--surface-2);
+}
+
+.moveFolderOptionActive,
+.moveFolderOptionActive:hover {
+  border-color: var(--accent-soft);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.moveFolderOptionIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-mute);
+}
+
+.moveFolderOptionActive .moveFolderOptionIcon {
+  color: var(--accent);
+}
+
+.moveFolderOptionName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.moveFolderOptionCheck {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
 .librarySettingsLoading {
   min-height: 180px;
   display: inline-flex;

@@ -48,6 +48,7 @@ import {
   Filter,
   Flame,
   Folder,
+  FolderInput,
   FolderOpen,
   FolderPlus,
   FormInput,
@@ -22011,6 +22012,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   const [folderSaving, setFolderSaving] = useState(false)
   const [draggingSiteId, setDraggingSiteId] = useState('')
   const [dragOverFolderId, setDragOverFolderId] = useState('')
+  const [moveModalSite, setMoveModalSite] = useState<PublicSite | null>(null)
   const stopCardAction = (event: React.SyntheticEvent) => event.stopPropagation()
   const sectionFolders = useMemo<LibraryFolderDefinition[]>(() => {
     const customFolders = folders
@@ -22129,21 +22131,6 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     if (!site || getSiteLibraryFolderId(site) === folderId) return
     onMoveToFolder(site, folderId)
   }
-  const renderMoveItems = (site: PublicSite) => (
-    <>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onMoveToFolder(site, SITE_LIBRARY_ROOT_ID) }}>
-        <FolderOpen size={15} />
-        Sin carpeta
-      </DropdownMenuItem>
-      {sectionFolders.map(folder => (
-        <DropdownMenuItem key={folder.id} onSelect={(event) => { event.stopPropagation(); onMoveToFolder(site, folder.id) }}>
-          <Folder size={15} />
-          {folder.name}
-        </DropdownMenuItem>
-      ))}
-    </>
-  )
   const renderActionsMenu = (site: PublicSite, siteKindLabel: string, buttonClassName = styles.libraryCardMenuButton) => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -22198,7 +22185,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             Ver respuestas
           </DropdownMenuItem>
         )}
-        {renderMoveItems(site)}
+        <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); setMoveModalSite(site) }}>
+          <FolderInput size={15} />
+          Mover
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem className={styles.pageMenuDanger} onSelect={(event) => { event.stopPropagation(); onDelete(site) }}>
           <Trash2 size={15} />
@@ -22553,6 +22543,46 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             </div>
           </form>
         </div>
+      )}
+
+      {moveModalSite && (
+        <Modal
+          isOpen={!!moveModalSite}
+          onClose={() => setMoveModalSite(null)}
+          title="Mover a carpeta"
+          size="sm"
+        >
+          <div className={styles.moveFolderModal}>
+            <p className={styles.moveFolderHint}>
+              Elige dónde guardar <strong>{moveModalSite.name}</strong>.
+            </p>
+            <div className={styles.moveFolderList} role="listbox" aria-label="Carpetas disponibles">
+              {[{ id: SITE_LIBRARY_ROOT_ID, name: 'Sin carpeta' }, ...sectionFolders.map(folder => ({ id: folder.id, name: folder.name }))].map(option => {
+                const isCurrent = option.id === getSiteLibraryFolderId(moveModalSite)
+                const isRoot = option.id === SITE_LIBRARY_ROOT_ID
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="option"
+                    aria-selected={isCurrent}
+                    className={`${styles.moveFolderOption} ${isCurrent ? styles.moveFolderOptionActive : ''}`}
+                    onClick={() => {
+                      if (!isCurrent) onMoveToFolder(moveModalSite, option.id)
+                      setMoveModalSite(null)
+                    }}
+                  >
+                    <span className={styles.moveFolderOptionIcon}>
+                      {isRoot ? <FolderOpen size={17} /> : <Folder size={17} />}
+                    </span>
+                    <span className={styles.moveFolderOptionName}>{option.name}</span>
+                    {isCurrent && <Check size={16} className={styles.moveFolderOptionCheck} />}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </Modal>
       )}
     </section>
   )
