@@ -201,8 +201,17 @@ async function processConfirmationWindow(win) {
 
   // Clasificar la respuesta con el agente IA.
   const classification = await classifyConfirmationResponse({ accumulatedMessages: messages })
-  const result = classification?.result || 'ambiguous'
-  const resultDetail = classification?.reason || ''
+
+  // IMPORTANTE (NOTI-001): distinguir una FALLA TÉCNICA del clasificador
+  // (classification === null: sin API key de OpenAI, error de red, timeout o
+  // JSON inválido) de una clasificación real 'ambiguous'. Ante una falla técnica
+  // jamás tomamos una acción destructiva (cancelar la cita): el cliente pudo haber
+  // confirmado y un hipo de un tercero no debe borrar su cita.
+  const classifierFailed = !classification
+  const result = classifierFailed ? 'human_needed' : (classification.result || 'ambiguous')
+  const resultDetail = classifierFailed
+    ? 'Clasificador IA no disponible (sin API key, error o timeout): se requiere revisión humana; no se ejecutó ninguna acción destructiva.'
+    : (classification.reason || '')
 
   logger.info(`[Confirmación IA] Contacto ${contactId}, cita ${appointmentId}: ${result} (${resultDetail})`)
 
@@ -223,7 +232,16 @@ async function processConfirmationWindow(win) {
     logger.info(`[Confirmación IA] Cita ${appointmentId} confirmada automáticamente`)
   } else {
     // Para reschedule, cancel, ambiguous, human_needed → ejecutar la acción del recordatorio.
-    const noConfirmAction = String(reminderData?.no_confirm_action || 'no_action')
+    // EXCEPCIÓN de seguridad (NOTI-001): si el clasificador falló técnicamente, nunca
+    // ejecutamos una acción destructiva; degradamos 'cancel_appointment' a 'notify_push'
+    // para que un humano revise sin que se cancele la cita.
+    const configuredAction = String(reminderData?.no_confirm_action || 'no_action')
+    const noConfirmAction = classifierFailed && configuredAction === 'cancel_appointment'
+      ? 'notify_push'
+      : configuredAction
+    if (classifierFailed && configuredAction === 'cancel_appointment') {
+      logger.warn(`[Confirmación IA] Clasificador no disponible para cita ${appointmentId}: se OMITE la cancelación automática y se avisa para revisión humana.`)
+    }
     await executeNoConfirmAction({
       contactId,
       appointmentId,

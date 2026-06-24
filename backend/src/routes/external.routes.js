@@ -1086,20 +1086,49 @@ async function deleteDataRow(req, res) {
   }
 }
 
+// (SEC-001) Recursos de GoHighLevel de SOLO LECTURA permitidos por el proxy.
+// El proxy dejó de aceptar métodos de escritura y rutas arbitrarias: solo GET sobre
+// estos prefijos, solo para administradores, y cada llamada queda auditada en logs.
+const GHL_PROXY_READONLY_PREFIXES = [
+  '/contacts', '/conversations', '/calendars', '/opportunities', '/pipelines',
+  '/forms', '/campaigns', '/users', '/locations', '/businesses', '/custom-fields',
+  '/custom-values', '/tags', '/funnels', '/products', '/invoices', '/payments'
+]
+
+function isAllowedGhlReadPath(path) {
+  const base = String(path || '').split(/[?#]/)[0]
+  return GHL_PROXY_READONLY_PREFIXES.some(prefix => base === prefix || base.startsWith(`${prefix}/`))
+}
+
 async function proxyHighLevelRequest(req, res) {
   try {
+    // (SEC-001) Solo administradores pueden usar el proxy directo a GoHighLevel.
+    const actor = req.user?.email || req.user?.userId || 'desconocido'
+    if (req.user?.role !== 'admin') {
+      logger.warn(`[GHL proxy] Acceso denegado (no admin) user=${actor} path=${req.body?.path || ''}`)
+      return res.status(403).json({ success: false, code: 'admin_required', error: 'Solo un administrador puede usar el proxy de GoHighLevel.' })
+    }
+
+    // (SEC-001) Solo lectura: se fuerza GET y se rechaza cualquier método de escritura.
     const method = String(req.body.method || 'GET').toUpperCase()
-    const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
-    if (!allowedMethods.has(method)) {
-      return res.status(400).json({ success: false, error: 'Método no permitido' })
+    if (method !== 'GET') {
+      logger.warn(`[GHL proxy] Método de escritura rechazado user=${actor} method=${method} path=${req.body?.path || ''}`)
+      return res.status(403).json({ success: false, code: 'read_only', error: 'El proxy de GoHighLevel es de solo lectura: solo se permite GET.' })
     }
 
     const path = normalizeGhlApiPath(req.body.path)
+    if (!isAllowedGhlReadPath(path)) {
+      logger.warn(`[GHL proxy] Path fuera de allowlist user=${actor} path=${path}`)
+      return res.status(403).json({ success: false, code: 'path_not_allowed', error: 'Ese recurso de GoHighLevel no está permitido por el proxy de solo lectura.' })
+    }
+
+    // (SEC-001) Auditoría: quién, qué método y qué ruta.
+    logger.info(`[GHL proxy] AUDIT user=${actor} ${method} ${path}`)
+
     const ghlClient = await getGHLClient()
     const data = await ghlClient.request(path, {
       method,
       params: req.body.params || undefined,
-      body: req.body.body || undefined,
       version: req.body.version || undefined
     })
 
@@ -1109,7 +1138,7 @@ async function proxyHighLevelRequest(req, res) {
       sync: {
         provider: 'highlevel',
         status: 'proxied',
-        note: 'La petición se ejecutó directo contra GoHighLevel. El espejo local se actualizará por webhooks/sync cuando aplique.'
+        note: 'Solo lectura. La petición se ejecutó directo contra GoHighLevel (GET).'
       }
     })
   } catch (error) {
