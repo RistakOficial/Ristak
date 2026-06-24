@@ -1338,9 +1338,14 @@ function formatMessageDate(value?: string | null) {
   const sameDay = date.toDateString() === now.toDateString()
   if (sameDay) return formatMessageTime(value)
 
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return 'Ayer'
+
   return new Intl.DateTimeFormat('es-MX', {
     day: '2-digit',
-    month: 'short'
+    month: 'short',
+    ...(date.getFullYear() !== now.getFullYear() ? { year: '2-digit' } : {})
   }).format(date).replace('.', '')
 }
 

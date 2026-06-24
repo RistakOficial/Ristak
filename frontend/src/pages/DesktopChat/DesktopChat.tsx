@@ -1264,9 +1264,14 @@ function formatMessageDate(value?: string | null) {
   const now = new Date()
   if (date.toDateString() === now.toDateString()) return formatMessageTime(value)
 
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return 'Ayer'
+
   return new Intl.DateTimeFormat('es-MX', {
     day: '2-digit',
-    month: 'short'
+    month: 'short',
+    ...(date.getFullYear() !== now.getFullYear() ? { year: '2-digit' } : {})
   }).format(date).replace('.', '')
 }
 
@@ -5872,7 +5877,7 @@ export const DesktopChat: React.FC = () => {
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
-                          <small>{contact.lastMessageDate ? formatMessageTime(contact.lastMessageDate) : ''}</small>
+                          <small>{contact.lastMessageDate ? formatMessageDate(contact.lastMessageDate) : ''}</small>
                         </span>
                         <span className={styles.chatPreviewLine}>
                           <span className={styles.agentPriorityText}>
@@ -5930,7 +5935,7 @@ export const DesktopChat: React.FC = () => {
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
-                          <small>{contact.lastMessageDate ? formatMessageTime(contact.lastMessageDate) : ''}</small>
+                          <small>{contact.lastMessageDate ? formatMessageDate(contact.lastMessageDate) : ''}</small>
                         </span>
                         <span className={styles.chatPreviewLine}>
                           {agentStatusLabel ? <span className={styles.agentInboxStatusText}>{agentStatusLabel}</span> : null}
