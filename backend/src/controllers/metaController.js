@@ -978,11 +978,20 @@ function renderMetaPixelTestPageHtml({ pixelId, eventName, method, hasServer, to
         }
       } catch (e) {}
 
-      var img = new Image();
-      img.onload = function(){ markBrowser(true, 'Pixel ' + CFG.pixelId + ' cargado y evento "' + CFG.eventName + '" enviado a Meta desde el navegador.'); };
-      img.onerror = function(){ markBrowser(false, 'No se pudo alcanzar facebook.com/tr (probable bloqueador de anuncios o red).'); };
-      img.src = 'https://www.facebook.com/tr?id=' + encodeURIComponent(CFG.pixelId) + '&ev=' + encodeURIComponent(CFG.eventName) + '&eid=' + encodeURIComponent(eventId) + '&noscript=1&rdt=' + Date.now();
-      setTimeout(function(){ if(!browserDone){ var loaded = !!(window.fbq && window.fbq.loaded); markBrowser(loaded, loaded ? 'Pixel cargado y evento disparado (sin confirmación de red).' : 'El script del pixel no cargó (probable bloqueador de anuncios).'); } }, 4500);
+      // Señal fiable de que fbevents.js cargó de verdad: la librería real define
+      // fbq.callMethod (el stub NO). fbq.loaded lo pone el stub al instante, así
+      // que no sirve. Si nunca aparece, es un bloqueador de anuncios.
+      var browserTries = 0;
+      var browserPoll = setInterval(function(){
+        browserTries++;
+        if (window.fbq && typeof window.fbq.callMethod === 'function') {
+          clearInterval(browserPoll);
+          markBrowser(true, 'Pixel ' + CFG.pixelId + ' cargado y evento "' + CFG.eventName + '" enviado a Meta desde el navegador.');
+        } else if (browserTries >= 16) {
+          clearInterval(browserPoll);
+          markBrowser(false, 'El script del pixel no cargó (lo bloqueó el navegador o una extensión). Prueba en incógnito o sin ad-blocker.');
+        }
+      }, 400);
 
       if (!CFG.hasServer) {
         serverDone = true; serverOk = false;
