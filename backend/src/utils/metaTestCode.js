@@ -19,9 +19,14 @@ const trim = (value) => String(value ?? '').trim()
 export async function getActiveMetaTestEventCode() {
   const stored = trim(await getAppConfig(META_TEST_CODE_KEY).catch(() => ''))
   if (stored) {
-    const setAt = Number(await getAppConfig(META_TEST_CODE_SET_AT_KEY).catch(() => 0)) || 0
-    // Sin timestamp (código legacy) lo tratamos como activo; con timestamp, expira a los 30 min.
-    if (!setAt || Date.now() - setAt <= META_TEST_CODE_TTL_MS) {
+    let setAt = Number(await getAppConfig(META_TEST_CODE_SET_AT_KEY).catch(() => 0)) || 0
+    // Código legacy sin timestamp: arrancamos el reloj de 30 min ahora, así nunca
+    // queda encendido para siempre (se garantiza expiración ≤30 min desde el primer uso).
+    if (!setAt) {
+      setAt = Date.now()
+      await setAppConfig(META_TEST_CODE_SET_AT_KEY, String(setAt)).catch(() => {})
+    }
+    if (Date.now() - setAt <= META_TEST_CODE_TTL_MS) {
       return stored
     }
     await setAppConfig(META_TEST_CODE_KEY, '').catch(() => {})

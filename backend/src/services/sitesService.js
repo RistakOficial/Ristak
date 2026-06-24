@@ -18751,11 +18751,12 @@ function buildMetaPixelBaseScript(pixelId) {
   <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
 }
 
-async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
+async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, preview = false) {
   const empty = { head: '', body: '' }
   // Con un código de Test Events activo forzamos el pixel aunque la página esté en
   // anti-tracking, para poder verificar en vivo (el modo test expira solo a los 30 min).
-  const testMode = await isMetaTestModeActive()
+  // Nunca en el preview del editor: ahí no debe dispararse ningún evento real.
+  const testMode = !preview && await isMetaTestModeActive()
   if ((!trackingEnabled && !testMode) || !site.metaCapiEnabled) return empty
 
   const metaConfig = await getMetaConfig().catch(error => {
@@ -19485,13 +19486,13 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
   </script>`
 }
 
-async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageId = DEFAULT_FUNNEL_PAGE_ID, pageTitle = '' } = {}) {
+async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageId = DEFAULT_FUNNEL_PAGE_ID, pageTitle = '', preview = false } = {}) {
   const activePageId = cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID
   const activePage = getSitePage(site, activePageId) || { id: activePageId, title: pageTitle || site.title || site.name }
   const metaPixel = await buildMetaPixelSnippet(site, trackingEnabled, {
     ...activePage,
     title: activePage.title || pageTitle || site.title || site.name
-  })
+  }, preview)
   const nativeTrackingScript = trackingEnabled
     ? buildNativeSiteTrackingScript({
       siteId: site.id,
@@ -19945,7 +19946,8 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled: trackingEnabled && !preview,
     pageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
-    pageTitle: activePage?.title || site.title || site.name
+    pageTitle: activePage?.title || site.title || site.name,
+    preview
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     annotateImportedEditableHtml(html),
@@ -20282,7 +20284,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
   const paramPreservationScript = preview ? '' : buildParamPreservationScript()
-  const metaPixel = await buildMetaPixelSnippet(site, trackingEnabled, activePage)
+  const metaPixel = await buildMetaPixelSnippet(site, trackingEnabled, activePage, preview)
   const headerTrackingCode = trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
   const popupHtml = renderSitePopup(site, {
     popupBlocks,
@@ -23771,8 +23773,8 @@ export async function createMetaPageEventFromRequest(req, body = {}, options = {
   site.domain = domainResolution.domain || host
 
   // Modo test (código de Test Events activo) fuerza el evento aunque la página
-  // esté en anti-tracking, para poder verificarlo en vivo.
-  if (shouldSkipTracking({ req, body, previewContext }) && !(await isMetaTestModeActive())) {
+  // esté en anti-tracking en vivo, pero NUNCA en el preview del editor.
+  if (shouldSkipTracking({ req, body, previewContext }) && (Boolean(previewContext) || !(await isMetaTestModeActive()))) {
     return { sent: false, reason: NO_TRACK_REASON }
   }
 

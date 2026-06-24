@@ -302,7 +302,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [messengerMessagingEnabled, setMessengerMessagingEnabled, savingMessengerMessaging] = useAppConfig('meta_messenger_messaging_enabled', false)
   const [instagramMessagingEnabled, setInstagramMessagingEnabled, savingInstagramMessaging] = useAppConfig('meta_instagram_messaging_enabled', false)
   const [metaTestEventCode, setMetaTestEventCode, savingMetaTestEventCode] = useAppConfig('meta_test_event_code', '')
-  const [metaTestEventCodeSetAt] = useAppConfig('meta_test_event_code_set_at', '')
+  const [metaTestEventCodeSetAt, setMetaTestEventCodeSetAt] = useAppConfig('meta_test_event_code_set_at', '')
 
   // El código de Test Events se auto-desactiva 30 min después de ponerse, para que
   // al lanzar publicidad no queden conversiones reales atrapadas en modo prueba.
@@ -1143,6 +1143,9 @@ export const MetaAdsIntegration: React.FC = () => {
 
     try {
       await setMetaTestEventCode(nextCode)
+      // Reflejar el inicio del temporizador de 30 min de inmediato (el backend
+      // también lo estampa al guardar).
+      void setMetaTestEventCodeSetAt(String(Date.now()))
       setMetaTestDraftCode(nextCode)
       showToast('success', 'Código guardado', 'Los eventos CAPI usarán este código de prueba')
       return true
@@ -1155,6 +1158,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const handleClearMetaTestEventCode = async () => {
     try {
       await setMetaTestEventCode('')
+      void setMetaTestEventCodeSetAt('')
       setMetaTestDraftCode('')
       setMetaTestResult(null)
       showToast('success', 'Código limpiado', 'Los eventos CAPI vuelven a tráfico real')

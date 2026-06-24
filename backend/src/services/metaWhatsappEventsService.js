@@ -14,7 +14,6 @@ const CONFIG_KEYS = {
   scheduleEventName: 'meta_whatsapp_schedule_event_name',
   purchaseEventName: 'meta_whatsapp_purchase_event_name',
   paymentPurchaseEventConfig: 'meta_payment_purchase_event_config',
-  testEventCode: 'meta_test_event_code',
   whatsappBusinessAccountId: 'meta_whatsapp_business_account_id'
 }
 
