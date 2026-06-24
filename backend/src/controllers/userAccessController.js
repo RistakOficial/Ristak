@@ -8,6 +8,7 @@ import {
   serializeAccessConfig
 } from '../utils/userAccess.js'
 import { logger } from '../utils/logger.js'
+import { requestPortalUserRefresh } from '../services/licenseService.js'
 
 function cleanText(value, maxLength = 160) {
   if (value === undefined || value === null) return ''
@@ -215,6 +216,10 @@ export async function createUser(req, res) {
 
     const createdMember = await fetchMemberById(userId)
 
+    // Refresca el directorio del portal para que el login móvil enrute a este
+    // usuario (best-effort, no bloquea la respuesta).
+    requestPortalUserRefresh()
+
     logger.success(`Usuario interno creado: ${username}`)
 
     res.status(201).json({
@@ -291,6 +296,9 @@ export async function updateUser(req, res) {
 
     const updatedMember = await fetchMemberById(targetId)
 
+    // El correo o el estado pudieron cambiar: refresca el directorio del portal.
+    requestPortalUserRefresh()
+
     res.json({
       success: true,
       user: serializeMember(updatedMember)
@@ -329,6 +337,9 @@ export async function deleteUser(req, res) {
       'UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [targetId]
     )
+
+    // Quitar el acceso debe sacarlo también del directorio del portal.
+    requestPortalUserRefresh()
 
     res.json({
       success: true,

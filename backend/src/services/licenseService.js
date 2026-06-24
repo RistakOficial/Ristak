@@ -200,6 +200,21 @@ async function callLicenseServer(path, body = {}) {
   return data || {}
 }
 
+/**
+ * Avisa al portal central que los usuarios de esta instalación cambiaron, para
+ * que vuelva a leerlos y el login móvil pueda enrutar a cualquier usuario
+ * (dueño o empleado) por su correo. No es crítico: si falla, no rompe la
+ * operación que lo disparó (se hace best-effort).
+ */
+export async function requestPortalUserRefresh() {
+  if (!isLicenseEnforced()) return
+  try {
+    await callLicenseServer('/api/license/users/refresh', {})
+  } catch (error) {
+    logger.warn(`No se pudo refrescar el directorio de usuarios en el portal: ${error.message}`)
+  }
+}
+
 export function getHealthInfo() {
   const config = getConfig()
   return {

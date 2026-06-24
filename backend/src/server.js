@@ -70,7 +70,7 @@ import pushRoutes from './routes/push.routes.js'
 import licenseRoutes from './routes/license.routes.js'
 import chatEventsRoutes from './routes/chatEvents.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
-import { getHealthInfo } from './services/licenseService.js'
+import { getHealthInfo, requestPortalUserRefresh } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
 import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
 import { repairStoredYCloudHistoryMessageDirections } from './services/whatsappApiService.js'
@@ -300,6 +300,10 @@ async function startRuntimeServices() {
 
   // Verificar si existe usuario; si no, la app muestra /setup para crear el primero.
   await initializeDefaultUser()
+
+  // Publica el directorio de usuarios al portal para que el login móvil pueda
+  // enrutar a dueño y empleados por su correo (best-effort, no bloquea el boot).
+  requestPortalUserRefresh()
 
   // Inicializar versión de Meta API desde BD
   await initializeVersion()

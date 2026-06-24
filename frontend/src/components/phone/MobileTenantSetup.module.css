@@ -24,6 +24,20 @@
   gap: 16px;
 }
 
+.header {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.formTitle {
+  margin: 0;
+  color: rgba(248, 250, 252, 0.78);
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .logo {
   height: 42px;
   width: auto;
@@ -62,6 +76,15 @@
   font-size: clamp(34px, 12vw, 52px);
   line-height: 0.95;
   letter-spacing: 0;
+}
+
+.heading {
+  margin: 0;
+  color: #fff;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
 }
 
 .subtitle,
