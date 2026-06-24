@@ -151,6 +151,10 @@ const CHAT_LIST_PAGE_SIZE = 30
 // Mínimo para prefetch del siguiente lote. El disparo real usa ~1.5 pantallas (ver
 // loadMoreChatsIfNeeded) para que el lote llegue antes de tocar el fondo.
 const CHAT_LIST_AUTO_LOAD_GAP_PX = 320
+// Cargamos el historial COMPLETO en segundo plano (no bloqueante) hasta este tope: la primera
+// página pinta al instante y el resto se trae solo, lote por lote, para que aparezcan TODAS las
+// conversaciones sin depender del scroll. Pasado el tope, el resto se carga con prefetch.
+const CHAT_LIST_BACKGROUND_LOAD_CAP = 500
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -5774,11 +5778,17 @@ export const PhoneChat: React.FC = () => {
 
   useEffect(() => {
     if (accessState !== 'allowed' || chats.length === 0) return
+    if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
     const list = chatListRef.current
-    if (!list || chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
-    // Tras cada cambio de la lista (incluida la carga inicial), si no llena la pantalla O el
-    // usuario ya está cerca del fondo, traemos el siguiente lote sin esperar a que vuelva a
-    // hacer scroll. Evita el caso "scrolleé hasta abajo y se quedó esperando".
+    if (!list) return
+    // Hasta el tope, cargamos el historial completo en segundo plano: cada lote que llega
+    // dispara el siguiente automáticamente (sin requerir scroll), para que aparezcan TODAS las
+    // conversaciones, no solo las más recientes.
+    if (chats.length < CHAT_LIST_BACKGROUND_LOAD_CAP) {
+      void loadChats({ silent: true, append: true, useCache: false })
+      return
+    }
+    // Pasado el tope, volvemos al prefetch por scroll.
     const prefetchDistance = Math.max(CHAT_LIST_AUTO_LOAD_GAP_PX, list.clientHeight * 1.5)
     const bottomGap = list.scrollHeight - list.scrollTop - list.clientHeight
     if (list.scrollHeight <= list.clientHeight + CHAT_LIST_AUTO_LOAD_GAP_PX || bottomGap <= prefetchDistance) {
