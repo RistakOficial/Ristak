@@ -1350,16 +1350,17 @@ export const Appointments: React.FC = () => {
     const dayColumn = e.currentTarget;
     const { hour, minute } = calculateTimeFromPosition(e, dayColumn);
 
-    const startTime = new Date(date);
-    startTime.setHours(hour, minute, 0, 0);
-
-    const endTime = new Date(startTime);
-    endTime.setHours(hour, minute + 60, 0, 0); // 1 hora de duración
+    // Construimos la hora-pared en la zona de la cuenta (igual que buildCreateDefaultTimes),
+    // no en la del navegador. Así la hora que el usuario tocó se conserva exacta al releerla
+    // en el modal, y no se corre (ni cambia de día) cuando el navegador está en otra zona.
+    const localWall = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute, 0, 0);
+    const startUTC = convertLocalToUTC(localWall, timezone);
+    const endUTC = new Date(startUTC.getTime() + 60 * 60 * 1000); // 1 hora de duración
 
     setCreateDefaults({
-      start: startTime.toISOString(),
-      end: endTime.toISOString(),
-      timeZone: selectedCalendar?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      start: startUTC.toISOString(),
+      end: endUTC.toISOString(),
+      timeZone: timezone,
       title: selectedCalendar?.eventTitle || ''
     });
     setCreateScheduleMode('custom'); // Doble click en hora usa modo personalizado

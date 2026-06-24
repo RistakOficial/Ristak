@@ -1366,14 +1366,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // (redondeadas al siguiente múltiplo de 5 minutos); el usuario solo ajusta lo que necesite.
   useEffect(() => {
     if (!isOpen || !isCreateMode || !isPhoneSurface || scheduleMode !== 'custom') return;
-    if (formData.startTime) return;
+    // Si ya hay una hora puesta O se abrió con una fecha preseleccionada (doble clic / arrastre
+    // en el calendario), NO inyectamos "ahora": respetamos la fecha y hora que eligió el usuario.
+    if (formData.startTime || defaultStart) return;
     const now = new Date();
     now.setMinutes(Math.ceil(now.getMinutes() / 5) * 5, 0, 0);
     const datePart = `${now.getFullYear()}-${padTwo(now.getMonth() + 1)}-${padTwo(now.getDate())}`;
     const timePart = `${padTwo(now.getHours())}:${padTwo(now.getMinutes())}`;
     applyCustomSchedule(datePart, timePart, effectiveDuration);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, isCreateMode, isPhoneSurface, scheduleMode, formData.startTime]);
+  }, [isOpen, isCreateMode, isPhoneSurface, scheduleMode, formData.startTime, defaultStart]);
 
   const handleTimeZoneChange = (newZone: string) => {
     setFormData((prev) => {

@@ -313,6 +313,9 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   const timelineScrollRef = useRef<HTMLElement | null>(null)
   const handledOpenAppointmentRef = useRef<string | null>(null)
   const calendarTouchStartRef = useRef<{ x: number; y: number } | null>(null)
+  // Para distinguir un swipe horizontal (cambiar de día) del arrastre vertical que selecciona hora
+  const timelinePointerStartRef = useRef<{ x: number; y: number } | null>(null)
+  const timelineSwipeAbortRef = useRef(false)
   const closeSheetViewNow = useCallback(() => setSheetView(null), [])
   const calendarSheetDismiss = useBottomSheetDismiss({
     isOpen: Boolean(sheetView),
@@ -943,6 +946,8 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     }
 
     const minutes = getTimelineMinutesFromPointer(event)
+    timelinePointerStartRef.current = { x: event.clientX, y: event.clientY }
+    timelineSwipeAbortRef.current = false
     event.currentTarget.setPointerCapture(event.pointerId)
     event.preventDefault()
     setTimelineSelection({
@@ -954,6 +959,25 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
   const handleTimelinePointerMove = (date: Date) => (event: React.PointerEvent<HTMLElement>) => {
     if (!timelineSelection || timelineSelection.pointerId !== event.pointerId) return
+    if (timelineSwipeAbortRef.current) return
+
+    // Si el dedo se mueve más en horizontal que en vertical, es un swipe para cambiar de día:
+    // abortamos la selección de hora para no crear una cita fantasma. El cambio de día lo hace
+    // el gesto táctil del contenedor (handleCalendarTouchEnd -> movePeriod).
+    const startPoint = timelinePointerStartRef.current
+    if (startPoint) {
+      const dx = event.clientX - startPoint.x
+      const dy = event.clientY - startPoint.y
+      if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
+        timelineSwipeAbortRef.current = true
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId)
+        }
+        setTimelineSelection(null)
+        return
+      }
+    }
+
     const minutes = getTimelineMinutesFromPointer(event)
     setTimelineSelection((current) => current ? {
       ...current,
@@ -974,11 +998,24 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   }, [openCreateAppointmentRange, timelineSelection])
 
   const handleTimelinePointerUp = (event: React.PointerEvent<HTMLElement>) => {
-    if (!timelineSelection || timelineSelection.pointerId !== event.pointerId) return
+    timelinePointerStartRef.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
+    // Swipe horizontal: no abrimos el modal de crear; el día ya cambió con el gesto táctil.
+    if (timelineSwipeAbortRef.current) {
+      timelineSwipeAbortRef.current = false
+      setTimelineSelection(null)
+      return
+    }
+    if (!timelineSelection || timelineSelection.pointerId !== event.pointerId) return
     finishTimelineSelection()
+  }
+
+  const handleTimelinePointerCancel = () => {
+    timelinePointerStartRef.current = null
+    timelineSwipeAbortRef.current = false
+    setTimelineSelection(null)
   }
 
   const renderTimelineSelectionOverlay = (date: Date) => {
@@ -1587,7 +1624,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	                          onPointerDown={handleTimelinePointerDown(date)}
 	                          onPointerMove={handleTimelinePointerMove(date)}
 	                          onPointerUp={handleTimelinePointerUp}
-	                          onPointerCancel={() => setTimelineSelection(null)}
+	                          onPointerCancel={handleTimelinePointerCancel}
 	                        >
 	                          {timelineHours.map((hour) => <span key={hour} />)}
 	                          {renderTimelineSelectionOverlay(date)}
@@ -1633,7 +1670,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	                    onPointerDown={handleTimelinePointerDown(selectedDate)}
 	                    onPointerMove={handleTimelinePointerMove(selectedDate)}
 	                    onPointerUp={handleTimelinePointerUp}
-	                    onPointerCancel={() => setTimelineSelection(null)}
+	                    onPointerCancel={handleTimelinePointerCancel}
 	                  >
 	                    {timelineHours.map((hour) => <span key={hour} />)}
 	                    {renderTimelineSelectionOverlay(selectedDate)}
