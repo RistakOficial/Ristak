@@ -1825,6 +1825,13 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     .message.ok{color:var(--ok)}
     .message.preview{color:var(--muted)}
     .loading{opacity:.62;pointer-events:none}
+    .successPane{display:none;grid-column:1 / -1;min-height:420px;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:clamp(36px,6vw,80px) clamp(24px,4vw,48px)}
+    .shell.bookingDone{grid-template-columns:1fr}
+    .shell.bookingDone .intro,.shell.bookingDone .calendarPane,.shell.bookingDone .timesPane{display:none}
+    .shell.bookingDone .successPane{display:flex}
+    .successCard{max-width:480px;display:flex;flex-direction:column;align-items:center;gap:18px}
+    .successCard .successIcon{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+    .successCard .successMessage{margin:0;font-size:1.22rem;line-height:1.55;font-weight:600;color:var(--heading);white-space:pre-line}
     @media (max-width:1020px){.shell,.shell.dateSelected,.shell.bookingActive{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}.shell.bookingActive .timesPane{border-left:0;max-width:none}}
     @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell,.shell.dateSelected,.shell.bookingActive,.shell.noIntro,.shell.noIntro.dateSelected,.shell.noIntro.bookingActive{grid-template-columns:1fr;min-height:0;border-radius:14px}.shell.dateSelected .intro,.shell.dateSelected .calendarPane,.shell.bookingActive .intro,.shell.bookingActive .calendarPane{display:none}.shell.dateSelected .timesPane,.shell.bookingActive .timesPane{grid-column:auto;border-top:0}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
   </style>
@@ -1872,6 +1879,15 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           <div class="slotEmpty">Elige un día con disponibilidad.</div>
         </div>
         ${renderCalendarBookingForm(payload.bookingForm)}
+      </section>
+
+      <section class="successPane" data-success-pane>
+        <div class="successCard">
+          <div class="successIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="36" height="36"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <p class="successMessage" data-success-message></p>
+        </div>
       </section>
     </div>
   </main>
@@ -1992,6 +2008,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       const form = document.querySelector('[data-form]');
       const submit = document.querySelector('[data-submit]');
       const message = document.querySelector('[data-message]');
+      const successMessageEl = document.querySelector('[data-success-message]');
       const formPages = Array.from(form ? form.querySelectorAll('[data-form-page]') : []);
       const formBackButton = form ? form.querySelector('[data-form-back]') : null;
       const formNextButton = form ? form.querySelector('[data-form-next]') : null;
@@ -2063,6 +2080,19 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           changeSlotButton.textContent = label;
           changeSlotButton.setAttribute('aria-label', label);
         }
+      };
+
+      const showSuccessScreen = (text) => {
+        if (successMessageEl) successMessageEl.textContent = text || '';
+        if (form) {
+          form.reset();
+          form.classList.remove('visible');
+        }
+        if (shell) {
+          shell.classList.remove('dateSelected', 'bookingActive');
+          shell.classList.add('bookingDone');
+        }
+        try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (err) {}
       };
 
       const getFieldValue = (field) => {
@@ -2435,22 +2465,19 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           });
           const payload = await response.json();
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
-          const completionRedirectUrl = getCompletionRedirectUrl();
           trackCalendarMetaEvent(payload.data?.metaEvent);
-          const successText = payload.data?.message || calendar.bookingCompletion?.message || 'Listo. Tu cita quedo agendada.';
+          const completionRedirectUrl = getCompletionRedirectUrl();
           selectedSlot = '';
-          form.reset();
-          form.classList.remove('visible');
-          setStep('calendar');
-          formPageIndex = 0;
-          renderFormPage();
-          await loadSlots();
-          setMessage(successText, 'ok');
+          setMessage('');
           if (completionRedirectUrl) {
+            showSuccessScreen('Te estamos redirigiendo...');
             window.setTimeout(() => {
               window.location.assign(completionRedirectUrl);
-            }, 450);
+            }, 600);
+            return;
           }
+          const successText = payload.data?.message || calendar.bookingCompletion?.message || 'Listo. Tu cita quedo agendada.';
+          showSuccessScreen(successText);
         } catch (error) {
           setMessage(error.message || 'No se pudo agendar la cita.', 'error');
         } finally {
