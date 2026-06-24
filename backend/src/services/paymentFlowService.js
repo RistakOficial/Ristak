@@ -2453,8 +2453,8 @@ export async function updateScheduledInstallmentPayment(payload = {}) {
             f.first_payment_status, f.metadata
      FROM installment_payments i
      JOIN payment_flows f ON f.id = i.flow_id
-     WHERE (? IS NOT NULL AND i.id = ?)
-        OR (? IS NOT NULL AND i.ghl_schedule_id = ?)
+     WHERE (CAST(? AS TEXT) IS NOT NULL AND i.id = ?)
+        OR (CAST(? AS TEXT) IS NOT NULL AND i.ghl_schedule_id = ?)
      ORDER BY i.updated_at DESC
      LIMIT 1`,
     [installmentId || null, installmentId || null, scheduleId || null, scheduleId || null]
@@ -2658,8 +2658,8 @@ export async function cancelScheduledInstallmentPayment(payload = {}) {
             f.currency, f.concept
      FROM installment_payments i
      JOIN payment_flows f ON f.id = i.flow_id
-     WHERE (? IS NOT NULL AND i.id = ?)
-        OR (? IS NOT NULL AND i.ghl_schedule_id = ?)
+     WHERE (CAST(? AS TEXT) IS NOT NULL AND i.id = ?)
+        OR (CAST(? AS TEXT) IS NOT NULL AND i.ghl_schedule_id = ?)
      ORDER BY i.updated_at DESC
      LIMIT 1`,
     [installmentId || null, installmentId || null, scheduleId || null, scheduleId || null]
@@ -2810,7 +2810,7 @@ async function findPaymentFlowPaidTarget(invoiceId, paymentSignal = {}) {
     const paymentRow = await db.get(
       `SELECT id, ghl_invoice_id
        FROM payments
-       WHERE (? IS NULL OR contact_id = ?)
+       WHERE (CAST(? AS TEXT) IS NULL OR contact_id = ?)
          AND (
            invoice_number = ?
            OR reference = ?

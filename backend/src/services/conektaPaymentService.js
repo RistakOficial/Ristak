@@ -2607,8 +2607,8 @@ export async function applyConektaPaymentPlanAction(flowId, action, options = {}
     await db.run(
       `UPDATE payment_flows
        SET current_state = ?,
-           installment_plan_created_at = CASE WHEN ? = ? THEN COALESCE(installment_plan_created_at, ?) ELSE installment_plan_created_at END,
-           installment_plan_active_at = CASE WHEN ? = ? THEN COALESCE(installment_plan_active_at, ?) ELSE installment_plan_active_at END,
+           installment_plan_created_at = CASE WHEN CAST(? AS TEXT) = ? THEN COALESCE(installment_plan_created_at, ?) ELSE installment_plan_created_at END,
+           installment_plan_active_at = CASE WHEN CAST(? AS TEXT) = ? THEN COALESCE(installment_plan_active_at, ?) ELSE installment_plan_active_at END,
            state_history = ?,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
