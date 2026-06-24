@@ -520,7 +520,7 @@ async function listTransactions(args = {}) {
      FROM payments p
      LEFT JOIN contacts c ON c.id = p.contact_id
      WHERE ${filters.join(' AND ')}
-     ORDER BY p.date DESC
+     ORDER BY p.date DESC, p.created_at DESC, p.id DESC
      LIMIT ?`,
     [...params, limit]
   )
