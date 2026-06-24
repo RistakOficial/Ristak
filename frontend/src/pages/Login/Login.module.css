@@ -346,6 +346,27 @@ body.light .error {
   -webkit-overflow-scrolling: touch;
 }
 
+/* iPad / tablet: el login de teléfono no debe estirarse de borde a borde.
+   En pantallas anchas acotamos y centramos la columna para que se vea
+   optimizada (no afecta al layout de teléfono, < 600px se mantiene igual). */
+@media (min-width: 600px) {
+  .phoneLoginBox {
+    padding-block: max(env(safe-area-inset-top), 48px) max(env(safe-area-inset-bottom), 40px);
+  }
+
+  .phoneLoginBox .header,
+  .phoneLoginBox .form,
+  .phoneLoginBox .recoverySection {
+    width: 100%;
+    max-width: 420px;
+    margin-inline: auto;
+  }
+
+  .phoneLoginBox .recoverySection {
+    max-height: none;
+  }
+}
+
 /* Link de recuperación */
 .forgotLink {
   width: 100%;

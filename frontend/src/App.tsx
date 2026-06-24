@@ -461,7 +461,11 @@ const TabletViewPreferenceGate: React.FC = () => {
   const navigate = useNavigate()
   const { isTablet, preference, setPreference } = useTabletViewPreferenceState()
   const isPhoneRoute = isPhoneAppPath(location.pathname)
-  const canApplyTabletPreference = isTablet && location.pathname !== SETUP_PATH
+  // En la app nativa iOS el shell siempre es la vista de teléfono/tablet: ofrecer
+  // "Versión para computadora" no aplica y provoca un loop con el gate nativo,
+  // además de tapar el login con un overlay. No mostramos el modal ahí.
+  const canApplyTabletPreference =
+    isTablet && location.pathname !== SETUP_PATH && !mobileAppService.isIosPhoneChatShell()
 
   React.useEffect(() => {
     if (!canApplyTabletPreference || !preference) return
