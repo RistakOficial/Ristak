@@ -18734,15 +18734,32 @@ function buildStyleSheet(template, maxWidth, overrides = {}, pageVars = {}) {
   `
 }
 
+// Pixel base de Meta (bootstrap + init + PageView). Va en el <head> para que el
+// Meta Pixel Helper lo detecte aunque la página no tenga eventos de conversión.
+function buildMetaPixelBaseScript(pixelId) {
+  return `
+  <script>
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
+    (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', ${JSON.stringify(pixelId)});
+    fbq('track', 'PageView');
+  </script>
+  <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
+}
+
 async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
-  if (!trackingEnabled || !site.metaCapiEnabled) return ''
+  const empty = { head: '', body: '' }
+  if (!trackingEnabled || !site.metaCapiEnabled) return empty
 
   const metaConfig = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer Pixel ID de Meta para snippet de Site: ${error.message}`)
     return null
   })
   const pixelId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
-  if (!pixelId) return ''
+  if (!pixelId) return empty
 
   const submitEventName = getFormSubmitMetaEventName(site, activePage?.id)
   const pageMeta = getPageMetaConfig(site, activePage?.id)
@@ -18753,15 +18770,10 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
   )
   const pageConfiguredCustomData = buildSiteMetaConfiguredCustomData(pageMeta?.parameters, pageViewEventName)
 
-  return `
+  // Helpers de eventos + disparo de page_view: van en el <body>, después del
+  // tracking nativo, para que la identidad del visitante ya esté disponible.
+  const body = `
   <script>
-    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-    n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
-    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
-    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
-    (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
-    fbq('init', ${JSON.stringify(pixelId)});
-    fbq('track', 'PageView');
     const ristakMetaReadCookie = function(name) {
       try {
         const prefix = String(name || '') + '=';
@@ -18877,8 +18889,9 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
       });
     } catch (error) {}
     ` : ''}
-  </script>
-  <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
+  </script>`
+
+  return { head: buildMetaPixelBaseScript(pixelId), body }
 }
 
 function getCalendarSiteMetaEventConfig(calendar = {}) {
@@ -18924,7 +18937,9 @@ function buildCalendarMetaBaseCustomData(calendar = {}, appointment = {}, extra 
 
 export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEnabled = true, preview = false } = {}) {
   const config = getCalendarSiteMetaEventConfig(calendar)
-  if (!trackingEnabled || preview || !config.enabled || !['site', 'smart'].includes(config.channel) || config.eventName === SITE_META_NO_EVENT) return ''
+  // El pixel base (init + PageView) solo necesita que el Meta del calendario esté
+  // activado, aunque no haya un evento de conversión configurado (solo PageView).
+  if (!trackingEnabled || preview || !config.enabled) return ''
 
   const metaConfig = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer Pixel ID de Meta para snippet de calendario: ${error.message}`)
@@ -18932,6 +18947,12 @@ export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEna
   })
   const pixelId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
   if (!pixelId) return ''
+
+  const baseScript = buildMetaPixelBaseScript(pixelId)
+  // El helper de conversión (Schedule, etc.) solo aplica a canales de Meta con un
+  // evento real; si no, el calendario carga únicamente el PageView.
+  const wantsConversionEvent = ['site', 'smart'].includes(config.channel) && config.eventName !== SITE_META_NO_EVENT
+  if (!wantsConversionEvent) return baseScript
 
   const configuredCustomData = buildSiteMetaConfiguredCustomData(config.parameters, config.eventName)
   const baseCustomData = buildCalendarMetaBaseCustomData(calendar, {}, {
@@ -18941,15 +18962,8 @@ export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEna
     appointment_end_time: ''
   })
 
-  return `
+  return `${baseScript}
   <script>
-    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-    n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
-    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
-    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
-    (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
-    fbq('init', ${JSON.stringify(pixelId)});
-    fbq('track', 'PageView');
     window.ristakMetaTrackCalendarEvent = function(eventName, eventId, customData) {
       if (!window.fbq) return;
       const normalizedEventName = eventName || ${JSON.stringify(config.eventName)};
@@ -18963,8 +18977,7 @@ export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEna
         window.fbq(method, normalizedEventName, data);
       }
     };
-  </script>
-  <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
+  </script>`
 }
 
 function isImportedHtmlSite(site = {}) {
@@ -19469,7 +19482,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
 async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageId = DEFAULT_FUNNEL_PAGE_ID, pageTitle = '' } = {}) {
   const activePageId = cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID
   const activePage = getSitePage(site, activePageId) || { id: activePageId, title: pageTitle || site.title || site.name }
-  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, {
+  const metaPixel = await buildMetaPixelSnippet(site, trackingEnabled, {
     ...activePage,
     title: activePage.title || pageTitle || site.title || site.name
   })
@@ -19493,7 +19506,12 @@ async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabl
   // El script de preservación de params va primero: define los helpers globales
   // que usan el tracking, los botones y la captura de formularios.
   const paramPreservationScript = buildParamPreservationScript()
-  return `${paramPreservationScript}${nativeTrackingScript}${metaPixelSnippet}${videoTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
+  // head: pixel base de Meta (se inyecta en el <head> del HTML importado).
+  // body: helpers/eventos y demás runtime (se inyecta antes de </body>).
+  return {
+    head: metaPixel.head,
+    body: `${paramPreservationScript}${nativeTrackingScript}${metaPixel.body}${videoTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
+  }
 }
 
 function injectImportedHtmlRuntime(html = '', injection = '') {
@@ -19925,9 +19943,9 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     annotateImportedEditableHtml(html),
-    trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
+    `${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${injection.head}`
   )
-  return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection}${importedVideoRuntime}`)
+  return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedVideoRuntime}`)
 }
 
 export async function getImportedSiteAssetResponse(siteId, assetPath, { trackingEnabled = true } = {}) {
@@ -19980,14 +19998,14 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
       annotateImportedEditableHtml(html),
-      trackingEnabled ? buildHeaderTrackingCode(site, page) : ''
+      `${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${injection.head}`
     )
 
     return {
       site,
       assetPath: asset.assetPath,
       contentType: 'text/html; charset=utf-8',
-      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection}${importedVideoRuntime}`), 'utf8'),
+      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedVideoRuntime}`), 'utf8'),
       cacheControl: trackingEnabled ? 'public, max-age=300' : 'no-store'
     }
   }
@@ -20258,7 +20276,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   // En páginas publicadas (no preview) los params de URL se preservan siempre,
   // aunque el tracking esté apagado: la atribución no debe perderse nunca.
   const paramPreservationScript = preview ? '' : buildParamPreservationScript()
-  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, activePage)
+  const metaPixel = await buildMetaPixelSnippet(site, trackingEnabled, activePage)
   const headerTrackingCode = trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
   const popupHtml = renderSitePopup(site, {
     popupBlocks,
@@ -20280,6 +20298,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   <link href="${RSTK_SITE_FONTS_CSS_PATH}" rel="stylesheet">
   <style>${styleSheet}</style>
   ${siteNavHtml ? `<style>${SITE_NAV_STYLES}</style>` : ''}
+  ${metaPixel.head}
   ${headerTrackingCode}
 </head>
 <body class="${bodyClass}">
@@ -21408,7 +21427,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     })();
   </script>
   ${nativeTrackingScript}
-  ${metaPixelSnippet}
+  ${metaPixel.body}
   ${videoTrackingScript}
 </body>
 </html>`
