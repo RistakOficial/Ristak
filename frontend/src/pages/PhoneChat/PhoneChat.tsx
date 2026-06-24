@@ -3539,8 +3539,9 @@ export const PhoneChat: React.FC = () => {
   // Controller propio para "cargar más" (append), independiente de chatsRequestRef, para que
   // nunca quede bloqueado por una carga inicial o un refresco en segundo plano.
   const chatListLoadMoreRequestRef = useRef<AbortController | null>(null)
-  // Solo true durante una recarga explícita (montaje/reintento) que reinicia el offset.
-  const chatListReloadingRef = useRef(false)
+  // Término de búsqueda de la última carga completa (no-append). Vacío = lista completa.
+  // Al limpiar la búsqueda, la recarga REEMPLAZA en vez de fusionar sobre los resultados.
+  const chatListLoadedSearchRef = useRef('')
   const dismissedRestoreIdsRef = useRef<Set<string>>(new Set())
   const composerPlusRef = useRef<HTMLButtonElement | null>(null)
   const composerScheduleRef = useRef<HTMLButtonElement | null>(null)
@@ -4730,18 +4731,13 @@ export const PhoneChat: React.FC = () => {
     const useCache = options.useCache !== false && !silentRefresh
 
     if (append) {
-      // El load-more solo se bloquea por otro load-more en curso o por una recarga explícita
-      // (que reinicia el offset). NO se bloquea por refrescos silenciosos: dispara de inmediato.
-      if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current || chatListReloadingRef.current) return
+      // El load-more usa su propio controller y solo se bloquea por otro load-more en curso o
+      // porque ya no hay más. NO lo bloquea la carga inicial ni los refrescos: dispara de
+      // inmediato al llegar al fondo.
+      if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
     } else if (silentRefresh && chatsRequestRef.current) {
       return
     }
-
-    const isExplicitReload = !append && !silentRefresh
-    // En recargas completas conservamos la profundidad ya cargada por scroll: si el
-    // usuario ya cargó varias páginas, volvemos a traerlas todas para que un refresco
-    // silencioso (intervalo de 20s / eventos en vivo) no recorte la lista al primer page.
-    const reloadTargetCount = Math.max(CHAT_LIST_PAGE_SIZE, chatListOffsetRef.current)
 
     if (!silentRefresh) setChatsError('')
     const trimmed = chatQuery.trim()
@@ -4769,27 +4765,29 @@ export const PhoneChat: React.FC = () => {
         : fastStartInbox?.chats || []
       chatListOffsetRef.current = cachedList.length
       chatListHasMoreRef.current = true
+      chatListLoadedSearchRef.current = ''
       const cachedRequestedContact = requestedContactParam
         ? cachedList.find((contact) => contact.id === requestedContactParam) || null
         : null
       applyLoadedChats(cachedList, cachedRequestedContact)
       setChatsLoading(false)
       setChatsRefreshing(showCacheRefresh)
+      // Pintamos el caché al instante y disparamos UNA recarga silenciosa (una página
+      // fusionada) para traer lo fresco de inmediato, sin esperar al intervalo de 20s.
+      void loadChats({ silent: true })
       return
     }
 
     if (!append) {
-      // Un refresco silencioso NO reinicia la paginación ni muestra el loader: si lo hiciera,
-      // la fusión perdería la profundidad cargada y la lista se recortaría al primer lote.
       if (!silentRefresh) {
         setChatsError('')
-        setChatsLoading(true)
-        chatListOffsetRef.current = 0
-        chatListHasMoreRef.current = true
-        // Una recarga explícita reinicia el offset: cancelamos un load-more en vuelo para que
-        // no añada un lote con offset ya obsoleto.
-        chatListLoadMoreRequestRef.current?.abort()
+        // Loader de pantalla completa solo si todavía no hay nada que mostrar (o al buscar).
+        if (chatsRef.current.length === 0 || trimmed.length > 0) {
+          setChatsLoading(true)
+        }
       }
+      // Coalescamos cargas no-append concurrentes. NO reiniciamos offset/hasMore: la recarga
+      // explícita ahora es una sola página fusionada que conserva la profundidad cargada.
       setChatsRefreshing(false)
       chatsRequestRef.current?.abort()
     }
@@ -4801,7 +4799,6 @@ export const PhoneChat: React.FC = () => {
       setIsLoadingMoreChats(true)
     } else {
       chatsRequestRef.current = controller
-      if (isExplicitReload) chatListReloadingRef.current = true
     }
 
     const fetchChatPage = async (pageOffset: number) => {
@@ -4819,9 +4816,10 @@ export const PhoneChat: React.FC = () => {
       if (append) {
         const offset = chatListOffsetRef.current
         const loadedPageChats = await fetchChatPage(offset)
-        // Si una recarga explícita canceló este load-more mientras esperábamos, no apliques un
-        // lote con offset ya obsoleto (en móvil el fetch no se cancela solo).
-        if (controller.signal.aborted || chatListLoadMoreRequestRef.current !== controller) return
+        // Si mientras esperábamos una recarga movió el offset (o canceló este load-more),
+        // descartamos el lote: aplicarlo corrompería offset/hasMore y podría bloquear futuras
+        // cargas. La lista no se pierde: el usuario re-scrollea.
+        if (controller.signal.aborted || chatListLoadMoreRequestRef.current !== controller || chatListOffsetRef.current !== offset) return
         const pageChats = dedupeChatsById(loadedPageChats)
         chatListOffsetRef.current = offset + loadedPageChats.length
         chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
@@ -4844,39 +4842,37 @@ export const PhoneChat: React.FC = () => {
           writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
         }
       } else {
-        // Recarga explícita: conservamos la profundidad ya mostrada (p. ej. la del caché)
-        // para no encoger la lista a un solo lote.
-        let offset = 0
-        let nextChats: ChatContact[] = []
-        let hasMore = true
-
-        while (hasMore && offset < reloadTargetCount && chatsRequestRef.current === controller) {
-          const loadedPageChats = await fetchChatPage(offset)
-          nextChats = dedupeChatsById([...nextChats, ...loadedPageChats])
-          offset += loadedPageChats.length
-          hasMore = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
-        }
-
+        // Carga inicial / refresco / búsqueda / al limpiar la búsqueda: UNA sola página rápida.
+        // Sin bucle multi-página y sin bloquear el "cargar más", por lo que la lista aparece al
+        // instante y se rellena al hacer scroll.
+        const freshPage = dedupeChatsById(await fetchChatPage(0))
         if (chatsRequestRef.current !== controller) return
 
-        chatListOffsetRef.current = offset
-        chatListHasMoreRef.current = hasMore
+        // En búsqueda (o al venir de una), REEMPLAZAMOS; en lista completa fusionamos sobre el
+        // caché para no encoger la lista.
+        const hasSearch = trimmed.length > 0
+        const shouldReplace = hasSearch || chatListLoadedSearchRef.current !== ''
+        chatListLoadedSearchRef.current = trimmed
+        const freshIds = new Set(freshPage.map((contact) => contact.id))
+        const merged = dedupeChatsById([
+          ...freshPage,
+          ...(shouldReplace ? [] : chatsRef.current.filter((contact) => !freshIds.has(contact.id)))
+        ])
+
+        // Conservamos la profundidad mostrada; hasMore según si la primera página vino llena.
+        chatListOffsetRef.current = merged.length
+        chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE
 
         let requestedContact = requestedContactParam
-          ? nextChats.find((contact) => contact.id === requestedContactParam)
+          ? merged.find((contact) => contact.id === requestedContactParam)
           : null
+        let nextChats = merged
 
         if (requestedContactParam && !requestedContact) {
           const contact = await contactsService.getContactDetails(requestedContactParam).catch(() => null)
-          if (contact) {
+          if (contact && chatsRequestRef.current === controller) {
             requestedContact = toChatContact(contact)
-            const nextList = [requestedContact, ...nextChats.filter((item) => item.id !== contact.id)]
-            const displayedChats = applyLoadedChats(nextList, requestedContact)
-            if (cacheEnabled) {
-              writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
-              writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
-            }
-            return
+            nextChats = [requestedContact, ...merged.filter((item) => item.id !== contact.id)]
           }
         }
 
@@ -4902,7 +4898,6 @@ export const PhoneChat: React.FC = () => {
         if (chatsRequestRef.current === controller) {
           chatsRequestRef.current = null
         }
-        if (isExplicitReload) chatListReloadingRef.current = false
         setChatsLoading(false)
         setChatsRefreshing(false)
       }
@@ -5780,7 +5775,7 @@ export const PhoneChat: React.FC = () => {
   useEffect(() => {
     if (accessState !== 'allowed' || chats.length === 0) return
     const list = chatListRef.current
-    if (!list || chatListLoadingMoreRef.current || !chatListHasMoreRef.current || chatListReloadingRef.current) return
+    if (!list || chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
     // Tras cada cambio de la lista (incluida la carga inicial), si no llena la pantalla O el
     // usuario ya está cerca del fondo, traemos el siguiente lote sin esperar a que vuelva a
     // hacer scroll. Evita el caso "scrolleé hasta abajo y se quedó esperando".
