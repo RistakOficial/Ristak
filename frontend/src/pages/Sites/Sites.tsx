@@ -11835,6 +11835,13 @@ export const Sites: React.FC = () => {
     selectEditorBlock(PAGE_SELECTED_ID)
   }, [selectEditorBlock])
 
+  // Stable reference so the video-gate floating editor doesn't re-subscribe its
+  // listeners on every parent render.
+  const handleVideoFormGateActiveBlockChange = useCallback((blockId: string) => {
+    setActiveVideoFormGateSubmitSelected(false)
+    setActiveVideoFormGateBlockId(blockId)
+  }, [])
+
   const embeddedFormEditorBridge: EmbeddedFormCanvasEditorBridge | null = formEditBlock ? {
     parentBlockId: formEditBlock.id,
     activeFieldId: activeEmbeddedFormFieldId,
@@ -12718,10 +12725,7 @@ export const Sites: React.FC = () => {
                     onVideoFormGatePreviewChange={setVideoFormGatePreviewBlockId}
                     videoFormGateActiveBlockId={activeVideoFormGateBlock?.id || activeVideoFormGateBlockId}
                     videoFormGateActiveElement={activeVideoFormGateSubmitSelected ? 'submit' : 'field'}
-                    onVideoFormGateActiveBlockChange={(blockId) => {
-                      setActiveVideoFormGateSubmitSelected(false)
-                      setActiveVideoFormGateBlockId(blockId)
-                    }}
+                    onVideoFormGateActiveBlockChange={handleVideoFormGateActiveBlockChange}
                     onVideoFormGateSubmitSelect={() => setActiveVideoFormGateSubmitSelected(true)}
                     onSave={() => handleSaveBlock()}
                     onDeselect={handleCanvasBlockDeselect}
