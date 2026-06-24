@@ -256,6 +256,34 @@
   background: color-mix(in srgb, var(--phone-settings-soft) 74%, transparent);
 }
 
+.logoutButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 22px;
+  padding: 13px 16px;
+  border: 1px solid var(--phone-settings-border);
+  border-radius: 16px;
+  background: transparent;
+  color: #dc2626;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.logoutButton:active {
+  background: color-mix(in srgb, #dc2626 12%, transparent);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .logoutButton {
+  color: #f87171;
+}
+
 .settingsListIcon {
   display: inline-flex;
   align-items: center;

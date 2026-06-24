@@ -11,6 +11,7 @@ import {
   FileText,
   ListChecks,
   Loader2,
+  LogOut,
   MessageCircle,
   Mic,
   Moon,
@@ -31,6 +32,7 @@ import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { contactsService } from '@/services/contactsService'
 import { aiAgentService } from '@/services/aiAgentService'
 import { mobileAppService } from '@/services/mobileAppService'
+import { clearRuntimeApiBaseUrl, isNativeAppRuntime } from '@/services/apiBaseUrl'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { ContactCustomFieldDefinition } from '@/types'
@@ -124,8 +126,8 @@ function getTemplatePreview(template: WhatsAppApiTemplate) {
 }
 
 export const PhoneSettings: React.FC = () => {
-  const { locationId, accessToken } = useAuth()
-  const { showToast } = useNotification()
+  const { locationId, accessToken, logout } = useAuth()
+  const { showToast, showConfirm } = useNotification()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
   const [whatsappNumberMode, setWhatsappNumberMode] = useAppConfig<WhatsAppNumberMode>('mobile_chat_whatsapp_number_mode', 'merged')
   const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
@@ -570,6 +572,26 @@ export const PhoneSettings: React.FC = () => {
     </label>
   )
 
+  const handleLogout = () => {
+    showConfirm(
+      'Cerrar sesión',
+      '¿Seguro que quieres cerrar tu sesión en este dispositivo?',
+      () => {
+        logout()
+        if (isNativeAppRuntime()) {
+          // App nativa: vuelve al login único (correo + contraseña).
+          clearRuntimeApiBaseUrl()
+          window.location.replace('/phone/tenant')
+        } else {
+          // Web: el login de este backend funciona en el mismo origen.
+          window.location.replace('/phone/login')
+        }
+      },
+      'Cerrar sesión',
+      'Cancelar'
+    )
+  }
+
   const renderMainList = () => {
     const items: Array<{
       id: Exclude<SettingsSection, null>
@@ -590,7 +612,8 @@ export const PhoneSettings: React.FC = () => {
     ]
 
     return (
-      <div className={styles.settingsListGroup}>
+      <>
+        <div className={styles.settingsListGroup}>
         {items.map(({ id, title, mobileTitle, description, meta, Icon, tone }) => (
           <button key={id} type="button" className={styles.settingsListItem} onClick={() => setActiveSection(id)}>
             <span className={`${styles.settingsListIcon} ${styles[`settingsListIcon_${tone}`]}`}><Icon size={18} /></span>
@@ -607,7 +630,12 @@ export const PhoneSettings: React.FC = () => {
             </span>
           </button>
         ))}
-      </div>
+        </div>
+        <button type="button" className={styles.logoutButton} onClick={handleLogout}>
+          <LogOut size={18} />
+          <span>Cerrar sesión</span>
+        </button>
+      </>
     )
   }
 
