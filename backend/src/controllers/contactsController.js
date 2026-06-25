@@ -2311,6 +2311,11 @@ export const getContactById = async (req, res) => {
   try {
     const { id } = req.params
 
+    // (SEC-005 / ACL-002) Aplicar filtro de contactos ocultos también al detalle por ID:
+    // si el contacto cae bajo un filtro de ocultos, responder 404 (no exponerlo por ID).
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+
     let contact = await db.get(
       `WITH payment_stats AS (
         SELECT
@@ -2384,7 +2389,7 @@ ${CONTACT_META_PROFILE_SELECT},
         ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      WHERE c.id = ?`,
+      WHERE c.id = ?${hiddenCondition ? ` AND ${hiddenCondition}` : ''}`,
       [id, id]
     )
 

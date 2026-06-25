@@ -5585,6 +5585,15 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
     throw error
   }
 
+  // (WA-001) Rollout seguro de firma de webhooks: si NO hay webhook_secret configurado
+  // aún (cuentas YCloud sin permiso para crear webhooks), aceptamos el payload para no
+  // romper integraciones en vivo, pero dejamos un warning visible de que el endpoint
+  // está aceptando webhooks sin verificar firma. Cuando exista secret, el bloque de
+  // arriba (signatureValid === false) ya rechaza con 401.
+  if (signatureValid === null) {
+    logger.warn('[WhatsApp API] Webhook YCloud aceptado SIN verificación de firma: no hay webhook_secret configurado. Configura el secreto para firmar y proteger este endpoint.')
+  }
+
   const eventRowId = await saveWebhookEvent({
     payload,
     rawBody,
