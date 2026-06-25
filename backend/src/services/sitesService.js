@@ -18780,6 +18780,9 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
   const submitAlign = blockButtonAlign({ buttonAlign: theme.submitAlign }, 'center')
   const submitWidth = themeNumber(theme, 'submitWidth', 0, 0, 100)
   const formContentAlign = ['center', 'right'].includes(cleanString(theme.formContentAlign)) ? cleanString(theme.formContentAlign) : 'left'
+  // La columna del formulario se centra por default (igual que en el editor); solo se mueve
+  // si el usuario eligió explícitamente una alineación. El texto/etiquetas sigue a formContentAlign.
+  const formFieldAlign = ['left', 'center', 'right'].includes(cleanString(theme.formContentAlign)) ? cleanString(theme.formContentAlign) : 'center'
 
   return `
 	    ${formSurface ? `--rstk-form-surface:${formSurface};` : ''}
@@ -18803,7 +18806,7 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
 	    --rstk-form-field-pad-y:${themeNumber(theme, 'formFieldPaddingY', 13, 6, 36)}px;
 	    --rstk-form-field-width:${themeNumber(theme, 'formFieldWidth', 560, 120, 2000)}px;
 	    --rstk-form-content-align:${formContentAlign};
-	    --rstk-form-field-justify:${justifyForAlign(formContentAlign)};
+	    --rstk-form-field-justify:${justifyForAlign(formFieldAlign)};
 	    --rstk-form-choice-selected-bg:${choiceSelectedBg};
 	    --rstk-form-choice-selected-border:${paintFallbackColor(choiceSelectedBorder, accent)};
 	    --rstk-submit-bg:${submitBg};

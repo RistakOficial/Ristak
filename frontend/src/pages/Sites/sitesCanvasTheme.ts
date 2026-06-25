@@ -443,6 +443,13 @@ const normalizeFormContentAlign = (value: unknown) => {
   return ['left', 'center', 'right'].includes(raw) ? raw : 'left'
 }
 
+// La columna del formulario se centra por default (igual que el editor); solo cambia si
+// el usuario eligió explícitamente una alineación. Debe coincidir con el backend.
+const normalizeFormFieldAlign = (value: unknown) => {
+  const raw = String(value || '').trim()
+  return ['left', 'center', 'right'].includes(raw) ? raw : 'center'
+}
+
 export interface CanvasTheme {
   /** All --rstk-* variables, applied inline on the canvas root. */
   vars: React.CSSProperties
@@ -560,7 +567,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
 	    '--rstk-form-field-pad-y': `${themeNumber(theme, 'formFieldPaddingY', 13, 6, 36)}px`,
 	    '--rstk-form-field-width': `${themeNumber(theme, 'formFieldWidth', 560, 120, 2000)}px`,
 	    '--rstk-form-content-align': normalizeFormContentAlign(theme.formContentAlign),
-	    '--rstk-form-field-justify': justifyForButtonAlign(normalizeFormContentAlign(theme.formContentAlign)),
+	    '--rstk-form-field-justify': justifyForButtonAlign(normalizeFormFieldAlign(theme.formContentAlign)),
 	    '--rstk-form-choice-selected-bg': themePaint(theme, 'formChoiceSelectedBg', `color-mix(in srgb, ${accent} 10%, transparent)`),
 	    '--rstk-form-choice-selected-border': paintFallbackColor(themePaint(theme, 'formChoiceSelectedBorder', accent), accent),
 	    '--rstk-submit-bg': themePaint(theme, 'submitBg', accent),

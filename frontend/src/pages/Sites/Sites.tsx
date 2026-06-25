@@ -31519,7 +31519,7 @@ const FormFieldGlobalStyleControls: React.FC<{
       </div>
       <AlignmentControl
         label="Alineación del contenido"
-        value={theme.formContentAlign || 'left'}
+        value={theme.formContentAlign || 'center'}
         options={formContentAlignOptions}
         onChange={(value) => onPatchTheme({ formContentAlign: value as FormContentAlign })}
         onCommit={onSaveSite}
@@ -31919,6 +31919,13 @@ const FormLayoutStyleControls: React.FC<{
           />
         </div>
       )}
+      <AlignmentControl
+        label="Alineación del formulario"
+        value={theme.formContentAlign || 'center'}
+        options={formContentAlignOptions}
+        onChange={(value) => onPatchTheme({ formContentAlign: value as FormContentAlign })}
+        onCommit={onSaveSite}
+      />
       <div className={styles.twoColumn}>
         <DimensionField
           label="Separación fondo"
@@ -32052,7 +32059,7 @@ const FormGlobalStyleControls: React.FC<{
       <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, FORM_BOX_WIDTH_MIN, FORM_BOX_WIDTH_MAX)} min={FORM_BOX_WIDTH_MIN} max={FORM_BOX_WIDTH_MAX} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
       <AlignmentControl
         label="Alineación del contenido"
-        value={theme.formContentAlign || 'left'}
+        value={theme.formContentAlign || 'center'}
         options={formContentAlignOptions}
         onChange={(value) => onPatchTheme({ formContentAlign: value as FormContentAlign })}
         onCommit={onSaveSite}
