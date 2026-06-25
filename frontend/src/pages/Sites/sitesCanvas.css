@@ -2130,12 +2130,15 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   overflow: auto;
   border: 0;
   border-radius: 10px;
-  background-color: var(--rstk-page-bg, transparent);
-  background-image: var(--rstk-page-overlay, none), var(--rstk-page-image, none);
-  background-position: center center, var(--rstk-page-image-position, center top);
-  background-repeat: no-repeat, var(--rstk-page-image-repeat, no-repeat);
-  background-size: cover, var(--rstk-page-image-size, auto);
-  background-attachment: scroll, var(--rstk-page-image-attachment, scroll);
+  /* Como el navegador: el page-bg se compone SOBRE blanco. Así un fondo
+     transparente (formulario en blanco) se ve blanco standalone, y los colores
+     opacos cubren el blanco igual que antes. */
+  background-color: #ffffff;
+  background-image: var(--rstk-page-overlay, none), var(--rstk-page-image, none), linear-gradient(var(--rstk-page-bg, transparent), var(--rstk-page-bg, transparent));
+  background-position: center center, var(--rstk-page-image-position, center top), center center;
+  background-repeat: no-repeat, var(--rstk-page-image-repeat, no-repeat), no-repeat;
+  background-size: cover, var(--rstk-page-image-size, auto), cover;
+  background-attachment: scroll, var(--rstk-page-image-attachment, scroll), scroll;
   padding: 0;
   display: flex;
   align-items: flex-start;
@@ -2197,7 +2200,8 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   flex: 0 0 auto;
   overflow: hidden;
   border-radius: inherit;
-  background: var(--rstk-page-bg, transparent);
+  background-color: #ffffff;
+  background-image: linear-gradient(var(--rstk-page-bg, transparent), var(--rstk-page-bg, transparent));
 }
 .canvasStage {
   position: relative;
@@ -2205,7 +2209,9 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   overflow: hidden;
   border: 0;
   border-radius: inherit;
-  background: var(--rstk-page-bg);
+  /* page-bg sobre blanco: transparente => blanco; opaco => el color (sin cambio). */
+  background-color: #ffffff;
+  background-image: linear-gradient(var(--rstk-page-bg, transparent), var(--rstk-page-bg, transparent));
   box-shadow: none;
 }
 .canvasStage.canvasPageSelected {

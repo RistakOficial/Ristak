@@ -10035,7 +10035,12 @@ export const Sites: React.FC = () => {
           ...(isBlank
             ? {
                 blankCanvas: true,
-                backgroundColor: siteType === 'landing_page' ? '#ffffff' : '#f8fafc',
+                // Un formulario "en blanco" es REALMENTE transparente: ni hoja ni fondo.
+                // Standalone se ve blanco (sobre el body del navegador) y, embebido como
+                // bloque en un sitio, hereda el color de fondo del sitio. La landing en
+                // blanco sí nace con blanco sólido.
+                backgroundColor: siteType === 'landing_page' ? '#ffffff' : 'transparent',
+                ...(siteType === 'landing_page' ? {} : { formSurfaceColor: 'transparent' }),
                 backgroundImage: ''
               }
             : {}),
