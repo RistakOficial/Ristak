@@ -559,9 +559,15 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+  grid-template-columns: minmax(98px, clamp(98px, 18%, 108px)) minmax(0, 1fr);
   gap: 8px;
   align-items: stretch;
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input[data-phone-country-hidden] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input[data-phone-country-hidden] > select {
+  display: none;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input > input,
 .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input > select {
@@ -571,12 +577,12 @@
   appearance: none;
   -webkit-appearance: none;
   background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-form-field-text, var(--rstk-muted)) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-form-field-text, var(--rstk-muted)) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
+    linear-gradient(45deg, transparent 50%, var(--rstk-form-field-text, var(--rstk-muted)) 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--rstk-form-field-text, var(--rstk-muted)) 50%, transparent 50%) calc(100% - 10px) calc(50% - 3px) / 5px 5px no-repeat,
     var(--rstk-form-field-bg, var(--rstk-input-bg));
   color: var(--rstk-form-field-text, var(--rstk-input-ink));
-  padding-left: clamp(10px, 2.4cqw, var(--rstk-form-field-pad-x, 14px));
-  padding-right: 42px;
+  padding-left: 9px;
+  padding-right: 26px;
 }
 .rstkCanvas .rstk-video-form-gate-preview .rstk-options {
   display: grid;
@@ -663,7 +669,10 @@
     padding-inline: 10px;
   }
   .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(96px, 104px) minmax(0, 1fr);
+  }
+  .rstkCanvas .rstk-video-form-gate-preview .rstk-phone-input[data-phone-country-hidden] {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 @media (max-width: 760px) {
@@ -1250,10 +1259,16 @@
 }
 .rstkCanvas .rstk-phone-input {
   display: grid;
-  grid-template-columns: minmax(132px, clamp(132px, 24%, 142px)) minmax(0, 1fr);
+  grid-template-columns: minmax(98px, clamp(98px, 18%, 108px)) minmax(0, 1fr);
   gap: 8px;
   align-items: stretch;
   max-width: 100%;
+}
+.rstkCanvas .rstk-phone-input[data-phone-country-hidden] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.rstkCanvas .rstk-phone-input[data-phone-country-hidden] > select {
+  display: none;
 }
 .rstkCanvas .rstk-phone-input > select,
 .rstkCanvas .rstk-phone-input > input {
@@ -1325,8 +1340,8 @@
 .rstkCanvas.rstk-select-soft .rstk-embedded-form select { border-radius: 999px; background-color: color-mix(in srgb, var(--rstk-form-field-bg, var(--rstk-input-bg)) 90%, var(--rstk-accent) 10%); padding-left: 20px; }
 .rstkCanvas .rstk-phone-input > select {
   background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
+    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 10px) calc(50% - 3px) / 5px 5px no-repeat,
     var(--rstk-input-bg);
 }
 .rstkCanvas.rstk-kind-form .rstk-field .rstk-phone-input > select,
@@ -1338,11 +1353,11 @@
   border-width: var(--rstk-form-field-border-width, 1px);
   border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius)));
   background:
-    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
-    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
+    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 10px) calc(50% - 3px) / 5px 5px no-repeat,
     var(--rstk-form-field-bg, var(--rstk-input-bg));
-  padding-left: var(--rstk-form-field-pad-x, 14px);
-  padding-right: 42px;
+  padding-left: 9px;
+  padding-right: 26px;
 }
 
 .rstkCanvas .rstk-options { display: grid; gap: 10px; }
@@ -1451,8 +1466,7 @@ html body .rstkCanvas input[type='week'] {
   padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px) !important;
 }
 
-html body .rstkCanvas select,
-html body .rstkCanvas .rstk-phone-input > select {
+html body .rstkCanvas select {
   appearance: none !important;
   -webkit-appearance: none !important;
   -moz-appearance: none !important;
@@ -1461,6 +1475,20 @@ html body .rstkCanvas .rstk-phone-input > select {
     linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
     var(--rstk-form-field-bg, var(--rstk-input-bg)) !important;
   padding-right: 42px !important;
+}
+/* El select de lada del teléfono es más angosto: flecha pegada y padding
+   compacto. Más específico que la regla de select genérica (gana al shorthand
+   y al endurecimiento !important) para reflejar el render en vivo. */
+html body .rstkCanvas .rstk-phone-input > select {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 10px) calc(50% - 3px) / 5px 5px no-repeat,
+    var(--rstk-form-field-bg, var(--rstk-input-bg)) !important;
+  padding-left: 9px !important;
+  padding-right: 26px !important;
 }
 
 html body .rstkCanvas.rstk-kind-form.rstk-select-filled select,
@@ -2065,11 +2093,13 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 
 @media (max-width: 640px) {
   .rstkCanvas .rstk-list-grid { grid-template-columns: 1fr; }
-  .rstkCanvas .rstk-phone-input { grid-template-columns: minmax(124px, 132px) minmax(0, 1fr); }
+  .rstkCanvas .rstk-phone-input { grid-template-columns: minmax(96px, 104px) minmax(0, 1fr); }
+  .rstkCanvas .rstk-phone-input[data-phone-country-hidden] { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 340px) {
-  .rstkCanvas .rstk-phone-input { grid-template-columns: 1fr; }
+  .rstkCanvas .rstk-phone-input { grid-template-columns: minmax(96px, 104px) minmax(0, 1fr); }
+  .rstkCanvas .rstk-phone-input[data-phone-country-hidden] { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---------- Premium landing ---------- */

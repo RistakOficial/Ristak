@@ -6268,7 +6268,9 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     label,
     content: isField ? '' : label,
     placeholder: isField ? (blockType === 'dropdown' ? 'Selecciona una opción' : 'Escribe aquí') : '',
-    required: false,
+    // Los campos del formulario nacen obligatorios por defecto (el autor puede
+    // desmarcar "Campo requerido"). Los bloques de contenido ignoran este flag.
+    required: isField,
     options: isChoiceBlock(blockType)
       ? [
           { label: 'Opción 1', value: 'Opción 1', action: 'continue' as SiteOptionAction },

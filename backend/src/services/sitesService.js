@@ -17393,24 +17393,28 @@ function renderFieldInput(block, context = {}) {
   }
 
   if (block.blockType === 'phone') {
-    if (isPhoneCountrySelectorEnabled(block)) {
-      const defaultCountryCode = cleanString(
-        settings.defaultCountryCode ||
-        settings.countryCode ||
-        context.phoneLocale?.countryCode ||
-        'MX'
-      ).toUpperCase()
-      return `
-        <div class="rstk-phone-input" data-phone-country-field>
-          <select id="${id}__country" name="${id}__country" data-phone-country-select aria-label="País y lada">
-            ${renderPhoneCountryOptions(defaultCountryCode)}
-          </select>
-          <input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${placeholder || 'Número'}" data-phone-number-input ${required}>
-        </div>
-      `
-    }
-
-    return `<input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel" placeholder="${placeholder}" ${required}>`
+    const selectorEnabled = isPhoneCountrySelectorEnabled(block)
+    const defaultCountryCode = cleanString(
+      settings.defaultCountryCode ||
+      settings.countryCode ||
+      context.phoneLocale?.countryCode ||
+      'MX'
+    ).toUpperCase()
+    // El selector de país siempre se renderiza para poder anteponer la lada al
+    // número (lo que el contacto envía siempre llega normalizado a E.164).
+    // Cuando el autor desactiva "Mostrar país y lada" el <select> queda oculto y
+    // la lada se aplica de forma automática a partir de la región detectada del
+    // visitante (con la lada de la cuenta como respaldo).
+    const hiddenAttr = selectorEnabled ? '' : ' data-phone-country-hidden'
+    const selectHiddenAttrs = selectorEnabled ? '' : ' aria-hidden="true" tabindex="-1"'
+    return `
+      <div class="rstk-phone-input" data-phone-country-field${hiddenAttr}>
+        <select id="${id}__country" name="${id}__country" data-phone-country-select aria-label="País y lada"${selectHiddenAttrs}>
+          ${renderPhoneCountryOptions(defaultCountryCode)}
+        </select>
+        <input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${placeholder || 'Número'}" data-phone-number-input ${required}>
+      </div>
+    `
   }
 
   if (block.blockType === 'date') {
@@ -18410,9 +18414,11 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-gate input,.rstk-video-form-gate textarea,.rstk-video-form-gate select{box-sizing:border-box;width:100%;max-width:100%;min-width:0;min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border:var(--rstk-form-field-border-width,1px) solid var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.86rem,2.4cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
 	  .rstk-video-form-gate input::placeholder,.rstk-video-form-gate textarea::placeholder{color:var(--rstk-form-placeholder,color-mix(in srgb,var(--rstk-muted) 80%,transparent))}
 	  .rstk-video-form-gate textarea{min-height:clamp(78px,18cqw,108px)}
-	  .rstk-video-form-gate .rstk-phone-input{display:grid;width:100%;max-width:100%;min-width:0;grid-template-columns:minmax(96px,max-content) minmax(0,1fr);gap:8px;align-items:stretch}
+	  .rstk-video-form-gate .rstk-phone-input{display:grid;width:100%;max-width:100%;min-width:0;grid-template-columns:minmax(98px,clamp(98px,18%,108px)) minmax(0,1fr);gap:8px;align-items:stretch}
+	  .rstk-video-form-gate .rstk-phone-input[data-phone-country-hidden]{grid-template-columns:minmax(0,1fr)}
+	  .rstk-video-form-gate .rstk-phone-input[data-phone-country-hidden] > select{display:none}
 	  .rstk-video-form-gate .rstk-phone-input > input,.rstk-video-form-gate .rstk-phone-input > select{min-width:0}
-	  .rstk-video-form-gate .rstk-phone-input > select{appearance:none;-webkit-appearance:none;background:linear-gradient(45deg,transparent 50%,var(--rstk-form-field-text,var(--rstk-muted)) 50%) calc(100% - 20px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-form-field-text,var(--rstk-muted)) 50%,transparent 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));padding-left:clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px));padding-right:42px}
+	  .rstk-video-form-gate .rstk-phone-input > select{appearance:none;-webkit-appearance:none;background:linear-gradient(45deg,transparent 50%,var(--rstk-form-field-text,var(--rstk-muted)) 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-form-field-text,var(--rstk-muted)) 50%,transparent 50%) calc(100% - 10px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));padding-left:9px;padding-right:26px}
 	  .rstk-video-form-gate .rstk-options{display:grid;gap:clamp(7px,1.8cqw,10px);width:100%;max-width:100%;min-width:0}
 	  .rstk-video-form-gate .rstk-option{width:100%;max-width:100%;min-width:0;min-height:clamp(38px,8cqw,var(--rstk-form-field-height,50px));border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:clamp(.84rem,2.2cqw,var(--rstk-form-input-size,1rem));font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:clamp(9px,2cqw,var(--rstk-form-field-pad-y,13px)) clamp(10px,2.4cqw,var(--rstk-form-field-pad-x,14px))}
 	  .rstk-video-form-gate .rstk-option:has(input:checked){border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-bg,color-mix(in srgb,var(--rstk-accent) 8%,transparent))}
@@ -18424,7 +18430,7 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-form-gate .rstk-submit-message{min-height:18px;margin:0;color:var(--rstk-form-help-color,var(--rstk-muted));font-size:clamp(.74rem,1.8cqw,.88rem);font-weight:650;text-align:var(--rstk-form-content-align,left)}
 	  @keyframes rstkVideoFormGateFade{from{opacity:0}to{opacity:1}}
 	  @keyframes rstkVideoFormGateSlide{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
-	  @container (max-width:460px){.rstk-video-form-gate{padding:8px}.rstk-video-form-gate-panel{--rstk-video-form-item-gap:8px;gap:var(--rstk-video-form-item-gap);padding:10px;border-radius:12px}.rstk-video-form-actions{justify-content:stretch}.rstk-video-form-actions button{flex:1 1 0;min-width:0;padding-inline:10px}.rstk-video-form-gate .rstk-phone-input{grid-template-columns:1fr}}
+	  @container (max-width:460px){.rstk-video-form-gate{padding:8px}.rstk-video-form-gate-panel{--rstk-video-form-item-gap:8px;gap:var(--rstk-video-form-item-gap);padding:10px;border-radius:12px}.rstk-video-form-actions{justify-content:stretch}.rstk-video-form-actions button{flex:1 1 0;min-width:0;padding-inline:10px}.rstk-video-form-gate .rstk-phone-input{grid-template-columns:minmax(96px,104px) minmax(0,1fr)}.rstk-video-form-gate .rstk-phone-input[data-phone-country-hidden]{grid-template-columns:minmax(0,1fr)}}
 		  @media (max-width:760px){.rstk-video-form-gate-fit-expanded,.rstk-video-gate-active.rstk-video-form-gate-fit-expanded{width:min(100%,var(--rstk-video-form-gate-fit-width,100%));margin-inline:auto}}
 		  @supports not (height:1svh){.rstk-video-form-gate-fit-expanded,.rstk-video-gate-active.rstk-video-form-gate-fit-expanded{min-height:var(--rstk-video-form-gate-fit-height,min(760px,max(520px,86vh)))}}
 	  @supports (width:1cqw){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(104px,min(22cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))))}.rstk-video-control-bar{left:max(6px,min(12px,2cqw));right:max(6px,min(12px,2cqw));bottom:max(6px,min(12px,2cqw));gap:max(4px,min(8px,1.4cqw));padding:max(5px,min(7px,1.2cqw))}.rstk-video-control-button{width:max(24px,min(30px,5cqw));height:max(24px,min(30px,5cqw))}.rstk-video-timecode{min-width:max(76px,min(98px,16cqw));height:max(24px,min(30px,5cqw));gap:max(3px,min(5px,1cqw));padding-inline:max(7px,min(10px,1.7cqw));font-size:max(.62rem,min(.72rem,1.4cqw))}.rstk-video-speed-control{min-width:max(54px,min(66px,11cqw));height:max(24px,min(30px,5cqw));padding-inline:max(6px,min(8px,1.5cqw)) max(18px,min(20px,3cqw))}@media (max-width:760px){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(88px,min(18cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))))}}}
@@ -18461,7 +18467,9 @@ const RSTK_BASE_CSS = `
 	    padding:13px 14px;outline:none;transition:border-color .15s ease,box-shadow .15s ease;
 	  }
 	  .rstk-kind-form .rstk-field > input,.rstk-kind-form .rstk-field > textarea,.rstk-kind-form .rstk-field > select,.rstk-embedded-form .rstk-field > input,.rstk-embedded-form .rstk-field > textarea,.rstk-embedded-form .rstk-field > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
-	  .rstk-phone-input{display:grid;grid-template-columns:minmax(132px,clamp(132px,24%,142px)) minmax(0,1fr);gap:8px;align-items:stretch;max-width:100%}
+	  .rstk-phone-input{display:grid;grid-template-columns:minmax(98px,clamp(98px,18%,108px)) minmax(0,1fr);gap:8px;align-items:stretch;max-width:100%}
+	  .rstk-phone-input[data-phone-country-hidden]{grid-template-columns:minmax(0,1fr)}
+	  .rstk-phone-input[data-phone-country-hidden] > select{display:none}
 	  .rstk-phone-input > select,.rstk-phone-input > input{min-width:0}
 	  .rstk-kind-form .rstk-field .rstk-phone-input > input,.rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > input,.rstk-embedded-form .rstk-field .rstk-phone-input > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
 	  textarea{resize:vertical;min-height:108px}
@@ -18476,8 +18484,8 @@ const RSTK_BASE_CSS = `
 	  .rstk-kind-form.rstk-select-filled .rstk-field select,.rstk-select-filled .rstk-embedded-form select{background-color:color-mix(in srgb,var(--rstk-form-field-bg,transparent) 88%,var(--rstk-accent) 12%)}
 	  .rstk-kind-form.rstk-select-underline .rstk-field select,.rstk-select-underline .rstk-embedded-form select{border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background-color:transparent;padding-left:0;padding-right:36px}
 	  .rstk-kind-form.rstk-select-soft .rstk-field select,.rstk-select-soft .rstk-embedded-form select{border-radius:999px;background-color:color-mix(in srgb,var(--rstk-form-field-bg,var(--rstk-input-bg)) 90%,var(--rstk-accent) 10%);padding-left:20px}
-	  .rstk-phone-input > select{background:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-input-bg)}
-	  .rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-filled .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-underline .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > select,.rstk-select-filled .rstk-embedded-form .rstk-field .rstk-phone-input > select,.rstk-select-underline .rstk-embedded-form .rstk-field .rstk-phone-input > select{border-width:var(--rstk-form-field-border-width,1px);border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-form-field-bg,var(--rstk-input-bg));padding-left:var(--rstk-form-field-pad-x,14px);padding-right:42px}
+	  .rstk-phone-input > select{background:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%) calc(100% - 10px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-input-bg)}
+	  .rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-filled .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-underline .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > select,.rstk-select-filled .rstk-embedded-form .rstk-field .rstk-phone-input > select,.rstk-select-underline .rstk-embedded-form .rstk-field .rstk-phone-input > select{border-width:var(--rstk-form-field-border-width,1px);border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%) calc(100% - 10px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-form-field-bg,var(--rstk-input-bg));padding-left:9px;padding-right:26px}
 
 	  .rstk-options{display:grid;gap:10px}
 	  .rstk-option{display:flex;align-items:center;gap:11px;min-height:50px;border:1px solid var(--rstk-input-border);border-radius:var(--rstk-field-radius,var(--rstk-radius));padding:11px 14px;background:var(--rstk-input-bg);color:var(--rstk-input-ink);font-weight:600;cursor:pointer;transition:border-color .15s ease,background .15s ease}
@@ -18652,10 +18660,12 @@ const RSTK_BASE_CSS = `
 
   @media (max-width:640px){
     .rstk-kind-landing .rstk-hero{padding:clamp(32px,8vw,56px) 20px}
-    .rstk-phone-input{grid-template-columns:minmax(124px,132px) minmax(0,1fr)}
+    .rstk-phone-input{grid-template-columns:minmax(96px,104px) minmax(0,1fr)}
+    .rstk-phone-input[data-phone-country-hidden]{grid-template-columns:minmax(0,1fr)}
   }
   @media (max-width:340px){
-    .rstk-phone-input{grid-template-columns:1fr}
+    .rstk-phone-input{grid-template-columns:minmax(96px,104px) minmax(0,1fr)}
+    .rstk-phone-input[data-phone-country-hidden]{grid-template-columns:minmax(0,1fr)}
   }
 `
 
