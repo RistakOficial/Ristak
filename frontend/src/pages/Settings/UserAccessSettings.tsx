@@ -18,7 +18,8 @@ import {
   Users,
   Zap
 } from 'lucide-react'
-import { Badge, Button, Card, Modal } from '@/components/common'
+import { Badge, Button, Card, Modal, TabList } from '@/components/common'
+import { UserNotificationPreferencesAdmin } from './UserNotificationPreferencesAdmin' // (MOB-006)
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { userAccessService, type SaveTeamUserInput, type TeamUser } from '@/services/userAccessService'
@@ -493,6 +494,9 @@ export const UserAccessSettings: React.FC = () => {
   const [createDraft, setCreateDraft] = useState<Draft>(() => blankDraft())
   const [editDraft, setEditDraft] = useState<Draft | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // (MOB-006) Pestañas: 'access' = gestión de accesos (lo de siempre); 'notifications'
+  // = preferencias de notificación del celular de todo el equipo (vista admin nueva).
+  const [activeTab, setActiveTab] = useState<'access' | 'notifications'>('access')
 
   const selectedMember = useMemo(
     () => members.find((member) => member.id === selectedId) || members[0] || null,
@@ -672,6 +676,21 @@ export const UserAccessSettings: React.FC = () => {
 
   return (
     <div className={styles.page}>
+      {/* (MOB-006) Pestañas: Accesos (intacto) + Notificaciones del equipo (nuevo). */}
+      <TabList
+        tabs={[
+          { value: 'access', label: 'Accesos' },
+          { value: 'notifications', label: 'Notificaciones del equipo' }
+        ]}
+        activeTab={activeTab}
+        onTabChange={(value) => setActiveTab(value as 'access' | 'notifications')}
+      />
+
+      {activeTab === 'notifications' ? (
+        <Card>
+          <UserNotificationPreferencesAdmin />
+        </Card>
+      ) : (
       <Card>
         <div className={styles.panelHeader}>
           <div className={styles.panelHeaderLeft}>
@@ -1050,6 +1069,7 @@ export const UserAccessSettings: React.FC = () => {
           )}
         </section>
       </Card>
+      )}
     </div>
   )
 }

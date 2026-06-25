@@ -47,6 +47,7 @@ import calendarsRoutes, { publicCalendarsRoutes } from './routes/calendars.route
 import trackingRoutes, { publicTrackingRoutes } from './routes/tracking.routes.js'
 import triggerLinksRoutes from './routes/triggerLinks.routes.js'
 import configRoutes from './routes/config.routes.js'
+import userConfigRoutes from './routes/userConfig.routes.js' // (MOB-006)
 import costsRoutes from './routes/costs.routes.js'
 import authRoutes from './routes/auth.routes.js'
 import apiAccessRoutes from './routes/apiAccess.routes.js'
@@ -290,6 +291,7 @@ app.use('/api/push', pushRoutes)
 app.use('/api/license', licenseRoutes)
 app.use('/api/chat-events', chatEventsRoutes)
 app.use('/api/config', configRoutes)
+app.use('/api/user-config', userConfigRoutes) // (MOB-006) preferencias de notificaciones por usuario
 app.use('/api', costsRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
 app.use('/api/ai-agent', requireAuth, requireFeature('app_assistant_ai'), aiAgentRoutes) // (LIC-002) auth antes de feature

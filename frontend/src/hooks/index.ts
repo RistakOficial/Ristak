@@ -1,5 +1,6 @@
 // Hooks personalizados de la app
 export { useAppConfig, useTableConfig } from './useAppConfig'
+export { useUserConfig } from './useUserConfig' // (MOB-006)
 export { usePhoneTheme, isPhoneThemePreference, type PhoneThemePreference, type PhoneThemeTone } from './usePhoneTheme'
 export { usePhoneElasticScroll } from './usePhoneElasticScroll'
 export { usePhoneWakeLock } from './usePhoneWakeLock'
