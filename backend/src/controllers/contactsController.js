@@ -13,6 +13,7 @@ import {
   recordContactPhoneNumber
 } from '../services/contactIdentityService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
+import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
@@ -1980,6 +1981,8 @@ export const getContacts = async (req, res) => {
     if (hiddenCondition) {
       conditions.push(hiddenCondition)
     }
+    // (CNT-007) Excluir contactos en la papelera (soft-delete) de la lista y el conteo.
+    conditions.push('contacts.deleted_at IS NULL')
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
@@ -2002,6 +2005,9 @@ export const getContacts = async (req, res) => {
     if (range.endUtc) {
       mainConditions.push('c.created_at <= ?')
     }
+
+    // (CNT-007) Excluir contactos en la papelera (soft-delete) de la query principal.
+    mainConditions.push('c.deleted_at IS NULL')
 
     // Aplicar filtro de contactos ocultos (con alias 'c')
     const hiddenConditionAlias = buildHiddenContactsCondition(hiddenFilters, 'c', false)
@@ -2311,6 +2317,11 @@ export const getContactById = async (req, res) => {
   try {
     const { id } = req.params
 
+    // (SEC-005 / ACL-002) Aplicar filtro de contactos ocultos también al detalle por ID:
+    // si el contacto cae bajo un filtro de ocultos, responder 404 (no exponerlo por ID).
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+
     let contact = await db.get(
       `WITH payment_stats AS (
         SELECT
@@ -2384,7 +2395,7 @@ ${CONTACT_META_PROFILE_SELECT},
         ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      WHERE c.id = ?`,
+      WHERE c.id = ? AND c.deleted_at IS NULL${hiddenCondition ? ` AND ${hiddenCondition}` : ''}`,
       [id, id]
     )
 
@@ -2739,6 +2750,10 @@ export const searchContacts = async (req, res) => {
     const searchClause = buildContactSearchClause('c', q)
     const searchRank = buildContactSearchRank('c', q)
 
+    // (ACL-002) Excluir contactos ocultos también en la búsqueda de contactos.
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+
     const contacts = await db.all(
       `WITH payment_stats AS (
         SELECT
@@ -2801,7 +2816,7 @@ ${CONTACT_META_PROFILE_SELECT},
         ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      WHERE ${searchClause.condition}
+      WHERE ${searchClause.condition} AND c.deleted_at IS NULL${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
       ORDER BY ${searchRank.expression} DESC, c.created_at DESC
       LIMIT 20`,
       [...searchClause.params, ...searchRank.params]
@@ -3074,11 +3089,26 @@ export const createContact = async (req, res) => {
     })
   } catch (error) {
     logger.error(`Error creando contacto: ${error.message}`)
-    const isUniqueError = /unique|duplicate/i.test(error.message || '')
+    // CNT-012: el pre-check (SELECT) y el INSERT no son atómicos; bajo concurrencia
+    // (webhooks + UI) la UNIQUE de la DB es el verdadero candado. Aquí mapeamos esa
+    // violación de UNIQUE a un 409 con el mensaje específico del campo en conflicto
+    // (correo vs teléfono) en lugar de un genérico, para que el usuario sepa qué editar.
+    const message = error.message || ''
+    const isUniqueError = /unique|duplicate/i.test(message)
+    let conflictError = 'Ya existe un contacto con ese correo o teléfono.'
+    if (isUniqueError) {
+      const mentionsEmail = /email/i.test(message)
+      const mentionsPhone = /phone/i.test(message)
+      if (mentionsEmail && !mentionsPhone) {
+        conflictError = 'Ya existe un contacto con ese correo. Búscalo en la lista y edítalo si necesitas cambiar algo.'
+      } else if (mentionsPhone && !mentionsEmail) {
+        conflictError = 'Ya existe un contacto con ese teléfono. Búscalo en la lista y edítalo si necesitas cambiar algo.'
+      }
+    }
     res.status(isUniqueError ? 409 : 500).json({
       success: false,
       error: isUniqueError
-        ? 'Ya existe un contacto con ese correo o teléfono.'
+        ? conflictError
         : 'Error creando contacto'
     })
   }
@@ -3120,9 +3150,21 @@ export const getContactStats = async (req, res) => {
 /**
  * Actualiza las estadísticas de todos los contactos (total_paid, purchases_count, last_purchase_date)
  */
+// CNT-010: `updateContactsStats()` hace un UPDATE full-table con subconsultas y es
+// caro en memoria (riesgo de OOM en el proceso de 512MB). El endpoint /sync-stats lo
+// dispara a demanda, así que ráfagas o doble-click podían encadenar varias pasadas
+// full-table simultáneas. Coalescemos en una sola ejecución en curso por proceso:
+// las peticiones concurrentes esperan/reusan el mismo resultado en vez de lanzar más.
+let inFlightStatsSync = null
+
 export const syncContactsStats = async (req, res) => {
   try {
-    const stats = await updateContactsStats()
+    if (!inFlightStatsSync) {
+      inFlightStatsSync = updateContactsStats().finally(() => {
+        inFlightStatsSync = null
+      })
+    }
+    const stats = await inFlightStatsSync
 
     res.json({
       success: true,
@@ -3190,8 +3232,12 @@ export const updateContact = async (req, res) => {
       tags,
       customFields,
       dnd,
-      dndSettings
+      dndSettings,
+      confirmMerge
     } = req.body
+    // (CNT-001) Bandera explícita para autorizar la fusión destructiva al editar
+    // teléfono/email. Sin ella NO se fusiona en silencio.
+    const mergeConfirmed = confirmMerge === true || confirmMerge === 'true'
     const hasPreferredWhatsAppPhoneNumberUpdate = hasOwn(req.body, 'preferredWhatsAppPhoneNumberId') ||
       hasOwn(req.body, 'preferred_whatsapp_phone_number_id')
     const preferredWhatsAppPhoneNumberInput = hasOwn(req.body, 'preferredWhatsAppPhoneNumberId')
@@ -3234,6 +3280,60 @@ export const updateContact = async (req, res) => {
     const normalizedPhone = phone !== undefined
       ? (await normalizePhoneForAccount(phone) || phone || null)
       : undefined
+
+    // (CNT-001) NO fusionar+borrar en silencio al editar teléfono/email.
+    // Si el dato nuevo ya pertenece a OTRO contacto, devolver 409 con
+    // 'merge_confirmation_required' e info del contacto en conflicto, salvo que
+    // venga confirmMerge=true. (El diálogo de confirmación lo hace el frontend.)
+    if (!mergeConfirmed) {
+      // Conflicto por teléfono
+      if (phone !== undefined && normalizedPhone) {
+        const phoneCanonical = normalizePhoneForStorage(normalizedPhone)
+        if (phoneCanonical) {
+          const phoneConflict = await findContactByPhoneCandidates(phoneCanonical, { excludeId: id })
+          if (phoneConflict?.id) {
+            return res.status(409).json({
+              success: false,
+              code: 'merge_confirmation_required',
+              error: 'El teléfono ya pertenece a otro contacto. Confirma la fusión para continuar.',
+              conflict: {
+                field: 'phone',
+                contact: {
+                  id: phoneConflict.id,
+                  full_name: phoneConflict.full_name || null,
+                  phone: phoneConflict.phone || null
+                }
+              }
+            })
+          }
+        }
+      }
+
+      // Conflicto por email
+      if (email !== undefined && cleanString(email)) {
+        const emailConflict = await db.get(
+          "SELECT id, full_name, email, phone FROM contacts WHERE email IS NOT NULL AND email != '' AND LOWER(email) = LOWER(?) AND id != ? LIMIT 1",
+          [cleanString(email), id]
+        )
+        if (emailConflict?.id) {
+          return res.status(409).json({
+            success: false,
+            code: 'merge_confirmation_required',
+            error: 'El email ya pertenece a otro contacto. Confirma la fusión para continuar.',
+            conflict: {
+              field: 'email',
+              contact: {
+                id: emailConflict.id,
+                full_name: emailConflict.full_name || null,
+                email: emailConflict.email || null,
+                phone: emailConflict.phone || null
+              }
+            }
+          })
+        }
+      }
+    }
+
     const phoneUpsert = phone !== undefined
       ? await prepareContactPhoneUpsert({ contactId: id, phone: normalizedPhone })
       : null
@@ -3318,15 +3418,15 @@ export const updateContact = async (req, res) => {
         logger.info(`Contacto actualizado en HighLevel: ${id} (GHL ${ghlContactId})`)
       }
     } catch (error) {
+      // (CNT-008) Antes se hacía `return 502` cuando fallaba la sync de custom
+      // fields a HighLevel, ANTES de persistir nada local: con GHL caído/token
+      // expirado el usuario no podía guardar. Ahora NO bloqueamos el guardado
+      // local; solo avisamos en el log y continuamos para no perder datos.
       if (shouldSyncHighLevelCustomFields) {
-        logger.warn(`No se pudieron actualizar custom fields en HighLevel para ${id}: ${error.message}`)
-        return res.status(502).json({
-          success: false,
-          error: 'No se pudieron sincronizar los campos personalizados con GoHighLevel'
-        })
+        logger.warn(`No se pudieron sincronizar custom fields con HighLevel para ${id} (se guarda local de todos modos): ${error.message}`)
+      } else {
+        logger.warn(`No se pudo actualizar el contacto en HighLevel: ${error.message}`)
       }
-
-      logger.warn(`No se pudo actualizar el contacto en HighLevel: ${error.message}`)
       // Continuar con la actualización local aunque falle en GHL
     }
 
@@ -3465,6 +3565,26 @@ export const updateContact = async (req, res) => {
     })
 
   } catch (error) {
+    // (CNT-004) Email duplicado al editar caía a un 500 genérico opaco por el
+    // constraint UNIQUE. Lo mapeamos a un 409 claro y accionable (consistente
+    // con la pre-validación de email/teléfono de más arriba), para que el
+    // usuario sepa que el email ya pertenece a otro contacto.
+    const code = String(error?.code || '')
+    const message = String(error?.message || '')
+    const isUniqueConflict = code === 'SQLITE_CONSTRAINT' ||
+      code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+      code === '23505' ||
+      message.includes('UNIQUE constraint failed') ||
+      message.includes('duplicate key value')
+    if (isUniqueConflict) {
+      logger.warn(`Conflicto de email duplicado actualizando contacto ${req.params.id}: ${error.message}`)
+      return res.status(409).json({
+        success: false,
+        code: 'duplicate_email',
+        error: 'El email ya pertenece a otro contacto. Usa uno distinto o confirma la fusión.'
+      })
+    }
+
     logger.error(`Error actualizando contacto ${req.params.id}: ${error.message}`)
     res.status(500).json({
       success: false,
@@ -3666,14 +3786,21 @@ export const deleteContact = async (req, res) => {
       // Continuar con la eliminación local aunque falle en GHL
     }
 
-    // Eliminar el contacto (las relaciones se eliminan automáticamente por CASCADE)
-    await db.run('DELETE FROM contacts WHERE id = ?', [id])
+    // (CNT-007 / DB-003) Soft-delete: marcar deleted_at en vez de borrar físicamente.
+    // Así NO se dispara el ON DELETE CASCADE y se conservan pagos e historial; el
+    // contacto queda en la papelera y es recuperable. Se limpia ghl_contact_id para que
+    // la sincronización de HighLevel no lo "resucite" emparejándolo por ese id.
+    await db.run(
+      `UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP, ghl_contact_id = NULL WHERE id = ?`,
+      [id]
+    )
 
-    logger.info(`Contacto eliminado: ${id} (${existing.full_name})`)
+    logger.info(`Contacto enviado a la papelera (soft-delete): ${id} (${existing.full_name})`)
+    await recordAudit({ entityType: 'contact', entityId: id, action: 'soft_delete', actor: req.user, details: { full_name: existing.full_name } })
 
     res.json({
       success: true,
-      message: 'Contacto eliminado correctamente'
+      message: 'Contacto movido a la papelera. Sus pagos e historial se conservan; puedes restaurarlo.'
     })
 
   } catch (error) {
@@ -3682,6 +3809,64 @@ export const deleteContact = async (req, res) => {
       success: false,
       error: 'Error eliminando contacto'
     })
+  }
+}
+
+// (CNT-007) Lista los contactos en la papelera (soft-deleted) para poder restaurarlos.
+export const getTrashedContacts = async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500)
+    const rows = await db.all(
+      `SELECT id, full_name, email, phone, source, deleted_at, total_paid, purchases_count
+       FROM contacts
+       WHERE deleted_at IS NOT NULL
+       ORDER BY deleted_at DESC
+       LIMIT ?`,
+      [limit]
+    )
+    res.json({ success: true, contacts: rows })
+  } catch (error) {
+    logger.error(`Error listando papelera de contactos: ${error.message}`)
+    res.status(500).json({ success: false, error: 'Error obteniendo la papelera' })
+  }
+}
+
+// (CNT-007) Restaura un contacto desde la papelera (deja deleted_at en NULL).
+export const restoreContact = async (req, res) => {
+  try {
+    const { id } = req.params
+    const existing = await db.get('SELECT id, full_name FROM contacts WHERE id = ? AND deleted_at IS NOT NULL', [id])
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Contacto no encontrado en la papelera' })
+    }
+    await db.run('UPDATE contacts SET deleted_at = NULL WHERE id = ?', [id])
+    logger.info(`Contacto restaurado de la papelera: ${id} (${existing.full_name})`)
+    await recordAudit({ entityType: 'contact', entityId: id, action: 'restore', actor: req.user, details: { full_name: existing.full_name } })
+    res.json({ success: true, message: 'Contacto restaurado correctamente' })
+  } catch (error) {
+    logger.error(`Error restaurando contacto ${req.params.id}: ${error.message}`)
+    res.status(500).json({ success: false, error: 'Error restaurando contacto' })
+  }
+}
+
+// (CNT-007 / DB-003) Borra permanentemente un contacto de la papelera, pero CONSERVA sus
+// pagos: los desacopla (contact_id = NULL) antes del borrado para no perder historial financiero.
+export const permanentDeleteContact = async (req, res) => {
+  try {
+    const { id } = req.params
+    const existing = await db.get('SELECT id, full_name FROM contacts WHERE id = ? AND deleted_at IS NOT NULL', [id])
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Contacto no encontrado en la papelera' })
+    }
+    // (DB-003) Conservar los pagos: desacoplarlos del contacto antes de borrarlo (contact_id es nullable).
+    await db.run('UPDATE payments SET contact_id = NULL WHERE contact_id = ?', [id])
+    await db.run('DELETE FROM contacts WHERE id = ?', [id])
+    logger.info(`Contacto borrado permanentemente (pagos conservados): ${id} (${existing.full_name})`)
+    await recordAudit({ entityType: 'contact', entityId: id, action: 'permanent_delete', actor: req.user, details: { full_name: existing.full_name } })
+    res.json({ success: true, message: 'Contacto borrado permanentemente. Sus pagos se conservaron en el historial.' })
+  } catch (error) {
+    logger.error(`Error borrando permanentemente contacto ${req.params.id}: ${error.message}`)
+    res.status(500).json({ success: false, error: 'Error borrando el contacto' })
   }
 }
 
@@ -3890,6 +4075,11 @@ export const getContactJourney = async (req, res) => {
     const refreshExternalStatuses = String(req.query?.refreshExternalStatuses ?? 'true').toLowerCase() !== 'false'
     const outboundMessageDirectionPlaceholders = OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.map(() => '?').join(', ')
 
+    // (SEC-005 / ACL-002) No exponer el journey de un contacto oculto: si cae bajo un
+    // filtro de ocultos, tratarlo como inexistente (404).
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+
     // Verificar que el contacto existe y obtener info de atribución completa
     const contact = await db.get(`
       SELECT
@@ -3901,7 +4091,7 @@ export const getContactJourney = async (req, res) => {
         meta_ads.ad_name as meta_ad_name
       FROM contacts
       LEFT JOIN meta_ads ON meta_ads.ad_id = contacts.attribution_ad_id
-      WHERE contacts.id = ?
+      WHERE contacts.id = ?${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
       ORDER BY meta_ads.date DESC
       LIMIT 1
     `, [id])

@@ -10,10 +10,14 @@ import {
   deleteContactTagFolderHandler
 } from '../controllers/contactTagsController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
+// (ACL-001) Las etiquetas son parte del módulo de Contactos; protegemos la API
+// directa con requireModuleAccess('contacts') para respetar el rol fuera de la UI.
+router.use(requireModuleAccess('contacts'))
 
 // Las rutas fijas van antes de '/:id'
 router.get('/catalog', getContactTagsCatalog)

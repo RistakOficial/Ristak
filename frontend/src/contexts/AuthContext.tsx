@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { ensureLocalDevAuth } from '@/services/authFetch'
-import { apiUrl, requiresRuntimeApiBaseUrl } from '@/services/apiBaseUrl'
+import { apiUrl, requiresRuntimeApiBaseUrl, isNativeAppRuntime, clearRuntimeApiBaseUrl } from '@/services/apiBaseUrl'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import type { AccountLocaleDefaults } from '@/utils/accountLocale'
 import type { AccessConfig, LicenseFeatures, UserRole } from '@/utils/accessControl'
@@ -269,6 +269,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(null)
     setLocationId(null)
     setAccessToken(null)
+    // (MOB-004) En la app móvil nativa, al cerrar sesión limpiamos también el tenant
+    // runtime (base URL + storage tenant-scoped). Antes el logout dejaba la app apuntando
+    // al backend de la empresa anterior, así que volver a entrar con un correo de OTRA
+    // empresa fallaba. Ahora el siguiente login vuelve a resolver la empresa correcta.
+    // En web es no-op (no hay tenant runtime; la API base la fija el host).
+    if (isNativeAppRuntime()) {
+      clearRuntimeApiBaseUrl()
+    }
   }
 
   return (

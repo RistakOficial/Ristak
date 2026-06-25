@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
+import { useTimezone } from '@/contexts/TimezoneContext' // (MOB-007) zona del negocio para el bucket de caché diaria
 import { useHighLevelConnected, usePhoneElasticScroll } from '@/hooks'
 import { AccountSettings } from '@/pages/Settings/AccountSettings'
 import { AIAgentSettings } from '@/pages/Settings/AIAgentSettings'
@@ -366,6 +367,7 @@ export const PhoneApp: React.FC = () => {
   const params = useParams<{ section?: string }>()
   const { locationId, accessToken } = useAuth()
   const { dateRange, setPreset } = useDateRange()
+  const { timezone } = useTimezone() // (MOB-007) zona del negocio
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   usePhoneElasticScroll({ enabled: accessState === 'allowed' })
 
@@ -533,7 +535,7 @@ export const PhoneApp: React.FC = () => {
     const loadPhoneData = async () => {
       setLoadError(null)
       const cacheKey = getPhoneDailyCacheKey('phone-app', 'data', locationId || 'default', startIso, endIso)
-      const cachedPhoneData = readPhoneDailyCache<PhoneAppData>(cacheKey)
+      const cachedPhoneData = readPhoneDailyCache<PhoneAppData>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
       const showedCachedData = Boolean(cachedPhoneData)
 
       if (cachedPhoneData) {
@@ -627,7 +629,7 @@ export const PhoneApp: React.FC = () => {
         }
 
         setPhoneData(nextPhoneData)
-        writePhoneDailyCache(cacheKey, compactPhoneDataForCache(nextPhoneData), { maxEntryChars: 520_000 })
+        writePhoneDailyCache(cacheKey, compactPhoneDataForCache(nextPhoneData), { maxEntryChars: 520_000 }, timezone) // (MOB-007)
       } catch {
         if (!cancelled) {
           if (!showedCachedData) {
@@ -647,7 +649,7 @@ export const PhoneApp: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [accessState, accessToken, activeSectionId, endDate, endIso, locationId, refreshKey, startDate, startIso])
+  }, [accessState, accessToken, activeSectionId, endDate, endIso, locationId, refreshKey, startDate, startIso, timezone]) // (MOB-007) recarga si cambia la zona del negocio
 
   const dashboardTiles = useMemo(() => {
     const metrics = phoneData.dashboardMetrics

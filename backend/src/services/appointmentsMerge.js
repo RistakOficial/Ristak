@@ -36,20 +36,25 @@ export async function recordAttendanceAttributionSignal({ contactId, appointment
     return false
   }
 
+  // (DB-008) Una señal por CITA (opción A): el id es determinista contact_id:appointment_id, así
+  // cada cita conserva su propia señal y no se pisa el historial. Las señales sin cita
+  // (appointmentId vacío) quedan como una por contacto (id = contact_id:'').
+  const normalizedAppointmentId = appointmentId || ''
+  const signalId = `${contactId}:${normalizedAppointmentId}`
+
   await db.run(`
     INSERT INTO appointment_attendance_signals (
-      contact_id, appointment_id, source, first_seen_at, updated_at
+      id, contact_id, appointment_id, source, first_seen_at, updated_at
     )
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ON CONFLICT (contact_id) DO UPDATE SET
-      appointment_id = COALESCE(appointment_attendance_signals.appointment_id, excluded.appointment_id),
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT (id) DO UPDATE SET
       source = CASE
         WHEN appointment_attendance_signals.source = 'webhook_showed'
           THEN appointment_attendance_signals.source
         ELSE excluded.source
       END,
       updated_at = CURRENT_TIMESTAMP
-  `, [contactId, appointmentId, source])
+  `, [signalId, contactId, normalizedAppointmentId, source])
 
   return true
 }

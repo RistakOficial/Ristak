@@ -407,13 +407,57 @@ async function ensurePublicCalendarRequest(req, slugOrId) {
   return { host, calendar };
 }
 
-async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, timezone }) {
-  return localCalendarService.getLocalFreeSlots(
+async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, timezone }, context = null) {
+  const localSlots = await localCalendarService.getLocalFreeSlots(
     calendar.id,
     startDate,
     endDate,
     timezone
   );
+
+  // (APT-007) Antes el parametro `context` se recibia y se ignoraba: la
+  // disponibilidad publica se calculaba SOLO contra la BD local, perdiendo las
+  // citas que existen en el calendario remoto de HighLevel pero aun no se han
+  // sincronizado localmente. Cuando el calendario esta enlazado a GHL y tenemos
+  // credenciales, cruzamos contra los free-slots remotos: un horario solo se
+  // considera libre si lo esta en AMBOS lados.
+  if (!context?.locationId || !context?.accessToken || !calendar.ghlCalendarId) {
+    return localSlots;
+  }
+
+  let remoteSlots;
+  try {
+    remoteSlots = await calendarService.getFreeSlots(
+      calendar.ghlCalendarId,
+      startDate,
+      endDate,
+      context.accessToken,
+      timezone
+    );
+  } catch (error) {
+    // Si GHL no responde, no bloqueamos la reserva publica; degradamos a la
+    // disponibilidad local (mismo comportamiento que tenia antes del fix).
+    logger.warn(`[Calendars Controller] (APT-007) No se pudo verificar disponibilidad remota GHL, usando solo local: ${error.message}`);
+    return localSlots;
+  }
+
+  // Indexamos los instantes libres remotos (con tolerancia de 1 min) para
+  // intersectar con los locales sin depender de formatos de fecha exactos.
+  const remoteMs = (Array.isArray(remoteSlots) ? remoteSlots : [])
+    .flatMap(day => (Array.isArray(day?.slots) ? day.slots : []))
+    .map(slot => new Date(slot).getTime())
+    .filter(ms => Number.isFinite(ms));
+
+  const isFreeRemotely = (slotIso) => {
+    const ms = new Date(slotIso).getTime();
+    if (!Number.isFinite(ms)) return false;
+    return remoteMs.some(remote => Math.abs(remote - ms) <= 60000);
+  };
+
+  return (Array.isArray(localSlots) ? localSlots : []).map(day => ({
+    ...day,
+    slots: (Array.isArray(day?.slots) ? day.slots : []).filter(isFreeRemotely)
+  }));
 }
 
 /**
@@ -1093,11 +1137,15 @@ export async function getPublicFreeSlots(req, res) {
 
     const { calendar } = await ensurePublicCalendarRequest(req, slug);
     const resolvedTimezone = cleanString(timezone) || await getAccountTimezone();
+    // (APT-007) Pasamos el context de HighLevel tambien al listado publico para
+    // que los horarios mostrados coincidan con los que la reserva aceptara
+    // (disponibilidad local + remota), evitando "el slot desaparecio al reservar".
+    const context = await getSavedHighLevelOnlyContext();
     const slots = await getCalendarFreeSlotsForPublic(calendar, {
       startDate,
       endDate,
       timezone: resolvedTimezone
-    });
+    }, context);
 
     res.json({
       success: true,
@@ -1399,7 +1447,21 @@ export async function getBlockedSlots(req, res) {
     const { startTime, endTime } = req.query;
     const { locationId, accessToken } = await getHighLevelContext(req);
 
-    if (!locationId || !startTime || !endTime || !accessToken) {
+    // (APT-004) Sin HighLevel: devolver los bloqueos NATIVOS guardados localmente.
+    if (!accessToken) {
+      const toIso = (epoch) => {
+        const n = parseInt(epoch, 10);
+        return Number.isFinite(n) ? new Date(n).toISOString() : null;
+      };
+      const data = await localCalendarService.listLocalBlockedSlots({
+        calendarId,
+        startTime: startTime ? toIso(startTime) : null,
+        endTime: endTime ? toIso(endTime) : null
+      });
+      return res.json({ success: true, data });
+    }
+
+    if (!locationId || !startTime || !endTime) {
       return res.json({
         success: true,
         data: []
@@ -1452,11 +1514,21 @@ export async function createBlockedSlot(req, res) {
   try {
     const { accessToken, locationId, ...blockData } = req.body;
 
+    // (APT-004) Sin HighLevel: crear un bloqueo NATIVO (calendarios Ristak/Google).
+    // Se respeta en checkSlotAvailability para impedir agendar sobre ese horario.
     if (!accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
+      const startTime = blockData.startTime || blockData.start_time || blockData.startTimeUtc;
+      const endTime = blockData.endTime || blockData.end_time || blockData.endTimeUtc;
+      if (!startTime || !endTime) {
+        return res.status(400).json({ success: false, error: 'Se requiere startTime y endTime para el bloqueo' });
+      }
+      const blockedSlot = await localCalendarService.createLocalBlockedSlot({
+        calendarId: blockData.calendarId || blockData.calendar_id || req.params.calendarId || null,
+        startTime,
+        endTime,
+        title: blockData.title || blockData.reason || blockData.name || null
       });
+      return res.status(201).json({ success: true, data: blockedSlot });
     }
 
     if (!locationId) {
@@ -1532,6 +1604,28 @@ export async function createAppointment(req, res) {
       title: renderedTemplates.title,
       notes: renderedTemplates.notes
     };
+
+    // (APT-001) Validar disponibilidad del slot antes de crear: evita doble-booking
+    // silencioso desde el modal admin. Si el slot ya alcanzó su límite respondemos 409,
+    // salvo que venga una bandera explícita para forzar (ignoreAppointmentConflicts).
+    const forceDoubleBooking = appointmentData.ignoreAppointmentConflicts === true
+      || appointmentData.confirmDoubleBooking === true;
+    if (!forceDoubleBooking && (localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id)) {
+      const availability = await localCalendarService.checkSlotAvailability(
+        localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id,
+        localAppointmentData.startTime || localAppointmentData.start_time,
+        localAppointmentData.endTime || localAppointmentData.end_time
+      );
+      if (!availability.available) {
+        return res.status(409).json({
+          success: false,
+          code: 'slot_unavailable',
+          error: 'Ese horario ya alcanzó el límite de citas. Elige otro horario o confirma el sobreagendamiento.',
+          data: { limit: availability.limit, overlapping: availability.overlapping }
+        });
+      }
+    }
+
     let appointment = await localCalendarService.createLocalAppointment({
       ...localAppointmentData,
       calendarId: localCalendar?.id || appointmentData.calendarId,
@@ -1645,6 +1739,33 @@ export async function updateAppointment(req, res) {
     const existing = await localCalendarService.getLocalAppointment(id);
     let appointment;
 
+    // (APT-006) Normaliza el nuevo estado ANTES de hablar con HL. El front puede
+    // mandar el estado como status / appointmentStatus / appointment_status; usamos
+    // el MISMO patrón que más abajo (previousStatus/nextStatus). Si el nuevo estado
+    // es 'cancelled' nos aseguramos de que el payload a HL lleve appointmentStatus
+    // para que highlevelCalendarService.mapAppointmentStatus lo reciba y propague la
+    // cancelación remota en este mismo PUT. NO duplicamos el mapeo de status aquí.
+    const incomingStatus = String(
+      updateData.appointmentStatus || updateData.appointment_status || updateData.status || ''
+    ).trim().toLowerCase();
+    if (incomingStatus === 'cancelled' && !updateData.appointmentStatus && !updateData.appointment_status) {
+      updateData.appointmentStatus = incomingStatus;
+    }
+
+    // (APT-006) Token de fallback: cuando un admin cancela por cambio de estado puede
+    // NO venir accessToken en el body. Si la cita está vinculada a HL pero no tenemos
+    // token en el contexto, intentamos el token guardado (highlevel_config) para poder
+    // propagar la cancelación en vez de dejarla solo local.
+    if (existing?.ghlAppointmentId && !context.accessToken) {
+      const saved = await getSavedHighLevelOnlyContext().catch(() => null);
+      if (saved?.accessToken) {
+        context.accessToken = saved.accessToken;
+        if (!context.locationId && saved.locationId) {
+          context.locationId = saved.locationId;
+        }
+      }
+    }
+
     if (context.accessToken && existing?.ghlAppointmentId) {
       try {
         const remote = await calendarService.updateAppointment(existing.ghlAppointmentId, updateData, context.accessToken);
@@ -1663,6 +1784,20 @@ export async function updateAppointment(req, res) {
 
     if (!appointment) {
       appointment = await localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
+    }
+
+    // (APT-003) Si la cita se reprogramó (cambió start_time), olvidar recordatorios ya
+    // registrados para que el cron recalcule/reenvíe en la nueva fecha. La ruta GHL hace
+    // upsert directo (sin pasar por updateLocalAppointment), por eso lo cubrimos aquí también.
+    try {
+      const prevStartMs = new Date(existing?.startTime || existing?.start_time).getTime();
+      const nextStartMs = new Date(appointment?.startTime || appointment?.start_time).getTime();
+      if (Number.isFinite(prevStartMs) && Number.isFinite(nextStartMs) && prevStartMs !== nextStartMs && (appointment?.id || id)) {
+        const { clearAppointmentReminderSends } = await import('../services/appointmentRemindersService.js');
+        await clearAppointmentReminderSends(appointment?.id || id);
+      }
+    } catch (error) {
+      logger.warn(`[Calendars Controller] No se pudieron limpiar recordatorios tras reprogramar: ${error.message}`);
     }
 
     const previousStatus = String(existing?.appointmentStatus || existing?.appointment_status || existing?.status || '').trim().toLowerCase();

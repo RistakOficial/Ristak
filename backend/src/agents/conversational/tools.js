@@ -14,6 +14,7 @@ import {
   setConversationSignal,
   setConversationStatus,
   recordConversationalAgentEvent,
+  hasRecentConversationalAgentEvent,
   applyAgentSuccessExtras,
   applyAgentCompletionAction,
   updateConversationClosingContext,
@@ -671,7 +672,8 @@ export function createConversationalTools(ctx) {
         })
         await recordConversationalAgentEvent({
           contactId: ctx.contactId,
-          eventType: 'payment_link_created',
+          // (AI-004) Distingue link reutilizado (idempotencia) de uno nuevo.
+          eventType: result.reused ? 'payment_link_reused' : 'payment_link_created',
           detail: {
             agentId: config.id || ctx.agentId || null,
             invoiceId: result.invoiceId,
@@ -679,7 +681,8 @@ export function createConversationalTools(ctx) {
             currency: result.currency,
             channel,
             paymentMode: getSalesPaymentMode(config),
-            status: result.status
+            status: result.status,
+            ...(result.reused ? { reused: true } : {})
           }
         })
         return {
@@ -690,7 +693,10 @@ export function createConversationalTools(ctx) {
           amount: result.amount,
           currency: result.currency,
           status: result.status,
-          note: 'Link enviado. La venta sigue pendiente hasta que Ristak confirme el pago real del invoice.'
+          // (AI-004) Evita que el modelo reenvíe/duplique: avísale que ya había un link equivalente.
+          note: result.reused
+            ? 'Ya existía un link de pago equivalente reciente para este contacto; se reutilizó en lugar de crear otro. Confirma a la persona con ese mismo link; no generes uno nuevo.'
+            : 'Link enviado. La venta sigue pendiente hasta que Ristak confirme el pago real del invoice.'
         }
       } catch (error) {
         await recordConversationalAgentEvent({
@@ -811,6 +817,21 @@ export function createConversationalTools(ctx) {
 
       const publicUrl = link.publicUrl || buildTriggerLinkPublicUrl(link, baseUrl)
       const sentUrl = buildContactTriggerLinkUrl(publicUrl, ctx.contactId)
+
+      // (AI-005) Idempotencia: si ya se envió un enlace de disparo a este contacto hace
+      // poco, no repetimos el efecto (evita que el agente lo reenvíe en bucle).
+      if (!ctx.dryRun && await hasRecentConversationalAgentEvent({ contactId: ctx.contactId, eventType: 'trigger_link_sent' })) {
+        return {
+          ok: true,
+          alreadySent: true,
+          triggerLinkId: link.id,
+          triggerLinkPublicId: link.publicId || null,
+          triggerLinkName: link.name,
+          sentUrl,
+          note: 'Ya enviaste este enlace hace poco. NO lo reenvíes salvo que el cliente lo pida explícitamente.'
+        }
+      }
+
       pushAction(ctx, 'send_trigger_link', {
         objective: config.objective,
         intencionDetectada,

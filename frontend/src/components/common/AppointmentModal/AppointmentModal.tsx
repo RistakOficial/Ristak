@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
+import { Badge, type BadgeVariant } from '../Badge'; // GCAL-007
 import { TabList } from '../TabList';
 import { DateTimePicker } from '../DateTimePicker';
 import { CustomSelect } from '../CustomSelect';
@@ -890,9 +891,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           resolvedInitialContact.phone
         : '';
 
+      // (APT-008) El estado inicial respeta el autoConfirm del calendario: si la
+      // auto-confirmación está apagada, la cita nueva arranca 'pending' (pendiente),
+      // no 'confirmed'. Si no se sabe el calendario, se conserva el default 'confirmed'.
+      const effectiveCalendar = calendar || calendars?.find(c => c.id === selectedCalendarId) || null
+      const initialStatus = effectiveCalendar?.autoConfirm === false ? 'pending' : 'confirmed'
+
       setFormData({
         title: defaultTitle || initialContactName || '',
-        appointmentStatus: 'confirmed', // Estado predeterminado: Confirmada
+        appointmentStatus: initialStatus, // (APT-008) según autoConfirm del calendario
         startTime: defaultStart ? toLocalInputValue(defaultStart, defaultTimeZone || accountTimezone) : '',
         endTime: defaultEnd ? toLocalInputValue(defaultEnd, defaultTimeZone || accountTimezone) : '',
         notes: '',
@@ -1186,6 +1193,32 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const contactDelivery = selectedContact ? getContactDelivery(selectedContact) : '';
   const addressLabel = formData.address.trim() || 'Sin ubicación';
   const notesLabel = formData.notes.trim() || 'Sin notas';
+
+  // GCAL-007: estado de sincronización por-cita con Google.
+  // El backend expone, por cita, `googleSyncStatus` ('pending' | 'synced' | 'error'),
+  // `googleEventId` y `source`. Como el tipo CalendarEvent todavía no declara esos
+  // campos, se leen vía cast (mismo patrón que el resto del modal).
+  // Solo se muestra al ver/editar una cita existente que tenga relación con Google.
+  const googleSyncStatusRaw = (event as any)?.googleSyncStatus as string | null | undefined;
+  const googleEventId = (event as any)?.googleEventId as string | null | undefined;
+  const eventSource = (event as any)?.source as string | undefined;
+  const hasGoogleLink = Boolean(googleSyncStatusRaw) || Boolean(googleEventId) || eventSource === 'google';
+  const googleSyncBadge: { label: string; variant: BadgeVariant } | null =
+    !isCreateMode && hasGoogleLink
+      ? (() => {
+          switch (googleSyncStatusRaw) {
+            case 'synced':
+              return { label: 'Google · Sincronizada', variant: 'success' };
+            case 'pending':
+              return { label: 'Google · Pendiente', variant: 'warning' };
+            case 'error':
+              return { label: 'Google · Error de sync', variant: 'error' };
+            default:
+              // Hay vínculo con Google (googleEventId/source) pero sin estado explícito.
+              return { label: 'Google · Sincronizada', variant: 'success' };
+          }
+        })()
+      : null;
 
   const clearPhonePanelCloseTimer = () => {
     if (phonePanelCloseTimerRef.current === null) return;
@@ -1741,6 +1774,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               </div>
             </div>
             <div className={styles.summaryActions}>
+              {/* GCAL-007: estado de sincronización con Google de esta cita */}
+              {googleSyncBadge && (
+                <Badge variant={googleSyncBadge.variant}>{googleSyncBadge.label}</Badge>
+              )}
               {currentStatus && (
                 <span
                   className={styles.statusChip}

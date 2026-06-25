@@ -24,6 +24,9 @@ import {
   resumeBulkContactAction,
   updateContactCustomFieldDefinitionHandler,
   deleteContact,
+  getTrashedContacts,
+  restoreContact,
+  permanentDeleteContact,
   getContactJourney,
   getContactWhatsAppRoutingEvents,
   bulkUpdateContactCustomFields
@@ -38,9 +41,14 @@ router.use(requireModuleAccess('contacts'))
 
 // Rutas principales
 router.get('/', getContacts)
-router.get('/chats', getChatContacts)
+// (ACL-001) /chats es un endpoint de Chat, no de Contactos. Además del gate de
+// 'contacts' a nivel de router, exigimos el módulo 'chat' para que un empleado con
+// chat:'none' (aunque tenga contacts:'read') quede bloqueado también por API directa.
+router.get('/chats', requireModuleAccess('chat'), getChatContacts)
 router.get('/search', searchContacts)
 router.get('/stats', getContactStats)
+// (CNT-007) Papelera de contactos (debe ir ANTES de '/:id' para no capturarse como un id).
+router.get('/trash', getTrashedContacts)
 router.get('/chart', getContactsChart)
 router.get('/custom-fields', getContactCustomFieldDefinitions)
 router.post('/custom-fields', createContactCustomFieldDefinition)
@@ -64,5 +72,8 @@ router.get('/:id/journey', getContactJourney)
 router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)
 router.put('/:id', updateContact)
 router.delete('/:id', deleteContact)
+// (CNT-007) Restaurar desde la papelera o borrar permanentemente (conservando pagos).
+router.post('/:id/restore', restoreContact)
+router.delete('/:id/permanent', permanentDeleteContact)
 
 export default router

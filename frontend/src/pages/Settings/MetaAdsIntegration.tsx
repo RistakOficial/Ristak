@@ -267,6 +267,16 @@ export const MetaAdsIntegration: React.FC = () => {
   })
   const [adAccounts, setAdAccounts] = useState<AdAccount[]>([])
   const [pixels, setPixels] = useState<Pixel[]>([])
+  // (META-003) Estado y expiración del token de Meta, para que el usuario sepa si su
+  // conexión sigue válida o está por caducar (antes no había forma de saberlo en la UI).
+  const [metaTokenStatus, setMetaTokenStatus] = useState<{ valid: boolean; message: string; daysUntilExpiry?: number; expiresAt?: string } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    campaignsService.verifyToken()
+      .then((res) => { if (!cancelled) setMetaTokenStatus(res?.configured && res.tokenStatus ? res.tokenStatus : null) })
+      .catch(() => { if (!cancelled) setMetaTokenStatus(null) })
+    return () => { cancelled = true }
+  }, [])
   const [pages, setPages] = useState<MetaPage[]>([])
   const [instagramAccounts, setInstagramAccounts] = useState<ConnectedSocialProfile[]>([])
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false)
@@ -1943,6 +1953,26 @@ export const MetaAdsIntegration: React.FC = () => {
                   <div className={styles.connectedMetaItem}>
                     <span>Instagram</span>
                     <strong>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Sin Instagram'}</strong>
+                  </div>
+                  <div className={styles.connectedMetaItem}>
+                    <span>Token de Meta</span>
+                    {metaTokenStatus ? (
+                      <Badge
+                        variant={
+                          !metaTokenStatus.valid
+                            ? 'error'
+                            : (typeof metaTokenStatus.daysUntilExpiry === 'number' && metaTokenStatus.daysUntilExpiry <= 7 ? 'warning' : 'success')
+                        }
+                      >
+                        {metaTokenStatus.valid
+                          ? (typeof metaTokenStatus.daysUntilExpiry === 'number'
+                              ? `Válido · expira en ${metaTokenStatus.daysUntilExpiry} día${metaTokenStatus.daysUntilExpiry === 1 ? '' : 's'}`
+                              : 'Válido')
+                          : 'Inválido o expirado'}
+                      </Badge>
+                    ) : (
+                      <strong>—</strong>
+                    )}
                   </div>
                 </div>
 

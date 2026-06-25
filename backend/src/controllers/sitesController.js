@@ -926,8 +926,25 @@ export async function publicSiteHostMiddleware(req, res, next) {
       return sendDomainError(req, res, 404, 'Este host solo sirve enlaces públicos de calendario.')
     }
 
-    if (isDashboardHost(host) || process.env.NODE_ENV !== 'production') {
+    // (TRK-010) Hosts legítimos de dashboard (incluye localhost/127.0.0.1/::1,
+    // *.localhost, *.local, *.onrender.com y DASHBOARD_DOMAINS) ya pasan por
+    // isDashboardHost. En producción esto queda EXACTAMENTE igual: un host que
+    // no es dashboard ni Site verificado recibe el 404 de abajo.
+    if (isDashboardHost(host)) {
       return next()
+    }
+
+    // (TRK-010) Antes, en NODE_ENV !== 'production' CUALQUIER host desconocido
+    // caía a next() y se servía como dashboard/CRM de forma silenciosa, lo que
+    // podía atribuir/contar tráfico mal. Ahora el fallthrough en no-producción
+    // requiere opt-in EXPLÍCITO (TRK_ALLOW_UNKNOWN_HOST_AS_DASHBOARD === '1') y
+    // siempre deja rastro en logs. Producción no usa esta rama.
+    if (process.env.NODE_ENV !== 'production') {
+      if (process.env.TRK_ALLOW_UNKNOWN_HOST_AS_DASHBOARD === '1') {
+        logger.warn(`(TRK-010) Host no configurado servido como dashboard por TRK_ALLOW_UNKNOWN_HOST_AS_DASHBOARD=1: host="${host}" path="${req.path}". No asumas atribución correcta para este host.`)
+        return next()
+      }
+      logger.warn(`(TRK-010) Host no configurado como dashboard ni como Site público verificado: host="${host}" path="${req.path}". Se devuelve 404. Para servirlo como dashboard en dev, configura el host (DASHBOARD_DOMAINS) o exporta TRK_ALLOW_UNKNOWN_HOST_AS_DASHBOARD=1.`)
     }
 
     return sendDomainError(req, res, 404, 'Este dominio no esta configurado como dashboard ni como Site público verificado')

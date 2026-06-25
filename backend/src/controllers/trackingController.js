@@ -12,7 +12,7 @@ import { getNoTrackReason } from '../utils/noTracking.js'
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
-const TRACKING_SNIPPET_VERSION = '10' // Incrementar cuando cambies el código del snippet
+const TRACKING_SNIPPET_VERSION = '11' // Incrementar cuando cambies el código del snippet (TRK-009: visitor_id fuera de la URL)
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
   .map(status => `'${String(status).replace(/'/g, "''")}'`)
   .join(', ')
@@ -114,9 +114,37 @@ function getContactConversionListCondition(type) {
   }
 }
 
+// TRK-008: deriva el offset (en horas) de una zona IANA en lugar de asumir -6h fijo.
+// SQLite (rama QA/dev) no entiende zonas IANA, así que calculamos el offset real con Intl.
+// Si la zona es inválida o falla el cálculo, conservamos el comportamiento previo (-6h).
+function sqliteTimezoneOffsetClause(timezone = 'UTC') {
+  const fallback = "'-6 hours'"
+  try {
+    const tz = String(timezone || 'UTC').trim() || 'UTC'
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'longOffset'
+    })
+    const part = dtf.formatToParts(new Date()).find(p => p.type === 'timeZoneName')
+    if (!part || !part.value) return fallback
+    // part.value ej: "GMT-6", "GMT-06:00", "GMT+5:30", "GMT" (UTC)
+    const match = part.value.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/)
+    if (!match) return part.value === 'GMT' ? "'0 hours'" : fallback
+    const sign = match[1] === '-' ? -1 : 1
+    const hours = parseInt(match[2], 10)
+    const minutes = match[3] ? parseInt(match[3], 10) : 0
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return fallback
+    const totalMinutes = sign * (hours * 60 + minutes)
+    return `'${totalMinutes} minutes'`
+  } catch {
+    return fallback
+  }
+}
+
 function timestampLocalExpression(column, timezone = 'UTC') {
   if (!isPostgres) {
-    return `datetime(${column}, '-6 hours')`
+    // TRK-008: usa el offset real de la zona en vez del -6h hardcodeado.
+    return `datetime(${column}, ${sqliteTimezoneOffsetClause(timezone)})`
   }
 
   const safeTimezone = String(timezone || 'UTC').replace(/'/g, "''")
@@ -786,28 +814,15 @@ export async function servePixel(req, res) {
     window.addEventListener('hashchange', schedulePageView);
   }
 
-  // Inyectar visitor_id en URL si no está presente
-  function injectVisitorIdToURL() {
-    try {
-      var currentURL = new URL(window.location.href);
-      var params = currentURL.searchParams;
+  // TRK-009: Ya NO inyectamos el visitor_id (rkvi_id) en la URL del navegador.
+  // Escribirlo en la query string lo filtraba en referrers y links compartidos.
+  // El visitor_id se persiste en localStorage y cookie (ver getVisitorId) y /collect
+  // lo lee del body, no de la URL. Mantenemos la lectura de rkvi_id desde la URL como
+  // fallback (getUrlVisitorId) para visitantes que ya lo traen en un link guardado,
+  // pero NO volvemos a escribirlo en window.location.
 
-      // Solo agregar si no existe ya
-      if (!params.has('rkvi_id') || !normalizeIdentityValue(params.get('rkvi_id'))) {
-        var visitorId = getVisitorId();
-        params.set('rkvi_id', visitorId);
-
-        // Actualizar URL sin recargar la página
-        var newURL = currentURL.pathname + '?' + params.toString() + currentURL.hash;
-        window.history.replaceState({}, '', newURL);
-      }
-    } catch (e) {
-      // Ignore errors (navegadores viejos sin URL API)
-    }
-  }
-
-  // Inyectar visitor_id en URL al cargar
-  injectVisitorIdToURL();
+  // TRK-009: persistir el visitor_id en cliente al cargar (sin tocar la URL).
+  getVisitorId();
   lastTrackedUrl = window.location.href;
   setupSpaNavigationTracking();
 
@@ -903,16 +918,38 @@ export async function collectEvent(req, res) {
 
     const user_agent = req.headers['user-agent'] || null
 
-    // Extraer full_name si viene en data.contact_name
+    // (TRK-001) /collect es público: el contact_id del body es atacante-controlado.
+    // Verificar que el contacto EXISTE antes de aceptarlo. Si no existe (o es inválido),
+    // ignorarlo: no se persiste en la sesión ni dispara reasignación de identidad.
+    // Esto evita inyectar atribución falsa y bloquea el hijack de visitor_id vía
+    // linkVisitorToContact/unifyVisitorIds desde un endpoint sin auth.
+    let verifiedContactId = null
+    let verifiedContactName = null
+    if (contact_id) {
+      try {
+        const contact = await db.get('SELECT id, full_name FROM contacts WHERE id = $1', [contact_id])
+        if (contact?.id) {
+          verifiedContactId = contact.id
+          verifiedContactName = contact.full_name || null
+        } else {
+          logger.warn(`/collect: contact_id inexistente ignorado: ${contact_id}`)
+        }
+      } catch (err) {
+        // contact_id malformado (p.ej. no-UUID) hace fallar el query; ignorarlo
+        logger.warn(`/collect: contact_id inválido ignorado (${contact_id}): ${err.message}`)
+      }
+    }
+
+    // Extraer full_name si viene en data.contact_name (solo si el contacto fue verificado)
     let full_name = null
-    if (contact_id && data && data.contact_name) {
+    if (verifiedContactId && data && data.contact_name) {
       full_name = data.contact_name
     }
 
     const sessionData = {
       session_id,
       visitor_id,
-      contact_id: contact_id || null,
+      contact_id: verifiedContactId,
       full_name,
       event_name,
       ts,
@@ -924,27 +961,22 @@ export async function collectEvent(req, res) {
     // SIEMPRE crear un nuevo registro (cada visita es única)
     await createSession(sessionData)
 
-    // Si hay contact_id, vincular visitor_id histórico con este contacto y unificar
-    if (contact_id && visitor_id) {
-      // Si no viene full_name, buscarlo en la tabla contacts
+    // (TRK-001) Solo vincular/unificar cuando el contact_id fue verificado contra la BD.
+    // Si hay contact_id verificado, vincular visitor_id histórico con este contacto y unificar
+    if (verifiedContactId && visitor_id) {
+      // Si no viene full_name, usar el de la tabla contacts ya consultado
       if (!full_name) {
-        try {
-          const contact = await db.get('SELECT full_name FROM contacts WHERE id = $1', [contact_id])
-          full_name = contact?.full_name || 'Sin nombre'
-        } catch (err) {
-          logger.warn(`No se pudo obtener full_name para contacto ${contact_id}: ${err.message}`)
-          full_name = 'Sin nombre'
-        }
+        full_name = verifiedContactName || 'Sin nombre'
       }
 
       // Importar funciones de tracking
       const { unifyVisitorIds } = await import('../services/trackingService.js')
 
       // No esperamos a que termine (async sin await) para responder rápido
-      linkVisitorToContact(visitor_id, contact_id, full_name)
+      linkVisitorToContact(visitor_id, verifiedContactId, full_name)
         .then(() => {
           // Después de vincular, unificar todos los visitor_ids al más viejo
-          return unifyVisitorIds(contact_id)
+          return unifyVisitorIds(verifiedContactId)
         })
         .catch(err => {
           logger.error('Error vinculando/unificando visitor a contact:', err)
@@ -1678,7 +1710,8 @@ export async function getVisitorsByPeriod(req, res) {
 
     const buildWeekExpression = (column) => {
       if (!isPostgres) {
-        return `strftime('%Y-W%W', datetime(${column}, '-6 hours'))`
+        // TRK-008: usa el offset real de la zona aplicada en vez del -6h hardcodeado.
+        return `strftime('%Y-W%W', datetime(${column}, ${sqliteTimezoneOffsetClause(range.appliedTimezone)}))`
       }
       const columnExpr = timestampLocalExpression(column, range.appliedTimezone)
       return `TO_CHAR(${columnExpr}, 'YYYY-"W"IW')`

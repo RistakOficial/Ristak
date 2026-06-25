@@ -4393,9 +4393,9 @@ async function findScheduledPaymentCandidates({ contactId, amount = 0, timezone 
          i.ghl_schedule_id IS NOT NULL OR
          LOWER(COALESCE(i.status, '')) IN ('scheduled', 'pending_card_authorization', 'schedule_failed', 'manual_pending')
        )
-     ORDER BY datetime(COALESCE(i.updated_at, i.created_at)) DESC,
-              datetime(COALESCE(f.updated_at, f.created_at)) DESC
-     LIMIT 15`,
+     ORDER BY COALESCE(i.updated_at, i.created_at) DESC,
+              COALESCE(f.updated_at, f.created_at) DESC
+     LIMIT 15`, // PAY-006-DB-005: datetime() no existe en Postgres; ordenar por la columna timestamp directamente (ISO ordena cronológicamente en ambos motores)
     [contactId]
   )
   const paymentPlanRows = await safeAll(
@@ -4403,8 +4403,9 @@ async function findScheduledPaymentCandidates({ contactId, amount = 0, timezone 
      FROM payment_plans
      WHERE contact_id = ?
        AND LOWER(COALESCE(status, 'active')) NOT IN ('cancelled', 'canceled', 'deleted', 'void', 'voided', 'failed', 'completed', 'complete', 'paid', 'expired', 'inactive')
-     ORDER BY datetime(COALESCE(next_run_at, updated_at, created_at)) DESC
-     LIMIT 15`,
+     ORDER BY COALESCE(next_run_at, updated_at, created_at) DESC
+     LIMIT 15`, // PAY-006-DB-005: datetime() no existe en Postgres; ordenar por la columna timestamp directamente
+
     [contactId]
   )
   const localCandidates = [
@@ -8306,6 +8307,69 @@ function normalizeAgentAppointmentStatus(status, fallback = 'confirmed') {
   return APPOINTMENT_STATUS_ALIASES[normalized] || fallback
 }
 
+// APT-005: conjunto canónico de estados de cita que se persiste en el mirror local
+// (columna appointment_status). NO se usa para hablar con GHL: ese contrato usa su
+// propio vocabulario (showed, etc.) y se preserva en updateData.appointmentStatus.
+const CANONICAL_APPOINTMENT_STATUSES = Object.freeze([
+  'pending',
+  'confirmed',
+  'rescheduled',
+  'cancelled',
+  'completed',
+  'noshow'
+])
+
+// APT-005: mapea cualquier variante (UI, GHL, español, inglés) al conjunto canónico.
+const CANONICAL_APPOINTMENT_STATUS_ALIASES = {
+  pending: 'pending',
+  pendiente: 'pending',
+  confirmar: 'confirmed',
+  confirmed: 'confirmed',
+  confirmada: 'confirmed',
+  confirmado: 'confirmed',
+  rescheduled: 'rescheduled',
+  reschedule: 'rescheduled',
+  reprogramada: 'rescheduled',
+  reprogramado: 'rescheduled',
+  reprogramar: 'rescheduled',
+  cancelled: 'cancelled',
+  canceled: 'cancelled',
+  cancelada: 'cancelled',
+  cancelado: 'cancelled',
+  cancelar: 'cancelled',
+  completed: 'completed',
+  complete: 'completed',
+  completada: 'completed',
+  completado: 'completed',
+  showed: 'completed',
+  show: 'completed',
+  attended: 'completed',
+  asistio: 'completed',
+  asistencia: 'completed',
+  presentada: 'completed',
+  presentado: 'completed',
+  noshow: 'noshow',
+  no_show: 'noshow',
+  'no-show': 'noshow',
+  noasistio: 'noshow',
+  no_asistio: 'noshow',
+  faltante: 'noshow'
+}
+
+// APT-005: helper centralizado. Devuelve siempre un valor del conjunto canónico
+// (o el fallback canónico si no se reconoce). Úsalo en TODO punto donde se ESCRIBE
+// appointment_status en la base local.
+function normalizeCanonicalAppointmentStatus(status, fallback = 'pending') {
+  const safeFallback = CANONICAL_APPOINTMENT_STATUSES.includes(fallback) ? fallback : 'pending'
+  const normalized = normalizeText(status).replace(/\s+/g, '_')
+  if (!normalized) return safeFallback
+  if (CANONICAL_APPOINTMENT_STATUS_ALIASES[normalized]) {
+    return CANONICAL_APPOINTMENT_STATUS_ALIASES[normalized]
+  }
+  if (CANONICAL_APPOINTMENT_STATUSES.includes(normalized)) return normalized
+  return safeFallback
+}
+
 function getAppointmentStatusForOperation(operation, args = {}) {
   if (operation === 'cancel') return 'cancelled'
   if (operation === 'confirm') return 'confirmed'
@@ -8621,7 +8685,9 @@ function normalizeAgentAppointmentRecord(rawAppointment = {}, fallback = {}) {
     '',
     180
   )
-  const appointmentStatus = normalizeAgentAppointmentStatus(
+  // APT-005: el estado que se PERSISTE en appointment_status se normaliza al
+  // conjunto canónico (pending/confirmed/rescheduled/cancelled/completed/noshow).
+  const appointmentStatus = normalizeCanonicalAppointmentStatus(
     appointment.appointmentStatus ||
     appointment.appointment_status ||
     appointment.status ||

@@ -27,7 +27,7 @@ import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAIAgentAvailability, useAppConfig, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig, useUserConfig, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks' // (MOB-006) useUserConfig
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { contactsService } from '@/services/contactsService'
 import { aiAgentService } from '@/services/aiAgentService'
@@ -138,13 +138,13 @@ export const PhoneSettings: React.FC = () => {
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
   const [showUnreadIndicators, setShowUnreadIndicators] = useAppConfig<boolean>('mobile_chat_show_unread_indicators', true)
   const [enabledContactInfoCustomFieldIds, setEnabledContactInfoCustomFieldIds] = useAppConfig<string[]>('mobile_chat_contact_info_custom_field_ids', [])
-  const [calendarPushEnabled, setCalendarPushEnabled] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
-  const [appointmentConfirmationPushEnabled, setAppointmentConfirmationPushEnabled] = useAppConfig<boolean>('appointment_confirmation_push_notifications_enabled', true)
-  const [chatPushEnabled, setChatPushEnabled] = useAppConfig<boolean>('chat_push_notifications_enabled', true)
-  const [paymentPushEnabled, setPaymentPushEnabled] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
-  const [notificationSoundEnabled, setNotificationSoundEnabled] = useAppConfig<boolean>('push_notification_sound_enabled', true)
-  const [notificationVibrationEnabled, setNotificationVibrationEnabled] = useAppConfig<boolean>('push_notification_vibration_enabled', true)
-  const [pushCalendarIds, setPushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
+  const [calendarPushEnabled, setCalendarPushEnabled] = useUserConfig<boolean>('calendar_push_notifications_enabled', false) // (MOB-006) preferencia por usuario
+  const [appointmentConfirmationPushEnabled, setAppointmentConfirmationPushEnabled] = useUserConfig<boolean>('appointment_confirmation_push_notifications_enabled', true) // (MOB-006) preferencia por usuario
+  const [chatPushEnabled, setChatPushEnabled] = useUserConfig<boolean>('chat_push_notifications_enabled', true) // (MOB-006) preferencia por usuario
+  const [paymentPushEnabled, setPaymentPushEnabled] = useUserConfig<boolean>('payment_push_notifications_enabled', true) // (MOB-006) preferencia por usuario
+  const [notificationSoundEnabled, setNotificationSoundEnabled] = useUserConfig<boolean>('push_notification_sound_enabled', true) // (MOB-006) preferencia por usuario
+  const [notificationVibrationEnabled, setNotificationVibrationEnabled] = useUserConfig<boolean>('push_notification_vibration_enabled', true) // (MOB-006) preferencia por usuario
+  const [pushCalendarIds, setPushCalendarIds] = useUserConfig<string[]>('calendar_push_notification_calendar_ids', []) // (MOB-006) preferencia por usuario
   const {
     safePreference,
     setPreference: setChatThemePreference,

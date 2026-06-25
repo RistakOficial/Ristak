@@ -16,6 +16,8 @@ import {
   normalizeManualBusinessExpenseRow
 } from '../services/manualBusinessExpensesService.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+// (ACL-002) Excluir contactos ocultos en la lista de transacciones de reportes (LEFT JOIN expone PII).
+import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
 const buildRangePayload = (range) => ({
   start: range.startUtc,
@@ -316,9 +318,14 @@ export const getContactsList = async (req, res) => {
   }
 }
 
+// (RPT-008) Tope duro para las listas de reportes: evita cargar miles de pagos en
+// memoria y tumbar la instancia de 512MB (OOM/502) o que el reporte timeouté.
+const REPORTS_LIST_MAX_LIMIT = 1000
+const REPORTS_LIST_DEFAULT_LIMIT = 500
+
 export const getTransactionsList = async (req, res) => {
   try {
-    const { from, to } = req.query
+    const { from, to, page, limit } = req.query
 
     // Importar db aquí para evitar problemas de importación circular
     const { db } = await import('../config/database.js')
@@ -348,7 +355,26 @@ export const getTransactionsList = async (req, res) => {
       params.push(range.endUtc)
     }
 
+    // (ACL-002) Excluir filas cuyo contacto (LEFT JOIN c) cae bajo un filtro de ocultos.
+    // Las transacciones sin contacto (c.* NULL) pasan gracias al COALESCE del filtro.
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    if (hiddenCondition) {
+      conditions.push(hiddenCondition)
+    }
+
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    // (RPT-008) Paginación con tope: nunca devolvemos toda la tabla de pagos de golpe.
+    const limitNumber = Math.min(
+      Math.max(Number(limit) || REPORTS_LIST_DEFAULT_LIMIT, 1),
+      REPORTS_LIST_MAX_LIMIT
+    )
+    const pageNumber = Math.max(Number(page) || 1, 1)
+    const offset = (pageNumber - 1) * limitNumber
+
+    const countResult = await db.get(`SELECT COUNT(*) as total FROM payments p LEFT JOIN contacts c ON c.id = p.contact_id ${whereClause}`, params)
+    const total = Number(countResult?.total || 0)
 
     const query = `
       SELECT
@@ -366,17 +392,26 @@ export const getTransactionsList = async (req, res) => {
       LEFT JOIN contacts c ON c.id = p.contact_id
       ${whereClause}
       ORDER BY p.date DESC, p.created_at DESC, p.id DESC
+      LIMIT ? OFFSET ?
     `
 
-    const transactions = await db.all(query, params)
+    const transactions = await db.all(query, [...params, limitNumber, offset])
 
-    logger.info(`Lista de transacciones generada: ${transactions.length} registros`)
+    logger.info(`Lista de transacciones generada: ${transactions.length} de ${total} registros (página ${pageNumber}, límite ${limitNumber})`)
 
     res.json({
       success: true,
       data: {
         transactions,
-        range: buildRangePayload(range)
+        range: buildRangePayload(range),
+        pagination: {
+          page: pageNumber,
+          limit: limitNumber,
+          total,
+          totalPages: Math.ceil(total / limitNumber),
+          hasNext: offset + transactions.length < total,
+          hasPrev: pageNumber > 1
+        }
       }
     })
   } catch (error) {

@@ -7,6 +7,7 @@ import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useTimezone } from '@/contexts/TimezoneContext' // (MOB-007) zona del negocio para el bucket de caché diaria
 import { useAccountCurrency, usePaymentGatewayCapabilities, usePhoneElasticScroll } from '@/hooks'
 import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
@@ -187,6 +188,7 @@ export const PhonePayments: React.FC = () => {
   const [searchParams] = useSearchParams()
   const paymentCapabilities = usePaymentGatewayCapabilities()
   const { showConfirm, showToast } = useNotification()
+  const { timezone } = useTimezone() // (MOB-007) zona del negocio
   const [accountCurrency] = useAccountCurrency()
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   usePhoneElasticScroll({ enabled: accessState === 'allowed' })
@@ -491,7 +493,7 @@ export const PhonePayments: React.FC = () => {
     const loadRecentPayments = async () => {
       const { startDate, endDate } = getRecentPaymentRange(recentPaymentsPeriod)
       const cacheKey = getPhoneDailyCacheKey('phone-payments', 'recent-payments', recentPaymentsPeriod, startDate, endDate)
-      const cachedPayments = readPhoneDailyCache<Transaction[]>(cacheKey)
+      const cachedPayments = readPhoneDailyCache<Transaction[]>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
       const showedCachedPayments = Boolean(cachedPayments)
 
       if (cachedPayments) {
@@ -520,7 +522,7 @@ export const PhonePayments: React.FC = () => {
         setSelectedRecentPaymentId((current) => (
           current && receivedPayments.some((payment) => payment.id === current) ? current : null
         ))
-        writePhoneDailyCache(cacheKey, receivedPayments.slice(0, 80), { maxEntryChars: 260_000 })
+        writePhoneDailyCache(cacheKey, receivedPayments.slice(0, 80), { maxEntryChars: 260_000 }, timezone) // (MOB-007)
       } catch {
         if (!cancelled && !showedCachedPayments) {
           setRecentPayments([])
@@ -539,7 +541,7 @@ export const PhonePayments: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [accessState, recentPaymentsOpen, recentPaymentsPeriod])
+  }, [accessState, recentPaymentsOpen, recentPaymentsPeriod, timezone]) // (MOB-007) recarga si cambia la zona del negocio
 
   const canUsePaymentPlans = paymentCapabilities.canUsePaymentPlans
   const canUseSubscriptions = paymentCapabilities.canUseSubscriptions

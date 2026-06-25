@@ -1,6 +1,7 @@
 import { resumeWhatsAppQrSessions } from '../services/whatsappQrService.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
+import { withCronLock } from '../utils/cronLock.js'
 
 // Cada cuanto revisa el watchdog que las sesiones de WhatsApp Web con
 // credenciales guardadas tengan un socket vivo.
@@ -36,7 +37,14 @@ export function startWhatsAppQrWatchdogCron() {
 
   setInterval(() => {
     if (isDeployShutdownStarted()) return
-    trackDeployDrainWork('cron:whatsapp-qr-watchdog', () => resumeWhatsAppQrSessions({ source: 'watchdog' }), 'watchdog').catch(error => {
+    // (WA-003) Lock distribuido: con varias instancias solo una corre el watchdog por tick,
+    // evitando que reabran/reemplacen los mismos sockets Baileys en bucle. TTL = el intervalo
+    // del propio watchdog. Defensivo: con 1 instancia es inofensivo (fail-open en cronLock).
+    trackDeployDrainWork(
+      'cron:whatsapp-qr-watchdog',
+      () => withCronLock('whatsapp-qr-watchdog', WATCHDOG_INTERVAL_MS, () => resumeWhatsAppQrSessions({ source: 'watchdog' })),
+      'watchdog'
+    ).catch(error => {
       logger.warn(`[WhatsApp QR] Watchdog de sesiones fallo: ${error.message}`)
     })
   }, WATCHDOG_INTERVAL_MS)

@@ -5,6 +5,8 @@ import {
   saveMobilePushDevice,
   savePushSubscription
 } from '../services/pushNotificationsService.js'
+// (NOTI-005)(MOB-008) acceso a DB para verificar propiedad antes de apagar suscripciones/dispositivos
+import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
 export async function getPushPublicKey(req, res) {
@@ -47,7 +49,25 @@ export async function saveSubscription(req, res) {
 
 export async function disableSubscription(req, res) {
   try {
-    await disablePushSubscription(req.body?.endpoint)
+    const endpoint = String(req.body?.endpoint || '').trim()
+    // (NOTI-005) verificar propiedad: solo el dueño (o filas sin dueño) puede apagar la suscripción
+    if (endpoint) {
+      const requesterId = String(req.user?.userId || '').trim()
+      const row = await db.get(
+        'SELECT user_id FROM push_subscriptions WHERE endpoint = ?',
+        [endpoint]
+      ).catch(() => null)
+      const ownerId = String(row?.user_id || '').trim()
+      if (row && ownerId && ownerId !== requesterId) {
+        return res.status(403).json({
+          success: false,
+          code: 'FORBIDDEN',
+          error: 'No puedes apagar este celular'
+        })
+      }
+    }
+
+    await disablePushSubscription(endpoint)
     res.json({
       success: true,
       data: { disabled: true }
@@ -89,7 +109,25 @@ export async function saveMobileDevice(req, res) {
 
 export async function disableMobileDevice(req, res) {
   try {
-    await disableMobilePushDevice(req.body?.token)
+    const token = String(req.body?.token || '').trim()
+    // (MOB-008)(NOTI-005) verificar propiedad: solo el dueño (o filas sin dueño) puede apagar el dispositivo
+    if (token) {
+      const requesterId = String(req.user?.userId || '').trim()
+      const row = await db.get(
+        'SELECT user_id FROM mobile_push_devices WHERE token = ?',
+        [token]
+      ).catch(() => null)
+      const ownerId = String(row?.user_id || '').trim()
+      if (row && ownerId && ownerId !== requesterId) {
+        return res.status(403).json({
+          success: false,
+          code: 'FORBIDDEN',
+          error: 'No puedes apagar este celular'
+        })
+      }
+    }
+
+    await disableMobilePushDevice(token)
     res.json({
       success: true,
       data: { disabled: true }

@@ -43,10 +43,39 @@ import {
   serializeContactCustomFieldsForDb
 } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 
 const router = express.Router()
+
+// (AUTH-001 / SEC-004) Rate limiting de la API externa para evitar scraping/abuso.
+// Se aplica DESPUÉS de requireApiToken, así que se puede acotar por usuario del token
+// (cae a IP si por alguna razón no hay usuario resuelto). Tope generoso pensado para
+// integraciones legítimas pero suficiente para frenar barridos masivos.
+const externalApiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.RATE_LIMIT_DISABLED === '1',
+  keyGenerator: (req) => {
+    const ipKey = ipKeyGenerator(req.ip)
+    const userId = req.user?.userId
+    return userId ? `user:${userId}` : ipKey
+  },
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      code: 'rate_limited',
+      error: 'Demasiadas solicitudes a la API. Espera unos minutos e intenta de nuevo.'
+    })
+  }
+})
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash)/i
-const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens)$/i
+// (SEC-006) `users` y tablas con PII de cuenta NO deben exponerse como directorio
+// por la API externa. Se agregan a la lista de tablas sensibles (bloqueo total de
+// lectura/escritura), no solo a WRITE_BLOCKED, para no filtrar el directorio de
+// empleados ni el mapa de permisos (access_config).
+const SENSITIVE_TABLE_PATTERN = /^(users|payment_methods|highlevel_config|meta_config|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens)$/i
 const WRITE_BLOCKED_TABLE_PATTERN = /^(users|payment_methods)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
@@ -751,6 +780,8 @@ async function getOpenApiSpec(req, res) {
 router.get('/openapi.json', getOpenApiSpec)
 
 router.use(requireApiToken)
+// (AUTH-001 / SEC-004) limitar tasa por usuario del token tras autenticar
+router.use(externalApiRateLimiter)
 
 async function listDataTables(req, res) {
   try {
@@ -1086,20 +1117,49 @@ async function deleteDataRow(req, res) {
   }
 }
 
+// (SEC-001) Recursos de GoHighLevel de SOLO LECTURA permitidos por el proxy.
+// El proxy dejó de aceptar métodos de escritura y rutas arbitrarias: solo GET sobre
+// estos prefijos, solo para administradores, y cada llamada queda auditada en logs.
+const GHL_PROXY_READONLY_PREFIXES = [
+  '/contacts', '/conversations', '/calendars', '/opportunities', '/pipelines',
+  '/forms', '/campaigns', '/users', '/locations', '/businesses', '/custom-fields',
+  '/custom-values', '/tags', '/funnels', '/products', '/invoices', '/payments'
+]
+
+function isAllowedGhlReadPath(path) {
+  const base = String(path || '').split(/[?#]/)[0]
+  return GHL_PROXY_READONLY_PREFIXES.some(prefix => base === prefix || base.startsWith(`${prefix}/`))
+}
+
 async function proxyHighLevelRequest(req, res) {
   try {
+    // (SEC-001) Solo administradores pueden usar el proxy directo a GoHighLevel.
+    const actor = req.user?.email || req.user?.userId || 'desconocido'
+    if (req.user?.role !== 'admin') {
+      logger.warn(`[GHL proxy] Acceso denegado (no admin) user=${actor} path=${req.body?.path || ''}`)
+      return res.status(403).json({ success: false, code: 'admin_required', error: 'Solo un administrador puede usar el proxy de GoHighLevel.' })
+    }
+
+    // (SEC-001) Solo lectura: se fuerza GET y se rechaza cualquier método de escritura.
     const method = String(req.body.method || 'GET').toUpperCase()
-    const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
-    if (!allowedMethods.has(method)) {
-      return res.status(400).json({ success: false, error: 'Método no permitido' })
+    if (method !== 'GET') {
+      logger.warn(`[GHL proxy] Método de escritura rechazado user=${actor} method=${method} path=${req.body?.path || ''}`)
+      return res.status(403).json({ success: false, code: 'read_only', error: 'El proxy de GoHighLevel es de solo lectura: solo se permite GET.' })
     }
 
     const path = normalizeGhlApiPath(req.body.path)
+    if (!isAllowedGhlReadPath(path)) {
+      logger.warn(`[GHL proxy] Path fuera de allowlist user=${actor} path=${path}`)
+      return res.status(403).json({ success: false, code: 'path_not_allowed', error: 'Ese recurso de GoHighLevel no está permitido por el proxy de solo lectura.' })
+    }
+
+    // (SEC-001) Auditoría: quién, qué método y qué ruta.
+    logger.info(`[GHL proxy] AUDIT user=${actor} ${method} ${path}`)
+
     const ghlClient = await getGHLClient()
     const data = await ghlClient.request(path, {
       method,
       params: req.body.params || undefined,
-      body: req.body.body || undefined,
       version: req.body.version || undefined
     })
 
@@ -1109,7 +1169,7 @@ async function proxyHighLevelRequest(req, res) {
       sync: {
         provider: 'highlevel',
         status: 'proxied',
-        note: 'La petición se ejecutó directo contra GoHighLevel. El espejo local se actualizará por webhooks/sync cuando aplique.'
+        note: 'Solo lectura. La petición se ejecutó directo contra GoHighLevel (GET).'
       }
     })
   } catch (error) {

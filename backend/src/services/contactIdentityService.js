@@ -2,6 +2,31 @@ import crypto from 'crypto'
 import { db, getContactReferenceTables, isWhatsAppAutoCreatedContact } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
+// (CNT-002) Para no perder custom_fields al fusionar.
+import { mergeContactCustomFields, serializeContactCustomFieldsForDb } from '../utils/contactCustomFields.js'
+
+// (CNT-002) Parser tolerante de tags almacenados como JSON array (o null/legacy).
+function parseStoredTags(raw) {
+  if (Array.isArray(raw)) return raw
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function parseStoredCustomFields(raw) {
+  if (Array.isArray(raw)) return raw
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
 
 // Prefijos de IDs de contacto generados por Ristak. Un id sin ninguno de estos
 // prefijos se asume que es un ID de HighLevel usado como PK (datos legacy).
@@ -347,8 +372,43 @@ export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
   if (!fromContact || !toContact) return toId
 
   const normalizedPhone = canonicalPhone || normalizePhoneForStorage(toContact.phone || fromContact.phone)
-  const totalPaid = Math.max(Number(fromContact.total_paid || 0), Number(toContact.total_paid || 0))
-  const purchasesCount = Math.max(Number(fromContact.purchases_count || 0), Number(toContact.purchases_count || 0))
+  // (CNT-002) Conservar TODO al fusionar: usar SUM (no MAX) para totales, de modo que
+  // el historial pagado de ambos contactos quede reflejado en el sobreviviente.
+  const totalPaid = Number(fromContact.total_paid || 0) + Number(toContact.total_paid || 0)
+  const purchasesCount = Number(fromContact.purchases_count || 0) + Number(toContact.purchases_count || 0)
+
+  // (CNT-002) Unir tags de ambos contactos (sin duplicar).
+  const mergedTags = (() => {
+    const all = [...parseStoredTags(toContact.tags), ...parseStoredTags(fromContact.tags)]
+    const seen = new Set()
+    const result = []
+    for (const tag of all) {
+      const key = typeof tag === 'object' ? JSON.stringify(tag) : String(tag)
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(tag)
+    }
+    return result
+  })()
+  const mergedTagsJson = JSON.stringify(mergedTags)
+
+  // (CNT-002) Mezclar custom_fields: el sobreviviente (toContact) tiene prioridad,
+  // pero los campos que solo existían en el absorbido (fromContact) se conservan.
+  const mergedCustomFieldsJson = serializeContactCustomFieldsForDb(
+    mergeContactCustomFields(
+      parseStoredCustomFields(fromContact.custom_fields),
+      parseStoredCustomFields(toContact.custom_fields)
+    )
+  )
+
+  // (CNT-002) Conservar el vínculo a HighLevel y el WhatsApp preferido si el
+  // sobreviviente no los tiene (prioridad: toContact, fallback fromContact).
+  const mergedGhlContactId = (toContact.ghl_contact_id && String(toContact.ghl_contact_id).trim())
+    ? toContact.ghl_contact_id
+    : (fromContact.ghl_contact_id || null)
+  const mergedPreferredWhatsApp = (toContact.preferred_whatsapp_phone_number_id && String(toContact.preferred_whatsapp_phone_number_id).trim())
+    ? toContact.preferred_whatsapp_phone_number_id
+    : (fromContact.preferred_whatsapp_phone_number_id || null)
 
   await db.run('UPDATE contacts SET phone = NULL, email = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [fromId])
 
@@ -384,8 +444,12 @@ export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
       attribution_ctwa_clid = COALESCE(NULLIF(attribution_ctwa_clid, ''), ?),
       attribution_ad_name = COALESCE(NULLIF(attribution_ad_name, ''), ?),
       attribution_ad_id = COALESCE(NULLIF(attribution_ad_id, ''), ?),
-      total_paid = CASE WHEN COALESCE(total_paid, 0) < ? THEN ? ELSE total_paid END,
-      purchases_count = CASE WHEN COALESCE(purchases_count, 0) < ? THEN ? ELSE purchases_count END,
+      ghl_contact_id = ?,
+      preferred_whatsapp_phone_number_id = ?,
+      tags = ?,
+      custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'},
+      total_paid = ?,
+      purchases_count = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
@@ -402,9 +466,11 @@ export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
     fromContact.attribution_ctwa_clid || null,
     fromContact.attribution_ad_name || null,
     fromContact.attribution_ad_id || null,
+    mergedGhlContactId,
+    mergedPreferredWhatsApp,
+    mergedTagsJson,
+    mergedCustomFieldsJson,
     totalPaid,
-    totalPaid,
-    purchasesCount,
     purchasesCount,
     toId
   ])

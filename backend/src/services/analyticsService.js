@@ -754,10 +754,22 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
 }
 
 export function getGroupExpression(column, groupBy, timezone = 'America/Mexico_City') {
-  // Para SQLite, convertir timezone IANA a offset en horas
-  // Nota: SQLite no soporta timezone names, solo offsets numéricos
-  // Por ahora usamos el offset de México City como default
-  const tzOffset = '-6 hours' // TODO: calcular dinámicamente desde timezone IANA
+  // (RPT-004) Para SQLite, convertir el timezone IANA real a un offset en minutos
+  // en vez de hardcodear -6h. SQLite no soporta nombres de zona, solo offsets;
+  // calculamos el offset actual de la zona configurada con luxon. (Sigue siendo un
+  // offset fijo, así que no captura cambios de DST a mitad de rango, pero respeta
+  // la zona configurada en lugar de asumir siempre México City.)
+  const safeIanaTimezone = String(timezone || 'America/Mexico_City')
+  let offsetMinutes = -360 // fallback: México City (UTC-6) si la zona es inválida
+  try {
+    const probe = DateTime.now().setZone(safeIanaTimezone)
+    if (probe.isValid && Number.isFinite(probe.offset)) {
+      offsetMinutes = probe.offset
+    }
+  } catch (error) {
+    // zona inválida → mantener fallback UTC-6
+  }
+  const tzOffset = `${offsetMinutes} minutes`
 
   if (!isPostgres) {
     if (groupBy === 'year') {

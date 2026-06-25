@@ -112,6 +112,25 @@ function formatDate(value?: string | null) {
   }).format(date)
 }
 
+// (PAY2-004) Parámetros que Mercado Pago (Checkout Pro) adjunta en sus back_urls al
+// regresar al sitio. Si la URL trae cualquiera de ellos, el usuario viene del checkout.
+const MERCADOPAGO_RETURN_PARAMS = [
+  'collection_status',
+  'collection_id',
+  'payment_id',
+  'preference_id',
+  'merchant_order_id',
+  'external_reference'
+] as const
+
+// (PAY2-004) ¿Volvimos del checkout? true para Stripe (?payment=return) y para
+// Mercado Pago (sus parámetros de retorno, incluido status=approved|pending|...).
+function isPaymentReturn(params: URLSearchParams) {
+  if (params.get('payment') === 'return') return true
+  if (params.has('status')) return true
+  return MERCADOPAGO_RETURN_PARAMS.some((key) => params.has(key))
+}
+
 function getStatusCopy(status: string) {
   const normalized = status.toLowerCase()
   if (['paid', 'succeeded', 'completed'].includes(normalized)) {
@@ -625,6 +644,7 @@ const ConektaCardTokenizerForm: React.FC<{
   const [loadingTokenizer, setLoadingTokenizer] = useState(Boolean(payment.publicKey))
   const [tokenizerReady, setTokenizerReady] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [saveCard, setSaveCard] = useState(false) // (PAY2-008) opt-in para guardar la tarjeta
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
@@ -681,7 +701,8 @@ const ConektaCardTokenizerForm: React.FC<{
               try {
                 const result = await conektaPaymentsService.createPublicCardPayment(payment.publicPaymentId, {
                   tokenId,
-                  savePaymentSource: Boolean(payment.contact?.id)
+                  // (PAY2-008) Opt-in: solo guardar la tarjeta si el cliente marcó la casilla.
+                  savePaymentSource: saveCard && Boolean(payment.contact?.id)
                 })
                 const statusMessage = normalizeConektaStatusMessage(result.payment?.status || result.status)
                 setMessageKind(statusMessage.kind)
@@ -766,6 +787,19 @@ const ConektaCardTokenizerForm: React.FC<{
           <div id={containerId} className={styles.conektaTokenizerFrame} />
         </div>
       </div>
+
+      {/* (PAY2-008) Opt-in: el cliente decide si guardar su tarjeta (desmarcado por defecto). */}
+      {payment.contact?.id && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 12px', color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={saveCard}
+            onChange={(e) => setSaveCard(e.target.checked)}
+            disabled={submitting}
+          />
+          Guardar mi tarjeta para futuros pagos
+        </label>
+      )}
 
       <Button
         type="button"
@@ -901,7 +935,12 @@ export const PublicPayment: React.FC = () => {
       setLoading(true)
       setError('')
       try {
-        const sync = searchParams.get('payment') === 'return'
+        // (PAY2-004) Detecta el retorno del checkout. Stripe vuelve con ?payment=return,
+        // pero Mercado Pago (Checkout Pro) regresa con sus propios parámetros
+        // (collection_status / status / payment_id / preference_id / merchant_order_id /
+        // external_reference). En cualquiera de esos casos forzamos un sync para refrescar
+        // el estado del pago en vez de quedarnos con la vista en caché.
+        const sync = isPaymentReturn(searchParams)
         const data = await loadPublicPayment(publicPaymentId, sync)
         if (mounted) setPayment(data)
       } catch (loadError: any) {

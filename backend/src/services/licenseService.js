@@ -46,6 +46,22 @@ const DEFAULT_FEATURES = {
   advanced_reports: true
 }
 
+// (LIC-003) Features de pago que el backend candaduea con requireFeature(...). Si el
+// portal responde enforced 'allowed' pero SIN un objeto features válido, NO se abren
+// éstas (fail-closed): la base del CRM sigue, el premium queda apagado hasta que el
+// servidor envíe features explícitas.
+const PREMIUM_GATED_FEATURES = [
+  'whatsapp', 'email', 'meta_ads', 'google_calendar', 'automations',
+  'advanced_reports', 'app_assistant_ai', 'conversational_ai', 'ai',
+  'ai_agent', 'premium_modules'
+]
+
+function closedRemoteFeatures() {
+  const closed = { ...DEFAULT_FEATURES }
+  for (const key of PREMIUM_GATED_FEATURES) closed[key] = false
+  return closed
+}
+
 const FEATURE_DEPENDENCIES = {
   appointments: ['google_calendar', 'settings_calendars'],
   payments: ['settings_payments'],
@@ -117,12 +133,63 @@ function getConfig() {
     offlinePolicy: process.env.LICENSE_OFFLINE_POLICY === 'grace' ? 'grace' : 'strict',
     graceHours: Number(process.env.LICENSE_OFFLINE_GRACE_HOURS) > 0
       ? Number(process.env.LICENSE_OFFLINE_GRACE_HOURS)
-      : 24
+      : 24,
+    // (LIC-006) TTL del cache negativo (estado bloqueado). Evita re-verificar contra
+    // el portal en cada request mientras la licencia esté bloqueada. Corto a propósito
+    // para que un upgrade/reactivación se note rápido. Default 60s.
+    blockedCacheSeconds: Number(process.env.LICENSE_BLOCKED_CACHE_SECONDS) > 0
+      ? Number(process.env.LICENSE_BLOCKED_CACHE_SECONDS)
+      : 60,
+    // (LIC-008) Revalidación EN CALIENTE del estado positivo. Antes las features del
+    // plan solo se capturaban al login y vivían hasta que expiraba el license_token
+    // (expiresAt, controlado por el portal, típicamente horas), así que un cambio de
+    // plan no se reflejaba sin re-login. Ahora, además de respetar expiresAt, el cache
+    // positivo se revalida contra el portal cada N segundos (default 300 = 5 min). El
+    // primer request tras vencer la ventana fuerza una verificación fresca y aplica el
+    // nuevo plan sin cerrar sesión. Si el portal está inaccesible, handleServerUnreachable
+    // conserva el último estado permitido (no rompe la operación).
+    revalidateSeconds: Number(process.env.LICENSE_REVALIDATE_SECONDS) > 0
+      ? Number(process.env.LICENSE_REVALIDATE_SECONDS)
+      : 300
   }
 }
 
+// AUTH-007: hosts donde se permite http:// (desarrollo local). Las credenciales
+// del dueño y la license_key viajan a esta URL base (verify, owner-credentials,
+// setup-token, callLicenseServer), así que fuera de estos hosts NO debe salir en claro.
+function isLocalHost(hostname = '') {
+  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '')
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h.endsWith('.localhost')
+}
+
 function normalizeBaseUrl(value = '') {
-  return String(value || '').trim().replace(/\/+$/, '')
+  const clean = String(value || '').trim().replace(/\/+$/, '')
+  if (!clean) return ''
+
+  // AUTH-007: validar/endurecer el protocolo de la URL del portal central.
+  // Si no trae protocolo explícito, asumimos https:// (no degradar a http).
+  // Si trae http:// hacia un host remoto en producción, lo UPGRADEAMOS a https://
+  // para que las credenciales del dueño nunca viajen en claro. Solo se permite
+  // http:// para localhost/127.0.0.1/::1 (desarrollo local).
+  try {
+    const hasProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(clean)
+    const parsed = new URL(hasProtocol ? clean : `https://${clean}`)
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) return ''
+
+    if (parsed.protocol === 'http:' && !isLocalHost(parsed.hostname)) {
+      const isProd = process.env.NODE_ENV === 'production'
+      if (isProd) {
+        // En producción nunca dejamos salir http a host remoto: upgrade a https.
+        parsed.protocol = 'https:'
+      }
+      // En no-producción se respeta http remoto (entornos de prueba internos).
+    }
+
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
 }
 
 function normalizeAppBaseUrl(value = '') {
@@ -203,15 +270,39 @@ async function callLicenseServer(path, body = {}) {
 /**
  * Avisa al portal central que los usuarios de esta instalación cambiaron, para
  * que vuelva a leerlos y el login móvil pueda enrutar a cualquier usuario
- * (dueño o empleado) por su correo. No es crítico: si falla, no rompe la
- * operación que lo disparó (se hace best-effort).
+ * (dueño o empleado) por su correo.
+ *
+ * (AUTH-009) Antes era best-effort de un solo intento: si el portal fallaba con un
+ * error transitorio, el empleado recién creado NO podía loguear en la app móvil
+ * hasta el siguiente ciclo de refresh. Ahora el refresh se completa con await y
+ * reintenta de forma acotada (hasta 3 intentos con backoff corto) ante fallos
+ * transitorios, de modo que el portal queda actualizado de inmediato. Sigue sin
+ * lanzar: si tras agotar los reintentos no se logra, se loguea como error pero no
+ * rompe la operación que lo disparó (creación de empleado, etc.).
  */
 export async function requestPortalUserRefresh() {
   if (!isLicenseEnforced()) return
-  try {
-    await callLicenseServer('/api/license/users/refresh', {})
-  } catch (error) {
-    logger.warn(`No se pudo refrescar el directorio de usuarios en el portal: ${error.message}`)
+
+  // (AUTH-009) Reintento acotado con backoff corto para fallos transitorios del portal.
+  const maxAttempts = 3
+  const baseBackoffMs = 300
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await callLicenseServer('/api/license/users/refresh', {})
+      return
+    } catch (error) {
+      // (AUTH-009) Si aún quedan intentos, esperamos un backoff creciente y reintentamos.
+      if (attempt < maxAttempts) {
+        logger.warn(`No se pudo refrescar el directorio de usuarios en el portal (intento ${attempt}/${maxAttempts}): ${error.message}. Reintentando...`)
+        const delayMs = baseBackoffMs * attempt
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        continue
+      }
+      // (AUTH-009) Agotados los reintentos: registramos como error (no como warn) pero no
+      // lanzamos, para no romper la operación que disparó el refresh.
+      logger.error(`No se pudo refrescar el directorio de usuarios en el portal tras ${maxAttempts} intentos: ${error.message}`)
+    }
   }
 }
 
@@ -266,8 +357,13 @@ function normalizeLicenseFeatures(features = {}) {
       normalized[featureKey] = explicitDependencies.every((dependency) => source[dependency] === true)
     }
     for (const dependency of dependencies) {
-      if (!hasExplicitFeature && hasOwn.call(source, dependency)) {
-        normalized[dependency] = source[dependency] === true
+      // (LIC-004) Una sub-feature enviada explícitamente por el portal SIEMPRE gana,
+      // aunque el padre esté en true. Antes el padre pisaba la sub-feature, así que un
+      // downgrade parcial ({reports:true, advanced_reports:false}) dejaba la sub-feature
+      // encendida. Solo cuando el padre es false la apagamos (no puede haber hijo activo
+      // sin su padre); y solo derivamos del padre cuando la sub-feature NO vino explícita.
+      if (hasOwn.call(source, dependency)) {
+        normalized[dependency] = source[dependency] === true && normalized[featureKey] === true
       } else {
         normalized[dependency] = normalized[featureKey] === true
       }
@@ -281,6 +377,32 @@ function normalizeLicenseFeatures(features = {}) {
 
 function cacheIsValid() {
   return !!(cachedState && cachedState.allowed && cachedState.expiresAt && new Date(cachedState.expiresAt).getTime() > Date.now())
+}
+
+// (LIC-008) El cache positivo es "fresco" (reutilizable sin pegarle al portal) solo si
+// además de tener un license_token vigente (cacheIsValid) no se venció su ventana corta
+// de revalidación. Cuando la ventana vence, getLicenseState revalida contra el portal
+// para reflejar cambios de plan en caliente. Si nunca se marcó revalidateAfter (estados
+// viejos en cache), se trata como fresco para no romper el comportamiento previo.
+function cacheIsFresh() {
+  if (!cacheIsValid()) return false
+  if (!cachedState.revalidateAfter) return true
+  return cachedState.revalidateAfter > Date.now()
+}
+
+// (LIC-006) Cache negativo: el estado bloqueado es válido mientras no expire su TTL
+// corto. Así dejamos de martillar el portal en cada request cuando la licencia está
+// bloqueada, sin volver el bloqueo permanente.
+function blockedCacheIsValid() {
+  return !!(cachedState && cachedState.allowed === false && cachedState.blockedUntil && cachedState.blockedUntil > Date.now())
+}
+
+// (LIC-007) El cache es un singleton por proceso compartido entre usuarios. Para no
+// servir un veredicto calculado contra otro email, solo reutilizamos el cache cuando
+// la verificación corresponde al mismo email solicitado (o no se pidió uno explícito).
+function cacheMatchesEmail(email) {
+  if (!email) return true
+  return lastVerifiedEmail === email
 }
 
 /**
@@ -317,28 +439,43 @@ export async function verifyLicenseWithServer(email) {
   }
 
   if (data && data.allowed) {
+    // (LIC-003) Fail-closed: solo confiamos en un objeto features no vacío. Una
+    // respuesta 'allowed' sin features es un error del portal y NO debe abrir premium.
+    const hasValidFeatures = data.features && typeof data.features === 'object' && Object.keys(data.features).length > 0
+    if (!hasValidFeatures) {
+      logger.warn('[Licencia] El servidor respondió allowed sin un objeto "features" válido: se aplican features mínimas (premium apagado).')
+    }
     cachedState = {
       allowed: true,
       enforced: true,
       plan: data.plan || null,
-      features: normalizeLicenseFeatures(data.features),
+      features: hasValidFeatures ? normalizeLicenseFeatures(data.features) : closedRemoteFeatures(),
       licenseToken: data.license_token || null,
       expiresAt: data.expires_at || null,
-      verifiedAt: new Date().toISOString()
+      verifiedAt: new Date().toISOString(),
+      // (LIC-008) Marca hasta cuándo el cache positivo se considera "fresco". Aunque el
+      // license_token siga vigente (expiresAt en horas), pasada esta ventana corta el
+      // siguiente getLicenseState revalida contra el portal y aplica cambios de plan en
+      // caliente, sin re-login.
+      revalidateAfter: Date.now() + config.revalidateSeconds * 1000
     }
     lastVerifiedEmail = targetEmail
     return cachedState
   }
 
-  // Respuesta válida del servidor pero bloqueada: invalidar cualquier cache
+  // Respuesta válida del servidor pero bloqueada: invalidar cualquier cache positivo.
+  // (LIC-006) Cacheamos el estado bloqueado por un TTL corto (blockedUntil) para no
+  // re-verificar contra el portal en cada request mientras la licencia siga bloqueada.
   cachedState = {
     allowed: false,
     enforced: true,
     reason: data?.reason || 'license_blocked',
     message: data?.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.',
     expiresAt: null,
-    verifiedAt: new Date().toISOString()
+    verifiedAt: new Date().toISOString(),
+    blockedUntil: Date.now() + config.blockedCacheSeconds * 1000
   }
+  lastVerifiedEmail = targetEmail
   return cachedState
 }
 
@@ -377,8 +514,22 @@ export async function getLicenseState({ email = null, forceRefresh = false } = {
     return allowedWithoutEnforcement()
   }
 
-  if (!forceRefresh && cacheIsValid()) {
-    return cachedState
+  // (LIC-007) Solo reutilizamos el cache (positivo o negativo) cuando corresponde al
+  // mismo email solicitado; un email distinto fuerza re-verificación para no servir el
+  // veredicto de otro usuario desde este singleton compartido.
+  if (!forceRefresh && cacheMatchesEmail(email)) {
+    // (LIC-008) Reutilizamos el cache positivo solo mientras siga "fresco": con
+    // license_token vigente Y dentro de su ventana corta de revalidación. Al vencer la
+    // ventana caemos a verifyLicenseWithServer para reflejar cambios de plan en caliente
+    // (si el portal está caído, handleServerUnreachable conserva el último estado).
+    if (cacheIsFresh()) {
+      return cachedState
+    }
+    // (LIC-006) Reutiliza el bloqueo cacheado por su TTL corto en vez de re-verificar
+    // en cada request mientras la licencia siga bloqueada.
+    if (blockedCacheIsValid()) {
+      return cachedState
+    }
   }
 
   return verifyLicenseWithServer(email)
@@ -391,6 +542,27 @@ export async function hasFeature(featureKey) {
   const state = await getLicenseState()
   if (!state.allowed) return false
   if (!state.enforced) return true
+  return !!state.features?.[featureKey] || !!state.features?.[normalizeFeatureKey(featureKey)]
+}
+
+/**
+ * (LIC-009) Gate de licencia/feature pensado para el runtime de fondo (crons,
+ * workers) que no pasa por los middlewares HTTP. Devuelve true cuando la app puede
+ * ejecutar el trabajo: o no hay enforcement, o la licencia está activa y —si se pide
+ * una feature— está incluida en el plan. Usa el cache temporal (incluido el cache
+ * negativo de LIC-006) para no martillar al portal en cada tick del cron.
+ *
+ * Uso sugerido en un cron:
+ *   if (!(await canRunBackgroundJob('meta_ads'))) return
+ */
+export async function canRunBackgroundJob(featureKey = null) {
+  if (!isLicenseEnforced()) return true
+
+  const state = await getLicenseState()
+  if (!state.allowed) return false
+  if (!state.enforced) return true
+  if (!featureKey) return true
+
   return !!state.features?.[featureKey] || !!state.features?.[normalizeFeatureKey(featureKey)]
 }
 

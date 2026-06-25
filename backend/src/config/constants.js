@@ -113,6 +113,7 @@ export const META_INSIGHTS_FIELDS = [
   'ad_name',
   'spend',
   'reach',
+  'impressions', // (META-001) necesario para calcular CPM/CTR por impresiones, no por reach
   'clicks',
   'cpc'
 ].join(',')

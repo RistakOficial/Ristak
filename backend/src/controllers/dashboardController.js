@@ -2,7 +2,7 @@ import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js';
 import { getGroupExpression } from '../services/analyticsService.js';
-import { getManualBusinessExpensesTotalForRange } from '../services/manualBusinessExpensesService.js';
+import { getManualBusinessExpensesTotalForRange, calculateMonthlyFixedCostForRange } from '../services/manualBusinessExpensesService.js';
 import { getContactSourceBreakdown } from '../services/contactSourceService.js';
 import { getTrafficDistributions, getWhatsAppApiSourceBreakdown, getWhatsAppApiNumberBreakdown, getLeadsContactIds } from '../services/originDistributionService.js';
 import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
@@ -200,6 +200,9 @@ const computeFinancialSnapshot = async (range) => {
   const gananciaBruta = ingresosNetos - gastosPublicidad;
   const roas = gastosPublicidad > 0 ? ingresosNetos / gastosPublicidad : 0;
 
+  // (RPT-001) Rango local para prorratear costos fijos mensuales por longitud del rango
+  const localDateRange = getLocalDateRange(range);
+
   // Calcular costos dinámicamente desde la tabla costs
   let totalCostos = 0;
   try {
@@ -209,25 +212,37 @@ const computeFinancialSnapshot = async (range) => {
       let amount = 0;
 
       if (cost.calculation_type === 'percentage') {
-        // Porcentaje sobre revenue
-        if (cost.applies_to === 'revenue') {
+        // (RPT-003) Porcentaje sobre la base elegida en la UI: 'revenue' (ingresos)
+        // o 'profit' (ganancias). Antes 'profit' se ignoraba en silencio y el costo
+        // valía 0. Usamos la ganancia bruta (ingresos - gasto publicitario) como base
+        // de ganancias, que es lo disponible antes de restar los propios costos.
+        if (cost.applies_to === 'profit') {
+          amount = (gananciaBruta * cost.value) / 100;
+        } else {
+          // 'revenue' o cualquier valor heredado/no especificado → sobre ingresos
           amount = (ingresosNetos * cost.value) / 100;
         }
       } else if (cost.calculation_type === 'fixed') {
-        // Monto fijo
-        amount = cost.value;
+        // (RPT-001) Los costos fijos son MENSUALES: prorratear por la longitud del rango
+        // (un día = valor/díasDelMes, un mes = valor completo, un año = valor*12).
+        // Misma fórmula que el reporte y los gastos manuales. Si no hay rango local,
+        // caer al monto mensual completo para no perder el costo.
+        amount = localDateRange
+          ? calculateMonthlyFixedCostForRange(localDateRange, cost.value)
+          : cost.value;
       }
 
       totalCostos += amount;
     }
   } catch (error) {
-    logger.warn('Error calculando costos desde tabla costs:', error.message);
-    // Fallback: usar IVA del 16% como antes
-    totalCostos = ingresosNetos * 0.16;
+    // (RPT-010) Antes, si fallaba la query de `costs`, se fabricaba un costo = 16% de los
+    // ingresos (IVA heredado). Eso inventaba una deducción sin base y mostraba una ganancia
+    // confiadamente equivocada. Ahora NO inventamos: si no se pueden leer los costos, no se
+    // resta nada (totalCostos += 0) y se registra claramente para diagnosticarlo.
+    logger.warn(`Error calculando costos desde tabla costs (no se aplicará costo automático): ${error.message}`);
   }
 
   try {
-    const localDateRange = getLocalDateRange(range);
     const manualBusinessExpenses = localDateRange
       ? await getManualBusinessExpensesTotalForRange(localDateRange)
       : 0;
@@ -547,7 +562,9 @@ export const getNewCustomersData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    const conditions = ['total_paid > 0', 'created_at >= $1', 'created_at <= $2'];
+    // (RPT-009) Placeholders posicionales SQLite-compatibles: el adaptador de db
+    // convierte '?' a $1/$2 solo en Postgres. Hardcodear $1/$2 rompe en SQLite.
+    const conditions = ['total_paid > 0', 'created_at >= ?', 'created_at <= ?'];
     if (hiddenCondition) conditions.push(hiddenCondition);
 
     const query = `
@@ -599,7 +616,7 @@ export const getVisitorsData = async (req, res) => {
         ${dateExpression} as periodo,
         COUNT(DISTINCT ${getVisitorIdentityExpression()}) as total
       FROM sessions
-      WHERE started_at >= $1 AND started_at <= $2
+      WHERE started_at >= ? AND started_at <= ?
       GROUP BY periodo
       ORDER BY periodo
     `;
@@ -642,7 +659,8 @@ export const getLeadsData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    const conditions = ['created_at >= $1', 'created_at <= $2'];
+    // (RPT-009) '?' en vez de $1/$2 para ser compatible con SQLite y Postgres.
+    const conditions = ['created_at >= ?', 'created_at <= ?'];
     if (hiddenCondition) conditions.push(hiddenCondition);
 
     const query = `
@@ -683,7 +701,7 @@ export const getLeadsData = async (req, res) => {
  */
 export const getAppointmentsData = async (req, res) => {
   try {
-    const { startDate, endDate, groupBy = 'day' } = req.query;
+    const { startDate, endDate, groupBy = 'day', scope = 'all' } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json([]);
@@ -692,19 +710,80 @@ export const getAppointmentsData = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const dateExpression = getGroupExpression('created_at', groupBy, timezone);
 
-    // PASO 1: Obtener configuración de HighLevel
+    // (RPT-006) Alinear la definición de "Citas" con la del funnel para que el número
+    // de la gráfica y el del embudo coincidan en la misma pantalla.
+    // - scope 'all' (default): cita por fecha en que se AGENDÓ (date_added), igual que
+    //   getFunnelData en su rama "Todos".
+    // - scope atribución (attribution/campaigns/attributed): cita contada por la fecha
+    //   de creación del contacto, igual que la rama de atribución del funnel.
+    const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
+
+    const attributionCalendarIds = await getAttributionCalendarIds();
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
 
-    // PASO 2: Cargar TODOS los eventos de calendarios (híbrido DB + API)
+    // (RPT-007) Distinguir "cero real" de "integración caída": si falta el token de
+    // HighLevel solo contamos las citas que ya estén en la DB local. Lo dejamos como
+    // warning explícito para que sea observable y no un 0 silencioso. (El estado
+    // "Conecta HighLevel / Token expirado" en la UI requiere el frontend.)
+    if (!config || !config.api_token) {
+      logger.warn('[RPT-007] getAppointmentsData: sin token de HighLevel; las citas solo reflejan datos locales de la DB (posible integración caída, no cero real)');
+    }
+
+    if (!useContactAttribution) {
+      // (RPT-006) Vista "Todos": agrupar por date_added de la cita (híbrido DB + API),
+      // misma fuente y filtro de calendarios que el funnel.
+      const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js');
+
+      const [dbAppointments, apiAppointments] = await Promise.all([
+        loadAppointmentsFromDB({
+          calendarIds: attributionCalendarIds,
+          startDate: range.startUtc,
+          endDate: range.endUtc
+        }),
+        config && config.api_token
+          ? loadAppointmentsFromAPI(config.location_id, config.api_token, attributionCalendarIds)
+          : []
+      ]);
+
+      const allAppointments = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date');
+
+      const start = new Date(range.startUtc);
+      const end = new Date(range.endUtc);
+      const periodMap = {};
+
+      allAppointments.forEach(apt => {
+        if (!apt.dateAdded || !apt.contactId) return;
+        const dateAdded = new Date(apt.dateAdded);
+        if (!(dateAdded >= start && dateAdded <= end)) return;
+
+        // Periodo por date_added en la zona aplicada (mismo agrupado que las demás gráficas)
+        const zoned = DateTime.fromJSDate(dateAdded, { zone: 'utc' }).setZone(timezone || 'UTC');
+        const periodKey = groupBy === 'month' ? zoned.toFormat('yyyy-MM') : zoned.toISODate();
+        if (!periodKey) return;
+
+        if (!periodMap[periodKey]) {
+          periodMap[periodKey] = new Set();
+        }
+        periodMap[periodKey].add(apt.contactId);
+      });
+
+      const appointmentsData = Object.keys(periodMap)
+        .sort()
+        .map(periodo => ({ label: periodo, value: periodMap[periodo].size }));
+
+      return res.json(appointmentsData);
+    }
+
+    // Vista atribución: cita por fecha de creación del contacto.
+    const dateExpression = getGroupExpression('created_at', groupBy, timezone);
+
     const contactsWithAppointments = config && config.api_token
-      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
+      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token, attributionCalendarIds)
       : new Set();
 
     logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API)`);
 
-    // PASO 3: Obtener contactos del rango de fechas
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
@@ -713,13 +792,12 @@ export const getAppointmentsData = async (req, res) => {
         id as contact_id,
         ${dateExpression} as periodo
       FROM contacts
-      WHERE created_at >= $1 AND created_at <= $2
+      WHERE created_at >= ? AND created_at <= ?
         ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
     `;
 
     const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
 
-    // PASO 4: Agrupar contactos con citas por periodo (fecha de creación)
     const periodMap = {};
 
     contactsRaw.forEach(contact => {
@@ -733,7 +811,6 @@ export const getAppointmentsData = async (req, res) => {
       }
     });
 
-    // Convertir a formato de respuesta
     const appointmentsData = Object.keys(periodMap)
       .sort()
       .map(periodo => ({
@@ -770,6 +847,13 @@ export const getAttendancesData = async (req, res) => {
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
     const attributionCalendarIds = await getAttributionCalendarIds();
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+
+    // (RPT-007) Sin token de HighLevel solo contamos asistencias de la DB local; lo
+    // registramos explícito para no confundir "cero real" con "integración caída".
+    if (!config || !config.api_token) {
+      logger.warn('[RPT-007] getAttendancesData: sin token de HighLevel; las asistencias solo reflejan datos locales de la DB (posible integración caída, no cero real)');
+    }
+
     const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
       config?.location_id,
       config?.api_token,
@@ -780,7 +864,8 @@ export const getAttendancesData = async (req, res) => {
       return res.json([]);
     }
 
-    const conditions = ['c.created_at >= $1', 'c.created_at <= $2'];
+    // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+    const conditions = ['c.created_at >= ?', 'c.created_at <= ?'];
     if (hiddenCondition) conditions.push(hiddenCondition);
 
     const contactsQuery = `
@@ -1295,6 +1380,13 @@ export const getFunnelData = async (req, res) => {
       leads: 'Interesados'
     }
 
+    // (RPT-007) Si falta el token de HighLevel, las citas/asistencias del funnel solo
+    // reflejan la DB local. Lo dejamos explícito en logs para distinguir "cero real"
+    // de "integración caída" (el estado en la UI requiere el frontend).
+    if (!hlConfig || !hlConfig.api_token) {
+      logger.warn('[RPT-007] getFunnelData: sin token de HighLevel; citas/asistencias solo reflejan datos locales de la DB (posible integración caída, no cero real)')
+    }
+
     let labels = defaultLabels
     if (hlConfig && hlConfig.custom_labels) {
       try {
@@ -1315,7 +1407,7 @@ export const getFunnelData = async (req, res) => {
       const visitorsQuery = `
         SELECT COUNT(DISTINCT ${getVisitorIdentityExpression()}) as count
         FROM sessions
-        WHERE started_at >= $1 AND started_at <= $2
+        WHERE started_at >= ? AND started_at <= ?
       `
       const visitorsParams = [range.startUtc, range.endUtc]
 
@@ -1328,7 +1420,7 @@ export const getFunnelData = async (req, res) => {
         SELECT COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as count
         FROM sessions s
         INNER JOIN contacts c ON c.id = s.contact_id
-        WHERE c.created_at >= $1 AND c.created_at <= $2
+        WHERE c.created_at >= ? AND c.created_at <= ?
           ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM meta_ads ma
             WHERE ma.ad_id = c.attribution_ad_id
@@ -1347,7 +1439,8 @@ export const getFunnelData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    const conditions = ['created_at >= $1', 'created_at <= $2'];
+    // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+    const conditions = ['created_at >= ?', 'created_at <= ?'];
     if (isAttributed) {
       conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
         SELECT 1 FROM meta_ads ma
@@ -1381,7 +1474,8 @@ export const getFunnelData = async (req, res) => {
         : new Set()
 
       // Contar cuántos contactos del rango tienen cita
-      const conditions = ['created_at >= $1', 'created_at <= $2'];
+      // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+      const conditions = ['created_at >= ?', 'created_at <= ?'];
       if (isAttributed) {
         conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM meta_ads ma
@@ -1432,7 +1526,8 @@ export const getFunnelData = async (req, res) => {
     // ========================================
     // 4. ASISTENCIAS (siempre por fecha de creación del contacto)
     // ========================================
-    const attendanceConditions = ['created_at >= $1', 'created_at <= $2'];
+    // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+    const attendanceConditions = ['created_at >= ?', 'created_at <= ?'];
     if (isAttributed) {
       attendanceConditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
         SELECT 1 FROM meta_ads ma
@@ -1462,7 +1557,8 @@ export const getFunnelData = async (req, res) => {
 
     if (useContactAttribution) {
       // Vista "Último toque": Contactos creados en el rango con purchases_count > 0
-      const conditions = ['purchases_count > 0', 'created_at >= $1', 'created_at <= $2'];
+      // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+      const conditions = ['purchases_count > 0', 'created_at >= ?', 'created_at <= ?'];
       if (isAttributed) {
         conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM meta_ads ma
@@ -1483,8 +1579,11 @@ export const getFunnelData = async (req, res) => {
       // Vista "Todos": Contactos cuyo PRIMER pago está en el rango
       const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
 
-      const conditions = ['first_p.first_payment_date >= $' + (SUCCESS_PAYMENT_STATUSES.length + 1),
-                         'first_p.first_payment_date <= $' + (SUCCESS_PAYMENT_STATUSES.length + 2)]
+      // (RPT-009) Mezclar '?' (statusPlaceholders) con $N hardcodeados rompía en
+      // SQLite. Usamos solo '?'; el adaptador los convierte a $1..$N en Postgres
+      // según el orden de firstPaymentParams (statuses, luego start/end).
+      const conditions = ['first_p.first_payment_date >= ?',
+                         'first_p.first_payment_date <= ?']
       if (hiddenCondition) {
         conditions.push(hiddenCondition.replace(/contacts\./g, 'c.'))
       }

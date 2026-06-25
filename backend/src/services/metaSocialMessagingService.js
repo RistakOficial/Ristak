@@ -6,6 +6,8 @@ import { logger } from '../utils/logger.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
+// (NOTI-003) Confirmación de citas por respuesta también para DMs de Messenger/Instagram.
+import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 
 const DEFAULT_VERIFY_TOKEN = 'ristak-meta-webhook'
 const META_SIGNATURE_HEADER = 'x-hub-signature-256'
@@ -571,26 +573,50 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
         })
 
         if (result.direction === 'inbound' && result.isNew !== false) {
-          // Motor de automatizaciones (import dinámico: evita ciclo)
-          import('./automationEngine.js')
-            .then(engine => engine.handleIncomingMessage({
-              contactId: result.contactId,
-              contactName: result.contactName,
-              text: result.messageText,
-              channel: socialMessage.platform === 'instagram' ? 'instagram' : 'messenger'
-            }))
-            .catch(error => {
-              logger.warn(`[Automatizaciones] DM Meta no procesado: ${error.message}`)
-            })
-          import('../agents/conversational/runner.js')
-            .then(runner => runner.handleInboundConversationalChatMessage({
-              contactId: result.contactId,
-              messageId: result.messageId,
-              channel: socialMessage.platform === 'instagram' ? 'instagram' : 'messenger'
-            }))
-            .catch(error => {
-              logger.warn(`[Agente conversacional] DM Meta no atendido: ${error.message}`)
-            })
+          // (NOTI-003) Abrir/evaluar la ventana de confirmación de citas antes de
+          // disparar automatizaciones/agente: el contacto pudo responder por DM al
+          // recordatorio. Si hay ventana activa con bypass, no se disparan.
+          const channelForAutomation = socialMessage.platform === 'instagram' ? 'instagram' : 'messenger'
+          ;(async () => {
+            let confirmWindow = { windowActive: false, bypassAutomations: false }
+            await handleInboundForConfirmation({ contactId: result.contactId, text: result.messageText })
+              .then(w => { confirmWindow = w })
+              .catch(error => {
+                logger.warn(`[Citas] Error en ventana de confirmación (DM Meta): ${error.message}`)
+              })
+
+            if (!confirmWindow.windowActive) {
+              await maybeConfirmAppointmentFromReply({ contactId: result.contactId, text: result.messageText })
+                .catch(error => {
+                  logger.warn(`[Citas] No se pudo evaluar confirmación automática (DM Meta): ${error.message}`)
+                })
+            }
+
+            if (confirmWindow.windowActive && confirmWindow.bypassAutomations) return
+
+            // Motor de automatizaciones (import dinámico: evita ciclo)
+            import('./automationEngine.js')
+              .then(engine => engine.handleIncomingMessage({
+                contactId: result.contactId,
+                contactName: result.contactName,
+                text: result.messageText,
+                channel: channelForAutomation
+              }))
+              .catch(error => {
+                logger.warn(`[Automatizaciones] DM Meta no procesado: ${error.message}`)
+              })
+            import('../agents/conversational/runner.js')
+              .then(runner => runner.handleInboundConversationalChatMessage({
+                contactId: result.contactId,
+                messageId: result.messageId,
+                channel: channelForAutomation
+              }))
+              .catch(error => {
+                logger.warn(`[Agente conversacional] DM Meta no atendido: ${error.message}`)
+              })
+          })().catch(error => {
+            logger.warn(`[Citas] Fallo inesperado al procesar inbound DM Meta: ${error.message}`)
+          })
           sendChatMessageNotification({
             contactId: result.contactId,
             contactName: result.contactName,

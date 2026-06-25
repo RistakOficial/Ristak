@@ -43,6 +43,9 @@ import {
   resolveConversationalAIRuntime
 } from '../../services/conversationalAIProviderService.js'
 import { tagNamesForIds } from '../../services/contactTagsService.js'
+// (AI-002) Gate de licencia: el runtime del agente conversacional debe respetar
+// la feature premium incluso cuando se dispara desde los servicios de mensajería.
+import { hasFeature } from '../../services/licenseService.js'
 import {
   buildClosingStrategyTemplateParameters,
   buildConversationalInstructions,
@@ -199,6 +202,49 @@ export function shouldIncludeConversationalBinaryMedia({ runtime } = {}) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// (AI-009) Helpers de persistencia del debounce/delay de reruns. pendingContactReruns
+// es un Map volátil: si el proceso reinicia mientras hay un rerun encolado se perdía.
+// Reflejamos cada alta/baja en la tabla ai_agent_pending_reruns (migración 012) para
+// reconstruirlo al boot. Tolerante a fallos: nunca tumba el flujo principal del agente.
+function nowSqlTimestamp() {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ')
+}
+
+async function persistPendingRerun(runKey, entry = {}) {
+  if (!runKey) return
+  try {
+    const contactId = entry.contactId != null ? String(entry.contactId) : null
+    const channel = entry.channel ? normalizeConversationalChannel(entry.channel) : null
+    const scheduledFor = entry.scheduledFor || nowSqlTimestamp()
+    const payload = JSON.stringify({
+      contactId,
+      channel,
+      phone: entry.phone || null,
+      messageId: entry.messageId != null ? String(entry.messageId) : null
+    })
+    await db.run(`
+      INSERT INTO ai_agent_pending_reruns (run_key, contact_id, channel, scheduled_for, payload, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_key) DO UPDATE SET
+        contact_id = excluded.contact_id,
+        channel = excluded.channel,
+        scheduled_for = excluded.scheduled_for,
+        payload = excluded.payload
+    `, [runKey, contactId, channel, scheduledFor, payload, nowSqlTimestamp()])
+  } catch (error) {
+    logger.warn(`[Agente conversacional] No se pudo persistir rerun pendiente (${runKey}): ${error.message}`)
+  }
+}
+
+async function deletePendingRerun(runKey) {
+  if (!runKey) return
+  try {
+    await db.run('DELETE FROM ai_agent_pending_reruns WHERE run_key = ?', [runKey])
+  } catch (error) {
+    logger.warn(`[Agente conversacional] No se pudo borrar rerun pendiente (${runKey}): ${error.message}`)
+  }
 }
 
 function toTimestampMs(value) {
@@ -887,6 +933,8 @@ function scheduleConversationalAgentRerun({ contactId, phone, latestMessage, rea
   const normalizedChannel = normalizeConversationalChannel(channel || latestMessage.channel)
   const runKey = getRunKey(contactId, normalizedChannel)
   pendingContactReruns.delete(runKey)
+  // (AI-009) El rerun ya se está disparando: limpia su copia persistida.
+  deletePendingRerun(runKey).catch(() => {})
   setTimeout(() => {
     handleInboundConversationalChatMessage({
       contactId,
@@ -1074,6 +1122,8 @@ async function sendConversationalChannelTextMessage({
 
 async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex, channel = 'whatsapp', agentId = null }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
+  // (AI-007) Kill switch real: si el toggle global está apagado, el agente no
+  // dispara seguimientos aunque existan agentes publicados.
   let config = await getConversationalAgentConfig()
   if (!config.enabled) {
     config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
@@ -1081,6 +1131,10 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     })
   }
   if (!config.enabled) return
+
+  // (AI-002) Los seguimientos también ejecutan el responder (consume tokens):
+  // sin entitlement de 'conversational_ai' no deben dispararse.
+  if (!(await hasFeature('conversational_ai'))) return
 
   const state = await getConversationState(contactId, { agentId })
   if (!state || state.status !== 'active' || state.signal) return
@@ -1419,18 +1473,42 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
   try {
     if (!contactId || !messageId) return
 
+    // (AI-007) Kill switch real: antes de procesar/responder verificamos el
+    // toggle global. Si está apagado, el agente NO actúa aunque existan agentes
+    // publicados (la antigua re-habilitación silenciosa del runtime queda anulada).
     let config = await getConversationalAgentConfig()
     if (!config.enabled) {
       config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
         reason: 'incoming_message_with_published_agent'
       })
     }
-    if (!config.enabled) return
+    if (!config.enabled) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'run_skipped_global_disabled',
+        detail: { messageId, channel: normalizedChannel }
+      }).catch(() => {})
+      return
+    }
+
+    // (AI-002) Sin entitlement de 'conversational_ai' (downgrade/impago) el
+    // agente no debe responder ni consumir tokens. hasFeature es fail-closed.
+    if (!(await hasFeature('conversational_ai'))) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'run_skipped_feature_disabled',
+        detail: { messageId, channel: normalizedChannel, feature: 'conversational_ai' }
+      }).catch(() => {})
+      return
+    }
 
     clearFollowUpTimer(runKey)
 
 	    if (runningContacts.has(runKey)) {
-	      pendingContactReruns.set(runKey, { contactId, phone, messageId, channel: normalizedChannel })
+	      const pendingEntry = { contactId, phone, messageId, channel: normalizedChannel }
+	      pendingContactReruns.set(runKey, pendingEntry)
+	      // (AI-009) Espeja el rerun encolado en DB para sobrevivir reinicios.
+	      await persistPendingRerun(runKey, pendingEntry)
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'run_rerun_queued',
@@ -1478,12 +1556,24 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
 	      if (!agentState || agentState.status !== 'active' || agentState.signal) return
 	      if (agentState.lastInboundMessageId === latest.id && agentState.lastAnsweredInboundMessageId === latest.id) return
 
-	      // Reclama el mensaje antes de correr para evitar respuestas duplicadas.
-	      await db.run(`
+	      // (AI-001/CRON-007) Claim atómico compare-and-set: reclama el mensaje
+	      // antes de correr para evitar respuestas/acciones duplicadas entre
+	      // instancias o ante reenvío de webhook. Solo procede si esta instancia
+	      // ganó el claim (changes>0); si otra ya lo reclamó, aborta sin responder.
+	      const claimRes = await db.run(`
 	        UPDATE conversational_agent_state
 	        SET last_inbound_message_id = ?, channel = ?, updated_at = CURRENT_TIMESTAMP
 	        WHERE id = ?
-	      `, [latest.id, normalizedChannel, agentState.id])
+	          AND (last_inbound_message_id IS NULL OR last_inbound_message_id <> ?)
+	      `, [latest.id, normalizedChannel, agentState.id, latest.id])
+	      if (!(Number(claimRes?.changes || 0) > 0)) {
+	        await recordConversationalAgentEvent({
+	          contactId,
+	          eventType: 'run_skipped_already_claimed',
+	          detail: { messageId: latest.id, channel: normalizedChannel, reason: 'inbound_already_claimed' }
+	        }).catch(() => {})
+	        return
+	      }
 
       const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
       const runtime = await resolveConversationalAIRuntime(aiProvider)
@@ -1654,6 +1744,8 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       const pending = pendingContactReruns.get(runKey)
       if (pending) {
         pendingContactReruns.delete(runKey)
+        // (AI-009) Se va a re-disparar de inmediato: limpia la copia persistida.
+        await deletePendingRerun(runKey)
         await schedulePendingContactRerun(
           contactId,
           pending.phone || phone,
@@ -1736,10 +1828,73 @@ async function recoverScheduledFollowUps({ limit = FOLLOW_UP_RECOVERY_SCAN_LIMIT
   return { scanned: rows.length, scheduled }
 }
 
+// (AI-009) Reconstruye al boot los reruns que quedaron encolados en memoria antes de
+// un reinicio. Para cada fila persistida en ai_agent_pending_reruns que siga vigente
+// (mensaje entrante aún sin responder y dentro de la ventana de recuperación) volvemos a
+// disparar el rerun por la vía normal; scheduleConversationalAgentRerun ya borra la copia
+// persistida, así que la operación es idempotente. Las filas viejas/inválidas se purgan.
+async function recoverPendingReruns({ nowMs = Date.now(), maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS } = {}) {
+  const rows = await db.all(`
+    SELECT run_key, contact_id, channel, scheduled_for, payload, created_at
+    FROM ai_agent_pending_reruns
+    ORDER BY scheduled_for ASC
+    LIMIT ?
+  `, [PENDING_RECOVERY_SCAN_LIMIT]).catch(() => [])
+
+  let scheduled = 0
+  for (const row of rows) {
+    const runKey = row?.run_key
+    if (!runKey) continue
+    let payload = {}
+    try { payload = row.payload ? JSON.parse(row.payload) : {} } catch { payload = {} }
+    const contactId = payload.contactId || (row.contact_id != null ? String(row.contact_id) : null)
+    const channel = normalizeConversationalChannel(payload.channel || row.channel || 'whatsapp')
+
+    if (!contactId) {
+      await deletePendingRerun(runKey)
+      continue
+    }
+
+    // El último entrante de ese contacto/canal: si ya fue respondido o quedó fuera de
+    // la ventana de recuperación, el rerun ya no aplica y solo limpiamos la copia.
+    const latest = await loadLatestInboundMessage(contactId, channel).catch(() => null)
+    if (!latest) {
+      await deletePendingRerun(runKey)
+      continue
+    }
+    const states = await listConversationStatesForContact(contactId).catch(() => [])
+    const alreadyAnswered = states.some((state) => (
+      state?.lastAnsweredInboundMessageId === latest.id ||
+      state?.last_answered_inbound_message_id === latest.id
+    ))
+    if (alreadyAnswered || !shouldRecoverPendingInbound(latest, null, { nowMs, maxAgeMs })) {
+      await deletePendingRerun(runKey)
+      continue
+    }
+
+    // scheduleConversationalAgentRerun borra la fila persistida y re-dispara la atención.
+    scheduleConversationalAgentRerun({
+      contactId,
+      phone: payload.phone || latest.phone,
+      latestMessage: latest,
+      channel,
+      reason: 'rerun encolado recuperado al arrancar'
+    })
+    scheduled += 1
+  }
+
+  if (scheduled) {
+    logger.info(`[Agente conversacional] ${scheduled} rerun(s) encolado(s) recuperado(s) al arrancar`)
+  }
+  return { scanned: rows.length, scheduled }
+}
+
 export async function recoverPendingConversationalAgentConversations({
   nowMs = Date.now(),
   maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
 } = {}) {
+  // (AI-007) Kill switch real: si el toggle global está apagado, no recuperamos
+  // ni reprogramamos conversaciones pendientes aunque existan agentes publicados.
   let config = await getConversationalAgentConfig()
   if (!config.enabled) {
     config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
@@ -1747,6 +1902,9 @@ export async function recoverPendingConversationalAgentConversations({
     })
   }
   if (!config.enabled) return { scanned: 0, scheduled: 0 }
+
+  // (AI-002) No recuperar pendientes si la feature premium está revocada.
+  if (!(await hasFeature('conversational_ai'))) return { scanned: 0, scheduled: 0 }
 
   const rowsByChannel = await Promise.all(
     ['whatsapp', 'instagram', 'messenger', 'sms'].map((channel) => loadRecentInboundMessagesForRecovery(channel, PENDING_RECOVERY_SCAN_LIMIT))
@@ -1801,7 +1959,13 @@ export async function recoverPendingConversationalAgentConversations({
     logger.info(`[Agente conversacional] ${followUps.scheduled} seguimiento(s) recuperado(s) al arrancar`)
   }
 
-  return { scanned: latestByContact.size, scheduled, followUps }
+  // (AI-009) Reconstruye los reruns que quedaron encolados en memoria antes del reinicio.
+  const reruns = await recoverPendingReruns({ nowMs, maxAgeMs }).catch((error) => {
+    logger.warn(`[Agente conversacional] No se pudieron recuperar reruns encolados: ${error.message}`)
+    return { scanned: 0, scheduled: 0 }
+  })
+
+  return { scanned: latestByContact.size, scheduled, followUps, reruns }
 }
 
 /**

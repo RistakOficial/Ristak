@@ -30,7 +30,15 @@ async function getMasterKey() {
     return cachedMasterKey
   }
 
-  // 2. Intentar desde base de datos
+  // (SEC-003) En producción la llave maestra DEBE venir del entorno. No la
+  // generamos ni la persistimos en la DB para no dejar la llave junto al
+  // ciphertext (un dump/backup expondría todos los secretos). Fallamos el
+  // arranque si falta, salvo que ya exista una llave previa en DB (instalaciones
+  // legacy que la auto-generaron antes de este cambio): en ese caso la cargamos
+  // pero advertimos que se migre a entorno.
+  const isProduction = process.env.NODE_ENV === 'production'
+
+  // 2. Intentar desde base de datos (compatibilidad con instalaciones previas)
   try {
     const result = await db.get(
       'SELECT config_value FROM app_config WHERE config_key = ?',
@@ -39,7 +47,14 @@ async function getMasterKey() {
 
     if (result && result.config_value) {
       cachedMasterKey = Buffer.from(result.config_value, 'hex')
-      logger.info('✅ ENCRYPTION_MASTER_KEY cargada desde base de datos')
+      if (isProduction) {
+        // (SEC-003) Llave legacy en DB: se respeta para no romper secretos ya
+        // cifrados, pero se exige migrarla a ENCRYPTION_MASTER_KEY en el entorno.
+        logger.warn('⚠️  ENCRYPTION_MASTER_KEY se cargó desde la DB (instalación legacy).')
+        logger.warn('   Por seguridad, mueve esta llave a la variable de entorno ENCRYPTION_MASTER_KEY y elimínala de app_config.')
+      } else {
+        logger.info('✅ ENCRYPTION_MASTER_KEY cargada desde base de datos')
+      }
       return cachedMasterKey
     }
   } catch (error) {
@@ -47,7 +62,23 @@ async function getMasterKey() {
     throw error
   }
 
-  // 3. Generar nueva clave y guardarla en DB
+  // (SEC-003) Rollout SEGURO: por defecto se mantiene el comportamiento previo
+  // (auto-generar y persistir) para NO romper instalaciones nuevas cuyo provisioner
+  // aún no inyecta ENCRYPTION_MASTER_KEY. El modo estricto (fallar el arranque si la
+  // llave no viene del entorno) se activa con ENCRYPTION_MASTER_KEY_REQUIRED=true, y
+  // es lo recomendado una vez que el Installer provisione la llave por entorno.
+  const requireEnvKey = String(process.env.ENCRYPTION_MASTER_KEY_REQUIRED || '').toLowerCase() === 'true'
+  if (isProduction && requireEnvKey) {
+    logger.error('❌ ENCRYPTION_MASTER_KEY no está configurada en el entorno (ENCRYPTION_MASTER_KEY_REQUIRED=true).')
+    logger.error('   Genera una con: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))" y configúrala en las variables de entorno (Render).')
+    throw new Error('ENCRYPTION_MASTER_KEY es obligatoria en producción y no está configurada')
+  }
+  if (isProduction) {
+    logger.warn('⚠️  ENCRYPTION_MASTER_KEY no está en el entorno; se generará y guardará en la DB (modo compatible).')
+    logger.warn('   Recomendado: provisiona ENCRYPTION_MASTER_KEY por entorno y activa ENCRYPTION_MASTER_KEY_REQUIRED=true (SEC-003).')
+  }
+
+  // 3. Generar nueva clave y guardarla en DB (dev, o prod en modo compatible)
   logger.warn('⚠️  ENCRYPTION_MASTER_KEY no encontrada. Generando nueva clave...')
   const newKey = crypto.randomBytes(KEY_LENGTH)
   const newKeyHex = newKey.toString('hex')

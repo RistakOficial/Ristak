@@ -81,7 +81,33 @@ class ApiClient {
           message = String(payload.message)
         }
       }
-      throw new Error(message)
+      // (CNT-001) Conservar status y body en el error para que el caller pueda
+      // reaccionar a respuestas accionables (p. ej. 409 merge_confirmation_required
+      // con el contacto en conflicto) sin perder compatibilidad con error.message.
+      const apiError = new Error(message) as Error & { status?: number; body?: unknown }
+      apiError.status = response.status
+      apiError.body = json
+
+      // (LIC-005) Cuando el backend bloquea un módulo premium fuera del plan
+      // devuelve 403 con code "feature_not_available". Antes esto fallaba en
+      // silencio. De forma centralizada emitimos un evento global para que la UI
+      // (NotificationContext) muestre un toast claro al usuario, sin acoplar el
+      // apiClient a React. El error igual se lanza para no romper a los callers.
+      if (response.status === 403 && json && typeof json === 'object') {
+        const code = (json as { code?: unknown }).code
+        if (code === 'feature_not_available' && typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('ristak:feature-not-available', {
+              detail: {
+                message,
+                feature: (json as { feature?: unknown }).feature,
+              },
+            })
+          )
+        }
+      }
+
+      throw apiError
     }
 
     // Si la respuesta tiene la estructura { success: true, data: ... } Y el campo data existe, extraer el campo data

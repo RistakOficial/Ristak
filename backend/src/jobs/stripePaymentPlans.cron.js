@@ -1,6 +1,7 @@
 import { processDueStripePaymentPlanCharges } from '../services/stripePaymentService.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
+import { withCronLock } from '../utils/cronLock.js'
 
 // Los planes se cobran por fecha, no por segundo exacto; 30 minutos evita ruido innecesario.
 const STRIPE_PAYMENT_PLANS_INTERVAL_MS = 30 * 60 * 1000
@@ -14,13 +15,21 @@ async function runStripePaymentPlans(source = 'interval') {
 
   try {
     await trackDeployDrainWork('cron:stripe-payment-plans', async () => {
-      const results = await processDueStripePaymentPlanCharges()
-      const charged = results.filter((result) => result.charged).length
-      const failed = results.filter((result) => result.error).length
+      // (CRON-009 / PAY-008 / CRON-002) Lock distribuido: si hay varias instancias, solo una
+      // cobra parcialidades en este tick (defensivo; con 1 instancia es inofensivo). El reclamo
+      // no era atómico (CRON-002) y el cron no tenía lock (PAY-008); ahora la idempotencia de
+      // Stripe (llave por bucket diario) protege contra doble cargo y el lock evita trabajo
+      // y efectos duplicados entre réplicas.
+      const { ran } = await withCronLock('stripe-payment-plans', STRIPE_PAYMENT_PLANS_INTERVAL_MS, async () => {
+        const results = await processDueStripePaymentPlanCharges()
+        const charged = results.filter((result) => result.charged).length
+        const failed = results.filter((result) => result.error).length
 
-      if (charged || failed) {
-        logger.info(`[Stripe Planes] ${source}: ${charged} cobrados, ${failed} con error`)
-      }
+        if (charged || failed) {
+          logger.info(`[Stripe Planes] ${source}: ${charged} cobrados, ${failed} con error`)
+        }
+      })
+      if (!ran) logger.info(`[Stripe Planes] ${source}: omitido (otra instancia tiene el lock)`)
     }, source)
   } catch (error) {
     const message = String(error?.message || '')

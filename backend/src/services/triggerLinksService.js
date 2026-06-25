@@ -269,11 +269,31 @@ export async function recordTriggerLinkClick(publicId, req = {}) {
   if (!row) throw notFound('Enlace de disparo no encontrado.')
 
   const query = req.query || {}
-  const contactId = getQueryValue(query, 'contact_id', 'contactId', 'cid')
+  const rawContactId = getQueryValue(query, 'contact_id', 'contactId', 'cid')
   const phone = getQueryValue(query, 'phone', 'teléfono', 'tel')
   const email = getQueryValue(query, 'email', 'correo')
   const contactName = getQueryValue(query, 'contact_name', 'contactName', 'name', 'nombre')
   const visitorId = getQueryValue(query, 'visitor_id', 'visitorId', 'vid', 'rstk_vid')
+
+  // (TRK-007) El contact_id llega por query string en una URL pública y dispara efectos
+  // (registro del evento + enrollment/mensajería vía handleAutomationEvent). Sin validar,
+  // cualquiera con la URL podía forjar ?contact_id=X y crear eventos/automatizaciones para
+  // un contacto arbitrario o inexistente. Defensa contenida: solo aceptamos el contact_id
+  // si corresponde a un contacto real y no borrado; si no, se trata como click anónimo.
+  // (La firma HMAC del enlace para impedir targetear a un contacto real conocido queda
+  // como decisión del dueño — cambia cómo se generan los enlaces.)
+  let contactId = null
+  if (rawContactId) {
+    const contactExists = await db.get(
+      'SELECT id FROM contacts WHERE id = ? AND deleted_at IS NULL',
+      [rawContactId]
+    )
+    if (contactExists) {
+      contactId = rawContactId
+    } else {
+      logger.warn(`Trigger link ${normalizedPublicId}: contact_id "${rawContactId}" del query no existe; se ignora (click anónimo).`)
+    }
+  }
   const eventId = `trigger_link_event_${crypto.randomUUID()}`
   const referrer = cleanString(req.headers?.referer || req.headers?.referrer || '', 2048)
   const userAgent = cleanString(req.headers?.['user-agent'] || '', 1000)

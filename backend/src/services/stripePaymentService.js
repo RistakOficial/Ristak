@@ -2011,6 +2011,15 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     ...(paymentPlanMetadata?.trigger ? { ristak_plan_trigger: cleanString(paymentPlanMetadata.trigger) } : {})
   }
 
+  // (PAY-009) Llave idempotente determinista para el create del PaymentIntent público.
+  // Sin ella, un doble-submit del formulario (o un reintento de red) crea DOS intents
+  // huérfanos antes de que se persista el id. La llave incluye monto+moneda+bucket-diario:
+  // un reintento del mismo día reutiliza el mismo intent; si cambia el monto (admin edita
+  // la factura) o pasa el día (expira el cache 24h de Stripe), se crea uno nuevo limpio.
+  const createIntentDayBucket = new Date().toISOString().slice(0, 10)
+  const createIntentIdempotencyKey =
+    `ristak:${row.id}:create-intent:${toStripeAmount(row.amount, currency)}:${currency}:${createIntentDayBucket}`
+
   const intent = await stripe.paymentIntents.create(
     {
       amount: toStripeAmount(row.amount, currency),
@@ -2022,7 +2031,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
       receipt_email: shouldSendReceipt ? row.contact_email || undefined : undefined,
       metadata
     },
-    requestOptions
+    stripeRequestOptionsWithIdempotency(requestOptions, createIntentIdempotencyKey)
   )
 
   await db.run(
@@ -2703,7 +2712,7 @@ export async function cancelStripeRecurringSubscription(stripeSubscriptionId) {
   return mapStripeSubscriptionStatus(subscription.status, 'cancelled')
 }
 
-async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLabel }) {
+async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLabel, amountRefunded, chargeAmount }) {
   const filters = []
   const params = []
 
@@ -2720,20 +2729,44 @@ async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLa
   if (!filters.length) return null
 
   const payment = await db.get(
-    `SELECT id, contact_id FROM payments WHERE ${filters.join(' OR ')} LIMIT 1`,
+    `SELECT id, contact_id, amount, currency FROM payments WHERE ${filters.join(' OR ')} LIMIT 1`,
     params
   )
 
   if (!payment) return null
 
+  // (PAY-002) Distinguir reembolso parcial de total. Stripe dispara charge.refunded
+  // también en reembolsos parciales; antes se marcaba todo como 'refunded' ocultando
+  // el monto completo. Comparamos el monto reembolsado contra el total cobrado.
+  const refundedCents = Number(amountRefunded)
+  let totalCents = Number(chargeAmount)
+  // Si el evento no trae el total del cargo (caso refund.created), lo derivamos del
+  // monto del pago almacenado, convertido a la unidad mínima de Stripe (centavos).
+  if (!Number.isFinite(totalCents) || totalCents <= 0) {
+    try {
+      totalCents = toStripeAmount(payment.amount, payment.currency)
+    } catch {
+      totalCents = NaN
+    }
+  }
+
+  let nextStatus = 'refunded'
+  if (
+    Number.isFinite(refundedCents) && refundedCents > 0 &&
+    Number.isFinite(totalCents) && totalCents > 0 &&
+    refundedCents < totalCents
+  ) {
+    nextStatus = 'partially_refunded'
+  }
+
   await db.run(
     `UPDATE payments
-     SET status = 'refunded',
+     SET status = ?,
          payment_method = 'stripe',
          payment_provider = 'stripe',
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [payment.id]
+    [nextStatus, payment.id]
   )
 
   if (payment.contact_id) {
@@ -2742,14 +2775,17 @@ async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLa
     })
   }
 
-  return 'refunded'
+  return nextStatus
 }
 
 async function updatePaymentFromRefund(refund) {
   return markStripePaymentAsRefunded({
     paymentIntentId: extractStripeObjectId(refund?.payment_intent),
     chargeId: extractStripeObjectId(refund?.charge),
-    sourceLabel: 'refund'
+    sourceLabel: 'refund',
+    // (PAY-002) refund.created trae el monto de ESTE reembolso; el total del cargo no
+    // viaja aquí, así que markStripePaymentAsRefunded lo deriva del pago almacenado.
+    amountRefunded: refund?.amount
   })
 }
 
@@ -2757,7 +2793,10 @@ async function updatePaymentFromRefundedCharge(charge) {
   return markStripePaymentAsRefunded({
     paymentIntentId: extractStripeObjectId(charge?.payment_intent),
     chargeId: extractStripeObjectId(charge?.id),
-    sourceLabel: 'charge.refunded'
+    sourceLabel: 'charge.refunded',
+    // (PAY-002) charge.refunded trae el acumulado reembolsado y el total del cargo.
+    amountRefunded: charge?.amount_refunded,
+    chargeAmount: charge?.amount
   })
 }
 
@@ -2939,6 +2978,15 @@ async function chargeStripePaymentRowWithSavedMethod({
     return row
   }
 
+  // (PAY-004) Token DETERMINISTA por día (UTC), NO aleatorio. Stripe cachea el
+  // resultado de una idempotencyKey 24h: una llave estática bloquea reintentar un
+  // cargo fallido, pero una llave 100% ALEATORIA es peligrosa (un cargo que sí pasó
+  // pero perdió la respuesta se volvería a cobrar en el siguiente tick = DOBLE COBRO).
+  // El bucket diario mantiene la idempotencia dentro de la ventana de cobro (reintentos
+  // del mismo día NO re-cobran) y a la vez permite reintentar un cargo fallido al día
+  // siguiente, cuando ya expiró el cache de 24h de Stripe.
+  const chargeAttemptToken = new Date().toISOString().slice(0, 10)
+
   const currency = normalizeCurrency(row.currency || config.defaultCurrency)
   const metadata = parseJson(row.metadata_json, {})
   const planMetadata = metadata.paymentPlan && typeof metadata.paymentPlan === 'object'
@@ -2972,7 +3020,8 @@ async function chargeStripePaymentRowWithSavedMethod({
           ...extraMetadata
         }
       },
-      stripeRequestOptionsWithIdempotency(requestOptions, `ristak:${row.id}:off-session-charge`)
+      // (PAY-004) Llave por intento (no estática) para no quedar bloqueados por el resultado cacheado 24h de Stripe en reintentos.
+      stripeRequestOptionsWithIdempotency(requestOptions, `ristak:${row.id}:off-session-charge:${chargeAttemptToken}`)
     )
 
     await updatePaymentFromIntent(intent, { stripe, config, requestOptions })
@@ -4880,6 +4929,24 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
   if (config.connectionType === 'connect' && event.account && event.account !== config.connectedAccountId) {
     return { received: true, ignored: true, type: event.type, account: event.account }
   }
+
+  // (PAY-005) Dedupe por event.id: Stripe reintenta entregas; reclamamos el id de forma
+  // atómica para no re-procesar el mismo evento (doble registro de pago/reembolso).
+  // Fail-open: ante cualquier problema con la tabla, seguimos procesando.
+  if (event?.id) {
+    try {
+      const claim = await db.run(
+        'INSERT INTO stripe_webhook_events (event_id, type) VALUES (?, ?) ON CONFLICT DO NOTHING',
+        [String(event.id), event.type || null]
+      )
+      if (Number(claim?.changes || 0) === 0) {
+        return { received: true, duplicate: true, type: event.type }
+      }
+    } catch (error) {
+      logger.warn(`[Stripe webhook] No se pudo deduplicar el evento ${event.id}: ${error.message}`)
+    }
+  }
+
   const object = event?.data?.object
 
   if (object?.object === 'payment_intent') {

@@ -130,8 +130,19 @@ async function getGeoInfoFromIP(ip) {
   }
 
   try {
-    // Llamar a ip-api.com (gratis, sin API key)
-    const response = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,regionName,city`)
+    // (TRK-003) timeout duro para que un tercero lento nunca cuelgue /collect
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 2500)
+    let response
+    try {
+      // Llamar a ip-api.com (gratis, sin API key)
+      response = await fetch(
+        `http://ip-api.com/json/${ip}?fields=status,country,regionName,city`,
+        { signal: controller.signal }
+      )
+    } finally {
+      clearTimeout(timeout)
+    }
 
     if (!response.ok) {
       logger.warn(`Error en API de geolocalización: ${response.status}`)
@@ -336,8 +347,10 @@ export async function createSession(sessionData) {
     now: new Date(ts)
   })
 
-  // Obtener geolocalización desde la IP del request (en vez de confiar en el cliente)
-  const geoInfo = await getGeoInfoFromIP(ip)
+  // (TRK-003) NO resolver geolocalización de forma síncrona aquí: bloqueaba /collect
+  // contra un tercero (ip-api.com) en el camino caliente y degradaba el endpoint en
+  // tráfico alto. Se inserta la sesión sin geo y se resuelve en segundo plano más abajo.
+  const geoInfo = { geo_country: null, geo_region: null, geo_city: null }
 
   const startedAt = new Date(ts).toISOString()
 
@@ -369,6 +382,32 @@ export async function createSession(sessionData) {
   }
 
   try {
+    // (TRK-002) Dedup de sesiones: el pixel reenvía el mismo evento de sesión
+    // (p. ej. session_end o reintentos de envío) e infla page_views / unique_sessions.
+    // Antes de insertar, se descarta un evento idéntico ya registrado usando una clave
+    // estable formada por columnas existentes: session_id + event_name + started_at.
+    // (Mismo session_id, mismo tipo de evento y mismo timestamp de origen = duplicado.)
+    // No se cambia el schema; solo se evita el doble conteo del mismo evento de sesión.
+    if (session_id) {
+      try {
+        const existing = await db.get(`
+          SELECT id FROM sessions
+          WHERE session_id = ?
+            AND COALESCE(event_name, '') = COALESCE(?, '')
+            AND started_at = ?
+          LIMIT 1
+        `, [session_id, event_name, startedAt])
+
+        if (existing) {
+          logger.info(`(TRK-002) Evento de sesión duplicado ignorado: session=${session_id} event=${event_name || 'page_view'} started_at=${startedAt}`)
+          return { success: true, deduped: true }
+        }
+      } catch (dedupErr) {
+        // Si la verificación de dedup falla, no bloquear el tracking: se continúa e inserta.
+        logger.warn(`(TRK-002) Falló verificación de dedup de sesión: ${dedupErr.message}`)
+      }
+    }
+
     // CADA page_view crea un registro NUEVO (el id se genera automáticamente)
     await db.run(`
       INSERT INTO sessions (
@@ -554,11 +593,53 @@ export async function createSession(sessionData) {
       ? `Page view: ${pageUrl} - visitor: ${visitor_id} - contact: ${validContactId}`
       : `Page view: ${pageUrl} - visitor: ${visitor_id} (anónimo)`
     logger.info(logMsg)
+
+    // (TRK-003) Resolver geolocalización en segundo plano (fire-and-forget) para no
+    // bloquear la respuesta de /collect. El id de sessions es un UUID/TEXT autogenerado
+    // (no un autoincrement), así que lastID no es fiable; se ubica el registro recién
+    // insertado por session_id + started_at (su geo aún es NULL). Cualquier fallo del
+    // tercero queda contenido en este bloque.
+    resolveSessionGeoInBackground({ sessionId: session_id, startedAt, ip })
+
     return { success: true }
   } catch (error) {
     logger.error('Error creando registro de tracking:', error)
     throw error
   }
+}
+
+/**
+ * (TRK-003) Resuelve la geolocalización fuera del camino caliente de /collect y
+ * actualiza la sesión ya insertada. Es fire-and-forget: nunca propaga errores ni
+ * bloquea al llamador.
+ */
+function resolveSessionGeoInBackground({ sessionId, startedAt, ip }) {
+  Promise.resolve()
+    .then(async () => {
+      const geoInfo = await getGeoInfoFromIP(ip)
+      if (!geoInfo.geo_country && !geoInfo.geo_region && !geoInfo.geo_city) {
+        return
+      }
+
+      // Ubicar la fila recién insertada de esta sesión (su geo aún es NULL).
+      await db.run(`
+        UPDATE sessions
+        SET geo_country = ?, geo_region = ?, geo_city = ?
+        WHERE id = (
+          SELECT id FROM sessions
+          WHERE session_id = ?
+            AND started_at = ?
+            AND geo_country IS NULL
+            AND geo_region IS NULL
+            AND geo_city IS NULL
+          ORDER BY created_at DESC
+          LIMIT 1
+        )
+      `, [geoInfo.geo_country, geoInfo.geo_region, geoInfo.geo_city, sessionId, startedAt])
+    })
+    .catch((error) => {
+      logger.warn(`Geolocalización en segundo plano falló para IP ${ip}: ${error.message}`)
+    })
 }
 
 /**

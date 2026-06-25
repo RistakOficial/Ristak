@@ -32,6 +32,16 @@ const WAIT_KIND_REPLY = 'reply'
 const WAIT_KIND_BUTTON_REPLY = 'button_reply'
 const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
 const WAIT_KIND_DRIP = 'drip'
+// (AUTO-005) Espera especial para reintentar el MISMO nodo que falló de forma
+// transitoria, en vez de expulsar la inscripción ('exited') al primer error.
+const WAIT_KIND_RETRY = 'retry'
+const RETRY_MAX_ATTEMPTS = 3
+const RETRY_BACKOFF_MS = [60000, 300000, 900000] // 1 min, 5 min, 15 min
+// (AUTO-008) Tope global de profundidad de cascada: una acción (p. ej. poner una
+// etiqueta) puede disparar otra automatización cuya acción dispara otra, y así en
+// cadena. Sin tope, un par de automatizaciones que se etiquetan mutuamente con
+// etiquetas distintas se re-disparan indefinidamente.
+const MAX_CASCADE_DEPTH = 5
 const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 const CONDITION_VARIABLE_FIELD_PREFIX = 'var:'
 const MESSAGE_TRIGGER_CHANNELS = {
@@ -916,6 +926,27 @@ export function renderTemplate(text, ctx, { preserveUnknown = false } = {}) {
   })
 }
 
+// AUTO-010: detectar tokens {{...}} que NO resuelven con el contexto dado.
+// Antes, una variable mal escrita (p. ej. {{nombre_contacto}} en vez de
+// {{first_name}}) se renderizaba como cadena vacía sin aviso y el cliente
+// recibía "Hola ,". Este helper permite a la validación de publicación avisar
+// del token desconocido en vez de enviarlo silenciosamente vacío. Reutiliza la
+// misma resolución que renderTemplate (mapa estático + token dinámico) para que
+// no haya falsos positivos. No altera el comportamiento de renderTemplate.
+export function findUnknownTemplateTokens(text, ctx) {
+  const map = buildVariableMap(ctx)
+  const unknown = new Set()
+  String(text || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, rawToken) => {
+    const token = cleanString(rawToken)
+    if (map[token] !== undefined) return match
+    const dynamic = resolveDynamicToken(token, ctx)
+    if (dynamic !== undefined) return match
+    if (token) unknown.add(token)
+    return match
+  })
+  return [...unknown]
+}
+
 // ---------------------------------------------------------------------------
 // Coincidencia de disparadores y filtros
 // ---------------------------------------------------------------------------
@@ -1518,12 +1549,43 @@ async function createEnrollment(automation, contact, ctx) {
       manualScheduledFor: ctx.manualScheduledFor || null
     }
   }
-  await db.run(
+  // (AUTO-004) ON CONFLICT DO NOTHING contra el índice único parcial
+  // uq_automation_enrollments_auto_contact (automation_id, contact_id WHERE contact_id IS NOT NULL).
+  // Si dos triggers corren la misma inscripción en paralelo, solo una gana la carrera.
+  const result = await db.run(
     `INSERT INTO automation_enrollments
        (id, automation_id, contact_id, contact_name, status, current_node_id, log, context)
-     VALUES (?, ?, ?, ?, 'active', 'start', '[]', ?)`,
+     VALUES (?, ?, ?, ?, 'active', 'start', '[]', ?)
+     ON CONFLICT DO NOTHING`,
     [id, automation.id, enrollment.contactId, enrollment.contactName, JSON.stringify(enrollment.context)]
   )
+  // (AUTO-004) Si no se insertó (changes === 0) ya existía una inscripción para este
+  // contacto+automatización: recuperamos la real y la devolvemos en vez del objeto recién
+  // construido, para no procesar una inscripción fantasma con id que no está en la tabla.
+  if (result && result.changes === 0 && enrollment.contactId) {
+    const existing = await db.get(
+      `SELECT id, automation_id, contact_id, contact_name, status, current_node_id, log, resume_at, wait_kind, context
+         FROM automation_enrollments
+        WHERE automation_id = ? AND contact_id = ?
+        ORDER BY entered_at ASC, id ASC
+        LIMIT 1`,
+      [automation.id, enrollment.contactId]
+    )
+    if (existing) {
+      return {
+        id: existing.id,
+        automationId: existing.automation_id,
+        contactId: existing.contact_id || null,
+        contactName: existing.contact_name || enrollment.contactName,
+        status: existing.status || 'active',
+        currentNodeId: existing.current_node_id || 'start',
+        log: parseJson(existing.log, []),
+        resumeAt: existing.resume_at || null,
+        waitKind: existing.wait_kind || null,
+        context: parseJson(existing.context, {})
+      }
+    }
+  }
   return enrollment
 }
 
@@ -1711,12 +1773,17 @@ async function applyTagAction(node, ctx, remove) {
   const didChangeSemanticTag = remove ? hadTag : !hadTag
   if (didChangeSemanticTag) {
     // El cambio real de etiqueta puede disparar otras automatizaciones.
+    // (AUTO-008) Propagamos la profundidad de cascada para que handleAutomationEvent
+    // pueda cortar re-disparos en cadena entre automatizaciones que se etiquetan
+    // mutuamente.
+    const nextCascadeDepth = (Number(ctx.__cascadeDepth) || 0) + 1
     setImmediate(() => {
       handleAutomationEvent('tag-changed', {
         contactId: ctx.contact.id,
         tag: displayName,
         tagId: tagId || null,
-        tagAction: remove ? 'removed' : 'added'
+        tagAction: remove ? 'removed' : 'added',
+        __cascadeDepth: nextCascadeDepth
       }).catch(() => undefined)
     })
   }
@@ -2111,13 +2178,16 @@ async function applyContactWhatsAppNumberAction(node, ctx) {
   })
 
   ctx.contact = await loadContact(contactId, ctx.contact)
+  // (AUTO-008) Propaga profundidad de cascada para acotar re-disparos en cadena.
+  const nextCascadeDepthNumber = (Number(ctx.__cascadeDepth) || 0) + 1
   setImmediate(() => {
     handleAutomationEvent('contact-updated', {
       contactId,
       changedFields: ['preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id'],
       previousPhoneNumberId: previousPhoneNumberId || null,
       newPhoneNumberId: targetPhoneNumberId,
-      contactChangeSource: 'automation'
+      contactChangeSource: 'automation',
+      __cascadeDepth: nextCascadeDepthNumber
     }).catch(() => undefined)
   })
   return {
@@ -2149,11 +2219,14 @@ async function applyContactUserAction(node, ctx) {
     ctx.contact.id
   ])
   ctx.contact = await loadContact(ctx.contact.id, ctx.contact)
+  // (AUTO-008) Propaga profundidad de cascada para acotar re-disparos en cadena.
+  const nextCascadeDepthUser = (Number(ctx.__cascadeDepth) || 0) + 1
   setImmediate(() => {
     handleAutomationEvent('contact-updated', {
       contactId: ctx.contact.id,
       changedFields: ['assignedUser', 'assigned_user'],
-      contactChangeSource: 'automation'
+      contactChangeSource: 'automation',
+      __cascadeDepth: nextCascadeDepthUser
     }).catch(() => undefined)
   })
   return remove
@@ -2650,6 +2723,48 @@ async function sendEmailAutomationMessage(node, ctx) {
   }
 }
 
+// (AUTO-006) Evalúa, con el estado ACTUAL del contacto, si el objetivo del nodo
+// ya está cumplido. Sólo decide para los tipos que se pueden comprobar contra el
+// estado actual (etiqueta, pago, cita). Para tipos puramente por evento
+// (formulario/link/conversación/personalizado/ads/avanzado) devuelve null =
+// "no evaluable inline": el flujo conserva el comportamiento anterior (continúa).
+// Devuelve true (cumplido), false (no cumplido) o null (no evaluable aquí).
+function evaluateGoalMet(config, ctx) {
+  const goalType = str(config?.goalType)
+  const contact = ctx.contact || {}
+  switch (goalType) {
+    case 'tag': {
+      const tag = normalizeText(config.tag)
+      if (!tag) return null
+      const has = (contact.tagKeys || contact.tags || []).map(normalizeText).includes(tag)
+      const operator = str(config.tagOperator) || 'has'
+      return operator === 'not-has' || operator === 'nothas' ? !has : has
+    }
+    case 'payment': {
+      const purchases = Number(contact.purchasesCount || contact.purchases_count || 0) || 0
+      if (purchases <= 0) return false
+      const amountOperator = str(config.amountOperator) || 'any'
+      if (amountOperator === 'any') return true
+      const amount = Number(String(config.amount ?? '').trim())
+      if (!Number.isFinite(amount)) return true
+      const totalPaid = Number(contact.totalPaid || contact.total_paid || 0) || 0
+      if (amountOperator === 'gte' || amountOperator === 'gt') return totalPaid >= amount
+      if (amountOperator === 'lte' || amountOperator === 'lt') return totalPaid <= amount
+      if (amountOperator === 'eq') return totalPaid === amount
+      return true
+    }
+    case 'appointment': {
+      const status = str(config.appointmentStatus) || 'booked'
+      if (status === 'attended' || status === 'showed' || status === 'completed') {
+        return Number(contact.attendedAppointmentsCount || 0) > 0
+      }
+      return Number(contact.activeAppointmentsCount || 0) > 0
+    }
+    default:
+      return null
+  }
+}
+
 /**
  * Ejecuta un nodo. Devuelve:
  *  { handle, detail }            → continuar por esa salida
@@ -2799,8 +2914,32 @@ async function executeNode(node, ctx, enrollment) {
       return { handle: result.handle, detail: `Condición evaluada → ${result.label}` }
     }
 
-    case 'logic-goal':
+    case 'logic-goal': {
+      // (AUTO-006) Antes este nodo SIEMPRE tomaba la salida "cumplido" sin evaluar
+      // nada, así que un contacto que ya cumplió la meta (p. ej. ya pagó) seguía
+      // recibiendo la secuencia. Ahora evaluamos el estado actual del contacto:
+      //  - Si el objetivo YA está cumplido y onMet es "end-automation" (el default del
+      //    editor), sacamos al contacto del flujo (stop).
+      //  - Si está cumplido y onMet es "continue", seguimos por la salida "out".
+      //  - Si NO está cumplido y onNotMet es "timeout-branch", tomamos la rama "notmet".
+      //  - En cualquier otro caso (no cumplido + continuar, o tipo no evaluable inline
+      //    como formulario/link/conversación/personalizado), conservamos el
+      //    comportamiento anterior: seguir por "out" sin cortar el flujo.
+      const config = node.config || {}
+      const met = evaluateGoalMet(config, ctx)
+      const onMet = str(config.onMet) || 'end-automation'
+      const onNotMet = str(config.onNotMet) || 'continue'
+      if (met === true) {
+        if (onMet === 'continue') {
+          return { handle: 'out', detail: 'Objetivo cumplido: continúa por la salida "cumplido"' }
+        }
+        return { stop: true, detail: 'Objetivo cumplido: el contacto sale de la automatización' }
+      }
+      if (met === false && onNotMet === 'timeout-branch') {
+        return { handle: 'notmet', detail: 'Objetivo no cumplido: rama "no cumplido"' }
+      }
       return { handle: 'out', detail: 'Objetivo registrado' }
+    }
 
     case 'action-create-contact':
       return executeCreateContact(node, ctx)
@@ -2861,10 +3000,39 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
     try {
       result = await executeNode(node, ctx, enrollment)
     } catch (error) {
-      addLog(enrollment, { nodeId: node.id, label: nodeLabel(node), status: 'error', detail: error.message })
+      // (AUTO-005) Un fallo transitorio de un nodo (WhatsApp/email caído un instante)
+      // ya no expulsa la inscripción de inmediato: se reprograma un reintento del MISMO
+      // nodo con backoff, hasta RETRY_MAX_ATTEMPTS. El contador vive en el contexto
+      // persistido (no requiere esquema). Sólo tras agotar los intentos se marca 'exited'.
+      const retryAttempts = Number(enrollment.context?.__retryAttempts) || 0
+      if (retryAttempts < RETRY_MAX_ATTEMPTS) {
+        const nextAttempt = retryAttempts + 1
+        const backoffMs = RETRY_BACKOFF_MS[Math.min(retryAttempts, RETRY_BACKOFF_MS.length - 1)]
+        enrollment.context = { ...enrollment.context, __retryAttempts: nextAttempt, __retryNodeId: node.id }
+        enrollment.currentNodeId = node.id
+        enrollment.status = 'waiting'
+        enrollment.waitKind = WAIT_KIND_RETRY
+        enrollment.resumeAt = new Date(Date.now() + backoffMs).toISOString()
+        addLog(enrollment, {
+          nodeId: node.id,
+          label: nodeLabel(node),
+          status: 'waiting',
+          detail: `Error temporal (${error.message}); reintento ${nextAttempt}/${RETRY_MAX_ATTEMPTS} programado`
+        })
+        logger.warn(`[Automatizaciones] Error temporal en paso ${node.type}, reintento ${nextAttempt}/${RETRY_MAX_ATTEMPTS}: ${error.message}`)
+        break
+      }
+      addLog(enrollment, { nodeId: node.id, label: nodeLabel(node), status: 'error', detail: `${error.message} (sin más reintentos)` })
       enrollment.status = 'exited'
-      logger.warn(`[Automatizaciones] Error en paso ${node.type}: ${error.message}`)
+      logger.warn(`[Automatizaciones] Error en paso ${node.type} tras ${retryAttempts} reintentos: ${error.message}`)
       break
+    }
+
+    // (AUTO-005) El nodo se ejecutó sin lanzar: limpiamos el contador de reintentos
+    // para que un fallo posterior empiece de cero y no herede intentos de otro nodo.
+    if (enrollment.context?.__retryAttempts || enrollment.context?.__retryNodeId) {
+      const { __retryAttempts, __retryNodeId, ...restContext } = enrollment.context
+      enrollment.context = restContext
     }
 
     if (result.wait) {
@@ -2902,6 +3070,15 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
 
     const edge = edgesFrom(flow, node.id, result.handle)[0] || (node.type === 'start' ? edgesFrom(flow, node.id)[0] : null)
     if (!edge) {
+      // (AUTO-001) Si el paso se omitió (tipo no soportado por el motor) pero sí tiene
+      // salidas conectadas por otros handles (p.ej. un aleatorizador con ramas a/b), NO
+      // terminamos el flujo en silencio como si hubiera concluido: marcamos error para
+      // que sea visible que un paso ramificado no soportado cortó el flujo.
+      if (result.skipped && edgesFrom(flow, node.id).length > 0) {
+        enrollment.status = 'exited'
+        addLog(enrollment, { nodeId: node.id, label: nodeLabel(node), status: 'error', detail: 'Paso no soportado con ramas conectadas: el flujo no puede continuar' })
+        break
+      }
       enrollment.status = 'completed'
       addLog(enrollment, { nodeId: node.id, label: nodeLabel(node), status: 'ok', detail: 'Fin del flujo' })
       break
@@ -3395,6 +3572,14 @@ async function enrollMatching(automations, eventType, baseCtx) {
 export async function handleAutomationEvent(eventType, data = {}) {
   try {
     const eventData = data
+    // (AUTO-008) Corte de cascada: si este evento proviene de acciones encadenadas de
+    // otras automatizaciones (etiqueta → dispara otra → etiqueta → …) y ya superamos la
+    // profundidad máxima, no inscribimos para no re-disparar en cadena sin tope.
+    const cascadeDepth = Number(eventData.__cascadeDepth) || 0
+    if (cascadeDepth > MAX_CASCADE_DEPTH) {
+      logger.warn(`[Automatizaciones] Cascada de eventos cortada en ${eventType} (profundidad ${cascadeDepth} > ${MAX_CASCADE_DEPTH})`)
+      return
+    }
     let contact = await loadContact(eventData.contactId, { phone: eventData.phone, name: eventData.contactName })
     // Resolver contacto por teléfono o email cuando no llega id (webhooks)
     if (!contact.id && (eventData.phone || eventData.email)) {
@@ -3630,6 +3815,18 @@ export async function processDueResumes() {
     const automations = await listPublishedAutomations()
 
     for (const row of rows) {
+      // (AUTO-003/CRON-004) Claim atómico antes de actuar: solo procesamos esta espera
+      // si la reclamamos nosotros (status pasa de 'waiting' a 'active'). Sin esto, dos
+      // ticks solapados o dos réplicas/deploy ejecutan la misma rama y duplican el
+      // WhatsApp/acción visible al contacto.
+      const claimed = await db.run(
+        `UPDATE automation_enrollments
+         SET status = 'active', resume_at = NULL
+         WHERE id = ? AND status = 'waiting'`,
+        [row.id]
+      )
+      if (Number(claimed?.changes || 0) === 0) continue
+
       const automation = automations.find((candidate) => candidate.id === row.automation_id)
       const enrollment = {
         id: row.id,
@@ -3642,6 +3839,21 @@ export async function processDueResumes() {
         context: parseJson(row.context, {})
       }
       if (!automation) {
+        // (AUTO-007) Distinguimos "pausada" de "despublicada/archivada". Si la
+        // automatización está sólo PAUSADA, no expulsamos al contacto: re-aparcamos la
+        // espera tal cual (status 'waiting' con su resume_at original) para que, al
+        // reanudarla, los contactos en espera continúen donde estaban en vez de quedar
+        // 'exited' irreversibles.
+        const automationRow = await db.get('SELECT status FROM automations WHERE id = ?', [row.automation_id])
+        if (cleanString(automationRow?.status) === 'paused') {
+          await db.run(
+            `UPDATE automation_enrollments
+             SET status = 'waiting', resume_at = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND status = 'active'`,
+            [row.resume_at || null, row.id]
+          )
+          continue
+        }
         enrollment.status = 'exited'
         addLog(enrollment, { nodeId: row.current_node_id, label: 'Flujo', status: 'error', detail: 'La automatización ya no está publicada' })
         await saveEnrollment(enrollment)
@@ -3655,6 +3867,20 @@ export async function processDueResumes() {
         channel: enrollment.context.channel || 'whatsapp',
         businessPhoneNumberId: enrollment.context.businessPhoneNumberId || null,
         automationName: automation.name
+      }
+      // (AUTO-005) Reintento de un nodo que falló de forma transitoria: re-ejecutamos
+      // EL MISMO nodo (no avanzamos por una arista), así el WhatsApp/email que no salió
+      // vuelve a intentarse.
+      if (row.wait_kind === WAIT_KIND_RETRY) {
+        const retryNodeId = str(enrollment.context.__retryNodeId) || row.current_node_id
+        addLog(enrollment, {
+          nodeId: retryNodeId,
+          label: 'Reintento',
+          status: 'ok',
+          detail: 'Reintentando paso que falló temporalmente'
+        })
+        await runFrom(automation.flow, enrollment, retryNodeId, ctx)
+        continue
       }
       const wasReplyTimeout = row.wait_kind === WAIT_KIND_REPLY
       const wasTriggerLinkTimeout = row.wait_kind === WAIT_KIND_TRIGGER_LINK_CLICK
@@ -3688,6 +3914,7 @@ export async function processDueResumes() {
 }
 
 let schedulerStarted = false
+let schedulerTickRunning = false
 
 /** Arranca el tick del programador (idempotente) */
 export function startAutomationScheduler(intervalMs = 20000) {
@@ -3695,13 +3922,19 @@ export function startAutomationScheduler(intervalMs = 20000) {
   schedulerStarted = true
   setInterval(() => {
     if (isDeployShutdownStarted()) return
+    // (CRON) Guard anti-solape intra-proceso: si el tick anterior aún corre (una
+    // corrida tardó más que el intervalo), no encimamos otra ejecución.
+    if (schedulerTickRunning) return
+    schedulerTickRunning = true
     trackDeployDrainWork('cron:automation-scheduler', async () => {
       await Promise.all([
         processDueResumes(),
         processScheduledTriggers(),
         processScheduledContactEnrollments()
       ])
-    }).catch(() => undefined)
+    })
+      .catch(() => undefined)
+      .finally(() => { schedulerTickRunning = false })
   }, intervalMs)
   logger.info('⚙️ Motor de automatizaciones activo (tick cada 20s)')
 }

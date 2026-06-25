@@ -1,4 +1,5 @@
-import { db } from '../config/database.js';
+import crypto from 'crypto';
+import { db, getAppConfig } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { updateSingleContactStats } from '../utils/updateContactsStats.js';
 import { normalizeToUtcIso, getAccountTimezone } from '../utils/dateUtils.js';
@@ -39,6 +40,83 @@ import {
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
 }
+
+// (SEC-002 / WA-004) Clave compartida para verificar los webhooks de ingreso
+// (pago/contacto/refund/cita/atribución/conversación) que hoy llegan sin firma desde
+// HighLevel. Rollout SEGURO: si AÚN no hay secreto configurado, aceptamos el webhook
+// pero dejamos un warning; en cuanto exista secreto, exigimos token o firma HMAC.
+const INBOUND_WEBHOOK_SECRET_KEY = 'inbound_webhook_secret';
+
+function timingSafeEqualStr(a = '', b = '') {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+async function getInboundWebhookSecret() {
+  try {
+    const value = await getAppConfig(INBOUND_WEBHOOK_SECRET_KEY);
+    const cleaned = typeof value === 'string' ? value.trim() : '';
+    return cleaned || '';
+  } catch (error) {
+    logger.warn(`[Webhooks] No se pudo leer ${INBOUND_WEBHOOK_SECRET_KEY}: ${error.message}`);
+    return '';
+  }
+}
+
+/**
+ * Devuelve true si la petición está autorizada (token o firma HMAC válidos, o aún no
+ * hay secreto configurado), false si hay secreto y la firma/token no coinciden.
+ * Acepta el secreto vía header de token (x-webhook-token / x-ristak-webhook-token) o
+ * como firma HMAC-SHA256 sobre el rawBody en x-webhook-signature (hex, con prefijo
+ * opcional "sha256=").
+ */
+async function isInboundWebhookAuthorized(req) {
+  const secret = await getInboundWebhookSecret();
+  if (!secret) {
+    // (SEC-002) Sin secreto configurado: no romper integraciones en vivo, pero avisar.
+    logger.warn('[Webhooks] Webhook de ingreso aceptado SIN verificación de firma: no hay inbound_webhook_secret configurado. Configura el secreto para proteger estos endpoints.');
+    return true;
+  }
+
+  const headers = req.headers || {};
+  const token = firstValue(
+    headers['x-webhook-token'],
+    headers['x-ristak-webhook-token'],
+    headers['x-webhook-secret']
+  );
+  if (token && timingSafeEqualStr(token, secret)) return true;
+
+  const signatureHeader = firstValue(headers['x-webhook-signature'], headers['x-ristak-webhook-signature']);
+  if (signatureHeader) {
+    const provided = String(signatureHeader).replace(/^sha256=/i, '').trim();
+    const rawBody = req.rawBody || JSON.stringify(req.body || {});
+    const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+    if (provided && provided.length === expected.length && timingSafeEqualStr(provided, expected)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Middleware para los webhooks de ingreso sin firma nativa. Rechaza con 401 solo cuando
+ * YA hay un secreto configurado y la firma/token no coinciden (decisión del dueño:
+ * rollout seguro).
+ */
+export const verifyInboundWebhookSignature = async (req, res, next) => {
+  try {
+    const authorized = await isInboundWebhookAuthorized(req);
+    if (!authorized) {
+      logger.warn(`[Webhooks] Webhook de ingreso rechazado: firma/token inválido (${req.originalUrl || req.url || ''})`);
+      return res.status(401).json({ success: false, code: 'invalid_webhook_signature', error: 'Firma o token de webhook inválido' });
+    }
+    return next();
+  } catch (error) {
+    logger.error(`[Webhooks] Error al verificar firma de webhook: ${error.message}`);
+    return res.status(401).json({ success: false, code: 'invalid_webhook_signature', error: 'No se pudo verificar la firma del webhook' });
+  }
+};
 
 export const verifyMetaSocialWebhook = async (req, res) => {
   try {
@@ -838,10 +916,32 @@ export const handlePaymentWebhook = async (req, res) => {
       paymentDate
     });
     const effectiveInvoiceId = invoiceId || existingInvoicePayment?.ghl_invoice_id || existingInvoicePayment?.id;
-    const configuredPaymentMode = await getConfiguredPaymentModeFallback();
-    const paymentMode = getWebhookPaymentMode(data, payment, existingInvoicePayment?.payment_mode || configuredPaymentMode);
 
-    if (existingInvoicePayment) {
+    // DB-006: dedup defensivo por ghl_invoice_id. findExistingInvoicePayment puede
+    // devolver null (filtros de monto/recencia/descripción) aunque YA exista una fila
+    // con este mismo ghl_invoice_id creada por otro flujo (sync de invoices usa
+    // id=ghl_invoice_id, el webhook insertaría id=paymentId -> ON CONFLICT(id) no
+    // dispara y se duplicaría la factura). Si la encontramos, la reusamos (UPDATE)
+    // en vez de INSERT. Cualquier error aquí NO debe abortar el webhook.
+    let dedupedInvoicePayment = existingInvoicePayment;
+    if (!dedupedInvoicePayment && effectiveInvoiceId) {
+      try {
+        const existingByGhlInvoiceId = await db.get(
+          'SELECT id, contact_id, ghl_invoice_id, payment_mode FROM payments WHERE ghl_invoice_id = ? LIMIT 1',
+          [effectiveInvoiceId]
+        );
+        if (existingByGhlInvoiceId) {
+          dedupedInvoicePayment = existingByGhlInvoiceId;
+        }
+      } catch (dedupError) {
+        logger.warn(`DB-006: pre-check de ghl_invoice_id falló para ${effectiveInvoiceId}: ${dedupError.message}`);
+      }
+    }
+
+    const configuredPaymentMode = await getConfiguredPaymentModeFallback();
+    const paymentMode = getWebhookPaymentMode(data, payment, dedupedInvoicePayment?.payment_mode || configuredPaymentMode);
+
+    if (dedupedInvoicePayment) {
       await db.run(
         `UPDATE payments
          SET contact_id = COALESCE(contact_id, ?),
@@ -876,13 +976,13 @@ export const handlePaymentWebhook = async (req, res) => {
           paymentDate,
           effectiveInvoiceId || null,
           invoiceNumber || null,
-          existingInvoicePayment.id
+          dedupedInvoicePayment.id // DB-006: reusar fila existente por ghl_invoice_id
         ]
       );
 
       await deleteDuplicateWebhookPaymentRows({
         paymentId,
-        existingPaymentId: existingInvoicePayment.id,
+        existingPaymentId: dedupedInvoicePayment.id, // DB-006
         contactId,
         amount,
         description
@@ -1806,18 +1906,21 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
       const contactUpdates = [];
       const contactParams = [];
 
+      // (WA-004) No pisar atribución existente: solo escribimos cada campo cuando el
+      // contacto aún no tiene valor (COALESCE/NULLIF), evitando que un webhook público
+      // contamine la atribución ya establecida de un anuncio anterior.
       if (finalAdId) {
-        contactUpdates.push('attribution_ad_id = ?');
+        contactUpdates.push('attribution_ad_id = COALESCE(NULLIF(attribution_ad_id, \'\'), ?)');
         contactParams.push(finalAdId);
       }
 
       if (referralCtwaClid) {
-        contactUpdates.push('attribution_ctwa_clid = ?');
+        contactUpdates.push('attribution_ctwa_clid = COALESCE(NULLIF(attribution_ctwa_clid, \'\'), ?)');
         contactParams.push(referralCtwaClid);
       }
 
       if (referralHeadline) {
-        contactUpdates.push('attribution_ad_name = ?');
+        contactUpdates.push('attribution_ad_name = COALESCE(NULLIF(attribution_ad_name, \'\'), ?)');
         contactParams.push(referralHeadline);
       }
 

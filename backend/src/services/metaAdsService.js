@@ -1,5 +1,5 @@
 import fetch from 'node-fetch'
-import { db } from '../config/database.js'
+import { db, getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { encrypt, decrypt, isEncrypted } from '../utils/encryption.js'
 import { API_URLS, META_INSIGHTS_FIELDS, PAGINATION } from '../config/constants.js'
@@ -725,7 +725,7 @@ async function fetchMetaAdsInsights(accountId, accessToken, sinceDate, untilDate
  * Las guardamos TAL CUAL porque representan "el día" en el timezone del anunciante.
  * El frontend debe mostrarlas en el timezone del usuario de HighLevel (no se convierten).
  */
-async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map()) {
+async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map(), options = {}) {
   try {
     // IMPORTANTE: accountId se guarda SIN el prefijo "act_" para consistencia
     // - Meta Config guarda: "123456789" (sin "act_")
@@ -733,22 +733,43 @@ async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map()
     // - Esto evita duplicados al cambiar entre formatos
     // - fetchMetaAdsInsights ya hace .replace('act_', '') antes de llamar aquí
 
-    for (const ad of ads) {
-      // Calcular CPM y CTR
-      const cpm = ad.reach > 0 ? (ad.spend / ad.reach) * 1000 : 0
-      const ctr = ad.reach > 0 ? (ad.clicks / ad.reach) * 100 : 0
+    // (META-010) Un INSERT por anuncio sin transacción: si un sync trae cientos de
+    // filas y falla a la mitad, la tabla queda con un subconjunto parcial y, en
+    // SQLite, cada INSERT autocommit es lento. Envolvemos todos los upserts en una
+    // sola transacción atómica (todo-o-nada) usando el helper db.transaction.
+    // `options.replaceRange` (META-008) permite borrar el rango antes de reinsertar
+    // dentro de la MISMA transacción, para que la app nunca vea un estado intermedio.
+    await db.transaction(async (tx) => {
+      const { replaceRange } = options
+      if (replaceRange) {
+        // (META-008) Borrar filas obsoletas del rango antes de reinsertar, dentro de
+        // la transacción, para purgar ads eliminados en Meta sin abrir ventanas de
+        // "gasto = 0" visibles desde la app.
+        await tx.run(
+          'DELETE FROM meta_ads WHERE ad_account_id = ? AND date >= ? AND date <= ?',
+          [accountId, replaceRange.since, replaceRange.until]
+        )
+      }
 
-      // ad.date_start viene como "YYYY-MM-DD" en el timezone de la cuenta de Meta
-      // Lo guardamos directo sin conversión (representa el "día" en el timezone del anunciante)
-      const creativeMedia = creativeMediaByAdId.get(String(ad.ad_id)) || {}
+      for (const ad of ads) {
+        // (META-001) CPM y CTR se calculan por IMPRESIONES, no por reach: CPM es costo
+        // por 1000 impresiones y CTR es clicks/impresiones. Usar reach (usuarios únicos,
+        // siempre ≤ impresiones) inflaba ambas métricas vs Meta Ads Manager.
+        const impressions = parseInt(ad.impressions || 0)
+        const cpm = impressions > 0 ? (ad.spend / impressions) * 1000 : 0
+        const ctr = impressions > 0 ? (ad.clicks / impressions) * 100 : 0
 
-      await db.run(`
+        // ad.date_start viene como "YYYY-MM-DD" en el timezone de la cuenta de Meta
+        // Lo guardamos directo sin conversión (representa el "día" en el timezone del anunciante)
+        const creativeMedia = creativeMediaByAdId.get(String(ad.ad_id)) || {}
+
+        await tx.run(`
         INSERT INTO meta_ads (
           date, ad_account_id, campaign_id, campaign_name, adset_id, adset_name,
           ad_id, ad_name, creative_id, creative_type, creative_thumbnail_url,
           creative_image_url, creative_video_id, creative_video_url, creative_preview_url,
-          spend, reach, clicks, cpc, cpm, ctr
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          spend, reach, impressions, clicks, cpc, cpm, ctr
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(date, campaign_id, adset_id, ad_id) DO UPDATE SET
           campaign_name = excluded.campaign_name,
           adset_name = excluded.adset_name,
@@ -762,6 +783,7 @@ async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map()
           creative_preview_url = COALESCE(excluded.creative_preview_url, meta_ads.creative_preview_url),
           spend = excluded.spend,
           reach = excluded.reach,
+          impressions = excluded.impressions,
           clicks = excluded.clicks,
           cpc = excluded.cpc,
           cpm = excluded.cpm,
@@ -785,12 +807,14 @@ async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map()
         creativeMedia.creative_preview_url || null,
         parseFloat(ad.spend || 0),
         parseInt(ad.reach || 0),
+        impressions,
         parseInt(ad.clicks || 0),
         parseFloat(ad.cpc || 0),
         parseFloat(cpm || 0),
         parseFloat(ctr || 0)
       ])
-    }
+      }
+    })
   } catch (error) {
     logger.error('Error guardando ads en base de datos:', error.message)
     throw error
@@ -998,6 +1022,16 @@ export async function updateRecentAds() {
       return { success: false, message: 'Sync completo en progreso' }
     }
 
+    // (META-009) Al desconectar Meta se marca meta_config_disconnected=1 en app_config,
+    // pero getMetaConfig no consulta ese flag, así que el cron seguía sincronizando
+    // (y revalidando el token) sobre una cuenta que el usuario ya desconectó. Aquí —el
+    // punto de entrada del cron— respetamos el estado "desconectado" y no hacemos nada.
+    const metaDisconnected = String(await getAppConfig('meta_config_disconnected') || '').trim() === '1'
+    if (metaDisconnected) {
+      logger.info('Meta Ads está marcado como desconectado: saltando actualización automática de ads recientes')
+      return { success: false, message: 'Meta desconectado' }
+    }
+
     const config = await getMetaConfig()
     if (!config?.ad_account_id || !config?.access_token) {
       logger.warn('No hay cuenta publicitaria de Meta conectada. Saltando actualización de ads recientes.')
@@ -1035,26 +1069,35 @@ export async function updateRecentAds() {
     // Últimos 7 días hasta hoy
     const startDate = daysAgo(7)
     const endDate = new Date()
+    const recentSince = formatDate(startDate)
+    const recentUntil = formatDate(endDate)
 
     logger.info(`Actualizando ads recientes (últimos 7 días hasta hoy)...`)
 
     const ads = await fetchMetaAdsInsights(
       ad_account_id,
       access_token,
-      formatDate(startDate),
-      formatDate(endDate)
+      recentSince,
+      recentUntil
     )
 
     logger.info(`${ads.length} ads obtenidos para actualización`)
 
-    if (ads.length > 0) {
-      const creativeMediaByAdId = await fetchMetaCreativesForAds(
-        ads.map(ad => ad.ad_id),
-        access_token,
-        ad_account_id
-      )
-      await saveAdsToDatabase(ads, ad_account_id, creativeMediaByAdId)
-    }
+    // (META-008) Antes solo se hacía upsert: ads eliminados/pausados en Meta dentro
+    // del rango reciente dejaban filas zombie con spend viejo hasta el próximo sync
+    // histórico. Ahora reemplazamos el rango completo (DELETE + reinsert atómico vía
+    // replaceRange) para purgar filas obsoletas. Se ejecuta SIEMPRE —incluso con
+    // ads.length === 0— para que una cuenta sin ads recientes también quede limpia.
+    const creativeMediaByAdId = ads.length > 0
+      ? await fetchMetaCreativesForAds(
+          ads.map(ad => ad.ad_id),
+          access_token,
+          ad_account_id
+        )
+      : new Map()
+    await saveAdsToDatabase(ads, ad_account_id, creativeMediaByAdId, {
+      replaceRange: { since: recentSince, until: recentUntil }
+    })
 
     syncProgress = {
       status: 'completed',

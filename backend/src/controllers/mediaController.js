@@ -388,8 +388,16 @@ export async function serveMediaAssetFileHandler(req, res) {
     res.setHeader('Content-Type', file.contentType || 'application/octet-stream')
     if (file.contentLength) res.setHeader('Content-Length', String(file.contentLength))
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    // (SEC-010) Evitar XSS almacenado vía media servida desde nuestro dominio: nunca dejar
+    // que el navegador "adivine" el tipo (nosniff) y solo servir INLINE los tipos seguros de
+    // visualización (imágenes raster, video, audio, PDF). Tipos ejecutables (SVG, HTML, XML,
+    // JS...) se fuerzan a DESCARGA (attachment) para que no corran scripts en el origen.
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    const contentTypeLower = String(file.contentType || '').toLowerCase()
+    const inlineSafe = /^(image\/(png|jpe?g|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon)|video\/|audio\/|application\/pdf)\b/.test(contentTypeLower)
     if (file.filename) {
-      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.filename)}"`)
+      const disposition = inlineSafe ? 'inline' : 'attachment'
+      res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(file.filename)}"`)
     }
     file.stream.pipe(res)
   } catch (error) {

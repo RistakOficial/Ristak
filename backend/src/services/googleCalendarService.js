@@ -225,16 +225,39 @@ export async function claimGoogleCalendarOAuthHandoff(handoffToken = '') {
 
 export async function deleteGoogleCalendarConfig() {
   await clearGoogleCalendarIntegrationCredentials()
+  // (GCAL-005) Al desconectar Google también hay que limpiar el `googleCalendarId`
+  // viejo de los calendarios locales vinculados; si no, quedan apuntando a un
+  // calendario de Google al que ya no tenemos acceso y la UI sigue "vinculada".
+  try {
+    const linkedCalendars = await localCalendarService.listGoogleLinkedLocalCalendars({ includeInactive: true })
+    for (const calendar of linkedCalendars) {
+      await localCalendarService.updateLocalCalendar(calendar.id, {
+        googleCalendarId: '',
+        googleAccessRole: '',
+        googleCalendarSummary: '',
+        googleCalendarTimeZone: ''
+      }, {
+        syncStatus: calendar.syncStatus || 'pending'
+      }).catch(error => {
+        logger.warn(`[Google Calendar] No se pudo limpiar vínculo Google del calendario ${calendar.id}: ${error.message}`)
+      })
+    }
+  } catch (error) {
+    logger.warn(`[Google Calendar] No se pudieron limpiar vínculos Google locales al desconectar: ${error.message}`)
+  }
   tokenCache = null
 }
 
-async function getAccessToken(config) {
+async function getAccessToken(config, { forceRefresh = false } = {}) {
   if (config.connectionMode !== 'oauth' || !config.refreshToken) {
     throw new Error('Conecta Google Calendar con OAuth antes de sincronizar.')
   }
 
   const cacheKey = `oauth:${config.googleAccountEmail || ''}:${crypto.createHash('sha1').update(config.refreshToken).digest('hex')}`
-  if (tokenCache?.cacheKey === cacheKey && tokenCache.expiresAt > Date.now() + 60000) {
+  // (GCAL-008) `forceRefresh` permite saltar el cache global por proceso cuando Google
+  // ya revocó/invalidó el token server-side (401). Sin esto, el access token cacheado
+  // se seguiría sirviendo hasta su expiración (~1h) aunque las credenciales ya no sirvan.
+  if (!forceRefresh && tokenCache?.cacheKey === cacheKey && tokenCache.expiresAt > Date.now() + 60000) {
     return tokenCache.accessToken
   }
 
@@ -252,8 +275,8 @@ async function getAccessToken(config) {
   return tokenCache.accessToken
 }
 
-async function googleRequest(config, path, options = {}) {
-  const token = await getAccessToken(config)
+async function googleRequest(config, path, options = {}, { forceRefresh = false } = {}) {
+  const token = await getAccessToken(config, { forceRefresh })
   const response = await fetchWithTimeout(`${GOOGLE_CALENDAR_API_BASE}${path}`, {
     ...options,
     headers: {
@@ -270,6 +293,14 @@ async function googleRequest(config, path, options = {}) {
   const payload = text ? parseJson(text, null) : null
 
   if (!response.ok) {
+    // (GCAL-008) Un 401 significa que el access token cacheado por proceso ya no es válido
+    // (Google revocó/invalidó las credenciales). Invalidamos el cache global y reintentamos
+    // una sola vez forzando un refresh; si persiste, propagamos el error real.
+    if (response.status === 401 && !forceRefresh) {
+      tokenCache = null
+      return googleRequest(config, path, options, { forceRefresh: true })
+    }
+
     const message = payload?.error?.message || payload?.error_description || payload?.error || text || `HTTP ${response.status}`
     const error = new Error(message)
     error.status = response.status
@@ -459,10 +490,18 @@ function mapGoogleEventStatus(event = {}) {
   return 'confirmed'
 }
 
-function googleEventDateToIso(value = {}, fallback = null) {
-  const raw = value.dateTime || (value.date ? `${value.date}T00:00:00.000Z` : fallback)
-  if (!raw) return null
-  return normalizeToUtcIso(raw, 'UTC')
+function googleEventDateToIso(value = {}, fallback = null, timezone = 'UTC') {
+  // (GCAL-004) Eventos all-day de Google solo traen `date` (YYYY-MM-DD) sin hora ni zona.
+  // Anclar la medianoche a la zona de la cuenta (no a UTC) para que el día no se desfase
+  // en zonas no-UTC (p. ej. México UTC-6, donde medianoche UTC cae el día anterior).
+  if (value.dateTime) {
+    return normalizeToUtcIso(value.dateTime, 'UTC')
+  }
+  if (value.date) {
+    return normalizeToUtcIso(`${value.date}T00:00:00`, timezone)
+  }
+  if (!fallback) return null
+  return normalizeToUtcIso(fallback, 'UTC')
 }
 
 function localIdForGoogleEvent(eventId) {
@@ -486,15 +525,28 @@ async function resolveLocalCalendarId(preferredCalendarId = null) {
   return calendar.id
 }
 
-function googleEventToAppointment(event = {}, { calendarId, locationId = null } = {}) {
+function googleEventToAppointment(event = {}, { calendarId, locationId = null, timezone = 'UTC' } = {}) {
   const privateProps = event.extendedProperties?.private || {}
   const ristakAppointmentId = cleanString(privateProps.ristakAppointmentId)
   const ristakCalendarId = cleanString(privateProps.ristakCalendarId)
-  const startTime = googleEventDateToIso(event.start)
-  const endTime = googleEventDateToIso(event.end, startTime)
+  // (GCAL-004) Pasar la zona de la cuenta para anclar correctamente los eventos all-day.
+  const startTime = googleEventDateToIso(event.start, null, timezone)
+  const endTime = googleEventDateToIso(event.end, startTime, timezone)
+
+  // (GCAL-006) Google manda los invitados en event.attendees como
+  // {email, displayName, organizer, self}. Tomamos el primer attendee que NO sea
+  // el organizador y NO sea la propia cuenta (self), y que traiga email utilizable.
+  // Ese invitado es el "contacto" de la cita. Si no hay ninguno, queda null y la
+  // cita entra sin contacto (degradación segura).
+  const guest = Array.isArray(event.attendees)
+    ? event.attendees.find(a => a && !a.organizer && !a.self && cleanString(a.email))
+    : null
 
   return {
     id: ristakAppointmentId || localIdForGoogleEvent(event.id),
+    // (GCAL-006) Datos del invitado para resolver/crear contacto antes del upsert.
+    guestEmail: guest ? cleanString(guest.email) : null,
+    guestName: guest ? cleanString(guest.displayName) : null,
     googleEventId: event.id,
     calendarId: ristakCalendarId || calendarId,
     locationId,
@@ -521,7 +573,9 @@ async function deleteLocalAppointmentForCancelledGoogleEvent(event = {}) {
   for (const candidateId of [...new Set(candidateIds)]) {
     const existing = await localCalendarService.getLocalAppointment(candidateId).catch(() => null)
     if (existing?.id) {
-      await localCalendarService.deleteLocalAppointment(existing.id)
+      // (GCAL-001) Soft-cancel en vez de hard-delete: un evento cancelado en Google
+      // NO debe borrar la cita de Ristak (perdería contacto, notas y trazabilidad).
+      await localCalendarService.cancelLocalAppointment(existing.id)
       return true
     }
   }
@@ -584,6 +638,8 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
   }
 
   const range = normalizeGoogleEventTimeRange({ startTime, endTime })
+  // (GCAL-004) Zona de la cuenta para anclar los eventos all-day al día correcto.
+  const accountTimezone = await getAccountTimezone()
   let saved = 0
   let deleted = 0
   for (const target of targets) {
@@ -608,7 +664,8 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
       if (!event.start) continue
 
       const appointment = googleEventToAppointment(event, {
-        calendarId: target.localCalendarId
+        calendarId: target.localCalendarId,
+        timezone: accountTimezone // (GCAL-004)
       })
 
       if (!appointment.startTime || !appointment.endTime) continue
@@ -619,6 +676,36 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
       appointment.locationId = localCalendar?.locationId || null
       const existingAppointment = await localCalendarService.getLocalAppointment(appointment.id).catch(() => null)
 
+      // (GCAL-006) Enlazar/crear contacto por email (y teléfono si viniera) del invitado
+      // ANTES del upsert, para que la cita entrante de Google entre al MISMO flujo de
+      // recordatorios/automatizaciones (cron-driven por contact_id) que una cita normal.
+      // upsertLocalAppointment ya llama updateContactAppointmentDate cuando hay contactId.
+      if (!appointment.contactId && (appointment.guestEmail || existingAppointment?.contactId)) {
+        if (existingAppointment?.contactId) {
+          // (GCAL-006) Si ya existía con contacto, conservarlo (no pisar el enlace previo).
+          appointment.contactId = existingAppointment.contactId
+        } else {
+          try {
+            const resolvedContactId = await localCalendarService.resolveOrCreateContactForGoogleAppointment({
+              email: appointment.guestEmail,
+              name: appointment.guestName
+            })
+            if (resolvedContactId) {
+              appointment.contactId = resolvedContactId
+            } else {
+              // (GCAL-006) Invitado sin datos utilizables: la cita entra sin contacto, como hoy.
+              logger.info(`(GCAL-006) Evento de Google ${event.id} entró sin datos de contacto utilizables; cita sin contacto.`)
+            }
+          } catch (contactError) {
+            // (GCAL-006) No romper el sync si falla la resolución de contacto: degradar a cita sin contacto.
+            logger.warn(`(GCAL-006) No se pudo resolver/crear contacto para evento de Google ${event.id}: ${contactError.message}`)
+          }
+        }
+      } else if (!appointment.contactId) {
+        // (GCAL-006) Evento sin attendees utilizables y sin contacto previo: cita sin contacto.
+        logger.info(`(GCAL-006) Evento de Google ${event.id} sin invitado con email; cita sin contacto.`)
+      }
+
       await localCalendarService.upsertLocalAppointment(appointment, {
         id: appointment.id,
         source: appointment.source,
@@ -626,7 +713,10 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
         calendarId: localCalendarId,
         locationId: localCalendar?.locationId || null,
         syncStatus: existingAppointment?.syncStatus || (appointment.source === 'google' ? 'synced' : 'pending'),
-        googleSyncStatus: 'synced'
+        googleSyncStatus: 'synced',
+        // (GCAL-003) Pull entrante de Google: last-write-wins por date_updated para no pisar
+        // una edición local fresca con el evento viejo de Google cuando el push falló o no corrió.
+        lastWriteWins: true
       })
       saved += 1
     }
@@ -689,6 +779,30 @@ export async function syncGoogleIntegrationNow({ startTime = null, endTime = nul
     await persistConfig(failedConfig)
     throw error
   }
+}
+
+// (GCAL-002) Reintento periódico de la sincronización Google<->local para las citas que
+// quedaron en error/pendiente. Es idempotente y acotado:
+//  - Pull Google->local: `syncGoogleEventsToLocal` (last-write-wins por date_updated, no pisa
+//    ediciones locales frescas; cancelados se soft-cancelan, nunca hard-delete - ver GCAL-001/003).
+//  - Push local->Google: `syncLocalAppointmentsToGoogle` SOLO selecciona citas con
+//    google_sync_status != 'synced' o sin google_event_id (las que fallaron/están pendientes),
+//    con LIMIT acotado; las ya sincronizadas se saltan. Eso es exactamente "reintentar las que
+//    quedaron con error/pendiente".
+// Si Google no está conectado o no hay calendarios vinculados, hace no-op seguro (no lanza),
+// para que el cron no genere ruido ni falle cuando la integración no está activa.
+// NO cambia las firmas existentes; reutiliza syncGoogleIntegrationNow tal cual.
+export async function retryGoogleCalendarSync() {
+  const config = await getGoogleCalendarConfig({ includeCredentials: true })
+  if (!config) {
+    return { enabled: false, ran: false }
+  }
+
+  // Reutiliza el flujo completo (pull + push) ya probado. syncGoogleIntegrationNow
+  // persiste lastSyncStatus/lastSyncMessage y, si hay 0 calendarios vinculados,
+  // simplemente devuelve 0 sincronizadas sin tocar nada (degradación segura).
+  const result = await syncGoogleIntegrationNow()
+  return { enabled: true, ran: true, sync: result?.sync || null }
 }
 
 export async function updateLocalCalendarGoogleSync({ calendarId, googleCalendarId }) {
@@ -1092,6 +1206,7 @@ export default {
   listGoogleCalendars,
   listGoogleEvents,
   mergeRistakAppointmentsIntoGoogle,
+  retryGoogleCalendarSync, // (GCAL-002)
   saveGoogleCalendarOAuthConnection,
   syncAppointmentToGoogle,
   syncLocalAppointmentsToGoogle,

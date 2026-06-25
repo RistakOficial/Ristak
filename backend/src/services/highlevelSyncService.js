@@ -21,7 +21,7 @@ import {
   resolveContactIdByGhlId,
   resolveOrCreateContactForGhl
 } from './contactIdentityService.js'
-import { sanitizeContactName } from '../utils/phoneUtils.js'
+import { sanitizeContactName, normalizePhoneDigits } from '../utils/phoneUtils.js'
 import GHLClient from './ghlClient.js'
 import {
   getLocalCalendar,
@@ -371,11 +371,6 @@ async function collectPaginatedData({
       await onPage({ page, pageItems, total: items.length, data, url })
     }
 
-    // Si no se agregaron items nuevos, es porque son duplicados - detenerse
-    if (newItemsCount === 0 && pageItems.length > 0) {
-      break
-    }
-
     // Verificar si ya tenemos todos según totalCount de la API
     const totalCount = data.totalCount || data.total || data.meta?.total
     if (totalCount && items.length >= totalCount) {
@@ -402,6 +397,15 @@ async function collectPaginatedData({
       }
     } else {
       url = null
+    }
+
+    // (GHL-012) Solo cortar por "página sin items nuevos" cuando la API NO
+    // ofrece una forma real de avanzar. Antes se cortaba apenas una página
+    // traía solo duplicados (p.ej. un item repetido en el borde de la página),
+    // perdiendo todas las páginas posteriores aunque hubiera nextToken/
+    // nextUrl/hasMore. Si todavía podemos avanzar, seguimos paginando.
+    if (newItemsCount === 0 && pageItems.length > 0 && !advanced) {
+      break
     }
 
     if (items.length === before && !advanced) {
@@ -488,6 +492,10 @@ function normalizeAppointmentRecord(raw = {}, locationIdFallback) {
   // Prioridad: dateAdded de GHL > createdAt > fecha actual (como última opción)
   const dateAdded = raw.dateAdded || raw.createdAt || raw.createdOn || new Date().toISOString()
   const dateUpdated = raw.dateUpdated || raw.updatedAt || raw.updatedOn || dateAdded
+  // (GHL-004) Capturar el id del evento de Google Calendar si HL lo provee, para
+  // que upsertLocalAppointment pueda deduplicar contra la cita de Google (columna
+  // google_event_id / match existingByGoogle) y no se dupliquen citas.
+  const googleEventId = raw.googleEventId || raw.googleCalendarEventId || raw.gEventId || raw.externalId || null
 
   return {
     id,
@@ -503,7 +511,8 @@ function normalizeAppointmentRecord(raw = {}, locationIdFallback) {
     startTime,
     endTime,
     dateAdded,
-    dateUpdated
+    dateUpdated,
+    googleEventId // (GHL-004)
   }
 }
 
@@ -745,6 +754,78 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
   }
 }
 
+// (GHL-002) Soft-delete SEGURO de contactos eliminados en HighLevel.
+//
+// La sync HL->local nunca marcaba como borrados los contactos que se eliminaron en
+// HighLevel: quedaban "fantasma" para siempre. Esta función marca deleted_at (igual
+// que el soft-delete de contacts de la migración 003) en los contactos LOCALES que:
+//   - están ligados a HighLevel (ghl_contact_id no vacío), Y
+//   - su ghl_contact_id NO apareció en una enumeración COMPLETA de HL.
+//
+// SOLO se invoca cuando la paginación de contactos recorrió TODAS las páginas hasta
+// agotarlas SIN fallo (syncHighLevelContacts pagina hasta meta.nextPageUrl == null y
+// lanza throw ante cualquier error no-429, así que llegar al final = enumeración
+// completa). NUNCA se ejecuta en una sync parcial/incremental/abortada: eso sería un
+// borrado masivo.
+//
+// Guardas duras anti-borrado-masivo (cualquiera que falle => NO se borra nada):
+//   1. seenGhlIds debe ser un Set no vacío (una respuesta vacía de HL NO borra todo).
+//   2. Se acota SOLO a filas con ghl_contact_id real (NUNCA toca contactos locales
+//      o de WhatsApp que aún no están ligados a HL).
+//   3. Solo afecta filas con deleted_at IS NULL (idempotente; no re-toca papelera).
+// Reversible: es soft-delete; las lecturas ya filtran deleted_at IS NULL y existe
+// papelera (deleted_at IS NOT NULL) para restaurar.
+async function softDeleteMissingHighLevelContacts(seenGhlIds) {
+  try {
+    // Guarda 1: nunca borrar a partir de un set vacío (HL pudo devolver 0 por error
+    // silencioso o cuenta recién conectada). Un wipe masivo sería catastrófico.
+    if (!(seenGhlIds instanceof Set) || seenGhlIds.size === 0) {
+      logger.warn('(GHL-002) Soft-delete de contactos OMITIDO: no hay IDs de HighLevel enumerados (set vacío). No se borra nada por seguridad.')
+      return { softDeleted: 0, skipped: true }
+    }
+
+    // Set de ghl_contact_id realmente vistos en HL, como strings limpios.
+    const ids = Array.from(seenGhlIds)
+      .map(id => (id === null || id === undefined ? '' : String(id).trim()))
+      .filter(Boolean)
+
+    if (ids.length === 0) {
+      logger.warn('(GHL-002) Soft-delete de contactos OMITIDO: los IDs enumerados quedaron vacíos tras normalizar.')
+      return { softDeleted: 0, skipped: true }
+    }
+
+    // Timestamp comparable como texto en SQLite y Postgres ('YYYY-MM-DD HH:MM:SS').
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+
+    // UPDATE acotado: SOLO contactos ligados a HL (ghl_contact_id no vacío) cuyo id de
+    // HL NO está en la lista enumerada, y que no estén ya en la papelera. Placeholders
+    // posicionales (?) válidos en ambos motores vía la abstracción db.
+    const placeholders = ids.map(() => '?').join(', ')
+    const result = await db.run(
+      `UPDATE contacts
+         SET deleted_at = ?
+       WHERE deleted_at IS NULL
+         AND ghl_contact_id IS NOT NULL
+         AND ghl_contact_id != ''
+         AND ghl_contact_id NOT IN (${placeholders})`,
+      [now, ...ids]
+    )
+
+    const softDeleted = result?.changes || 0
+    if (softDeleted > 0) {
+      logger.info(`(GHL-002) Soft-delete de contactos: ${softDeleted} contacto(s) eliminado(s) en HighLevel marcados como borrados localmente.`)
+    } else {
+      logger.info('(GHL-002) Soft-delete de contactos: ningún contacto fantasma por limpiar (todos los locales ligados siguen en HighLevel).')
+    }
+
+    return { softDeleted, skipped: false }
+  } catch (error) {
+    // Nunca tumbar la sync por el soft-delete: es un paso de limpieza, no crítico.
+    logger.error(`(GHL-002) Error en soft-delete de contactos (se ignora, no se borró nada parcial peligroso): ${error.message}`)
+    return { softDeleted: 0, skipped: true, error: error.message }
+  }
+}
+
 /**
  * Sincroniza contactos desde HighLevel (con paginación)
  */
@@ -823,6 +904,17 @@ async function syncHighLevelContacts(locationId, apiToken) {
   let saved = 0
   const usePostgres = process.env.DATABASE_URL ? true : false
   const customFieldDefinitions = await fetchHighLevelContactCustomFieldDefinitions({ apiToken, locationId })
+
+  // (GHL-002) Set de ghl_contact_id realmente enumerados desde HL en esta corrida
+  // COMPLETA, para luego marcar como borrados localmente los que ya no existen.
+  // Se construye a partir de allContacts (la enumeración completa), INDEPENDIENTE de
+  // si el guardado local de cada contacto falla: el contacto existe en HL, así que
+  // NO debe soft-borrarse aunque su upsert local truene.
+  const seenGhlContactIds = new Set()
+  for (const rawContact of allContacts) {
+    const ghlId = rawContact?.id || rawContact?._id
+    if (ghlId) seenGhlContactIds.add(String(ghlId).trim())
+  }
 
   for (const rawContact of allContacts) {
     try {
@@ -956,7 +1048,16 @@ async function syncHighLevelContacts(locationId, apiToken) {
 
   logger.info(`✅ Sincronizados ${saved}/${allContacts.length} contactos desde HighLevel`)
   updateContacts(saved, allContacts.length, 'completed', `${saved} contactos sincronizados exitosamente`)
-  return { saved, total: allContacts.length }
+
+  // (GHL-002) Llegar hasta aquí significa que la paginación recorrió TODAS las
+  // páginas hasta meta.nextPageUrl == null SIN throw (cualquier error no-429 aborta
+  // la sync antes de este punto). Es decir: enumeración COMPLETA y EXITOSA. Solo en
+  // ese caso es seguro marcar como borrados los contactos locales ligados a HL cuyo
+  // id ya no aparece en HighLevel. El helper aplica sus propias guardas (set no
+  // vacío, solo ghl_contact_id real, solo deleted_at IS NULL) y nunca tumba la sync.
+  const softDeleteResult = await softDeleteMissingHighLevelContacts(seenGhlContactIds)
+
+  return { saved, total: allContacts.length, softDeleted: softDeleteResult.softDeleted || 0 }
 }
 
 function serializeCustomFieldsForUpsert(value) {
@@ -986,14 +1087,54 @@ async function getWhatsAppOnlyContactsForHighLevelUpload() {
 }
 
 async function findHighLevelContactForLocal(client, contact) {
+  // (GHL-011) Antes se tomaba el PRIMER candidato HL con id devuelto por la
+  // búsqueda por email o teléfono, sin corroborar el identificador. Dos
+  // contactos HL con el mismo teléfono (líneas compartidas/familiares) podían
+  // ligar el ghl_contact_id equivocado y disparar un merge de DOS personas
+  // distintas. Ahora cada match exige que el identificador buscado coincida de
+  // verdad en el candidato: email exacto, o dígitos de teléfono iguales.
+  const localEmail = String(contact.email || '').trim().toLowerCase()
+  const localPhoneDigits = normalizePhoneDigits(contact.phone || '')
+
+  const candidateEmail = (candidate) => String(candidate.email || '').trim().toLowerCase()
+  const candidatePhoneDigits = (candidate) => normalizePhoneDigits(candidate.phone || '')
+
   const searches = []
-  if (contact.email) searches.push({ email: contact.email })
-  if (contact.phone) searches.push({ phone: contact.phone })
+  if (localEmail) searches.push({ by: 'email', params: { email: contact.email } })
+  if (localPhoneDigits) searches.push({ by: 'phone', params: { phone: contact.phone } })
 
   for (const search of searches) {
     try {
-      const result = await client.searchContacts({ ...search, limit: 5 })
-      const match = (result.contacts || []).find(candidate => candidate.id)
+      const result = await client.searchContacts({ ...search.params, limit: 5 })
+      const candidates = (result.contacts || []).filter(candidate => candidate.id)
+
+      let match = null
+      if (search.by === 'email') {
+        // (GHL-011) Solo aceptar si el email del candidato coincide exactamente.
+        match = candidates.find(candidate => candidateEmail(candidate) === localEmail)
+      } else if (search.by === 'phone') {
+        // (GHL-011) Exigir coincidencia real de dígitos de teléfono. Si hay
+        // varios candidatos con el mismo teléfono, preferir el que además
+        // corrobora el email; si siguen siendo ambiguos, no emparejar (no se
+        // puede decidir con seguridad).
+        const phoneMatches = candidates.filter(candidate => {
+          const digits = candidatePhoneDigits(candidate)
+          return digits && digits === localPhoneDigits
+        })
+        if (phoneMatches.length === 1) {
+          match = phoneMatches[0]
+        } else if (phoneMatches.length > 1) {
+          const corroborated = localEmail
+            ? phoneMatches.filter(candidate => candidateEmail(candidate) === localEmail)
+            : []
+          if (corroborated.length === 1) {
+            match = corroborated[0]
+          } else {
+            logger.warn(`Match WhatsApp→HL ambiguo para contacto ${contact.id}: ${phoneMatches.length} contactos HL comparten teléfono; no se emparejará para evitar fusionar personas distintas.`)
+          }
+        }
+      }
+
       if (match) return match
     } catch (error) {
       logger.warn(`No se pudo buscar contacto WhatsApp en HighLevel (${contact.id}): ${error.message}`)
@@ -1214,13 +1355,17 @@ async function syncHighLevelAppointments(locationId, apiToken) {
         contactId: localContactId,
         id: normalized.id,
         ghlAppointmentId: normalized.id,
-        calendarId: localCalendar?.id || normalized.calendarId
+        calendarId: localCalendar?.id || normalized.calendarId,
+        googleEventId: normalized.googleEventId // (GHL-004) alimenta google_event_id para deduplicar contra Google
       }, {
         source: 'ghl',
         ghlAppointmentId: normalized.id,
         calendarId: localCalendar?.id || normalized.calendarId,
         locationId,
-        syncStatus: 'synced'
+        syncStatus: 'synced',
+        // (GHL-003) Pull horario de HL: aplicar last-write-wins para no pisar ediciones
+        // locales recientes ni revivir citas borradas en Ristak con datos viejos de HL.
+        lastWriteWins: true
       })
 
       // Actualizar appointment_date del contacto con la fecha de la cita más próxima
@@ -1610,6 +1755,11 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
       }
 
       const credentialsToSave = mergeMetaCredentials(highLevelCredentials)
+      // GHL-009: solo se adopta la config de HighLevel porque NO existe ninguna
+      // config local de Meta (el guard kept_local de arriba ya descartó el caso
+      // con credenciales locales). No se pisa nada configurado por el usuario.
+      // Aun así dejamos aviso explícito para que la escritura no sea silenciosa.
+      logger.info('GHL-009: Meta local vacío; se adopta la configuración de HighLevel (no se sobrescribe ninguna config previa del usuario)')
       await saveMetaConfig(
         credentialsToSave.adAccountId,
         credentialsToSave.accessToken,
@@ -1638,6 +1788,14 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
       const highLevelNeedsUpdate = credentialsMissingValues(highLevelCredentials, localCredentials)
 
       if (localNeedsUpdate) {
+        // GHL-009: mergeMetaCredentials(local, highLevel) prioriza SIEMPRE los
+        // valores locales y solo rellena los campos que estaban vacíos en local.
+        // Nunca se pisan campos que el usuario ya configuró. Dejamos aviso
+        // explícito de qué campos opcionales se completaron desde HighLevel para
+        // que la escritura en meta_config no sea silenciosa en cada corrida.
+        const filledFields = ['pixelId', 'pageId', 'instagramAccountId', 'pixelApiToken', 'whatsappBusinessAccountId']
+          .filter(key => !cleanString(localCredentials[key]) && cleanString(highLevelCredentials[key]))
+        logger.info(`GHL-009: Se completan campos faltantes de Meta local desde HighLevel (sin sobrescribir lo configurado): ${filledFields.join(', ') || 'ninguno'}`)
         const mergedLocal = mergeMetaCredentials(localCredentials, highLevelCredentials)
         await saveMetaConfig(
           mergedLocal.adAccountId,
@@ -1679,6 +1837,11 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
     }
 
     if (prefer === 'highlevel') {
+      // GHL-009: única ruta que reemplaza el core (ad account + token) local con
+      // el de HighLevel. Solo se alcanza con prefer='highlevel' explícito (acción
+      // manual del usuario, NUNCA desde el cron que usa prefer='local'). Se deja
+      // aviso explícito para que la sobrescritura no sea silenciosa.
+      logger.warn('GHL-009: Sobrescritura EXPLÍCITA de Meta local con la config de HighLevel por prefer=highlevel (acción manual del usuario)')
       const credentialsToSave = mergeMetaCredentials(highLevelCredentials, localCredentials)
       await saveMetaConfig(
         credentialsToSave.adAccountId,

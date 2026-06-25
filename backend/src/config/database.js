@@ -548,8 +548,13 @@ async function reconcileCanonicalContactPhones() {
         if (!merged[field] && loser[field]) merged[field] = loser[field]
       }
 
-      merged.total_paid = Math.max(Number(merged.total_paid || 0), Number(loser.total_paid || 0))
-      merged.purchases_count = Math.max(Number(merged.purchases_count || 0), Number(loser.purchases_count || 0))
+      // (DB-007) Al fusionar contactos duplicados se SUMAN los acumulados, no se toma el MAX:
+      // cada registro acumuló su propio total_paid/purchases_count de sus propios pagos, y
+      // updateContactReferences() repunta los pagos del loser al winner. Con MAX se perdía
+      // dinero (un cliente que pagó 100 en un registro y 50 en otro quedaba con 100). SUM es
+      // consistente con el otro camino de fusión (contactIdentityService.mergeContactIds).
+      merged.total_paid = Number(merged.total_paid || 0) + Number(loser.total_paid || 0)
+      merged.purchases_count = Number(merged.purchases_count || 0) + Number(loser.purchases_count || 0)
 
       await db.run('UPDATE contacts SET phone = NULL, email = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [loser.id])
       await updateContactReferences(loser.id, winner.id)
@@ -1178,6 +1183,21 @@ async function initTables() {
     } catch (err) {
       logger.warn('Advertencia al asegurar unicidad de app_config.config_key:', err.message)
     }
+
+    // (MOB-006) Configuración por-usuario (espejo de app_config). Cuando un usuario
+    // no tiene fila para una clave, hereda el valor global de app_config (fallback en
+    // getUserAppConfig). user_id es INTEGER porque users.id es INTEGER.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS user_app_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        config_key TEXT NOT NULL,
+        config_value TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_user_app_config_user_key ON user_app_config(user_id, config_key)')
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -2607,12 +2627,12 @@ async function initTables() {
     // No alteran el estado operativo del calendario.
     await db.run(`
       CREATE TABLE IF NOT EXISTS appointment_attendance_signals (
-        contact_id TEXT PRIMARY KEY,
-        appointment_id TEXT,
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        appointment_id TEXT NOT NULL DEFAULT '',
         source TEXT NOT NULL DEFAULT 'webhook_showed',
         first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
 
@@ -5445,6 +5465,97 @@ export async function setAppConfig(key, value) {
       config_value = excluded.config_value,
       updated_at = CURRENT_TIMESTAMP
   `, [key, normalizedValue])
+}
+
+// (MOB-006) Normaliza un valor de config igual que setAppConfig: string tal cual,
+// resto a JSON; null/undefined -> null.
+function normalizeAppConfigValue(value) {
+  return value === null || value === undefined
+    ? null
+    : typeof value === 'string'
+      ? value
+      : JSON.stringify(value)
+}
+
+/**
+ * (MOB-006) Obtiene el valor por-usuario de una clave. Si el usuario no tiene fila
+ * propia, hace FALLBACK al valor global de app_config (así nadie pierde lo que ya
+ * tenía: quien no ha personalizado hereda el default del tenant).
+ */
+export async function getUserAppConfig(userId, key) {
+  const numericUserId = Number(userId)
+  if (Number.isFinite(numericUserId)) {
+    const row = await db.get(
+      'SELECT config_value FROM user_app_config WHERE user_id = ? AND config_key = ?',
+      [numericUserId, key]
+    )
+    if (row && row.config_value !== null && row.config_value !== undefined) {
+      return row.config_value
+    }
+  }
+  return getAppConfig(key)
+}
+
+/**
+ * (MOB-006) Guarda (upsert) el valor por-usuario de una clave. Normaliza igual que
+ * setAppConfig. El índice único (user_id, config_key) habilita el ON CONFLICT en
+ * ambos motores.
+ */
+export async function setUserAppConfig(userId, key, value) {
+  const numericUserId = Number(userId)
+  const normalizedValue = normalizeAppConfigValue(value)
+
+  await db.run(`
+    INSERT INTO user_app_config (user_id, config_key, config_value, updated_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, config_key) DO UPDATE SET
+      config_value = excluded.config_value,
+      updated_at = CURRENT_TIMESTAMP
+  `, [numericUserId, key, normalizedValue])
+}
+
+/**
+ * (MOB-006) Borra el override por-usuario de una clave para que el usuario vuelva a
+ * heredar el valor global de app_config.
+ */
+export async function deleteUserAppConfig(userId, key) {
+  const numericUserId = Number(userId)
+  if (!Number.isFinite(numericUserId)) return
+  await db.run(
+    'DELETE FROM user_app_config WHERE user_id = ? AND config_key = ?',
+    [numericUserId, key]
+  )
+}
+
+/**
+ * (MOB-006) Resuelve varias claves por-usuario de una sola pasada, con el mismo
+ * fallback al global (para el GET batch del frontend).
+ */
+export async function getUserAppConfigMany(userId, keys = []) {
+  const config = {}
+  for (const key of keys) {
+    config[key] = await getUserAppConfig(userId, key)
+  }
+  return config
+}
+
+/**
+ * (MOB-006) Indica si el usuario tiene override propio (fila) para cada clave dada.
+ * Sirve a la vista admin para diferenciar "Personal" vs "Heredado".
+ */
+export async function getUserAppConfigOverrideFlags(userId, keys = []) {
+  const numericUserId = Number(userId)
+  const flags = {}
+  for (const key of keys) flags[key] = false
+  if (!Number.isFinite(numericUserId) || keys.length === 0) return flags
+
+  const placeholders = keys.map(() => '?').join(', ')
+  const rows = await db.all(
+    `SELECT config_key FROM user_app_config WHERE user_id = ? AND config_key IN (${placeholders})`,
+    [numericUserId, ...keys]
+  )
+  for (const row of rows) flags[row.config_key] = true
+  return flags
 }
 
 export { db }

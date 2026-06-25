@@ -79,6 +79,22 @@ const cleanString = (value) => String(value || '').trim()
 
 const createLocalId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
 
+// (PAY-007) Idempotencia del registro manual de pago: un reintento de red NO debe
+// crear un pago duplicado. Si el cliente manda Idempotency-Key (o un id estable en el
+// body), derivamos un id de pago determinista para que el segundo intento reproduzca
+// el primero (mismo PK) en vez de insertar otra fila.
+const sanitizeIdempotencyToken = (value) => cleanString(value).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80)
+
+const resolveManualPaymentId = (req, bodyId) => {
+  const explicitId = cleanString(bodyId)
+  if (explicitId) return explicitId
+  const headerKey = sanitizeIdempotencyToken(
+    req.headers?.['idempotency-key'] || req.headers?.['x-idempotency-key']
+  )
+  if (headerKey) return `manual_payment_idemp_${headerKey}`
+  return createLocalId('manual_payment')
+}
+
 const parseJson = (value, fallback = {}) => {
   if (!value) return fallback
   if (typeof value === 'object') return value
@@ -576,7 +592,21 @@ export const createTransaction = async (req, res) => {
       })
     }
 
-    const transactionId = cleanString(id) || createLocalId('manual_payment')
+    // (PAY-007) Id idempotente: con Idempotency-Key (o id estable) un reintento
+    // reusa el mismo PK en vez de duplicar el pago.
+    const transactionId = resolveManualPaymentId(req, id)
+
+    // (PAY-007) Replay idempotente: si ya existe un pago con este id (reintento de
+    // red), devolvemos el existente sin volver a insertar ni re-disparar efectos.
+    const existingTransaction = await getTransactionByIdForResponse(transactionId, getRequestBaseUrl(req))
+    if (existingTransaction) {
+      logger.info(`Transacción ${transactionId} ya existía (reintento idempotente); se devuelve sin duplicar`)
+      return res.status(200).json({
+        success: true,
+        data: existingTransaction
+      })
+    }
+
     const finalCurrency = cleanString(await getAccountCurrency()).toUpperCase() || 'MXN'
     const finalMethod = cleanString(paymentMethod || method || 'cash') || 'cash'
     const finalTitle = cleanString(title || description || 'Pago')
@@ -585,11 +615,15 @@ export const createTransaction = async (req, res) => {
     const finalPaymentMode = normalizePaymentMode(paymentMode)
     const metadataJson = metadata && typeof metadata === 'object' ? JSON.stringify(metadata) : null
 
-    await db.run(
+    // (PAY-007) INSERT idempotente: ON CONFLICT DO NOTHING cierra la ventana de
+    // carrera entre el chequeo previo y el insert. Si no se insertó (changes==0),
+    // otro reintento ya creó el pago: devolvemos el existente sin re-disparar efectos.
+    const insertResult = await db.run(
       `INSERT INTO payments (
         id, contact_id, amount, currency, status, payment_method, payment_mode,
         payment_provider, reference, title, description, date, due_date, metadata_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO NOTHING`,
       [
         transactionId,
         finalContactId,
@@ -607,6 +641,17 @@ export const createTransaction = async (req, res) => {
         metadataJson
       ]
     )
+
+    if (Number(insertResult?.changes || 0) <= 0) {
+      const replayTransaction = await getTransactionByIdForResponse(transactionId, getRequestBaseUrl(req))
+      if (replayTransaction) {
+        logger.info(`Transacción ${transactionId} ya existía (carrera de reintento); se devuelve sin duplicar`)
+        return res.status(200).json({
+          success: true,
+          data: replayTransaction
+        })
+      }
+    }
 
     await updateSingleContactStats(finalContactId)
 

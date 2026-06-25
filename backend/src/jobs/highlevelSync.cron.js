@@ -6,6 +6,40 @@ import { logger } from '../utils/logger.js'
 import { syncHighLevelData, setSyncTriggerSource } from '../services/highlevelSyncService.js'
 import { syncHighLevelConversationHistory } from '../services/highlevelConversationsSyncService.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
+import { withCronLock } from '../utils/cronLock.js'
+
+// (GHL-005) TTLs de los locks distribuidos = el intervalo de cada cron, así un lock
+// que quede colgado por un crash se libera solo en el siguiente ciclo.
+const HIGHLEVEL_SYNC_LOCK_TTL_MS = 60 * 60 * 1000 // sync completa: cada hora
+const HIGHLEVEL_CONVERSATIONS_LOCK_TTL_MS = 10 * 60 * 1000 // conversaciones: cada 10 min
+
+// (GHL-010) Prueba ligera de que el token tenga acceso a un scope concreto.
+// NO rompe la conexión base: solo loguea claramente si el scope falta, para que
+// quede registrado por qué la sync de calendarios o conversaciones no traerá nada.
+// Un 401/403 indica scope ausente; otros errores (red, 5xx) se reportan pero no
+// se interpretan como falta de scope.
+async function probeHighLevelScope({ url, apiToken, version, scopeLabel }) {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Version': version
+      }
+    })
+
+    if (response.ok) return true
+
+    if (response.status === 401 || response.status === 403) {
+      logger.warn(`HighLevel: el token NO tiene acceso al scope de ${scopeLabel} (${response.status}). La sincronización de ${scopeLabel} no traerá datos hasta reconectar con ese permiso.`)
+    } else {
+      logger.warn(`HighLevel: no se pudo verificar el scope de ${scopeLabel} (${response.status}); se continúa de todos modos.`)
+    }
+    return false
+  } catch (error) {
+    logger.warn(`HighLevel: error verificando el scope de ${scopeLabel}: ${error.message}; se continúa de todos modos.`)
+    return false
+  }
+}
 
 async function isHighLevelConnected(config) {
   const locationId = String(config?.location_id || '').trim()
@@ -26,6 +60,19 @@ async function isHighLevelConnected(config) {
       return false
     }
 
+    // (GHL-010) La conexión base (locations) funciona. Además validamos que el
+    // token tenga acceso a calendarios y conversaciones, ya que la sync completa
+    // y la sync incremental los necesitan. Si falta alguno, lo dejamos claro en
+    // los logs PERO no abortamos: el resto de la sync (contactos, pagos) sí debe
+    // correr. Versiones por endpoint consistentes con el resto del código:
+    //   /calendars        -> 2021-04-15 (igual que fetchCalendarEventsByCalendar)
+    //   /conversations    -> 2021-07-28 (versión estándar del cliente, ver GHL-008)
+    const calendarsUrl = `${API_URLS.HIGHLEVEL_CALENDARS}?locationId=${encodeURIComponent(locationId)}`
+    const conversationsUrl = `${API_URLS.HIGHLEVEL_BASE}/conversations/search?locationId=${encodeURIComponent(locationId)}&limit=1`
+
+    await probeHighLevelScope({ url: calendarsUrl, apiToken, version: '2021-04-15', scopeLabel: 'calendarios' })
+    await probeHighLevelScope({ url: conversationsUrl, apiToken, version: '2021-07-28', scopeLabel: 'conversaciones' })
+
     return true
   } catch (error) {
     logger.warn(`No se pudo verificar conexión con HighLevel, saltando sincronización automática: ${error.message}`)
@@ -41,16 +88,34 @@ async function isHighLevelConnected(config) {
  * Mantiene la DB actualizada automáticamente en caso de cambios externos,
  * solo cuando HighLevel sigue conectado.
  */
+// (CRON-008) Guards anti-solape intra-proceso: una sync completa de HighLevel
+// (contactos+citas+pagos) puede tardar más que el intervalo de 1h, y la sync
+// incremental de conversaciones más que sus 10 min. Si un tick anterior aún
+// corre (o un deploy zero-downtime dispara dos veces en el mismo proceso), no
+// encimamos otra ejecución de la misma tarea. Mismo patrón que metaSync (META-006).
+let highLevelSyncRunning = false
+let highLevelConversationsSyncRunning = false
+
 export function startHighLevelSyncCron() {
   logger.info('🔄 Iniciando cron job de sincronización completa de HighLevel (cada hora, solo si está conectado)')
 
   // Ejecutar cada hora (minuto 17) para no competir con el cron de Meta Ads
   cron.schedule('17 * * * *', async () => {
     if (isDeployShutdownStarted()) return
+    // (CRON-008) Claim intra-proceso antes de actuar.
+    if (highLevelSyncRunning) {
+      logger.warn('Sincronización automática de HighLevel saltada: ya hay un tick en curso')
+      return
+    }
+    highLevelSyncRunning = true
     logger.info('⏰ Revisando conexión de HighLevel antes de sincronizar...')
 
     try {
       await trackDeployDrainWork('cron:highlevel-sync', async () => {
+       // (GHL-005) Lock global además del guard intra-proceso (CRON-008): si hay
+       // varias réplicas, solo una corre la sync completa por hora (evita doble
+       // escritura/borrado al sincronizar HL→local). Defensivo con 1 instancia.
+       const { ran } = await withCronLock('highlevel-sync', HIGHLEVEL_SYNC_LOCK_TTL_MS, async () => {
         // Obtener configuración de HighLevel
         const config = await db.get(
           'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
@@ -85,9 +150,13 @@ export function startHighLevelSyncCron() {
         } else {
           logger.warn('⚠️  Sincronización HighLevel terminó con advertencias')
         }
+       })
+       if (!ran) logger.info('Sincronización HighLevel omitida: otra instancia tiene el lock')
       })
     } catch (error) {
       logger.error('❌ Error en sincronización automática de HighLevel:', error.message)
+    } finally {
+      highLevelSyncRunning = false // (CRON-008)
     }
   })
 
@@ -99,8 +168,16 @@ export function startHighLevelSyncCron() {
   // aunque el workflow de webhook no esté configurado en GHL.
   cron.schedule('*/10 * * * *', async () => {
     if (isDeployShutdownStarted()) return
+    // (CRON-008) Claim intra-proceso antes de actuar.
+    if (highLevelConversationsSyncRunning) {
+      logger.warn('Sincronización de conversaciones de HighLevel saltada: ya hay un tick en curso')
+      return
+    }
+    highLevelConversationsSyncRunning = true
     try {
       await trackDeployDrainWork('cron:highlevel-conversations', async () => {
+       // (GHL-005) Lock global también para la sync incremental de conversaciones.
+       await withCronLock('highlevel-conversations', HIGHLEVEL_CONVERSATIONS_LOCK_TTL_MS, async () => {
         const config = await db.get(
           'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
         )
@@ -119,9 +196,12 @@ export function startHighLevelSyncCron() {
         if (result.saved > 0) {
           logger.info(`💬 Chats HighLevel actualizados: ${result.saved} mensajes nuevos/actualizados`)
         }
+       })
       })
     } catch (error) {
       logger.warn(`No se pudieron actualizar conversaciones de HighLevel: ${error.message}`)
+    } finally {
+      highLevelConversationsSyncRunning = false // (CRON-008)
     }
   })
 

@@ -199,7 +199,13 @@ async function resolveVisualAnalysisApiKey(options = {}) {
   const explicit = cleanString(options.visualAnalysisApiKey)
   if (explicit) return explicit
   if (options.aiProvider === 'openai' && cleanString(options.apiKey)) return cleanString(options.apiKey)
-  return getOpenAIApiKey().catch(() => null)
+  const fallbackKey = await getOpenAIApiKey().catch(() => null)
+  // (AI-006) Proveedor IA no-OpenAI sin OPENAI_API_KEY: el analisis visual usa
+  // OpenAI; si no hay key disponible avisamos en vez de fallar en silencio.
+  if (!fallbackKey && cleanString(options.aiProvider) && options.aiProvider !== 'openai') {
+    logger.warn('[Agente conversacional] (AI-006) Proveedor IA no-OpenAI sin OPENAI_API_KEY: no se puede analizar media entrante (imagen/video/documento).')
+  }
+  return fallbackKey
 }
 
 function buildAttachmentAnalysisPart(attachment = {}) {
@@ -422,7 +428,13 @@ async function readMediaBuffer(row = {}, { maxBytes = MAX_INLINE_MEDIA_BYTES, fe
 async function resolveAudioTranscriptionApiKey({ aiProvider = 'openai', apiKey = '', audioTranscriptionApiKey = '' } = {}) {
   if (audioTranscriptionApiKey) return audioTranscriptionApiKey
   if (aiProvider === 'openai' && apiKey) return apiKey
-  return getOpenAIApiKey().catch(() => null)
+  const fallbackKey = await getOpenAIApiKey().catch(() => null)
+  // (AI-006) Proveedor IA no-OpenAI sin OPENAI_API_KEY: la transcripcion de audio
+  // usa OpenAI; si no hay key disponible avisamos en vez de fallar en silencio.
+  if (!fallbackKey && cleanString(aiProvider) && aiProvider !== 'openai') {
+    logger.warn('[Agente conversacional] (AI-006) Proveedor IA no-OpenAI sin OPENAI_API_KEY: no se puede transcribir el audio entrante.')
+  }
+  return fallbackKey
 }
 
 async function buildAudioContext(row, options = {}) {

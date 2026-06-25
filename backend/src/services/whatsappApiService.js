@@ -315,16 +315,21 @@ function normalizeMessageDeliveryStatus(status = '') {
 
 function getMessageDeliveryStatusPriority(status = '') {
   switch (normalizeMessageDeliveryStatus(status)) {
-    case 'failed':
-    case 'error':
-    case 'undelivered':
-    case 'rejected':
-      return 100
     case 'read':
     case 'played':
       return 90
     case 'delivered':
       return 80
+    // (WA-007) 'failed'/'error'/'undelivered'/'rejected' ya NO son terminales por
+    // encima de delivered/read. Si después llega un acuse real de entrega/lectura
+    // (prueba de que el mensaje SÍ llegó), debe ganar sobre un 'failed' previo o
+    // fuera de orden. Mantienen prioridad sobre 'sent'/'accepted'/'pending' para
+    // que un fallo siga sobreescribiendo un simple 'enviado'.
+    case 'failed':
+    case 'error':
+    case 'undelivered':
+    case 'rejected':
+      return 75
     case 'sent':
       return 70
     case 'accepted':
@@ -560,6 +565,14 @@ export function buildLocalMediaUrl(localMedia, publicBaseUrl = '') {
 export function requirePublicMediaUrl(localMedia, publicBaseUrl = '', mediaLabel = 'archivos') {
   const publicPath = cleanString(localMedia?.publicPath)
   if (/^https:\/\//i.test(publicPath)) return publicPath
+
+  // (WA-006) Un asset que cayó al fallback de disco local solo sirve para QR
+  // (ruta relativa sin HTTPS). El envío por API necesita una URL pública que
+  // WhatsApp pueda abrir, así que se bloquea aquí con un mensaje accionable en
+  // vez de dejar que falle más adelante con un error genérico.
+  if (localMedia?.qrOnly === true || localMedia?.localFallback === true) {
+    throw new Error(`Para enviar ${mediaLabel} por WhatsApp por la API oficial, Ristak necesita almacenamiento multimedia público (HTTPS). El archivo se guardó solo en disco local y únicamente puede enviarse por QR.`)
+  }
 
   const baseUrl = requirePublicHttpsBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL, mediaLabel)
   const mediaUrl = buildLocalMediaUrl(localMedia, baseUrl)
@@ -853,6 +866,13 @@ export async function saveWhatsAppImageDataUrl(dataUrl = '') {
   return {
     mimeType: prepared.mimeType,
     size: prepared.buffer.length,
+    // (WA-006) El fallback a disco local produce una ruta relativa sin HTTPS:
+    // solo sirve para envíos por QR. Se marca como local/qr-only y se expone
+    // filePath para que el envío por API la detecte y bloquee con un error claro
+    // en vez de intentar mandar una URL que WhatsApp no puede abrir.
+    localFallback: true,
+    qrOnly: true,
+    filePath,
     publicPath: `${WHATSAPP_IMAGE_PUBLIC_PATH}/${dayKey}/${filename}`,
     filename
   }
@@ -903,6 +923,9 @@ export async function saveWhatsAppAudioDataUrl(dataUrl = '') {
     mimeType: media.mimeType,
     originalMimeType,
     size: media.buffer.length,
+    // (WA-006) Fallback local: solo válido para QR (ruta relativa sin HTTPS).
+    localFallback: true,
+    qrOnly: true,
     filePath,
     publicPath: `${WHATSAPP_AUDIO_PUBLIC_PATH}/${dayKey}/${filename}`,
     filename
@@ -943,6 +966,9 @@ async function saveWhatsAppDocumentDataUrl(dataUrl = '', filename = '', mimeType
   return {
     mimeType: parsed.mimeType,
     size: parsed.buffer.length,
+    // (WA-006) Fallback local: solo válido para QR (ruta relativa sin HTTPS).
+    localFallback: true,
+    qrOnly: true,
     filePath,
     publicPath: `${WHATSAPP_DOCUMENT_PUBLIC_PATH}/${dayKey}/${storedFilename}`,
     storedFilename,
@@ -3937,6 +3963,13 @@ function inferMessageDirection({ payload = {}, direction = '', message = {}, bus
   if (INBOUND_MESSAGE_EVENT_TYPES.has(type)) return 'inbound'
   if (OUTBOUND_MESSAGE_EVENT_TYPES.has(type)) return 'outbound'
 
+  // (WA-005) Antes de caer al default, usar el estado de entrega como señal:
+  // 'sent'/'delivered'/'failed'/'undelivered' son acuses que SOLO aplican a
+  // mensajes que nosotros enviamos (salientes). Sin esto, un saliente sin otra
+  // señal de dirección se guardaba como 'inbound'.
+  const deliveryStatus = normalizeMessageDeliveryStatus(message.status)
+  if (['sent', 'delivered', 'failed', 'undelivered'].includes(deliveryStatus)) return 'outbound'
+
   return 'inbound'
 }
 
@@ -4752,6 +4785,40 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   }
 }
 
+// (WA-009) Persiste en el chat un envío saliente por API que falló y NO tuvo
+// fallback por QR. Sin esto, un mensaje que truena en la API oficial sin
+// fallback desaparece: nunca queda registro en la conversación. Se guarda como
+// saliente con status 'failed' y el detalle del error para que el operador lo
+// vea en el historial y pueda reintentarlo.
+async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'text', content = {}, externalId, contactId, error } = {}) {
+  try {
+    const errorMessage = cleanString(error?.message || error)
+    const errorCode = cleanString(error?.code || error?.statusCode)
+    await upsertMessage({
+      payload: {
+        id: externalId || hashId('waapi_send_failed_event', `${fromPhone}|${toPhone}|${type}|${nowIso()}`),
+        type: 'whatsapp.message.failed',
+        createTime: nowIso()
+      },
+      message: {
+        from: fromPhone,
+        to: toPhone,
+        type,
+        ...content,
+        status: 'failed',
+        transport: 'api',
+        createTime: nowIso(),
+        error: { code: errorCode || undefined, message: errorMessage || 'Envío por API fallido' }
+      },
+      direction: 'outbound',
+      transport: 'api',
+      contactId
+    })
+  } catch (persistError) {
+    logger.error(`[WhatsApp API] No se pudo persistir el envío saliente fallido: ${persistError.message}`)
+  }
+}
+
 // Persiste en el historial unificado un mensaje visto por la sesión de WhatsApp Web (Baileys).
 // Solo captura cuando la API oficial de ese número no está operando (desactivada, restringida o
 // sin configurar); si la API está sana, el webhook de YCloud ya registra el mensaje y guardarlo
@@ -4791,6 +4858,11 @@ export async function captureQrChatMessage({
 
   // Dedupe difusa: el mismo mensaje pudo entrar por webhook con otro wamid durante una transición.
   if (messageText) {
+    // PAY-006-DB-005: datetime(?, '±2 minutes') es SQLite-only y truena en Postgres
+    // (la query iba en un .catch que ocultaba el error => el dedupe nunca corría en prod).
+    // Se ramifica a INTERVAL en Postgres manteniendo el mismo orden de parámetros.
+    const lowerBoundExpr = isPostgres() ? "(?::timestamp - INTERVAL '2 minutes')" : "datetime(?, '-2 minutes')"
+    const upperBoundExpr = isPostgres() ? "(?::timestamp + INTERVAL '2 minutes')" : "datetime(?, '+2 minutes')"
     const duplicate = await db.get(`
       SELECT id
       FROM whatsapp_api_messages
@@ -4798,7 +4870,7 @@ export async function captureQrChatMessage({
         AND direction = ?
         AND message_text = ?
         AND COALESCE(wamid, '') != ?
-        AND COALESCE(message_timestamp, created_at) BETWEEN datetime(?, '-2 minutes') AND datetime(?, '+2 minutes')
+        AND COALESCE(message_timestamp, created_at) BETWEEN ${lowerBoundExpr} AND ${upperBoundExpr}
       LIMIT 1
     `, [cleanContactPhone, cleanDirection, messageText, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => null)
     if (duplicate) {
@@ -5583,6 +5655,15 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
     const error = new Error('Firma de WhatsApp API inválida')
     error.statusCode = 401
     throw error
+  }
+
+  // (WA-001) Rollout seguro de firma de webhooks: si NO hay webhook_secret configurado
+  // aún (cuentas YCloud sin permiso para crear webhooks), aceptamos el payload para no
+  // romper integraciones en vivo, pero dejamos un warning visible de que el endpoint
+  // está aceptando webhooks sin verificar firma. Cuando exista secret, el bloque de
+  // arriba (signatureValid === false) ya rechaza con 401.
+  if (signatureValid === null) {
+    logger.warn('[WhatsApp API] Webhook YCloud aceptado SIN verificación de firma: no hay webhook_secret configurado. Configura el secreto para firmar y proteger este endpoint.')
   }
 
   const eventRowId = await saveWebhookEvent({
@@ -6819,8 +6900,16 @@ export async function sendWhatsAppApiTemplateMessage({
 
   if (!finalTemplate.name) throw new Error('No se encontro el nombre de la plantilla')
   if (!finalTemplate.language) throw new Error('Falta el idioma de la plantilla')
-  if (finalTemplate.status && finalTemplate.status !== 'APPROVED') {
-    throw new Error(`La plantilla ${finalTemplate.name} está ${finalTemplate.status}; solo se pueden enviar plantillas APPROVED`)
+  // WA-008: no asumir que una plantilla no sincronizada localmente es válida.
+  // Antes la validación se omitía cuando `status` venía vacío (plantilla no
+  // encontrada en whatsapp_api_templates), permitiendo enviar plantillas que
+  // podían estar PENDING/REJECTED en Meta. Ahora se exige status APPROVED
+  // confirmado localmente; si no hay snapshot local, se rechaza el envío.
+  if (!template) {
+    throw new Error(`La plantilla ${finalTemplate.name} (${finalTemplate.language}) no está sincronizada; sincroniza las plantillas y verifica que esté APPROVED antes de enviar`)
+  }
+  if (finalTemplate.status !== 'APPROVED') {
+    throw new Error(`La plantilla ${finalTemplate.name} está ${finalTemplate.status || 'sin estado'}; solo se pueden enviar plantillas APPROVED`)
   }
 
   const renderedVariables = await renderOutgoingVariables(variables, {
@@ -6996,6 +7085,19 @@ export async function sendWhatsAppApiTemplateMessage({
         fallbackPhoneNumberId: retryDecision.phoneRow?.id
       })
     }
+    // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
+    await persistFailedOutboundApiMessage({
+      fromPhone,
+      toPhone,
+      type: 'template',
+      content: {
+        template: requestBody.template,
+        ...(renderedTemplateText ? { text: { body: renderedTemplateText } } : {})
+      },
+      externalId,
+      contactId,
+      error
+    })
     throw error
   }
 
@@ -7147,6 +7249,16 @@ export async function sendWhatsAppApiInteractiveMessage({
         originalError: error
       })
     }
+    // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
+    await persistFailedOutboundApiMessage({
+      fromPhone,
+      toPhone,
+      type: 'interactive',
+      content: { interactive: interactivePayload.interactive },
+      externalId,
+      contactId,
+      error
+    })
     throw error
   }
 
@@ -7521,6 +7633,16 @@ export async function sendWhatsAppApiTextMessage({
         originalError: error
       })
     }
+    // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
+    await persistFailedOutboundApiMessage({
+      fromPhone,
+      toPhone,
+      type: 'text',
+      content: { text: { body } },
+      externalId,
+      contactId,
+      error
+    })
     throw error
   }
 
@@ -7680,6 +7802,16 @@ export async function sendWhatsAppApiImageMessage({
         originalError: error
       })
     }
+    // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
+    await persistFailedOutboundApiMessage({
+      fromPhone,
+      toPhone,
+      type: 'image',
+      content: { image: requestBody.image },
+      externalId,
+      contactId,
+      error
+    })
     throw error
   }
 
@@ -7852,6 +7984,16 @@ export async function sendWhatsAppApiDocumentMessage({
         originalError: error
       })
     }
+    // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
+    await persistFailedOutboundApiMessage({
+      fromPhone,
+      toPhone,
+      type: 'document',
+      content: { document: requestBody.document },
+      externalId,
+      contactId,
+      error
+    })
     throw error
   }
 
@@ -8021,6 +8163,16 @@ export async function sendWhatsAppApiAudioMessage({
         originalError: error
       })
     }
+    // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
+    await persistFailedOutboundApiMessage({
+      fromPhone,
+      toPhone,
+      type: 'audio',
+      content: { audio: requestBody.audio },
+      externalId,
+      contactId,
+      error
+    })
     throw error
   }
 

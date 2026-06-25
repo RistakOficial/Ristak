@@ -40,25 +40,33 @@ import {
   getUsersByIds
 } from '../controllers/highlevelController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireAdmin } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
+// (GHL-007) Decisión del dueño: restringir a solo admin las rutas de ADMINISTRACIÓN de
+// HighLevel (conectar/guardar/borrar config, disparar sincronizaciones, revelar token,
+// etiquetas/config de facturación). NO se gatean a admin las rutas OPERATIVAS que usan
+// los empleados desde chat/pagos/citas (getConfig, integration-status, enviar mensaje,
+// buscar/ver contactos, productos/facturas/cobros), para no romper su trabajo diario.
 
-router.post('/test-connection', testConnection)
-router.post('/test', testConnection) // Alias para compatibilidad
-router.post('/config', saveConfig)
+router.post('/test-connection', requireAdmin, testConnection)
+router.post('/test', requireAdmin, testConnection) // Alias para compatibilidad
+router.post('/config', requireAdmin, saveConfig)
 router.get('/config', getConfig)
-router.delete('/config', deleteConfig)
-router.get('/config/reveal/api_token', revealToken)
+router.delete('/config', requireAdmin, deleteConfig)
+// (GHL-001) Revelar el token maestro de HighLevel queda restringido a admin
+// (antes cualquier usuario autenticado podía obtenerlo) y se audita en el controlador.
+router.get('/config/reveal/api_token', requireAdmin, revealToken)
 router.get('/integration-status', getIntegrationStatus)
-router.post('/refresh-location', refreshLocationData)
-router.post('/sync', syncData)
+router.post('/refresh-location', requireAdmin, refreshLocationData)
+router.post('/sync', requireAdmin, syncData)
 router.get('/sync/progress', getSyncProgressEndpoint)
-router.post('/sync-custom-values', syncCustomValues)
-router.post('/sync-contacts', syncContacts)
+router.post('/sync-custom-values', requireAdmin, syncCustomValues)
+router.post('/sync-contacts', requireAdmin, syncContacts)
 router.get('/custom-labels', getCustomLabels)
-router.post('/custom-labels', updateCustomLabels)
+router.post('/custom-labels', requireAdmin, updateCustomLabels)
 
 // Contacts
 router.post('/contacts/search', searchContacts)
@@ -72,8 +80,8 @@ router.post('/conversations/sync', syncConversations)
 router.get('/users', getLocationUsers)
 router.post('/users/by-ids', getUsersByIds)
 
-// Invoice/Payment Configuration
-router.post('/invoice-config', saveInvoiceConfig)
+// Invoice/Payment Configuration (administración)
+router.post('/invoice-config', requireAdmin, saveInvoiceConfig)
 
 // Products and Payments
 router.get('/products', listProducts)

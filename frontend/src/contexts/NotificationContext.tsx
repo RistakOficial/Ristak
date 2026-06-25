@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react'
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
 type ToastType = 'success' | 'error' | 'info' | 'warning'
 type ModalActionResult = void | boolean | Promise<void | boolean>
@@ -140,6 +140,25 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const closeModal = useCallback(() => {
     setModal(prev => ({ ...prev, isOpen: false }))
   }, [])
+
+  // (LIC-005) Escucha centralizada del evento que emite apiClient cuando el
+  // backend responde 403 con code "feature_not_available" (módulo premium fuera
+  // del plan). Antes esto fallaba en silencio; ahora mostramos un toast claro.
+  useEffect(() => {
+    const handleFeatureNotAvailable = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail
+      const message = detail?.message?.trim()
+      showToast(
+        'warning',
+        'Esta función no está incluida en tu plan',
+        message || 'Contacta al administrador para activarla.'
+      )
+    }
+    window.addEventListener('ristak:feature-not-available', handleFeatureNotAvailable)
+    return () => {
+      window.removeEventListener('ristak:feature-not-available', handleFeatureNotAvailable)
+    }
+  }, [showToast])
 
   return (
     <NotificationContext.Provider value={{

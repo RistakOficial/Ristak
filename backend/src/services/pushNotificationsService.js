@@ -2,10 +2,11 @@ import crypto from 'crypto'
 import fs from 'fs/promises'
 import http2 from 'http2'
 import webPush from 'web-push'
-import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { db, getAppConfig, setAppConfig, getUserAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { shouldSuppressChatNotificationForConversationalAgent } from './conversationalAgentService.js'
-import { resolvePushNotificationTargetForEvent } from './notificationPreferencesService.js'
+// (MOB-002 / NOTI-004) Importamos el chequeo de contactos ocultos para no exponerlos en el push
+import { resolvePushNotificationTargetForEvent, isContactHiddenFromNotifications } from './notificationPreferencesService.js'
 
 const ENV_VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || ''
 const ENV_VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || ''
@@ -75,6 +76,12 @@ async function resolveWebPushKeys() {
   ])
 
   logger.success('[Push] Llaves web push creadas y guardadas para activar notificaciones en celulares PWA.')
+  // (NOTI-009) Las llaves VAPID autogeneradas viven solo en esta base de datos. Si la BD se
+  // reinicia, se restaura o las llaves se regeneran, la llave pública cambia y TODAS las
+  // suscripciones push existentes quedan inservibles (los navegadores quedan atados a la
+  // pública original). Recomendamos fijar WEB_PUSH_PUBLIC_KEY/WEB_PUSH_PRIVATE_KEY por
+  // variables de entorno para mantenerlas estables entre reinicios y despliegues.
+  logger.warn('[Push] (NOTI-009) Llaves VAPID autogeneradas en base de datos: NO recomendado para producción. Si la BD se reinicia o las llaves cambian, se romperán todas las suscripciones push existentes. Define WEB_PUSH_PUBLIC_KEY y WEB_PUSH_PRIVATE_KEY en variables de entorno para que sean permanentes.')
 
   return {
     publicKey: generated.publicKey,
@@ -101,6 +108,11 @@ if (pushConfigured) {
   webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
   if (resolvedWebPushKeys.source !== 'environment') {
     logger.info(`[Push] Web Push activo con llaves ${resolvedWebPushKeys.source === 'generated' ? 'creadas automáticamente' : 'guardadas en base de datos'}.`)
+    // (NOTI-009) Las llaves no provienen de variables de entorno: están atadas a esta base de
+    // datos. Avisamos en cada arranque porque cualquier reinicio/restauración de la BD que cambie
+    // la llave pública dejará inservibles las suscripciones push ya registradas. Fija
+    // WEB_PUSH_PUBLIC_KEY/WEB_PUSH_PRIVATE_KEY en el entorno para hacerlas permanentes.
+    logger.warn('[Push] (NOTI-009) Llaves VAPID NO fijadas por entorno (origen: base de datos). Para evitar romper las suscripciones push ante un reinicio o restauración de la BD, define WEB_PUSH_PUBLIC_KEY y WEB_PUSH_PRIVATE_KEY como variables de entorno.')
   }
 } else {
   logger.warn('[Push] Web Push sin llaves VAPID; las suscripciones se guardan, pero no se enviarán notificaciones.')
@@ -400,6 +412,59 @@ async function getNotificationExperienceConfig() {
   ])
 
   return { soundEnabled, vibrationEnabled }
+}
+
+// (MOB-006) Interpreta el valor on/off por-usuario (string|bool) con un default.
+function interpretBooleanPushValue(raw, fallback = false) {
+  if (raw === null || raw === undefined || raw === '') return fallback
+  if (typeof raw === 'boolean') return raw
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase())
+}
+
+// (MOB-006) Lee una clave on/off resuelta para el USUARIO destinatario (override propio
+// con fallback al global). Así quien no personalizó nada sigue recibiendo lo de antes.
+async function getUserBooleanPushConfig(userId, key, fallback = false) {
+  const raw = await getUserAppConfig(userId, key).catch(() => null)
+  return interpretBooleanPushValue(raw, fallback)
+}
+
+// (MOB-006) Resuelve sonido/vibración POR usuario (cada device usa lo de su dueño),
+// con un caché user_id->experience para no repetir queries dentro de un mismo envío.
+function createUserExperienceResolver() {
+  const cache = new Map()
+  return async (userId) => {
+    const key = String(userId || '').trim()
+    if (cache.has(key)) return cache.get(key)
+    const [soundEnabled, vibrationEnabled] = await Promise.all([
+      getUserBooleanPushConfig(key, PUSH_SOUND_CONFIG_KEY, true),
+      getUserBooleanPushConfig(key, PUSH_VIBRATION_CONFIG_KEY, true)
+    ])
+    const experience = { soundEnabled, vibrationEnabled }
+    cache.set(key, experience)
+    return experience
+  }
+}
+
+// (MOB-006) ¿El usuario destinatario tiene activado este tipo de notificación?
+// enabledKey es la clave on/off del evento; si el usuario no la personalizó, hereda el
+// global (fallback en getUserAppConfig) -> comportamiento idéntico al previo.
+async function isEventEnabledForUser(userId, enabledKey) {
+  if (!enabledKey) return true
+  return getUserBooleanPushConfig(userId, enabledKey, true)
+}
+
+// (MOB-006) Para calendario: si el usuario tiene override propio de calendar_ids, ese
+// override manda; lista vacía = todos los calendarios. Si no tiene override, no filtra
+// por usuario (el filtrado por device/global ya se aplicó antes).
+async function isCalendarAllowedForUser(userId, calendarId) {
+  const target = String(calendarId || '').trim()
+  if (!target) return true
+  const raw = await getUserAppConfig(userId, 'calendar_push_notification_calendar_ids').catch(() => null)
+  const calendarIds = normalizeCalendarIds(
+    Array.isArray(raw) ? raw : safeJsonParse(raw || '[]', [])
+  )
+  if (calendarIds.length === 0) return true
+  return calendarIds.includes(target)
 }
 
 async function getPushPreferenceTarget(eventKey) {
@@ -848,15 +913,25 @@ async function sendApnsNotification(row, payload = {}, experience = {}) {
   })
 }
 
+// (MOB-006) experience puede ser un objeto fijo (global) o una función resolver
+// async(userId)->experience para calcular sonido/vibración por dueño del device.
+async function resolveExperienceForRow(experience, row) {
+  if (typeof experience === 'function') {
+    return experience(row.user_id)
+  }
+  return experience
+}
+
 async function sendMobileNotificationRows(rows = [], payload = {}, experience = {}) {
   let sent = 0
   await Promise.all(rows.map(async (row) => {
     const platform = normalizePlatform(row.platform)
+    const rowExperience = await resolveExperienceForRow(experience, row) // (MOB-006) por usuario
     try {
       if (platform === 'android') {
-        await sendFcmNotification(row, payload, experience)
+        await sendFcmNotification(row, payload, rowExperience)
       } else if (platform === 'ios') {
-        await sendApnsNotification(row, payload, experience)
+        await sendApnsNotification(row, payload, rowExperience)
       } else {
         return
       }
@@ -870,9 +945,33 @@ async function sendMobileNotificationRows(rows = [], payload = {}, experience = 
   return sent
 }
 
-export async function sendAppNotificationPayload(payload = {}, { calendarId = '', userIds = null } = {}) {
+// (MOB-006) Filtra filas (web + nativas) por la preferencia del USUARIO destinatario:
+// (a) on/off del evento (enabledKey) y (b) override de calendarios cuando aplica.
+// Mantiene las filas sin user_id (no se puede resolver -> se respeta el comportamiento
+// previo, que ya las dejaba pasar tras el filtro por matrix/calendario).
+async function filterRowsByUserPreference(rows, { enabledKey = '', calendarId = '' } = {}) {
+  if (!enabledKey && !calendarId) return rows
+  const results = await Promise.all(rows.map(async (row) => {
+    const userId = String(row.user_id || '').trim()
+    if (!userId) {
+      // (MOB-006) Una suscripción sin user_id no tiene preferencia por-usuario, pero debe
+      // seguir respetando el apagado GLOBAL (preserva el kill-switch previo): si la clave
+      // on/off del evento está en false a nivel global, no se envía.
+      if (enabledKey && !(await getBooleanPushConfig(enabledKey, true))) return null
+      return row
+    }
+    if (enabledKey && !(await isEventEnabledForUser(userId, enabledKey))) return null
+    if (calendarId && !(await isCalendarAllowedForUser(userId, calendarId))) return null
+    return row
+  }))
+  return results.filter(Boolean)
+}
+
+// (MOB-006) enabledKey: clave on/off del evento para resolver la preferencia POR
+// usuario destinatario (con fallback al global). Si se omite, no se filtra por usuario.
+export async function sendAppNotificationPayload(payload = {}, { calendarId = '', userIds = null, enabledKey = '' } = {}) {
   if (appNotificationPayloadSenderForTest) {
-    return appNotificationPayloadSenderForTest(payload, { calendarId, userIds })
+    return appNotificationPayloadSenderForTest(payload, { calendarId, userIds, enabledKey })
   }
 
   if (!pushConfigured && !nativePushConfigured) {
@@ -886,30 +985,41 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
   }
 
   const normalizedPayload = normalizeNotificationPayload(payload)
-  const [webRows, nativeRows, experience] = await Promise.all([
+  const [webRows, nativeRows] = await Promise.all([
     pushConfigured
       ? (calendarId ? getSubscriptionsForCalendar(calendarId) : getEnabledSubscriptions())
       : Promise.resolve([]),
     nativePushConfigured
       ? (calendarId ? getMobileDevicesForCalendar(calendarId) : getEnabledMobileDevices(normalizedUserIds))
-      : Promise.resolve([]),
-    getNotificationExperienceConfig()
+      : Promise.resolve([])
   ])
 
-  const filteredWebRows = filterByUser
+  const matrixWebRows = filterByUser
     ? webRows.filter((row) => normalizedUserIds.includes(String(row.user_id || '').trim()))
     : webRows
-  const filteredNativeRows = filterByUser
+  const matrixNativeRows = filterByUser
     ? nativeRows.filter((row) => normalizedUserIds.includes(String(row.user_id || '').trim()))
     : nativeRows
+
+  // (MOB-006) Tercer eje: override por-usuario de las 7 claves. La entrega final llega a
+  // un device del user U solo si (matrix permite a U) AND (preferencia de U on/off true,
+  // con fallback global) AND (calendario permitido para U). Sin override => hereda global
+  // => idéntico al comportamiento previo (no se silencia a nadie que ya recibía).
+  const [filteredWebRows, filteredNativeRows] = await Promise.all([
+    filterRowsByUserPreference(matrixWebRows, { enabledKey, calendarId }),
+    filterRowsByUserPreference(matrixNativeRows, { enabledKey, calendarId })
+  ])
 
   if (filteredWebRows.length === 0 && filteredNativeRows.length === 0) {
     return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'no_subscriptions' }
   }
 
+  // (MOB-006) Sonido/vibración por dueño del device (resolver cacheado por user_id).
+  const experienceResolver = createUserExperienceResolver()
+
   const [webSent, nativeSent] = await Promise.all([
     pushConfigured ? sendNotificationRows(filteredWebRows, normalizedPayload) : Promise.resolve(0),
-    nativePushConfigured ? sendMobileNotificationRows(filteredNativeRows, normalizedPayload, experience) : Promise.resolve(0)
+    nativePushConfigured ? sendMobileNotificationRows(filteredNativeRows, normalizedPayload, experienceResolver) : Promise.resolve(0)
   ])
 
   return {
@@ -926,8 +1036,11 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
   const calendarId = String(options.calendarId || appointment.calendarId || appointment.calendar_id || '').trim()
   if (!calendarId) return { sent: 0, skipped: true, reason: 'missing_calendar' }
 
+  // (MOB-006) El on/off de calendario ahora se resuelve POR usuario destinatario en el
+  // dispatcher (enabledKey), con fallback al global. Aquí solo se aplica el filtro GLOBAL
+  // de calendarios (mismo comportamiento que antes); el override por-usuario de
+  // calendar_ids se aplica adicionalmente por fila vía el calendarId que pasamos abajo.
   const config = await getGlobalCalendarPushConfig()
-  if (!config.enabled) return { sent: 0, skipped: true, reason: 'disabled' }
   if (config.calendarIds.length > 0 && !config.calendarIds.includes(calendarId)) {
     return { sent: 0, skipped: true, reason: 'calendar_filtered' }
   }
@@ -954,7 +1067,11 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
     contactId: appointment.contactId || appointment.contact_id || ''
   }
 
-  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, { calendarId }))
+  // (MOB-006) enabledKey + calendarId => on/off y calendarios por usuario destinatario.
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
+    calendarId,
+    enabledKey: 'calendar_push_notifications_enabled'
+  }))
 }
 
 async function getAppointmentContactName(appointment = {}, options = {}) {
@@ -984,9 +1101,8 @@ async function getAppointmentContactName(appointment = {}, options = {}) {
 export async function sendAppointmentConfirmationNotification(appointment = {}, options = {}) {
   if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
 
-  const enabled = await getBooleanPushConfig('appointment_confirmation_push_notifications_enabled', true)
-  if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
-
+  // (MOB-006) El on/off ahora se resuelve POR usuario destinatario en el dispatcher
+  // (enabledKey, fallback al global), no como kill-switch global aquí.
   const appointmentId = String(options.appointmentId || appointment.id || '').trim()
   if (!appointmentId) return { sent: 0, skipped: true, reason: 'missing_appointment' }
 
@@ -1016,21 +1132,31 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
     contactId: appointment.contactId || appointment.contact_id || options.contactId || ''
   }
 
-  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, { calendarId }))
+  // (MOB-006) enabledKey => on/off por usuario destinatario (fallback global).
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
+    calendarId,
+    enabledKey: 'appointment_confirmation_push_notifications_enabled'
+  }))
 }
 
 export async function sendChatMessageNotification(message = {}) {
   if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
 
-  const enabled = await getBooleanPushConfig('chat_push_notifications_enabled', true)
-  if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
-
+  // (MOB-006) El on/off de chat se resuelve POR usuario destinatario en el dispatcher.
   const suppressByAgent = await shouldSuppressChatNotificationForConversationalAgent(message.contactId).catch((error) => {
     logger.warn(`[Push] No se pudo revisar silencio del agente conversacional: ${error.message}`)
     return false
   })
   if (suppressByAgent) {
     return { sent: 0, skipped: true, reason: 'conversational_agent_attending' }
+  }
+  // (MOB-002 / NOTI-004) No exponer nombre ni texto de contactos ocultos en el push de chat
+  const hidden = await isContactHiddenFromNotifications(message.contactId).catch((error) => {
+    logger.warn(`[Push] No se pudo verificar contacto oculto para chat: ${error.message}`)
+    return true // fail-safe: ante error no enviamos para evitar fuga
+  })
+  if (hidden) {
+    return { sent: 0, skipped: true, reason: 'hidden_contact' }
   }
   const preferenceTarget = await getPushPreferenceTarget('conversations')
   if (isPushPreferenceDisabled(preferenceTarget)) {
@@ -1051,17 +1177,26 @@ export async function sendChatMessageNotification(message = {}) {
     category: 'chat'
   }
 
-  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget))
+  // (MOB-006) enabledKey => on/off de chat por usuario destinatario (fallback global).
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
+    enabledKey: 'chat_push_notifications_enabled'
+  }))
 }
 
 export async function sendConversationalAgentPriorityNotification(signal = {}) {
   if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
 
-  const enabled = await getBooleanPushConfig('chat_push_notifications_enabled', true)
-  if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
-
+  // (MOB-006) El on/off de chat se resuelve POR usuario destinatario en el dispatcher.
   const contactId = String(signal.contactId || '').trim()
   if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
+  // (MOB-002 / NOTI-004) No exponer nombre de contactos ocultos en el aviso de prioridad
+  const hidden = await isContactHiddenFromNotifications(contactId).catch((error) => {
+    logger.warn(`[Push] No se pudo verificar contacto oculto para prioridad: ${error.message}`)
+    return true // fail-safe: ante error no enviamos para evitar fuga
+  })
+  if (hidden) {
+    return { sent: 0, skipped: true, reason: 'hidden_contact' }
+  }
   const preferenceTarget = await getPushPreferenceTarget('agent_priority')
   if (isPushPreferenceDisabled(preferenceTarget)) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
@@ -1090,14 +1225,16 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
     category: 'chat'
   }
 
-  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget))
+  // (MOB-006) Comparte el on/off de chat (chat_push_notifications_enabled) por usuario.
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
+    enabledKey: 'chat_push_notifications_enabled'
+  }))
 }
 
 export async function sendPaymentNotification(payment = {}) {
   if (!pushConfigured && !nativePushConfigured) return { sent: 0, skipped: true, reason: 'not_configured' }
 
-  const enabled = await getBooleanPushConfig('payment_push_notifications_enabled', true)
-  if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
+  // (MOB-006) El on/off de pagos se resuelve POR usuario destinatario en el dispatcher.
   const preferenceTarget = await getPushPreferenceTarget('payments')
   if (isPushPreferenceDisabled(preferenceTarget)) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
@@ -1116,5 +1253,8 @@ export async function sendPaymentNotification(payment = {}) {
     contactId: payment.contactId || payment.contact_id || ''
   }
 
-  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget))
+  // (MOB-006) enabledKey => on/off de pagos por usuario destinatario (fallback global).
+  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
+    enabledKey: 'payment_push_notifications_enabled'
+  }))
 }

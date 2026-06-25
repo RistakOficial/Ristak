@@ -790,19 +790,20 @@ async function finalizeQrSendResponse({ response, recipient, externalId }) {
     throw error
   }
 
-  if (!isConfirmedQrSendAck(ack)) {
-    const error = new Error('WhatsApp QR no confirmó entrega al destinatario. Revisa que el teléfono siga conectado y que el contacto pueda recibir mensajes.')
-    error.code = ack.timedOut ? 'qr_send_ack_timeout' : 'qr_send_not_confirmed'
-    error.statusCode = 408
-    error.qrAck = ack
-    throw error
-  }
+  // (WA-002) El servidor de WhatsApp ya aceptó el mensaje (Baileys devolvió key.id en
+  // `accepted.messageId`). Antes lanzábamos 408 cuando el destinatario no confirmaba
+  // entrega en 20s (típico si está offline), aunque WhatsApp lo entregaría luego: el
+  // operador lo veía como "falló" y reenviaba, generando duplicados. Ahora tratamos el
+  // mensaje aceptado como ÉXITO con estado 'sent'; los acks posteriores actualizan a
+  // delivered/read. Solo un 'failed' explícito (arriba) se considera error.
+  const confirmed = isConfirmedQrSendAck(ack)
+  const resolvedStatus = confirmed ? (ack.status || 'delivered') : 'sent'
 
   return {
     id: accepted.messageId || externalId || '',
     wamid: accepted.messageId || '',
     recipientJid: accepted.remoteJid,
-    status: ack.status || 'pending',
+    status: resolvedStatus,
     ack,
     raw: safeJson({ response, ack })
   }
