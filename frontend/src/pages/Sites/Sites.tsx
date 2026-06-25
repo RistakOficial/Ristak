@@ -12009,6 +12009,26 @@ export const Sites: React.FC = () => {
       onSaveSite={() => handleSaveSite(undefined, { silent: true })}
     />
   ) : null
+  // Selector de páginas del FORMULARIO multistep (solo al editar un formulario embebido).
+  // Reutiliza FunnelPagesPanel con los handlers del form embebido que ya existen, para que
+  // el editor de sitios tenga las mismas funciones de páginas que el editor standalone.
+  const editorFormPageSelector = formEditMode ? (
+    <FunnelPagesPanel
+      pages={formEditPages}
+      activePageId={activeEmbeddedFormPage?.id || formEditPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID}
+      locked={editorAIGenerating}
+      colorFinalPages={false}
+      pageMode="funnel"
+      canDeletePage={() => formEditPages.length > 1}
+      canDuplicatePage={() => false}
+      onSelectPage={selectEmbeddedFormPage}
+      onAddPage={addEmbeddedFormPage}
+      onDuplicatePage={() => {}}
+      onDeletePage={deleteEmbeddedFormPage}
+      onReorderPages={() => {}}
+      onRenamePage={renameEmbeddedFormPage}
+    />
+  ) : null
   const editorToolbarSettingsSite = editorSite
   const editorToolbarSettingsPages = pages
   const editorToolbarSettingsActivePage = activePage
@@ -12085,7 +12105,14 @@ export const Sites: React.FC = () => {
                     <div className={`${styles.editorToolbarTools} ${styles.editorToolbarFormControls}`} aria-label="Herramientas de formulario">
                       {editorPageSelector && (
                         <div className={styles.editorPageSelectorSlot}>
+                          <span className={styles.editorPageScopeLabel}>Sitio</span>
                           {editorPageSelector}
+                        </div>
+                      )}
+                      {editorFormPageSelector && (
+                        <div className={styles.editorPageSelectorSlot}>
+                          <span className={styles.editorPageScopeLabel}>Formulario</span>
+                          {editorFormPageSelector}
                         </div>
                       )}
                       {editorHistoryControls}
