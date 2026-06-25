@@ -448,16 +448,44 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, tim
     .map(slot => new Date(slot).getTime())
     .filter(ms => Number.isFinite(ms));
 
+  // (APT-007 fix) Salvaguarda anti-bloqueo: si HighLevel respondio OK pero sin
+  // NINGUN slot utilizable en todo el rango, NO lo interpretamos como "todo
+  // ocupado". Casi siempre significa que el calendario remoto no tiene
+  // disponibilidad propia configurada (round-robin/servicio sin horarios), que
+  // devolvio un formato inesperado o que hay un desfase de zona/grilla. Cruzar
+  // contra una respuesta vacia dejaria el calendario publico SIN fechas
+  // agendables (todas bloqueadas). Degradamos a la disponibilidad local, igual
+  // que cuando GHL no responde.
+  if (!remoteMs.length) {
+    logger.warn(`[Calendars Controller] (APT-007) HighLevel no devolvio horarios para ${calendar.ghlCalendarId} (${startDate}..${endDate}); uso disponibilidad local para no bloquear el calendario publico.`);
+    return localSlots;
+  }
+
   const isFreeRemotely = (slotIso) => {
     const ms = new Date(slotIso).getTime();
     if (!Number.isFinite(ms)) return false;
     return remoteMs.some(remote => Math.abs(remote - ms) <= 60000);
   };
 
-  return (Array.isArray(localSlots) ? localSlots : []).map(day => ({
+  const intersected = (Array.isArray(localSlots) ? localSlots : []).map(day => ({
     ...day,
     slots: (Array.isArray(day?.slots) ? day.slots : []).filter(isFreeRemotely)
   }));
+
+  // (APT-007 fix) Segunda salvaguarda: si localmente SI habia horarios pero el
+  // cruce con HighLevel los elimino TODOS, es un desajuste (zona/grilla/config)
+  // y no que el dia entero este lleno. Preferimos mostrar la disponibilidad
+  // local antes que dejar al cliente sin poder agendar.
+  const countSlots = (days) => (Array.isArray(days) ? days : [])
+    .reduce((sum, day) => sum + (Array.isArray(day?.slots) ? day.slots.length : 0), 0);
+  const localTotal = countSlots(localSlots);
+  const intersectedTotal = countSlots(intersected);
+  if (localTotal > 0 && intersectedTotal === 0) {
+    logger.warn(`[Calendars Controller] (APT-007) El cruce con HighLevel dejo 0 horarios para ${calendar.ghlCalendarId} (${startDate}..${endDate}) teniendo ${localTotal} locales; uso disponibilidad local para no bloquear el calendario publico.`);
+    return localSlots;
+  }
+
+  return intersected;
 }
 
 /**
