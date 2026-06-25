@@ -124,7 +124,9 @@ export const Login: React.FC = () => {
   }
 
   const handleCopyCode = () => {
-    const code = `node -e "const crypto = require('crypto'); const { Pool } = require('pg'); const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); async function reset() { const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync('admin123', salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = \$1, password_hash = \$2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); process.stdout.write('✅ Credenciales reseteadas: admin / admin123\\n'); await pool.end(); } reset();"`
+    // (AUTH-002) El comando genera una contraseña ALEATORIA temporal y la imprime,
+    // en vez de fijar 'admin123' (credencial conocida que cualquiera veía en esta página).
+    const code = `node -e "const crypto = require('crypto'); const { Pool } = require('pg'); const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); async function reset() { const newPassword = crypto.randomBytes(12).toString('base64').replace(/[+/=]/g, '').slice(0, 16); const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync(newPassword, salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = \$1, password_hash = \$2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); process.stdout.write('✅ Credenciales reseteadas. Usuario: admin · Contraseña temporal: ' + newPassword + '\\n'); await pool.end(); } reset();"`
 
     navigator.clipboard.writeText(code)
     setCopied(true)
@@ -279,7 +281,7 @@ export const Login: React.FC = () => {
                   Copia y pega este comando en el Shell:
                   <div className={styles.codeBlock}>
                     <code>
-                      node -e "const crypto = require('crypto'); const &#123; Pool &#125; = require('pg'); const pool = new Pool(&#123; connectionString: process.env.DATABASE_URL, ssl: &#123; rejectUnauthorized: false &#125; &#125;); async function reset() &#123; const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync('admin123', salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = $1, password_hash = $2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); process.stdout.write('✅ Credenciales reseteadas: admin / admin123\n'); await pool.end(); &#125; reset();"
+                      node -e "const crypto = require('crypto'); const &#123; Pool &#125; = require('pg'); const pool = new Pool(&#123; connectionString: process.env.DATABASE_URL, ssl: &#123; rejectUnauthorized: false &#125; &#125;); async function reset() &#123; const newPassword = crypto.randomBytes(12).toString('base64').replace(/[+/=]/g, '').slice(0, 16); const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync(newPassword, salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = $1, password_hash = $2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); process.stdout.write('✅ Credenciales reseteadas. Usuario: admin · Contraseña temporal: ' + newPassword + '\n'); await pool.end(); &#125; reset();"
                     </code>
                     <button
                       onClick={handleCopyCode}
@@ -291,16 +293,16 @@ export const Login: React.FC = () => {
                   </div>
                 </li>
                 <li>
-                  Presiona <strong>Enter</strong> y espera a que veas el mensaje:
+                  Presiona <strong>Enter</strong> y espera a que veas el mensaje (la contraseña es aleatoria y única en cada reseteo):
                   <div className={styles.successMessage}>
-                    ✅ Credenciales reseteadas: admin / admin123
+                    ✅ Credenciales reseteadas. Usuario: admin · Contraseña temporal: ••••••••
                   </div>
                 </li>
                 <li>
                   Ahora puedes loguearte con:
                   <div className={styles.credentialsBox}>
                     <p><strong>Usuario:</strong> admin</p>
-                    <p><strong>Contraseña:</strong> admin123</p>
+                    <p><strong>Contraseña:</strong> la contraseña temporal que imprimió el comando (cópiala del Shell)</p>
                   </div>
                 </li>
               </ol>
