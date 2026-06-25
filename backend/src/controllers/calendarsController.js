@@ -1739,6 +1739,33 @@ export async function updateAppointment(req, res) {
     const existing = await localCalendarService.getLocalAppointment(id);
     let appointment;
 
+    // (APT-006) Normaliza el nuevo estado ANTES de hablar con HL. El front puede
+    // mandar el estado como status / appointmentStatus / appointment_status; usamos
+    // el MISMO patrón que más abajo (previousStatus/nextStatus). Si el nuevo estado
+    // es 'cancelled' nos aseguramos de que el payload a HL lleve appointmentStatus
+    // para que highlevelCalendarService.mapAppointmentStatus lo reciba y propague la
+    // cancelación remota en este mismo PUT. NO duplicamos el mapeo de status aquí.
+    const incomingStatus = String(
+      updateData.appointmentStatus || updateData.appointment_status || updateData.status || ''
+    ).trim().toLowerCase();
+    if (incomingStatus === 'cancelled' && !updateData.appointmentStatus && !updateData.appointment_status) {
+      updateData.appointmentStatus = incomingStatus;
+    }
+
+    // (APT-006) Token de fallback: cuando un admin cancela por cambio de estado puede
+    // NO venir accessToken en el body. Si la cita está vinculada a HL pero no tenemos
+    // token en el contexto, intentamos el token guardado (highlevel_config) para poder
+    // propagar la cancelación en vez de dejarla solo local.
+    if (existing?.ghlAppointmentId && !context.accessToken) {
+      const saved = await getSavedHighLevelOnlyContext().catch(() => null);
+      if (saved?.accessToken) {
+        context.accessToken = saved.accessToken;
+        if (!context.locationId && saved.locationId) {
+          context.locationId = saved.locationId;
+        }
+      }
+    }
+
     if (context.accessToken && existing?.ghlAppointmentId) {
       try {
         const remote = await calendarService.updateAppointment(existing.ghlAppointmentId, updateData, context.accessToken);

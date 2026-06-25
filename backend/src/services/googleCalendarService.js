@@ -533,8 +533,20 @@ function googleEventToAppointment(event = {}, { calendarId, locationId = null, t
   const startTime = googleEventDateToIso(event.start, null, timezone)
   const endTime = googleEventDateToIso(event.end, startTime, timezone)
 
+  // (GCAL-006) Google manda los invitados en event.attendees como
+  // {email, displayName, organizer, self}. Tomamos el primer attendee que NO sea
+  // el organizador y NO sea la propia cuenta (self), y que traiga email utilizable.
+  // Ese invitado es el "contacto" de la cita. Si no hay ninguno, queda null y la
+  // cita entra sin contacto (degradación segura).
+  const guest = Array.isArray(event.attendees)
+    ? event.attendees.find(a => a && !a.organizer && !a.self && cleanString(a.email))
+    : null
+
   return {
     id: ristakAppointmentId || localIdForGoogleEvent(event.id),
+    // (GCAL-006) Datos del invitado para resolver/crear contacto antes del upsert.
+    guestEmail: guest ? cleanString(guest.email) : null,
+    guestName: guest ? cleanString(guest.displayName) : null,
     googleEventId: event.id,
     calendarId: ristakCalendarId || calendarId,
     locationId,
@@ -663,6 +675,36 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
       appointment.calendarId = localCalendarId
       appointment.locationId = localCalendar?.locationId || null
       const existingAppointment = await localCalendarService.getLocalAppointment(appointment.id).catch(() => null)
+
+      // (GCAL-006) Enlazar/crear contacto por email (y teléfono si viniera) del invitado
+      // ANTES del upsert, para que la cita entrante de Google entre al MISMO flujo de
+      // recordatorios/automatizaciones (cron-driven por contact_id) que una cita normal.
+      // upsertLocalAppointment ya llama updateContactAppointmentDate cuando hay contactId.
+      if (!appointment.contactId && (appointment.guestEmail || existingAppointment?.contactId)) {
+        if (existingAppointment?.contactId) {
+          // (GCAL-006) Si ya existía con contacto, conservarlo (no pisar el enlace previo).
+          appointment.contactId = existingAppointment.contactId
+        } else {
+          try {
+            const resolvedContactId = await localCalendarService.resolveOrCreateContactForGoogleAppointment({
+              email: appointment.guestEmail,
+              name: appointment.guestName
+            })
+            if (resolvedContactId) {
+              appointment.contactId = resolvedContactId
+            } else {
+              // (GCAL-006) Invitado sin datos utilizables: la cita entra sin contacto, como hoy.
+              logger.info(`(GCAL-006) Evento de Google ${event.id} entró sin datos de contacto utilizables; cita sin contacto.`)
+            }
+          } catch (contactError) {
+            // (GCAL-006) No romper el sync si falla la resolución de contacto: degradar a cita sin contacto.
+            logger.warn(`(GCAL-006) No se pudo resolver/crear contacto para evento de Google ${event.id}: ${contactError.message}`)
+          }
+        }
+      } else if (!appointment.contactId) {
+        // (GCAL-006) Evento sin attendees utilizables y sin contacto previo: cita sin contacto.
+        logger.info(`(GCAL-006) Evento de Google ${event.id} sin invitado con email; cita sin contacto.`)
+      }
 
       await localCalendarService.upsertLocalAppointment(appointment, {
         id: appointment.id,

@@ -5,7 +5,16 @@ import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizeToUtcIso, getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
-import { isRistakContactId, linkContactToGhl } from './contactIdentityService.js'
+import {
+  isRistakContactId,
+  linkContactToGhl,
+  // (GCAL-006) Reutilizamos los helpers de identidad de contacto para enlazar/crear
+  // contacto a partir de un evento entrante de Google, sin duplicar lógica.
+  findContactByPhoneCandidates,
+  prepareContactPhoneUpsert,
+  finalizePreparedPhoneUpsert
+} from './contactIdentityService.js'
+import { normalizePhoneForAccount } from '../utils/accountLocale.js' // (GCAL-006)
 import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
@@ -2997,6 +3006,94 @@ export async function updateContactAppointmentDate(contactId) {
   await updateSingleContactStats(contactId).catch(error => {
     logger.warn(`No se pudieron actualizar stats del contacto ${contactId}: ${error.message}`)
   })
+}
+
+// (GCAL-006) Helpers locales para resolver/crear contacto desde un evento de Google.
+// Misma lógica que upsertPublicCalendarContact del controller, pero EXPORTADA aquí
+// (el controller es privado y no se puede importar). Reutiliza findContactByPhoneCandidates,
+// el match por email LOWER(email)=LOWER(?), y prepare/finalize del teléfono.
+function normalizeGoogleContactEmail(value) {
+  const email = cleanString(value).toLowerCase()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
+}
+
+function splitGoogleContactName(fullName = '') {
+  const parts = cleanString(fullName).split(/\s+/).filter(Boolean)
+  return {
+    firstName: parts[0] || '',
+    lastName: parts.slice(1).join(' ')
+  }
+}
+
+/**
+ * (GCAL-006) Resuelve un contacto existente por teléfono/email o crea uno nuevo
+ * para una cita entrante de Google Calendar. Devuelve el contactId o null si no
+ * hay datos de contacto utilizables (degrada con seguridad: la cita entra sin
+ * contacto, como hoy).
+ */
+export async function resolveOrCreateContactForGoogleAppointment({ email, name, phone } = {}) {
+  const fullName = cleanString(name)
+  const normalizedEmail = normalizeGoogleContactEmail(email)
+  const rawPhone = cleanString(phone)
+  // (GCAL-006) Normaliza el teléfono según la cuenta (mismo helper que el controller público).
+  const normalizedPhone = rawPhone
+    ? (await normalizePhoneForAccount(rawPhone).catch(() => null)) || rawPhone
+    : ''
+
+  const hasUsablePhone = Boolean(normalizedPhone && normalizedPhone.replace(/[^\d]/g, '').length >= 7)
+
+  // (GCAL-006) Sin teléfono utilizable ni email: no hay forma fiable de identificar
+  // al invitado. Degradar con seguridad dejando la cita sin contacto.
+  if (!hasUsablePhone && !normalizedEmail) {
+    return null
+  }
+
+  // (GCAL-006) Match primero por teléfono, luego por email (misma prioridad que el controller).
+  const byPhone = hasUsablePhone
+    ? await findContactByPhoneCandidates(normalizedPhone).catch(() => null)
+    : null
+  const byEmail = !byPhone && normalizedEmail
+    ? await db.get(
+        'SELECT id FROM contacts WHERE LOWER(email) = LOWER(?) ORDER BY updated_at DESC LIMIT 1',
+        [normalizedEmail]
+      ).catch(() => null)
+    : null
+
+  const contactId = byPhone?.id || byEmail?.id || `rstk_contact_${crypto.randomUUID()}`
+  const names = splitGoogleContactName(fullName)
+  // (GCAL-006) Si el invitado no trajo nombre, usar el email como etiqueta legible.
+  const displayName = fullName || normalizedEmail || normalizedPhone || 'Invitado de Google'
+
+  const phoneUpsert = hasUsablePhone
+    ? await prepareContactPhoneUpsert({ contactId, phone: normalizedPhone })
+    : { phone: null }
+
+  // (GCAL-006) INSERT ... ON CONFLICT(id) DO UPDATE funciona en SQLite y Postgres.
+  await db.run(`
+    INSERT INTO contacts (
+      id, phone, email, full_name, first_name, last_name, source,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      phone = COALESCE(excluded.phone, contacts.phone),
+      email = COALESCE(excluded.email, contacts.email),
+      full_name = COALESCE(NULLIF(excluded.full_name, ''), contacts.full_name),
+      first_name = COALESCE(NULLIF(excluded.first_name, ''), contacts.first_name),
+      last_name = COALESCE(NULLIF(excluded.last_name, ''), contacts.last_name),
+      source = COALESCE(NULLIF(contacts.source, ''), excluded.source),
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    contactId,
+    phoneUpsert.phone || normalizedPhone || null,
+    normalizedEmail || null,
+    displayName,
+    names.firstName || null,
+    names.lastName || null,
+    'google_calendar' // (GCAL-006) source del contacto creado desde un evento de Google
+  ])
+
+  if (hasUsablePhone) await finalizePreparedPhoneUpsert(phoneUpsert, contactId)
+  return contactId
 }
 
 function getCalendarOpenIntervals(calendar, date) {
