@@ -1072,7 +1072,7 @@
   gap: 14px;
 }
 .rstkCanvas .rstkEmbeddedFormEditor {
-  width: min(100%, var(--rstk-form-field-width, 580px));
+  width: min(100%, var(--rstk-form-field-width, 560px));
   justify-self: var(--rstk-form-field-justify, center);
   display: grid;
   gap: 8px;
