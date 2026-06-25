@@ -1,4 +1,5 @@
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   DndContext,
@@ -131,6 +132,7 @@ import { useAIAgentAvailability, useAppConfig, useUrlDateRangeSync } from '@/hoo
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { setSearchParam } from '@/utils/urlState'
 import { hasLicenseFeature } from '@/utils/accessControl'
+import { getFloatingLayerZIndex } from '@/utils/layering'
 import {
   blockLabels,
   fieldBlockTypes,
@@ -12248,7 +12250,7 @@ export const Sites: React.FC = () => {
                         <small>{formEditBlock?.content || formEditBlock?.label || 'Formulario'}</small>
                       </div>
                       {formEditBlock && (
-                        <FormEmbedToolbarControls
+                        <FormToolbarConfigSlot
                           site={editorSite}
                           block={formEditBlock}
                           forms={forms}
@@ -12274,7 +12276,7 @@ export const Sites: React.FC = () => {
                         <strong>Editando calendario</strong>
                         <small>{getSettingString(calendarEditBlock.settings || {}, 'calendarName') || calendarEditBlock.label || 'Calendario'}</small>
                       </div>
-                      <CalendarEmbedToolbarControls
+                      <CalendarToolbarConfigSlot
                         block={calendarEditBlock}
                         calendars={calendars}
                         onPatchSettings={(patch) => patchBlockSettingsLocal(calendarEditBlock, patch)}
@@ -32144,6 +32146,165 @@ const CalendarEmbedToolbarControls: React.FC<{
         )}
       </div>
     </div>
+  )
+}
+
+// Popover reutilizable para el toolbar del editor: un disparador compacto +
+// un panel flotante (porteado a <body>, así escapa del overflow del toolbar).
+// Click-afuera respeta los dropdowns porteados (CustomSelect) para que elegir
+// una opción dentro del panel no lo cierre.
+const ToolbarConfigPopover: React.FC<{
+  label: string
+  title: string
+  icon?: React.ReactNode
+  children: React.ReactNode
+}> = ({ label, title, icon, children }) => {
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({})
+
+  const reposition = useCallback(() => {
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const pad = 12
+    const gap = 6
+    const width = Math.min(320, window.innerWidth - pad * 2)
+    const left = Math.min(Math.max(pad, rect.right - width), window.innerWidth - width - pad)
+    const top = Math.min(rect.bottom + gap, window.innerHeight - pad)
+    setPanelStyle({
+      position: 'fixed',
+      top,
+      left,
+      width,
+      maxHeight: Math.max(160, window.innerHeight - top - pad),
+      zIndex: getFloatingLayerZIndex(trigger, 'popover'),
+    } as React.CSSProperties)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    reposition()
+    const onResize = () => setOpen(false)
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [open, reposition])
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (!target) return
+      if (triggerRef.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('[data-ristak-dropdown-panel]')) return
+      setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  return (
+    <div className={styles.editorToolbarConfigCollapsed}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`${styles.editorToolbarConfigTrigger} ${open ? styles.editorToolbarConfigTriggerOpen : ''}`}
+        onClick={() => setOpen(value => !value)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={title}
+        data-ristak-dropdown-trigger
+      >
+        {icon}
+        <span className={styles.editorToolbarConfigTriggerLabel}>{label}</span>
+        <ChevronDown size={15} className={open ? styles.editorToolbarConfigChevronOpen : ''} />
+      </button>
+      {open && createPortal(
+        <div
+          ref={panelRef}
+          className={styles.editorToolbarConfigPanel}
+          style={panelStyle}
+          data-ristak-dropdown-panel
+          role="dialog"
+          aria-label={title}
+        >
+          <div className={styles.editorToolbarConfigPanelTitle}>
+            {icon}
+            <span>{title}</span>
+          </div>
+          {children}
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
+
+// Slot adaptable del formulario: muestra los controles inline cuando hay
+// espacio; en pantalla angosta (container query) se ocultan y aparecen dentro
+// del popover "Configuración". El disparador muestra el formulario activo.
+const FormToolbarConfigSlot: React.FC<{
+  site: PublicSite
+  block: SiteBlock
+  forms: PublicSite[]
+  pages: SitePage[]
+  activePageId: string
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = (props) => {
+  const controls = <FormEmbedToolbarControls {...props} />
+  const sourceId = getEmbeddedFormSourceId(props.block)
+  const sourceName =
+    (sourceId ? props.forms.find(form => form.id === sourceId)?.name : '') ||
+    (sourceId ? getSettingString(props.block.settings || {}, 'embeddedSiteName') : '') ||
+    'Configuración'
+  return (
+    <>
+      <div className={styles.editorToolbarConfigInline}>{controls}</div>
+      <ToolbarConfigPopover
+        label={sourceName}
+        title="Configuración del formulario"
+        icon={<SlidersHorizontal size={15} />}
+      >
+        {controls}
+      </ToolbarConfigPopover>
+    </>
+  )
+}
+
+// Espejo del slot anterior para el bloque de calendario.
+const CalendarToolbarConfigSlot: React.FC<{
+  block: SiteBlock
+  calendars: CalendarType[]
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = (props) => {
+  const controls = <CalendarEmbedToolbarControls {...props} />
+  const calendarName = getSettingString(props.block.settings || {}, 'calendarName') || 'Configuración'
+  return (
+    <>
+      <div className={styles.editorToolbarConfigInline}>{controls}</div>
+      <ToolbarConfigPopover
+        label={calendarName}
+        title="Configuración del calendario"
+        icon={<SlidersHorizontal size={15} />}
+      >
+        {controls}
+      </ToolbarConfigPopover>
+    </>
   )
 }
 
