@@ -3286,6 +3286,7 @@ type ButtonStylePresetId = string
 type SocialPlatform = 'facebook' | 'instagram' | 'tiktok' | 'threads'
 type FormChoiceStyle = NonNullable<SiteTheme['formChoiceStyle']>
 type FormSelectStyle = NonNullable<SiteTheme['formSelectStyle']>
+type FormInputStyle = NonNullable<SiteTheme['formInputStyle']>
 type FormContentAlign = NonNullable<SiteTheme['formContentAlign']>
 
 const horizontalAlignOptions: Array<{ value: HorizontalAlign; label: string; icon: React.ReactNode }> = [
@@ -3599,13 +3600,25 @@ const formChoiceStyleOptions: Array<{ value: FormChoiceStyle; label: string }> =
   { value: 'native', label: 'Clasico con circulo' },
   { value: 'cards', label: 'Fila seleccionada' },
   { value: 'pills', label: 'Pildoras' },
-  { value: 'minimal', label: 'Línea simple' }
+  { value: 'minimal', label: 'Línea simple' },
+  { value: 'grid', label: 'Cuadrícula (2 columnas)' },
+  { value: 'button', label: 'Botones sólidos' },
+  { value: 'check', label: 'Lista con palomita' },
+  { value: 'segmented', label: 'Segmentado' }
 ]
 
 const formSelectStyleOptions: Array<{ value: FormSelectStyle; label: string }> = [
   { value: 'classic', label: 'Clasico' },
   { value: 'filled', label: 'Relleno moderno' },
-  { value: 'underline', label: 'Línea inferior' }
+  { value: 'underline', label: 'Línea inferior' },
+  { value: 'soft', label: 'Suave redondeado' }
+]
+
+const formInputStyleOptions: Array<{ value: FormInputStyle; label: string }> = [
+  { value: 'box', label: 'Caja con borde' },
+  { value: 'underline', label: 'Línea inferior' },
+  { value: 'filled', label: 'Relleno suave' },
+  { value: 'soft', label: 'Pastilla redonda' }
 ]
 
 const socialPlatformOptions: Array<{ value: SocialPlatform; label: string }> = [
@@ -3627,6 +3640,11 @@ const normalizeFormChoiceStyle = (value: unknown): FormChoiceStyle => {
 const normalizeFormSelectStyle = (value: unknown): FormSelectStyle => {
   const raw = String(value || '').trim()
   return formSelectStyleOptions.some(option => option.value === raw) ? raw as FormSelectStyle : 'classic'
+}
+
+const normalizeFormInputStyle = (value: unknown): FormInputStyle => {
+  const raw = String(value || '').trim()
+  return formInputStyleOptions.some(option => option.value === raw) ? raw as FormInputStyle : 'box'
 }
 
 const normalizeSocialPlatform = (value: unknown): SocialPlatform => {
@@ -6511,6 +6529,7 @@ const EMBEDDED_FORM_PROXY_THEME_KEYS: Array<keyof SiteTheme> = [
   'formChoiceSelectedBg',
   'formChoiceSelectedBorder',
   'formSelectStyle',
+  'formInputStyle',
   'formQualifiedRedirectUrl',
   'formDisqualifiedCompletionAction',
   'formDisqualifiedRedirectUrl',
@@ -32429,11 +32448,19 @@ const FormGlobalStyleControls: React.FC<{
 
       <div className={styles.twoColumn}>
         <label className={styles.field}>
+          <span>Estilo de caja</span>
+          <CustomSelect value={normalizeFormInputStyle(theme.formInputStyle)} onChange={(event) => onPatchTheme({ formInputStyle: event.target.value as FormInputStyle })} onBlur={onSaveSite}>
+            {formInputStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </CustomSelect>
+        </label>
+        <label className={styles.field}>
           <span>Estilo opciones</span>
           <CustomSelect value={normalizeFormChoiceStyle(theme.formChoiceStyle)} onChange={(event) => onPatchTheme({ formChoiceStyle: event.target.value as FormChoiceStyle })} onBlur={onSaveSite}>
             {formChoiceStyleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </CustomSelect>
         </label>
+      </div>
+      <div className={styles.twoColumn}>
         <label className={styles.field}>
           <span>Estilo lista</span>
           <CustomSelect value={normalizeFormSelectStyle(theme.formSelectStyle)} onChange={(event) => onPatchTheme({ formSelectStyle: event.target.value as FormSelectStyle })} onBlur={onSaveSite}>

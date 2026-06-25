@@ -1294,6 +1294,40 @@
   text-decoration: var(--rstk-form-text-decoration, none);
   padding: var(--rstk-form-field-pad-y, 13px) var(--rstk-form-field-pad-x, 14px);
 }
+/* Estilos de caja de texto (campos input/textarea). 'box' = sin reglas extra (default). */
+.rstkCanvas.rstk-kind-form.rstk-input-underline .rstk-field > input,
+.rstkCanvas.rstk-kind-form.rstk-input-underline .rstk-field > textarea,
+.rstkCanvas.rstk-input-underline .rstk-embedded-form .rstk-field > input,
+.rstkCanvas.rstk-input-underline .rstk-embedded-form .rstk-field > textarea {
+  border-width: 0 0 var(--rstk-form-field-border-width, 1px);
+  border-radius: 0;
+  background: transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+.rstkCanvas.rstk-kind-form.rstk-input-filled .rstk-field > input,
+.rstkCanvas.rstk-kind-form.rstk-input-filled .rstk-field > textarea,
+.rstkCanvas.rstk-input-filled .rstk-embedded-form .rstk-field > input,
+.rstkCanvas.rstk-input-filled .rstk-embedded-form .rstk-field > textarea {
+  border-width: 0 0 var(--rstk-form-field-border-width, 1px);
+  border-color: var(--rstk-form-field-border, var(--rstk-input-border));
+  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) 0 0;
+  background: color-mix(in srgb, var(--rstk-muted) 10%, transparent);
+}
+.rstkCanvas.rstk-kind-form.rstk-input-soft .rstk-field > input,
+.rstkCanvas.rstk-input-soft .rstk-embedded-form .rstk-field > input {
+  border-radius: 999px;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--rstk-muted) 8%, transparent);
+  padding-left: calc(var(--rstk-form-field-pad-x, 14px) + 6px);
+  padding-right: calc(var(--rstk-form-field-pad-x, 14px) + 6px);
+}
+.rstkCanvas.rstk-kind-form.rstk-input-soft .rstk-field > textarea,
+.rstkCanvas.rstk-input-soft .rstk-embedded-form .rstk-field > textarea {
+  border-radius: 20px;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--rstk-muted) 8%, transparent);
+}
 .rstkCanvas textarea { resize: vertical; min-height: 108px; }
 .rstkCanvas input::placeholder, .rstkCanvas textarea::placeholder { color: color-mix(in srgb, var(--rstk-muted) 80%, transparent); }
 .rstkCanvas.rstk-kind-form input::placeholder,
@@ -1305,6 +1339,8 @@
 .rstkCanvas.rstk-select-filled .rstk-embedded-form select { background-color: color-mix(in srgb, var(--rstk-form-field-bg, transparent) 88%, var(--rstk-accent) 12%); }
 .rstkCanvas.rstk-kind-form.rstk-select-underline select,
 .rstkCanvas.rstk-select-underline .rstk-embedded-form select { border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background-color: transparent; padding-left: 0; padding-right: 36px; }
+.rstkCanvas.rstk-kind-form.rstk-select-soft select,
+.rstkCanvas.rstk-select-soft .rstk-embedded-form select { border-radius: 999px; background-color: color-mix(in srgb, var(--rstk-form-field-bg, var(--rstk-input-bg)) 90%, var(--rstk-accent) 10%); padding-left: 20px; }
 .rstkCanvas .rstk-phone-input > select {
   background:
     linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
@@ -1366,6 +1402,50 @@
 .rstkCanvas.rstk-kind-form.rstk-choice-minimal .rstk-option,
 .rstkCanvas.rstk-choice-minimal .rstk-embedded-form .rstk-option { min-height: 38px; border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-inline: 0; }
 
+/* Cuadrícula: tarjetas en 2 columnas, control nativo oculto. */
+.rstkCanvas.rstk-kind-form.rstk-choice-grid .rstk-options,
+.rstkCanvas.rstk-choice-grid .rstk-embedded-form .rstk-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rstkCanvas.rstk-kind-form.rstk-choice-grid .rstk-option,
+.rstkCanvas.rstk-choice-grid .rstk-embedded-form .rstk-option,
+.rstkCanvas.rstk-kind-form.rstk-choice-button .rstk-option,
+.rstkCanvas.rstk-choice-button .rstk-embedded-form .rstk-option { justify-content: center; text-align: center; gap: 0; }
+
+/* Botones sólidos: la opción activa se rellena con el color seleccionado. */
+.rstkCanvas.rstk-kind-form.rstk-choice-button .rstk-option:has(input:checked),
+.rstkCanvas.rstk-choice-button .rstk-embedded-form .rstk-option:has(input:checked) { background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); color: var(--rstk-on-accent); }
+
+/* Lista con palomita: filas aireadas con indicador circular a la derecha. */
+.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option,
+.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option { justify-content: space-between; gap: 12px; border-width: 0 0 var(--rstk-form-field-border-width, 1px); border-radius: 0; background: transparent; padding-inline: 0; }
+.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option::after,
+.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option::after { content: ''; flex: 0 0 auto; width: 20px; height: 20px; border-radius: 999px; border: 2px solid var(--rstk-form-field-border, var(--rstk-input-border)); box-sizing: border-box; transition: border-color .15s ease, background .15s ease; }
+.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option:has(input:checked),
+.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option:has(input:checked) { background: transparent; }
+.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option:has(input:checked)::after,
+.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option:has(input:checked)::after { border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); box-shadow: inset 0 0 0 3px var(--rstk-form-field-bg, var(--rstk-input-bg)); }
+
+/* Segmentado: control unido horizontal, segmento activo relleno. */
+.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-options,
+.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-options { display: flex; flex-wrap: wrap; gap: 0; }
+.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option,
+.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option { position: relative; flex: 1 1 0; justify-content: center; text-align: center; gap: 0; border-radius: 0; margin-left: calc(-1 * var(--rstk-form-field-border-width, 1px)); }
+.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option:first-child,
+.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option:first-child { margin-left: 0; border-top-left-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); border-bottom-left-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); }
+.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option:last-child,
+.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option:last-child { border-top-right-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); border-bottom-right-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))); }
+.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option:has(input:checked),
+.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option:has(input:checked) { z-index: 1; background: var(--rstk-form-choice-selected-border, var(--rstk-accent)); border-color: var(--rstk-form-choice-selected-border, var(--rstk-accent)); color: var(--rstk-on-accent); }
+
+/* Oculta el control nativo en los estilos que pintan la opción completa. */
+.rstkCanvas.rstk-kind-form.rstk-choice-grid .rstk-option input,
+.rstkCanvas.rstk-kind-form.rstk-choice-button .rstk-option input,
+.rstkCanvas.rstk-kind-form.rstk-choice-check .rstk-option input,
+.rstkCanvas.rstk-kind-form.rstk-choice-segmented .rstk-option input,
+.rstkCanvas.rstk-choice-grid .rstk-embedded-form .rstk-option input,
+.rstkCanvas.rstk-choice-button .rstk-embedded-form .rstk-option input,
+.rstkCanvas.rstk-choice-check .rstk-embedded-form .rstk-option input,
+.rstkCanvas.rstk-choice-segmented .rstk-embedded-form .rstk-option input { position: absolute; opacity: 0; pointer-events: none; }
+
 /* Keep app dark/light mode out of the page being designed. Global app styles use
    hardening selectors like `html body select` and themed checkbox/radio rules,
    so the canvas needs its own stronger boundary. */
@@ -1419,6 +1499,50 @@ html body .rstkCanvas.rstk-select-underline .rstk-embedded-form select {
     transparent !important;
   padding-left: 0 !important;
   padding-right: 36px !important;
+}
+
+html body .rstkCanvas.rstk-kind-form.rstk-select-soft select,
+html body .rstkCanvas.rstk-select-soft .rstk-embedded-form select {
+  border-radius: 999px !important;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px) / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%) calc(100% - 15px) calc(50% - 3px) / 5px 5px no-repeat,
+    color-mix(in srgb, var(--rstk-form-field-bg, var(--rstk-input-bg)) 90%, var(--rstk-accent) 10%) !important;
+  padding-left: 20px !important;
+}
+
+/* Estilos de caja de texto: también para inputs de fecha/hora endurecidos. */
+html body .rstkCanvas.rstk-kind-form.rstk-input-underline .rstk-field > input,
+html body .rstkCanvas.rstk-kind-form.rstk-input-underline .rstk-field > textarea,
+html body .rstkCanvas.rstk-input-underline .rstk-embedded-form .rstk-field > input,
+html body .rstkCanvas.rstk-input-underline .rstk-embedded-form .rstk-field > textarea {
+  border-width: 0 0 var(--rstk-form-field-border-width, 1px) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+html body .rstkCanvas.rstk-kind-form.rstk-input-filled .rstk-field > input,
+html body .rstkCanvas.rstk-kind-form.rstk-input-filled .rstk-field > textarea,
+html body .rstkCanvas.rstk-input-filled .rstk-embedded-form .rstk-field > input,
+html body .rstkCanvas.rstk-input-filled .rstk-embedded-form .rstk-field > textarea {
+  border-width: 0 0 var(--rstk-form-field-border-width, 1px) !important;
+  border-radius: var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) var(--rstk-form-field-radius, var(--rstk-field-radius, var(--rstk-radius))) 0 0 !important;
+  background: color-mix(in srgb, var(--rstk-muted) 10%, transparent) !important;
+}
+html body .rstkCanvas.rstk-kind-form.rstk-input-soft .rstk-field > input,
+html body .rstkCanvas.rstk-input-soft .rstk-embedded-form .rstk-field > input {
+  border-radius: 999px !important;
+  border-color: transparent !important;
+  background: color-mix(in srgb, var(--rstk-muted) 8%, transparent) !important;
+  padding-left: calc(var(--rstk-form-field-pad-x, 14px) + 6px) !important;
+  padding-right: calc(var(--rstk-form-field-pad-x, 14px) + 6px) !important;
+}
+html body .rstkCanvas.rstk-kind-form.rstk-input-soft .rstk-field > textarea,
+html body .rstkCanvas.rstk-input-soft .rstk-embedded-form .rstk-field > textarea {
+  border-radius: 20px !important;
+  border-color: transparent !important;
+  background: color-mix(in srgb, var(--rstk-muted) 8%, transparent) !important;
 }
 
 html body .rstkCanvas select option,
@@ -1522,6 +1646,25 @@ html body .rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option input[t
 html body .rstkCanvas.rstk-choice-cards .rstk-embedded-form .rstk-option input[type='radio']::after,
 html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[type='checkbox']::after,
 html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[type='radio']::after {
+  content: none !important;
+}
+
+/* Oculta el control nativo (endurecido) para grid/button/check/segmented. */
+html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind-form.rstk-choice-button, .rstkCanvas.rstk-kind-form.rstk-choice-check, .rstkCanvas.rstk-kind-form.rstk-choice-segmented, .rstkCanvas.rstk-choice-grid .rstk-embedded-form, .rstkCanvas.rstk-choice-button .rstk-embedded-form, .rstkCanvas.rstk-choice-check .rstk-embedded-form, .rstkCanvas.rstk-choice-segmented .rstk-embedded-form) .rstk-option input[type='checkbox'],
+html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind-form.rstk-choice-button, .rstkCanvas.rstk-kind-form.rstk-choice-check, .rstkCanvas.rstk-kind-form.rstk-choice-segmented, .rstkCanvas.rstk-choice-grid .rstk-embedded-form, .rstkCanvas.rstk-choice-button .rstk-embedded-form, .rstkCanvas.rstk-choice-check .rstk-embedded-form, .rstkCanvas.rstk-choice-segmented .rstk-embedded-form) .rstk-option input[type='radio'] {
+  position: absolute !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  opacity: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  pointer-events: none !important;
+}
+html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind-form.rstk-choice-button, .rstkCanvas.rstk-kind-form.rstk-choice-check, .rstkCanvas.rstk-kind-form.rstk-choice-segmented, .rstkCanvas.rstk-choice-grid .rstk-embedded-form, .rstkCanvas.rstk-choice-button .rstk-embedded-form, .rstkCanvas.rstk-choice-check .rstk-embedded-form, .rstkCanvas.rstk-choice-segmented .rstk-embedded-form) .rstk-option input[type='checkbox']::after,
+html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind-form.rstk-choice-button, .rstkCanvas.rstk-kind-form.rstk-choice-check, .rstkCanvas.rstk-kind-form.rstk-choice-segmented, .rstkCanvas.rstk-choice-grid .rstk-embedded-form, .rstkCanvas.rstk-choice-button .rstk-embedded-form, .rstkCanvas.rstk-choice-check .rstk-embedded-form, .rstkCanvas.rstk-choice-segmented .rstk-embedded-form) .rstk-option input[type='radio']::after {
   content: none !important;
 }
 

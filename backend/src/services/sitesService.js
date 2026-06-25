@@ -12607,7 +12607,8 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
     'rstk-video-form-gate',
     `rstk-video-form-gate-anim-${animation}`,
     `rstk-choice-${normalizeFormChoiceStyle(embeddedTheme.formChoiceStyle)}`,
-    `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`
+    `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`,
+    `rstk-input-${normalizeFormInputStyle(embeddedTheme.formInputStyle)}`
   ].join(' ')
 
   return `
@@ -16900,7 +16901,8 @@ function buildEmbeddedFormSourceTheme(site = {}) {
     textPaint && isCssGradient(textPaint) ? 'rstkPageTextGradient' : '',
     site?.siteType === 'interactive_form' ? 'rstk-interactive' : '',
     `rstk-choice-${normalizeFormChoiceStyle(theme.formChoiceStyle)}`,
-    `rstk-select-${normalizeFormSelectStyle(theme.formSelectStyle)}`
+    `rstk-select-${normalizeFormSelectStyle(theme.formSelectStyle)}`,
+    `rstk-input-${normalizeFormInputStyle(theme.formInputStyle)}`
   ].filter(Boolean).join(' ')
 
   const vars = [
@@ -17267,7 +17269,8 @@ function renderContentBlock(block, context = {}) {
       settings.embeddedFullWidth === true ? 'rstkEmbeddedFormStretch' : '',
       embeddedSourceTheme.bodyClass,
       `rstk-choice-${normalizeFormChoiceStyle(embeddedTheme.formChoiceStyle)}`,
-      `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`
+      `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`,
+      `rstk-input-${normalizeFormInputStyle(embeddedTheme.formInputStyle)}`
     ].filter(Boolean).join(' ')
     const embeddedSection = `
       <section class="rstk-embedded-form" id="form">
@@ -18464,12 +18467,17 @@ const RSTK_BASE_CSS = `
 	  .rstk-phone-input > select,.rstk-phone-input > input{min-width:0}
 	  .rstk-kind-form .rstk-field .rstk-phone-input > input,.rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > input,.rstk-embedded-form .rstk-field .rstk-phone-input > select{min-height:var(--rstk-form-field-height,50px);border-width:var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:var(--rstk-form-field-bg,var(--rstk-input-bg));color:var(--rstk-form-field-text,var(--rstk-input-ink));font-family:var(--rstk-form-font,var(--rstk-font));font-size:var(--rstk-form-input-size,1rem);font-style:var(--rstk-form-font-style,normal);font-weight:var(--rstk-form-weight,500);text-decoration:var(--rstk-form-text-decoration,none);padding:var(--rstk-form-field-pad-y,13px) var(--rstk-form-field-pad-x,14px)}
 	  textarea{resize:vertical;min-height:108px}
+	  .rstk-kind-form.rstk-input-underline .rstk-field > input,.rstk-kind-form.rstk-input-underline .rstk-field > textarea,.rstk-input-underline .rstk-embedded-form .rstk-field > input,.rstk-input-underline .rstk-embedded-form .rstk-field > textarea{border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background:transparent;padding-left:0;padding-right:0}
+	  .rstk-kind-form.rstk-input-filled .rstk-field > input,.rstk-kind-form.rstk-input-filled .rstk-field > textarea,.rstk-input-filled .rstk-embedded-form .rstk-field > input,.rstk-input-filled .rstk-embedded-form .rstk-field > textarea{border-width:0 0 var(--rstk-form-field-border-width,1px);border-color:var(--rstk-form-field-border,var(--rstk-input-border));border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius))) var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius))) 0 0;background:color-mix(in srgb,var(--rstk-muted) 10%,transparent)}
+	  .rstk-kind-form.rstk-input-soft .rstk-field > input,.rstk-input-soft .rstk-embedded-form .rstk-field > input{border-radius:999px;border-color:transparent;background:color-mix(in srgb,var(--rstk-muted) 8%,transparent);padding-left:calc(var(--rstk-form-field-pad-x,14px) + 6px);padding-right:calc(var(--rstk-form-field-pad-x,14px) + 6px)}
+	  .rstk-kind-form.rstk-input-soft .rstk-field > textarea,.rstk-input-soft .rstk-embedded-form .rstk-field > textarea{border-radius:20px;border-color:transparent;background:color-mix(in srgb,var(--rstk-muted) 8%,transparent)}
 	  input::placeholder,textarea::placeholder{color:color-mix(in srgb,var(--rstk-muted) 80%,transparent)}
 	  .rstk-kind-form input::placeholder,.rstk-kind-form textarea::placeholder,.rstk-embedded-form input::placeholder,.rstk-embedded-form textarea::placeholder{color:var(--rstk-form-placeholder,color-mix(in srgb,var(--rstk-muted) 80%,transparent))}
 	  input:focus,textarea:focus,select:focus{border-color:var(--rstk-accent);box-shadow:0 0 0 4px var(--rstk-ring)}
 	  select{appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%),linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%);background-position:calc(100% - 20px) calc(50% - 3px),calc(100% - 15px) calc(50% - 3px);background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:42px}
 	  .rstk-kind-form.rstk-select-filled .rstk-field select,.rstk-select-filled .rstk-embedded-form select{background-color:color-mix(in srgb,var(--rstk-form-field-bg,transparent) 88%,var(--rstk-accent) 12%)}
 	  .rstk-kind-form.rstk-select-underline .rstk-field select,.rstk-select-underline .rstk-embedded-form select{border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background-color:transparent;padding-left:0;padding-right:36px}
+	  .rstk-kind-form.rstk-select-soft .rstk-field select,.rstk-select-soft .rstk-embedded-form select{border-radius:999px;background-color:color-mix(in srgb,var(--rstk-form-field-bg,var(--rstk-input-bg)) 90%,var(--rstk-accent) 10%);padding-left:20px}
 	  .rstk-phone-input > select{background:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-input-bg)}
 	  .rstk-kind-form .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-filled .rstk-field .rstk-phone-input > select,.rstk-kind-form.rstk-select-underline .rstk-field .rstk-phone-input > select,.rstk-embedded-form .rstk-field .rstk-phone-input > select,.rstk-select-filled .rstk-embedded-form .rstk-field .rstk-phone-input > select,.rstk-select-underline .rstk-embedded-form .rstk-field .rstk-phone-input > select{border-width:var(--rstk-form-field-border-width,1px);border-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));background:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%) calc(100% - 20px) calc(50% - 3px)/5px 5px no-repeat,linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%) calc(100% - 15px) calc(50% - 3px)/5px 5px no-repeat,var(--rstk-form-field-bg,var(--rstk-input-bg));padding-left:var(--rstk-form-field-pad-x,14px);padding-right:42px}
 
@@ -18487,6 +18495,19 @@ const RSTK_BASE_CSS = `
 	  .rstk-kind-form.rstk-choice-pills .rstk-options,.rstk-choice-pills .rstk-embedded-form .rstk-options{display:flex;flex-wrap:wrap;gap:8px}
 	  .rstk-kind-form.rstk-choice-pills .rstk-option,.rstk-choice-pills .rstk-embedded-form .rstk-option{flex:0 1 auto;min-height:40px;border-radius:999px;padding:9px 16px}
 	  .rstk-kind-form.rstk-choice-minimal .rstk-option,.rstk-choice-minimal .rstk-embedded-form .rstk-option{min-height:38px;border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background:transparent;padding-inline:0}
+	  .rstk-kind-form.rstk-choice-grid .rstk-options,.rstk-choice-grid .rstk-embedded-form .rstk-options{grid-template-columns:repeat(2,minmax(0,1fr))}
+	  .rstk-kind-form.rstk-choice-grid .rstk-option,.rstk-choice-grid .rstk-embedded-form .rstk-option,.rstk-kind-form.rstk-choice-button .rstk-option,.rstk-choice-button .rstk-embedded-form .rstk-option{justify-content:center;text-align:center;gap:0}
+	  .rstk-kind-form.rstk-choice-button .rstk-option:has(input:checked),.rstk-choice-button .rstk-embedded-form .rstk-option:has(input:checked){background:var(--rstk-form-choice-selected-border,var(--rstk-accent));border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));color:var(--rstk-on-accent)}
+	  .rstk-kind-form.rstk-choice-check .rstk-option,.rstk-choice-check .rstk-embedded-form .rstk-option{justify-content:space-between;gap:12px;border-width:0 0 var(--rstk-form-field-border-width,1px);border-radius:0;background:transparent;padding-inline:0}
+	  .rstk-kind-form.rstk-choice-check .rstk-option::after,.rstk-choice-check .rstk-embedded-form .rstk-option::after{content:'';flex:0 0 auto;width:20px;height:20px;border-radius:999px;border:2px solid var(--rstk-form-field-border,var(--rstk-input-border));box-sizing:border-box;transition:border-color .15s ease,background .15s ease}
+	  .rstk-kind-form.rstk-choice-check .rstk-option:has(input:checked),.rstk-choice-check .rstk-embedded-form .rstk-option:has(input:checked){background:transparent}
+	  .rstk-kind-form.rstk-choice-check .rstk-option:has(input:checked)::after,.rstk-choice-check .rstk-embedded-form .rstk-option:has(input:checked)::after{border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));background:var(--rstk-form-choice-selected-border,var(--rstk-accent));box-shadow:inset 0 0 0 3px var(--rstk-form-field-bg,var(--rstk-input-bg))}
+	  .rstk-kind-form.rstk-choice-segmented .rstk-options,.rstk-choice-segmented .rstk-embedded-form .rstk-options{display:flex;flex-wrap:wrap;gap:0}
+	  .rstk-kind-form.rstk-choice-segmented .rstk-option,.rstk-choice-segmented .rstk-embedded-form .rstk-option{position:relative;flex:1 1 0;justify-content:center;text-align:center;gap:0;border-radius:0;margin-left:calc(-1 * var(--rstk-form-field-border-width,1px))}
+	  .rstk-kind-form.rstk-choice-segmented .rstk-option:first-child,.rstk-choice-segmented .rstk-embedded-form .rstk-option:first-child{margin-left:0;border-top-left-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));border-bottom-left-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)))}
+	  .rstk-kind-form.rstk-choice-segmented .rstk-option:last-child,.rstk-choice-segmented .rstk-embedded-form .rstk-option:last-child{border-top-right-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)));border-bottom-right-radius:var(--rstk-form-field-radius,var(--rstk-field-radius,var(--rstk-radius)))}
+	  .rstk-kind-form.rstk-choice-segmented .rstk-option:has(input:checked),.rstk-choice-segmented .rstk-embedded-form .rstk-option:has(input:checked){z-index:1;background:var(--rstk-form-choice-selected-border,var(--rstk-accent));border-color:var(--rstk-form-choice-selected-border,var(--rstk-accent));color:var(--rstk-on-accent)}
+	  .rstk-kind-form.rstk-choice-grid .rstk-option input,.rstk-kind-form.rstk-choice-button .rstk-option input,.rstk-kind-form.rstk-choice-check .rstk-option input,.rstk-kind-form.rstk-choice-segmented .rstk-option input,.rstk-choice-grid .rstk-embedded-form .rstk-option input,.rstk-choice-button .rstk-embedded-form .rstk-option input,.rstk-choice-check .rstk-embedded-form .rstk-option input,.rstk-choice-segmented .rstk-embedded-form .rstk-option input{position:absolute;opacity:0;pointer-events:none}
 
   .rstk-embed{width:100%;min-height:var(--rstk-embed-height,360px);display:block;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius));background:var(--rstk-block-bg,var(--rstk-surface2))}
   .rstk-calendar-embed{width:var(--rstk-media-width,100%);min-height:var(--rstk-embed-height,760px);margin-left:var(--rstk-media-margin-left,0);margin-right:var(--rstk-media-margin-right,0);border:var(--rstk-calendar-frame-border-width,0) solid var(--rstk-calendar-frame-border,transparent);border-radius:var(--rstk-media-radius,0);background:transparent;box-shadow:none}
@@ -18816,12 +18837,17 @@ function sanitizeCssFont(value) {
 
 function normalizeFormChoiceStyle(value) {
   const raw = cleanString(value)
-  return ['native', 'cards', 'pills', 'minimal'].includes(raw) ? raw : 'native'
+  return ['native', 'cards', 'pills', 'minimal', 'grid', 'button', 'check', 'segmented'].includes(raw) ? raw : 'native'
 }
 
 function normalizeFormSelectStyle(value) {
   const raw = cleanString(value)
-  return ['classic', 'filled', 'underline'].includes(raw) ? raw : 'classic'
+  return ['classic', 'filled', 'underline', 'soft'].includes(raw) ? raw : 'classic'
+}
+
+function normalizeFormInputStyle(value) {
+  const raw = cleanString(value)
+  return ['box', 'underline', 'filled', 'soft'].includes(raw) ? raw : 'box'
 }
 
 function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
@@ -20452,7 +20478,8 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	    textPaint && isCssGradient(textPaint) ? 'rstkPageTextGradient' : '',
 	    isInteractive ? 'rstk-interactive' : '',
 	    `rstk-choice-${normalizeFormChoiceStyle(theme.formChoiceStyle)}`,
-	    `rstk-select-${normalizeFormSelectStyle(theme.formSelectStyle)}`
+	    `rstk-select-${normalizeFormSelectStyle(theme.formSelectStyle)}`,
+	    `rstk-input-${normalizeFormInputStyle(theme.formInputStyle)}`
 	  ].filter(Boolean).join(' ')
 
 	  const phoneLocale = await getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
