@@ -18867,7 +18867,9 @@
 }
 
 .formEmbedToolbarControls {
-  min-width: 0;
+  /* Respeta el ancho mínimo de los controles para que el toolbar haga scroll
+     (overflow-x del contenedor) en vez de comprimirlos hasta encimarlos. */
+  min-width: min-content;
   flex: 0 1 470px;
   display: flex;
   align-items: center;
@@ -18876,14 +18878,14 @@
 }
 
 .formCompletionToolbarControls {
-  min-width: 0;
+  min-width: min-content;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 .formToolbarField {
-  min-width: 0;
+  min-width: min-content;
   display: inline-flex;
   align-items: center;
   gap: 6px;
