@@ -4227,6 +4227,7 @@ const getBlockStyleClassName = (block: SiteBlock, extra = '') => {
     'rstk-block-style',
     blockHasExplicitBg(settings) ? 'rstkBlockBgSet' : '',
     blockHasExplicitBorder(settings) ? 'rstkBlockBorderSet' : '',
+    getSettingBoolean(settings, 'blockFullWidth') ? 'rstkBlockFullWidth' : '',
     block.blockType === HEADER_PANEL_BLOCK_TYPE ? 'rstkHeaderPanelBlock' : '',
     block.blockType === FOOTER_PANEL_BLOCK_TYPE ? 'rstkFooterPanelBlock' : '',
     block.blockType === 'calendar_embed' ? 'rstkCalendarBlock' : '',
@@ -28912,6 +28913,19 @@ const InlineBlockStyleControls: React.FC<{
       {showDesignControls && (
         <>
           <div className={styles.panelSubheader}>{isSection ? 'Estilo de franja' : isLandingContent ? 'Estilo del contenedor' : 'Estilo del bloque'}</div>
+          {!isSection && !isHardEmbed && block.blockType !== 'form_embed' && (
+            <div className={styles.videoFormGateSwitchRow}>
+              <div>
+                <strong>Ancho completo</strong>
+                <span>El fondo del bloque se estira a toda la franja; el contenido queda centrado.</span>
+              </div>
+              <Switch
+                checked={getSettingBoolean(settings, 'blockFullWidth')}
+                onChange={(checked) => { onPatchSettings({ blockFullWidth: checked }); window.setTimeout(() => { onSave() }, 0) }}
+                aria-label="Estirar el bloque a toda la franja"
+              />
+            </div>
+          )}
           {!isCalendarEmbed && (
             <LinkedSpacingField
               label={isSection ? 'Relleno de franja' : 'Relleno'}
