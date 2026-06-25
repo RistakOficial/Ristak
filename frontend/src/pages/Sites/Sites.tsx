@@ -7268,6 +7268,13 @@ function FormEmbedEditorPanel({
   ) : activeField && activeBlockIsField ? (
     <>
       <FormTypographyGlobalControls site={site} title="Tipografía de campos" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      <AlignmentControl
+        label="Alineación del texto de este campo"
+        value={getHorizontalAlign(activeField.settings || {}, 'textAlign', 'left')}
+        options={horizontalAlignOptions}
+        onChange={(value) => patchActiveFieldSettings({ textAlign: value })}
+        onCommit={onSave}
+      />
       <FormFieldGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       {isChoiceBlock(activeField.blockType) && (
         <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
@@ -31725,13 +31732,6 @@ const FormFieldGlobalStyleControls: React.FC<{
         <DimensionField label="Relleno vertical" value={getThemeNumber(theme, 'formFieldPaddingY', 13, 6, 36)} min={6} max={36} onChange={(value) => onPatchTheme({ formFieldPaddingY: value })} onCommit={onSaveSite} />
         <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, FORM_BOX_WIDTH_MIN, FORM_BOX_WIDTH_MAX)} min={FORM_BOX_WIDTH_MIN} max={FORM_BOX_WIDTH_MAX} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
       </div>
-      <AlignmentControl
-        label="Alineación del contenido"
-        value={theme.formContentAlign || 'center'}
-        options={formContentAlignOptions}
-        onChange={(value) => onPatchTheme({ formContentAlign: value as FormContentAlign })}
-        onCommit={onSaveSite}
-      />
     </>
   )
 }
