@@ -13,6 +13,7 @@ import {
   recordContactPhoneNumber
 } from '../services/contactIdentityService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
+import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
@@ -3768,6 +3769,7 @@ export const deleteContact = async (req, res) => {
     )
 
     logger.info(`Contacto enviado a la papelera (soft-delete): ${id} (${existing.full_name})`)
+    await recordAudit({ entityType: 'contact', entityId: id, action: 'soft_delete', actor: req.user, details: { full_name: existing.full_name } })
 
     res.json({
       success: true,
@@ -3812,6 +3814,7 @@ export const restoreContact = async (req, res) => {
     }
     await db.run('UPDATE contacts SET deleted_at = NULL WHERE id = ?', [id])
     logger.info(`Contacto restaurado de la papelera: ${id} (${existing.full_name})`)
+    await recordAudit({ entityType: 'contact', entityId: id, action: 'restore', actor: req.user, details: { full_name: existing.full_name } })
     res.json({ success: true, message: 'Contacto restaurado correctamente' })
   } catch (error) {
     logger.error(`Error restaurando contacto ${req.params.id}: ${error.message}`)
@@ -3832,6 +3835,7 @@ export const permanentDeleteContact = async (req, res) => {
     await db.run('UPDATE payments SET contact_id = NULL WHERE contact_id = ?', [id])
     await db.run('DELETE FROM contacts WHERE id = ?', [id])
     logger.info(`Contacto borrado permanentemente (pagos conservados): ${id} (${existing.full_name})`)
+    await recordAudit({ entityType: 'contact', entityId: id, action: 'permanent_delete', actor: req.user, details: { full_name: existing.full_name } })
     res.json({ success: true, message: 'Contacto borrado permanentemente. Sus pagos se conservaron en el historial.' })
   } catch (error) {
     logger.error(`Error borrando permanentemente contacto ${req.params.id}: ${error.message}`)
