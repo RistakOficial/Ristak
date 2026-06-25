@@ -11254,12 +11254,23 @@ async function hydrateEmbeddedForms(blocks = []) {
       continue
     }
 
-    const localEmbeddedTheme = isPlainObject(settings.embeddedTheme) ? settings.embeddedTheme : {}
-    const embeddedTheme = {
-      ...EMBEDDED_FORM_DEFAULT_THEME,
-      ...(embeddedSite?.theme || {}),
-      ...localEmbeddedTheme
+    const localEmbeddedTheme = isPlainObject(settings.embeddedTheme) ? { ...settings.embeddedTheme } : {}
+    // Importado: descarta el borde transparente auto-inyectado para no pisar el marco del fuente.
+    if (embeddedSite && localEmbeddedTheme.pageBorderColor === 'transparent') {
+      delete localEmbeddedTheme.pageBorderWidth
+      delete localEmbeddedTheme.pageBorderColor
     }
+    // Importado (hay form fuente): el theme del fuente es la base tal cual; el borde
+    // default (EMBEDDED_FORM_DEFAULT_THEME) es SOLO para lienzos nuevos sin fuente.
+    const embeddedTheme = embeddedSite
+      ? {
+          ...(embeddedSite.theme || {}),
+          ...localEmbeddedTheme
+        }
+      : {
+          ...EMBEDDED_FORM_DEFAULT_THEME,
+          ...localEmbeddedTheme
+        }
 
     hydrated.push({
       ...block,
@@ -17177,11 +17188,21 @@ function renderContentBlock(block, context = {}) {
   }
 
   if (block.blockType === 'form_embed') {
-    const localEmbeddedTheme = isPlainObject(settings.embeddedTheme) ? settings.embeddedTheme : {}
+    const isImportedForm = Boolean(
+      cleanString(settings.formSiteId) || cleanString(settings.embeddedSiteId) || cleanString(settings.form_site_id)
+    )
+    const localEmbeddedTheme = isPlainObject(settings.embeddedTheme) ? { ...settings.embeddedTheme } : {}
+    // Importado: descarta el borde transparente auto-inyectado para no pisar el marco del fuente.
+    if (isImportedForm && localEmbeddedTheme.pageBorderColor === 'transparent') {
+      delete localEmbeddedTheme.pageBorderWidth
+      delete localEmbeddedTheme.pageBorderColor
+    }
+    // El borde default (EMBEDDED_FORM_DEFAULT_THEME) es SOLO para lienzos nuevos sin
+    // fuente; un formulario importado conserva el marco real de su diseño guardado.
     const embeddedTheme = {
       ...DEFAULT_THEME,
       ...(context.site?.theme || {}),
-      ...EMBEDDED_FORM_DEFAULT_THEME,
+      ...(isImportedForm ? {} : EMBEDDED_FORM_DEFAULT_THEME),
       ...localEmbeddedTheme
     }
     const embeddedSiteForCopy = { ...(context.site || {}), siteType: settings.embeddedSiteType || 'standard_form', theme: embeddedTheme }

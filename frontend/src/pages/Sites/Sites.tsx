@@ -6344,14 +6344,28 @@ const getEmbeddedFormSourceId = (block?: SiteBlock | null) => {
 }
 
 const getEmbeddedFormThemeOverride = (block?: SiteBlock | null): Partial<SiteTheme> | null => {
-  const theme = block?.settings?.embeddedTheme
-  if (theme && typeof theme === 'object' && !Array.isArray(theme)) {
-    return {
-      ...createDefaultEmbeddedFormThemeOverride(),
-      ...(theme as Partial<SiteTheme>)
+  const raw = block?.settings?.embeddedTheme
+  const themeObj = (raw && typeof raw === 'object' && !Array.isArray(raw))
+    ? { ...(raw as Partial<SiteTheme>) }
+    : null
+  // Formulario IMPORTADO (referencia a un formulario ya guardado): se respeta su
+  // marco/diseño REAL tal cual; NO se le fuerza el borde transparente (ese era un
+  // default de lienzo NUEVO que pisaba el marco del fuente y lo reacomodaba).
+  if (getEmbeddedFormSourceId(block)) {
+    if (!themeObj) return {}
+    // Auto-sana importados viejos: descarta el borde transparente auto-inyectado
+    // para que vuelva a verse el marco del formulario fuente.
+    if (themeObj.pageBorderColor === 'transparent') {
+      delete themeObj.pageBorderWidth
+      delete themeObj.pageBorderColor
     }
+    return themeObj
   }
-  return createDefaultEmbeddedFormThemeOverride()
+  // Lienzo NUEVO creado directamente en el embebido: conserva el default.
+  return {
+    ...createDefaultEmbeddedFormThemeOverride(),
+    ...(themeObj || {})
+  }
 }
 
 const getEditableEmbeddedFormPages = (block: SiteBlock, forms: PublicSite[]): SitePage[] => {
@@ -31152,7 +31166,8 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                     embeddedSiteId: undefined,
                     embeddedBlocks: undefined,
                     embeddedPages: undefined,
-                    embeddedTheme: createDefaultEmbeddedFormThemeOverride()
+                    // Importado: sin override de theme, para que llegue idéntico al fuente.
+                    embeddedTheme: undefined
                   })
                   window.setTimeout(save, 0)
                 }}
@@ -32045,7 +32060,8 @@ const FormEmbedToolbarControls: React.FC<{
               embeddedSiteName: undefined,
               embeddedBlocks: undefined,
               embeddedPages: undefined,
-              embeddedTheme: createDefaultEmbeddedFormThemeOverride(),
+              // Importado: sin override de theme, para que llegue idéntico al fuente.
+              embeddedTheme: undefined,
               embeddedSiteType: undefined
             })
             commitSoon()
