@@ -1300,6 +1300,9 @@ interface VideoActionRule {
   metaCapiEnabled?: boolean
   metaEventName?: string
   metaEventParameters?: SiteMetaEventParameters
+  repeatMode?: VideoFormGateRepeatMode
+  storageValue?: number
+  storageUnit?: VideoFormGateStorageUnit
 }
 
 interface VideoActionTargetOption {
@@ -1315,7 +1318,7 @@ const VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS = 600
 const VIDEO_ACTION_TIMELINE_PADDING_SECONDS = 60
 const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event', 'reveal_form_action']
 const videoActionBeforeStates: VideoActionBeforeState[] = ['hidden', 'visible', 'unchanged']
-const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'meta_event', 'reveal_form_action']
+const primaryVideoActionKinds: VideoActionKind[] = ['reveal_form_action', 'show', 'hide', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'meta_event']
 const videoActionTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 const videoActionMultiTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form'])
 
@@ -4585,6 +4588,15 @@ const getRecommendedVideoActionBefore = (action: VideoActionKind): VideoActionBe
   return 'unchanged'
 }
 
+const normalizeVideoActionRepeatMode = (value: unknown): VideoFormGateRepeatMode =>
+  videoFormGateRepeatModeOptions.some(option => option.value === value) ? value as VideoFormGateRepeatMode : 'every_visit'
+
+const clampVideoActionStorageValue = (value: unknown) => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 30
+  return Math.min(730, Math.max(1, Math.round(number)))
+}
+
 const getVideoFormGateAnimation = (settings: Record<string, unknown> = {}): VideoFormGateAnimation => {
   const animation = getSettingString(settings, 'videoFormGateAnimation') as VideoFormGateAnimation
   return videoFormGateAnimationOptions.some(option => option.value === animation) ? animation : 'fade'
@@ -4738,6 +4750,11 @@ const normalizeVideoActionRule = (value: unknown, index = 0): VideoActionRule | 
       metaCapiEnabled: source.metaCapiEnabled !== false && source.meta_capi_enabled !== false,
       metaEventName,
       metaEventParameters: pruneMetaEventParametersForEvent(rawMetaEventParameters, metaEventName)
+    } : {}),
+    ...(action === 'reveal_form_action' ? {
+      repeatMode: normalizeVideoActionRepeatMode(source.repeatMode ?? source.repeat_mode),
+      storageValue: clampVideoActionStorageValue(source.storageValue ?? source.storage_value),
+      storageUnit: (getSettingString(source, 'storageUnit') || getSettingString(source, 'storage_unit')) === 'months' ? 'months' : 'days'
     } : {})
   }
 }
@@ -33520,6 +33537,56 @@ const VideoActionsPanel: React.FC<{
               ))}
             </CustomSelect>
           </label>
+        )}
+
+        {rule.action === 'reveal_form_action' && (
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Si ya vio el video</span>
+              <CustomSelect
+                value={rule.repeatMode || 'every_visit'}
+                onChange={(event) => patchRule(rule.id, { repeatMode: event.target.value as VideoFormGateRepeatMode })}
+                onBlur={onSave}
+              >
+                {videoFormGateRepeatModeOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+            {(rule.repeatMode || 'every_visit') === 'remember_visitor' ? (
+              <div className={styles.inlineFields}>
+                <label className={styles.field}>
+                  <span>Guardar por</span>
+                  <NumberInput
+                    value={rule.storageValue || 30}
+                    min={1}
+                    max={730}
+                    step={1}
+                    onValueChange={(value) => patchRule(rule.id, { storageValue: Math.round(value) })}
+                    onBlur={onSave}
+                  />
+                </label>
+                <label className={styles.field}>
+                  <span>Unidad</span>
+                  <CustomSelect
+                    value={rule.storageUnit || 'days'}
+                    onChange={(event) => patchRule(rule.id, { storageUnit: event.target.value as VideoFormGateStorageUnit })}
+                    onBlur={onSave}
+                  >
+                    {videoFormGateStorageUnitOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </CustomSelect>
+                </label>
+              </div>
+            ) : (
+              <p className={styles.muted}>
+                {(rule.repeatMode || 'every_visit') === 'session'
+                  ? 'El botón queda visible durante esta sesión del navegador.'
+                  : 'El botón vuelve a ocultarse cada vez que el visitante entra.'}
+              </p>
+            )}
+          </div>
         )}
 
         {rule.action === 'site_page' && (

@@ -11589,6 +11589,27 @@ function getRecommendedVideoActionBefore(action) {
   return 'unchanged'
 }
 
+// Persistencia del "Mostrar botón de enviar": una vez que el visitante llegó al
+// punto del video, podemos recordarlo (sesión o cookie por visitante) para no
+// volver a esconder el botón en futuras visitas, igual que el gate/contador.
+const VIDEO_ACTION_REPEAT_MODES = new Set(['every_visit', 'session', 'remember_visitor'])
+
+function normalizeVideoActionRepeatMode(value) {
+  const mode = cleanString(value)
+  return VIDEO_ACTION_REPEAT_MODES.has(mode) ? mode : 'every_visit'
+}
+
+function normalizeVideoActionStorageValue(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 30
+  return Math.min(730, Math.max(1, Math.round(number)))
+}
+
+function videoActionRevealStorageTtlSeconds(rule = {}) {
+  const value = normalizeVideoActionStorageValue(rule.storageValue)
+  return Math.round(value * (rule.storageUnit === 'months' ? 30 * 86400 : 86400))
+}
+
 function getVideoActionTargetIdsFromSource(source = {}) {
   const rawIds = Array.isArray(source.targetBlockIds)
     ? source.targetBlockIds
@@ -11630,6 +11651,11 @@ function normalizeVideoActionRule(value, index = 0) {
       metaCapiEnabled: source.metaCapiEnabled !== false && source.meta_capi_enabled !== false,
       metaEventName,
       metaEventParameters: pruneSiteMetaEventParametersForEvent(metaEventParametersSource, metaEventName)
+    } : {}),
+    ...(action === 'reveal_form_action' ? {
+      repeatMode: normalizeVideoActionRepeatMode(source.repeatMode || source.repeat_mode),
+      storageValue: normalizeVideoActionStorageValue(source.storageValue ?? source.storage_value),
+      storageUnit: cleanString(source.storageUnit || source.storage_unit) === 'months' ? 'months' : 'days'
     } : {})
   }
 }
@@ -11745,6 +11771,12 @@ function renderVideoActionAttributes(block = {}, settings = {}, context = {}) {
       return {
         ...rule,
         metaCustomData: buildSiteMetaConfiguredCustomData(rule.metaEventParameters, rule.metaEventName)
+      }
+    }
+    if (rule.action === 'reveal_form_action') {
+      return {
+        ...rule,
+        storageTtlSeconds: videoActionRevealStorageTtlSeconds(rule)
       }
     }
     if (rule.action !== 'site_page' || !rule.targetPageId) return rule
@@ -11958,6 +11990,13 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         const cookie = String(document.cookie || '').split(';').map(item => item.trim()).find(item => item.indexOf(prefix) === 0);
         return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : '';
       };
+      const setCookie = (name, value, maxAge) => {
+        document.cookie = name + '=' + encodeURIComponent(value) + '; Max-Age=' + String(maxAge || 31536000) + '; Path=/; SameSite=Lax';
+      };
+      const removeCookie = name => {
+        document.cookie = name + '=; Max-Age=0; Path=/; SameSite=Lax';
+      };
+      const storageSafeId = value => String(value || 'action').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 96) || 'action';
       const getCurrentParams = () => {
         let current = {};
         try { current = Object.fromEntries(new URL(window.location.href).searchParams.entries()); } catch (_) {}
@@ -12029,6 +12068,53 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         };
         window.addEventListener('ristak:submitted', release, { once: true });
       };
+      const revealStorageKeys = (state, action) => {
+        const raw = [
+          state.video.getAttribute('data-rstk-video-action-site-id') || 'site',
+          state.video.getAttribute('data-rstk-video-action-source') || 'video',
+          action.id || 'action'
+        ].join(':');
+        return {
+          storage: 'ristak:video-reveal-form-action:' + raw,
+          cookie: 'rstk_vrfa_' + storageSafeId(raw)
+        };
+      };
+      const revealAlreadyStored = (state, action) => {
+        const mode = String(action.repeatMode || 'every_visit');
+        if (mode === 'every_visit') return false;
+        const keys = revealStorageKeys(state, action);
+        let raw = '';
+        try {
+          if (mode === 'session' && window.sessionStorage) raw = window.sessionStorage.getItem(keys.storage) || '';
+          else if (window.localStorage) raw = window.localStorage.getItem(keys.storage) || '';
+        } catch (_) {}
+        if (!raw) raw = getCookie(keys.cookie);
+        let record = null;
+        try { record = JSON.parse(raw || 'null'); } catch (_) { record = null; }
+        if (!record || record.revealed !== true) return false;
+        if (Number(record.expiresAt || 0) && Number(record.expiresAt || 0) < Date.now()) {
+          try {
+            if (window.localStorage) window.localStorage.removeItem(keys.storage);
+            if (window.sessionStorage) window.sessionStorage.removeItem(keys.storage);
+          } catch (_) {}
+          removeCookie(keys.cookie);
+          return false;
+        }
+        return true;
+      };
+      const rememberReveal = (state, action) => {
+        const mode = String(action.repeatMode || 'every_visit');
+        if (mode === 'every_visit') return;
+        const ttlSeconds = Math.max(3600, Number(action.storageTtlSeconds || 2592000) || 2592000);
+        const record = { revealed: true, revealedAt: Date.now(), expiresAt: mode === 'session' ? 0 : Date.now() + ttlSeconds * 1000 };
+        const value = JSON.stringify(record);
+        const keys = revealStorageKeys(state, action);
+        try {
+          if (mode === 'session' && window.sessionStorage) window.sessionStorage.setItem(keys.storage, value);
+          else if (window.localStorage) window.localStorage.setItem(keys.storage, value);
+        } catch (_) {}
+        if (mode === 'remember_visitor') setCookie(keys.cookie, value, ttlSeconds);
+      };
       const syncState = state => {
         const realPlaybackStarted = ensureRealPlaybackStarted(state.video);
         const time = realPlaybackStarted ? Number(state.video.currentTime || 0) : 0;
@@ -12070,9 +12156,11 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
             const form = state.video.closest('form[data-site-form]');
             const area = form ? form.querySelector('[data-rstk-form-action-area]') : null;
             if (!area) return;
-            // Una vez que el video alcanza el punto, el botón queda visible
-            // aunque el visitante rebobine (no se vuelve a ocultar).
-            if (reached || state.triggered.has(action.id)) {
+            // El botón queda visible una vez alcanzado el punto (aunque el
+            // visitante rebobine) o si ya se desbloqueó en una visita previa
+            // según la persistencia configurada (sesión o cookie por visitante).
+            if (reached || state.triggered.has(action.id) || revealAlreadyStored(state, action)) {
+              if (reached && !state.triggered.has(action.id)) rememberReveal(state, action);
               state.triggered.add(action.id);
               setTargetHidden(area, false);
             } else {

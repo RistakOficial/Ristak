@@ -96,3 +96,31 @@ test('editor preview never hides the submit button (rule only applies to the pub
   assert.doesNotMatch(html, /data-rstk-form-action-area/)
   assert.doesNotMatch(html, /ristakVideoActionsRuntimeLoaded/)
 })
+
+test('reveal_form_action persists the unlock per visitor with a TTL', async () => {
+  const html = await renderPublicSiteHtml(revealFormActionSite([
+    { id: 'reveal-1', action: 'reveal_form_action', timeSeconds: 30, repeatMode: 'remember_visitor', storageValue: 45, storageUnit: 'days' }
+  ]), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+
+  // The rule carries its repeat mode and a server-computed TTL (45 days).
+  assert.match(html, /&quot;repeatMode&quot;:&quot;remember_visitor&quot;/)
+  assert.match(html, /&quot;storageTtlSeconds&quot;:3888000/)
+  // The runtime knows how to read/remember the unlock across visits.
+  assert.match(html, /revealAlreadyStored/)
+  assert.match(html, /rememberReveal/)
+  assert.match(html, /video-reveal-form-action/)
+})
+
+test('reveal_form_action defaults to restarting every visit (no persistence)', async () => {
+  const html = await renderPublicSiteHtml(revealFormActionSite(REVEAL_RULES), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+
+  assert.match(html, /&quot;repeatMode&quot;:&quot;every_visit&quot;/)
+})
