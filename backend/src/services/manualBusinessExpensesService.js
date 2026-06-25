@@ -126,6 +126,53 @@ export const deleteManualBusinessExpenseDescendants = async (database, periodTyp
 
 export const roundCurrencyValue = (value) => Math.round((value + Number.EPSILON) * 100) / 100
 
+// (RPT-001) Prorrateo de costos fijos mensuales por la longitud del rango.
+// Los costos fijos configurados son MENSUALES: cada mes aporta su monto completo.
+// Para cualquier rango objetivo (día, mes, año o rango libre) se prorratea mes a mes:
+// cada mes contribuye monthlyValue * (díasDelMesDentroDelRango / díasTotalesDelMes).
+// Así un día = monthlyValue / díasDelMes, un mes completo = monthlyValue
+// y un año completo = monthlyValue * 12. Misma fórmula que el reporte (Reports.tsx).
+export const calculateMonthlyFixedCostForRange = (targetRange, monthlyValue) => {
+  const value = Number(monthlyValue)
+  if (!Number.isFinite(value) || value <= 0) return 0
+
+  const startParts = parseDateKeyParts(targetRange?.from)
+  const endParts = parseDateKeyParts(targetRange?.to)
+  if (!startParts || !endParts) return 0
+
+  const targetStart = toUtcDayIndex(targetRange.from)
+  const targetEnd = toUtcDayIndex(targetRange.to)
+  if (targetStart === null || targetEnd === null || targetEnd < targetStart) return 0
+
+  let total = 0
+  let year = startParts.year
+  let month = startParts.month
+
+  while (year < endParts.year || (year === endParts.year && month <= endParts.month)) {
+    const daysInMonth = getLastDayOfMonth(year, month)
+    const monthStart = toUtcDayIndex(`${year}-${String(month).padStart(2, '0')}-01`)
+
+    if (monthStart !== null) {
+      const monthEnd = monthStart + daysInMonth - 1
+      const overlapStart = Math.max(targetStart, monthStart)
+      const overlapEnd = Math.min(targetEnd, monthEnd)
+
+      if (overlapEnd >= overlapStart) {
+        const overlapDays = overlapEnd - overlapStart + 1
+        total += (value * overlapDays) / daysInMonth
+      }
+    }
+
+    month += 1
+    if (month > 12) {
+      month = 1
+      year += 1
+    }
+  }
+
+  return total
+}
+
 const MANUAL_BUSINESS_EXPENSE_PRIORITY = {
   year: 1,
   month: 2,

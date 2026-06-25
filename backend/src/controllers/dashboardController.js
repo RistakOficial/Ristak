@@ -2,7 +2,7 @@ import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js';
 import { getGroupExpression } from '../services/analyticsService.js';
-import { getManualBusinessExpensesTotalForRange } from '../services/manualBusinessExpensesService.js';
+import { getManualBusinessExpensesTotalForRange, calculateMonthlyFixedCostForRange } from '../services/manualBusinessExpensesService.js';
 import { getContactSourceBreakdown } from '../services/contactSourceService.js';
 import { getTrafficDistributions, getWhatsAppApiSourceBreakdown, getWhatsAppApiNumberBreakdown, getLeadsContactIds } from '../services/originDistributionService.js';
 import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
@@ -200,6 +200,9 @@ const computeFinancialSnapshot = async (range) => {
   const gananciaBruta = ingresosNetos - gastosPublicidad;
   const roas = gastosPublicidad > 0 ? ingresosNetos / gastosPublicidad : 0;
 
+  // (RPT-001) Rango local para prorratear costos fijos mensuales por longitud del rango
+  const localDateRange = getLocalDateRange(range);
+
   // Calcular costos dinámicamente desde la tabla costs
   let totalCostos = 0;
   try {
@@ -214,8 +217,13 @@ const computeFinancialSnapshot = async (range) => {
           amount = (ingresosNetos * cost.value) / 100;
         }
       } else if (cost.calculation_type === 'fixed') {
-        // Monto fijo
-        amount = cost.value;
+        // (RPT-001) Los costos fijos son MENSUALES: prorratear por la longitud del rango
+        // (un día = valor/díasDelMes, un mes = valor completo, un año = valor*12).
+        // Misma fórmula que el reporte y los gastos manuales. Si no hay rango local,
+        // caer al monto mensual completo para no perder el costo.
+        amount = localDateRange
+          ? calculateMonthlyFixedCostForRange(localDateRange, cost.value)
+          : cost.value;
       }
 
       totalCostos += amount;
@@ -227,7 +235,6 @@ const computeFinancialSnapshot = async (range) => {
   }
 
   try {
-    const localDateRange = getLocalDateRange(range);
     const manualBusinessExpenses = localDateRange
       ? await getManualBusinessExpensesTotalForRange(localDateRange)
       : 0;

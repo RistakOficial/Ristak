@@ -2744,6 +2744,10 @@ export const searchContacts = async (req, res) => {
     const searchClause = buildContactSearchClause('c', q)
     const searchRank = buildContactSearchRank('c', q)
 
+    // (ACL-002) Excluir contactos ocultos también en la búsqueda de contactos.
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+
     const contacts = await db.all(
       `WITH payment_stats AS (
         SELECT
@@ -2806,7 +2810,7 @@ ${CONTACT_META_PROFILE_SELECT},
         ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      WHERE ${searchClause.condition}
+      WHERE ${searchClause.condition}${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
       ORDER BY ${searchRank.expression} DESC, c.created_at DESC
       LIMIT 20`,
       [...searchClause.params, ...searchRank.params]
@@ -3195,8 +3199,12 @@ export const updateContact = async (req, res) => {
       tags,
       customFields,
       dnd,
-      dndSettings
+      dndSettings,
+      confirmMerge
     } = req.body
+    // (CNT-001) Bandera explícita para autorizar la fusión destructiva al editar
+    // teléfono/email. Sin ella NO se fusiona en silencio.
+    const mergeConfirmed = confirmMerge === true || confirmMerge === 'true'
     const hasPreferredWhatsAppPhoneNumberUpdate = hasOwn(req.body, 'preferredWhatsAppPhoneNumberId') ||
       hasOwn(req.body, 'preferred_whatsapp_phone_number_id')
     const preferredWhatsAppPhoneNumberInput = hasOwn(req.body, 'preferredWhatsAppPhoneNumberId')
@@ -3239,6 +3247,60 @@ export const updateContact = async (req, res) => {
     const normalizedPhone = phone !== undefined
       ? (await normalizePhoneForAccount(phone) || phone || null)
       : undefined
+
+    // (CNT-001) NO fusionar+borrar en silencio al editar teléfono/email.
+    // Si el dato nuevo ya pertenece a OTRO contacto, devolver 409 con
+    // 'merge_confirmation_required' e info del contacto en conflicto, salvo que
+    // venga confirmMerge=true. (El diálogo de confirmación lo hace el frontend.)
+    if (!mergeConfirmed) {
+      // Conflicto por teléfono
+      if (phone !== undefined && normalizedPhone) {
+        const phoneCanonical = normalizePhoneForStorage(normalizedPhone)
+        if (phoneCanonical) {
+          const phoneConflict = await findContactByPhoneCandidates(phoneCanonical, { excludeId: id })
+          if (phoneConflict?.id) {
+            return res.status(409).json({
+              success: false,
+              code: 'merge_confirmation_required',
+              error: 'El teléfono ya pertenece a otro contacto. Confirma la fusión para continuar.',
+              conflict: {
+                field: 'phone',
+                contact: {
+                  id: phoneConflict.id,
+                  full_name: phoneConflict.full_name || null,
+                  phone: phoneConflict.phone || null
+                }
+              }
+            })
+          }
+        }
+      }
+
+      // Conflicto por email
+      if (email !== undefined && cleanString(email)) {
+        const emailConflict = await db.get(
+          "SELECT id, full_name, email, phone FROM contacts WHERE email IS NOT NULL AND email != '' AND LOWER(email) = LOWER(?) AND id != ? LIMIT 1",
+          [cleanString(email), id]
+        )
+        if (emailConflict?.id) {
+          return res.status(409).json({
+            success: false,
+            code: 'merge_confirmation_required',
+            error: 'El email ya pertenece a otro contacto. Confirma la fusión para continuar.',
+            conflict: {
+              field: 'email',
+              contact: {
+                id: emailConflict.id,
+                full_name: emailConflict.full_name || null,
+                email: emailConflict.email || null,
+                phone: emailConflict.phone || null
+              }
+            }
+          })
+        }
+      }
+    }
+
     const phoneUpsert = phone !== undefined
       ? await prepareContactPhoneUpsert({ contactId: id, phone: normalizedPhone })
       : null
@@ -3895,6 +3957,11 @@ export const getContactJourney = async (req, res) => {
     const refreshExternalStatuses = String(req.query?.refreshExternalStatuses ?? 'true').toLowerCase() !== 'false'
     const outboundMessageDirectionPlaceholders = OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.map(() => '?').join(', ')
 
+    // (SEC-005 / ACL-002) No exponer el journey de un contacto oculto: si cae bajo un
+    // filtro de ocultos, tratarlo como inexistente (404).
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+
     // Verificar que el contacto existe y obtener info de atribución completa
     const contact = await db.get(`
       SELECT
@@ -3906,7 +3973,7 @@ export const getContactJourney = async (req, res) => {
         meta_ads.ad_name as meta_ad_name
       FROM contacts
       LEFT JOIN meta_ads ON meta_ads.ad_id = contacts.attribution_ad_id
-      WHERE contacts.id = ?
+      WHERE contacts.id = ?${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
       ORDER BY meta_ads.date DESC
       LIMIT 1
     `, [id])

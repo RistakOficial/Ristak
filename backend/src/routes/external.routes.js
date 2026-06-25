@@ -43,8 +43,33 @@ import {
   serializeContactCustomFieldsForDb
 } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 
 const router = express.Router()
+
+// (AUTH-001 / SEC-004) Rate limiting de la API externa para evitar scraping/abuso.
+// Se aplica DESPUÉS de requireApiToken, así que se puede acotar por usuario del token
+// (cae a IP si por alguna razón no hay usuario resuelto). Tope generoso pensado para
+// integraciones legítimas pero suficiente para frenar barridos masivos.
+const externalApiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.RATE_LIMIT_DISABLED === '1',
+  keyGenerator: (req) => {
+    const ipKey = ipKeyGenerator(req.ip)
+    const userId = req.user?.userId
+    return userId ? `user:${userId}` : ipKey
+  },
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      code: 'rate_limited',
+      error: 'Demasiadas solicitudes a la API. Espera unos minutos e intenta de nuevo.'
+    })
+  }
+})
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash)/i
 const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens)$/i
 const WRITE_BLOCKED_TABLE_PATTERN = /^(users|payment_methods)$/i
@@ -751,6 +776,8 @@ async function getOpenApiSpec(req, res) {
 router.get('/openapi.json', getOpenApiSpec)
 
 router.use(requireApiToken)
+// (AUTH-001 / SEC-004) limitar tasa por usuario del token tras autenticar
+router.use(externalApiRateLimiter)
 
 async function listDataTables(req, res) {
   try {

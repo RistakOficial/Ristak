@@ -10,8 +10,27 @@ import {
   registerOAuthClient,
   validateApiTokenUser
 } from '../utils/oauthTokens.js'
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 
 const router = express.Router()
+
+// (AUTH-001 / SEC-004) Rate limiting por IP para los endpoints OAuth sensibles:
+// /authorize (valida API token, brute-forceable) y /token (canjeo de códigos).
+// Sin esto un atacante puede iterar API tokens / códigos sin límite.
+const oauthRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.RATE_LIMIT_DISABLED === '1',
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+  handler: (req, res) => {
+    res.status(429).json({
+      error: 'rate_limited',
+      error_description: 'Demasiados intentos. Espera unos minutos e intenta de nuevo.'
+    })
+  }
+})
 
 function originFor(req) {
   const proto = req.get('x-forwarded-proto') || req.protocol || 'https'
@@ -139,7 +158,7 @@ router.get('/api/oauth/authorize', (req, res) => {
   renderAuthorizeForm(req, res)
 })
 
-router.post('/api/oauth/authorize', async (req, res) => {
+router.post('/api/oauth/authorize', oauthRateLimiter, async (req, res) => {
   try {
     const {
       response_type: responseType,
@@ -190,7 +209,7 @@ router.post('/api/oauth/authorize', async (req, res) => {
   }
 })
 
-router.post('/api/oauth/token', async (req, res) => {
+router.post('/api/oauth/token', oauthRateLimiter, async (req, res) => {
   try {
     const grantType = req.body.grant_type
     const clientId = req.body.client_id

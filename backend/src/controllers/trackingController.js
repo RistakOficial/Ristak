@@ -903,16 +903,38 @@ export async function collectEvent(req, res) {
 
     const user_agent = req.headers['user-agent'] || null
 
-    // Extraer full_name si viene en data.contact_name
+    // (TRK-001) /collect es público: el contact_id del body es atacante-controlado.
+    // Verificar que el contacto EXISTE antes de aceptarlo. Si no existe (o es inválido),
+    // ignorarlo: no se persiste en la sesión ni dispara reasignación de identidad.
+    // Esto evita inyectar atribución falsa y bloquea el hijack de visitor_id vía
+    // linkVisitorToContact/unifyVisitorIds desde un endpoint sin auth.
+    let verifiedContactId = null
+    let verifiedContactName = null
+    if (contact_id) {
+      try {
+        const contact = await db.get('SELECT id, full_name FROM contacts WHERE id = $1', [contact_id])
+        if (contact?.id) {
+          verifiedContactId = contact.id
+          verifiedContactName = contact.full_name || null
+        } else {
+          logger.warn(`/collect: contact_id inexistente ignorado: ${contact_id}`)
+        }
+      } catch (err) {
+        // contact_id malformado (p.ej. no-UUID) hace fallar el query; ignorarlo
+        logger.warn(`/collect: contact_id inválido ignorado (${contact_id}): ${err.message}`)
+      }
+    }
+
+    // Extraer full_name si viene en data.contact_name (solo si el contacto fue verificado)
     let full_name = null
-    if (contact_id && data && data.contact_name) {
+    if (verifiedContactId && data && data.contact_name) {
       full_name = data.contact_name
     }
 
     const sessionData = {
       session_id,
       visitor_id,
-      contact_id: contact_id || null,
+      contact_id: verifiedContactId,
       full_name,
       event_name,
       ts,
@@ -924,27 +946,22 @@ export async function collectEvent(req, res) {
     // SIEMPRE crear un nuevo registro (cada visita es única)
     await createSession(sessionData)
 
-    // Si hay contact_id, vincular visitor_id histórico con este contacto y unificar
-    if (contact_id && visitor_id) {
-      // Si no viene full_name, buscarlo en la tabla contacts
+    // (TRK-001) Solo vincular/unificar cuando el contact_id fue verificado contra la BD.
+    // Si hay contact_id verificado, vincular visitor_id histórico con este contacto y unificar
+    if (verifiedContactId && visitor_id) {
+      // Si no viene full_name, usar el de la tabla contacts ya consultado
       if (!full_name) {
-        try {
-          const contact = await db.get('SELECT full_name FROM contacts WHERE id = $1', [contact_id])
-          full_name = contact?.full_name || 'Sin nombre'
-        } catch (err) {
-          logger.warn(`No se pudo obtener full_name para contacto ${contact_id}: ${err.message}`)
-          full_name = 'Sin nombre'
-        }
+        full_name = verifiedContactName || 'Sin nombre'
       }
 
       // Importar funciones de tracking
       const { unifyVisitorIds } = await import('../services/trackingService.js')
 
       // No esperamos a que termine (async sin await) para responder rápido
-      linkVisitorToContact(visitor_id, contact_id, full_name)
+      linkVisitorToContact(visitor_id, verifiedContactId, full_name)
         .then(() => {
           // Después de vincular, unificar todos los visitor_ids al más viejo
-          return unifyVisitorIds(contact_id)
+          return unifyVisitorIds(verifiedContactId)
         })
         .catch(err => {
           logger.error('Error vinculando/unificando visitor a contact:', err)

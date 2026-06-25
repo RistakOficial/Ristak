@@ -19,6 +19,10 @@ import { logger } from '../utils/logger.js'
 import GHLClient from './ghlClient.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
+// (NOTI-003) La confirmación de citas por respuesta también debe abrirse cuando el
+// contacto responde por canales sincronizados vía HighLevel (SMS/Messenger/Instagram/
+// WhatsApp de GHL), no solo por WhatsApp API.
+import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 
 const LAST_SYNC_CONFIG_KEY = 'highlevel_conversations_last_synced_at'
 const INCREMENTAL_OVERLAP_MS = 24 * 60 * 60 * 1000 // re-leer 24h hacia atrás por seguridad
@@ -416,6 +420,25 @@ async function ensureLocalContact({ contactId, apiToken, locationId }) {
 async function triggerAutomationsForInboundMessage({ contact, channel, text, messageType, isNew, notifyNewInbound }) {
   if (!contact?.id || !isNew || !notifyNewInbound) return
   if (!['whatsapp', 'messenger', 'instagram', 'sms', 'webchat', 'email'].includes(channel)) return
+
+  // (NOTI-003) Abrir/evaluar la ventana de confirmación de citas también para los
+  // inbound que llegan vía HighLevel. Si hay una ventana activa con bypass, no
+  // disparamos automatizaciones (mismo criterio que el inbound de WhatsApp API/QR).
+  let confirmWindow = { windowActive: false, bypassAutomations: false }
+  await handleInboundForConfirmation({ contactId: contact.id, text })
+    .then(w => { confirmWindow = w })
+    .catch(error => {
+      logger.warn(`[Citas] Error en ventana de confirmación (GHL ${channel}): ${error.message}`)
+    })
+
+  if (!confirmWindow.windowActive) {
+    await maybeConfirmAppointmentFromReply({ contactId: contact.id, text })
+      .catch(error => {
+        logger.warn(`[Citas] No se pudo evaluar confirmación automática (GHL ${channel}): ${error.message}`)
+      })
+  }
+
+  if (confirmWindow.windowActive && confirmWindow.bypassAutomations) return
 
   await import('./automationEngine.js')
     .then(engine => engine.handleIncomingMessage({

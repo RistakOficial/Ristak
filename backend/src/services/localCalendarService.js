@@ -2723,6 +2723,13 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
 export async function upsertLocalAppointment(raw = {}, options = {}) {
   const normalized = normalizeAppointmentRecord(raw, options)
 
+  // (GCAL-003/GHL-003) Last-write-wins: cuando el upsert viene de un PULL de sincronización
+  // (Google o HighLevel) activamos un candado de conflicto. Solo pisamos los campos de la
+  // cita local si el remoto es realmente más nuevo (excluded.date_updated > local) y la
+  // cita local NO tiene una edición pendiente de subir (sync_status pending/pending_delete).
+  // Así un pull viejo deja de revertir una edición fresca hecha en Ristak.
+  const lastWriteWins = options.lastWriteWins === true ? 1 : 0
+
   // Normalizar TODOS los instantes a UTC real antes de guardar.
   // GHL y el modal mandan ISO con offset (ej "...-06:00"); si la columna es
   // `timestamp` (sin zona) Postgres descartaría el offset y guardaría hora local.
@@ -2762,24 +2769,24 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
       calendar_id = COALESCE(excluded.calendar_id, appointments.calendar_id),
       contact_id = COALESCE(excluded.contact_id, appointments.contact_id),
       location_id = COALESCE(excluded.location_id, appointments.location_id),
-      title = COALESCE(excluded.title, appointments.title),
-      status = COALESCE(excluded.status, appointments.status),
-      appointment_status = COALESCE(excluded.appointment_status, appointments.appointment_status),
+      title = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.title ELSE COALESCE(excluded.title, appointments.title) END,
+      status = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.status ELSE COALESCE(excluded.status, appointments.status) END,
+      appointment_status = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.appointment_status ELSE COALESCE(excluded.appointment_status, appointments.appointment_status) END,
       assigned_user_id = COALESCE(excluded.assigned_user_id, appointments.assigned_user_id),
-      notes = COALESCE(excluded.notes, appointments.notes),
-      address = COALESCE(excluded.address, appointments.address),
-      start_time = COALESCE(excluded.start_time, appointments.start_time),
-      end_time = COALESCE(excluded.end_time, appointments.end_time),
+      notes = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.notes ELSE COALESCE(excluded.notes, appointments.notes) END,
+      address = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.address ELSE COALESCE(excluded.address, appointments.address) END,
+      start_time = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.start_time ELSE COALESCE(excluded.start_time, appointments.start_time) END,
+      end_time = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.end_time ELSE COALESCE(excluded.end_time, appointments.end_time) END,
       date_added = COALESCE(appointments.date_added, excluded.date_added),
-      date_updated = excluded.date_updated,
+      date_updated = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.date_updated ELSE excluded.date_updated END,
       source = COALESCE(excluded.source, appointments.source),
-      sync_status = excluded.sync_status,
+      sync_status = CASE WHEN ${lastWriteWins} = 1 AND appointments.sync_status IN ('pending','pending_delete') THEN appointments.sync_status ELSE excluded.sync_status END,
       sync_error = excluded.sync_error,
       synced_at = CASE WHEN excluded.sync_status = 'synced' THEN CURRENT_TIMESTAMP ELSE appointments.synced_at END,
       google_sync_status = COALESCE(excluded.google_sync_status, appointments.google_sync_status),
       google_sync_error = excluded.google_sync_error,
       google_synced_at = CASE WHEN excluded.google_sync_status = 'synced' THEN CURRENT_TIMESTAMP ELSE appointments.google_synced_at END,
-      deleted_at = NULL
+      deleted_at = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status = 'pending_delete' OR appointments.date_updated >= excluded.date_updated) THEN appointments.deleted_at ELSE NULL END
   `, [
     normalized.id,
     normalized.ghlAppointmentId,
@@ -2892,7 +2899,7 @@ export async function updateLocalAppointment(appointmentId, updates = {}, { sync
   const existing = await getLocalAppointment(appointmentId)
   if (!existing) return null
 
-  return upsertLocalAppointment({
+  const result = await upsertLocalAppointment({
     ...existing,
     ...updates,
     id: existing.id,
@@ -2905,6 +2912,21 @@ export async function updateLocalAppointment(appointmentId, updates = {}, { sync
   }, {
     syncStatus
   })
+
+  // (APT-003) Si la cita se reprogramó (cambió start_time), olvidamos los recordatorios ya
+  // registrados para que el cron recalcule y reenvíe en la nueva fecha. Sin esto el dedup
+  // por (reminder_id|appointment_id) deja el recordatorio congelado en la hora vieja.
+  const prevStart = sameTime(existing.startTime, result?.startTime, 0) ? null : existing.startTime
+  if (prevStart && result?.startTime) {
+    try {
+      const { clearAppointmentReminderSends } = await import('./appointmentRemindersService.js')
+      await clearAppointmentReminderSends(result.id)
+    } catch (error) {
+      logger.warn(`No se pudieron limpiar recordatorios tras reprogramar la cita ${result?.id}: ${error.message}`)
+    }
+  }
+
+  return result
 }
 
 export async function deleteLocalAppointment(appointmentId, { markPendingDelete = false } = {}) {
@@ -3034,6 +3056,41 @@ function getEffectiveSlotAppointmentLimit(calendar = {}, options = {}) {
   }
 
   return getSlotAppointmentLimit(calendar)
+}
+
+// (APT-001) Verifica que el slot solicitado todavía tenga cupo antes de crear una cita
+// desde el admin. Reusa la misma lógica de límite/solapamiento que los slots públicos
+// (overlaps + getEffectiveSlotAppointmentLimit) para evitar doble-booking silencioso.
+// Devuelve { available, limit, overlapping }. `excludeAppointmentId` permite ignorar la
+// propia cita al reprogramar.
+export async function checkSlotAvailability(calendarId, startTime, endTime, options = {}) {
+  const calendar = await getLocalCalendar(calendarId)
+  if (!calendar) return { available: true, limit: Number.POSITIVE_INFINITY, overlapping: 0 }
+
+  const limit = getEffectiveSlotAppointmentLimit(calendar, options)
+  if (!Number.isFinite(limit)) return { available: true, limit, overlapping: 0 }
+
+  const slotStartMs = new Date(startTime).getTime()
+  const slotEndMs = new Date(endTime || startTime).getTime()
+  if (!Number.isFinite(slotStartMs) || !Number.isFinite(slotEndMs)) {
+    return { available: true, limit, overlapping: 0 }
+  }
+
+  const excludeId = cleanString(options.excludeAppointmentId || '')
+  const existing = await listLocalAppointments({ calendarId })
+  const overlapping = existing.filter(event => {
+    if (excludeId && cleanString(event.id) === excludeId) return false
+    const status = cleanString(event.appointmentStatus || event.status).toLowerCase()
+    if (['cancelled', 'canceled', 'noshow', 'invalid'].includes(status)) return false
+    return overlaps(
+      slotStartMs,
+      slotEndMs,
+      new Date(event.startTime).getTime(),
+      new Date(event.endTime || event.startTime).getTime()
+    )
+  }).length
+
+  return { available: overlapping < limit, limit, overlapping }
 }
 
 export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone, options = {}) {

@@ -16,6 +16,8 @@ import {
   normalizeManualBusinessExpenseRow
 } from '../services/manualBusinessExpensesService.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+// (ACL-002) Excluir contactos ocultos en la lista de transacciones de reportes (LEFT JOIN expone PII).
+import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
 const buildRangePayload = (range) => ({
   start: range.startUtc,
@@ -346,6 +348,14 @@ export const getTransactionsList = async (req, res) => {
     if (range.endUtc) {
       conditions.push('p.date <= ?')
       params.push(range.endUtc)
+    }
+
+    // (ACL-002) Excluir filas cuyo contacto (LEFT JOIN c) cae bajo un filtro de ocultos.
+    // Las transacciones sin contacto (c.* NULL) pasan gracias al COALESCE del filtro.
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    if (hiddenCondition) {
+      conditions.push(hiddenCondition)
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''

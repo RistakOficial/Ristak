@@ -1532,6 +1532,28 @@ export async function createAppointment(req, res) {
       title: renderedTemplates.title,
       notes: renderedTemplates.notes
     };
+
+    // (APT-001) Validar disponibilidad del slot antes de crear: evita doble-booking
+    // silencioso desde el modal admin. Si el slot ya alcanzó su límite respondemos 409,
+    // salvo que venga una bandera explícita para forzar (ignoreAppointmentConflicts).
+    const forceDoubleBooking = appointmentData.ignoreAppointmentConflicts === true
+      || appointmentData.confirmDoubleBooking === true;
+    if (!forceDoubleBooking && (localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id)) {
+      const availability = await localCalendarService.checkSlotAvailability(
+        localCalendar?.id || appointmentData.calendarId || appointmentData.calendar_id,
+        localAppointmentData.startTime || localAppointmentData.start_time,
+        localAppointmentData.endTime || localAppointmentData.end_time
+      );
+      if (!availability.available) {
+        return res.status(409).json({
+          success: false,
+          code: 'slot_unavailable',
+          error: 'Ese horario ya alcanzó el límite de citas. Elige otro horario o confirma el sobreagendamiento.',
+          data: { limit: availability.limit, overlapping: availability.overlapping }
+        });
+      }
+    }
+
     let appointment = await localCalendarService.createLocalAppointment({
       ...localAppointmentData,
       calendarId: localCalendar?.id || appointmentData.calendarId,
@@ -1663,6 +1685,20 @@ export async function updateAppointment(req, res) {
 
     if (!appointment) {
       appointment = await localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
+    }
+
+    // (APT-003) Si la cita se reprogramó (cambió start_time), olvidar recordatorios ya
+    // registrados para que el cron recalcule/reenvíe en la nueva fecha. La ruta GHL hace
+    // upsert directo (sin pasar por updateLocalAppointment), por eso lo cubrimos aquí también.
+    try {
+      const prevStartMs = new Date(existing?.startTime || existing?.start_time).getTime();
+      const nextStartMs = new Date(appointment?.startTime || appointment?.start_time).getTime();
+      if (Number.isFinite(prevStartMs) && Number.isFinite(nextStartMs) && prevStartMs !== nextStartMs && (appointment?.id || id)) {
+        const { clearAppointmentReminderSends } = await import('../services/appointmentRemindersService.js');
+        await clearAppointmentReminderSends(appointment?.id || id);
+      }
+    } catch (error) {
+      logger.warn(`[Calendars Controller] No se pudieron limpiar recordatorios tras reprogramar: ${error.message}`);
     }
 
     const previousStatus = String(existing?.appointmentStatus || existing?.appointment_status || existing?.status || '').trim().toLowerCase();

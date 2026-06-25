@@ -628,7 +628,10 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
         calendarId: localCalendarId,
         locationId: localCalendar?.locationId || null,
         syncStatus: existingAppointment?.syncStatus || (appointment.source === 'google' ? 'synced' : 'pending'),
-        googleSyncStatus: 'synced'
+        googleSyncStatus: 'synced',
+        // (GCAL-003) Pull entrante de Google: last-write-wins por date_updated para no pisar
+        // una edición local fresca con el evento viejo de Google cuando el push falló o no corrió.
+        lastWriteWins: true
       })
       saved += 1
     }

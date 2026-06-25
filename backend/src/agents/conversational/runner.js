@@ -43,6 +43,9 @@ import {
   resolveConversationalAIRuntime
 } from '../../services/conversationalAIProviderService.js'
 import { tagNamesForIds } from '../../services/contactTagsService.js'
+// (AI-002) Gate de licencia: el runtime del agente conversacional debe respetar
+// la feature premium incluso cuando se dispara desde los servicios de mensajería.
+import { hasFeature } from '../../services/licenseService.js'
 import {
   buildClosingStrategyTemplateParameters,
   buildConversationalInstructions,
@@ -1082,6 +1085,10 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   }
   if (!config.enabled) return
 
+  // (AI-002) Los seguimientos también ejecutan el responder (consume tokens):
+  // sin entitlement de 'conversational_ai' no deben dispararse.
+  if (!(await hasFeature('conversational_ai'))) return
+
   const state = await getConversationState(contactId, { agentId })
   if (!state || state.status !== 'active' || state.signal) return
   if (state.followUpBaseMessageId !== baseMessageId) return
@@ -1427,6 +1434,17 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
     }
     if (!config.enabled) return
 
+    // (AI-002) Sin entitlement de 'conversational_ai' (downgrade/impago) el
+    // agente no debe responder ni consumir tokens. hasFeature es fail-closed.
+    if (!(await hasFeature('conversational_ai'))) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'run_skipped_feature_disabled',
+        detail: { messageId, channel: normalizedChannel, feature: 'conversational_ai' }
+      }).catch(() => {})
+      return
+    }
+
     clearFollowUpTimer(runKey)
 
 	    if (runningContacts.has(runKey)) {
@@ -1478,12 +1496,24 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
 	      if (!agentState || agentState.status !== 'active' || agentState.signal) return
 	      if (agentState.lastInboundMessageId === latest.id && agentState.lastAnsweredInboundMessageId === latest.id) return
 
-	      // Reclama el mensaje antes de correr para evitar respuestas duplicadas.
-	      await db.run(`
+	      // (AI-001/CRON-007) Claim atómico compare-and-set: reclama el mensaje
+	      // antes de correr para evitar respuestas/acciones duplicadas entre
+	      // instancias o ante reenvío de webhook. Solo procede si esta instancia
+	      // ganó el claim (changes>0); si otra ya lo reclamó, aborta sin responder.
+	      const claimRes = await db.run(`
 	        UPDATE conversational_agent_state
 	        SET last_inbound_message_id = ?, channel = ?, updated_at = CURRENT_TIMESTAMP
 	        WHERE id = ?
-	      `, [latest.id, normalizedChannel, agentState.id])
+	          AND (last_inbound_message_id IS NULL OR last_inbound_message_id <> ?)
+	      `, [latest.id, normalizedChannel, agentState.id, latest.id])
+	      if (!(Number(claimRes?.changes || 0) > 0)) {
+	        await recordConversationalAgentEvent({
+	          contactId,
+	          eventType: 'run_skipped_already_claimed',
+	          detail: { messageId: latest.id, channel: normalizedChannel, reason: 'inbound_already_claimed' }
+	        }).catch(() => {})
+	        return
+	      }
 
       const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
       const runtime = await resolveConversationalAIRuntime(aiProvider)
@@ -1747,6 +1777,9 @@ export async function recoverPendingConversationalAgentConversations({
     })
   }
   if (!config.enabled) return { scanned: 0, scheduled: 0 }
+
+  // (AI-002) No recuperar pendientes si la feature premium está revocada.
+  if (!(await hasFeature('conversational_ai'))) return { scanned: 0, scheduled: 0 }
 
   const rowsByChannel = await Promise.all(
     ['whatsapp', 'instagram', 'messenger', 'sms'].map((channel) => loadRecentInboundMessagesForRecovery(channel, PENDING_RECOVERY_SCAN_LIMIT))

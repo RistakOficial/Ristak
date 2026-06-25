@@ -1165,6 +1165,10 @@ export const revealToken = async (req, res) => {
       });
     }
 
+    // (GHL-001) Auditar quién revela el token maestro del CRM externo. La ruta
+    // ya está restringida a admin (requireAdmin); aquí dejamos rastro de la acción.
+    logger.warn(`🔓 [AUDIT] revealToken HighLevel: usuario=${req.user?.username || 'desconocido'} (id=${req.user?.userId ?? 'n/a'}, role=${req.user?.role || 'n/a'}) ip=${req.ip || req.headers['x-forwarded-for'] || 'n/a'}`);
+
     res.json({
       success: true,
       value: config.api_token

@@ -913,6 +913,38 @@ async function sendInvoice({ ghlClient, invoiceId, contact, channels, forceAllAv
   }
 }
 
+// (AI-004) Ventana de deduplicación de links de pago equivalentes (minutos).
+const PAYMENT_LINK_IDEMPOTENCY_WINDOW_MS = 10 * 60 * 1000
+
+// (AI-004) Busca un link de pago pendiente reciente del mismo contacto con el
+// mismo monto y concepto. Devuelve la fila reutilizable o null. No considera
+// pagos ya pagados/cancelados/reembolsados, que sí deberían generar uno nuevo.
+async function findRecentEquivalentPaymentLink({ contactId, amount, concept }) {
+  if (!contactId) return null
+  try {
+    const sinceIso = new Date(Date.now() - PAYMENT_LINK_IDEMPOTENCY_WINDOW_MS).toISOString()
+    const normalizedConcept = String(concept || 'Pago').trim().toLowerCase()
+    const row = await db.get(
+      `SELECT ghl_invoice_id, invoice_number, amount, currency, status, description, title
+       FROM payments
+       WHERE contact_id = ?
+         AND ghl_invoice_id IS NOT NULL
+         AND ABS(COALESCE(amount, 0) - ?) < 0.005
+         AND LOWER(TRIM(COALESCE(description, title, 'Pago'))) = ?
+         AND LOWER(COALESCE(status, '')) NOT IN ('paid', 'cancelled', 'canceled', 'refunded', 'void', 'voided', 'failed')
+         AND COALESCE(created_at, '') >= ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [contactId, normalizeAmount(amount), normalizedConcept, sinceIso]
+    )
+    return row && row.ghl_invoice_id ? row : null
+  } catch (error) {
+    // Ante cualquier problema de la consulta de dedup, no bloquees el cobro: cae al flujo normal.
+    logger.warn(`(AI-004) No se pudo verificar link de pago duplicado para contacto ${contactId}: ${error.message}`)
+    return null
+  }
+}
+
 export async function createSinglePaymentLink(payload) {
   const contact = payload.contact || {}
   const amount = normalizeAmount(payload.amount || payload.totalAmount)
@@ -929,6 +961,25 @@ export async function createSinglePaymentLink(payload) {
   }
 
   assertAiAgentSendablePaymentChannel(payload, contact, 'el link de pago')
+
+  // (AI-004) Idempotencia: antes de crear un invoice nuevo, reutiliza un link
+  // pendiente reciente del mismo contacto con monto+concepto equivalentes para
+  // evitar links/cobros duplicados ante reejecuciones del agente o del modelo.
+  const existingLink = await findRecentEquivalentPaymentLink({ contactId: contact.id, amount, concept })
+  if (existingLink) {
+    logger.info(`(AI-004) Reutilizando link de pago reciente ${existingLink.ghl_invoice_id} para contacto ${contact.id} (${amount} ${currency}); no se crea uno nuevo`)
+    const context = await getInvoiceSendContext()
+    return {
+      invoiceId: existingLink.ghl_invoice_id,
+      invoiceNumber: existingLink.invoice_number || null,
+      paymentLink: buildInvoicePaymentUrl(context.domain, existingLink.ghl_invoice_id),
+      sendMethod: 'reused',
+      amount: normalizeAmount(existingLink.amount || amount),
+      currency: existingLink.currency || currency,
+      status: existingLink.status || 'sent',
+      reused: true
+    }
+  }
 
   const ghlClient = await getGHLClient()
   const invoice = await createInvoice({

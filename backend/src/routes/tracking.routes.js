@@ -23,6 +23,7 @@ import {
   getContactConversionsList
 } from '../controllers/trackingController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 export const publicTrackingRoutes = express.Router()
 const router = express.Router()
@@ -43,6 +44,9 @@ publicTrackingRoutes.post('/sync-visitor', syncVisitorToHighLevel)
 publicTrackingRoutes.post('/link-visitor', linkVisitorToContactHandler)
 
 router.use(requireAuth)
+// (ACL-001) El panel de analytics se protege con AccessRoute en el frontend; aquí
+// exigimos el módulo 'analytics' para que la API directa también respete el rol.
+router.use(requireModuleAccess('analytics'))
 
 // CRUD de sesiones
 router.get('/sessions', getSessionsHandler)

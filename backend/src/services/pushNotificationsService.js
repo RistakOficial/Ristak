@@ -5,7 +5,8 @@ import webPush from 'web-push'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { shouldSuppressChatNotificationForConversationalAgent } from './conversationalAgentService.js'
-import { resolvePushNotificationTargetForEvent } from './notificationPreferencesService.js'
+// (MOB-002 / NOTI-004) Importamos el chequeo de contactos ocultos para no exponerlos en el push
+import { resolvePushNotificationTargetForEvent, isContactHiddenFromNotifications } from './notificationPreferencesService.js'
 
 const ENV_VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || ''
 const ENV_VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || ''
@@ -1032,6 +1033,14 @@ export async function sendChatMessageNotification(message = {}) {
   if (suppressByAgent) {
     return { sent: 0, skipped: true, reason: 'conversational_agent_attending' }
   }
+  // (MOB-002 / NOTI-004) No exponer nombre ni texto de contactos ocultos en el push de chat
+  const hidden = await isContactHiddenFromNotifications(message.contactId).catch((error) => {
+    logger.warn(`[Push] No se pudo verificar contacto oculto para chat: ${error.message}`)
+    return true // fail-safe: ante error no enviamos para evitar fuga
+  })
+  if (hidden) {
+    return { sent: 0, skipped: true, reason: 'hidden_contact' }
+  }
   const preferenceTarget = await getPushPreferenceTarget('conversations')
   if (isPushPreferenceDisabled(preferenceTarget)) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
@@ -1062,6 +1071,14 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
 
   const contactId = String(signal.contactId || '').trim()
   if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
+  // (MOB-002 / NOTI-004) No exponer nombre de contactos ocultos en el aviso de prioridad
+  const hidden = await isContactHiddenFromNotifications(contactId).catch((error) => {
+    logger.warn(`[Push] No se pudo verificar contacto oculto para prioridad: ${error.message}`)
+    return true // fail-safe: ante error no enviamos para evitar fuga
+  })
+  if (hidden) {
+    return { sent: 0, skipped: true, reason: 'hidden_contact' }
+  }
   const preferenceTarget = await getPushPreferenceTarget('agent_priority')
   if (isPushPreferenceDisabled(preferenceTarget)) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }

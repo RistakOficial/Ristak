@@ -2703,7 +2703,7 @@ export async function cancelStripeRecurringSubscription(stripeSubscriptionId) {
   return mapStripeSubscriptionStatus(subscription.status, 'cancelled')
 }
 
-async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLabel }) {
+async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLabel, amountRefunded, chargeAmount }) {
   const filters = []
   const params = []
 
@@ -2720,20 +2720,44 @@ async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLa
   if (!filters.length) return null
 
   const payment = await db.get(
-    `SELECT id, contact_id FROM payments WHERE ${filters.join(' OR ')} LIMIT 1`,
+    `SELECT id, contact_id, amount, currency FROM payments WHERE ${filters.join(' OR ')} LIMIT 1`,
     params
   )
 
   if (!payment) return null
 
+  // (PAY-002) Distinguir reembolso parcial de total. Stripe dispara charge.refunded
+  // también en reembolsos parciales; antes se marcaba todo como 'refunded' ocultando
+  // el monto completo. Comparamos el monto reembolsado contra el total cobrado.
+  const refundedCents = Number(amountRefunded)
+  let totalCents = Number(chargeAmount)
+  // Si el evento no trae el total del cargo (caso refund.created), lo derivamos del
+  // monto del pago almacenado, convertido a la unidad mínima de Stripe (centavos).
+  if (!Number.isFinite(totalCents) || totalCents <= 0) {
+    try {
+      totalCents = toStripeAmount(payment.amount, payment.currency)
+    } catch {
+      totalCents = NaN
+    }
+  }
+
+  let nextStatus = 'refunded'
+  if (
+    Number.isFinite(refundedCents) && refundedCents > 0 &&
+    Number.isFinite(totalCents) && totalCents > 0 &&
+    refundedCents < totalCents
+  ) {
+    nextStatus = 'partially_refunded'
+  }
+
   await db.run(
     `UPDATE payments
-     SET status = 'refunded',
+     SET status = ?,
          payment_method = 'stripe',
          payment_provider = 'stripe',
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [payment.id]
+    [nextStatus, payment.id]
   )
 
   if (payment.contact_id) {
@@ -2742,14 +2766,17 @@ async function markStripePaymentAsRefunded({ paymentIntentId, chargeId, sourceLa
     })
   }
 
-  return 'refunded'
+  return nextStatus
 }
 
 async function updatePaymentFromRefund(refund) {
   return markStripePaymentAsRefunded({
     paymentIntentId: extractStripeObjectId(refund?.payment_intent),
     chargeId: extractStripeObjectId(refund?.charge),
-    sourceLabel: 'refund'
+    sourceLabel: 'refund',
+    // (PAY-002) refund.created trae el monto de ESTE reembolso; el total del cargo no
+    // viaja aquí, así que markStripePaymentAsRefunded lo deriva del pago almacenado.
+    amountRefunded: refund?.amount
   })
 }
 
@@ -2757,7 +2784,10 @@ async function updatePaymentFromRefundedCharge(charge) {
   return markStripePaymentAsRefunded({
     paymentIntentId: extractStripeObjectId(charge?.payment_intent),
     chargeId: extractStripeObjectId(charge?.id),
-    sourceLabel: 'charge.refunded'
+    sourceLabel: 'charge.refunded',
+    // (PAY-002) charge.refunded trae el acumulado reembolsado y el total del cargo.
+    amountRefunded: charge?.amount_refunded,
+    chargeAmount: charge?.amount
   })
 }
 

@@ -21507,6 +21507,60 @@ function getClientIp(req) {
   return forwarded || req.ip || req.socket?.remoteAddress || ''
 }
 
+// (TRK-004) Rate limiting en memoria por IP+site para el submit público.
+// Sin dependencias externas: ventana deslizante simple con timestamps.
+// Protege el formulario público de captación contra spam masivo, gasto de
+// cuota CAPI y disparo de automatizaciones con datos basura.
+const PUBLIC_SUBMIT_RATE_WINDOW_MS = 60 * 1000 // ventana de 1 minuto
+const PUBLIC_SUBMIT_RATE_MAX = 10 // máx. envíos por IP+site en la ventana
+const publicSubmitRateBuckets = new Map()
+let publicSubmitRateLastSweep = 0
+
+function enforcePublicSubmitRateLimit(req, siteKey) {
+  const ip = cleanString(getClientIp(req)) || 'unknown'
+  const key = `${ip}::${siteKey || 'unknown'}`
+  const now = Date.now()
+
+  // Limpieza periódica perezosa de buckets viejos para evitar fuga de memoria
+  if (now - publicSubmitRateLastSweep > PUBLIC_SUBMIT_RATE_WINDOW_MS) {
+    for (const [k, hits] of publicSubmitRateBuckets) {
+      const fresh = hits.filter((t) => now - t < PUBLIC_SUBMIT_RATE_WINDOW_MS)
+      if (fresh.length) publicSubmitRateBuckets.set(k, fresh)
+      else publicSubmitRateBuckets.delete(k)
+    }
+    publicSubmitRateLastSweep = now
+  }
+
+  const hits = (publicSubmitRateBuckets.get(key) || []).filter(
+    (t) => now - t < PUBLIC_SUBMIT_RATE_WINDOW_MS
+  )
+
+  if (hits.length >= PUBLIC_SUBMIT_RATE_MAX) {
+    logger.warn(`Submit público rate-limited para ${key} (${hits.length} envíos en ventana)`)
+    const error = new Error('Demasiados envíos, intenta de nuevo en un momento')
+    error.status = 429
+    error.code = 'rate_limited'
+    throw error
+  }
+
+  hits.push(now)
+  publicSubmitRateBuckets.set(key, hits)
+}
+
+// (TRK-004) Honeypot: campo señuelo que un humano nunca llena. Si llega con
+// contenido, es un bot. Se descarta silenciosamente devolviendo "éxito" para no
+// darle pistas al spammer de que fue detectado.
+function isPublicSubmitHoneypotTriggered(body = {}) {
+  const candidates = [
+    body._gotcha,
+    body.honeypot,
+    body.hp_field,
+    body.meta?.honeypot,
+    body.meta?._gotcha
+  ]
+  return candidates.some((v) => cleanString(v).length > 0)
+}
+
 function normalizeEmail(value) {
   const email = cleanString(value).toLowerCase()
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
@@ -23487,6 +23541,37 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     const error = new Error('Este site no esta publicado')
     error.status = 404
     throw error
+  }
+
+  // (TRK-004) Anti-abuso del submit público: rate limiting por IP+site + honeypot.
+  // Se aplica solo a envíos reales (no a pasos intermedios sin finalSubmit) para no
+  // estrangular la navegación legítima de funnels multi-paso. Va ANTES de crear
+  // contactos, disparar automatizaciones o enviar eventos a CAPI.
+  const isCountedPublicSubmit = normalizeBoolean(
+    body.finalSubmit ||
+    body.final_submit ||
+    body.meta?.formFinalSubmit ||
+    body.meta?.form_final_submit
+  ) || site.siteType !== 'standard_form'
+  if (isCountedPublicSubmit) {
+    // Honeypot: si un bot llenó el campo señuelo, descartar en silencio fingiendo éxito.
+    if (isPublicSubmitHoneypotTriggered(body)) {
+      logger.warn(`Submit público descartado por honeypot (site ${site.id}, ip ${getClientIp(req)})`)
+      return {
+        submissionId: null,
+        siteId: site.id,
+        contactId: null,
+        status: 'ok',
+        message: '',
+        redirectUrl: '',
+        rules: {},
+        rawFields: {},
+        mappedFields: {},
+        derivedFields: {},
+        capi: { sent: false, reason: 'honeypot' }
+      }
+    }
+    enforcePublicSubmitRateLimit(req, site.id)
   }
 
   site.domain = domainResolution.domain || host

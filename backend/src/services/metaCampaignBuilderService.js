@@ -728,7 +728,11 @@ export async function getMetaCampaignBuilderCapabilities() {
       serverLabel: 'meta_ads',
       executionEnabled: MCP_EXECUTION_ENABLED,
       hasAuthorization: Boolean(MCP_AUTHORIZATION_TOKEN),
-      status: MCP_EXECUTION_ENABLED && MCP_AUTHORIZATION_TOKEN ? 'ready' : 'preview_only'
+      // (META-002) El adaptador de ejecución real aún no existe: aunque haya env
+      // MCP, hoy la función es siempre preview/beta. Lo exponemos para que la UI
+      // muestre el badge "beta / solo preview" y no prometa crear campañas reales.
+      previewOnly: true,
+      status: 'preview_only'
     },
     connection: configSnapshot,
     templates: templates.map(template => ({
@@ -947,7 +951,11 @@ export async function executeMetaCampaignDraft(draftId, { dryRun = false, confir
   }
 
   if (!MCP_EXECUTION_ENABLED || !MCP_AUTHORIZATION_TOKEN) {
-    const message = 'El builder ya armó y validó el payload, pero la ejecución real por MCP todavía no está conectada en este entorno.'
+    // (META-002) Decisión de producto: mientras no exista el adaptador real de
+    // ejecución, el Campaign Builder es PREVIEW/BETA. No simulamos creación:
+    // devolvemos explícitamente previewOnly=true para que UI/producto no prometan
+    // que la campaña se creó en Meta.
+    const message = 'Campaign Builder está en modo PREVIEW (beta): el builder arma y valida el payload, pero todavía NO crea campañas reales en Meta en este entorno. Ningún anuncio se publicó ni se generó gasto.'
 
     await logCampaignBuilderStep({
       draftId,
@@ -958,7 +966,8 @@ export async function executeMetaCampaignDraft(draftId, { dryRun = false, confir
       responsePayload: {
         mcpServerUrl: META_ADS_MCP_SERVER_URL,
         executionEnabled: MCP_EXECUTION_ENABLED,
-        hasAuthorization: Boolean(MCP_AUTHORIZATION_TOKEN)
+        hasAuthorization: Boolean(MCP_AUTHORIZATION_TOKEN),
+        previewOnly: true // (META-002)
       },
       errorMessage: message
     })
@@ -974,13 +983,17 @@ export async function executeMetaCampaignDraft(draftId, { dryRun = false, confir
     return {
       ok: false,
       status: 'mcp_not_connected',
+      previewOnly: true, // (META-002) la función es beta hasta tener adaptador real
       message,
       draft,
       mcp: draft.payload?.mcp || null
     }
   }
 
-  const message = 'Adaptador MCP listo para conectarse: falta enlazar el runtime que ejecuta tools remotas de Meta Ads con aprobación humana.'
+  // (META-002) Aun con env MCP presentes, el runtime que ejecuta las tools reales
+  // (create_campaign/create_ad_set/create_ad con subida de media y object_story_spec)
+  // todavía no está implementado. No fingimos éxito: reportamos beta.
+  const message = 'Campaign Builder está en modo PREVIEW (beta): el adaptador de ejecución real de Meta Ads (creación de campaña, conjunto, creativo y anuncio) aún no está conectado. Ningún anuncio se publicó ni se generó gasto.'
 
   await logCampaignBuilderStep({
     draftId,
@@ -988,6 +1001,7 @@ export async function executeMetaCampaignDraft(draftId, { dryRun = false, confir
     step: 'execute_mcp_adapter_missing',
     status: 'blocked',
     requestPayload: draft.payload?.mcp,
+    responsePayload: { previewOnly: true }, // (META-002)
     errorMessage: message
   })
 
@@ -1002,6 +1016,7 @@ export async function executeMetaCampaignDraft(draftId, { dryRun = false, confir
   return {
     ok: false,
     status: 'adapter_missing',
+    previewOnly: true, // (META-002) la función es beta hasta tener adaptador real
     message,
     draft,
     mcp: draft.payload?.mcp || null

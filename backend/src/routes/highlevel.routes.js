@@ -40,6 +40,7 @@ import {
   getUsersByIds
 } from '../controllers/highlevelController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireAdmin } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 
@@ -50,7 +51,9 @@ router.post('/test', testConnection) // Alias para compatibilidad
 router.post('/config', saveConfig)
 router.get('/config', getConfig)
 router.delete('/config', deleteConfig)
-router.get('/config/reveal/api_token', revealToken)
+// (GHL-001) Revelar el token maestro de HighLevel queda restringido a admin
+// (antes cualquier usuario autenticado podía obtenerlo) y se audita en el controlador.
+router.get('/config/reveal/api_token', requireAdmin, revealToken)
 router.get('/integration-status', getIntegrationStatus)
 router.post('/refresh-location', refreshLocationData)
 router.post('/sync', syncData)

@@ -38,7 +38,10 @@ router.use(requireModuleAccess('contacts'))
 
 // Rutas principales
 router.get('/', getContacts)
-router.get('/chats', getChatContacts)
+// (ACL-001) /chats es un endpoint de Chat, no de Contactos. Además del gate de
+// 'contacts' a nivel de router, exigimos el módulo 'chat' para que un empleado con
+// chat:'none' (aunque tenga contacts:'read') quede bloqueado también por API directa.
+router.get('/chats', requireModuleAccess('chat'), getChatContacts)
 router.get('/search', searchContacts)
 router.get('/stats', getContactStats)
 router.get('/chart', getContactsChart)

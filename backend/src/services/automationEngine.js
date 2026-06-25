@@ -2902,6 +2902,15 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
 
     const edge = edgesFrom(flow, node.id, result.handle)[0] || (node.type === 'start' ? edgesFrom(flow, node.id)[0] : null)
     if (!edge) {
+      // (AUTO-001) Si el paso se omitió (tipo no soportado por el motor) pero sí tiene
+      // salidas conectadas por otros handles (p.ej. un aleatorizador con ramas a/b), NO
+      // terminamos el flujo en silencio como si hubiera concluido: marcamos error para
+      // que sea visible que un paso ramificado no soportado cortó el flujo.
+      if (result.skipped && edgesFrom(flow, node.id).length > 0) {
+        enrollment.status = 'exited'
+        addLog(enrollment, { nodeId: node.id, label: nodeLabel(node), status: 'error', detail: 'Paso no soportado con ramas conectadas: el flujo no puede continuar' })
+        break
+      }
       enrollment.status = 'completed'
       addLog(enrollment, { nodeId: node.id, label: nodeLabel(node), status: 'ok', detail: 'Fin del flujo' })
       break

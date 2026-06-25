@@ -1220,7 +1220,10 @@ async function syncHighLevelAppointments(locationId, apiToken) {
         ghlAppointmentId: normalized.id,
         calendarId: localCalendar?.id || normalized.calendarId,
         locationId,
-        syncStatus: 'synced'
+        syncStatus: 'synced',
+        // (GHL-003) Pull horario de HL: aplicar last-write-wins para no pisar ediciones
+        // locales recientes ni revivir citas borradas en Ristak con datos viejos de HL.
+        lastWriteWins: true
       })
 
       // Actualizar appointment_date del contacto con la fecha de la cita más próxima

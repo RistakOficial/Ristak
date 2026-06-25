@@ -533,6 +533,17 @@ function shouldFallbackToQrAfterTemplateError(error) {
   return /WhatsApp[_\s-]*API no está conectado|WhatsApp Business no está conectado|Falta el número emisor|restricción|límite|limit|quality|sender|from|phone number|business account/i.test(text)
 }
 
+// (APT-003) Al reprogramar una cita (cambia start_time) hay que olvidar los envíos ya
+// registrados para que el cron vuelva a calcular y reenviar el recordatorio en la nueva
+// fecha. La llave de dedup es (reminder_id|appointment_id) y no incluye start_time, así que
+// sin esto un recordatorio ya 'sent' nunca se recalcularía para la hora nueva.
+export async function clearAppointmentReminderSends(appointmentId) {
+  const id = cleanString(appointmentId)
+  if (!id) return 0
+  const res = await db.run('DELETE FROM appointment_reminder_sends WHERE appointment_id = ?', [id])
+  return Number(res?.changes || 0)
+}
+
 async function recordSend({ reminder, appointment, status, sendAt, sentMessageId = '', errorMessage = '' }) {
   await db.run(`
     INSERT INTO appointment_reminder_sends (
@@ -544,6 +555,40 @@ async function recordSend({ reminder, appointment, status, sendAt, sentMessageId
     status, reminder.messageType, reminder.aiEnabled ? 1 : 0,
     cleanString(sentMessageId) || null, cleanString(errorMessage) || null,
     sendAt ? sendAt.toISO() : null, status === 'sent' ? nowIso() : null
+  ])
+}
+
+// (NOTI-002/CRON-003) Claim atómico ANTES de enviar el WhatsApp. Insertamos la fila en
+// estado 'sending' aprovechando el UNIQUE(reminder_id, appointment_id); si otra instancia
+// ya la insertó, el ON CONFLICT DO NOTHING deja changes=0 y NO enviamos (evita doble
+// mensaje al cliente). Solo el proceso que gana el claim (changes>0) procede a enviar.
+async function claimSend({ reminder, appointment, sendAt }) {
+  const res = await db.run(`
+    INSERT INTO appointment_reminder_sends (
+      id, reminder_id, appointment_id, contact_id, status, message_type,
+      ai_enabled, sent_message_id, error_message, send_at, sent_at
+    ) VALUES (?, ?, ?, ?, 'sending', ?, ?, NULL, NULL, ?, NULL)
+    ON CONFLICT (reminder_id, appointment_id) DO NOTHING
+  `, [
+    createSendId(), reminder.id, appointment.id, cleanString(appointment.contact_id) || null,
+    reminder.messageType, reminder.aiEnabled ? 1 : 0,
+    sendAt ? sendAt.toISO() : null
+  ])
+  return Number(res?.changes || 0) > 0
+}
+
+// (NOTI-002/CRON-003) Marca el resultado final del envío sobre la fila ya reclamada.
+async function finalizeSend({ reminder, appointment, status, sentMessageId = '', errorMessage = '' }) {
+  await db.run(`
+    UPDATE appointment_reminder_sends
+    SET status = ?,
+        sent_message_id = ?,
+        error_message = ?,
+        sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END
+    WHERE reminder_id = ? AND appointment_id = ?
+  `, [
+    status, cleanString(sentMessageId) || null, cleanString(errorMessage) || null,
+    status, nowIso(), reminder.id, appointment.id
   ])
 }
 
@@ -593,10 +638,17 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
       const sendAt = computeReminderSendAt(appointment.start_time, reminder, timezone)
       if (!sendAt || sendAt > now) continue
 
+      // (NOTI-002/CRON-003) Reclamar ANTES de enviar. Si otra instancia ya reclamó este
+      // par (reminder, cita) no enviamos para evitar el doble mensaje al cliente.
+      const claimed = await claimSend({ reminder, appointment, sendAt })
+      if (!claimed) {
+        alreadyHandled.add(`${reminder.id}|${appointment.id}`)
+        continue
+      }
       alreadyHandled.add(`${reminder.id}|${appointment.id}`)
 
       if (now.toMillis() - sendAt.toMillis() > SEND_GRACE_MS) {
-        await recordSend({ reminder, appointment, status: 'skipped', sendAt, errorMessage: 'Fuera de la ventana de envío' })
+        await finalizeSend({ reminder, appointment, status: 'skipped', errorMessage: 'Fuera de la ventana de envío' })
         skipped += 1
         continue
       }
@@ -661,12 +713,12 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
           }
         }
 
-        await recordSend({ reminder, appointment, status: 'sent', sendAt, sentMessageId: response?.id || '' })
+        await finalizeSend({ reminder, appointment, status: 'sent', sentMessageId: response?.id || '' })
         sent += 1
         const transport = response?.transport === 'qr' ? 'QR' : 'WhatsApp API'
         logger.info(`[Citas] Mensaje automático "${reminder.name}" enviado por ${transport} a ${appointment.phone} (cita ${appointment.id})`)
       } catch (error) {
-        await recordSend({ reminder, appointment, status: 'error', sendAt, errorMessage: error.message })
+        await finalizeSend({ reminder, appointment, status: 'error', errorMessage: error.message })
         errors += 1
         logger.warn(`[Citas] Falló mensaje automático "${reminder.name}" para la cita ${appointment.id}: ${error.message}`)
       }

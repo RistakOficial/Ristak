@@ -6,6 +6,8 @@ import {
   containsPattern,
   textFoldExpression
 } from '../utils/searchText.js'
+// (ACL-002) Excluir contactos ocultos también en la búsqueda global.
+import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
 const CATEGORY_LIMIT = 6
 const INACTIVE_APPOINTMENT_STATUSES = [
@@ -93,6 +95,13 @@ export const globalSearch = async (req, res) => {
     })
     const basicContactSearchClause = buildContactSearchClause('c', rawQuery)
 
+    // (ACL-002) Condición para excluir contactos ocultos. Se aplica a la categoría
+    // de contactos y a las filas de citas/pagos que exponen PII del contacto vía JOIN.
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenContactCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    const hiddenAnd = hiddenContactCondition ? ` AND ${hiddenContactCondition}` : ''
+    const hiddenOrExclude = hiddenContactCondition ? ` AND ${hiddenContactCondition}` : ''
+
     const [
       contacts,
       appointments,
@@ -120,7 +129,7 @@ export const globalSearch = async (req, res) => {
               AND ${ACTIVE_APPOINTMENT_CONDITION}
           ) AS has_appointments
         FROM contacts c
-        WHERE ${contactSearchClause.condition}
+        WHERE ${contactSearchClause.condition}${hiddenAnd}
         ORDER BY ${contactSearchRank.expression} DESC, c.created_at DESC
         LIMIT ?`,
         [...contactSearchClause.params, ...contactSearchRank.params, CATEGORY_LIMIT]
@@ -143,11 +152,11 @@ export const globalSearch = async (req, res) => {
         FROM appointments a
         LEFT JOIN contacts c ON c.id = a.contact_id
         WHERE
-          ${textFoldExpression('a.title')} LIKE ? OR
+          (${textFoldExpression('a.title')} LIKE ? OR
           ${textFoldExpression('a.status')} LIKE ? OR
           ${textFoldExpression('a.appointment_status')} LIKE ? OR
           ${basicContactSearchClause.condition} OR
-          CAST(a.start_time AS TEXT) LIKE ?
+          CAST(a.start_time AS TEXT) LIKE ?)${hiddenOrExclude}
         ORDER BY a.start_time DESC
         LIMIT ?`,
         [foldedLike, foldedLike, foldedLike, ...basicContactSearchClause.params, like, CATEGORY_LIMIT]
@@ -171,13 +180,13 @@ export const globalSearch = async (req, res) => {
         FROM payments p
         LEFT JOIN contacts c ON c.id = p.contact_id
         WHERE
-          ${basicContactSearchClause.condition} OR
+          (${basicContactSearchClause.condition} OR
           ${textFoldExpression('p.status')} LIKE ? OR
           ${textFoldExpression('p.payment_method')} LIKE ? OR
           ${textFoldExpression('p.reference')} LIKE ? OR
           ${textFoldExpression('p.description')} LIKE ? OR
           CAST(p.amount AS TEXT) LIKE ? OR
-          CAST(p.date AS TEXT) LIKE ?
+          CAST(p.date AS TEXT) LIKE ?)${hiddenOrExclude}
         ORDER BY p.date DESC, p.created_at DESC, p.id DESC
         LIMIT ?`,
         [...basicContactSearchClause.params, foldedLike, foldedLike, foldedLike, foldedLike, like, like, CATEGORY_LIMIT]

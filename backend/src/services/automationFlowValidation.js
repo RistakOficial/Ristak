@@ -16,6 +16,57 @@ const DRIP_INTERVAL_UNITS = new Set(['minutes', 'hours', 'days'])
 
 // Únicos canales conversacionales soportados (sin SMS ni Email)
 export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram']
+
+// (AUTO-001) Tipos de paso que el motor (executeNode en automationEngine.js) sabe
+// ejecutar. Cualquier otro cae en el `default` del motor y se omite en silencio,
+// cortando el flujo (sobre todo en nodos ramificados como el aleatorizador). Por eso
+// bloqueamos la publicación de flujos con pasos que el motor no ejecuta.
+// IMPORTANTE: mantener en sync con el switch de executeNode.
+const EXECUTABLE_NODE_TYPES = new Set([
+  START_NODE_TYPE,
+  'channel-whatsapp',
+  'channel-email',
+  'logic-wait',
+  'logic-drip',
+  'logic-condition',
+  'logic-goal',
+  'action-create-contact',
+  'action-find-contact',
+  'action-change-whatsapp-number',
+  'action-webhook',
+  'action-contact-tag',
+  'action-add-contact-tag',
+  'action-remove-contact-tag',
+  'action-contact-user',
+  'action-assign-user',
+  'action-unassign-user',
+  'action-system-notification'
+])
+
+// (AUTO-002) Disparadores que el motor (triggerMatches en automationEngine.js)
+// realmente reconoce y que algún controlador emite. Los disparadores de comentarios
+// de Facebook/Instagram, clic en anuncio y Click-to-WhatsApp NO tienen caso ni emisor,
+// por lo que una automatización con ellos nunca correría: se bloquea su publicación.
+// IMPORTANTE: mantener en sync con triggerMatches.
+const SUPPORTED_TRIGGER_TYPES = new Set([
+  'trigger-whatsapp-message',
+  'trigger-instagram-message',
+  'trigger-messenger-message',
+  'trigger-email-message',
+  'trigger-customer-replied',
+  'trigger-contact-created',
+  'trigger-contact-updated',
+  'trigger-contact-tag',
+  'trigger-form-submitted',
+  'trigger-scheduler',
+  'trigger-appointment-booked',
+  'trigger-appointment-status',
+  'trigger-payment-received',
+  'trigger-refund',
+  'trigger-incoming-webhook',
+  'trigger-activation-link',
+  'trigger-link-clicked'
+])
 const CHANNEL_CONFIG_KEYS = ['channel', 'replyChannel', 'conversationChannel', 'actionChannel']
 
 function asArray(value) {
@@ -201,6 +252,33 @@ export function validateFlowForPublish(flow) {
   )
   if (brokenEdge) {
     errors.push('Hay conexiones que apuntan a pasos que ya no existen')
+  }
+
+  // (AUTO-001) Rechazar pasos que el motor no sabe ejecutar (caerían en `default` y
+  // cortarían el flujo en silencio). Se excluye el nodo `start` (estructural) que ya
+  // está en la allowlist.
+  const unsupportedNodeTypes = new Set()
+  nodes.forEach((node) => {
+    const type = String(node.type || '')
+    if (type && !EXECUTABLE_NODE_TYPES.has(type)) unsupportedNodeTypes.add(type)
+  })
+  if (unsupportedNodeTypes.size > 0) {
+    errors.push(
+      `Hay pasos que aún no se pueden ejecutar y cortarían el flujo (${[...unsupportedNodeTypes].join(', ')}): quítalos antes de publicar`
+    )
+  }
+
+  // (AUTO-002) Rechazar disparadores sin evento real (comentarios FB/IG, clic en
+  // anuncio, Click-to-WhatsApp): la automatización nunca correría.
+  const unsupportedTriggerTypes = new Set()
+  triggers.forEach((trigger) => {
+    const type = String(trigger?.type || '')
+    if (type && !SUPPORTED_TRIGGER_TYPES.has(type)) unsupportedTriggerTypes.add(type)
+  })
+  if (unsupportedTriggerTypes.size > 0) {
+    errors.push(
+      `Hay disparadores que todavía no están disponibles y nunca activarían la automatización (${[...unsupportedTriggerTypes].join(', ')}): elige otro disparador`
+    )
   }
 
   nodes

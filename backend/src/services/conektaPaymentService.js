@@ -365,7 +365,7 @@ function getConektaAuthHeaders(config) {
   }
 }
 
-async function conektaApiRequest(path, { method = 'GET', body = null, config: providedConfig = null } = {}) {
+async function conektaApiRequest(path, { method = 'GET', body = null, config: providedConfig = null, idempotencyKey = null } = {}) {
   const config = providedConfig || await getConektaPaymentConfig({ includeSecrets: true })
   if (!config.configured || !config.privateKey) {
     const error = new Error('Conekta no está configurado todavía. Guarda las llaves primero.')
@@ -373,9 +373,18 @@ async function conektaApiRequest(path, { method = 'GET', body = null, config: pr
     throw error
   }
 
+  // (PAY2-001 / CRON-001) Idempotency-Key estable para cobros: si dos ejecuciones
+  // concurrentes alcanzan a llamar /orders para la misma parcialidad, Conekta dedupe
+  // por esta clave y NO genera un segundo cargo a la tarjeta.
+  const headers = getConektaAuthHeaders(config)
+  const cleanIdempotencyKey = cleanString(idempotencyKey)
+  if (cleanIdempotencyKey) {
+    headers['Idempotency-Key'] = cleanIdempotencyKey
+  }
+
   const response = await conektaFetch()(`${CONEKTA_API_BASE}${path}`, {
     method,
-    headers: getConektaAuthHeaders(config),
+    headers,
     ...(body ? { body: JSON.stringify(body) } : {})
   })
   const payload = await response.json().catch(() => ({}))
@@ -783,7 +792,10 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
 async function createOrderForPayment(row, options = {}) {
   const { payload, config } = await conektaApiRequest('/orders', {
     method: 'POST',
-    body: buildOrderPayload(row, options)
+    body: buildOrderPayload(row, options),
+    // (PAY2-001 / CRON-001) Propagamos la clave de idempotencia (cuando se provee)
+    // hacia el POST /orders para evitar doble cobro en cobros automáticos.
+    idempotencyKey: options.idempotencyKey || null
   })
   const updated = await updatePaymentFromOrder(payload, row, options)
   return { order: payload, payment: updated, config }
@@ -1517,9 +1529,14 @@ async function chargeConektaPaymentRowWithSavedSource({
 
   try {
     const latest = await findPaymentById(row.id)
+    // (PAY2-001 / CRON-001) Clave de idempotencia estable derivada de la identidad de
+    // la parcialidad/primer pago (installment_id cuando existe, si no el payment id).
+    // Garantiza que reintentos o ejecuciones solapadas del cron NO cobren dos veces.
+    const idempotencySeed = cleanString(extraMetadata?.ristak_installment_id) || row.id
     const result = await createOrderForPayment(latest, {
       paymentSourceId: savedSource.conekta_payment_source_id,
-      customerId: savedSource.conekta_customer_id
+      customerId: savedSource.conekta_customer_id,
+      idempotencyKey: `ristak_conekta_charge_${idempotencySeed}`
     })
     await syncConektaPlanFromPayment(result.payment, savedSource, result.config)
     return result.payment || await findPaymentById(row.id)
@@ -1930,18 +1947,27 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
   for (const row of firstPaymentRows || []) {
     touchedFlowIds.add(row.flow_id)
     try {
+      // (PAY2-001 / CRON-001) Claim atómico ANTES de cobrar el primer pago programado:
+      // solo cobramos si ganamos la transición a 'processing'. Replica el filtro del
+      // SELECT (pending/scheduled, o processing-pero-stale) dentro del UPDATE para
+      // evitar el doble cobro ante ejecuciones concurrentes (solape de deploy/trigger).
+      const claim = await db.run(
+        `UPDATE payment_flows
+         SET first_payment_status = 'processing',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentSql}))`,
+        [row.flow_id]
+      )
+      if (!(Number(claim?.changes || 0) > 0)) {
+        // Otra ejecución ya reclamó este primer pago; lo saltamos sin cobrar.
+        continue
+      }
+
       const savedSource = await resolveConektaSavedSource(row.contact_id, row.conekta_payment_source_id, config)
       if (!savedSource) {
         throw new Error('No encontramos la tarjeta guardada para el primer pago programado.')
       }
-
-      await db.run(
-        `UPDATE payment_flows
-         SET first_payment_status = 'processing',
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [row.flow_id]
-      )
 
       const charged = await chargeConektaPaymentRowWithSavedSource({
         paymentId: row.payment_id,
@@ -1977,18 +2003,27 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
   for (const row of rows || []) {
     touchedFlowIds.add(row.flow_id)
     try {
+      // (PAY2-001 / CRON-001) Claim atómico ANTES de cobrar: solo procesamos esta
+      // parcialidad si ganamos la transición a 'processing'. Replica el filtro del
+      // SELECT (scheduled, o processing-pero-stale) dentro del UPDATE para que dos
+      // ejecuciones concurrentes no cobren la misma parcialidad dos veces.
+      const claim = await db.run(
+        `UPDATE installment_payments
+         SET status = 'processing',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentSql}))`,
+        [row.installment_id]
+      )
+      if (!(Number(claim?.changes || 0) > 0)) {
+        // Otra ejecución ya reclamó esta parcialidad; la saltamos sin cobrar.
+        continue
+      }
+
       const savedSource = await resolveConektaSavedSource(row.contact_id, row.conekta_payment_source_id, config)
       if (!savedSource) {
         throw new Error('No encontramos la tarjeta guardada para esta parcialidad.')
       }
-
-      await db.run(
-        `UPDATE installment_payments
-         SET status = 'processing',
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [row.installment_id]
-      )
 
       const charged = await chargeConektaPaymentRowWithSavedSource({
         paymentId: row.payment_id,

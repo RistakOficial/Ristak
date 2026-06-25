@@ -1,4 +1,6 @@
 import { db, getAppConfig } from '../config/database.js'
+// (MOB-002 / NOTI-004) Reutilizamos el mismo filtro de contactos ocultos que los listados
+import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
 export const NOTIFICATION_PREFERENCES_CONFIG_KEY = 'notification_preferences_matrix'
 
@@ -136,5 +138,40 @@ export async function resolvePushNotificationTargetForEvent(eventKey = '') {
   return {
     configured: true,
     userIds: uniqueValues([...adminUserIds, ...explicitUserIds])
+  }
+}
+
+// (MOB-002 / NOTI-004) Determina si un contacto coincide con algún filtro de "contactos ocultos".
+// El push de chat re-exponía nombre + mensaje de contactos ocultos en la pantalla de bloqueo;
+// antes de enviar verificamos visibilidad reutilizando la misma condición SQL de los listados.
+// Fail-safe: ante error o datos faltantes asumimos OCULTO (no enviar) para no filtrar datos sensibles.
+export async function isContactHiddenFromNotifications(contactId = '') {
+  const normalizedContactId = String(contactId || '').trim()
+  if (!normalizedContactId) {
+    // Sin contacto no podemos verificar visibilidad: tratamos como oculto para no arriesgar fuga.
+    return true
+  }
+
+  try {
+    const filters = await getHiddenContactFilters()
+    if (!Array.isArray(filters) || filters.length === 0) {
+      return false
+    }
+
+    // buildHiddenContactsCondition devuelve "NOT (...)" que deja pasar SOLO los visibles.
+    const visibleCondition = buildHiddenContactsCondition(filters, 'c', false)
+    if (!visibleCondition) {
+      return false
+    }
+
+    const row = await db.get(
+      `SELECT c.id FROM contacts c WHERE c.id = ? AND ${visibleCondition}`,
+      [normalizedContactId]
+    )
+    // Si la query (que ya excluye ocultos) no devuelve la fila, el contacto está oculto.
+    return !row
+  } catch (error) {
+    // Ante cualquier error de DB preferimos no enviar el push de un contacto potencialmente oculto.
+    return true
   }
 }
