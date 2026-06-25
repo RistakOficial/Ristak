@@ -890,9 +890,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           resolvedInitialContact.phone
         : '';
 
+      // (APT-008) El estado inicial respeta el autoConfirm del calendario: si la
+      // auto-confirmación está apagada, la cita nueva arranca 'pending' (pendiente),
+      // no 'confirmed'. Si no se sabe el calendario, se conserva el default 'confirmed'.
+      const effectiveCalendar = calendar || calendars?.find(c => c.id === selectedCalendarId) || null
+      const initialStatus = effectiveCalendar?.autoConfirm === false ? 'pending' : 'confirmed'
+
       setFormData({
         title: defaultTitle || initialContactName || '',
-        appointmentStatus: 'confirmed', // Estado predeterminado: Confirmada
+        appointmentStatus: initialStatus, // (APT-008) según autoConfirm del calendario
         startTime: defaultStart ? toLocalInputValue(defaultStart, defaultTimeZone || accountTimezone) : '',
         endTime: defaultEnd ? toLocalInputValue(defaultEnd, defaultTimeZone || accountTimezone) : '',
         notes: '',
