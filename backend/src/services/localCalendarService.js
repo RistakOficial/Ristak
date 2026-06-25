@@ -3090,7 +3090,67 @@ export async function checkSlotAvailability(calendarId, startTime, endTime, opti
     )
   }).length
 
+  // (APT-004) Bloqueos de horario nativos: si el slot cae sobre un horario bloqueado,
+  // no está disponible (igual que una cita), aunque no haya HighLevel.
+  const blockedOverlaps = await getOverlappingLocalBlockedSlots(calendarId, slotStartMs, slotEndMs)
+  if (blockedOverlaps.length > 0) {
+    return { available: false, limit, overlapping, blocked: true }
+  }
+
   return { available: overlapping < limit, limit, overlapping }
+}
+
+// (APT-004) Bloqueos de horario NATIVOS (calendarios Ristak/Google, no solo HighLevel).
+async function getOverlappingLocalBlockedSlots(calendarId, slotStartMs, slotEndMs) {
+  if (!Number.isFinite(slotStartMs) || !Number.isFinite(slotEndMs)) return []
+  let rows = []
+  try {
+    rows = await db.all(
+      `SELECT id, start_time, end_time FROM blocked_slots WHERE calendar_id = ? OR calendar_id IS NULL`,
+      [calendarId]
+    )
+  } catch (error) {
+    // Fail-open: si la tabla aún no existe (migración pendiente), no bloquear el agendado.
+    return []
+  }
+  return rows.filter(b => overlaps(
+    slotStartMs,
+    slotEndMs,
+    new Date(b.start_time).getTime(),
+    new Date(b.end_time || b.start_time).getTime()
+  ))
+}
+
+export async function createLocalBlockedSlot({ calendarId = null, startTime, endTime, title = null } = {}) {
+  const zone = await getAccountTimezone()
+  const startIso = normalizeToUtcIso(startTime, zone)
+  const endIso = normalizeToUtcIso(endTime || startTime, zone)
+  if (!startIso || !endIso) throw new Error('Horario de bloqueo inválido')
+  const id = makeId('rstk_block')
+  await db.run(
+    `INSERT INTO blocked_slots (id, calendar_id, start_time, end_time, title) VALUES (?, ?, ?, ?, ?)`,
+    [id, calendarId ? cleanString(calendarId) : null, startIso, endIso, title ? cleanString(title) : null]
+  )
+  return { id, calendarId: calendarId || null, startTime: startIso, endTime: endIso, title: title || null }
+}
+
+export async function listLocalBlockedSlots({ calendarId = null, startTime = null, endTime = null } = {}) {
+  const conditions = []
+  const params = []
+  if (calendarId) { conditions.push('(calendar_id = ? OR calendar_id IS NULL)'); params.push(cleanString(calendarId)) }
+  if (startTime) { conditions.push('end_time >= ?'); params.push(startTime) }
+  if (endTime) { conditions.push('start_time <= ?'); params.push(endTime) }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  return db.all(
+    `SELECT id, calendar_id AS "calendarId", start_time AS "startTime", end_time AS "endTime", title
+     FROM blocked_slots ${where} ORDER BY start_time ASC`,
+    params
+  )
+}
+
+export async function deleteLocalBlockedSlot(id) {
+  const result = await db.run('DELETE FROM blocked_slots WHERE id = ?', [cleanString(id)])
+  return result.changes > 0
 }
 
 export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone, options = {}) {

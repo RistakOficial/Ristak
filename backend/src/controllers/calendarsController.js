@@ -1399,7 +1399,21 @@ export async function getBlockedSlots(req, res) {
     const { startTime, endTime } = req.query;
     const { locationId, accessToken } = await getHighLevelContext(req);
 
-    if (!locationId || !startTime || !endTime || !accessToken) {
+    // (APT-004) Sin HighLevel: devolver los bloqueos NATIVOS guardados localmente.
+    if (!accessToken) {
+      const toIso = (epoch) => {
+        const n = parseInt(epoch, 10);
+        return Number.isFinite(n) ? new Date(n).toISOString() : null;
+      };
+      const data = await localCalendarService.listLocalBlockedSlots({
+        calendarId,
+        startTime: startTime ? toIso(startTime) : null,
+        endTime: endTime ? toIso(endTime) : null
+      });
+      return res.json({ success: true, data });
+    }
+
+    if (!locationId || !startTime || !endTime) {
       return res.json({
         success: true,
         data: []
@@ -1452,11 +1466,21 @@ export async function createBlockedSlot(req, res) {
   try {
     const { accessToken, locationId, ...blockData } = req.body;
 
+    // (APT-004) Sin HighLevel: crear un bloqueo NATIVO (calendarios Ristak/Google).
+    // Se respeta en checkSlotAvailability para impedir agendar sobre ese horario.
     if (!accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
+      const startTime = blockData.startTime || blockData.start_time || blockData.startTimeUtc;
+      const endTime = blockData.endTime || blockData.end_time || blockData.endTimeUtc;
+      if (!startTime || !endTime) {
+        return res.status(400).json({ success: false, error: 'Se requiere startTime y endTime para el bloqueo' });
+      }
+      const blockedSlot = await localCalendarService.createLocalBlockedSlot({
+        calendarId: blockData.calendarId || blockData.calendar_id || req.params.calendarId || null,
+        startTime,
+        endTime,
+        title: blockData.title || blockData.reason || blockData.name || null
       });
+      return res.status(201).json({ success: true, data: blockedSlot });
     }
 
     if (!locationId) {
