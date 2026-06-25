@@ -240,10 +240,11 @@ export interface SiteTheme {
   formFieldPaddingY?: number
   formFieldWidth?: number
   formContentAlign?: 'left' | 'center' | 'right'
-  formChoiceStyle?: 'native' | 'cards' | 'pills' | 'minimal'
+  formChoiceStyle?: 'native' | 'cards' | 'pills' | 'minimal' | 'grid' | 'button' | 'check' | 'segmented'
   formChoiceSelectedBg?: string
   formChoiceSelectedBorder?: string
-  formSelectStyle?: 'classic' | 'filled' | 'underline'
+  formSelectStyle?: 'classic' | 'filled' | 'underline' | 'soft'
+  formInputStyle?: 'box' | 'underline' | 'filled' | 'soft'
   finalMessages?: {
     success?: string
     disqualified?: string

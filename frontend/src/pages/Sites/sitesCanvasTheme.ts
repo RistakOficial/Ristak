@@ -418,12 +418,17 @@ const sanitizeCssFont = (value?: string) => normalizeSiteFontFamily(value)
 
 const normalizeFormChoiceStyle = (value: unknown) => {
   const raw = String(value || '').trim()
-  return ['native', 'cards', 'pills', 'minimal'].includes(raw) ? raw : 'native'
+  return ['native', 'cards', 'pills', 'minimal', 'grid', 'button', 'check', 'segmented'].includes(raw) ? raw : 'native'
 }
 
 const normalizeFormSelectStyle = (value: unknown) => {
   const raw = String(value || '').trim()
-  return ['classic', 'filled', 'underline'].includes(raw) ? raw : 'classic'
+  return ['classic', 'filled', 'underline', 'soft'].includes(raw) ? raw : 'classic'
+}
+
+const normalizeFormInputStyle = (value: unknown) => {
+  const raw = String(value || '').trim()
+  return ['box', 'underline', 'filled', 'soft'].includes(raw) ? raw : 'box'
 }
 
 const normalizeButtonAlign = (value: unknown) => {
@@ -598,7 +603,8 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
 	    textPaint && isCssGradient(textPaint) ? 'rstkPageTextGradient' : '',
 	    site.siteType === 'interactive_form' ? 'rstk-interactive' : '',
 	    `rstk-choice-${normalizeFormChoiceStyle(theme.formChoiceStyle)}`,
-	    `rstk-select-${normalizeFormSelectStyle(theme.formSelectStyle)}`
+	    `rstk-select-${normalizeFormSelectStyle(theme.formSelectStyle)}`,
+	    `rstk-input-${normalizeFormInputStyle(theme.formInputStyle)}`
 	  ].filter(Boolean).join(' ')
 
   const desktopChromePadding = isLandingType ? 48 : 32
