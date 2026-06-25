@@ -7296,12 +7296,28 @@ function FormEmbedEditorPanel({
 
   const formElementDesignContent = isSubmitSelected ? (
     <FormSubmitGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-  ) : activeField && activeBlockIsField ? (
+  ) : activeField ? (
     <>
-      <FormTypographyGlobalControls site={site} title="Tipografía de campos" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-      <FormFieldGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-      {isChoiceBlock(activeField.blockType) && (
-        <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      {/* Mismo inspector por-elemento que el formulario standalone: alineación de 4
+          botones, color, ancho de texto, contorno y caja del campo, por elemento.
+          mode='design' cuando la tipografía ya vive en el popover (títulos/subtítulos);
+          mode='all' (incluye tipografía + alineación) para campos y perfil de red social. */}
+      <InlineBlockStyleControls
+        site={site}
+        block={activeField}
+        blocks={fields}
+        mode={showActiveFieldTypographyInEdit ? 'design' : 'all'}
+        onPatchSettings={patchActiveFieldSettings}
+        onSave={onSave}
+      />
+      {activeBlockIsField && (
+        <>
+          <FormTypographyGlobalControls site={site} title="Tipografía de campos" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+          <FormFieldGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+          {isChoiceBlock(activeField.blockType) && (
+            <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+          )}
+        </>
       )}
     </>
   ) : null

@@ -1047,30 +1047,12 @@
 .rstkCanvas.rstk-kind-form .rstk-field,
 .rstkCanvas.rstk-kind-form .rstk-options,
 .rstkCanvas.rstk-kind-form .rstk-actions,
-.rstkCanvas .rstk-embedded-form > .rstk-field,
-.rstkCanvas .rstk-embedded-form > .rstk-block-style.rstk-field,
-.rstkCanvas .rstk-embedded-form > .rstk-block-style,
-.rstkCanvas .rstk-embedded-form > .rstk-options,
-.rstkCanvas .rstk-embedded-form > .rstk-actions,
-.rstkCanvas .rstk-embedded-form > .rstk-headline,
-.rstkCanvas .rstk-embedded-form > .rstk-subheading,
-.rstkCanvas .rstk-embedded-form > .rstk-text {
+.rstkCanvas .rstk-embedded-form .rstk-field,
+.rstkCanvas .rstk-embedded-form .rstk-options,
+.rstkCanvas .rstk-embedded-form .rstk-actions {
   width: min(100%, var(--rstk-form-field-width, 560px));
   justify-self: var(--rstk-form-field-justify, center);
   text-align: var(--rstk-block-align, left);
-}
-.rstkCanvas .rstk-embedded-form > .rstk-field,
-.rstkCanvas .rstk-embedded-form > .rstk-block-style > .rstk-field {
-  text-align: var(--rstk-block-align, left);
-}
-/* Perfil de red social dentro del formulario: el chip mantiene su ancho natural
-   (max-content) pero se posiciona con la alineación GLOBAL del formulario dentro de
-   su franja (izquierda = inicio de la franja, igual que el resto de los elementos). */
-.rstkCanvas .rstk-embedded-form > .rstkSocialProfileBlock.rstk-block-style {
-  width: max-content;
-  min-width: 0;
-  max-width: min(100%, var(--rstk-form-field-width, 560px));
-  justify-self: var(--rstk-form-field-justify, center);
 }
 .rstkCanvas .rstk-embedded-form > .rstk-help {
   width: min(100%, 620px);

@@ -18442,9 +18442,7 @@ const RSTK_BASE_CSS = `
   .rstk-site-panel-footer .rstk-site-panel-links{justify-content:center}
 
   .rstk-field{display:grid;gap:8px;text-align:left}
-  .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style,.rstk-embedded-form > .rstk-options,.rstk-embedded-form > .rstk-actions,.rstk-embedded-form > .rstk-headline,.rstk-embedded-form > .rstk-subheading,.rstk-embedded-form > .rstk-text{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);text-align:var(--rstk-block-align,left)}
-  .rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style > .rstk-field{text-align:var(--rstk-block-align,left)}
-  .rstk-embedded-form > .rstkSocialProfileBlock.rstk-block-style{width:max-content;min-width:0;max-width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center)}
+  .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-embedded-form .rstk-field,.rstk-embedded-form .rstk-options,.rstk-embedded-form .rstk-actions{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);text-align:var(--rstk-block-align,left)}
   .rstk-embedded-form > .rstk-help{width:min(100%,620px);justify-self:center}
   .rstk-embedded-pages,.rstk-embedded-pages [data-embedded-page-content]{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);display:grid;gap:14px}
   .rstk-block-style.rstk-field,.rstk-block-style > .rstk-field{width:min(100%,var(--rstk-field-width,100%));justify-self:center}
