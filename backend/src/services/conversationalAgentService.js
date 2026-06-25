@@ -4211,6 +4211,27 @@ export async function listConversationStates({ signal = null, statuses = null } 
   }))
 }
 
+// (AI-005) ¿Ya ocurrió hace poco una acción del agente (mismo contacto + tipo de evento)?
+// Permite que las acciones reales de envío sean idempotentes: si ya se hizo en la ventana,
+// no se repite el efecto. Fecha en formato 'YYYY-MM-DD HH:MM:SS' para comparar bien en
+// SQLite (texto) y Postgres (timestamp).
+export async function hasRecentConversationalAgentEvent({ contactId = null, eventType, withinMs = 180000 } = {}) {
+  if (!contactId || !eventType) return false
+  try {
+    const since = new Date(Date.now() - Math.max(1000, withinMs)).toISOString().slice(0, 19).replace('T', ' ')
+    const row = await db.get(
+      `SELECT id FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = ? AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [String(contactId), String(eventType), since]
+    )
+    return !!row?.id
+  } catch {
+    // Fail-open: ante cualquier problema, no bloqueamos la acción.
+    return false
+  }
+}
+
 export async function recordConversationalAgentEvent({ contactId = null, eventType, detail = null }) {
   try {
     const detailJson = detail ? JSON.stringify(detail) : null

@@ -14,6 +14,7 @@ import {
   setConversationSignal,
   setConversationStatus,
   recordConversationalAgentEvent,
+  hasRecentConversationalAgentEvent,
   applyAgentSuccessExtras,
   applyAgentCompletionAction,
   updateConversationClosingContext,
@@ -816,6 +817,21 @@ export function createConversationalTools(ctx) {
 
       const publicUrl = link.publicUrl || buildTriggerLinkPublicUrl(link, baseUrl)
       const sentUrl = buildContactTriggerLinkUrl(publicUrl, ctx.contactId)
+
+      // (AI-005) Idempotencia: si ya se envió un enlace de disparo a este contacto hace
+      // poco, no repetimos el efecto (evita que el agente lo reenvíe en bucle).
+      if (!ctx.dryRun && await hasRecentConversationalAgentEvent({ contactId: ctx.contactId, eventType: 'trigger_link_sent' })) {
+        return {
+          ok: true,
+          alreadySent: true,
+          triggerLinkId: link.id,
+          triggerLinkPublicId: link.publicId || null,
+          triggerLinkName: link.name,
+          sentUrl,
+          note: 'Ya enviaste este enlace hace poco. NO lo reenvíes salvo que el cliente lo pida explícitamente.'
+        }
+      }
+
       pushAction(ctx, 'send_trigger_link', {
         objective: config.objective,
         intencionDetectada,
