@@ -72,11 +72,13 @@ test('site calendar preview is interactive but flagged as non-booking preview', 
   assert.equal(url.searchParams.get('embed'), '1')
   assert.equal(url.searchParams.get('editor_preview'), '1')
   assert.equal(url.searchParams.get('designMode'), 'original')
-  assert.equal(url.searchParams.get('layout'), 'stacked')
+  // El selector de layout se eliminó: el bloque siempre usa el layout clásico,
+  // ignorando cualquier valor guardado (aquí 'stacked').
+  assert.equal(url.searchParams.get('layout'), 'classic')
   assert.equal(url.searchParams.get('coverImage'), '/media/calendar-cover.png')
   assert.equal(url.searchParams.get('accent'), null)
   assert.equal(url.searchParams.get('slotRadius'), null)
-  assert.match(html, /--rstk-embed-height:980px/)
+  assert.match(html, /--rstk-embed-height:760px/)
 })
 
 test('site calendar custom mode passes editable style params for live embeds', async () => {
@@ -96,10 +98,79 @@ test('site calendar custom mode passes editable style params for live embeds', a
 
   assert.equal(url.searchParams.get('editor_preview'), null)
   assert.equal(url.searchParams.get('designMode'), 'custom')
-  assert.equal(url.searchParams.get('layout'), 'compact')
+  // Layout siempre clásico aunque se guarde 'compact'.
+  assert.equal(url.searchParams.get('layout'), 'classic')
   assert.equal(url.searchParams.get('accent'), '#ff0055')
   assert.equal(url.searchParams.get('slotRadius'), '18')
   assert.equal(url.searchParams.get('fieldRadius'), '12')
+})
+
+test('site calendar custom mode forwards display toggles and font to the live embed', async () => {
+  const html = await renderPublicSiteHtml(calendarSite({
+    calendarDesignMode: 'custom',
+    calendarShowSidebar: false,
+    calendarShowDuration: false,
+    calendarFontFamily: 'serif'
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+
+  const url = getCalendarFrameUrl(html)
+  assert.equal(url.searchParams.get('designMode'), 'custom')
+  // Toggles apagados viajan como 0; los no tocados viajan encendidos (1).
+  assert.equal(url.searchParams.get('showSidebar'), '0')
+  assert.equal(url.searchParams.get('showDuration'), '0')
+  assert.equal(url.searchParams.get('showIcon'), '1')
+  assert.equal(url.searchParams.get('showConfirmation'), '1')
+  assert.equal(url.searchParams.get('allowTimezoneSelection'), '1')
+  assert.equal(url.searchParams.get('fontFamily'), 'serif')
+})
+
+test('site calendar original mode does not force display toggles or font', async () => {
+  const html = await renderPublicSiteHtml(calendarSite({
+    calendarDesignMode: 'original',
+    calendarShowSidebar: false,
+    calendarFontFamily: 'serif'
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+
+  const url = getCalendarFrameUrl(html)
+  assert.equal(url.searchParams.get('showSidebar'), null)
+  assert.equal(url.searchParams.get('fontFamily'), null)
+})
+
+test('public calendar applies per-embed display overrides from style params', () => {
+  const calendar = {
+    id: 'calendar-overrides',
+    slug: 'agenda-overrides',
+    name: 'Agenda overrides',
+    eventTitle: 'Cita demo',
+    description: 'Una descripcion',
+    slotDuration: 30,
+    eventColor: '#146FC5'
+  }
+
+  const full = renderPublicCalendarHtml(calendar, { embedded: true })
+  assert.match(full, /<section class="intro">/)
+  assert.match(full, /<h1>Agenda overrides<\/h1>/)
+
+  const hiddenSidebar = renderPublicCalendarHtml(calendar, {
+    embedded: true,
+    style: { designMode: 'custom', showSidebar: '0' }
+  })
+  assert.doesNotMatch(hiddenSidebar, /<section class="intro">/)
+
+  const hiddenName = renderPublicCalendarHtml(calendar, {
+    embedded: true,
+    style: { designMode: 'custom', showCalendarName: '0' }
+  })
+  assert.match(hiddenName, /<section class="intro">/)
+  assert.doesNotMatch(hiddenName, /<h1>Agenda overrides<\/h1>/)
 })
 
 test('public calendar carries booking completion behavior into the booking widget', () => {

@@ -1712,11 +1712,30 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   const slotRadius = useCustomStyle ? safeCssNumber(style.slotRadius, 8, 0, 32) : 8
   const fieldRadius = useCustomStyle ? safeCssNumber(style.fieldRadius, 8, 0, 32) : 8
   const layout = normalizeCalendarEmbedLayout(style.layout || bookingDisplay.layout)
-  const fontStack = getCalendarBookingFontStack(style.fontFamily || style.font_family || bookingDisplay.fontFamily)
+  // En modo "Personalizar para sitio" (custom) el bloque del sitio puede sobreescribir
+  // qué elementos se muestran (mismos toggles que en "Estilos y diseños" del calendario)
+  // y la tipografía. Si no llega override, se respeta la configuración del calendario.
+  const resolveDisplayToggle = (key, fallback) => (
+    useCustomStyle && style[key] !== undefined ? parseBoolean(style[key], fallback) : fallback
+  )
+  const overrideFontFamily = useCustomStyle ? cleanString(style.fontFamily || style.font_family) : ''
+  const effectiveBookingDisplay = {
+    ...bookingDisplay,
+    showSidebar: resolveDisplayToggle('showSidebar', bookingDisplay.showSidebar !== false),
+    showIcon: resolveDisplayToggle('showIcon', bookingDisplay.showIcon !== false),
+    showEventTitle: resolveDisplayToggle('showEventTitle', bookingDisplay.showEventTitle !== false),
+    showCalendarName: resolveDisplayToggle('showCalendarName', bookingDisplay.showCalendarName !== false),
+    showDescription: resolveDisplayToggle('showDescription', bookingDisplay.showDescription !== false),
+    showDuration: resolveDisplayToggle('showDuration', bookingDisplay.showDuration !== false),
+    showConfirmation: resolveDisplayToggle('showConfirmation', bookingDisplay.showConfirmation !== false),
+    allowTimezoneSelection: resolveDisplayToggle('allowTimezoneSelection', bookingDisplay.allowTimezoneSelection !== false),
+    fontFamily: overrideFontFamily ? normalizeCalendarBookingFontFamily(overrideFontFamily) : bookingDisplay.fontFamily
+  }
+  const fontStack = getCalendarBookingFontStack(effectiveBookingDisplay.fontFamily)
   const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
   const bookingCompletion = normalizeCalendarBookingCompletionConfig(calendar.bookingCompletion || calendar.booking_completion || {})
   const customEvents = normalizeCalendarCustomEventsConfig(calendar.customEvents || calendar.custom_events || calendar.metaEvent || calendar.meta_event || {})
-  const showSidebar = bookingDisplay.showSidebar !== false
+  const showSidebar = effectiveBookingDisplay.showSidebar !== false
   const payload = {
     slug,
     name: calendar.name || 'Calendario',
@@ -1729,7 +1748,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     layout,
     coverImage,
     bookingCompletion,
-    bookingDisplay,
+    bookingDisplay: effectiveBookingDisplay,
     customEvents,
     styleDefaults: {
       accent,
@@ -1750,7 +1769,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
       fieldRadius,
       layout,
       coverImage,
-      fontFamily: bookingDisplay.fontFamily
+      fontFamily: effectiveBookingDisplay.fontFamily
     },
     bookingForm: bookingForm || {
       mode: 'default',
@@ -1762,19 +1781,19 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   }
 
   const introMetaItems = [
-    bookingDisplay.showDuration
+    effectiveBookingDisplay.showDuration
       ? `<span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>${duration} min</span>`
       : '',
-    bookingDisplay.showConfirmation
+    effectiveBookingDisplay.showConfirmation
       ? `<span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Confirmación ${calendar.autoConfirm ? 'automática' : 'pendiente'}</span>`
       : ''
   ].filter(Boolean).join('')
   const introHtml = showSidebar
     ? `<section class="intro">
-        ${bookingDisplay.showIcon ? `<div class="avatar" aria-hidden="true" data-calendar-avatar>${coverImage ? `<img src="${escapeHtml(coverImage)}" alt="">` : `<span data-calendar-initial>${escapeHtml((calendar.name || 'R').trim()[0] || 'R')}</span>`}</div>` : ''}
-        ${bookingDisplay.showEventTitle ? `<p class="host">${escapeHtml(calendar.eventTitle || 'Evento')}</p>` : ''}
-        ${bookingDisplay.showCalendarName ? `<h1>${escapeHtml(calendar.name || 'Agenda tu cita')}</h1>` : ''}
-        ${bookingDisplay.showDescription ? `<p class="description">${escapeHtml(calendar.description || 'Selecciona una fecha y horario disponible para confirmar tu cita.')}</p>` : ''}
+        ${effectiveBookingDisplay.showIcon ? `<div class="avatar" aria-hidden="true" data-calendar-avatar>${coverImage ? `<img src="${escapeHtml(coverImage)}" alt="">` : `<span data-calendar-initial>${escapeHtml((calendar.name || 'R').trim()[0] || 'R')}</span>`}</div>` : ''}
+        ${effectiveBookingDisplay.showEventTitle ? `<p class="host">${escapeHtml(calendar.eventTitle || 'Evento')}</p>` : ''}
+        ${effectiveBookingDisplay.showCalendarName ? `<h1>${escapeHtml(calendar.name || 'Agenda tu cita')}</h1>` : ''}
+        ${effectiveBookingDisplay.showDescription ? `<p class="description">${escapeHtml(calendar.description || 'Selecciona una fecha y horario disponible para confirmar tu cita.')}</p>` : ''}
         ${introMetaItems ? `<div class="meta">${introMetaItems}</div>` : ''}
       </section>`
     : ''
@@ -1932,7 +1951,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           <span class="timezoneControl">
             <span>Zona horaria</span>
             <strong data-timezone></strong>
-            ${bookingDisplay.allowTimezoneSelection ? '<select data-timezone-select aria-label="Cambiar zona horaria"></select>' : ''}
+            ${effectiveBookingDisplay.allowTimezoneSelection ? '<select data-timezone-select aria-label="Cambiar zona horaria"></select>' : ''}
           </span>
         </div>
       </section>

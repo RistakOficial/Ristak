@@ -1577,6 +1577,10 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
     "slots";
   align-content: start;
 }
+.rstkCanvas .rstk-calendar-preview-no-sidebar .rstk-calendar-preview-shell {
+  grid-template-columns: minmax(320px, 1.4fr) minmax(178px, .62fr);
+  grid-template-areas: "month slots";
+}
 .rstkCanvas .rstk-calendar-preview-intro,
 .rstkCanvas .rstk-calendar-preview-month,
 .rstkCanvas .rstk-calendar-preview-slots {
@@ -1735,6 +1739,12 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "intro"
+      "month"
+      "slots";
+  }
+  .rstkCanvas .rstk-calendar-preview-no-sidebar .rstk-calendar-preview-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
       "month"
       "slots";
   }

@@ -1438,7 +1438,7 @@ const LANDING_DEFAULT_BLOCK_SPACING: Partial<Record<SiteBlockType, ReturnType<ty
   image: makeLandingSpacing(16, 18),
   video: makeLandingSpacing(16, 18),
   embed: makeLandingSpacing(16, 18),
-  calendar_embed: makeLandingSpacing(16, 18),
+  calendar_embed: makeLandingSpacing(48, 56),
   button: makeLandingSpacing(18, 18),
   hero: makeLandingSpacing(0, 0),
   benefits: makeLandingSpacing(0, 0),
@@ -5333,6 +5333,39 @@ const calendarEmbedDesignModeOptions = [
   { value: 'custom', label: 'Personalizar para sitio' }
 ] as const
 
+// Tipografía del calendario embebido (mismas opciones y stacks que en
+// "Estilos y diseños" del calendario, CalendarsConfiguration).
+const calendarEmbedFontOptions = [
+  { value: 'system', label: 'Sistema' },
+  { value: 'modern', label: 'Moderna' },
+  { value: 'serif', label: 'Editorial' },
+  { value: 'mono', label: 'Monoespaciada' }
+] as const
+type CalendarEmbedFontFamily = typeof calendarEmbedFontOptions[number]['value']
+const CALENDAR_EMBED_FONT_STACKS: Record<CalendarEmbedFontFamily, string> = {
+  system: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  modern: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  mono: '"SFMono-Regular", "Roboto Mono", "Cascadia Code", monospace'
+}
+const getCalendarEmbedFontFamily = (settings: Record<string, unknown>): CalendarEmbedFontFamily => {
+  const value = getSettingString(settings, 'calendarFontFamily')
+  return value === 'modern' || value === 'serif' || value === 'mono' ? value : 'system'
+}
+
+// Toggles "qué se muestra": los MISMOS elementos que se apagan/encienden en
+// "Estilos y diseños" del calendario. ON por defecto.
+const calendarEmbedDisplayToggles: Array<{ key: string; label: string; description: string }> = [
+  { key: 'calendarShowSidebar', label: 'Panel izquierdo', description: 'Muestra la barra lateral con la info.' },
+  { key: 'calendarShowIcon', label: 'Icono o imagen', description: 'Muestra la inicial o imagen superior.' },
+  { key: 'calendarShowEventTitle', label: 'Título corto', description: 'Muestra el texto tipo "Cita".' },
+  { key: 'calendarShowCalendarName', label: 'Nombre del calendario', description: 'Muestra el título grande público.' },
+  { key: 'calendarShowDescription', label: 'Descripción', description: 'Muestra el texto descriptivo.' },
+  { key: 'calendarShowDuration', label: 'Duración', description: 'Muestra los minutos de la cita.' },
+  { key: 'calendarShowConfirmation', label: 'Confirmación', description: 'Muestra si la cita es automática o pendiente.' },
+  { key: 'calendarAllowTimezoneSelection', label: 'Cambio de zona horaria', description: 'Permite a la persona cambiar su zona horaria.' }
+]
+
 const calendarEmbedLayoutOptions = [
   { value: 'classic', label: 'Clásico', description: 'Info, calendario y horarios en columnas.' },
   { value: 'compact', label: 'Compacto', description: 'Info arriba; fecha y horarios juntos.' },
@@ -5351,11 +5384,9 @@ const getCalendarEmbedDesignMode = (settings: Record<string, unknown>) => (
   getSettingString(settings, 'calendarDesignMode') === 'original' ? 'original' : 'custom'
 )
 
-const getCalendarEmbedLayout = (settings: Record<string, unknown>): CalendarEmbedLayout => {
-  const value = getSettingString(settings, 'calendarLayout')
-  if (value === 'compact' || value === 'stacked') return value
-  return 'classic'
-}
+// El calendario del sitio usa SIEMPRE el layout clásico: ya no exponemos el
+// selector de layout, así que ignoramos cualquier valor guardado (compact/stacked).
+const getCalendarEmbedLayout = (_settings: Record<string, unknown>): CalendarEmbedLayout => 'classic'
 
 const getCalendarEmbedLayoutMinHeight = (settings: Record<string, unknown>) => (
   calendarEmbedLayoutRecommendedHeights[getCalendarEmbedLayout(settings)]
@@ -7761,6 +7792,10 @@ export const Sites: React.FC = () => {
       : null
   const formEditBlock = selectedBlock?.blockType === 'form_embed' ? selectedBlock : null
   const formEditMode = Boolean(editorSite && formEditBlock)
+  // El calendario imita al formulario: al seleccionarlo, su acción "Al agendar"
+  // sube al toolbar superior (no al panel de propiedades de la derecha).
+  const calendarEditBlock = selectedBlock?.blockType === 'calendar_embed' ? selectedBlock : null
+  const calendarEditMode = Boolean(editorSite && calendarEditBlock && !formEditMode)
   const formEditSourceId = formEditBlock ? getEmbeddedFormSourceId(formEditBlock) : ''
   const formEditSourceSite = useMemo(
     () => formEditSourceId ? forms.find(form => form.id === formEditSourceId) || null : null,
@@ -12089,7 +12124,7 @@ export const Sites: React.FC = () => {
         <header className={`${styles.header} ${editorActive ? styles.editorHeader : ''}`}>
           {editorSite ? (
             <>
-              <div className={`${styles.editorUnifiedToolbar} ${formEditMode ? styles.editorUnifiedToolbarFormMode : ''}`}>
+              <div className={`${styles.editorUnifiedToolbar} ${formEditMode || calendarEditMode ? styles.editorUnifiedToolbarFormMode : ''}`}>
                 <div className={styles.editorToolbarTop}>
                   <div className={styles.editorToolbarContext}>
                     <button type="button" className={styles.backButton} onClick={handleBackToLibrary}>
@@ -12145,7 +12180,29 @@ export const Sites: React.FC = () => {
                       )}
                     </div>
                   )}
-                  {!formEditMode && editorToolbarSettingsSite && (
+                  {calendarEditMode && calendarEditBlock && (
+                    <div className={`${styles.editorToolbarTools} ${styles.editorToolbarFormControls}`} aria-label="Herramientas de calendario">
+                      {editorPageSelector && (
+                        <div className={styles.editorPageSelectorSlot}>
+                          <span className={styles.editorPageScopeLabel}>Sitio</span>
+                          {editorPageSelector}
+                        </div>
+                      )}
+                      <div className={styles.formModeStatus}>
+                        <span aria-hidden="true" />
+                        <CalendarDays size={15} />
+                        <strong>Editando calendario</strong>
+                        <small>{getSettingString(calendarEditBlock.settings || {}, 'calendarName') || calendarEditBlock.label || 'Calendario'}</small>
+                      </div>
+                      <CalendarEmbedToolbarControls
+                        block={calendarEditBlock}
+                        calendars={calendars}
+                        onPatchSettings={(patch) => patchBlockSettingsLocal(calendarEditBlock, patch)}
+                        onSave={() => { void handleSaveBlock(calendarEditBlock.id) }}
+                      />
+                    </div>
+                  )}
+                  {!formEditMode && !calendarEditMode && editorToolbarSettingsSite && (
                     <div className={styles.editorToolbarTools} aria-label="Herramientas de edición">
                       {editorPageSelector && (
                         <div className={styles.editorPageSelectorSlot}>
@@ -29253,52 +29310,15 @@ const CalendarBlockDesignControls: React.FC<{
   onSave: () => void
 }> = ({ site, block, blocks, calendar, onPatchSettings, onSave }) => {
   const settings = getPanelStyleSettings(site, block, blocks)
-  const blockSettings = block.settings || {}
-  const calendarCompletionAction = getCalendarCompletionAction(blockSettings)
   const defaultAccent = getSettingHex({ value: calendar?.eventColor || defaultAccentForSite(site) }, 'value', defaultAccentForSite(site))
   const defaultText = paintFallbackColor(getPageTextPaint(site), isSiteDark(site) ? '#ffffff' : '#111827')
   const defaultMuted = isSiteDark(site) ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
   const defaultLine = isSiteDark(site) ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
   const designMode = getCalendarEmbedDesignMode(settings)
   const customDesign = designMode === 'custom'
-  const currentLayout = getCalendarEmbedLayout(settings)
-  const currentHeight = getSettingNumber(settings, 'embedHeight', CALENDAR_EMBED_DEFAULT_HEIGHT, EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)
-  const handleLayoutChange = (layout: CalendarEmbedLayout) => {
-    const recommendedHeight = calendarEmbedLayoutRecommendedHeights[layout]
-    onPatchSettings({
-      calendarLayout: layout,
-      ...(currentHeight < recommendedHeight ? { embedHeight: recommendedHeight } : {})
-    })
-    window.setTimeout(onSave, 0)
-  }
 
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
-      <div className={styles.panelSubheader}>Al agendar</div>
-      <label className={styles.field}>
-        <span>Cuando agenden una cita</span>
-        <CustomSelect
-          value={calendarCompletionAction}
-          dropdownMinWidth={280}
-          onChange={(event) => onPatchSettings({ calendarCompletionAction: event.target.value })}
-          onBlur={onSave}
-        >
-          <option value="calendar_default">Usar reglas del calendario</option>
-          <option value="next_page">Ir a la siguiente página</option>
-          <option value="redirect">Redirigir a URL</option>
-        </CustomSelect>
-      </label>
-      {calendarCompletionAction === 'redirect' && (
-        <label className={styles.field}>
-          <span>URL destino</span>
-          <input
-            value={getSettingString(blockSettings, 'calendarCompletionRedirectUrl')}
-            placeholder="https://..."
-            onChange={(event) => onPatchSettings({ calendarCompletionRedirectUrl: event.target.value })}
-            onBlur={onSave}
-          />
-        </label>
-      )}
       <div className={styles.panelSubheader}>Diseño del calendario</div>
       <label className={styles.field}>
         <span>Modo</span>
@@ -29337,34 +29357,6 @@ const CalendarBlockDesignControls: React.FC<{
           onChange={(value) => onPatchSettings({ embedHeight: value })}
           onCommit={onSave}
         />
-      </div>
-      <div className={styles.calendarLayoutField}>
-        <span>Layout</span>
-        <div className={styles.calendarLayoutChoices} role="radiogroup" aria-label="Layout del calendario">
-          {calendarEmbedLayoutOptions.map(option => {
-            const active = option.value === currentLayout
-            return (
-              <button
-                key={option.value}
-                type="button"
-                className={`${styles.calendarLayoutChoice} ${active ? styles.calendarLayoutChoiceActive : ''}`}
-                aria-pressed={active}
-                onClick={() => handleLayoutChange(option.value)}
-              >
-                <span className={`${styles.calendarLayoutPreview} ${styles[`calendarLayoutPreview_${option.value}`]}`} aria-hidden="true">
-                  <span className={styles.calendarLayoutIntro} />
-                  <span className={styles.calendarLayoutMonth} />
-                  <span className={styles.calendarLayoutSlots} />
-                </span>
-                <span className={styles.calendarLayoutChoiceCopy}>
-                  <strong>{option.label}</strong>
-                  <small>{option.description}</small>
-                </span>
-                {active && <Check size={14} className={styles.calendarLayoutCheck} aria-hidden="true" />}
-              </button>
-            )
-          })}
-        </div>
       </div>
       <MediaUploadControl
         kind="image"
@@ -29411,6 +29403,40 @@ const CalendarBlockDesignControls: React.FC<{
 
       {customDesign && (
         <>
+          <div className={styles.panelSubheader}>Qué se muestra</div>
+          <div className={styles.calendarToggleGrid}>
+            {calendarEmbedDisplayToggles.map(toggle => (
+              <div className={styles.calendarToggleRow} key={toggle.key}>
+                <div className={styles.calendarToggleCopy}>
+                  <strong>{toggle.label}</strong>
+                  <small>{toggle.description}</small>
+                </div>
+                <Switch
+                  checked={getSettingBoolean(settings, toggle.key, true)}
+                  onChange={(checked) => {
+                    onPatchSettings({ [toggle.key]: checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                  aria-label={`Mostrar ${toggle.label}`}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className={styles.panelSubheader}>Tipografía</div>
+          <label className={styles.field}>
+            <span>Fuente</span>
+            <CustomSelect
+              value={getCalendarEmbedFontFamily(settings)}
+              onChange={(event) => onPatchSettings({ calendarFontFamily: event.target.value })}
+              onBlur={onSave}
+            >
+              {calendarEmbedFontOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+
           <div className={styles.panelSubheader}>Colores internos</div>
           <div className={styles.twoColumn}>
             <ColorField
@@ -30647,7 +30673,7 @@ const CalendarEmbedStaticPreview: React.FC<{
   const layout = getCalendarEmbedLayout(settings)
   const monthPreview = useMemo(() => getCalendarPreviewMonth(calendar), [calendar])
   const slots = useMemo(() => getCalendarPreviewSlots(calendar), [calendar])
-  const style = useMemo(() => getCalendarPreviewStyle(settings, site, calendar), [settings, site, calendar])
+  const baseStyle = useMemo(() => getCalendarPreviewStyle(settings, site, calendar), [settings, site, calendar])
   const profileImage = safePublicMediaUrl(getSettingString(settings, 'calendarCoverImage') || calendar?.calendarCoverImage || '', 'image')
   const title = calendarName || calendar?.name || 'Calendario'
   const eventTitle = calendar?.eventTitle || 'Cita'
@@ -30656,29 +30682,58 @@ const CalendarEmbedStaticPreview: React.FC<{
   const confirmation = calendar?.autoConfirm === false ? 'Confirmacion manual' : 'Confirmacion automatica'
   const initial = (title.trim()[0] || 'C').toUpperCase()
 
+  // En "Personalizar para sitio" mandan los toggles del bloque (ON por defecto);
+  // en modo original respetamos la config del calendario. Espejo del widget en vivo.
+  const designMode = getCalendarEmbedDesignMode(settings)
+  const calendarBookingDisplay = (calendar?.bookingDisplay || {}) as Record<string, unknown>
+  const showElement = (toggleKey: string, bookingKey: string) => (
+    designMode === 'custom'
+      ? getSettingBoolean(settings, toggleKey, true)
+      : calendarBookingDisplay[bookingKey] !== false
+  )
+  const showSidebar = showElement('calendarShowSidebar', 'showSidebar')
+  const showIcon = showElement('calendarShowIcon', 'showIcon')
+  const showEventTitle = showElement('calendarShowEventTitle', 'showEventTitle')
+  const showCalendarName = showElement('calendarShowCalendarName', 'showCalendarName')
+  const showDescription = showElement('calendarShowDescription', 'showDescription')
+  const showDuration = showElement('calendarShowDuration', 'showDuration')
+  const showConfirmation = showElement('calendarShowConfirmation', 'showConfirmation')
+  const fontFamilyKey = designMode === 'custom'
+    ? getCalendarEmbedFontFamily(settings)
+    : getCalendarEmbedFontFamily({ calendarFontFamily: calendarBookingDisplay.fontFamily })
+  const style = { ...baseStyle, fontFamily: CALENDAR_EMBED_FONT_STACKS[fontFamilyKey] }
+
   return (
     <section
-      className={`rstk-calendar-preview rstk-calendar-preview-${layout}`}
+      className={`rstk-calendar-preview rstk-calendar-preview-${layout} ${showSidebar ? '' : 'rstk-calendar-preview-no-sidebar'}`}
       style={style}
       aria-label={`Vista previa de ${title}`}
     >
       <div className="rstk-calendar-preview-shell">
-        <aside className="rstk-calendar-preview-intro">
-          <span className="rstk-calendar-preview-avatar" aria-hidden="true">
-            {profileImage ? <img src={profileImage} alt="" loading="lazy" /> : initial}
-          </span>
-          <span className="rstk-calendar-preview-kicker">{eventTitle}</span>
-          <strong className="rstk-calendar-preview-title">{title}</strong>
-          <span className="rstk-calendar-preview-description">{description}</span>
-          <span className="rstk-calendar-preview-meta">
-            <Clock3 size={16} aria-hidden="true" />
-            {duration}
-          </span>
-          <span className="rstk-calendar-preview-meta">
-            <Check size={16} aria-hidden="true" />
-            {confirmation}
-          </span>
-        </aside>
+        {showSidebar && (
+          <aside className="rstk-calendar-preview-intro">
+            {showIcon && (
+              <span className="rstk-calendar-preview-avatar" aria-hidden="true">
+                {profileImage ? <img src={profileImage} alt="" loading="lazy" /> : initial}
+              </span>
+            )}
+            {showEventTitle && <span className="rstk-calendar-preview-kicker">{eventTitle}</span>}
+            {showCalendarName && <strong className="rstk-calendar-preview-title">{title}</strong>}
+            {showDescription && <span className="rstk-calendar-preview-description">{description}</span>}
+            {showDuration && (
+              <span className="rstk-calendar-preview-meta">
+                <Clock3 size={16} aria-hidden="true" />
+                {duration}
+              </span>
+            )}
+            {showConfirmation && (
+              <span className="rstk-calendar-preview-meta">
+                <Check size={16} aria-hidden="true" />
+                {confirmation}
+              </span>
+            )}
+          </aside>
+        )}
 
         <section className="rstk-calendar-preview-month" aria-label={monthPreview.monthLabel}>
           <header className="rstk-calendar-preview-month-head">
@@ -31938,6 +31993,78 @@ const FormEmbedToolbarControls: React.FC<{
         }}
         onSave={onSave}
       />
+    </div>
+  )
+}
+
+// Espejo de FormEmbedToolbarControls para el bloque de calendario: el selector de
+// calendario + la acción "Al agendar" viven arriba en el toolbar, igual que el form.
+const CalendarEmbedToolbarControls: React.FC<{
+  block: SiteBlock
+  calendars: CalendarType[]
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ block, calendars, onPatchSettings, onSave }) => {
+  const settings = block.settings || {}
+  const selectedCalendarId = getSettingString(settings, 'calendarId')
+  const hasSelectedCalendarOption = calendars.some(calendar => calendar.id === selectedCalendarId)
+  const completionAction = getCalendarCompletionAction(settings)
+
+  const commitSoon = () => {
+    window.setTimeout(onSave, 0)
+  }
+
+  return (
+    <div className={styles.formEmbedToolbarControls}>
+      <label className={`${styles.field} ${styles.formToolbarField} ${styles.formSourceToolbarField}`}>
+        <span>Calendario</span>
+        <CustomSelect
+          value={selectedCalendarId}
+          onChange={(event) => {
+            const calendar = calendars.find(item => item.id === event.target.value)
+            onPatchSettings(getCalendarEmbedSelectionPatch(calendar))
+            commitSoon()
+          }}
+          onBlur={onSave}
+        >
+          <option value="">{calendars.length ? 'Selecciona un calendario' : 'No hay calendarios'}</option>
+          {selectedCalendarId && !hasSelectedCalendarOption && (
+            <option value={selectedCalendarId}>{getSettingString(settings, 'calendarName') || 'Calendario seleccionado'}</option>
+          )}
+          {calendars.map(calendar => (
+            <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
+          ))}
+        </CustomSelect>
+      </label>
+      <div className={styles.formCompletionToolbarControls}>
+        <label className={`${styles.field} ${styles.formToolbarField}`}>
+          <span>Al agendar</span>
+          <CustomSelect
+            value={completionAction}
+            dropdownMinWidth={280}
+            onChange={(event) => {
+              onPatchSettings({ calendarCompletionAction: event.target.value })
+              commitSoon()
+            }}
+            onBlur={onSave}
+          >
+            <option value="calendar_default">Usar reglas del calendario</option>
+            <option value="next_page">Ir a la siguiente página</option>
+            <option value="redirect">Redirigir a URL</option>
+          </CustomSelect>
+        </label>
+        {completionAction === 'redirect' && (
+          <label className={`${styles.field} ${styles.formToolbarField}`}>
+            <span>URL destino</span>
+            <input
+              value={getSettingString(settings, 'calendarCompletionRedirectUrl')}
+              placeholder="https://..."
+              onChange={(event) => onPatchSettings({ calendarCompletionRedirectUrl: event.target.value })}
+              onBlur={onSave}
+            />
+          </label>
+        )}
+      </div>
     </div>
   )
 }
