@@ -17,6 +17,7 @@ import { startAppointmentRemindersCron } from './jobs/appointmentReminders.cron.
 import { startWhatsAppQrWatchdogCron } from './jobs/whatsappQrWatchdog.cron.js'
 import { startStripePaymentPlansCron } from './jobs/stripePaymentPlans.cron.js'
 import { startConektaPaymentPlansCron } from './jobs/conektaPaymentPlans.cron.js'
+import { startMercadoPagoPaymentPlansCron } from './jobs/mercadoPagoPaymentPlans.cron.js' // (CRON-005)
 import { startPaymentAutomationsCron } from './jobs/paymentAutomations.cron.js'
 import { startGoogleCalendarSyncCron } from './jobs/googleCalendarSync.cron.js' // (GCAL-002)
 import { initializeVersion } from './services/metaVersionService.js'
@@ -407,6 +408,7 @@ async function startRuntimeServices() {
   startWhatsAppQrWatchdogCron()    // Reabre sesiones de WhatsApp Web al arrancar y las mantiene vivas
   startStripePaymentPlansCron()    // Cobra parcialidades Stripe vencidas con tarjetas guardadas
   startConektaPaymentPlansCron()   // Cobra parcialidades Conekta vencidas con tarjetas guardadas
+  startMercadoPagoPaymentPlansCron() // (CRON-005) Genera links de pago de parcialidades MP vencidas (no cobra tarjeta off-session)
   startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
   startGoogleCalendarSyncCron()    // (GCAL-002) Reintenta sync Google Calendar<->local de citas con error/pendiente
   startupState.ready = true
