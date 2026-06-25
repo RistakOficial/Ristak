@@ -588,7 +588,9 @@ export const PaymentSubscriptions: React.FC = () => {
   const handleDelete = (subscription: PaymentSubscription) => {
     showConfirm(
       'Eliminar suscripción',
-      `Se quitará "${subscription.name}" de la lista. Los pagos ya registrados no se borran.`,
+      // (PAY-001) Eliminar ahora CANCELA el cobro recurrente en la pasarela (Stripe/
+      // MercadoPago/Conekta): el mensaje debe dejarlo claro para no sorprender al usuario.
+      `Se cancelará el cobro recurrente de "${subscription.name}" en la pasarela de pago y el cliente dejará de ser cobrado. Los pagos ya registrados se conservan. Esta acción no se puede deshacer.`,
       async () => {
         setActingId(subscription.id)
         try {
