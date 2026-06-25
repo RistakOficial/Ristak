@@ -560,7 +560,9 @@ export const getNewCustomersData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    const conditions = ['total_paid > 0', 'created_at >= $1', 'created_at <= $2'];
+    // (RPT-009) Placeholders posicionales SQLite-compatibles: el adaptador de db
+    // convierte '?' a $1/$2 solo en Postgres. Hardcodear $1/$2 rompe en SQLite.
+    const conditions = ['total_paid > 0', 'created_at >= ?', 'created_at <= ?'];
     if (hiddenCondition) conditions.push(hiddenCondition);
 
     const query = `
@@ -612,7 +614,7 @@ export const getVisitorsData = async (req, res) => {
         ${dateExpression} as periodo,
         COUNT(DISTINCT ${getVisitorIdentityExpression()}) as total
       FROM sessions
-      WHERE started_at >= $1 AND started_at <= $2
+      WHERE started_at >= ? AND started_at <= ?
       GROUP BY periodo
       ORDER BY periodo
     `;
@@ -655,7 +657,8 @@ export const getLeadsData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    const conditions = ['created_at >= $1', 'created_at <= $2'];
+    // (RPT-009) '?' en vez de $1/$2 para ser compatible con SQLite y Postgres.
+    const conditions = ['created_at >= ?', 'created_at <= ?'];
     if (hiddenCondition) conditions.push(hiddenCondition);
 
     const query = `
@@ -787,7 +790,7 @@ export const getAppointmentsData = async (req, res) => {
         id as contact_id,
         ${dateExpression} as periodo
       FROM contacts
-      WHERE created_at >= $1 AND created_at <= $2
+      WHERE created_at >= ? AND created_at <= ?
         ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
     `;
 
@@ -859,7 +862,8 @@ export const getAttendancesData = async (req, res) => {
       return res.json([]);
     }
 
-    const conditions = ['c.created_at >= $1', 'c.created_at <= $2'];
+    // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+    const conditions = ['c.created_at >= ?', 'c.created_at <= ?'];
     if (hiddenCondition) conditions.push(hiddenCondition);
 
     const contactsQuery = `
@@ -1401,7 +1405,7 @@ export const getFunnelData = async (req, res) => {
       const visitorsQuery = `
         SELECT COUNT(DISTINCT ${getVisitorIdentityExpression()}) as count
         FROM sessions
-        WHERE started_at >= $1 AND started_at <= $2
+        WHERE started_at >= ? AND started_at <= ?
       `
       const visitorsParams = [range.startUtc, range.endUtc]
 
@@ -1414,7 +1418,7 @@ export const getFunnelData = async (req, res) => {
         SELECT COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as count
         FROM sessions s
         INNER JOIN contacts c ON c.id = s.contact_id
-        WHERE c.created_at >= $1 AND c.created_at <= $2
+        WHERE c.created_at >= ? AND c.created_at <= ?
           ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM meta_ads ma
             WHERE ma.ad_id = c.attribution_ad_id
@@ -1433,7 +1437,8 @@ export const getFunnelData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    const conditions = ['created_at >= $1', 'created_at <= $2'];
+    // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+    const conditions = ['created_at >= ?', 'created_at <= ?'];
     if (isAttributed) {
       conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
         SELECT 1 FROM meta_ads ma
@@ -1467,7 +1472,8 @@ export const getFunnelData = async (req, res) => {
         : new Set()
 
       // Contar cuántos contactos del rango tienen cita
-      const conditions = ['created_at >= $1', 'created_at <= $2'];
+      // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+      const conditions = ['created_at >= ?', 'created_at <= ?'];
       if (isAttributed) {
         conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM meta_ads ma
@@ -1518,7 +1524,8 @@ export const getFunnelData = async (req, res) => {
     // ========================================
     // 4. ASISTENCIAS (siempre por fecha de creación del contacto)
     // ========================================
-    const attendanceConditions = ['created_at >= $1', 'created_at <= $2'];
+    // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+    const attendanceConditions = ['created_at >= ?', 'created_at <= ?'];
     if (isAttributed) {
       attendanceConditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
         SELECT 1 FROM meta_ads ma
@@ -1548,7 +1555,8 @@ export const getFunnelData = async (req, res) => {
 
     if (useContactAttribution) {
       // Vista "Último toque": Contactos creados en el rango con purchases_count > 0
-      const conditions = ['purchases_count > 0', 'created_at >= $1', 'created_at <= $2'];
+      // (RPT-009) '?' en vez de $1/$2 para compatibilidad SQLite/Postgres.
+      const conditions = ['purchases_count > 0', 'created_at >= ?', 'created_at <= ?'];
       if (isAttributed) {
         conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM meta_ads ma
@@ -1569,8 +1577,11 @@ export const getFunnelData = async (req, res) => {
       // Vista "Todos": Contactos cuyo PRIMER pago está en el rango
       const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
 
-      const conditions = ['first_p.first_payment_date >= $' + (SUCCESS_PAYMENT_STATUSES.length + 1),
-                         'first_p.first_payment_date <= $' + (SUCCESS_PAYMENT_STATUSES.length + 2)]
+      // (RPT-009) Mezclar '?' (statusPlaceholders) con $N hardcodeados rompía en
+      // SQLite. Usamos solo '?'; el adaptador los convierte a $1..$N en Postgres
+      // según el orden de firstPaymentParams (statuses, luego start/end).
+      const conditions = ['first_p.first_payment_date >= ?',
+                         'first_p.first_payment_date <= ?']
       if (hiddenCondition) {
         conditions.push(hiddenCondition.replace(/contacts\./g, 'c.'))
       }

@@ -76,6 +76,12 @@ async function resolveWebPushKeys() {
   ])
 
   logger.success('[Push] Llaves web push creadas y guardadas para activar notificaciones en celulares PWA.')
+  // (NOTI-009) Las llaves VAPID autogeneradas viven solo en esta base de datos. Si la BD se
+  // reinicia, se restaura o las llaves se regeneran, la llave pública cambia y TODAS las
+  // suscripciones push existentes quedan inservibles (los navegadores quedan atados a la
+  // pública original). Recomendamos fijar WEB_PUSH_PUBLIC_KEY/WEB_PUSH_PRIVATE_KEY por
+  // variables de entorno para mantenerlas estables entre reinicios y despliegues.
+  logger.warn('[Push] (NOTI-009) Llaves VAPID autogeneradas en base de datos: NO recomendado para producción. Si la BD se reinicia o las llaves cambian, se romperán todas las suscripciones push existentes. Define WEB_PUSH_PUBLIC_KEY y WEB_PUSH_PRIVATE_KEY en variables de entorno para que sean permanentes.')
 
   return {
     publicKey: generated.publicKey,
@@ -102,6 +108,11 @@ if (pushConfigured) {
   webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
   if (resolvedWebPushKeys.source !== 'environment') {
     logger.info(`[Push] Web Push activo con llaves ${resolvedWebPushKeys.source === 'generated' ? 'creadas automáticamente' : 'guardadas en base de datos'}.`)
+    // (NOTI-009) Las llaves no provienen de variables de entorno: están atadas a esta base de
+    // datos. Avisamos en cada arranque porque cualquier reinicio/restauración de la BD que cambie
+    // la llave pública dejará inservibles las suscripciones push ya registradas. Fija
+    // WEB_PUSH_PUBLIC_KEY/WEB_PUSH_PRIVATE_KEY en el entorno para hacerlas permanentes.
+    logger.warn('[Push] (NOTI-009) Llaves VAPID NO fijadas por entorno (origen: base de datos). Para evitar romper las suscripciones push ante un reinicio o restauración de la BD, define WEB_PUSH_PUBLIC_KEY y WEB_PUSH_PRIVATE_KEY como variables de entorno.')
   }
 } else {
   logger.warn('[Push] Web Push sin llaves VAPID; las suscripciones se guardan, pero no se enviarán notificaciones.')

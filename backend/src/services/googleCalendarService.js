@@ -248,13 +248,16 @@ export async function deleteGoogleCalendarConfig() {
   tokenCache = null
 }
 
-async function getAccessToken(config) {
+async function getAccessToken(config, { forceRefresh = false } = {}) {
   if (config.connectionMode !== 'oauth' || !config.refreshToken) {
     throw new Error('Conecta Google Calendar con OAuth antes de sincronizar.')
   }
 
   const cacheKey = `oauth:${config.googleAccountEmail || ''}:${crypto.createHash('sha1').update(config.refreshToken).digest('hex')}`
-  if (tokenCache?.cacheKey === cacheKey && tokenCache.expiresAt > Date.now() + 60000) {
+  // (GCAL-008) `forceRefresh` permite saltar el cache global por proceso cuando Google
+  // ya revocó/invalidó el token server-side (401). Sin esto, el access token cacheado
+  // se seguiría sirviendo hasta su expiración (~1h) aunque las credenciales ya no sirvan.
+  if (!forceRefresh && tokenCache?.cacheKey === cacheKey && tokenCache.expiresAt > Date.now() + 60000) {
     return tokenCache.accessToken
   }
 
@@ -272,8 +275,8 @@ async function getAccessToken(config) {
   return tokenCache.accessToken
 }
 
-async function googleRequest(config, path, options = {}) {
-  const token = await getAccessToken(config)
+async function googleRequest(config, path, options = {}, { forceRefresh = false } = {}) {
+  const token = await getAccessToken(config, { forceRefresh })
   const response = await fetchWithTimeout(`${GOOGLE_CALENDAR_API_BASE}${path}`, {
     ...options,
     headers: {
@@ -290,6 +293,14 @@ async function googleRequest(config, path, options = {}) {
   const payload = text ? parseJson(text, null) : null
 
   if (!response.ok) {
+    // (GCAL-008) Un 401 significa que el access token cacheado por proceso ya no es válido
+    // (Google revocó/invalidó las credenciales). Invalidamos el cache global y reintentamos
+    // una sola vez forzando un refresh; si persiste, propagamos el error real.
+    if (response.status === 401 && !forceRefresh) {
+      tokenCache = null
+      return googleRequest(config, path, options, { forceRefresh: true })
+    }
+
     const message = payload?.error?.message || payload?.error_description || payload?.error || text || `HTTP ${response.status}`
     const error = new Error(message)
     error.status = response.status

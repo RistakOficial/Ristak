@@ -41,12 +41,26 @@ async function isHighLevelConnected(config) {
  * Mantiene la DB actualizada automáticamente en caso de cambios externos,
  * solo cuando HighLevel sigue conectado.
  */
+// (CRON-008) Guards anti-solape intra-proceso: una sync completa de HighLevel
+// (contactos+citas+pagos) puede tardar más que el intervalo de 1h, y la sync
+// incremental de conversaciones más que sus 10 min. Si un tick anterior aún
+// corre (o un deploy zero-downtime dispara dos veces en el mismo proceso), no
+// encimamos otra ejecución de la misma tarea. Mismo patrón que metaSync (META-006).
+let highLevelSyncRunning = false
+let highLevelConversationsSyncRunning = false
+
 export function startHighLevelSyncCron() {
   logger.info('🔄 Iniciando cron job de sincronización completa de HighLevel (cada hora, solo si está conectado)')
 
   // Ejecutar cada hora (minuto 17) para no competir con el cron de Meta Ads
   cron.schedule('17 * * * *', async () => {
     if (isDeployShutdownStarted()) return
+    // (CRON-008) Claim intra-proceso antes de actuar.
+    if (highLevelSyncRunning) {
+      logger.warn('Sincronización automática de HighLevel saltada: ya hay un tick en curso')
+      return
+    }
+    highLevelSyncRunning = true
     logger.info('⏰ Revisando conexión de HighLevel antes de sincronizar...')
 
     try {
@@ -88,6 +102,8 @@ export function startHighLevelSyncCron() {
       })
     } catch (error) {
       logger.error('❌ Error en sincronización automática de HighLevel:', error.message)
+    } finally {
+      highLevelSyncRunning = false // (CRON-008)
     }
   })
 
@@ -99,6 +115,12 @@ export function startHighLevelSyncCron() {
   // aunque el workflow de webhook no esté configurado en GHL.
   cron.schedule('*/10 * * * *', async () => {
     if (isDeployShutdownStarted()) return
+    // (CRON-008) Claim intra-proceso antes de actuar.
+    if (highLevelConversationsSyncRunning) {
+      logger.warn('Sincronización de conversaciones de HighLevel saltada: ya hay un tick en curso')
+      return
+    }
+    highLevelConversationsSyncRunning = true
     try {
       await trackDeployDrainWork('cron:highlevel-conversations', async () => {
         const config = await db.get(
@@ -122,6 +144,8 @@ export function startHighLevelSyncCron() {
       })
     } catch (error) {
       logger.warn(`No se pudieron actualizar conversaciones de HighLevel: ${error.message}`)
+    } finally {
+      highLevelConversationsSyncRunning = false // (CRON-008)
     }
   })
 

@@ -6895,8 +6895,16 @@ export async function sendWhatsAppApiTemplateMessage({
 
   if (!finalTemplate.name) throw new Error('No se encontro el nombre de la plantilla')
   if (!finalTemplate.language) throw new Error('Falta el idioma de la plantilla')
-  if (finalTemplate.status && finalTemplate.status !== 'APPROVED') {
-    throw new Error(`La plantilla ${finalTemplate.name} está ${finalTemplate.status}; solo se pueden enviar plantillas APPROVED`)
+  // WA-008: no asumir que una plantilla no sincronizada localmente es válida.
+  // Antes la validación se omitía cuando `status` venía vacío (plantilla no
+  // encontrada en whatsapp_api_templates), permitiendo enviar plantillas que
+  // podían estar PENDING/REJECTED en Meta. Ahora se exige status APPROVED
+  // confirmado localmente; si no hay snapshot local, se rechaza el envío.
+  if (!template) {
+    throw new Error(`La plantilla ${finalTemplate.name} (${finalTemplate.language}) no está sincronizada; sincroniza las plantillas y verifica que esté APPROVED antes de enviar`)
+  }
+  if (finalTemplate.status !== 'APPROVED') {
+    throw new Error(`La plantilla ${finalTemplate.name} está ${finalTemplate.status || 'sin estado'}; solo se pueden enviar plantillas APPROVED`)
   }
 
   const renderedVariables = await renderOutgoingVariables(variables, {

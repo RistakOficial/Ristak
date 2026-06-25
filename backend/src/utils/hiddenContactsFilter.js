@@ -3,6 +3,31 @@ import { db } from '../config/database.js'
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
 /**
+ * ACL-005 / SEC-012: Escapa de forma segura un valor que se interpolará dentro
+ * de un literal de cadena SQL ('...').
+ *
+ * El contrato histórico de buildHiddenContactsCondition es devolver un FRAGMENTO
+ * de SQL como string (decenas de callers lo concatenan directo en sus queries),
+ * por lo que no podemos pasar a placeholders sin tocar esos callers. La mitigación
+ * de cirugía es endurecer el escape para que el valor NO pueda romper el literal:
+ *   - coerción a string (un filter.text numérico/null hacía throw en .replace)
+ *   - duplicar comillas simples ('' -> escape estándar de literal SQL)
+ *   - eliminar NUL (Postgres rechaza \x00 en strings) y otros caracteres de control
+ *   - en SQLite/Postgres con standard_conforming_strings (default), el backslash
+ *     es literal, así que no necesita escape adicional; aun así normalizamos.
+ *
+ * @param {*} value
+ * @returns {string} valor seguro para interpolar dentro de '...'
+ */
+function escapeSqlLiteral(value) {
+  const CONTROL_CHARS = /[\x00-\x1F\x7F]/g
+  return String(value == null ? '' : value)
+    .replace(CONTROL_CHARS, '')
+    // ACL-005/SEC-012: duplicar comilla simple (escape de literal de cadena)
+    .replace(/'/g, "''")
+}
+
+/**
  * Obtiene todos los filtros activos de contactos ocultos
  * @returns {Promise<Array<{text: string, type: string}>>} Array de filtros con texto y tipo
  */
@@ -31,25 +56,32 @@ export function buildHiddenContactsCondition(filters, tableAlias = 'c', includeA
     return ''
   }
 
+  // ACL-005/SEC-012: el alias de tabla también se interpola en el SQL. Aunque
+  // siempre proviene de callers internos ('c' / 'contacts'), lo validamos como
+  // identificador seguro para que no pueda inyectar SQL ni romper la query.
+  const safeAlias = /^[A-Za-z_][A-Za-z0-9_]*$/.test(tableAlias) ? tableAlias : 'c'
+
   const conditions = filters.map(filter => {
-    const escapedFilter = filter.text.replace(/'/g, "''") // Escape single quotes
+    // ACL-005/SEC-012: escape robusto del literal (antes solo duplicaba comillas
+    // y rompía si filter.text no era string)
+    const escapedFilter = escapeSqlLiteral(filter.text)
 
     if (filter.type === 'exact') {
       // Coincidencia exacta (ignorando mayúsculas) - usar COALESCE para manejar NULLs
       return `(
-        LOWER(COALESCE(${tableAlias}.full_name, '')) = LOWER('${escapedFilter}') OR
-        LOWER(COALESCE(${tableAlias}.email, '')) = LOWER('${escapedFilter}') OR
-        LOWER(COALESCE(${tableAlias}.phone, '')) = LOWER('${escapedFilter}') OR
-        LOWER(${tableAlias}.id) = LOWER('${escapedFilter}')
+        LOWER(COALESCE(${safeAlias}.full_name, '')) = LOWER('${escapedFilter}') OR
+        LOWER(COALESCE(${safeAlias}.email, '')) = LOWER('${escapedFilter}') OR
+        LOWER(COALESCE(${safeAlias}.phone, '')) = LOWER('${escapedFilter}') OR
+        LOWER(${safeAlias}.id) = LOWER('${escapedFilter}')
       )`
     } else {
       // Coincidencia con "contiene" (default) - usar COALESCE para manejar NULLs
       const pattern = `%${escapedFilter}%`
       return `(
-        LOWER(COALESCE(${tableAlias}.full_name, '')) LIKE LOWER('${pattern}') OR
-        LOWER(COALESCE(${tableAlias}.email, '')) LIKE LOWER('${pattern}') OR
-        LOWER(COALESCE(${tableAlias}.phone, '')) LIKE LOWER('${pattern}') OR
-        LOWER(${tableAlias}.id) LIKE LOWER('${pattern}')
+        LOWER(COALESCE(${safeAlias}.full_name, '')) LIKE LOWER('${pattern}') OR
+        LOWER(COALESCE(${safeAlias}.email, '')) LIKE LOWER('${pattern}') OR
+        LOWER(COALESCE(${safeAlias}.phone, '')) LIKE LOWER('${pattern}') OR
+        LOWER(${safeAlias}.id) LIKE LOWER('${pattern}')
       )`
     }
   })

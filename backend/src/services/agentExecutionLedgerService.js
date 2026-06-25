@@ -250,12 +250,19 @@ export async function getAgentRunTrace(traceId, { userId = null } = {}) {
   if (!cleanTraceId) return null
 
   const normalizedUserId = userId || null
+  // AI-008: cuando hay un usuario autenticado, atar el rastro a su scope.
+  // Antes se incluía `OR user_id IS NULL`, lo que permitía a cualquier empleado
+  // con el módulo ai_agent leer los runs conversacionales (inbound WhatsApp/email),
+  // que se guardan con user_id NULL y contienen el contenido completo de la
+  // conversación del contacto. El endpoint /runs/:traceId solo debe exponer los
+  // runs propios del usuario (su agente de dashboard). Los runs sin dueño son
+  // internos del sistema y no se entregan por traceId a un usuario autenticado.
   const run = normalizedUserId
     ? await db.get(`
       SELECT *
       FROM agent_runs
       WHERE trace_id = ?
-        AND (user_id = ? OR user_id IS NULL)
+        AND user_id = ?
       LIMIT 1
     `, [cleanTraceId, normalizedUserId])
     : await db.get(`

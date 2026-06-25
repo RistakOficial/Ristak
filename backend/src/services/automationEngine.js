@@ -926,6 +926,27 @@ export function renderTemplate(text, ctx, { preserveUnknown = false } = {}) {
   })
 }
 
+// AUTO-010: detectar tokens {{...}} que NO resuelven con el contexto dado.
+// Antes, una variable mal escrita (p. ej. {{nombre_contacto}} en vez de
+// {{first_name}}) se renderizaba como cadena vacía sin aviso y el cliente
+// recibía "Hola ,". Este helper permite a la validación de publicación avisar
+// del token desconocido en vez de enviarlo silenciosamente vacío. Reutiliza la
+// misma resolución que renderTemplate (mapa estático + token dinámico) para que
+// no haya falsos positivos. No altera el comportamiento de renderTemplate.
+export function findUnknownTemplateTokens(text, ctx) {
+  const map = buildVariableMap(ctx)
+  const unknown = new Set()
+  String(text || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, rawToken) => {
+    const token = cleanString(rawToken)
+    if (map[token] !== undefined) return match
+    const dynamic = resolveDynamicToken(token, ctx)
+    if (dynamic !== undefined) return match
+    if (token) unknown.add(token)
+    return match
+  })
+  return [...unknown]
+}
+
 // ---------------------------------------------------------------------------
 // Coincidencia de disparadores y filtros
 // ---------------------------------------------------------------------------

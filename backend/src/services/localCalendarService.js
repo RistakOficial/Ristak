@@ -2985,7 +2985,8 @@ export async function updateContactAppointmentDate(contactId) {
     WHERE contact_id = ?
       AND deleted_at IS NULL
       AND COALESCE(sync_status, '') != 'pending_delete'
-      AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'invalid')
+      -- APT-010: excluir 'noshow' además de cancelladas/invalid para no fijar appointment_date sobre una cita a la que el contacto no asistió
+      AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled', 'noshow', 'invalid')
   `, [contactId])
 
   await db.run(

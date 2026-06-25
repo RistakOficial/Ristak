@@ -3089,11 +3089,26 @@ export const createContact = async (req, res) => {
     })
   } catch (error) {
     logger.error(`Error creando contacto: ${error.message}`)
-    const isUniqueError = /unique|duplicate/i.test(error.message || '')
+    // CNT-012: el pre-check (SELECT) y el INSERT no son atómicos; bajo concurrencia
+    // (webhooks + UI) la UNIQUE de la DB es el verdadero candado. Aquí mapeamos esa
+    // violación de UNIQUE a un 409 con el mensaje específico del campo en conflicto
+    // (correo vs teléfono) en lugar de un genérico, para que el usuario sepa qué editar.
+    const message = error.message || ''
+    const isUniqueError = /unique|duplicate/i.test(message)
+    let conflictError = 'Ya existe un contacto con ese correo o teléfono.'
+    if (isUniqueError) {
+      const mentionsEmail = /email/i.test(message)
+      const mentionsPhone = /phone/i.test(message)
+      if (mentionsEmail && !mentionsPhone) {
+        conflictError = 'Ya existe un contacto con ese correo. Búscalo en la lista y edítalo si necesitas cambiar algo.'
+      } else if (mentionsPhone && !mentionsEmail) {
+        conflictError = 'Ya existe un contacto con ese teléfono. Búscalo en la lista y edítalo si necesitas cambiar algo.'
+      }
+    }
     res.status(isUniqueError ? 409 : 500).json({
       success: false,
       error: isUniqueError
-        ? 'Ya existe un contacto con ese correo o teléfono.'
+        ? conflictError
         : 'Error creando contacto'
     })
   }
@@ -3135,9 +3150,21 @@ export const getContactStats = async (req, res) => {
 /**
  * Actualiza las estadísticas de todos los contactos (total_paid, purchases_count, last_purchase_date)
  */
+// CNT-010: `updateContactsStats()` hace un UPDATE full-table con subconsultas y es
+// caro en memoria (riesgo de OOM en el proceso de 512MB). El endpoint /sync-stats lo
+// dispara a demanda, así que ráfagas o doble-click podían encadenar varias pasadas
+// full-table simultáneas. Coalescemos en una sola ejecución en curso por proceso:
+// las peticiones concurrentes esperan/reusan el mismo resultado en vez de lanzar más.
+let inFlightStatsSync = null
+
 export const syncContactsStats = async (req, res) => {
   try {
-    const stats = await updateContactsStats()
+    if (!inFlightStatsSync) {
+      inFlightStatsSync = updateContactsStats().finally(() => {
+        inFlightStatsSync = null
+      })
+    }
+    const stats = await inFlightStatsSync
 
     res.json({
       success: true,

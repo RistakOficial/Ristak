@@ -424,12 +424,29 @@ export async function getPaymentGatewayMode() {
   return normalizePaymentSettingsMode(settings.paymentMode)
 }
 
+// PAY2-009: el pago público (/pay/:id) no debe exponer la identidad fiscal del
+// merchant (RFC/fiscalId, razón social, CP, régimen) ni la config interna del
+// proveedor (Gigstack). Solo se exponen los campos necesarios para mostrar y
+// calcular el impuesto en el checkout.
+function publicTaxes(taxes = {}) {
+  return {
+    enabled: taxes.enabled,
+    taxName: taxes.taxName,
+    rateType: taxes.rateType,
+    rateValue: taxes.rateValue,
+    rateSource: taxes.rateSource,
+    calculationMode: taxes.calculationMode,
+    country: taxes.country
+  }
+}
+
 export async function getPublicPaymentSettings() {
   const settings = await getPaymentSettings()
   return {
     paymentMode: settings.paymentMode,
     checkout: settings.checkout,
     receipt: settings.receipt,
-    taxes: settings.taxes
+    // PAY2-009: filtrar campos fiscales sensibles antes de exponerlos públicamente
+    taxes: publicTaxes(settings.taxes)
   }
 }

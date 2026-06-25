@@ -114,9 +114,37 @@ function getContactConversionListCondition(type) {
   }
 }
 
+// TRK-008: deriva el offset (en horas) de una zona IANA en lugar de asumir -6h fijo.
+// SQLite (rama QA/dev) no entiende zonas IANA, así que calculamos el offset real con Intl.
+// Si la zona es inválida o falla el cálculo, conservamos el comportamiento previo (-6h).
+function sqliteTimezoneOffsetClause(timezone = 'UTC') {
+  const fallback = "'-6 hours'"
+  try {
+    const tz = String(timezone || 'UTC').trim() || 'UTC'
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'longOffset'
+    })
+    const part = dtf.formatToParts(new Date()).find(p => p.type === 'timeZoneName')
+    if (!part || !part.value) return fallback
+    // part.value ej: "GMT-6", "GMT-06:00", "GMT+5:30", "GMT" (UTC)
+    const match = part.value.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/)
+    if (!match) return part.value === 'GMT' ? "'0 hours'" : fallback
+    const sign = match[1] === '-' ? -1 : 1
+    const hours = parseInt(match[2], 10)
+    const minutes = match[3] ? parseInt(match[3], 10) : 0
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return fallback
+    const totalMinutes = sign * (hours * 60 + minutes)
+    return `'${totalMinutes} minutes'`
+  } catch {
+    return fallback
+  }
+}
+
 function timestampLocalExpression(column, timezone = 'UTC') {
   if (!isPostgres) {
-    return `datetime(${column}, '-6 hours')`
+    // TRK-008: usa el offset real de la zona en vez del -6h hardcodeado.
+    return `datetime(${column}, ${sqliteTimezoneOffsetClause(timezone)})`
   }
 
   const safeTimezone = String(timezone || 'UTC').replace(/'/g, "''")
@@ -1695,7 +1723,8 @@ export async function getVisitorsByPeriod(req, res) {
 
     const buildWeekExpression = (column) => {
       if (!isPostgres) {
-        return `strftime('%Y-W%W', datetime(${column}, '-6 hours'))`
+        // TRK-008: usa el offset real de la zona aplicada en vez del -6h hardcodeado.
+        return `strftime('%Y-W%W', datetime(${column}, ${sqliteTimezoneOffsetClause(range.appliedTimezone)}))`
       }
       const columnExpr = timestampLocalExpression(column, range.appliedTimezone)
       return `TO_CHAR(${columnExpr}, 'YYYY-"W"IW')`
