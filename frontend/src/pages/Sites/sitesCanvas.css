@@ -2139,6 +2139,13 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame {
+  /* Aísla el formulario embebido de la alineación del bloque anfitrión: si el bloque
+     form_embed está alineado al centro en el sitio, su --rstk-block-align NO debe
+     heredarse a los campos (que deben quedar a la izquierda, como en el standalone). */
+  --rstk-block-align: initial;
+  --rstk-block-justify: initial;
+  --rstk-content-margin-left: initial;
+  --rstk-content-margin-right: initial;
   position: relative;
   isolation: isolate;
   min-height: auto;
@@ -2198,7 +2205,9 @@ html body :is(.rstkCanvas.rstk-kind-form.rstk-choice-grid, .rstkCanvas.rstk-kind
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-headline,
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-subheading,
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-text {
-  text-align: var(--rstk-block-align, left);
+  /* inherit: sin alineación propia, el título sigue la del shell (centrada en
+     plantillas centradas), como el standalone; con textAlign propio, lo respeta. */
+  text-align: var(--rstk-block-align, inherit);
 }
 /* Bloque genérico a ancho completo (full-bleed por viewport, recortado al lienzo). */
 .rstkCanvas .rstk-frame:has(.rstkBlockFullWidth),
