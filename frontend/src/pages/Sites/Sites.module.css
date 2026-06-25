@@ -21051,6 +21051,14 @@
   }
 }
 
+/* Cuando un dropdown de páginas está abierto en el toolbar de formulario, NO recortarlo.
+   overflow-x:auto fuerza a overflow-y a recortar (regla de CSS), tapando el menú que cae
+   hacia abajo. Mientras el dropdown está abierto dejamos overflow visible para que se vea. */
+.pageFrame .containerFocused:has(.builder) .editorUnifiedToolbarFormMode .editorToolbarFormControls:has(.pagesDropdownOpen),
+.pageFrame .containerFocused:has(.builder) .editorToolbarFormControls:has(.pagesDropdownOpen) {
+  overflow: visible;
+}
+
 /* Very narrow: stack every group on its own scrollable row. */
 @container editorbar (max-width: 820px) {
   .pageFrame .containerFocused:has(.builder) .editorToolbarTop {
