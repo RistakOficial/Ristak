@@ -12816,7 +12816,6 @@ export const Sites: React.FC = () => {
                     onVideoFormGateSubmitSelect={() => setActiveVideoFormGateSubmitSelected(true)}
                     onSave={() => handleSaveBlock()}
                     onDeselect={handleCanvasBlockDeselect}
-                    onSelectBlock={selectEditorBlock}
                   />
                 )}
 
@@ -31619,7 +31618,6 @@ interface PropertiesPanelProps {
   onVideoFormGateSubmitSelect?: () => void
   onSave: () => void
   onDeselect?: () => void
-  onSelectBlock?: (blockId: string) => void
 }
 
 const FormTypographyGlobalControls: React.FC<{
@@ -34126,8 +34124,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onVideoFormGateActiveBlockChange,
   onVideoFormGateSubmitSelect,
   onSave,
-  onDeselect,
-  onSelectBlock
+  onDeselect
 }) => {
   // For form sites the selected element's behaviour/logic moves to a floating
   // box pinned to the block on the canvas; landings keep the inspector intact.
@@ -34356,24 +34353,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </>
   )
 
-  const parentFranjaForBreadcrumb = onSelectBlock && isLanding(site) && !isSectionBlock(block) && !isPanelBlock(block)
-    ? getParentSectionBlock(block, allBlocks || blocks)
-    : null
-
   const editContent = (
     <>
-      {parentFranjaForBreadcrumb && (
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          fullWidth
-          leftIcon={<PanelTop size={14} />}
-          onClick={() => onSelectBlock?.(parentFranjaForBreadcrumb.id)}
-        >
-          Seleccionar franja
-        </Button>
-      )}
       {showBlockNameFirst && blockNameField}
       {showBlockNameFirst && editTypographyControls}
 
