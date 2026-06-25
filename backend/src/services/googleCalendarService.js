@@ -781,6 +781,30 @@ export async function syncGoogleIntegrationNow({ startTime = null, endTime = nul
   }
 }
 
+// (GCAL-002) Reintento periódico de la sincronización Google<->local para las citas que
+// quedaron en error/pendiente. Es idempotente y acotado:
+//  - Pull Google->local: `syncGoogleEventsToLocal` (last-write-wins por date_updated, no pisa
+//    ediciones locales frescas; cancelados se soft-cancelan, nunca hard-delete - ver GCAL-001/003).
+//  - Push local->Google: `syncLocalAppointmentsToGoogle` SOLO selecciona citas con
+//    google_sync_status != 'synced' o sin google_event_id (las que fallaron/están pendientes),
+//    con LIMIT acotado; las ya sincronizadas se saltan. Eso es exactamente "reintentar las que
+//    quedaron con error/pendiente".
+// Si Google no está conectado o no hay calendarios vinculados, hace no-op seguro (no lanza),
+// para que el cron no genere ruido ni falle cuando la integración no está activa.
+// NO cambia las firmas existentes; reutiliza syncGoogleIntegrationNow tal cual.
+export async function retryGoogleCalendarSync() {
+  const config = await getGoogleCalendarConfig({ includeCredentials: true })
+  if (!config) {
+    return { enabled: false, ran: false }
+  }
+
+  // Reutiliza el flujo completo (pull + push) ya probado. syncGoogleIntegrationNow
+  // persiste lastSyncStatus/lastSyncMessage y, si hay 0 calendarios vinculados,
+  // simplemente devuelve 0 sincronizadas sin tocar nada (degradación segura).
+  const result = await syncGoogleIntegrationNow()
+  return { enabled: true, ran: true, sync: result?.sync || null }
+}
+
 export async function updateLocalCalendarGoogleSync({ calendarId, googleCalendarId }) {
   const normalizedCalendarId = cleanString(calendarId)
   if (!normalizedCalendarId) {
@@ -1182,6 +1206,7 @@ export default {
   listGoogleCalendars,
   listGoogleEvents,
   mergeRistakAppointmentsIntoGoogle,
+  retryGoogleCalendarSync, // (GCAL-002)
   saveGoogleCalendarOAuthConnection,
   syncAppointmentToGoogle,
   syncLocalAppointmentsToGoogle,

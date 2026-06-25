@@ -754,6 +754,78 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
   }
 }
 
+// (GHL-002) Soft-delete SEGURO de contactos eliminados en HighLevel.
+//
+// La sync HL->local nunca marcaba como borrados los contactos que se eliminaron en
+// HighLevel: quedaban "fantasma" para siempre. Esta función marca deleted_at (igual
+// que el soft-delete de contacts de la migración 003) en los contactos LOCALES que:
+//   - están ligados a HighLevel (ghl_contact_id no vacío), Y
+//   - su ghl_contact_id NO apareció en una enumeración COMPLETA de HL.
+//
+// SOLO se invoca cuando la paginación de contactos recorrió TODAS las páginas hasta
+// agotarlas SIN fallo (syncHighLevelContacts pagina hasta meta.nextPageUrl == null y
+// lanza throw ante cualquier error no-429, así que llegar al final = enumeración
+// completa). NUNCA se ejecuta en una sync parcial/incremental/abortada: eso sería un
+// borrado masivo.
+//
+// Guardas duras anti-borrado-masivo (cualquiera que falle => NO se borra nada):
+//   1. seenGhlIds debe ser un Set no vacío (una respuesta vacía de HL NO borra todo).
+//   2. Se acota SOLO a filas con ghl_contact_id real (NUNCA toca contactos locales
+//      o de WhatsApp que aún no están ligados a HL).
+//   3. Solo afecta filas con deleted_at IS NULL (idempotente; no re-toca papelera).
+// Reversible: es soft-delete; las lecturas ya filtran deleted_at IS NULL y existe
+// papelera (deleted_at IS NOT NULL) para restaurar.
+async function softDeleteMissingHighLevelContacts(seenGhlIds) {
+  try {
+    // Guarda 1: nunca borrar a partir de un set vacío (HL pudo devolver 0 por error
+    // silencioso o cuenta recién conectada). Un wipe masivo sería catastrófico.
+    if (!(seenGhlIds instanceof Set) || seenGhlIds.size === 0) {
+      logger.warn('(GHL-002) Soft-delete de contactos OMITIDO: no hay IDs de HighLevel enumerados (set vacío). No se borra nada por seguridad.')
+      return { softDeleted: 0, skipped: true }
+    }
+
+    // Set de ghl_contact_id realmente vistos en HL, como strings limpios.
+    const ids = Array.from(seenGhlIds)
+      .map(id => (id === null || id === undefined ? '' : String(id).trim()))
+      .filter(Boolean)
+
+    if (ids.length === 0) {
+      logger.warn('(GHL-002) Soft-delete de contactos OMITIDO: los IDs enumerados quedaron vacíos tras normalizar.')
+      return { softDeleted: 0, skipped: true }
+    }
+
+    // Timestamp comparable como texto en SQLite y Postgres ('YYYY-MM-DD HH:MM:SS').
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+
+    // UPDATE acotado: SOLO contactos ligados a HL (ghl_contact_id no vacío) cuyo id de
+    // HL NO está en la lista enumerada, y que no estén ya en la papelera. Placeholders
+    // posicionales (?) válidos en ambos motores vía la abstracción db.
+    const placeholders = ids.map(() => '?').join(', ')
+    const result = await db.run(
+      `UPDATE contacts
+         SET deleted_at = ?
+       WHERE deleted_at IS NULL
+         AND ghl_contact_id IS NOT NULL
+         AND ghl_contact_id != ''
+         AND ghl_contact_id NOT IN (${placeholders})`,
+      [now, ...ids]
+    )
+
+    const softDeleted = result?.changes || 0
+    if (softDeleted > 0) {
+      logger.info(`(GHL-002) Soft-delete de contactos: ${softDeleted} contacto(s) eliminado(s) en HighLevel marcados como borrados localmente.`)
+    } else {
+      logger.info('(GHL-002) Soft-delete de contactos: ningún contacto fantasma por limpiar (todos los locales ligados siguen en HighLevel).')
+    }
+
+    return { softDeleted, skipped: false }
+  } catch (error) {
+    // Nunca tumbar la sync por el soft-delete: es un paso de limpieza, no crítico.
+    logger.error(`(GHL-002) Error en soft-delete de contactos (se ignora, no se borró nada parcial peligroso): ${error.message}`)
+    return { softDeleted: 0, skipped: true, error: error.message }
+  }
+}
+
 /**
  * Sincroniza contactos desde HighLevel (con paginación)
  */
@@ -832,6 +904,17 @@ async function syncHighLevelContacts(locationId, apiToken) {
   let saved = 0
   const usePostgres = process.env.DATABASE_URL ? true : false
   const customFieldDefinitions = await fetchHighLevelContactCustomFieldDefinitions({ apiToken, locationId })
+
+  // (GHL-002) Set de ghl_contact_id realmente enumerados desde HL en esta corrida
+  // COMPLETA, para luego marcar como borrados localmente los que ya no existen.
+  // Se construye a partir de allContacts (la enumeración completa), INDEPENDIENTE de
+  // si el guardado local de cada contacto falla: el contacto existe en HL, así que
+  // NO debe soft-borrarse aunque su upsert local truene.
+  const seenGhlContactIds = new Set()
+  for (const rawContact of allContacts) {
+    const ghlId = rawContact?.id || rawContact?._id
+    if (ghlId) seenGhlContactIds.add(String(ghlId).trim())
+  }
 
   for (const rawContact of allContacts) {
     try {
@@ -965,7 +1048,16 @@ async function syncHighLevelContacts(locationId, apiToken) {
 
   logger.info(`✅ Sincronizados ${saved}/${allContacts.length} contactos desde HighLevel`)
   updateContacts(saved, allContacts.length, 'completed', `${saved} contactos sincronizados exitosamente`)
-  return { saved, total: allContacts.length }
+
+  // (GHL-002) Llegar hasta aquí significa que la paginación recorrió TODAS las
+  // páginas hasta meta.nextPageUrl == null SIN throw (cualquier error no-429 aborta
+  // la sync antes de este punto). Es decir: enumeración COMPLETA y EXITOSA. Solo en
+  // ese caso es seguro marcar como borrados los contactos locales ligados a HL cuyo
+  // id ya no aparece en HighLevel. El helper aplica sus propias guardas (set no
+  // vacío, solo ghl_contact_id real, solo deleted_at IS NULL) y nunca tumba la sync.
+  const softDeleteResult = await softDeleteMissingHighLevelContacts(seenGhlContactIds)
+
+  return { saved, total: allContacts.length, softDeleted: softDeleteResult.softDeleted || 0 }
 }
 
 function serializeCustomFieldsForUpsert(value) {

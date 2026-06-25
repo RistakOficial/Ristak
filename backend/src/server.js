@@ -18,6 +18,7 @@ import { startWhatsAppQrWatchdogCron } from './jobs/whatsappQrWatchdog.cron.js'
 import { startStripePaymentPlansCron } from './jobs/stripePaymentPlans.cron.js'
 import { startConektaPaymentPlansCron } from './jobs/conektaPaymentPlans.cron.js'
 import { startPaymentAutomationsCron } from './jobs/paymentAutomations.cron.js'
+import { startGoogleCalendarSyncCron } from './jobs/googleCalendarSync.cron.js' // (GCAL-002)
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { runVersionedMigrations } from './startup/runMigrations.js'
@@ -407,6 +408,7 @@ async function startRuntimeServices() {
   startStripePaymentPlansCron()    // Cobra parcialidades Stripe vencidas con tarjetas guardadas
   startConektaPaymentPlansCron()   // Cobra parcialidades Conekta vencidas con tarjetas guardadas
   startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
+  startGoogleCalendarSyncCron()    // (GCAL-002) Reintenta sync Google Calendar<->local de citas con error/pendiente
   startupState.ready = true
   logger.success('App lista para recibir tráfico')
 }
