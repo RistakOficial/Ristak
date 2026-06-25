@@ -18293,6 +18293,12 @@
   color: var(--text, var(--color-text-primary));
 }
 
+.paletteElementActions button.paletteElementDelete:hover:not(:disabled) {
+  border-color: var(--neg);
+  background: color-mix(in srgb, var(--neg) 12%, transparent);
+  color: var(--neg);
+}
+
 .paletteEmpty {
   min-height: 132px;
   display: grid;

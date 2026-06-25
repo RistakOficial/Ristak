@@ -12478,6 +12478,7 @@ export const Sites: React.FC = () => {
                       }}
                       onMoveElement={moveEmbeddedFormField}
                       onToggleElementVisibility={toggleEmbeddedFormFieldVisibility}
+                      onDeleteElement={(block) => removeEmbeddedFormField(block.id)}
                       onReorderElements={reorderEmbeddedFormFields}
                       getMoveState={(block) => {
                         const index = formEditVisibleFields.findIndex(item => item.id === block.id)
@@ -12512,6 +12513,7 @@ export const Sites: React.FC = () => {
                       }}
                       onMoveElement={moveVideoFormGateBlock}
                       onToggleElementVisibility={toggleVideoFormGateBlockVisibility}
+                      onDeleteElement={(block) => removeVideoFormGateBlock(block.id)}
                       onReorderElements={reorderVideoFormGateBlocks}
                       getMoveState={(block) => {
                         const index = videoFormGateEditBlocks.findIndex(item => item.id === block.id)
@@ -12542,6 +12544,7 @@ export const Sites: React.FC = () => {
                         onSelectElement={selectEditorBlock}
                         onMoveElement={handleMoveBlock}
                         onToggleElementVisibility={toggleBlockVisibility}
+                        onDeleteElement={(block) => requestDeleteBlock(block.id)}
                         getMoveState={getBlockMoveState}
                         onReorderElements={(orderedBlocks) => {
                           void persistCanvasBlockOrder(orderedBlocks, { popup: popupSurfaceSelected })
@@ -26874,6 +26877,7 @@ const Palette: React.FC<{
   onSelectElement?: (blockId: string) => void
   onMoveElement?: (blockId: string, direction: BlockMoveDirection) => void
   onToggleElementVisibility?: (block: SiteBlock) => void
+  onDeleteElement?: (block: SiteBlock) => void
   onReorderElements?: (orderedBlocks: SiteBlock[]) => void
   getMoveState?: (block: SiteBlock) => BlockMoveState
   onPaletteDragStart: (payload: PaletteDragPayload, position: PaletteDragPosition | null) => void
@@ -26890,6 +26894,7 @@ const Palette: React.FC<{
   onSelectElement,
   onMoveElement,
   onToggleElementVisibility,
+  onDeleteElement,
   onReorderElements,
   getMoveState,
   onPaletteDragStart,
@@ -26957,6 +26962,7 @@ const Palette: React.FC<{
                       onMoveUp={() => onMoveElement?.(block.id, 'up')}
                       onMoveDown={() => onMoveElement?.(block.id, 'down')}
                       onToggleVisibility={() => onToggleElementVisibility?.(block)}
+                      onDelete={onDeleteElement ? () => onDeleteElement(block) : undefined}
                     />
                   )
                 })}
@@ -27043,7 +27049,8 @@ const PaletteElementItem: React.FC<{
   onMoveUp: () => void
   onMoveDown: () => void
   onToggleVisibility: () => void
-}> = ({ block, selected, canMoveUp, canMoveDown, onSelect, onMoveUp, onMoveDown, onToggleVisibility }) => {
+  onDelete?: () => void
+}> = ({ block, selected, canMoveUp, canMoveDown, onSelect, onMoveUp, onMoveDown, onToggleVisibility, onDelete }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: block.id,
     animateLayoutChanges: sortableAnimateLayoutChanges,
@@ -27098,6 +27105,17 @@ const PaletteElementItem: React.FC<{
         <button type="button" disabled={!canMoveDown} onClick={onMoveDown} aria-label={`Bajar ${name}`} title="Bajar">
           <ArrowDown size={13} />
         </button>
+        {onDelete && (
+          <button
+            type="button"
+            className={styles.paletteElementDelete}
+            onClick={onDelete}
+            aria-label={`Eliminar ${name}`}
+            title="Eliminar elemento"
+          >
+            <Trash2 size={13} />
+          </button>
+        )}
       </span>
     </div>
   )
