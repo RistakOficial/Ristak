@@ -10180,146 +10180,38 @@
   margin: 0;
 }
 
-.calendarLayoutField {
+.calendarToggleGrid {
   display: grid;
   gap: 8px;
 }
 
-.calendarLayoutField > span {
-  color: var(--text-dim, var(--color-text-secondary));
-  font-size: 0.8rem;
-  font-weight: 800;
+.calendarToggleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
 }
 
-.calendarLayoutChoices {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.calendarLayoutChoice {
-  position: relative;
-  display: grid;
-  align-content: start;
-  gap: 8px;
+.calendarToggleCopy {
   min-width: 0;
-  min-height: 132px;
-  border: 1px solid var(--border, var(--design-control-border));
-  border-radius: var(--radius-ctl, 12px);
-  background: var(--surface, var(--color-background-primary));
-  color: var(--text, var(--color-text-primary));
-  width: 100%;
-  padding: 10px;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  box-shadow: var(--shadow-xs, none);
-  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
-}
-
-.calendarLayoutChoice:hover {
-  border-color: color-mix(in srgb, var(--accent, var(--color-primary)) 48%, var(--border, var(--design-control-border)));
-  background: color-mix(in srgb, var(--accent, var(--color-primary)) 6%, var(--surface, var(--color-background-primary)));
-}
-
-.calendarLayoutChoice:focus-visible {
-  outline: none;
-  border-color: var(--accent, var(--color-primary));
-  box-shadow: var(--ristak-focus-ring, 0 0 0 3px color-mix(in srgb, var(--accent, var(--color-primary)) 18%, transparent));
-}
-
-.calendarLayoutChoiceActive {
-  border-color: var(--accent, var(--color-primary));
-  background: color-mix(in srgb, var(--accent, var(--color-primary)) 10%, var(--surface, var(--color-background-primary)));
-}
-
-.calendarLayoutPreview {
   display: grid;
-  gap: 4px;
-  min-height: 48px;
-  border: 1px solid var(--border, var(--design-control-border));
-  border-radius: 8px;
-  background: var(--surface-2, var(--color-background-secondary));
-  padding: 5px;
-  overflow: hidden;
+  gap: 2px;
 }
 
-.calendarLayoutIntro,
-.calendarLayoutMonth,
-.calendarLayoutSlots {
-  display: block;
-  min-width: 0;
-  border-radius: 4px;
+.calendarToggleCopy strong {
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 600;
 }
 
-.calendarLayoutIntro {
-  background: color-mix(in srgb, var(--text-mute, var(--color-text-tertiary)) 28%, var(--surface, var(--color-background-primary)));
-}
-
-.calendarLayoutMonth {
-  background: color-mix(in srgb, var(--accent, var(--color-primary)) 18%, var(--surface, var(--color-background-primary)));
-}
-
-.calendarLayoutSlots {
-  background: color-mix(in srgb, var(--accent, var(--color-primary)) 36%, var(--surface, var(--color-background-primary)));
-}
-
-.calendarLayoutPreview_classic {
-  grid-template-columns: 0.75fr 1fr 0.62fr;
-  grid-template-rows: repeat(2, minmax(0, 1fr));
-}
-
-.calendarLayoutPreview_classic .calendarLayoutIntro {
-  grid-row: 1 / -1;
-}
-
-.calendarLayoutPreview_classic .calendarLayoutMonth {
-  grid-row: 1 / -1;
-}
-
-.calendarLayoutPreview_classic .calendarLayoutSlots {
-  grid-row: 1 / -1;
-}
-
-.calendarLayoutPreview_compact {
-  grid-template-columns: 1fr 0.64fr;
-  grid-template-rows: 0.46fr 1fr;
-}
-
-.calendarLayoutPreview_compact .calendarLayoutIntro {
-  grid-column: 1 / -1;
-}
-
-.calendarLayoutPreview_stacked {
-  grid-template-columns: 1fr;
-  grid-template-rows: 0.6fr 1fr 0.72fr;
-}
-
-.calendarLayoutChoiceCopy {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.calendarLayoutChoiceCopy strong {
-  color: var(--text, var(--color-text-primary));
-  font-size: 0.82rem;
-  font-weight: 800;
-  line-height: 1.15;
-}
-
-.calendarLayoutChoiceCopy small {
-  color: var(--text-mute, var(--color-text-tertiary));
-  font-size: 0.72rem;
-  font-weight: 650;
-  line-height: 1.25;
-}
-
-.calendarLayoutCheck {
-  position: absolute;
-  right: 8px;
-  top: 8px;
-  color: var(--accent, var(--color-primary));
+.calendarToggleCopy small {
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  line-height: 1.35;
 }
 
 /* --- Pages context menu (Radix portal content) --- */

@@ -4151,7 +4151,7 @@ function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
     image: makeLandingSpacing(16, 18),
     video: makeLandingSpacing(16, 18),
     embed: makeLandingSpacing(16, 18),
-    calendar_embed: makeLandingSpacing(16, 18),
+    calendar_embed: makeLandingSpacing(48, 56),
     button: makeLandingSpacing(18, 18),
     hero: makeLandingSpacing(0, 0),
     benefits: makeLandingSpacing(0, 0),
@@ -16076,16 +16076,35 @@ const calendarEmbedNumberQuerySettings = [
   ['calendarFieldRadius', 'fieldRadius', 0, 32]
 ]
 
-const calendarEmbedLayouts = new Set(['classic', 'compact', 'stacked'])
+// Toggles de "qué se muestra" (mismos que en Estilos y diseños del calendario).
+// En modo "Personalizar para sitio" el bloque controla la visibilidad por completo.
+const calendarEmbedToggleQuerySettings = [
+  ['calendarShowSidebar', 'showSidebar'],
+  ['calendarShowIcon', 'showIcon'],
+  ['calendarShowEventTitle', 'showEventTitle'],
+  ['calendarShowCalendarName', 'showCalendarName'],
+  ['calendarShowDescription', 'showDescription'],
+  ['calendarShowDuration', 'showDuration'],
+  ['calendarShowConfirmation', 'showConfirmation'],
+  ['calendarAllowTimezoneSelection', 'allowTimezoneSelection']
+]
+
+// Un toggle está "encendido" salvo que su valor sea explícitamente falso.
+function isCalendarToggleOff(value) {
+  return value === false || value === 'false' || value === 0 || value === '0' || value === 'no' || value === 'off'
+}
+
 const calendarEmbedLayoutRecommendedHeights = {
   classic: CALENDAR_EMBED_DEFAULT_HEIGHT,
   compact: 720,
   stacked: 980
 }
 
-function getCalendarEmbedLayoutValue(settings = {}) {
-  const layout = cleanString(settings.calendarLayout || settings.calendar_layout).toLowerCase()
-  return calendarEmbedLayouts.has(layout) ? layout : 'classic'
+function getCalendarEmbedLayoutValue() {
+  // El bloque de calendario ya no ofrece selector de layout: siempre clásico.
+  // Ignoramos cualquier valor antiguo (compact/stacked) para mantener consistencia
+  // con el editor (getCalendarEmbedLayout en Sites.tsx).
+  return 'classic'
 }
 
 function appendCalendarEmbedParams(value, settings = {}, options = {}) {
@@ -16119,6 +16138,15 @@ function appendCalendarEmbedParams(value, settings = {}, options = {}) {
         const valueNumber = blockSettingNumber(settings, settingKey, min, max)
         if (valueNumber !== null) parsed.searchParams.set(paramKey, String(valueNumber))
       })
+
+      // En custom el bloque dicta qué se muestra: reenviamos siempre los toggles
+      // (ON por defecto) para que el editor y el sitio publicado coincidan.
+      calendarEmbedToggleQuerySettings.forEach(([settingKey, paramKey]) => {
+        parsed.searchParams.set(paramKey, isCalendarToggleOff(settings[settingKey]) ? '0' : '1')
+      })
+
+      const fontFamily = cleanString(settings.calendarFontFamily || settings.calendar_font_family)
+      if (fontFamily) parsed.searchParams.set('fontFamily', fontFamily)
     }
 
     return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
@@ -16172,7 +16200,7 @@ function getRenderLandingSpacing(blockType) {
     image: makeRenderLandingSpacing(16, 18),
     video: makeRenderLandingSpacing(16, 18),
     embed: makeRenderLandingSpacing(16, 18),
-    calendar_embed: makeRenderLandingSpacing(16, 18),
+    calendar_embed: makeRenderLandingSpacing(48, 56),
     button: makeRenderLandingSpacing(18, 18),
     hero: makeRenderLandingSpacing(0, 0),
     benefits: makeRenderLandingSpacing(0, 0),
