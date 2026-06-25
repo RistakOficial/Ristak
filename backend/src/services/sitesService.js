@@ -18561,10 +18561,12 @@ const RSTK_BASE_CSS = `
   .rstk-embedded-form-source-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
-  body:has(.rstkEmbeddedFormStretch),body:has(.rstkBlockFullWidth){overflow-x:hidden}
-  .rstk-frame:has(.rstkEmbeddedFormStretch),.rstk-frame:has(.rstkBlockFullWidth),.rstk-kind-form .rstk-shell:has(.rstkEmbeddedFormStretch),.rstk-kind-form .rstk-shell:has(.rstkBlockFullWidth),.rstk-kind-landing .rstk-page:has(.rstkBlockFullWidth),.rstk-section-lane:has(.rstkBlockFullWidth),.rstk-section-inner:has(.rstkBlockFullWidth),.rstk-section-column:has(.rstkBlockFullWidth){overflow:visible}
-  .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw)}
+  body:has(.rstkBlockFullWidth){overflow-x:hidden}
+  .rstk-frame:has(.rstkBlockFullWidth),.rstk-kind-form .rstk-shell:has(.rstkBlockFullWidth),.rstk-kind-landing .rstk-page:has(.rstkBlockFullWidth),.rstk-section-lane:has(.rstkBlockFullWidth),.rstk-section-inner:has(.rstkBlockFullWidth),.rstk-section-column:has(.rstkBlockFullWidth){overflow:visible}
+  .rstk-kind-form .rstk-page:has(.rstkEmbeddedFormStretch){max-width:none;margin:0}
+  .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch{width:100%;max-width:none;margin:0}
   .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:none;width:100%;margin:0}
+  .rstk-embedded-form-source-frame .rstk-headline,.rstk-embedded-form-source-frame .rstk-subheading,.rstk-embedded-form-source-frame .rstk-text{text-align:var(--rstk-form-content-align,left)}
   .rstk-block-style.rstkBlockFullWidth{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:max(24px,calc(50vw - var(--rstk-max)/2))}
   .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:visible}
   .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent}

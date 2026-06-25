@@ -2008,29 +2008,38 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   overflow: visible;
 }
 
-/* "Estirar a la franja": fondo de orilla a orilla (recortado al lienzo del editor),
-   contenido centrado. Misma técnica que el sitio publicado (100vw + márgenes negativos).
-   El recorte al ancho de página lo da .canvasStage/.canvasScaler (no se les quita overflow). */
-.rstkCanvas .rstk-frame:has(.rstkEmbeddedFormStretch),
+/* "Estirar a la franja": el formulario ocupa todo el ancho de la página (sin 100vw,
+   para que el lienzo del editor no se descuadre ni corte el contenido al alinear).
+   La página del sitio-formulario se ensancha cuando contiene un formulario estirado,
+   el frame llena ese ancho y la columna de campos flota con --rstk-form-field-justify. */
+.rstkCanvas.rstk-kind-form .rstk-page:has(.rstkEmbeddedFormStretch) {
+  max-width: none;
+  margin: 0;
+}
+.rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+.rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch > .rstk-page {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+}
+/* El encabezado y textos del formulario siguen la misma alineación que los campos. */
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-headline,
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-subheading,
+.rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-text {
+  text-align: var(--rstk-form-content-align, left);
+}
+/* Bloque genérico a ancho completo (full-bleed por viewport, recortado al lienzo). */
 .rstkCanvas .rstk-frame:has(.rstkBlockFullWidth),
-.rstkCanvas.rstk-kind-form .rstk-shell:has(.rstkEmbeddedFormStretch),
 .rstkCanvas.rstk-kind-form .rstk-shell:has(.rstkBlockFullWidth),
 .rstkCanvas.rstk-kind-landing .rstk-page:has(.rstkBlockFullWidth),
 .rstkCanvas .rstk-section-lane:has(.rstkBlockFullWidth),
 .rstkCanvas .rstk-section-inner:has(.rstkBlockFullWidth),
 .rstkCanvas .rstk-section-column:has(.rstkBlockFullWidth) {
   overflow: visible;
-}
-.rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch {
-  width: 100vw;
-  max-width: 100vw;
-  margin-left: calc(50% - 50vw);
-  margin-right: calc(50% - 50vw);
-}
-.rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch > .rstk-page {
-  max-width: none;
-  width: 100%;
-  margin: 0;
 }
 .rstkCanvas .rstk-block-style.rstkBlockFullWidth {
   width: 100vw;
