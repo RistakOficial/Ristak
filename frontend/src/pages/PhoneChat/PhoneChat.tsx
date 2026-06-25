@@ -4764,7 +4764,7 @@ export const PhoneChat: React.FC = () => {
       effectiveSelectedChatPhoneId,
       phoneFilterParams.businessPhone || 'all'
     )
-    const cachedChats = !append && cacheEnabled && useCache ? readPhoneDailyCache<ChatContact[]>(cacheKey) : null
+    const cachedChats = !append && cacheEnabled && useCache ? readPhoneDailyCache<ChatContact[]>(cacheKey, timezone) : null // (MOB-007) bucket por día del negocio
     const fastStartInbox = !append && cacheEnabled && useCache && !cachedChats ? readChatFastStartInbox(selectedChatPhoneId) : null
     const showedCachedChats = Boolean(cachedChats || fastStartInbox)
 
@@ -4847,7 +4847,7 @@ export const PhoneChat: React.FC = () => {
         ])
         const displayedChats = applyLoadedChats(merged)
         if (cacheEnabled) {
-          writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
+          writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 }, timezone) // (MOB-007)
           writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
         }
       } else {
@@ -4887,7 +4887,7 @@ export const PhoneChat: React.FC = () => {
 
         const displayedChats = applyLoadedChats(nextChats, requestedContact)
         if (cacheEnabled) {
-          writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
+          writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 }, timezone) // (MOB-007)
           writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
         }
       }
@@ -4919,7 +4919,8 @@ export const PhoneChat: React.FC = () => {
     locationId,
     requestedContactParam,
     selectedChatPhoneFilterActive,
-    selectedChatPhoneId
+    selectedChatPhoneId,
+    timezone // (MOB-007) recarga si cambia la zona del negocio
   ])
 
   const loadMoreChatsIfNeeded = useCallback((event?: React.UIEvent<HTMLDivElement>) => {
@@ -5178,7 +5179,7 @@ export const PhoneChat: React.FC = () => {
     if (contactCustomFieldDefinitionsLoading) return
 
     const cacheKey = getPhoneDailyCacheKey('phone-chat', 'contact-custom-fields', locationId || 'default')
-    const cachedDefinitions = readPhoneDailyCache<ContactCustomFieldDefinition[]>(cacheKey)
+    const cachedDefinitions = readPhoneDailyCache<ContactCustomFieldDefinition[]>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
 
     if (cachedDefinitions) {
       setContactCustomFieldDefinitions(Array.isArray(cachedDefinitions.data) ? cachedDefinitions.data.filter((definition) => !definition.archived) : [])
@@ -5193,7 +5194,7 @@ export const PhoneChat: React.FC = () => {
       const activeDefinitions = Array.isArray(definitions) ? definitions.filter((definition) => !definition.archived) : []
       setContactCustomFieldDefinitions(activeDefinitions)
       setContactCustomFieldDefinitionsLoaded(true)
-      writePhoneDailyCache(cacheKey, activeDefinitions, { maxEntryChars: 180_000 })
+      writePhoneDailyCache(cacheKey, activeDefinitions, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
     } catch {
       if (!cachedDefinitions) {
         setContactCustomFieldDefinitions([])
@@ -5202,7 +5203,7 @@ export const PhoneChat: React.FC = () => {
     } finally {
       setContactCustomFieldDefinitionsLoading(false)
     }
-  }, [contactCustomFieldDefinitionsLoading, locationId])
+  }, [contactCustomFieldDefinitionsLoading, locationId, timezone]) // (MOB-007)
 
   const loadConversation = useCallback(async (contactId: string, options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
     const loadGeneration = conversationLoadGenerationRef.current + 1
@@ -5215,7 +5216,7 @@ export const PhoneChat: React.FC = () => {
     const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
     const useCache = options.useCache !== false && !silentRefresh
     const cacheKey = getPhoneDailyCacheKey('phone-chat', 'conversation', locationId || 'default', contactId)
-    const cachedConversation = useCache ? readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[]; agentCompletions?: ConversationalAgentCompletionEvent[] }>(cacheKey) : null
+    const cachedConversation = useCache ? readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[]; agentCompletions?: ConversationalAgentCompletionEvent[] }>(cacheKey, timezone) : null // (MOB-007) bucket por día del negocio
     const showedCachedConversation = Boolean(cachedConversation)
 
     if (cachedConversation) {
@@ -5262,7 +5263,7 @@ export const PhoneChat: React.FC = () => {
       setMessages((currentMessages) => (
         areMessagesEquivalent(currentMessages, nextMessages) ? currentMessages : nextMessages
       ))
-      writePhoneDailyCache(cacheKey, { journey, messages: nextMessages, agentCompletions }, { maxEntryChars: 360_000 })
+      writePhoneDailyCache(cacheKey, { journey, messages: nextMessages, agentCompletions }, { maxEntryChars: 360_000 }, timezone) // (MOB-007)
     } catch {
       if (isCurrentConversationLoad() && !showedCachedConversation && !silentRefresh) {
         setMessages([])
@@ -5275,7 +5276,7 @@ export const PhoneChat: React.FC = () => {
         setMessagesRefreshing(false)
       }
     }
-  }, [locationId])
+  }, [locationId, timezone]) // (MOB-007)
 
   const refreshChatInboxNow = useCallback(async (options: { contactId?: string; showIndicator?: boolean } = {}) => {
     if (accessState !== 'allowed') return
@@ -5322,9 +5323,9 @@ export const PhoneChat: React.FC = () => {
     const statusCacheKey = getPhoneDailyCacheKey('phone-chat', 'whatsapp-status', locationId || 'default')
     const calendarsCacheKey = getPhoneDailyCacheKey('phone-chat', 'calendars', locationId || 'default')
     const productsCacheKey = getPhoneDailyCacheKey('phone-chat', 'agent-products', locationId || 'default')
-    const cachedStatus = readPhoneDailyCache<WhatsAppApiStatus>(statusCacheKey)
-    const cachedCalendars = readPhoneDailyCache<Calendar[]>(calendarsCacheKey)
-    const cachedProducts = readPhoneDailyCache<ProductItem[]>(productsCacheKey)
+    const cachedStatus = readPhoneDailyCache<WhatsAppApiStatus>(statusCacheKey, timezone) // (MOB-007) bucket por día del negocio
+    const cachedCalendars = readPhoneDailyCache<Calendar[]>(calendarsCacheKey, timezone) // (MOB-007)
+    const cachedProducts = readPhoneDailyCache<ProductItem[]>(productsCacheKey, timezone) // (MOB-007)
     const applyCalendars = (items: Calendar[]) => {
       const availableItems = items.filter((calendar) => calendar.isActive !== false)
       setCalendars(availableItems)
@@ -5365,28 +5366,28 @@ export const PhoneChat: React.FC = () => {
 
     if (status) {
       setWhatsappStatus(status)
-      writePhoneDailyCache(statusCacheKey, status, { maxEntryChars: 180_000 })
+      writePhoneDailyCache(statusCacheKey, status, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
     }
     if (Array.isArray(calendarItems)) {
       applyCalendars(calendarItems)
-      writePhoneDailyCache(calendarsCacheKey, calendarItems, { maxEntryChars: 180_000 })
+      writePhoneDailyCache(calendarsCacheKey, calendarItems, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
     } else if (!cachedCalendars) {
       setCalendars([])
     }
     if (productsResponse && Array.isArray(productsResponse.products)) {
       const nextProducts = applyProducts(productsResponse.products)
-      writePhoneDailyCache(productsCacheKey, nextProducts, { maxEntryChars: 180_000 })
+      writePhoneDailyCache(productsCacheKey, nextProducts, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
     } else if (!cachedProducts) {
       setAgentProducts([])
     }
     setCalendarsLoading(false)
     setAgentProductsLoading(false)
-  }, [accessToken, defaultCalendarId, locationId])
+  }, [accessToken, defaultCalendarId, locationId, timezone]) // (MOB-007)
 
   const loadTemplates = useCallback(async () => {
     setTemplatesError('')
     const cacheKey = getPhoneDailyCacheKey('phone-chat', 'templates', locationId || 'default')
-    const cachedTemplates = readPhoneDailyCache<{ status: WhatsAppApiStatus | null; templates: WhatsAppApiTemplate[] }>(cacheKey)
+    const cachedTemplates = readPhoneDailyCache<{ status: WhatsAppApiStatus | null; templates: WhatsAppApiTemplate[] }>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
     const showedCachedTemplates = Boolean(cachedTemplates)
 
     if (cachedTemplates) {
@@ -5409,7 +5410,7 @@ export const PhoneChat: React.FC = () => {
       if (status) setWhatsappStatus(status)
       const nextTemplates = Array.isArray(response.items) ? response.items : []
       setTemplates(nextTemplates)
-      writePhoneDailyCache(cacheKey, { status, templates: nextTemplates }, { maxEntryChars: 280_000 })
+      writePhoneDailyCache(cacheKey, { status, templates: nextTemplates }, { maxEntryChars: 280_000 }, timezone) // (MOB-007)
     } catch (error) {
       if (!showedCachedTemplates) {
         setTemplates([])
@@ -5419,7 +5420,7 @@ export const PhoneChat: React.FC = () => {
       setTemplatesLoading(false)
       setTemplatesRefreshing(false)
     }
-  }, [locationId])
+  }, [locationId, timezone]) // (MOB-007)
 
   const saveConfigPreference = useCallback(<T,>(setter: (value: T) => Promise<void>, value: T) => {
     setter(value).catch(() => showToast('error', 'No se guardó la configuración', 'Intenta otra vez.'))
@@ -6614,7 +6615,7 @@ export const PhoneChat: React.FC = () => {
     if (contactInfoContact?.id === activeContact.id) return
 
     const cacheKey = getPhoneDailyCacheKey('phone-chat', 'contact-info', locationId || 'default', activeContact.id)
-    const cachedContactInfo = readPhoneDailyCache<Contact>(cacheKey)
+    const cachedContactInfo = readPhoneDailyCache<Contact>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
 
     setContactInfoContact(cachedContactInfo?.data || activeContact)
     setContactInfoLoading(true)
@@ -6625,7 +6626,7 @@ export const PhoneChat: React.FC = () => {
       setChats((current) => current.map((contact) => (
         contact.id === details.id ? { ...contact, ...details } : contact
       )))
-      writePhoneDailyCache(cacheKey, details, { maxEntryChars: 220_000 })
+      writePhoneDailyCache(cacheKey, details, { maxEntryChars: 220_000 }, timezone) // (MOB-007)
     } catch {
       setContactInfoError('No se pudo cargar todo el detalle. Te muestro lo que ya está guardado en este chat.')
     } finally {
@@ -6643,7 +6644,7 @@ export const PhoneChat: React.FC = () => {
     setChats((current) => current.map((contact) => (
       contact.id === contactInfoData.id ? { ...contact, ...patch } : contact
     )))
-    writePhoneDailyCache(cacheKey, nextContact, { maxEntryChars: 220_000 })
+    writePhoneDailyCache(cacheKey, nextContact, { maxEntryChars: 220_000 }, timezone) // (MOB-007)
   }
 
   const handleStartContactNameEdit = () => {
@@ -6755,7 +6756,7 @@ export const PhoneChat: React.FC = () => {
       setChats((current) => current.map((contact) => (
         contact.id === contactInfoData.id ? { ...contact, customFields: savedCustomFields } : contact
       )))
-      writePhoneDailyCache(cacheKey, nextContact, { maxEntryChars: 220_000 })
+      writePhoneDailyCache(cacheKey, nextContact, { maxEntryChars: 220_000 }, timezone) // (MOB-007)
       setEditingCustomFieldId(null)
       setCustomFieldDrafts((current) => {
         const next = { ...current }

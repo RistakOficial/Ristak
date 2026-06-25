@@ -27,7 +27,31 @@ function getStorage() {
   }
 }
 
-function getTodayKey(date = new Date()) {
+// (MOB-007) Formatters cacheados por zona de negocio para derivar el dayKey 'YYYY-MM-DD'
+// en la zona del NEGOCIO (no la del dispositivo). Mismo enfoque que getContactInfoJourneyDayKey.
+const businessDayFormatters = new Map<string, Intl.DateTimeFormat>()
+
+// (MOB-007) `timezone` opcional: si se pasa, el dayKey sigue el día del NEGOCIO; si no, se
+// mantiene el comportamiento actual (zona del dispositivo) para no romper llamadas sin tz.
+function getTodayKey(date = new Date(), timezone?: string) {
+  // (MOB-007) Con timezone de negocio: 'en-CA' + 2-digit produce 'YYYY-MM-DD' en esa zona.
+  if (timezone) {
+    try {
+      let formatter = businessDayFormatters.get(timezone)
+      if (!formatter) {
+        formatter = new Intl.DateTimeFormat('en-CA', {
+          timeZone: timezone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        })
+        businessDayFormatters.set(timezone, formatter)
+      }
+      return formatter.format(date)
+    } catch {
+      // (MOB-007) Zona inválida → cae al comportamiento del dispositivo.
+    }
+  }
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
@@ -68,11 +92,12 @@ function getCacheEntries(storage: Storage) {
   return entries
 }
 
-export function prunePhoneDailyCache() {
+// (MOB-007) timezone opcional: el bucket de "hoy" sigue el día del negocio cuando se pasa.
+export function prunePhoneDailyCache(timezone?: string) {
   const storage = getStorage()
   if (!storage) return
 
-  const todayKey = getTodayKey()
+  const todayKey = getTodayKey(new Date(), timezone) // (MOB-007) día del negocio si hay tz
   const currentEntries = getCacheEntries(storage)
   currentEntries.forEach((entry) => {
     if (entry.dayKey !== todayKey) {
@@ -98,7 +123,8 @@ export function getPhoneDailyCacheKey(...parts: Array<string | number | boolean 
     .join(':')
 }
 
-export function readPhoneDailyCache<T>(key: string): PhoneDailyCacheEntry<T> | null {
+// (MOB-007) timezone opcional: valida que la entrada sea "de hoy" según el día del negocio.
+export function readPhoneDailyCache<T>(key: string, timezone?: string): PhoneDailyCacheEntry<T> | null {
   const storage = getStorage()
   if (!storage) return null
 
@@ -112,7 +138,7 @@ export function readPhoneDailyCache<T>(key: string): PhoneDailyCacheEntry<T> | n
       storage.removeItem(storageKey)
       return null
     }
-    if (parsed.dayKey !== getTodayKey() || typeof parsed.savedAt !== 'number' || !('data' in parsed)) {
+    if (parsed.dayKey !== getTodayKey(new Date(), timezone) || typeof parsed.savedAt !== 'number' || !('data' in parsed)) { // (MOB-007) día del negocio si hay tz
       storage.removeItem(storageKey)
       return null
     }
@@ -128,12 +154,13 @@ export function readPhoneDailyCache<T>(key: string): PhoneDailyCacheEntry<T> | n
   }
 }
 
-export function writePhoneDailyCache<T>(key: string, data: T, options: WriteOptions = {}) {
+// (MOB-007) timezone opcional: el dayKey almacenado sigue el día del negocio cuando se pasa.
+export function writePhoneDailyCache<T>(key: string, data: T, options: WriteOptions = {}, timezone?: string) {
   const storage = getStorage()
   if (!storage) return false
 
   const record: CachedRecord<T> = {
-    dayKey: getTodayKey(),
+    dayKey: getTodayKey(new Date(), timezone), // (MOB-007) día del negocio si hay tz
     savedAt: Date.now(),
     data
   }
@@ -143,19 +170,19 @@ export function writePhoneDailyCache<T>(key: string, data: T, options: WriteOpti
 
   if (value.length > maxEntryChars) {
     storage.removeItem(storageKey)
-    prunePhoneDailyCache()
+    prunePhoneDailyCache(timezone) // (MOB-007) propaga tz para no purgar el bucket del negocio
     return false
   }
 
   try {
     storage.setItem(storageKey, value)
-    prunePhoneDailyCache()
+    prunePhoneDailyCache(timezone) // (MOB-007)
     return true
   } catch {
-    prunePhoneDailyCache()
+    prunePhoneDailyCache(timezone) // (MOB-007)
     try {
       storage.setItem(storageKey, value)
-      prunePhoneDailyCache()
+      prunePhoneDailyCache(timezone) // (MOB-007)
       return true
     } catch {
       storage.removeItem(storageKey)

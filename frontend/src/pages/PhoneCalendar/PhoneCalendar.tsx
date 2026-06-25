@@ -451,7 +451,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
   const loadCalendars = useCallback(async () => {
     const cacheKey = getPhoneDailyCacheKey('phone-calendar', 'calendars', locationId || 'default')
-    const cachedCalendars = readPhoneDailyCache<Calendar[]>(cacheKey)
+    const cachedCalendars = readPhoneDailyCache<Calendar[]>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
 
     if (cachedCalendars) {
       applyCalendars(Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
@@ -459,9 +459,9 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
     const calendarsData = await calendarsService.getCalendars(locationId, accessToken)
     applyCalendars(calendarsData)
-    writePhoneDailyCache(cacheKey, calendarsData, { maxEntryChars: 180_000 })
+    writePhoneDailyCache(cacheKey, calendarsData, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
     setCacheRefreshing(false)
-  }, [accessToken, applyCalendars, locationId])
+  }, [accessToken, applyCalendars, locationId, timezone])
 
   const loadEvents = useCallback(async () => {
     if (!selectedCalendar) {
@@ -478,7 +478,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       start.getTime(),
       end.getTime()
     )
-    const cachedEvents = readPhoneDailyCache<{ events: CalendarEvent[] }>(cacheKey)
+    const cachedEvents = readPhoneDailyCache<{ events: CalendarEvent[] }>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
 
     if (cachedEvents) {
       setEvents(Array.isArray(cachedEvents.data.events) ? cachedEvents.data.events : [])
@@ -493,9 +493,9 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     )
     const nextEvents = eventsData.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
     setEvents(nextEvents)
-    writePhoneDailyCache(cacheKey, { events: nextEvents }, { maxEntryChars: 240_000 })
+    writePhoneDailyCache(cacheKey, { events: nextEvents }, { maxEntryChars: 240_000 }, timezone) // (MOB-007)
     setCacheRefreshing(false)
-  }, [accessToken, currentDate, locationId, selectedCalendar])
+  }, [accessToken, currentDate, locationId, selectedCalendar, timezone])
 
   useEffect(() => {
     if (embedded) return
