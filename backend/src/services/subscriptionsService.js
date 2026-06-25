@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
+import { logger } from '../utils/logger.js'
 import {
   cancelStripeRecurringSubscription,
   createStripeRecurringSubscription,
@@ -866,13 +867,23 @@ export async function deleteSubscription(subscriptionId) {
   }
 
   const existing = await db.get(
-    `SELECT id, status, mercadopago_preapproval_id, conekta_customer_id, conekta_subscription_id
+    `SELECT id, status, stripe_subscription_id, mercadopago_preapproval_id, conekta_customer_id, conekta_subscription_id
      FROM subscriptions
      WHERE id = ? AND COALESCE(status, '') <> 'deleted'
      LIMIT 1`,
     [subscriptionId]
   )
 
+  // (PAY-001) Eliminar una suscripción también la cancela en Stripe: de lo contrario
+  // Stripe seguiría cobrando al cliente mes a mes aunque desaparezca de Ristak.
+  // Tolerante a que ya esté cancelada en Stripe (no debe bloquear el borrado local).
+  if (existing?.stripe_subscription_id && existing.status !== 'cancelled') {
+    try {
+      await cancelStripeRecurringSubscription(existing.stripe_subscription_id)
+    } catch (error) {
+      logger.warn(`[Suscripciones] No se pudo cancelar en Stripe al eliminar ${subscriptionId} (¿ya cancelada?): ${error.message}`)
+    }
+  }
   if (existing?.mercadopago_preapproval_id && existing.status !== 'cancelled') {
     await cancelMercadoPagoRecurringSubscription(existing.mercadopago_preapproval_id)
   }
