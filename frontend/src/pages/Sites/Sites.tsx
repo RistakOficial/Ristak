@@ -25183,6 +25183,34 @@ const CanvasChrome: React.FC<{
   )
 }
 
+// Arma el "site" sintético para pintar un bloque de perfil de red social desde sus
+// settings (con la marca de la página como fallback). Se usa tanto en el bloque
+// suelto del canvas como en el encabezado del formulario embebido, para que ambos
+// se vean idénticos. Espejo del backend renderSocialProfileBlock.
+const buildSocialProfileBlockSite = (block: SiteBlock, fallbackSite: PublicSite | null): { platform: SocialPlatform; site: PublicSite } => {
+  const settings = block.settings || {}
+  const platform = normalizeSocialPlatform(getSettingString(settings, 'platform'))
+  const fallbackTheme = fallbackSite?.theme || {}
+  const brandName = getSettingString(settings, 'brandName') || fallbackTheme.brandName || fallbackSite?.title || fallbackSite?.name || 'Tu marca'
+  const site = {
+    ...(fallbackSite || {}),
+    id: fallbackSite?.id || block.siteId,
+    name: fallbackSite?.name || brandName,
+    title: fallbackSite?.title || brandName,
+    theme: {
+      ...fallbackTheme,
+      template: platform,
+      brandName,
+      brandSubtitle: getSettingString(settings, 'brandSubtitle') || fallbackTheme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
+      brandAvatar: getSettingString(settings, 'brandAvatar') || fallbackTheme.brandAvatar || '',
+      followers: getSettingString(settings, 'followers') || fallbackTheme.followers || '',
+      socialProfileScale: getSettingNumber(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX),
+      brandVerified: settings.brandVerified === undefined ? fallbackTheme.brandVerified : settings.brandVerified !== false
+    }
+  } as PublicSite
+  return { platform, site }
+}
+
 const SubmitButtonContent: React.FC<{ theme?: SiteTheme; label?: string; subtitle?: string; settings?: Record<string, unknown> }> = ({ theme, label: labelOverride, subtitle: subtitleOverride, settings }) => {
   const label = labelOverride || getThemeString(theme, 'submitText') || 'Enviar'
   const subtitle = subtitleOverride !== undefined ? subtitleOverride : getThemeString(theme, 'submitSubtitle')
@@ -30678,26 +30706,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   const save = onSave || (() => {})
 
   if (block.blockType === 'social_profile') {
-    const platform = normalizeSocialPlatform(settings.platform)
-    const fallbackTheme = site?.theme || {}
-    const brandName = getSettingString(settings, 'brandName') || fallbackTheme.brandName || site?.title || site?.name || 'Tu marca'
-    const socialSite = {
-      ...(site || {}),
-      id: site?.id || block.siteId,
-      name: site?.name || brandName,
-      title: site?.title || brandName,
-      theme: {
-        ...fallbackTheme,
-        template: platform,
-        brandName,
-        brandSubtitle: getSettingString(settings, 'brandSubtitle') || fallbackTheme.brandSubtitle || (platform === 'instagram' ? 'Publicación pagada' : 'Patrocinado'),
-        brandAvatar: getSettingString(settings, 'brandAvatar') || fallbackTheme.brandAvatar || '',
-        followers: getSettingString(settings, 'followers') || fallbackTheme.followers || '',
-        socialProfileScale: getSettingNumber(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX),
-        brandVerified: settings.brandVerified === undefined ? fallbackTheme.brandVerified : settings.brandVerified !== false
-      }
-    } as PublicSite
-
+    const { platform, site: socialSite } = buildSocialProfileBlockSite(block, site || null)
     return <CanvasChrome platform={platform} site={socialSite} embedded profileBlock onPatchTheme={() => {}} onSave={() => {}} />
   }
 
@@ -31034,6 +31043,14 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const sourceChromePlatform: SocialPlatform | null = sourceCanvasTheme?.chrome && sourceCanvasTheme.chrome !== 'none'
       ? sourceCanvasTheme.chrome
       : null
+    // El perfil de red social del formulario fuente se filtra de resolvedItems (no es
+    // un block-type embebible), así que lo tomamos de los bloques crudos para pintarlo
+    // como encabezado del formulario embebido. Espejo del backend.
+    const embeddedSourceSocialBlock = (hasLinkedForm ? (form?.blocks ?? []) : embeddedBlocks)
+      .find(item => item.blockType === 'social_profile') || null
+    const embeddedSourceSocialData = embeddedSourceSocialBlock && previewForm
+      ? buildSocialProfileBlockSite(embeddedSourceSocialBlock, previewForm)
+      : null
     const embeddedFormPreview = (
       <section
         className="rstk-embedded-form"
@@ -31090,7 +31107,16 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                 embeddedFormEditor.onSelectSurface()
               } : undefined}
             >
-              {sourceChromePlatform && previewForm ? (
+              {embeddedSourceSocialData ? (
+                <CanvasChrome
+                  platform={embeddedSourceSocialData.platform}
+                  site={embeddedSourceSocialData.site}
+                  embedded
+                  profileBlock
+                  onPatchTheme={() => {}}
+                  onSave={() => {}}
+                />
+              ) : sourceChromePlatform && previewForm ? (
                 <CanvasChrome
                   platform={sourceChromePlatform}
                   site={previewForm}
