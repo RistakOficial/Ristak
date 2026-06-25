@@ -16313,14 +16313,14 @@ function renderBlockStyleVars(block) {
   const fontSize = blockSettingNumber(settings, 'fontSize', 12, 96)
   const textStrokeWidth = blockSettingNumber(settings, 'textStrokeWidth', 0, 12)
   const contentMaxWidth = blockSettingNumber(settings, 'contentMaxWidth', 10, 120)
-  const blockPaddingValues = blockSpacingValues(settings, 'blockPadding', 0, -80, 160)
-  const blockMarginValues = blockSpacingValues(settings, 'blockMargin', 0, -80, 200)
+  const blockPaddingValues = blockSpacingValues(settings, 'blockPadding', 0, -400, 600)
+  const blockMarginValues = blockSpacingValues(settings, 'blockMargin', 0, -400, 800)
   const blockPadding = blockPaddingValues ? spacingValuesToCss(positiveSpacingValues(blockPaddingValues)) : ''
   const blockMargin = blockMarginValues || hasNegativeSpacing(blockPaddingValues)
     ? spacingValuesToCss(combineSpacingValues(blockMarginValues, blockPaddingValues ? negativeSpacingValues(blockPaddingValues) : null))
     : ''
-  const blockRadius = blockSettingNumber(settings, 'blockRadius', 0, 48)
-  const blockBorderWidth = blockSettingNumber(settings, 'blockBorderWidth', 0, 12)
+  const blockRadius = blockSettingNumber(settings, 'blockRadius', 0, 400)
+  const blockBorderWidth = blockSettingNumber(settings, 'blockBorderWidth', 0, 80)
   const buttonRadius = blockSettingNumber(settings, 'buttonRadius', 0, 80)
   const buttonHeight = blockSettingNumber(settings, 'buttonHeight', 34, 88)
   const buttonPaddingX = blockSettingNumber(settings, 'buttonPaddingX', 8, 72)
@@ -16340,12 +16340,12 @@ function renderBlockStyleVars(block) {
   const cardRadius = blockSettingNumber(settings, 'cardRadius', 0, 48)
   const cardBorderWidth = blockSettingNumber(settings, 'cardBorderWidth', 0, 8)
   const listColumns = blockSettingNumber(settings, 'listColumns', 1, 4)
-  const fieldWidth = blockSettingNumber(settings, 'fieldWidth', 20, 100)
+  const fieldWidth = blockSettingNumber(settings, 'fieldWidth', 5, 100)
   const fieldRadius = blockSettingNumber(settings, 'fieldRadius', 0, 32)
   const countdownNumberSize = blockSettingNumber(settings, 'countdownNumberSize', 14, 96)
   const countdownUnitRadius = blockSettingNumber(settings, 'countdownUnitRadius', 0, 48)
   const countdownUnitGap = blockSettingNumber(settings, 'countdownUnitGap', 0, 48)
-  const sectionGap = blockSettingNumber(settings, 'sectionGap', 0, 80)
+  const sectionGap = blockSettingNumber(settings, 'sectionGap', 0, 400)
   const blockHasNativeBorder = ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed'].includes(block.blockType)
   const supportsButton = ['hero', 'button', 'cta', 'form_embed'].includes(block.blockType)
   const isCalendarEmbed = block.blockType === 'calendar_embed'
@@ -16493,10 +16493,22 @@ function renderBlockStyleVars(block) {
   return vars.length ? ` style="${escapeHtml(vars.join(';'))}"` : ''
 }
 
+function blockHasExplicitBg(settings) {
+  const paint = cleanString(settings.blockBg)
+  if (isCssPaint(paint) && paint.toLowerCase() !== 'transparent') return true
+  return Boolean(cleanString(settings.blockBackgroundImage))
+}
+
+function blockHasExplicitBorder(settings) {
+  return (blockSettingNumber(settings, 'blockBorderWidth', 0, 80) || 0) > 0
+}
+
 function renderBlockStyleClassName(block) {
   const settings = block.settings || {}
   const classes = [
     'rstk-block-style',
+    blockHasExplicitBg(settings) ? 'rstkBlockBgSet' : '',
+    blockHasExplicitBorder(settings) ? 'rstkBlockBorderSet' : '',
     block.blockType === 'header_panel' ? 'rstkHeaderPanelBlock' : '',
     block.blockType === 'footer_panel' ? 'rstkFooterPanelBlock' : '',
     block.blockType === 'calendar_embed' ? 'rstkCalendarBlock' : '',
@@ -16811,9 +16823,9 @@ function buildEmbeddedFormSourceTheme(site = {}) {
   const storedPageMaxWidth = Number(theme?.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
     ? 1440
-    : themeNumber(theme, 'pageMaxWidth', isLandingType ? 1440 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
-  const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 36 : 22, 0, 120)
-  const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
+    : themeNumber(theme, 'pageMaxWidth', isLandingType ? 1440 : (template.id === 'interactive' ? 600 : 520), 240, 3000)
+  const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 36 : 22, 0, 600)
+  const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 400)
   const pageBorderPaint = themePaint(theme, 'pageBorderColor')
   const pageBorder = pageBorderPaint ? paintFallbackColor(pageBorderPaint, 'transparent') : 'transparent'
   const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)
@@ -17199,6 +17211,7 @@ function renderContentBlock(block, context = {}) {
     const embeddedThemeClass = [
       'rstk-embedded-form-theme',
       'rstk-embedded-form-source-frame',
+      settings.embeddedFullWidth === true ? 'rstkEmbeddedFormStretch' : '',
       embeddedSourceTheme.bodyClass,
       `rstk-choice-${normalizeFormChoiceStyle(embeddedTheme.formChoiceStyle)}`,
       `rstk-select-${normalizeFormSelectStyle(embeddedTheme.formSelectStyle)}`
@@ -18123,7 +18136,8 @@ const RSTK_BASE_CSS = `
   .rstk-section-heading h2,.rstk-section-heading p{margin:0}
   .rstk-section-columns{display:grid;grid-template-columns:repeat(var(--rstk-section-columns,1),minmax(0,1fr));gap:var(--rstk-section-gap,clamp(18px,3vw,30px));align-items:start}
   .rstk-section-column{min-width:0;display:grid;align-content:start;gap:var(--rstk-gap)}
-  .rstk-section-column>.rstk-block-style{--rstk-block-bg:transparent;--rstk-block-bg-color:transparent;--rstk-block-bg-layer:none;--rstk-block-bg-image:none;--rstk-block-border:transparent;--rstk-block-border-width:0px;--rstk-block-shell-border-width:0px}
+  .rstk-section-column>.rstk-block-style:not(.rstkBlockBgSet){--rstk-block-bg:transparent;--rstk-block-bg-color:transparent;--rstk-block-bg-layer:none;--rstk-block-bg-image:none}
+  .rstk-section-column>.rstk-block-style:not(.rstkBlockBorderSet){--rstk-block-border:transparent;--rstk-block-border-width:0px;--rstk-block-shell-border-width:0px}
   .rstk-block-style{
     position:relative;
     width:auto;
@@ -18526,6 +18540,7 @@ const RSTK_BASE_CSS = `
   .rstk-embedded-form-source-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
+  .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:none;width:100%;margin:0}
   .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:visible}
   .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent}
   .rstk-embedded-form-source-frame .rstk-headline{margin:0;color:var(--rstk-ink);font-family:var(--rstk-display);font-size:clamp(1.7rem,4.6vw,3rem);font-weight:var(--rstk-heading-weight);line-height:1.05;letter-spacing:0;background-image:none;-webkit-text-fill-color:currentColor}
@@ -18781,7 +18796,7 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
 	    --rstk-form-field-height:${themeNumber(theme, 'formFieldHeight', 50, 34, 96)}px;
 	    --rstk-form-field-pad-x:${themeNumber(theme, 'formFieldPaddingX', 14, 6, 48)}px;
 	    --rstk-form-field-pad-y:${themeNumber(theme, 'formFieldPaddingY', 13, 6, 36)}px;
-	    --rstk-form-field-width:${themeNumber(theme, 'formFieldWidth', 560, 240, 900)}px;
+	    --rstk-form-field-width:${themeNumber(theme, 'formFieldWidth', 560, 120, 2000)}px;
 	    --rstk-form-content-align:${formContentAlign};
 	    --rstk-form-field-justify:${justifyForAlign(formContentAlign)};
 	    --rstk-form-choice-selected-bg:${choiceSelectedBg};
@@ -20313,9 +20328,9 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
 	  const storedPageMaxWidth = Number(theme && theme.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
     ? 1440
-    : themeNumber(theme, 'pageMaxWidth', isLandingType ? 1440 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
-  const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 36 : 22, 0, 120)
-  const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
+    : themeNumber(theme, 'pageMaxWidth', isLandingType ? 1440 : (template.id === 'interactive' ? 600 : 520), 240, 3000)
+  const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 36 : 22, 0, 600)
+  const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 400)
   const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)
   const pageBorderPaint = themePaint(theme, 'pageBorderColor')
   const pageBorder = pageBorderPaint ? paintFallbackColor(pageBorderPaint, 'transparent') : 'transparent'

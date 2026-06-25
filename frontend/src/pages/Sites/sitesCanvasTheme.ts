@@ -476,9 +476,9 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const storedPageMaxWidth = Number(theme?.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
     ? 1440
-    : themeNumber(theme, 'pageMaxWidth', isLandingType ? 1440 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
-  const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 36 : 22, 0, 120)
-  const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
+    : themeNumber(theme, 'pageMaxWidth', isLandingType ? 1440 : (template.id === 'interactive' ? 600 : 520), 240, 3000)
+  const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 36 : 22, 0, 600)
+  const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 400)
   const pageBorderPaint = normalizeCssPaint(theme.pageBorderColor, '')
   const pageBorder = pageBorderPaint ? paintFallbackColor(pageBorderPaint, 'transparent') : 'transparent'
   const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 80)
@@ -558,7 +558,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
 	    '--rstk-form-field-height': `${themeNumber(theme, 'formFieldHeight', 50, 34, 96)}px`,
 	    '--rstk-form-field-pad-x': `${themeNumber(theme, 'formFieldPaddingX', 14, 6, 48)}px`,
 	    '--rstk-form-field-pad-y': `${themeNumber(theme, 'formFieldPaddingY', 13, 6, 36)}px`,
-	    '--rstk-form-field-width': `${themeNumber(theme, 'formFieldWidth', 560, 240, 900)}px`,
+	    '--rstk-form-field-width': `${themeNumber(theme, 'formFieldWidth', 560, 120, 2000)}px`,
 	    '--rstk-form-content-align': normalizeFormContentAlign(theme.formContentAlign),
 	    '--rstk-form-field-justify': justifyForButtonAlign(normalizeFormContentAlign(theme.formContentAlign)),
 	    '--rstk-form-choice-selected-bg': themePaint(theme, 'formChoiceSelectedBg', `color-mix(in srgb, ${accent} 10%, transparent)`),

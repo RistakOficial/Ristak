@@ -1397,7 +1397,24 @@ const PANEL_BLOCK_TYPES = new Set<SiteBlockType>([HEADER_PANEL_BLOCK_TYPE, FOOTE
 type HeaderScope = 'global' | 'page'
 const HEADER_SCOPE_GLOBAL: HeaderScope = 'global'
 const HEADER_SCOPE_PAGE: HeaderScope = 'page'
-const SPACING_OVERLAP_MIN = -80
+const SPACING_OVERLAP_MIN = -400
+// Límites "enormes pero seguros" para la personalización de bloques/franjas.
+// Deben coincidir EXACTO con backend/src/services/sitesService.js (renderBlockStyleVars)
+// o el editor y el sitio publicado se ven distintos.
+const SPACING_MAX = 600
+const SPACING_MARGIN_MAX = 800
+const BLOCK_RADIUS_MAX = 400
+const BLOCK_BORDER_WIDTH_MAX = 80
+const SECTION_GAP_MAX = 400
+const FORM_FIELD_WIDTH_MIN = 5
+// Ancho del formulario (pageMaxWidth → --rstk-max) y de las cajas (formFieldWidth → --rstk-form-field-width).
+// Mismos límites en sitesCanvasTheme.ts y en backend buildStyleSheet / buildEmbeddedFormSourceTheme.
+const FORM_PAGE_MAX_WIDTH_MIN = 240
+const FORM_PAGE_MAX_WIDTH_MAX = 3000
+const FORM_BOX_WIDTH_MIN = 120
+const FORM_BOX_WIDTH_MAX = 2000
+const FORM_PAGE_PADDING_MAX = 600
+const FORM_PAGE_RADIUS_MAX = 400
 const makeLandingSpacing = (top: number, bottom: number, right = 0, left = 0) => ({
   blockMarginLinked: false,
   blockMarginTop: top,
@@ -4110,10 +4127,10 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const hasBlockPadding = settings.blockPadding !== undefined || hasSpacingSideValue(settings, 'blockPadding')
   const hasBlockMargin = settings.blockMargin !== undefined || hasSpacingSideValue(settings, 'blockMargin')
   const paddingValues = hasBlockPadding
-    ? getSpacingValues(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, 160)
+    ? getSpacingValues(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, SPACING_MAX)
     : null
   const marginValues = hasBlockMargin
-    ? getSpacingValues(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, 200)
+    ? getSpacingValues(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, SPACING_MARGIN_MAX)
     : null
 
   if (!isCalendarEmbed && paddingValues) {
@@ -4125,9 +4142,9 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
     const paddingOverlap = !isCalendarEmbed && paddingValues ? getNegativeSpacing(paddingValues) : { Top: 0, Right: 0, Bottom: 0, Left: 0 }
     style['--rstk-block-margin'] = getSpacingShorthand(combineSpacingValues(safeMargin, paddingOverlap))
   }
-  if (!isCalendarEmbed && settings.blockRadius !== undefined) style['--rstk-block-radius'] = `${getSettingNumber(settings, 'blockRadius', 8, 0, 48)}px`
+  if (!isCalendarEmbed && settings.blockRadius !== undefined) style['--rstk-block-radius'] = `${getSettingNumber(settings, 'blockRadius', 8, 0, BLOCK_RADIUS_MAX)}px`
   if (!isCalendarEmbed && settings.blockBorderWidth !== undefined) {
-    const width = `${getSettingNumber(settings, 'blockBorderWidth', 0, 0, 12)}px`
+    const width = `${getSettingNumber(settings, 'blockBorderWidth', 0, 0, BLOCK_BORDER_WIDTH_MAX)}px`
     style['--rstk-block-border-width'] = width
     if (!blockHasNativeBorder) style['--rstk-block-shell-border-width'] = width
   }
@@ -4182,23 +4199,34 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   if (settings.cardBorderWidth !== undefined) style['--rstk-card-border-width'] = `${getSettingNumber(settings, 'cardBorderWidth', 1, 0, 8)}px`
   if (settings.listColumns !== undefined) style['--rstk-list-columns'] = `repeat(${getSettingNumber(settings, 'listColumns', 3, 1, 4)}, minmax(0, 1fr))`
   if (settings.cardAlign !== undefined) style['--rstk-card-align'] = getHorizontalAlign(settings, 'cardAlign', 'left')
-  if (settings.fieldWidth !== undefined) style['--rstk-field-width'] = `${getSettingNumber(settings, 'fieldWidth', 100, 20, 100)}%`
+  if (settings.fieldWidth !== undefined) style['--rstk-field-width'] = `${getSettingNumber(settings, 'fieldWidth', 100, FORM_FIELD_WIDTH_MIN, 100)}%`
   if (settings.fieldRadius !== undefined) style['--rstk-field-radius'] = `${getSettingNumber(settings, 'fieldRadius', 12, 0, 32)}px`
   if (settings.countdownNumberSize !== undefined) style['--rstk-countdown-number-size'] = `${getSettingNumber(settings, 'countdownNumberSize', 38, 14, 96)}px`
   if (settings.countdownUnitRadius !== undefined) style['--rstk-countdown-unit-radius'] = `${getSettingNumber(settings, 'countdownUnitRadius', 14, 0, 48)}px`
   if (settings.countdownUnitGap !== undefined) style['--rstk-countdown-gap'] = `${getSettingNumber(settings, 'countdownUnitGap', 10, 0, 48)}px`
   if (block.blockType === SECTION_BLOCK_TYPE) {
     style['--rstk-section-columns'] = `${getSectionColumns(block)}`
-    style['--rstk-section-gap'] = `${getSettingNumber(settings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)}px`
+    style['--rstk-section-gap'] = `${getSettingNumber(settings, 'sectionGap', DEFAULT_SECTION_GAP, 0, SECTION_GAP_MAX)}px`
   }
 
   return style as React.CSSProperties
 }
 
+const blockHasExplicitBg = (settings: Record<string, unknown>) => {
+  const paint = getSettingString(settings, 'blockBg')
+  if (isCssPaint(paint) && paint.trim().toLowerCase() !== 'transparent') return true
+  return Boolean(getSettingString(settings, 'blockBackgroundImage'))
+}
+
+const blockHasExplicitBorder = (settings: Record<string, unknown>) =>
+  getSettingNumber(settings, 'blockBorderWidth', 0, 0, BLOCK_BORDER_WIDTH_MAX) > 0
+
 const getBlockStyleClassName = (block: SiteBlock, extra = '') => {
   const settings = block.settings || {}
   return [
     'rstk-block-style',
+    blockHasExplicitBg(settings) ? 'rstkBlockBgSet' : '',
+    blockHasExplicitBorder(settings) ? 'rstkBlockBorderSet' : '',
     block.blockType === HEADER_PANEL_BLOCK_TYPE ? 'rstkHeaderPanelBlock' : '',
     block.blockType === FOOTER_PANEL_BLOCK_TYPE ? 'rstkFooterPanelBlock' : '',
     block.blockType === 'calendar_embed' ? 'rstkCalendarBlock' : '',
@@ -7244,7 +7272,14 @@ function FormEmbedEditorPanel({
     <>
       <div className={styles.settingsGroup}>
         <FormSurfaceStyleControls site={site} embedded onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-        <FormLayoutStyleControls site={site} embedded onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+        <FormLayoutStyleControls
+          site={site}
+          embedded
+          fullWidth={getSettingBoolean(block.settings || {}, 'embeddedFullWidth')}
+          onToggleFullWidth={(value) => { onPatchSettings({ embeddedFullWidth: value }); window.setTimeout(() => { onSave() }, 0) }}
+          onPatchTheme={onPatchTheme}
+          onSaveSite={onSaveSite}
+        />
       </div>
       {formElementDesignContent ? (
         <div className={styles.settingsGroup}>
@@ -10585,7 +10620,7 @@ export const Sites: React.FC = () => {
             ...(payload.settings || {}),
             ...initialSettings,
             sectionColumns: columns,
-            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
+            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, SECTION_GAP_MAX)
           })
         } else {
           const selectedTarget = selectedBlock && isPopupBlock(selectedBlock)
@@ -10656,7 +10691,7 @@ export const Sites: React.FC = () => {
             ...(payload.settings || {}),
             ...initialSettings,
             sectionColumns: columns,
-            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
+            sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, SECTION_GAP_MAX)
           }
         } else if (!isPanel) {
           if (!targetSectionId) {
@@ -12766,6 +12801,7 @@ export const Sites: React.FC = () => {
                     onVideoFormGateSubmitSelect={() => setActiveVideoFormGateSubmitSelected(true)}
                     onSave={() => handleSaveBlock()}
                     onDeselect={handleCanvasBlockDeselect}
+                    onSelectBlock={selectEditorBlock}
                   />
                 )}
 
@@ -28685,8 +28721,8 @@ const InlineBlockStyleControls: React.FC<{
           />
           <DimensionField
             label="Ancho caja"
-            value={getSettingNumber(settings, 'fieldWidth', 100, 20, 100)}
-            min={20}
+            value={getSettingNumber(settings, 'fieldWidth', 100, FORM_FIELD_WIDTH_MIN, 100)}
+            min={FORM_FIELD_WIDTH_MIN}
             max={100}
             unit="%"
             onChange={(value) => onPatchSettings({ fieldWidth: value })}
@@ -28864,8 +28900,8 @@ const InlineBlockStyleControls: React.FC<{
               base="blockPadding"
               settings={settings}
               min={SPACING_OVERLAP_MIN}
-              max={160}
-              fallback={getSettingNumber(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, 160)}
+              max={SPACING_MAX}
+              fallback={getSettingNumber(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, SPACING_MAX)}
               onChange={onPatchSettings}
               onCommit={onSave}
             />
@@ -28875,8 +28911,8 @@ const InlineBlockStyleControls: React.FC<{
             base="blockMargin"
             settings={settings}
             min={SPACING_OVERLAP_MIN}
-            max={200}
-            fallback={getSettingNumber(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, 200)}
+            max={SPACING_MARGIN_MAX}
+            fallback={getSettingNumber(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, SPACING_MARGIN_MAX)}
             onChange={onPatchSettings}
             onCommit={onSave}
           />
@@ -28942,17 +28978,17 @@ const InlineBlockStyleControls: React.FC<{
               <div className={styles.twoColumn}>
                 <DimensionField
                   label="Radio"
-                  value={getSettingNumber(settings, 'blockRadius', 8, 0, 48)}
+                  value={getSettingNumber(settings, 'blockRadius', 8, 0, BLOCK_RADIUS_MAX)}
                   min={0}
-                  max={48}
+                  max={BLOCK_RADIUS_MAX}
                   onChange={(value) => onPatchSettings({ blockRadius: value })}
                   onCommit={onSave}
                 />
                 <DimensionField
                   label="Grosor borde"
-                  value={getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, 12)}
+                  value={getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, BLOCK_BORDER_WIDTH_MAX)}
                   min={0}
-                  max={12}
+                  max={BLOCK_BORDER_WIDTH_MAX}
                   onChange={(value) => onPatchSettings({ blockBorderWidth: value })}
                   onCommit={onSave}
                 />
@@ -30844,7 +30880,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
 
     return sourceCanvasTheme ? (
       <div className={`rstkCanvas ${sourceCanvasTheme.bodyClass} rstkEmbeddedFormSourceRoot`} style={sourceThemeVars}>
-        <div className="rstk-frame rstkEmbeddedFormSourceFrame">
+        <div className={`rstk-frame rstkEmbeddedFormSourceFrame${getSettingBoolean(settings, 'embeddedFullWidth') ? ' rstkEmbeddedFormStretch' : ''}`}>
           <CanvasBackgroundVideo theme={previewForm?.theme} />
           <main className="rstk-page">
             <div
@@ -31357,6 +31393,7 @@ interface PropertiesPanelProps {
   onVideoFormGateSubmitSelect?: () => void
   onSave: () => void
   onDeselect?: () => void
+  onSelectBlock?: (blockId: string) => void
 }
 
 const FormTypographyGlobalControls: React.FC<{
@@ -31446,7 +31483,7 @@ const FormFieldGlobalStyleControls: React.FC<{
       </div>
       <div className={styles.twoColumn}>
         <DimensionField label="Relleno vertical" value={getThemeNumber(theme, 'formFieldPaddingY', 13, 6, 36)} min={6} max={36} onChange={(value) => onPatchTheme({ formFieldPaddingY: value })} onCommit={onSaveSite} />
-        <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, 240, 900)} min={240} max={900} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
+        <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, FORM_BOX_WIDTH_MIN, FORM_BOX_WIDTH_MAX)} min={FORM_BOX_WIDTH_MIN} max={FORM_BOX_WIDTH_MAX} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
       </div>
       <AlignmentControl
         label="Alineación del contenido"
@@ -31819,43 +31856,61 @@ const FormSurfaceStyleControls: React.FC<{
 const FormLayoutStyleControls: React.FC<{
   site: PublicSite
   embedded?: boolean
+  fullWidth?: boolean
+  onToggleFullWidth?: (value: boolean) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
-}> = ({ site, embedded = false, onPatchTheme, onSaveSite }) => {
+}> = ({ site, embedded = false, fullWidth = false, onToggleFullWidth, onPatchTheme, onSaveSite }) => {
   const theme = site.theme || {}
   const defaultMaxWidth = isLanding(site) ? 1440 : 520
   const maxWidth = isLanding(site) && Number(theme.pageMaxWidth) === 1160
     ? 1440
-    : getThemeNumber(theme, 'pageMaxWidth', defaultMaxWidth, 360, 1440)
+    : getThemeNumber(theme, 'pageMaxWidth', defaultMaxWidth, FORM_PAGE_MAX_WIDTH_MIN, FORM_PAGE_MAX_WIDTH_MAX)
+  const showStretchToggle = embedded && typeof onToggleFullWidth === 'function'
 
   return (
     <>
       <div className={styles.panelSubheader}>{embedded ? 'Espacio del formulario' : 'Dimensiones del formulario'}</div>
+      {showStretchToggle && (
+        <div className={styles.videoFormGateSwitchRow}>
+          <div>
+            <strong>Estirar a la franja</strong>
+            <span>El formulario ocupa todo el ancho del bloque, como en su versión estándar.</span>
+          </div>
+          <Switch
+            checked={fullWidth}
+            onChange={(checked) => onToggleFullWidth?.(checked)}
+            aria-label="Estirar formulario a toda la franja"
+          />
+        </div>
+      )}
       <div className={styles.twoColumn}>
         <DimensionField
           label="Separación fondo"
-          value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, 120)}
+          value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, FORM_PAGE_PADDING_MAX)}
           min={0}
-          max={120}
+          max={FORM_PAGE_PADDING_MAX}
           onChange={(value) => onPatchTheme({ pagePadding: value })}
           onCommit={onSaveSite}
         />
-        <DimensionField
-          label="Ancho formulario"
-          value={maxWidth}
-          min={360}
-          max={1440}
-          step={10}
-          onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
-          onCommit={onSaveSite}
-        />
+        {!(showStretchToggle && fullWidth) && (
+          <DimensionField
+            label="Ancho formulario"
+            value={maxWidth}
+            min={FORM_PAGE_MAX_WIDTH_MIN}
+            max={FORM_PAGE_MAX_WIDTH_MAX}
+            step={10}
+            onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
+            onCommit={onSaveSite}
+          />
+        )}
       </div>
       <div className={styles.twoColumn}>
         <DimensionField
           label="Radio formulario"
-          value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 60)}
+          value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, FORM_PAGE_RADIUS_MAX)}
           min={0}
-          max={60}
+          max={FORM_PAGE_RADIUS_MAX}
           onChange={(value) => onPatchTheme({ pageRadius: value })}
           onCommit={onSaveSite}
         />
@@ -31959,7 +32014,7 @@ const FormGlobalStyleControls: React.FC<{
         <DimensionField label="Relleno lados" value={getThemeNumber(theme, 'formFieldPaddingX', 14, 6, 48)} min={6} max={48} onChange={(value) => onPatchTheme({ formFieldPaddingX: value })} onCommit={onSaveSite} />
       </div>
       <DimensionField label="Relleno vertical" value={getThemeNumber(theme, 'formFieldPaddingY', 13, 6, 36)} min={6} max={36} onChange={(value) => onPatchTheme({ formFieldPaddingY: value })} onCommit={onSaveSite} />
-      <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, 240, 900)} min={240} max={900} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
+      <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, FORM_BOX_WIDTH_MIN, FORM_BOX_WIDTH_MAX)} min={FORM_BOX_WIDTH_MIN} max={FORM_BOX_WIDTH_MAX} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
       <AlignmentControl
         label="Alineación del contenido"
         value={theme.formContentAlign || 'left'}
@@ -32505,9 +32560,9 @@ const PageInspector: React.FC<{
       <div className={styles.panelSubheader}>Dimensiones</div>
       <DimensionField
         label="Ancho máximo"
-        value={isLanding(site) && Number(theme.pageMaxWidth) === 1160 ? 1440 : getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1440 : 520, 360, 1440)}
-        min={360}
-        max={1440}
+        value={isLanding(site) && Number(theme.pageMaxWidth) === 1160 ? 1440 : getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1440 : 520, FORM_PAGE_MAX_WIDTH_MIN, FORM_PAGE_MAX_WIDTH_MAX)}
+        min={FORM_PAGE_MAX_WIDTH_MIN}
+        max={FORM_PAGE_MAX_WIDTH_MAX}
         step={10}
         onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
         onCommit={onSaveSite}
@@ -32515,17 +32570,17 @@ const PageInspector: React.FC<{
       <div className={styles.twoColumn}>
         <DimensionField
           label="Relleno de página"
-          value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, 120)}
+          value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, FORM_PAGE_PADDING_MAX)}
           min={0}
-          max={120}
+          max={FORM_PAGE_PADDING_MAX}
           onChange={(value) => onPatchTheme({ pagePadding: value })}
           onCommit={onSaveSite}
         />
         <DimensionField
           label="Radio"
-          value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 40)}
+          value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, FORM_PAGE_RADIUS_MAX)}
           min={0}
-          max={40}
+          max={FORM_PAGE_RADIUS_MAX}
           onChange={(value) => onPatchTheme({ pageRadius: value })}
           onCommit={onSaveSite}
         />
@@ -33801,7 +33856,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onVideoFormGateActiveBlockChange,
   onVideoFormGateSubmitSelect,
   onSave,
-  onDeselect
+  onDeselect,
+  onSelectBlock
 }) => {
   // For form sites the selected element's behaviour/logic moves to a floating
   // box pinned to the block on the canvas; landings keep the inspector intact.
@@ -34030,8 +34086,24 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     </>
   )
 
+  const parentFranjaForBreadcrumb = onSelectBlock && isLanding(site) && !isSectionBlock(block) && !isPanelBlock(block)
+    ? getParentSectionBlock(block, allBlocks || blocks)
+    : null
+
   const editContent = (
     <>
+      {parentFranjaForBreadcrumb && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          fullWidth
+          leftIcon={<PanelTop size={14} />}
+          onClick={() => onSelectBlock?.(parentFranjaForBreadcrumb.id)}
+        >
+          Seleccionar franja
+        </Button>
+      )}
       {showBlockNameFirst && blockNameField}
       {showBlockNameFirst && editTypographyControls}
 
@@ -35559,6 +35631,13 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
     return (
       <div className={styles.settingsGroup}>
         <div className={styles.panelSubheader}>Tipo de franja</div>
+        <ColorField
+          label="Fondo de franja"
+          value={getSettingPaint(settings, 'blockBg', 'transparent')}
+          allowGradient
+          onChange={(value) => onPatchSettings({ blockBg: value })}
+          onCommit={onSave}
+        />
         <label className={styles.field}>
           <span>Columnas</span>
           <CustomSelect
@@ -35573,9 +35652,9 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
         </label>
         <DimensionField
           label="Espacio entre columnas"
-          value={getSettingNumber(settings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)}
+          value={getSettingNumber(settings, 'sectionGap', DEFAULT_SECTION_GAP, 0, SECTION_GAP_MAX)}
           min={0}
-          max={80}
+          max={SECTION_GAP_MAX}
           onChange={(value) => onPatchSettings({ sectionGap: value })}
           onCommit={onSave}
         />

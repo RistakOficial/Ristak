@@ -131,11 +131,15 @@
   align-content: start;
   gap: var(--rstk-gap);
 }
-.rstkCanvas .rstk-section-column > .rstk-block-style {
+/* Los bloques dentro de una franja dejan ver el fondo de la franja por defecto,
+   PERO si el bloque tiene su propio fondo/borde explícito, se respeta (libertad total). */
+.rstkCanvas .rstk-section-column > .rstk-block-style:not(.rstkBlockBgSet) {
   --rstk-block-bg: transparent;
   --rstk-block-bg-color: transparent;
   --rstk-block-bg-layer: none;
   --rstk-block-bg-image: none;
+}
+.rstkCanvas .rstk-section-column > .rstk-block-style:not(.rstkBlockBorderSet) {
   --rstk-block-border: transparent;
   --rstk-block-border-width: 0px;
   --rstk-block-shell-border-width: 0px;
@@ -2002,6 +2006,13 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, transparent);
   border-radius: var(--rstk-page-radius, 0);
   overflow: visible;
+}
+
+/* "Estirar a la franja": el formulario embebido ocupa todo el ancho del bloque/franja */
+.rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch > .rstk-page {
+  max-width: none;
+  width: 100%;
+  margin: 0;
 }
 
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell {
