@@ -236,15 +236,39 @@ async function callLicenseServer(path, body = {}) {
 /**
  * Avisa al portal central que los usuarios de esta instalación cambiaron, para
  * que vuelva a leerlos y el login móvil pueda enrutar a cualquier usuario
- * (dueño o empleado) por su correo. No es crítico: si falla, no rompe la
- * operación que lo disparó (se hace best-effort).
+ * (dueño o empleado) por su correo.
+ *
+ * (AUTH-009) Antes era best-effort de un solo intento: si el portal fallaba con un
+ * error transitorio, el empleado recién creado NO podía loguear en la app móvil
+ * hasta el siguiente ciclo de refresh. Ahora el refresh se completa con await y
+ * reintenta de forma acotada (hasta 3 intentos con backoff corto) ante fallos
+ * transitorios, de modo que el portal queda actualizado de inmediato. Sigue sin
+ * lanzar: si tras agotar los reintentos no se logra, se loguea como error pero no
+ * rompe la operación que lo disparó (creación de empleado, etc.).
  */
 export async function requestPortalUserRefresh() {
   if (!isLicenseEnforced()) return
-  try {
-    await callLicenseServer('/api/license/users/refresh', {})
-  } catch (error) {
-    logger.warn(`No se pudo refrescar el directorio de usuarios en el portal: ${error.message}`)
+
+  // (AUTH-009) Reintento acotado con backoff corto para fallos transitorios del portal.
+  const maxAttempts = 3
+  const baseBackoffMs = 300
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await callLicenseServer('/api/license/users/refresh', {})
+      return
+    } catch (error) {
+      // (AUTH-009) Si aún quedan intentos, esperamos un backoff creciente y reintentamos.
+      if (attempt < maxAttempts) {
+        logger.warn(`No se pudo refrescar el directorio de usuarios en el portal (intento ${attempt}/${maxAttempts}): ${error.message}. Reintentando...`)
+        const delayMs = baseBackoffMs * attempt
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        continue
+      }
+      // (AUTH-009) Agotados los reintentos: registramos como error (no como warn) pero no
+      // lanzamos, para no romper la operación que disparó el refresh.
+      logger.error(`No se pudo refrescar el directorio de usuarios en el portal tras ${maxAttempts} intentos: ${error.message}`)
+    }
   }
 }
 

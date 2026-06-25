@@ -492,6 +492,10 @@ function normalizeAppointmentRecord(raw = {}, locationIdFallback) {
   // Prioridad: dateAdded de GHL > createdAt > fecha actual (como última opción)
   const dateAdded = raw.dateAdded || raw.createdAt || raw.createdOn || new Date().toISOString()
   const dateUpdated = raw.dateUpdated || raw.updatedAt || raw.updatedOn || dateAdded
+  // (GHL-004) Capturar el id del evento de Google Calendar si HL lo provee, para
+  // que upsertLocalAppointment pueda deduplicar contra la cita de Google (columna
+  // google_event_id / match existingByGoogle) y no se dupliquen citas.
+  const googleEventId = raw.googleEventId || raw.googleCalendarEventId || raw.gEventId || raw.externalId || null
 
   return {
     id,
@@ -507,7 +511,8 @@ function normalizeAppointmentRecord(raw = {}, locationIdFallback) {
     startTime,
     endTime,
     dateAdded,
-    dateUpdated
+    dateUpdated,
+    googleEventId // (GHL-004)
   }
 }
 
@@ -1258,7 +1263,8 @@ async function syncHighLevelAppointments(locationId, apiToken) {
         contactId: localContactId,
         id: normalized.id,
         ghlAppointmentId: normalized.id,
-        calendarId: localCalendar?.id || normalized.calendarId
+        calendarId: localCalendar?.id || normalized.calendarId,
+        googleEventId: normalized.googleEventId // (GHL-004) alimenta google_event_id para deduplicar contra Google
       }, {
         source: 'ghl',
         ghlAppointmentId: normalized.id,

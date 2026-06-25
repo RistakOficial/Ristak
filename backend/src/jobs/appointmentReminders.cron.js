@@ -21,6 +21,9 @@ async function runAppointmentRemindersDispatch(source = 'interval') {
   running = true
 
   try {
+    // (NOTI-010) Flush-on-drain: el tick en vuelo al iniciar el shutdown queda registrado en
+    // trackDeployDrainWork, de modo que el graceful shutdown espera a que termine de enviar los
+    // recordatorios ya vencidos en lugar de perderlos al cerrar el proceso en un deploy.
     await trackDeployDrainWork('cron:appointment-reminders', async () => {
       // (APT-009) Lock distribuido: si hubiera varias instancias, solo una despacha
       // recordatorios por tick (evita mensajes duplicados). Defensivo con 1 instancia.

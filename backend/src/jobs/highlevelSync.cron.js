@@ -13,6 +13,34 @@ import { withCronLock } from '../utils/cronLock.js'
 const HIGHLEVEL_SYNC_LOCK_TTL_MS = 60 * 60 * 1000 // sync completa: cada hora
 const HIGHLEVEL_CONVERSATIONS_LOCK_TTL_MS = 10 * 60 * 1000 // conversaciones: cada 10 min
 
+// (GHL-010) Prueba ligera de que el token tenga acceso a un scope concreto.
+// NO rompe la conexión base: solo loguea claramente si el scope falta, para que
+// quede registrado por qué la sync de calendarios o conversaciones no traerá nada.
+// Un 401/403 indica scope ausente; otros errores (red, 5xx) se reportan pero no
+// se interpretan como falta de scope.
+async function probeHighLevelScope({ url, apiToken, version, scopeLabel }) {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Version': version
+      }
+    })
+
+    if (response.ok) return true
+
+    if (response.status === 401 || response.status === 403) {
+      logger.warn(`HighLevel: el token NO tiene acceso al scope de ${scopeLabel} (${response.status}). La sincronización de ${scopeLabel} no traerá datos hasta reconectar con ese permiso.`)
+    } else {
+      logger.warn(`HighLevel: no se pudo verificar el scope de ${scopeLabel} (${response.status}); se continúa de todos modos.`)
+    }
+    return false
+  } catch (error) {
+    logger.warn(`HighLevel: error verificando el scope de ${scopeLabel}: ${error.message}; se continúa de todos modos.`)
+    return false
+  }
+}
+
 async function isHighLevelConnected(config) {
   const locationId = String(config?.location_id || '').trim()
   const apiToken = String(config?.api_token || '').trim().replace(/[\r\n\t]/g, '')
@@ -31,6 +59,19 @@ async function isHighLevelConnected(config) {
       logger.warn(`HighLevel no está conectado (${response.status}), saltando sincronización automática`)
       return false
     }
+
+    // (GHL-010) La conexión base (locations) funciona. Además validamos que el
+    // token tenga acceso a calendarios y conversaciones, ya que la sync completa
+    // y la sync incremental los necesitan. Si falta alguno, lo dejamos claro en
+    // los logs PERO no abortamos: el resto de la sync (contactos, pagos) sí debe
+    // correr. Versiones por endpoint consistentes con el resto del código:
+    //   /calendars        -> 2021-04-15 (igual que fetchCalendarEventsByCalendar)
+    //   /conversations    -> 2021-07-28 (versión estándar del cliente, ver GHL-008)
+    const calendarsUrl = `${API_URLS.HIGHLEVEL_CALENDARS}?locationId=${encodeURIComponent(locationId)}`
+    const conversationsUrl = `${API_URLS.HIGHLEVEL_BASE}/conversations/search?locationId=${encodeURIComponent(locationId)}&limit=1`
+
+    await probeHighLevelScope({ url: calendarsUrl, apiToken, version: '2021-04-15', scopeLabel: 'calendarios' })
+    await probeHighLevelScope({ url: conversationsUrl, apiToken, version: '2021-07-28', scopeLabel: 'conversaciones' })
 
     return true
   } catch (error) {

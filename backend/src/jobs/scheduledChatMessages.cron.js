@@ -12,6 +12,9 @@ async function runScheduledChatDispatch(source = 'interval') {
   running = true
 
   try {
+    // (NOTI-010) Flush-on-drain: el tick que esté en vuelo cuando empieza el shutdown queda
+    // registrado en trackDeployDrainWork, así que el graceful shutdown espera a que termine de
+    // despachar los mensajes programados ya vencidos en vez de matar el proceso a media tanda.
     await trackDeployDrainWork('cron:scheduled-chat-messages', async () => {
       const results = await dispatchDueScheduledChatMessages()
       const sent = results.filter(result => result.sent).length

@@ -407,13 +407,57 @@ async function ensurePublicCalendarRequest(req, slugOrId) {
   return { host, calendar };
 }
 
-async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, timezone }) {
-  return localCalendarService.getLocalFreeSlots(
+async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, timezone }, context = null) {
+  const localSlots = await localCalendarService.getLocalFreeSlots(
     calendar.id,
     startDate,
     endDate,
     timezone
   );
+
+  // (APT-007) Antes el parametro `context` se recibia y se ignoraba: la
+  // disponibilidad publica se calculaba SOLO contra la BD local, perdiendo las
+  // citas que existen en el calendario remoto de HighLevel pero aun no se han
+  // sincronizado localmente. Cuando el calendario esta enlazado a GHL y tenemos
+  // credenciales, cruzamos contra los free-slots remotos: un horario solo se
+  // considera libre si lo esta en AMBOS lados.
+  if (!context?.locationId || !context?.accessToken || !calendar.ghlCalendarId) {
+    return localSlots;
+  }
+
+  let remoteSlots;
+  try {
+    remoteSlots = await calendarService.getFreeSlots(
+      calendar.ghlCalendarId,
+      startDate,
+      endDate,
+      context.accessToken,
+      timezone
+    );
+  } catch (error) {
+    // Si GHL no responde, no bloqueamos la reserva publica; degradamos a la
+    // disponibilidad local (mismo comportamiento que tenia antes del fix).
+    logger.warn(`[Calendars Controller] (APT-007) No se pudo verificar disponibilidad remota GHL, usando solo local: ${error.message}`);
+    return localSlots;
+  }
+
+  // Indexamos los instantes libres remotos (con tolerancia de 1 min) para
+  // intersectar con los locales sin depender de formatos de fecha exactos.
+  const remoteMs = (Array.isArray(remoteSlots) ? remoteSlots : [])
+    .flatMap(day => (Array.isArray(day?.slots) ? day.slots : []))
+    .map(slot => new Date(slot).getTime())
+    .filter(ms => Number.isFinite(ms));
+
+  const isFreeRemotely = (slotIso) => {
+    const ms = new Date(slotIso).getTime();
+    if (!Number.isFinite(ms)) return false;
+    return remoteMs.some(remote => Math.abs(remote - ms) <= 60000);
+  };
+
+  return (Array.isArray(localSlots) ? localSlots : []).map(day => ({
+    ...day,
+    slots: (Array.isArray(day?.slots) ? day.slots : []).filter(isFreeRemotely)
+  }));
 }
 
 /**
@@ -1093,11 +1137,15 @@ export async function getPublicFreeSlots(req, res) {
 
     const { calendar } = await ensurePublicCalendarRequest(req, slug);
     const resolvedTimezone = cleanString(timezone) || await getAccountTimezone();
+    // (APT-007) Pasamos el context de HighLevel tambien al listado publico para
+    // que los horarios mostrados coincidan con los que la reserva aceptara
+    // (disponibilidad local + remota), evitando "el slot desaparecio al reservar".
+    const context = await getSavedHighLevelOnlyContext();
     const slots = await getCalendarFreeSlotsForPublic(calendar, {
       startDate,
       endDate,
       timezone: resolvedTimezone
-    });
+    }, context);
 
     res.json({
       success: true,

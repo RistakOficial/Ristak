@@ -899,6 +899,14 @@ export async function syncHighLevelConversationHistory({
     let skipped = 0
     let contactsCreated = 0
     const seenCursors = new Set()
+    // (GHL-006) Rastrear el mensaje MÁS ANTIGUO que NO se pudo persistir (error de
+    // guardado). El checkpoint se usa como startDate (límite inferior) de la próxima
+    // sync; si avanzamos más allá de un mensaje perdido, ese mensaje nunca se
+    // reintenta. Por eso, si hubo fallos, NO avanzamos el checkpoint más allá del
+    // mensaje fallido más antiguo: lo dejamos justo antes para que el próximo ciclo
+    // lo vuelva a traer. Solo errores reales de guardado cuentan, no los 'skipped'
+    // legítimos (canal no soportado, mensaje vacío, etc.).
+    let oldestFailedMs = null
 
     while (page < MAX_EXPORT_PAGES) {
       page++
@@ -930,7 +938,15 @@ export async function syncHighLevelConversationHistory({
           }
         } catch (error) {
           skipped++
-          logger.warn(`[GHL Conversations] No se pudo guardar mensaje ${getRemoteMessageId(message) || 'sin_id'}: ${error.message}`)
+          // (GHL-006) Error real de guardado: registrar el timestamp del mensaje
+          // perdido para no avanzar el checkpoint por encima de él.
+          const failedMs = parseTimestampMs(
+            message.dateAdded || message.date_added || message.createdAt || message.created_at || message.dateUpdated
+          )
+          if (failedMs !== null && (oldestFailedMs === null || failedMs < oldestFailedMs)) {
+            oldestFailedMs = failedMs
+          }
+          logger.error(`[GHL Conversations] No se pudo guardar mensaje ${getRemoteMessageId(message) || 'sin_id'}: ${error.message}`)
         }
       }
 
@@ -946,7 +962,24 @@ export async function syncHighLevelConversationHistory({
       cursor = nextCursor
     }
 
-    await setAppConfig(LAST_SYNC_CONFIG_KEY, startedAt)
+    // (GHL-006) Avanzar el checkpoint SOLO hasta donde el guardado fue confiable.
+    // Si todo se guardó OK (sin errores reales), el checkpoint llega hasta startedAt.
+    // Si hubo mensajes que fallaron al persistir, NO avanzamos más allá del más
+    // antiguo de ellos: dejamos el checkpoint justo antes (menos el overlap habitual)
+    // para que el siguiente ciclo vuelva a traer y reintentar ese rango.
+    let checkpoint = startedAt
+    if (oldestFailedMs !== null) {
+      const safeMs = oldestFailedMs - INCREMENTAL_OVERLAP_MS
+      const previousCheckpointMs = parseTimestampMs(startDate) // límite inferior de esta corrida
+      // No retroceder por debajo del inicio de esta ventana: solo recortar el avance.
+      const boundedMs = previousCheckpointMs !== null ? Math.max(safeMs, previousCheckpointMs) : safeMs
+      checkpoint = new Date(boundedMs).toISOString()
+      logger.warn(
+        `[GHL Conversations] ⚠️ Hubo mensajes que no se pudieron guardar; ` +
+        `checkpoint no avanza más allá de ${checkpoint} (en vez de ${startedAt}) para reintentar en el próximo ciclo`
+      )
+    }
+    await setAppConfig(LAST_SYNC_CONFIG_KEY, checkpoint)
 
     logger.info(`[GHL Conversations] ✅ ${saved} mensajes sincronizados (${skipped} omitidos, ${contactsCreated} contactos creados)`)
 
