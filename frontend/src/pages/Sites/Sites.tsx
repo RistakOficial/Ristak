@@ -12100,6 +12100,7 @@ export const Sites: React.FC = () => {
                         />
                       </label>
                     )}
+                    {editorHistoryControls}
                     {editorSite.status !== 'draft' && !formEditMode && (
                       <Badge variant={getStatusVariant(editorSite, domainConfig)}>{getStatusLabel(editorSite, domainConfig)}</Badge>
                     )}
@@ -12118,7 +12119,6 @@ export const Sites: React.FC = () => {
                           {editorFormPageSelector}
                         </div>
                       )}
-                      {editorHistoryControls}
                       <div className={styles.formModeStatus}>
                         <span aria-hidden="true" />
                         <FormInput size={15} />
@@ -12145,7 +12145,6 @@ export const Sites: React.FC = () => {
                           {editorPageSelector}
                         </div>
                       )}
-                      {editorHistoryControls}
                       {canConfigurePopup && (
                         <button
                           type="button"
