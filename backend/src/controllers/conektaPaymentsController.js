@@ -7,6 +7,7 @@ import {
   getConektaPaymentConfig,
   getConektaSavedPaymentSources,
   getPublicConektaPayment,
+  reconcileConektaOrderFromWebhook,
   saveConektaPaymentConfig,
   testConektaPaymentConfig
 } from '../services/conektaPaymentService.js'
@@ -33,6 +34,32 @@ function sendConektaError(res, error, fallback = 'No se pudo procesar Conekta') 
     success: false,
     error: cleanString(error.message) || fallback
   })
+}
+
+// (PAY2-002) Webhook de Conekta para reconciliar pagos pendientes (3DS/OXXO/SPEI) que
+// quedaban "pending" para siempre. Rollout seguro: si hay CONEKTA_WEBHOOK_SECRET, se exige;
+// si no, se acepta + warn para no romper la integración mientras se configura.
+// NOTA (verificar en QA): confirmar contra el payload real de tu cuenta Conekta que el id
+// de la orden viaja en data.object.id (la estructura documentada es { type, data:{ object } }).
+export async function handleConektaWebhookView(req, res) {
+  try {
+    const secret = cleanString(process.env.CONEKTA_WEBHOOK_SECRET)
+    if (secret) {
+      const provided = cleanString(req.get('x-conekta-webhook-secret') || req.query?.secret || '')
+      if (provided !== secret) {
+        return res.status(401).json({ success: false, error: 'Firma de webhook inválida' })
+      }
+    } else {
+      logger.warn('[Conekta webhook] Aceptado SIN verificación: configura CONEKTA_WEBHOOK_SECRET para protegerlo.')
+    }
+
+    const result = await reconcileConektaOrderFromWebhook(req.body || {})
+    // Siempre 200 para que Conekta no reintente en bucle; el resultado va en el body.
+    return res.json({ success: true, ...result })
+  } catch (error) {
+    logger.error(`[Conekta webhook] Error: ${error.message}`)
+    return res.status(200).json({ success: false, error: 'No se pudo procesar el webhook' })
+  }
 }
 
 export async function getConektaConfigView(req, res) {

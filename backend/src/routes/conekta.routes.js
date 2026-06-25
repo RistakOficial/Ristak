@@ -8,6 +8,7 @@ import {
   getConektaConfigView,
   getConektaSavedPaymentSourcesView,
   getPublicConektaPaymentView,
+  handleConektaWebhookView,
   saveConektaConfigView,
   testConektaConfigView
 } from '../controllers/conektaPaymentsController.js'
@@ -18,6 +19,8 @@ const router = express.Router()
 
 router.get('/public/payments/:publicPaymentId', getPublicConektaPaymentView)
 router.post('/public/payments/:publicPaymentId/card', createPublicConektaCardPaymentView)
+// (PAY2-002) Webhook público de Conekta (reconcilia pagos pendientes 3DS/OXXO/SPEI).
+router.post('/webhook', handleConektaWebhookView)
 
 router.use(requireAuth)
 

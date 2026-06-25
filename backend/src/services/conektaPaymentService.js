@@ -587,6 +587,36 @@ function mapOrderStatus(order = {}) {
   return 'pending'
 }
 
+// (PAY2-002) Reconcilia un pago de Conekta a partir del payload de un webhook. Conekta
+// envía { type, data: { object: <order> } } para eventos como order.paid / order.expired /
+// charge.paid. Buscamos el pago local por conekta_order_id (o conekta_charge_id) y
+// actualizamos su estado de forma idempotente (solo si cambió). Así los pagos 3DS/OXXO/SPEI
+// que quedaban "pending" sí se reconcilian cuando Conekta confirma.
+export async function reconcileConektaOrderFromWebhook(event = {}) {
+  const order = event?.data?.object || event?.object || event || {}
+  const orderId = cleanString(order?.id)
+  const charge = extractCharge(order)
+  const chargeId = cleanString(charge?.id)
+  if (!orderId && !chargeId) return { matched: false, reason: 'sin_id' }
+
+  let payment = null
+  if (orderId) {
+    payment = await db.get('SELECT id, status FROM payments WHERE conekta_order_id = ? ORDER BY created_at DESC LIMIT 1', [orderId])
+  }
+  if (!payment?.id && chargeId) {
+    payment = await db.get('SELECT id, status FROM payments WHERE conekta_charge_id = ? ORDER BY created_at DESC LIMIT 1', [chargeId])
+  }
+  if (!payment?.id) return { matched: false, reason: 'pago_no_encontrado' }
+
+  const newStatus = mapOrderStatus(order)
+  if (cleanString(payment.status).toLowerCase() === newStatus) {
+    return { matched: true, changed: false, paymentId: payment.id, status: newStatus }
+  }
+  await db.run('UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newStatus, payment.id])
+  logger.info(`[Conekta webhook] Pago ${payment.id} reconciliado: ${payment.status} -> ${newStatus} (order ${orderId || chargeId})`)
+  return { matched: true, changed: true, paymentId: payment.id, status: newStatus }
+}
+
 function getPaymentSourceCard(source = {}) {
   return source.card && typeof source.card === 'object' ? source.card : source
 }
