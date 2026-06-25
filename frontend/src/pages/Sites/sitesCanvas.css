@@ -1048,6 +1048,7 @@
 .rstkCanvas.rstk-kind-form .rstk-options,
 .rstkCanvas.rstk-kind-form .rstk-actions,
 .rstkCanvas .rstk-embedded-form > .rstk-field,
+.rstkCanvas .rstk-embedded-form > .rstk-block-style.rstk-field,
 .rstkCanvas .rstk-embedded-form > .rstk-block-style,
 .rstkCanvas .rstk-embedded-form > .rstk-options,
 .rstkCanvas .rstk-embedded-form > .rstk-actions {
