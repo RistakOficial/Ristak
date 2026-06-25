@@ -1169,6 +1169,7 @@
   opacity: .36;
 }
 .rstkCanvas .rstkEmbeddedFormDrop {
+  position: relative;
   width: 100%;
   min-height: 9px;
   display: grid;
@@ -1176,23 +1177,36 @@
   justify-content: center;
   align-items: center;
   gap: 6px;
-  border: 1px dashed transparent;
-  border-radius: 999px;
+  border-radius: var(--rstk-field-radius, var(--rstk-radius));
   color: transparent;
   font-size: .78rem;
   font-weight: 750;
-  transition: min-height .16s ease, border-color .16s ease, color .16s ease, background .16s ease;
+  transition: min-height .16s ease, color .16s ease, background .16s ease;
 }
 .rstkCanvas .rstkEmbeddedFormDropActive,
 .rstkCanvas .rstkEmbeddedFormDropEmpty {
   min-height: 38px;
-  border-color: color-mix(in srgb, var(--rstk-accent) 52%, transparent);
   background: color-mix(in srgb, var(--rstk-accent) 10%, transparent);
   color: var(--rstk-ink);
 }
 .rstkCanvas .rstkEmbeddedFormDropEmpty {
   min-height: 86px;
-  border-radius: var(--rstk-field-radius, var(--rstk-radius));
+}
+/* Animated contour for the embedded-form drop indicator — same marching-ants
+   as selection/drag so dropping a field into the form feels identical. */
+.rstkCanvas .rstkEmbeddedFormDropActive::after,
+.rstkCanvas .rstkEmbeddedFormDropEmpty::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: var(--rstk-march-bg);
+  background-size: 14px 3px, 14px 3px, 3px 14px, 3px 14px;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  filter: drop-shadow(0 0 1px var(--rstk-selection-contrast, rgba(15, 23, 42, 0.28)));
+  animation: rstkSelMarch 1s linear infinite;
 }
 .rstkCanvas.rstk-kind-form .rstk-form,
 .rstkCanvas .rstk-embedded-form { font-family: var(--rstk-form-font, var(--rstk-font)); }
@@ -2173,6 +2187,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   line-height: 1.15;
   pointer-events: none;
   transform: translate(14px, 14px);
+  transition: opacity .16s ease, transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .16s ease;
 }
 
 .rstkPaletteFloatingPreviewCanvas {
@@ -2183,6 +2198,13 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   box-shadow:
     0 22px 48px -20px rgba(15, 23, 42, 0.72),
     0 0 0 3px color-mix(in srgb, var(--rstk-accent, #2563eb) 14%, transparent);
+}
+
+/* Over a valid drop target the floating badge recedes, handing off to the
+   element materializing on the page (rstkPalettePreview). */
+.rstkPaletteFloatingPreviewArmed {
+  opacity: .5;
+  transform: translate(18px, -50%) scale(.9);
 }
 
 .rstkPaletteFloatingPreviewIcon {
@@ -2445,48 +2467,80 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   border-radius: 16px;
 }
 
+/* Reusable animated marching-ants contour, shared by selection AND drag/drop
+   previews. var(--rstk-selection-border) makes it blue on light pages and
+   light-blue on dark ones automatically. */
+.rstkCanvas {
+  --rstk-march-bg:
+    linear-gradient(90deg, var(--rstk-selection-border, #2563eb) 0 57%, transparent 57%),
+    linear-gradient(90deg, var(--rstk-selection-border, #2563eb) 0 57%, transparent 57%),
+    linear-gradient(0deg,  var(--rstk-selection-border, #2563eb) 0 57%, transparent 57%),
+    linear-gradient(0deg,  var(--rstk-selection-border, #2563eb) 0 57%, transparent 57%);
+}
+
+/* Drag-from-palette drop preview: the real block grows/morphs into place
+   wrapped in the animated contour, so it reads as the element forming before
+   you release it. */
 .rstkCanvas .rstkPalettePreview {
   position: relative;
-  opacity: .82;
+  opacity: .92;
   max-height: 1400px;
   overflow: hidden;
-  outline: 2px solid var(--rstk-accent);
-  outline-offset: 4px;
   pointer-events: none;
-  transform: translateY(0);
-  animation: rstkPalettePreviewIn .58s cubic-bezier(.2,.8,.2,1);
+  transform-origin: center top;
+  animation: rstkPalettePreviewIn .44s cubic-bezier(.2,.8,.2,1) both;
   transition: transform .46s cubic-bezier(.2,.8,.2,1), opacity .28s ease, max-height .58s cubic-bezier(.2,.8,.2,1);
   will-change: max-height, transform, opacity;
 }
 
 @keyframes rstkPalettePreviewIn {
-  from {
+  0% {
     max-height: 0;
     opacity: 0;
-    transform: translateY(-8px) scale(.985);
+    transform: translateY(-6px) scale(.94);
   }
-  to {
+  55% {
+    opacity: .98;
+  }
+  100% {
     max-height: 1400px;
-    opacity: .82;
+    opacity: .92;
     transform: translateY(0) scale(1);
   }
 }
 
-.rstkCanvas .rstkPalettePreview::before {
+.rstkCanvas .rstkPalettePreview::after {
   content: "";
   position: absolute;
-  inset: -10px;
-  border-radius: 12px;
-  border: 1.5px dashed var(--rstk-accent);
+  inset: 0;
+  border-radius: inherit;
   pointer-events: none;
+  background-image: var(--rstk-march-bg);
+  background-size: 14px 3px, 14px 3px, 3px 14px, 3px 14px;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  filter: drop-shadow(0 0 1px var(--rstk-selection-contrast, rgba(15, 23, 42, 0.28)));
+  animation: rstkSelMarch 1s linear infinite;
 }
 
 .rstkCanvas .rstk-section-column-active {
+  position: relative;
   min-height: 92px;
-  outline: 1.5px dashed rgba(37, 99, 235, 0.45);
-  outline-offset: 8px;
   border-radius: 10px;
-  transition: min-height .42s cubic-bezier(.2,.8,.2,1), outline-color .2s ease, background .2s ease;
+  transition: min-height .42s cubic-bezier(.2,.8,.2,1), background .2s ease;
+}
+.rstkCanvas .rstk-section-column-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: var(--rstk-march-bg);
+  background-size: 14px 3px, 14px 3px, 3px 14px, 3px 14px;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  filter: drop-shadow(0 0 1px var(--rstk-selection-contrast, rgba(15, 23, 42, 0.28)));
+  animation: rstkSelMarch 1s linear infinite;
 }
 
 .rstkCanvas .rstk-section-column-target {
@@ -2504,10 +2558,10 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 }
 
 .rstkCanvas .rstkColumnDropZone {
+  position: relative;
   min-height: 82px;
   display: grid;
   place-items: center;
-  border: 1.5px dashed rgba(37, 99, 235, 0.4);
   border-radius: 10px;
   color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 58%, transparent);
   background: rgba(255, 255, 255, 0.58);
@@ -2515,6 +2569,28 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   font-weight: 750;
   text-align: center;
   padding: 16px;
+}
+.rstkCanvas .rstkColumnDropZone::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: var(--rstk-march-bg);
+  background-size: 14px 3px, 14px 3px, 3px 14px, 3px 14px;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  filter: drop-shadow(0 0 1px var(--rstk-selection-contrast, rgba(15, 23, 42, 0.28)));
+  animation: rstkSelMarch 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rstkCanvas .rstkPalettePreview { animation: none; }
+  .rstkCanvas .rstkPalettePreview::after,
+  .rstkCanvas .rstk-section-column-active::after,
+  .rstkCanvas .rstkColumnDropZone::after,
+  .rstkCanvas .rstkEmbeddedFormDropActive::after,
+  .rstkCanvas .rstkEmbeddedFormDropEmpty::after { animation: none; }
 }
 
 /* Block toolbar (drag + actions). Counter-scaled so it stays usable at any zoom. */

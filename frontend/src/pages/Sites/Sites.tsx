@@ -12864,7 +12864,7 @@ export const Sites: React.FC = () => {
         </main>
         {palettePreviewBlock && paletteDragPosition && (
           <div
-            className={`rstkPaletteFloatingPreview ${paletteDragging ? 'rstkPaletteFloatingPreviewCanvas' : ''}`}
+            className={`rstkPaletteFloatingPreview ${paletteDragging ? 'rstkPaletteFloatingPreviewCanvas' : ''} ${(paletteInsertIndex !== null || paletteSectionTarget !== null || embeddedFieldInsertIndex !== null) ? 'rstkPaletteFloatingPreviewArmed' : ''}`}
             style={{ left: paletteDragPosition.x, top: paletteDragPosition.y }}
             aria-hidden="true"
           >
