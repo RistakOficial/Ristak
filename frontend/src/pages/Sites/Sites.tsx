@@ -31844,7 +31844,7 @@ const FormSurfaceStyleControls: React.FC<{
           onCommit={onSaveSite}
         />
         <ColorField
-          label="Tarjeta"
+          label="Hoja"
           value={getThemePaint(theme, 'formSurfaceColor', isSiteDark(site) ? '#1e293b' : '#ffffff')}
           allowGradient
           onChange={(value) => onPatchTheme({ formSurfaceColor: value })}
