@@ -13,6 +13,8 @@ import {
 } from './licenseService.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
+// (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
+import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 
 const CONFIG_KEYS = {
   enabled: 'mercadopago_enabled',
@@ -2467,6 +2469,11 @@ async function updatePaymentFromMercadoPagoPayment(mpPayment) {
     updateSingleContactStats(updated.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por pago Mercado Pago ${row.id}: ${error.message}`)
     })
+    // (PAY2-003) Encolar el comprobante automático igual que Conekta para que el cliente lo reciba.
+    Promise.resolve(queuePaymentAutomationMessage('receipt', { ...updated, status: nextStatus }))
+      .catch((error) => {
+        logger.warn(`No se pudo encolar comprobante por pago Mercado Pago ${updated.id}: ${error.message}`)
+      })
   }
   await syncMercadoPagoPaymentPlanFromLocalPayment(updated)
 
@@ -2653,6 +2660,14 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
     updateSingleContactStats(subscriptionRow.contact_id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por suscripción Mercado Pago ${subscriptionRow.id}: ${error.message}`)
     })
+    // (PAY2-003) Encolar el comprobante automático también para los cobros recurrentes de Mercado Pago.
+    Promise.resolve(findPaymentById(localPaymentId))
+      .then((paymentRow) => {
+        if (paymentRow) return queuePaymentAutomationMessage('receipt', { ...paymentRow, status: nextStatus })
+      })
+      .catch((error) => {
+        logger.warn(`No se pudo encolar comprobante por suscripción Mercado Pago ${localPaymentId}: ${error.message}`)
+      })
   }
 
   return localPaymentId
@@ -2703,15 +2718,21 @@ export async function handleMercadoPagoWebhookEvent(body = {}, headers = {}, que
   const requestId = cleanString(headers['x-request-id'])
   const signatureHeader = cleanString(headers['x-signature'])
 
-  if (config.webhookSecret && !validateWebhookSignature({
-    signatureHeader,
-    requestId,
-    dataId,
-    secret: config.webhookSecret
-  })) {
-    const error = new Error('No se pudo verificar la firma del webhook de Mercado Pago.')
-    error.status = 401
-    throw error
+  // (PAY2-005) Rollout seguro: si YA hay secret configurado, exigir firma válida (401 si falla);
+  // si todavía no hay secret provisionado, aceptar pero dejar constancia para no romper la integración viva.
+  if (config.webhookSecret) {
+    if (!validateWebhookSignature({
+      signatureHeader,
+      requestId,
+      dataId,
+      secret: config.webhookSecret
+    })) {
+      const error = new Error('No se pudo verificar la firma del webhook de Mercado Pago.')
+      error.status = 401
+      throw error
+    }
+  } else {
+    logger.warn('Webhook de Mercado Pago aceptado sin verificar firma porque no hay secret configurado. Configura el secret para exigir firma.')
   }
 
   const type = cleanString(body.type || body.topic || query.topic || query.type)

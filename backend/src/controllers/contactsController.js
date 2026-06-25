@@ -3385,15 +3385,15 @@ export const updateContact = async (req, res) => {
         logger.info(`Contacto actualizado en HighLevel: ${id} (GHL ${ghlContactId})`)
       }
     } catch (error) {
+      // (CNT-008) Antes se hacía `return 502` cuando fallaba la sync de custom
+      // fields a HighLevel, ANTES de persistir nada local: con GHL caído/token
+      // expirado el usuario no podía guardar. Ahora NO bloqueamos el guardado
+      // local; solo avisamos en el log y continuamos para no perder datos.
       if (shouldSyncHighLevelCustomFields) {
-        logger.warn(`No se pudieron actualizar custom fields en HighLevel para ${id}: ${error.message}`)
-        return res.status(502).json({
-          success: false,
-          error: 'No se pudieron sincronizar los campos personalizados con GoHighLevel'
-        })
+        logger.warn(`No se pudieron sincronizar custom fields con HighLevel para ${id} (se guarda local de todos modos): ${error.message}`)
+      } else {
+        logger.warn(`No se pudo actualizar el contacto en HighLevel: ${error.message}`)
       }
-
-      logger.warn(`No se pudo actualizar el contacto en HighLevel: ${error.message}`)
       // Continuar con la actualización local aunque falle en GHL
     }
 
@@ -3532,6 +3532,26 @@ export const updateContact = async (req, res) => {
     })
 
   } catch (error) {
+    // (CNT-004) Email duplicado al editar caía a un 500 genérico opaco por el
+    // constraint UNIQUE. Lo mapeamos a un 409 claro y accionable (consistente
+    // con la pre-validación de email/teléfono de más arriba), para que el
+    // usuario sepa que el email ya pertenece a otro contacto.
+    const code = String(error?.code || '')
+    const message = String(error?.message || '')
+    const isUniqueConflict = code === 'SQLITE_CONSTRAINT' ||
+      code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+      code === '23505' ||
+      message.includes('UNIQUE constraint failed') ||
+      message.includes('duplicate key value')
+    if (isUniqueConflict) {
+      logger.warn(`Conflicto de email duplicado actualizando contacto ${req.params.id}: ${error.message}`)
+      return res.status(409).json({
+        success: false,
+        code: 'duplicate_email',
+        error: 'El email ya pertenece a otro contacto. Usa uno distinto o confirma la fusión.'
+      })
+    }
+
     logger.error(`Error actualizando contacto ${req.params.id}: ${error.message}`)
     res.status(500).json({
       success: false,

@@ -2969,6 +2969,15 @@ async function chargeStripePaymentRowWithSavedMethod({
     return row
   }
 
+  // (PAY-004) Token DETERMINISTA por día (UTC), NO aleatorio. Stripe cachea el
+  // resultado de una idempotencyKey 24h: una llave estática bloquea reintentar un
+  // cargo fallido, pero una llave 100% ALEATORIA es peligrosa (un cargo que sí pasó
+  // pero perdió la respuesta se volvería a cobrar en el siguiente tick = DOBLE COBRO).
+  // El bucket diario mantiene la idempotencia dentro de la ventana de cobro (reintentos
+  // del mismo día NO re-cobran) y a la vez permite reintentar un cargo fallido al día
+  // siguiente, cuando ya expiró el cache de 24h de Stripe.
+  const chargeAttemptToken = new Date().toISOString().slice(0, 10)
+
   const currency = normalizeCurrency(row.currency || config.defaultCurrency)
   const metadata = parseJson(row.metadata_json, {})
   const planMetadata = metadata.paymentPlan && typeof metadata.paymentPlan === 'object'
@@ -3002,7 +3011,8 @@ async function chargeStripePaymentRowWithSavedMethod({
           ...extraMetadata
         }
       },
-      stripeRequestOptionsWithIdempotency(requestOptions, `ristak:${row.id}:off-session-charge`)
+      // (PAY-004) Llave por intento (no estática) para no quedar bloqueados por el resultado cacheado 24h de Stripe en reintentos.
+      stripeRequestOptionsWithIdempotency(requestOptions, `ristak:${row.id}:off-session-charge:${chargeAttemptToken}`)
     )
 
     await updatePaymentFromIntent(intent, { stripe, config, requestOptions })

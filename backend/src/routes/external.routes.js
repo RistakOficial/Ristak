@@ -71,7 +71,11 @@ const externalApiRateLimiter = rateLimit({
   }
 })
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash)/i
-const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens)$/i
+// (SEC-006) `users` y tablas con PII de cuenta NO deben exponerse como directorio
+// por la API externa. Se agregan a la lista de tablas sensibles (bloqueo total de
+// lectura/escritura), no solo a WRITE_BLOCKED, para no filtrar el directorio de
+// empleados ni el mapa de permisos (access_config).
+const SENSITIVE_TABLE_PATTERN = /^(users|payment_methods|highlevel_config|meta_config|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens)$/i
 const WRITE_BLOCKED_TABLE_PATTERN = /^(users|payment_methods)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 

@@ -133,7 +133,13 @@ function getConfig() {
     offlinePolicy: process.env.LICENSE_OFFLINE_POLICY === 'grace' ? 'grace' : 'strict',
     graceHours: Number(process.env.LICENSE_OFFLINE_GRACE_HOURS) > 0
       ? Number(process.env.LICENSE_OFFLINE_GRACE_HOURS)
-      : 24
+      : 24,
+    // (LIC-006) TTL del cache negativo (estado bloqueado). Evita re-verificar contra
+    // el portal en cada request mientras la licencia esté bloqueada. Corto a propósito
+    // para que un upgrade/reactivación se note rápido. Default 60s.
+    blockedCacheSeconds: Number(process.env.LICENSE_BLOCKED_CACHE_SECONDS) > 0
+      ? Number(process.env.LICENSE_BLOCKED_CACHE_SECONDS)
+      : 60
   }
 }
 
@@ -282,8 +288,13 @@ function normalizeLicenseFeatures(features = {}) {
       normalized[featureKey] = explicitDependencies.every((dependency) => source[dependency] === true)
     }
     for (const dependency of dependencies) {
-      if (!hasExplicitFeature && hasOwn.call(source, dependency)) {
-        normalized[dependency] = source[dependency] === true
+      // (LIC-004) Una sub-feature enviada explícitamente por el portal SIEMPRE gana,
+      // aunque el padre esté en true. Antes el padre pisaba la sub-feature, así que un
+      // downgrade parcial ({reports:true, advanced_reports:false}) dejaba la sub-feature
+      // encendida. Solo cuando el padre es false la apagamos (no puede haber hijo activo
+      // sin su padre); y solo derivamos del padre cuando la sub-feature NO vino explícita.
+      if (hasOwn.call(source, dependency)) {
+        normalized[dependency] = source[dependency] === true && normalized[featureKey] === true
       } else {
         normalized[dependency] = normalized[featureKey] === true
       }
@@ -297,6 +308,21 @@ function normalizeLicenseFeatures(features = {}) {
 
 function cacheIsValid() {
   return !!(cachedState && cachedState.allowed && cachedState.expiresAt && new Date(cachedState.expiresAt).getTime() > Date.now())
+}
+
+// (LIC-006) Cache negativo: el estado bloqueado es válido mientras no expire su TTL
+// corto. Así dejamos de martillar el portal en cada request cuando la licencia está
+// bloqueada, sin volver el bloqueo permanente.
+function blockedCacheIsValid() {
+  return !!(cachedState && cachedState.allowed === false && cachedState.blockedUntil && cachedState.blockedUntil > Date.now())
+}
+
+// (LIC-007) El cache es un singleton por proceso compartido entre usuarios. Para no
+// servir un veredicto calculado contra otro email, solo reutilizamos el cache cuando
+// la verificación corresponde al mismo email solicitado (o no se pidió uno explícito).
+function cacheMatchesEmail(email) {
+  if (!email) return true
+  return lastVerifiedEmail === email
 }
 
 /**
@@ -352,15 +378,19 @@ export async function verifyLicenseWithServer(email) {
     return cachedState
   }
 
-  // Respuesta válida del servidor pero bloqueada: invalidar cualquier cache
+  // Respuesta válida del servidor pero bloqueada: invalidar cualquier cache positivo.
+  // (LIC-006) Cacheamos el estado bloqueado por un TTL corto (blockedUntil) para no
+  // re-verificar contra el portal en cada request mientras la licencia siga bloqueada.
   cachedState = {
     allowed: false,
     enforced: true,
     reason: data?.reason || 'license_blocked',
     message: data?.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.',
     expiresAt: null,
-    verifiedAt: new Date().toISOString()
+    verifiedAt: new Date().toISOString(),
+    blockedUntil: Date.now() + config.blockedCacheSeconds * 1000
   }
+  lastVerifiedEmail = targetEmail
   return cachedState
 }
 
@@ -399,8 +429,18 @@ export async function getLicenseState({ email = null, forceRefresh = false } = {
     return allowedWithoutEnforcement()
   }
 
-  if (!forceRefresh && cacheIsValid()) {
-    return cachedState
+  // (LIC-007) Solo reutilizamos el cache (positivo o negativo) cuando corresponde al
+  // mismo email solicitado; un email distinto fuerza re-verificación para no servir el
+  // veredicto de otro usuario desde este singleton compartido.
+  if (!forceRefresh && cacheMatchesEmail(email)) {
+    if (cacheIsValid()) {
+      return cachedState
+    }
+    // (LIC-006) Reutiliza el bloqueo cacheado por su TTL corto en vez de re-verificar
+    // en cada request mientras la licencia siga bloqueada.
+    if (blockedCacheIsValid()) {
+      return cachedState
+    }
   }
 
   return verifyLicenseWithServer(email)
@@ -413,6 +453,27 @@ export async function hasFeature(featureKey) {
   const state = await getLicenseState()
   if (!state.allowed) return false
   if (!state.enforced) return true
+  return !!state.features?.[featureKey] || !!state.features?.[normalizeFeatureKey(featureKey)]
+}
+
+/**
+ * (LIC-009) Gate de licencia/feature pensado para el runtime de fondo (crons,
+ * workers) que no pasa por los middlewares HTTP. Devuelve true cuando la app puede
+ * ejecutar el trabajo: o no hay enforcement, o la licencia está activa y —si se pide
+ * una feature— está incluida en el plan. Usa el cache temporal (incluido el cache
+ * negativo de LIC-006) para no martillar al portal en cada tick del cron.
+ *
+ * Uso sugerido en un cron:
+ *   if (!(await canRunBackgroundJob('meta_ads'))) return
+ */
+export async function canRunBackgroundJob(featureKey = null) {
+  if (!isLicenseEnforced()) return true
+
+  const state = await getLicenseState()
+  if (!state.allowed) return false
+  if (!state.enforced) return true
+  if (!featureKey) return true
+
   return !!state.features?.[featureKey] || !!state.features?.[normalizeFeatureKey(featureKey)]
 }
 

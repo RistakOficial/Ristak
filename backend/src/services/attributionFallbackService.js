@@ -211,7 +211,11 @@ export async function executeFallbackAttribution() {
 export async function previewFallbackAttribution() {
   try {
     const urlMapping = await buildUrlToAdIdMapping();
-    const candidates = await findFallbackCandidates();
+    // (TRK-005) usar la misma timezone de GHL que executeFallbackAttribution
+    // para que la vista previa y la ejecución coincidan (antes preview omitía la
+    // tz → default UTC y difería en contactos cerca de medianoche)
+    const timezone = await getTimezoneFromGHL();
+    const candidates = await findFallbackCandidates(timezone);
 
     const preview = {
       total_candidates: candidates.length,

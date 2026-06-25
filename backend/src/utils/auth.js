@@ -7,11 +7,34 @@ function getJwtSecret() {
 
   if (secret) return secret
 
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('JWT_SECRET es requerido en producción')
-  }
+  // (AUTH-004) JWT_SECRET es obligatorio SIEMPRE, no solo en producción.
+  // El fallback estático ('ristak-default-secret-change-me') permitía a
+  // cualquiera que conociera la cadena del repo forjar JWTs válidos en
+  // staging/preview o instalaciones sin NODE_ENV=production.
+  throw new Error('JWT_SECRET es requerido (configura la variable de entorno JWT_SECRET)')
+}
 
-  return 'ristak-default-secret-change-me'
+// (AUTH-005) Política de contraseñas: mínimo 10 caracteres y al menos una
+// minúscula, una mayúscula y un dígito. Bloquea además contraseñas comunes.
+export const PASSWORD_MIN_LENGTH = 10
+
+const COMMON_PASSWORDS = new Set([
+  'password', 'password1', 'passw0rd', '1234567890', '12345678', '123456789',
+  'qwertyuiop', 'qwerty123', 'iloveyou1', 'admin12345', 'changeme123',
+  'welcome123', 'letmein123', 'ristak12345'
+])
+
+export function validatePasswordPolicy(password) {
+  if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
+    return `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`
+  }
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+    return 'La contraseña debe incluir mayúsculas, minúsculas y números'
+  }
+  if (COMMON_PASSWORDS.has(password.toLowerCase())) {
+    return 'La contraseña es demasiado común. Elige una más segura'
+  }
+  return null
 }
 
 /**
@@ -20,8 +43,10 @@ function getJwtSecret() {
  * @returns {string} - Hash del password
  */
 export function hashPassword(password) {
-  if (!password || password.length < 6) {
-    throw new Error('La contraseña debe tener al menos 6 caracteres')
+  // (AUTH-005) Aplicar política de contraseñas fuerte en el punto de hashing.
+  const policyError = validatePasswordPolicy(password)
+  if (policyError) {
+    throw new Error(policyError)
   }
 
   // Generar salt aleatorio (16 bytes)
@@ -141,7 +166,11 @@ export function verifyToken(token) {
       .update(`${encodedHeader}.${encodedPayload}`)
       .digest('base64url')
 
-    if (signature !== expectedSignature) {
+    // (SEC-011) Comparación constante de la firma para evitar canal de timing
+    // (alineado con oauthTokens/apiTokens/verifyScopedToken).
+    const signatureBuf = Buffer.from(signature)
+    const expectedBuf = Buffer.from(expectedSignature)
+    if (signatureBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(signatureBuf, expectedBuf)) {
       logger.warn('⚠️  Token inválido: firma no coincide')
       return null
     }

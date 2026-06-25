@@ -73,6 +73,9 @@ import chatEventsRoutes from './routes/chatEvents.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 import { getHealthInfo, requestPortalUserRefresh } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
+// (LIC-002) requireAuth se aplica ANTES de requireFeature en los mounts gateados
+// para que el tráfico no autenticado reciba 401 sin tocar el license server.
+import { requireAuth } from './middleware/authMiddleware.js'
 import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
 import { repairStoredYCloudHistoryMessageDirections } from './services/whatsappApiService.js'
 import {
@@ -150,7 +153,38 @@ app.use((req, res, next) => {
 })
 
 // Middlewares
-app.use(cors())
+// (SEC-009) CORS con allowlist en lugar de reflejar cualquier origen.
+// Rollout seguro: si NO hay allowlist configurada (instalación sin APP_URL/
+// CORS_ALLOWED_ORIGINS), se mantiene el comportamiento permisivo + warn para no
+// romper instalaciones vivas. Cuando hay allowlist, solo se reflejan los orígenes
+// permitidos; peticiones sin Origin (same-origin, app nativa, server-to-server) y
+// los orígenes de la app móvil (Capacitor) siempre pasan.
+const CORS_NATIVE_APP_ORIGINS = ['capacitor://localhost', 'ionic://localhost', 'https://localhost']
+const corsConfiguredOrigins = Array.from(new Set([
+  process.env.APP_URL,
+  process.env.RENDER_EXTERNAL_URL,
+  ...String(process.env.CORS_ALLOWED_ORIGINS || '').split(',')
+]
+  .map((value) => String(value || '').trim().replace(/\/+$/, ''))
+  .filter(Boolean)))
+const corsAllowlist = new Set([...corsConfiguredOrigins, ...CORS_NATIVE_APP_ORIGINS])
+const corsAllowlistEnforced = corsConfiguredOrigins.length > 0
+if (!corsAllowlistEnforced) {
+  logger.warn('[SEC-009] CORS sin allowlist (APP_URL/CORS_ALLOWED_ORIGINS no configurados): reflejando cualquier origen. Configura el dominio de la instalación para endurecer.')
+}
+app.use(cors({
+  origin: (origin, callback) => {
+    // Sin Origin (same-origin, app nativa, server-to-server) o allowlist no enforced: permitir.
+    if (!origin || !corsAllowlistEnforced) return callback(null, true)
+    const normalized = origin.replace(/\/+$/, '')
+    if (corsAllowlist.has(normalized)) return callback(null, true)
+    // Origen no permitido: no reflejar headers CORS (el navegador bloquea la lectura
+    // cross-origin) sin rechazar la petición server-side, para no romper rutas públicas
+    // (tracking/sites) ni clientes no-navegador.
+    return callback(null, false)
+  },
+  credentials: true
+}))
 app.use(express.json({
   limit: '35mb',
   verify: (req, _res, buf) => {
@@ -217,9 +251,9 @@ app.use('/api/api-access', apiAccessRoutes)
 app.use('/api/media', mediaRoutes)
 app.use('/api/internal', internalStorageRoutes)
 app.use('/api/sites', sitesRoutes)
-app.use('/api/automations', requireFeature('automations'), automationsRoutes)
+app.use('/api/automations', requireAuth, requireFeature('automations'), automationsRoutes) // (LIC-002) auth antes de feature
 app.use('/api/appointment-reminders', appointmentRemindersRoutes)
-app.use('/api/reports', requireFeature('advanced_reports'), reportsRoutes)
+app.use('/api/reports', requireAuth, requireFeature('advanced_reports'), reportsRoutes) // (LIC-002) auth antes de feature
 app.use('/api/highlevel', highlevelRoutes)
 app.use('/api/products', productsRoutes)
 app.use('/api/subscriptions', subscriptionsRoutes)
@@ -231,20 +265,23 @@ app.use('/api/conekta', conektaRoutes)
 // abrir en una pestaña nueva sin el header Authorization.
 app.get('/api/meta/pixel-test', renderMetaPixelTestPage)
 app.post('/api/meta/pixel-test/event', runMetaPixelTestServerEvent)
-app.use('/api/meta', requireFeature('meta_ads'), metaRoutes)
+app.use('/api/meta', requireAuth, requireFeature('meta_ads'), metaRoutes) // (LIC-002) auth antes de feature
 // (LIC-001) Gating de features cobradas también en backend (el frontend ya las trata
 // como features de licencia). Solo se gatean routers 100% autenticados sin sub-rutas
 // públicas; los routers con webhooks o checkout público (stripe/conekta/mercadopago/sites)
 // NO se gatean en el mount para no romper pagos en vivo ni la captura pública de leads.
 // requireFeature es fail-open cuando la licencia no está enforced (instalación standalone).
-app.use('/api/dashboard', requireFeature('dashboard'), dashboardRoutes)
+app.use('/api/dashboard', requireAuth, requireFeature('dashboard'), dashboardRoutes) // (LIC-002) auth antes de feature
 app.use('/api/webhook-config', webhookConfigRoutes)
-app.use('/api/contacts', requireFeature('contacts'), contactsRoutes)
-app.use('/api/contact-tags', requireFeature('contacts'), contactTagsRoutes)
-app.use('/api/transactions', requireFeature('payments'), transactionsRoutes)
-app.use('/api/integrations', requireFeature('integrations'), integrationsRoutes)
-app.use('/api/attribution', requireFeature('analytics'), attributionRoutes)
+app.use('/api/contacts', requireAuth, requireFeature('contacts'), contactsRoutes) // (LIC-002) auth antes de feature
+app.use('/api/contact-tags', requireAuth, requireFeature('contacts'), contactTagsRoutes) // (LIC-002) auth antes de feature
+app.use('/api/transactions', requireAuth, requireFeature('payments'), transactionsRoutes) // (LIC-002) auth antes de feature
+app.use('/api/integrations', requireAuth, requireFeature('integrations'), integrationsRoutes) // (LIC-002) auth antes de feature
+app.use('/api/attribution', requireAuth, requireFeature('analytics'), attributionRoutes) // (LIC-002) auth antes de feature
 app.use('/api/settings', settingsRoutes)
+// (LIC-002) Estos mounts NO anteponen requireAuth: publicCalendarsRoutes expone
+// rutas públicas de booking (/public/...) que romperían con auth. calendarsRoutes
+// ya aplica requireAuth internamente.
 app.use('/api/calendars', requireFeature('google_calendar'), publicCalendarsRoutes)
 app.use('/api/calendars', requireFeature('google_calendar'), calendarsRoutes)
 app.use('/api/push', pushRoutes)
@@ -253,13 +290,13 @@ app.use('/api/chat-events', chatEventsRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api', costsRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
-app.use('/api/ai-agent', requireFeature('app_assistant_ai'), aiAgentRoutes)
-app.use('/api/conversational-agent', requireFeature('conversational_ai'), conversationalAgentRoutes)
+app.use('/api/ai-agent', requireAuth, requireFeature('app_assistant_ai'), aiAgentRoutes) // (LIC-002) auth antes de feature
+app.use('/api/conversational-agent', requireAuth, requireFeature('conversational_ai'), conversationalAgentRoutes) // (LIC-002) auth antes de feature
 app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
 app.use('/api/mcp', mcpRoutes)
-app.use('/api/whatsapp-api', requireFeature('whatsapp'), whatsappApiRoutes)
-app.use('/api/email', requireFeature('email'), emailRoutes)
+app.use('/api/whatsapp-api', requireAuth, requireFeature('whatsapp'), whatsappApiRoutes) // (LIC-002) auth antes de feature
+app.use('/api/email', requireAuth, requireFeature('email'), emailRoutes) // (LIC-002) auth antes de feature
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 
@@ -326,8 +363,13 @@ async function startRuntimeServices() {
     logger.error(`No se pudo revisar la versión de Meta API al arrancar: ${error.message}`)
   })
 
-  // Verificar y actualizar webhooks en producción
-  await verifyAndUpdateWebhooks()
+  // (CRON-006) Verificar y actualizar webhooks en producción SIN bloquear el boot:
+  // si HighLevel responde lento, el await anterior dejaba la app en 'starting' y
+  // devolvía 503 a todo el tráfico. Se ejecuta en segundo plano (best-effort), igual
+  // que el resto de tareas de arranque no críticas (repairPendingPaymentFlows, etc.).
+  verifyAndUpdateWebhooks().catch(error => {
+    logger.error(`No se pudo verificar/actualizar webhooks al arrancar: ${error.message}`)
+  })
 
   repairPendingPaymentFlows().catch(error => {
     logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)

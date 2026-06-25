@@ -277,8 +277,47 @@ export async function registerGigstackPaymentForTransaction(paymentId) {
   return { registered: true, data }
 }
 
+// (PAY2-006) Reintentos con backoff: si el 1er intento de registrar la factura
+// en Gigstack falla, la factura se perdía. Ahora reintentamos con espera
+// exponencial. Es seguro porque registerGigstackPaymentForTransaction es
+// idempotente (salta si ya está 'registered'/'stamped').
+const GIGSTACK_MAX_ATTEMPTS = Math.max(1, Number(process.env.GIGSTACK_MAX_ATTEMPTS) || 4)
+const GIGSTACK_RETRY_BASE_MS = Math.max(1000, Number(process.env.GIGSTACK_RETRY_BASE_MS) || 5000)
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// (PAY2-006) No reintentar errores que nunca se van a resolver solos
+// (config faltante, pago inexistente, etc.); solo reintentar fallas
+// transitorias (red, timeouts, 5xx, 429).
+function isRetryableGigstackError(error) {
+  const status = Number(error?.status)
+  if (Number.isFinite(status) && status > 0) {
+    return status === 429 || status >= 500
+  }
+  // Sin status HTTP suele ser error de red/timeout: reintentar.
+  return true
+}
+
 export function registerGigstackPaymentForTransactionInBackground(paymentId) {
-  registerGigstackPaymentForTransaction(paymentId).catch((error) => {
-    logger.warn(`No se pudo registrar pago ${paymentId} en Gigstack: ${error.message}`)
-  })
+  ;(async () => {
+    let lastError = null
+    for (let attempt = 1; attempt <= GIGSTACK_MAX_ATTEMPTS; attempt++) {
+      try {
+        const result = await registerGigstackPaymentForTransaction(paymentId)
+        // (PAY2-006) Si se saltó por config/estado, no tiene sentido reintentar.
+        return result
+      } catch (error) {
+        lastError = error
+        if (attempt >= GIGSTACK_MAX_ATTEMPTS || !isRetryableGigstackError(error)) {
+          break
+        }
+        const delayMs = GIGSTACK_RETRY_BASE_MS * Math.pow(2, attempt - 1)
+        logger.warn(`Registro de pago ${paymentId} en Gigstack falló (intento ${attempt}/${GIGSTACK_MAX_ATTEMPTS}): ${error.message}. Reintentando en ${delayMs}ms.`)
+        await sleep(delayMs)
+      }
+    }
+    logger.warn(`No se pudo registrar pago ${paymentId} en Gigstack tras ${GIGSTACK_MAX_ATTEMPTS} intento(s): ${lastError?.message}`)
+  })()
 }

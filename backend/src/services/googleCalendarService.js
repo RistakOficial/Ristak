@@ -225,6 +225,26 @@ export async function claimGoogleCalendarOAuthHandoff(handoffToken = '') {
 
 export async function deleteGoogleCalendarConfig() {
   await clearGoogleCalendarIntegrationCredentials()
+  // (GCAL-005) Al desconectar Google también hay que limpiar el `googleCalendarId`
+  // viejo de los calendarios locales vinculados; si no, quedan apuntando a un
+  // calendario de Google al que ya no tenemos acceso y la UI sigue "vinculada".
+  try {
+    const linkedCalendars = await localCalendarService.listGoogleLinkedLocalCalendars({ includeInactive: true })
+    for (const calendar of linkedCalendars) {
+      await localCalendarService.updateLocalCalendar(calendar.id, {
+        googleCalendarId: '',
+        googleAccessRole: '',
+        googleCalendarSummary: '',
+        googleCalendarTimeZone: ''
+      }, {
+        syncStatus: calendar.syncStatus || 'pending'
+      }).catch(error => {
+        logger.warn(`[Google Calendar] No se pudo limpiar vínculo Google del calendario ${calendar.id}: ${error.message}`)
+      })
+    }
+  } catch (error) {
+    logger.warn(`[Google Calendar] No se pudieron limpiar vínculos Google locales al desconectar: ${error.message}`)
+  }
   tokenCache = null
 }
 
@@ -459,10 +479,18 @@ function mapGoogleEventStatus(event = {}) {
   return 'confirmed'
 }
 
-function googleEventDateToIso(value = {}, fallback = null) {
-  const raw = value.dateTime || (value.date ? `${value.date}T00:00:00.000Z` : fallback)
-  if (!raw) return null
-  return normalizeToUtcIso(raw, 'UTC')
+function googleEventDateToIso(value = {}, fallback = null, timezone = 'UTC') {
+  // (GCAL-004) Eventos all-day de Google solo traen `date` (YYYY-MM-DD) sin hora ni zona.
+  // Anclar la medianoche a la zona de la cuenta (no a UTC) para que el día no se desfase
+  // en zonas no-UTC (p. ej. México UTC-6, donde medianoche UTC cae el día anterior).
+  if (value.dateTime) {
+    return normalizeToUtcIso(value.dateTime, 'UTC')
+  }
+  if (value.date) {
+    return normalizeToUtcIso(`${value.date}T00:00:00`, timezone)
+  }
+  if (!fallback) return null
+  return normalizeToUtcIso(fallback, 'UTC')
 }
 
 function localIdForGoogleEvent(eventId) {
@@ -486,12 +514,13 @@ async function resolveLocalCalendarId(preferredCalendarId = null) {
   return calendar.id
 }
 
-function googleEventToAppointment(event = {}, { calendarId, locationId = null } = {}) {
+function googleEventToAppointment(event = {}, { calendarId, locationId = null, timezone = 'UTC' } = {}) {
   const privateProps = event.extendedProperties?.private || {}
   const ristakAppointmentId = cleanString(privateProps.ristakAppointmentId)
   const ristakCalendarId = cleanString(privateProps.ristakCalendarId)
-  const startTime = googleEventDateToIso(event.start)
-  const endTime = googleEventDateToIso(event.end, startTime)
+  // (GCAL-004) Pasar la zona de la cuenta para anclar correctamente los eventos all-day.
+  const startTime = googleEventDateToIso(event.start, null, timezone)
+  const endTime = googleEventDateToIso(event.end, startTime, timezone)
 
   return {
     id: ristakAppointmentId || localIdForGoogleEvent(event.id),
@@ -586,6 +615,8 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
   }
 
   const range = normalizeGoogleEventTimeRange({ startTime, endTime })
+  // (GCAL-004) Zona de la cuenta para anclar los eventos all-day al día correcto.
+  const accountTimezone = await getAccountTimezone()
   let saved = 0
   let deleted = 0
   for (const target of targets) {
@@ -610,7 +641,8 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
       if (!event.start) continue
 
       const appointment = googleEventToAppointment(event, {
-        calendarId: target.localCalendarId
+        calendarId: target.localCalendarId,
+        timezone: accountTimezone // (GCAL-004)
       })
 
       if (!appointment.startTime || !appointment.endTime) continue

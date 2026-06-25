@@ -1,6 +1,6 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
-import { hashPassword, verifyPassword, generateToken, verifyToken } from '../utils/auth.js'
+import { hashPassword, verifyPassword, generateToken, verifyToken, validatePasswordPolicy } from '../utils/auth.js'
 import {
   getExternalApiAppId,
   getApiTokenMetadataForUser,
@@ -417,10 +417,20 @@ export async function changePassword(req, res) {
       })
     }
 
-    if (newPassword.length < 6) {
+    // (AUTH-005) Política de contraseñas fuerte para la nueva contraseña.
+    const policyError = validatePasswordPolicy(newPassword)
+    if (policyError) {
       return res.status(400).json({
         success: false,
-        message: 'La nueva contraseña debe tener al menos 6 caracteres'
+        message: policyError
+      })
+    }
+
+    // (AUTH-005) Impedir que la nueva contraseña sea igual a la actual.
+    if (newPassword === currentPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'La nueva contraseña debe ser diferente de la actual'
       })
     }
 
@@ -934,11 +944,16 @@ export async function setup(req, res) {
       })
     }
 
-    if (!ownerPasswordHash && password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: 'La contraseña debe tener al menos 6 caracteres'
-      })
+    // (AUTH-005) Política de contraseñas fuerte. En modo gestionado con hash del
+    // portal central (ownerPasswordHash) no hay password en claro que validar.
+    if (!ownerPasswordHash) {
+      const policyError = validatePasswordPolicy(password)
+      if (policyError) {
+        return res.status(400).json({
+          success: false,
+          message: policyError
+        })
+      }
     }
 
     // CRÍTICO: Verificar que NO existan usuarios previos
@@ -979,10 +994,27 @@ export async function setup(req, res) {
     const { hashPassword, generateToken } = await import('../utils/auth.js')
     const passwordHash = ownerPasswordHash || hashPassword(password)
 
+    // (AUTH-006) Insert atómico anti-TOCTOU: la fila solo se crea si AÚN no hay
+    // usuarios. Dos POST /setup concurrentes podían pasar ambos el peek previo
+    // ("SELECT id FROM users LIMIT 1") antes de insertar; este WHERE NOT EXISTS
+    // garantiza que solo el primero gane la carrera (changes > 0).
     const result = await db.run(
-      'INSERT INTO users (username, email, password_hash, full_name, role, is_active) VALUES (?, ?, ?, ?, ?, ?)',
+      `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+       SELECT ?, ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (SELECT 1 FROM users)`,
       [username, ownerEmail || null, passwordHash, username, 'admin', 1]
     )
+
+    // (AUTH-006) Si no insertó ninguna fila, otra request creó el primer usuario
+    // en paralelo: rechazar en vez de continuar con estado inconsistente.
+    if (Number(result?.changes || 0) === 0) {
+      logger.warn('⚠️  Setup concurrente detectado: el primer usuario ya fue creado por otra request')
+      return res.status(409).json({
+        success: false,
+        code: 'setup_already_completed',
+        message: 'Ya existe un usuario registrado. Inicia sesión con tu correo y contraseña.'
+      })
+    }
 
     let userId = result.lastID
     if (!userId) {

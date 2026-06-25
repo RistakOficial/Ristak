@@ -6,6 +6,17 @@ import { getMetaApiVersion, setMetaApiVersion } from '../config/constants.js'
 const DEFAULT_META_API_VERSION = 'v23.0'
 const MIN_META_API_MAJOR = 15
 const MAX_META_API_MAJOR = 30
+// (META-004) Techo de auto-detección: nunca subir por encima de la versión con la
+// que la app fue probada (DEFAULT_META_API_VERSION). Que un endpoint raíz de Graph
+// "responda" para vXX no garantiza que esa versión sea GA ni compatible con los
+// endpoints de ads que usamos; saltar a una más nueva sin validar puede romper la
+// sincronización. Se permite override explícito vía META_API_AUTODETECT_MAX_MAJOR.
+const AUTODETECT_MAX_MAJOR = (() => {
+  const known = Number(String(DEFAULT_META_API_VERSION).match(/^v(\d+)\.0$/)?.[1] || MAX_META_API_MAJOR)
+  const override = Number(process.env.META_API_AUTODETECT_MAX_MAJOR)
+  const ceiling = Number.isFinite(override) && override > 0 ? override : known
+  return Math.min(MAX_META_API_MAJOR, Math.max(MIN_META_API_MAJOR, ceiling))
+})()
 
 export function normalizeMetaApiVersion(version) {
   const cleanVersion = String(version || '').trim().toLowerCase()
@@ -37,9 +48,11 @@ export async function detectLatestVersion(fallbackVersion = DEFAULT_META_API_VER
 
   const normalizedFallback = normalizeMetaApiVersion(fallbackVersion) || DEFAULT_META_API_VERSION
 
-  // Probar versiones desde v30.0 hasta v15.0
+  // (META-004) Probar desde el techo conocido-bueno hacia abajo (no desde v30):
+  // así la detección sirve para RECUPERARSE a una versión soportada, nunca para
+  // saltar a una más nueva sin validar.
   const versionsToTest = []
-  for (let major = MAX_META_API_MAJOR; major >= MIN_META_API_MAJOR; major--) {
+  for (let major = AUTODETECT_MAX_MAJOR; major >= MIN_META_API_MAJOR; major--) {
     versionsToTest.push(`v${major}.0`)
   }
 

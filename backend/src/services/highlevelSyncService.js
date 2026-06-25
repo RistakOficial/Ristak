@@ -21,7 +21,7 @@ import {
   resolveContactIdByGhlId,
   resolveOrCreateContactForGhl
 } from './contactIdentityService.js'
-import { sanitizeContactName } from '../utils/phoneUtils.js'
+import { sanitizeContactName, normalizePhoneDigits } from '../utils/phoneUtils.js'
 import GHLClient from './ghlClient.js'
 import {
   getLocalCalendar,
@@ -371,11 +371,6 @@ async function collectPaginatedData({
       await onPage({ page, pageItems, total: items.length, data, url })
     }
 
-    // Si no se agregaron items nuevos, es porque son duplicados - detenerse
-    if (newItemsCount === 0 && pageItems.length > 0) {
-      break
-    }
-
     // Verificar si ya tenemos todos según totalCount de la API
     const totalCount = data.totalCount || data.total || data.meta?.total
     if (totalCount && items.length >= totalCount) {
@@ -402,6 +397,15 @@ async function collectPaginatedData({
       }
     } else {
       url = null
+    }
+
+    // (GHL-012) Solo cortar por "página sin items nuevos" cuando la API NO
+    // ofrece una forma real de avanzar. Antes se cortaba apenas una página
+    // traía solo duplicados (p.ej. un item repetido en el borde de la página),
+    // perdiendo todas las páginas posteriores aunque hubiera nextToken/
+    // nextUrl/hasMore. Si todavía podemos avanzar, seguimos paginando.
+    if (newItemsCount === 0 && pageItems.length > 0 && !advanced) {
+      break
     }
 
     if (items.length === before && !advanced) {
@@ -986,14 +990,54 @@ async function getWhatsAppOnlyContactsForHighLevelUpload() {
 }
 
 async function findHighLevelContactForLocal(client, contact) {
+  // (GHL-011) Antes se tomaba el PRIMER candidato HL con id devuelto por la
+  // búsqueda por email o teléfono, sin corroborar el identificador. Dos
+  // contactos HL con el mismo teléfono (líneas compartidas/familiares) podían
+  // ligar el ghl_contact_id equivocado y disparar un merge de DOS personas
+  // distintas. Ahora cada match exige que el identificador buscado coincida de
+  // verdad en el candidato: email exacto, o dígitos de teléfono iguales.
+  const localEmail = String(contact.email || '').trim().toLowerCase()
+  const localPhoneDigits = normalizePhoneDigits(contact.phone || '')
+
+  const candidateEmail = (candidate) => String(candidate.email || '').trim().toLowerCase()
+  const candidatePhoneDigits = (candidate) => normalizePhoneDigits(candidate.phone || '')
+
   const searches = []
-  if (contact.email) searches.push({ email: contact.email })
-  if (contact.phone) searches.push({ phone: contact.phone })
+  if (localEmail) searches.push({ by: 'email', params: { email: contact.email } })
+  if (localPhoneDigits) searches.push({ by: 'phone', params: { phone: contact.phone } })
 
   for (const search of searches) {
     try {
-      const result = await client.searchContacts({ ...search, limit: 5 })
-      const match = (result.contacts || []).find(candidate => candidate.id)
+      const result = await client.searchContacts({ ...search.params, limit: 5 })
+      const candidates = (result.contacts || []).filter(candidate => candidate.id)
+
+      let match = null
+      if (search.by === 'email') {
+        // (GHL-011) Solo aceptar si el email del candidato coincide exactamente.
+        match = candidates.find(candidate => candidateEmail(candidate) === localEmail)
+      } else if (search.by === 'phone') {
+        // (GHL-011) Exigir coincidencia real de dígitos de teléfono. Si hay
+        // varios candidatos con el mismo teléfono, preferir el que además
+        // corrobora el email; si siguen siendo ambiguos, no emparejar (no se
+        // puede decidir con seguridad).
+        const phoneMatches = candidates.filter(candidate => {
+          const digits = candidatePhoneDigits(candidate)
+          return digits && digits === localPhoneDigits
+        })
+        if (phoneMatches.length === 1) {
+          match = phoneMatches[0]
+        } else if (phoneMatches.length > 1) {
+          const corroborated = localEmail
+            ? phoneMatches.filter(candidate => candidateEmail(candidate) === localEmail)
+            : []
+          if (corroborated.length === 1) {
+            match = corroborated[0]
+          } else {
+            logger.warn(`Match WhatsApp→HL ambiguo para contacto ${contact.id}: ${phoneMatches.length} contactos HL comparten teléfono; no se emparejará para evitar fusionar personas distintas.`)
+          }
+        }
+      }
+
       if (match) return match
     } catch (error) {
       logger.warn(`No se pudo buscar contacto WhatsApp en HighLevel (${contact.id}): ${error.message}`)

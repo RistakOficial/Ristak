@@ -266,6 +266,16 @@ export async function createWhatsAppTemplateBulkAction(input = {}) {
   const fromPhone = await resolveSenderPhone({ phoneNumberId, fromPhone: input.fromPhone })
   if (!phoneNumberId && !fromPhone) throw serviceError('Elige el número de WhatsApp que mandará la plantilla.')
 
+  // (CNT-006) Contar de antemano los contactos sin teléfono. Antes solo fallaban
+  // ítem por ítem y en silencio después de mandar; ahora devolvemos el conteo en
+  // la respuesta para que la UI pueda avisar cuántos no recibirán la plantilla.
+  const requestedIds = normalizeContactIds(input.contactIds)
+  let noPhoneCount = 0
+  if (requestedIds.length > 0) {
+    const requestedContacts = await getContactsByIds(requestedIds)
+    noPhoneCount = requestedContacts.filter((contact) => !cleanString(contact?.phone)).length
+  }
+
   const action = await createBulkAction({
     actionType: 'whatsapp_template',
     title: `WhatsApp: ${templateName || templateId}`,
@@ -288,7 +298,9 @@ export async function createWhatsAppTemplateBulkAction(input = {}) {
     })
   }
 
-  return action
+  // (CNT-006) Exponer cuántos contactos seleccionados no tienen teléfono para que
+  // la UI lo advierta antes de mandar. Esos ítems fallarán al procesarse.
+  return { ...action, skippedNoPhone: noPhoneCount }
 }
 
 export async function createAutomationBulkAction(input = {}) {

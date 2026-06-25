@@ -351,9 +351,14 @@ export async function dispatchDueScheduledChatMessages({ limit = DISPATCH_BATCH_
     const lastActivity = new Date(row.last_attempt_at || row.updated_at || row.created_at || 0).getTime()
     if (!Number.isFinite(lastActivity) || lastActivity >= staleCutoffMs) continue
 
+    // (NOTI-007) Antes un mensaje atorado en 'sending' tras un crash se devolvía a 'scheduled'
+    // y se REENVIABA, sin poder verificar con el proveedor si ya se entregó: el contacto podía
+    // recibirlo dos veces. Como no podemos confirmar la entrega, lo marcamos como 'error'
+    // (visible en la UI y reintentable manualmente) en vez de reenviar a ciegas.
     await db.run(`
       UPDATE scheduled_chat_messages
-      SET status = 'scheduled',
+      SET status = 'error',
+          error_message = 'El envío quedó interrumpido y no se pudo confirmar si el mensaje llegó. Revísalo y reenvíalo manualmente si es necesario.',
           updated_at = ?
       WHERE id = ?
         AND status = 'sending'

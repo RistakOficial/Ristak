@@ -212,8 +212,14 @@ const computeFinancialSnapshot = async (range) => {
       let amount = 0;
 
       if (cost.calculation_type === 'percentage') {
-        // Porcentaje sobre revenue
-        if (cost.applies_to === 'revenue') {
+        // (RPT-003) Porcentaje sobre la base elegida en la UI: 'revenue' (ingresos)
+        // o 'profit' (ganancias). Antes 'profit' se ignoraba en silencio y el costo
+        // valía 0. Usamos la ganancia bruta (ingresos - gasto publicitario) como base
+        // de ganancias, que es lo disponible antes de restar los propios costos.
+        if (cost.applies_to === 'profit') {
+          amount = (gananciaBruta * cost.value) / 100;
+        } else {
+          // 'revenue' o cualquier valor heredado/no especificado → sobre ingresos
           amount = (ingresosNetos * cost.value) / 100;
         }
       } else if (cost.calculation_type === 'fixed') {
@@ -690,7 +696,7 @@ export const getLeadsData = async (req, res) => {
  */
 export const getAppointmentsData = async (req, res) => {
   try {
-    const { startDate, endDate, groupBy = 'day' } = req.query;
+    const { startDate, endDate, groupBy = 'day', scope = 'all' } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json([]);
@@ -699,19 +705,80 @@ export const getAppointmentsData = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const dateExpression = getGroupExpression('created_at', groupBy, timezone);
 
-    // PASO 1: Obtener configuración de HighLevel
+    // (RPT-006) Alinear la definición de "Citas" con la del funnel para que el número
+    // de la gráfica y el del embudo coincidan en la misma pantalla.
+    // - scope 'all' (default): cita por fecha en que se AGENDÓ (date_added), igual que
+    //   getFunnelData en su rama "Todos".
+    // - scope atribución (attribution/campaigns/attributed): cita contada por la fecha
+    //   de creación del contacto, igual que la rama de atribución del funnel.
+    const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
+
+    const attributionCalendarIds = await getAttributionCalendarIds();
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
 
-    // PASO 2: Cargar TODOS los eventos de calendarios (híbrido DB + API)
+    // (RPT-007) Distinguir "cero real" de "integración caída": si falta el token de
+    // HighLevel solo contamos las citas que ya estén en la DB local. Lo dejamos como
+    // warning explícito para que sea observable y no un 0 silencioso. (El estado
+    // "Conecta HighLevel / Token expirado" en la UI requiere el frontend.)
+    if (!config || !config.api_token) {
+      logger.warn('[RPT-007] getAppointmentsData: sin token de HighLevel; las citas solo reflejan datos locales de la DB (posible integración caída, no cero real)');
+    }
+
+    if (!useContactAttribution) {
+      // (RPT-006) Vista "Todos": agrupar por date_added de la cita (híbrido DB + API),
+      // misma fuente y filtro de calendarios que el funnel.
+      const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js');
+
+      const [dbAppointments, apiAppointments] = await Promise.all([
+        loadAppointmentsFromDB({
+          calendarIds: attributionCalendarIds,
+          startDate: range.startUtc,
+          endDate: range.endUtc
+        }),
+        config && config.api_token
+          ? loadAppointmentsFromAPI(config.location_id, config.api_token, attributionCalendarIds)
+          : []
+      ]);
+
+      const allAppointments = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date');
+
+      const start = new Date(range.startUtc);
+      const end = new Date(range.endUtc);
+      const periodMap = {};
+
+      allAppointments.forEach(apt => {
+        if (!apt.dateAdded || !apt.contactId) return;
+        const dateAdded = new Date(apt.dateAdded);
+        if (!(dateAdded >= start && dateAdded <= end)) return;
+
+        // Periodo por date_added en la zona aplicada (mismo agrupado que las demás gráficas)
+        const zoned = DateTime.fromJSDate(dateAdded, { zone: 'utc' }).setZone(timezone || 'UTC');
+        const periodKey = groupBy === 'month' ? zoned.toFormat('yyyy-MM') : zoned.toISODate();
+        if (!periodKey) return;
+
+        if (!periodMap[periodKey]) {
+          periodMap[periodKey] = new Set();
+        }
+        periodMap[periodKey].add(apt.contactId);
+      });
+
+      const appointmentsData = Object.keys(periodMap)
+        .sort()
+        .map(periodo => ({ label: periodo, value: periodMap[periodo].size }));
+
+      return res.json(appointmentsData);
+    }
+
+    // Vista atribución: cita por fecha de creación del contacto.
+    const dateExpression = getGroupExpression('created_at', groupBy, timezone);
+
     const contactsWithAppointments = config && config.api_token
-      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
+      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token, attributionCalendarIds)
       : new Set();
 
     logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API)`);
 
-    // PASO 3: Obtener contactos del rango de fechas
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
@@ -726,7 +793,6 @@ export const getAppointmentsData = async (req, res) => {
 
     const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
 
-    // PASO 4: Agrupar contactos con citas por periodo (fecha de creación)
     const periodMap = {};
 
     contactsRaw.forEach(contact => {
@@ -740,7 +806,6 @@ export const getAppointmentsData = async (req, res) => {
       }
     });
 
-    // Convertir a formato de respuesta
     const appointmentsData = Object.keys(periodMap)
       .sort()
       .map(periodo => ({
@@ -777,6 +842,13 @@ export const getAttendancesData = async (req, res) => {
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
     const attributionCalendarIds = await getAttributionCalendarIds();
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+
+    // (RPT-007) Sin token de HighLevel solo contamos asistencias de la DB local; lo
+    // registramos explícito para no confundir "cero real" con "integración caída".
+    if (!config || !config.api_token) {
+      logger.warn('[RPT-007] getAttendancesData: sin token de HighLevel; las asistencias solo reflejan datos locales de la DB (posible integración caída, no cero real)');
+    }
+
     const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
       config?.location_id,
       config?.api_token,
@@ -1300,6 +1372,13 @@ export const getFunnelData = async (req, res) => {
       customers: 'Clientes',
       lead: 'Interesado',
       leads: 'Interesados'
+    }
+
+    // (RPT-007) Si falta el token de HighLevel, las citas/asistencias del funnel solo
+    // reflejan la DB local. Lo dejamos explícito en logs para distinguir "cero real"
+    // de "integración caída" (el estado en la UI requiere el frontend).
+    if (!hlConfig || !hlConfig.api_token) {
+      logger.warn('[RPT-007] getFunnelData: sin token de HighLevel; citas/asistencias solo reflejan datos locales de la DB (posible integración caída, no cero real)')
     }
 
     let labels = defaultLabels

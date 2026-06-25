@@ -223,13 +223,55 @@ async function listSenderOptions() {
   }))
 }
 
+// (NOTI-008) Antes los fallos de envío (p.ej. plantilla no APPROVED sin fallback QR) quedaban
+// SOLO en logs/DB y la pantalla de recordatorios nunca los exponía: el usuario creía que sus
+// recordatorios salían cuando ninguno salía. Aquí agregamos los fallos recientes (status='error')
+// por recordatorio usando las columnas existentes, sin cambios de schema.
+async function getRecentReminderFailures() {
+  const rows = await db.all(`
+    SELECT reminder_id,
+      COUNT(*) AS error_count,
+      MAX(COALESCE(sent_at, send_at, '')) AS last_error_at,
+      MAX(id) AS latest_id
+    FROM appointment_reminder_sends
+    WHERE status = 'error'
+    GROUP BY reminder_id
+  `)
+
+  const byReminder = new Map()
+  for (const row of rows) {
+    const reminderId = cleanString(row.reminder_id)
+    if (!reminderId) continue
+    // Trae el mensaje de error más reciente para mostrarlo en la UI.
+    const latest = await db.get(`
+      SELECT error_message, COALESCE(sent_at, send_at) AS occurred_at
+      FROM appointment_reminder_sends
+      WHERE reminder_id = ? AND status = 'error'
+      ORDER BY COALESCE(sent_at, send_at, created_at) DESC, id DESC
+      LIMIT 1
+    `, [reminderId])
+    byReminder.set(reminderId, {
+      errorCount: Number(row.error_count || 0),
+      lastErrorAt: cleanString(row.last_error_at) || null,
+      lastErrorMessage: cleanString(latest?.error_message) || null
+    })
+  }
+  return byReminder
+}
+
 export async function getAppointmentRemindersOverview() {
   await backfillMissingReminderTemplates()
   const rows = await db.all('SELECT * FROM appointment_reminders ORDER BY position ASC, created_at ASC')
   const senders = await listSenderOptions()
   const whatsappConnected = senders.some(sender => sender.apiEnabled || sender.qrConnected)
+  // (NOTI-008) Adjuntamos los fallos recientes a cada recordatorio para que la UI los exponga.
+  const failuresByReminder = await getRecentReminderFailures()
+  const reminders = rows.map(normalizeReminderRow).map(reminder => ({
+    ...reminder,
+    failures: failuresByReminder.get(reminder.id) || { errorCount: 0, lastErrorAt: null, lastErrorMessage: null }
+  }))
   return {
-    reminders: rows.map(normalizeReminderRow),
+    reminders,
     senders,
     channels: [
       { id: 'whatsapp', label: 'WhatsApp', connected: whatsappConnected }
@@ -619,7 +661,17 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
 
   if (!appointments.length) return { sent: 0, errors: 0, skipped: 0 }
 
-  const sendRows = await db.all('SELECT reminder_id, appointment_id FROM appointment_reminder_sends')
+  // (NOTI-006) Antes se cargaba TODA la tabla appointment_reminder_sends en memoria por tick,
+  // lo que crece sin límite con el historial. Acotamos la consulta a solo las citas que estamos
+  // procesando en este tick (las únicas cuyos sends nos interesan para deduplicar).
+  const appointmentIds = appointments.map(appointment => appointment.id)
+  const sendPlaceholders = appointmentIds.map(() => '?').join(', ')
+  const sendRows = appointmentIds.length
+    ? await db.all(
+        `SELECT reminder_id, appointment_id FROM appointment_reminder_sends WHERE appointment_id IN (${sendPlaceholders})`,
+        appointmentIds
+      )
+    : []
   const alreadyHandled = new Set(sendRows.map(row => `${row.reminder_id}|${row.appointment_id}`))
 
   let sent = 0
