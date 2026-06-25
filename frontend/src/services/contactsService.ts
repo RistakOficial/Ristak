@@ -308,11 +308,14 @@ export const contactsService = {
     }
   },
 
-  async updateContact(id: string, contact: Partial<Contact>): Promise<Contact> {
+  async updateContact(id: string, contact: Partial<Contact>, options?: { confirmMerge?: boolean }): Promise<Contact> {
     const payload: Record<string, unknown> = { ...contact }
     if (Object.prototype.hasOwnProperty.call(payload, 'name') && !Object.prototype.hasOwnProperty.call(payload, 'full_name')) {
       payload.full_name = payload.name
     }
+    // (CNT-001) confirmMerge=true autoriza la fusión cuando el teléfono/email ya
+    // pertenece a otro contacto (el backend devuelve 409 sin esta bandera).
+    if (options?.confirmMerge) payload.confirmMerge = true
 
     const data = await apiClient.put<Contact>(`/contacts/${id}`, payload)
     return normalizeContact(data)

@@ -81,7 +81,13 @@ class ApiClient {
           message = String(payload.message)
         }
       }
-      throw new Error(message)
+      // (CNT-001) Conservar status y body en el error para que el caller pueda
+      // reaccionar a respuestas accionables (p. ej. 409 merge_confirmation_required
+      // con el contacto en conflicto) sin perder compatibilidad con error.message.
+      const apiError = new Error(message) as Error & { status?: number; body?: unknown }
+      apiError.status = response.status
+      apiError.body = json
+      throw apiError
     }
 
     // Si la respuesta tiene la estructura { success: true, data: ... } Y el campo data existe, extraer el campo data

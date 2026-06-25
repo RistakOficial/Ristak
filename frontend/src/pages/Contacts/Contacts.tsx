@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter, CustomSelect, Modal } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   Users,
@@ -618,6 +618,13 @@ const ContactsTable: React.FC = () => {
   const [contactsPendingDeletion, setContactsPendingDeletion] = useState<Contact[]>([])
   const [whatsappPhoneNumbers, setWhatsappPhoneNumbers] = useState<WhatsAppApiPhoneNumber[]>([])
   const [contactDeleteConfirmation, setContactDeleteConfirmation] = useState('')
+  // (CNT-001) Confirmación de fusión cuando al editar el teléfono/email choca con otro contacto.
+  const [mergeConfirm, setMergeConfirm] = useState<{
+    contactId: string
+    updates: { full_name: string; email: string; phone: string; source: string }
+    conflict: { field: string; contact: { id: string; full_name?: string | null; phone?: string | null; email?: string | null } }
+  } | null>(null)
+  const [mergeSaving, setMergeSaving] = useState(false)
   const [showBulkTagsModal, setShowBulkTagsModal] = useState(false)
   const [showBulkCustomFieldsModal, setShowBulkCustomFieldsModal] = useState(false)
   const [showBulkWhatsAppModal, setShowBulkWhatsAppModal] = useState(false)
@@ -1694,6 +1701,35 @@ const ContactsTable: React.FC = () => {
     setContactDeleteConfirmation('')
   }
 
+  // (CNT-001) Guarda la edición del contacto. Si el teléfono/email ya pertenece a otro
+  // contacto, el backend responde 409 'merge_confirmation_required': en vez de mostrar un
+  // error genérico, abrimos un diálogo para confirmar la fusión y reintentamos con
+  // confirmMerge=true (el backend conserva toda la información de ambos contactos).
+  const persistContactEdit = async (
+    contactId: string,
+    updates: { full_name: string; email: string; phone: string; source: string },
+    confirmMerge: boolean
+  ) => {
+    try {
+      if (confirmMerge) setMergeSaving(true)
+      await contactsService.updateContact(contactId, updates, confirmMerge ? { confirmMerge: true } : undefined)
+      setMergeConfirm(null)
+      setEditingContact(null)
+      navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
+      showToast('success', '¡Contacto actualizado!', 'Los cambios se guardaron correctamente')
+      fetchData()
+    } catch (error) {
+      const apiError = error as { status?: number; body?: { code?: string; conflict?: { field: string; contact: { id: string; full_name?: string | null; phone?: string | null; email?: string | null } } } }
+      if (apiError?.status === 409 && apiError.body?.code === 'merge_confirmation_required' && apiError.body.conflict) {
+        setMergeConfirm({ contactId, updates, conflict: apiError.body.conflict })
+        return
+      }
+      showToast('error', 'Error al actualizar', 'No se pudo actualizar el contacto')
+    } finally {
+      setMergeSaving(false)
+    }
+  }
+
   const closeContactDeleteModal = () => {
     if (deletingContacts) return
 
@@ -2173,6 +2209,36 @@ const ContactsTable: React.FC = () => {
         />
       )}
 
+      {mergeConfirm && (
+        <Modal
+          isOpen
+          onClose={() => { if (!mergeSaving) setMergeConfirm(null) }}
+          title="Confirmar fusión de contactos"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <p style={{ color: 'var(--text-dim)', lineHeight: 1.5, margin: 0 }}>
+              El {mergeConfirm.conflict.field === 'email' ? 'correo' : 'teléfono'} que ingresaste ya pertenece a otro contacto
+              {mergeConfirm.conflict.contact.full_name ? <> (<strong>{mergeConfirm.conflict.contact.full_name}</strong>)</> : null}.
+              {' '}Si continúas, ambos contactos se <strong>fusionarán en uno</strong> y se conservará toda la información de los dos
+              (etiquetas, campos personalizados e historial). Esta acción no se puede deshacer.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <Button type="button" variant="secondary" onClick={() => setMergeConfirm(null)} disabled={mergeSaving}>
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => persistContactEdit(mergeConfirm.contactId, mergeConfirm.updates, true)}
+                disabled={mergeSaving}
+              >
+                {mergeSaving ? 'Fusionando…' : 'Sí, fusionar'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {isClient && showNewContactModal && createPortal(
         <div className={styles.modalOverlay} data-overlay="" onClick={() => {
           setShowNewContactModal(false)
@@ -2282,15 +2348,7 @@ const ContactsTable: React.FC = () => {
                 source: formData.get('source') as string
               }
 
-              try {
-	                await contactsService.updateContact(editingContact.id, updatedContact)
-	                setEditingContact(null)
-                  navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
-	                showToast('success', '¡Contacto actualizado!', 'Los cambios se guardaron correctamente')
-                fetchData()
-              } catch (error) {
-                showToast('error', 'Error al actualizar', 'No se pudo actualizar el contacto')
-              }
+              await persistContactEdit(editingContact.id, updatedContact, false)
             }}>
               <div className={styles.formGroup}>
                 <label>Nombre completo</label>
