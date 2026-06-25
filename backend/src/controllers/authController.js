@@ -1,6 +1,8 @@
+import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { hashPassword, verifyPassword, generateToken, verifyToken, validatePasswordPolicy } from '../utils/auth.js'
+import { sendEmail } from '../services/emailService.js'
 import {
   getExternalApiAppId,
   getApiTokenMetadataForUser,
@@ -499,6 +501,120 @@ export async function changePassword(req, res) {
       success: false,
       message: 'Error en el servidor'
     })
+  }
+}
+
+// (AUTH-010) Base pública de la app para armar el enlace de reset.
+function resolveAppBaseUrl(req) {
+  const fromEnv = (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || '').trim().replace(/\/+$/, '')
+  if (fromEnv) return fromEnv
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'https'
+  const host = req.get('x-forwarded-host') || req.get('host')
+  return host ? `${proto}://${host}` : ''
+}
+
+/**
+ * POST /api/auth/forgot-password
+ * (AUTH-010) Inicia la recuperación por correo. Anti-enumeración: SIEMPRE responde igual
+ * (no revela si el correo existe). Si existe, genera un token de un solo uso (se guarda
+ * solo su hash) y envía un enlace con expiración de 1 hora.
+ */
+export async function forgotPassword(req, res) {
+  const genericOk = () => res.json({
+    success: true,
+    message: 'Si el correo está registrado, te enviamos un enlace para restablecer tu contraseña.'
+  })
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase()
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return genericOk()
+
+    const user = await db.get('SELECT id, email FROM users WHERE LOWER(email) = LOWER(?) AND is_active = 1', [email])
+    if (!user?.id || !user.email) return genericOk()
+
+    const rawToken = crypto.randomBytes(32).toString('hex')
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex')
+    const id = crypto.randomBytes(16).toString('hex')
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1 hora
+
+    // (cross-DB) user_id es TEXT y users.id es INTEGER: guardamos String(user.id) para
+    // que Postgres no rechace un integer en columna TEXT.
+    const userIdText = String(user.id)
+    // Invalida tokens previos sin usar del mismo usuario (solo uno activo a la vez).
+    await db.run('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL', [userIdText])
+    await db.run(
+      'INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)',
+      [id, userIdText, tokenHash, expiresAt]
+    )
+
+    const baseUrl = resolveAppBaseUrl(req)
+    const resetUrl = `${baseUrl}/reset-password?token=${rawToken}`
+    const subject = 'Restablece tu contraseña de Ristak'
+    const text = `Recibimos una solicitud para restablecer tu contraseña.\n\nAbre este enlace para crear una nueva (vence en 1 hora):\n${resetUrl}\n\nSi no fuiste tú, ignora este correo: tu contraseña no cambiará.`
+    const html = `<p>Recibimos una solicitud para restablecer tu contraseña.</p>
+<p><a href="${resetUrl}">Crear una nueva contraseña</a> (el enlace vence en 1 hora).</p>
+<p>Si no fuiste tú, ignora este correo: tu contraseña no cambiará.</p>`
+    try {
+      await sendEmail({ to: user.email, subject, text, html, includeSignature: false })
+    } catch (error) {
+      logger.warn(`[AUTH-010] No se pudo enviar el correo de recuperación a ${user.email}: ${error.message}`)
+    }
+    return genericOk()
+  } catch (error) {
+    logger.error(`[AUTH-010] Error en forgotPassword: ${error.message}`)
+    return genericOk()
+  }
+}
+
+/**
+ * POST /api/auth/reset-password
+ * (AUTH-010) Completa la recuperación: valida el token (hash, vigente, sin usar), aplica
+ * la política de contraseña, actualiza el hash, INCREMENTA token_version (revoca todas
+ * las sesiones, AUTH-003) y marca el token como usado.
+ */
+export async function resetPassword(req, res) {
+  try {
+    const rawToken = String(req.body?.token || '').trim()
+    const newPassword = String(req.body?.newPassword ?? req.body?.password ?? '')
+    if (!rawToken) {
+      return res.status(400).json({ success: false, error: 'Falta el token de recuperación.' })
+    }
+    const policyError = validatePasswordPolicy(newPassword)
+    if (policyError) {
+      return res.status(400).json({ success: false, error: policyError })
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex')
+    const row = await db.get(
+      'SELECT id, user_id, expires_at, used_at FROM password_reset_tokens WHERE token_hash = ?',
+      [tokenHash]
+    )
+    if (!row || row.used_at || new Date(row.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ success: false, error: 'El enlace es inválido o ya expiró. Solicita uno nuevo.' })
+    }
+
+    // (cross-DB) row.user_id viene como TEXT; users.id es INTEGER. Convertimos a número
+    // para que la comparación funcione en Postgres (y en SQLite).
+    const userIdNum = Number(row.user_id)
+    const user = Number.isFinite(userIdNum)
+      ? await db.get('SELECT id, token_version FROM users WHERE id = ? AND is_active = 1', [userIdNum])
+      : null
+    if (!user?.id) {
+      return res.status(400).json({ success: false, error: 'El enlace es inválido.' })
+    }
+
+    const newHash = hashPassword(newPassword)
+    const newTokenVersion = (user.token_version ?? 0) + 1
+    await db.run(
+      'UPDATE users SET password_hash = ?, token_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [newHash, newTokenVersion, user.id]
+    )
+    await db.run('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [row.id])
+    logger.success(`[AUTH-010] Contraseña restablecida por enlace para el usuario ${user.id}`)
+
+    return res.json({ success: true, message: 'Tu contraseña se actualizó. Ya puedes iniciar sesión.' })
+  } catch (error) {
+    logger.error(`[AUTH-010] Error en resetPassword: ${error.message}`)
+    return res.status(500).json({ success: false, error: 'No se pudo restablecer la contraseña. Intenta de nuevo.' })
   }
 }
 

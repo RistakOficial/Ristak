@@ -3,6 +3,8 @@ import {
   login,
   verifyTokenEndpoint,
   changePassword,
+  forgotPassword,
+  resetPassword,
   changeUsername,
   updateProfile,
   getMe,
@@ -88,6 +90,10 @@ router.post('/sso', authBurstRateLimiter, ssoLogin)
 // POST /api/auth/login - Autenticar usuario
 // (AUTH-001 / SEC-004) rate limit + lockout por IP+usuario
 router.post('/login', loginRateLimiter, login)
+
+// (AUTH-010) Recuperación de contraseña por correo (público, rate-limited por IP).
+router.post('/forgot-password', authBurstRateLimiter, forgotPassword)
+router.post('/reset-password', authBurstRateLimiter, resetPassword)
 
 // POST /api/auth/local-dev-session - Sesión automática sólo para desarrollo local
 router.post('/local-dev-session', localDevSession)
