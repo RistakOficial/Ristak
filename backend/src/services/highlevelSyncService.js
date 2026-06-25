@@ -1657,6 +1657,11 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
       }
 
       const credentialsToSave = mergeMetaCredentials(highLevelCredentials)
+      // GHL-009: solo se adopta la config de HighLevel porque NO existe ninguna
+      // config local de Meta (el guard kept_local de arriba ya descartó el caso
+      // con credenciales locales). No se pisa nada configurado por el usuario.
+      // Aun así dejamos aviso explícito para que la escritura no sea silenciosa.
+      logger.info('GHL-009: Meta local vacío; se adopta la configuración de HighLevel (no se sobrescribe ninguna config previa del usuario)')
       await saveMetaConfig(
         credentialsToSave.adAccountId,
         credentialsToSave.accessToken,
@@ -1685,6 +1690,14 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
       const highLevelNeedsUpdate = credentialsMissingValues(highLevelCredentials, localCredentials)
 
       if (localNeedsUpdate) {
+        // GHL-009: mergeMetaCredentials(local, highLevel) prioriza SIEMPRE los
+        // valores locales y solo rellena los campos que estaban vacíos en local.
+        // Nunca se pisan campos que el usuario ya configuró. Dejamos aviso
+        // explícito de qué campos opcionales se completaron desde HighLevel para
+        // que la escritura en meta_config no sea silenciosa en cada corrida.
+        const filledFields = ['pixelId', 'pageId', 'instagramAccountId', 'pixelApiToken', 'whatsappBusinessAccountId']
+          .filter(key => !cleanString(localCredentials[key]) && cleanString(highLevelCredentials[key]))
+        logger.info(`GHL-009: Se completan campos faltantes de Meta local desde HighLevel (sin sobrescribir lo configurado): ${filledFields.join(', ') || 'ninguno'}`)
         const mergedLocal = mergeMetaCredentials(localCredentials, highLevelCredentials)
         await saveMetaConfig(
           mergedLocal.adAccountId,
@@ -1726,6 +1739,11 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
     }
 
     if (prefer === 'highlevel') {
+      // GHL-009: única ruta que reemplaza el core (ad account + token) local con
+      // el de HighLevel. Solo se alcanza con prefer='highlevel' explícito (acción
+      // manual del usuario, NUNCA desde el cron que usa prefer='local'). Se deja
+      // aviso explícito para que la sobrescritura no sea silenciosa.
+      logger.warn('GHL-009: Sobrescritura EXPLÍCITA de Meta local con la config de HighLevel por prefer=highlevel (acción manual del usuario)')
       const credentialsToSave = mergeMetaCredentials(highLevelCredentials, localCredentials)
       await saveMetaConfig(
         credentialsToSave.adAccountId,

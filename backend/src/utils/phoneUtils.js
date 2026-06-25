@@ -77,8 +77,31 @@ export function buildPhoneMatchCandidates(value = '') {
     if (candidate) candidates.add(candidate)
   }
 
+  // CNT-005: NO colisionar números de distinto código de país que comparten los
+  // mismos 10 dígitos nacionales (ej. +1 555... vs +52 555...). Solo expandimos
+  // prefijos dentro de la MISMA familia de país, derivada del país real de la
+  // entrada; antes se agregaban 52/521/1 a ciegas y un número de EUA matcheaba
+  // contra un contacto mexicano.
   if (national && national.length === 10) {
-    for (const prefix of ['52', '521', '1']) {
+    // Determinar el código de país real a partir de los dígitos disponibles.
+    // Sin código de país explícito (10 dígitos pelones / sin +), conservamos el
+    // comportamiento previo asumiendo México (default histórico de almacenamiento)
+    // para no romper matches de datos ya guardados.
+    const hasCountryCode = digits.length > 10
+    let prefixes
+    if (!hasCountryCode) {
+      prefixes = ['52', '521']
+    } else if (digits.startsWith('521') || digits.startsWith('52')) {
+      prefixes = ['52', '521']
+    } else if (digits.startsWith('1')) {
+      prefixes = ['1']
+    } else {
+      // Otro país: solo su propio código (los dígitos entre el nacional y el final).
+      const cc = digits.slice(0, digits.length - 10)
+      prefixes = cc ? [cc] : []
+    }
+
+    for (const prefix of prefixes) {
       candidates.add(`${prefix}${national}`)
       candidates.add(`+${prefix}${national}`)
     }

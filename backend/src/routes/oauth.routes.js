@@ -139,6 +139,17 @@ router.get('/.well-known/openid-configuration', (req, res) => {
 })
 
 router.post('/api/oauth/register', async (req, res) => {
+  // (SEC-008) El registro dinámico de clientes OAuth queda CERRADO POR DEFECTO.
+  // Sin auth, cualquiera podía registrar clientes OAuth arbitrarios. Para
+  // habilitarlo (rollout controlado) hay que setear explícitamente
+  // OAUTH_DYNAMIC_REGISTRATION=1; en cualquier otro caso se rechaza con 403.
+  if (process.env.OAUTH_DYNAMIC_REGISTRATION !== '1') {
+    return res.status(403).json({
+      error: 'access_denied',
+      error_description: 'El registro dinámico de clientes OAuth está deshabilitado.'
+    })
+  }
+
   try {
     const client = await registerOAuthClient({
       clientName: req.body.client_name,

@@ -382,6 +382,32 @@ export async function createSession(sessionData) {
   }
 
   try {
+    // (TRK-002) Dedup de sesiones: el pixel reenvía el mismo evento de sesión
+    // (p. ej. session_end o reintentos de envío) e infla page_views / unique_sessions.
+    // Antes de insertar, se descarta un evento idéntico ya registrado usando una clave
+    // estable formada por columnas existentes: session_id + event_name + started_at.
+    // (Mismo session_id, mismo tipo de evento y mismo timestamp de origen = duplicado.)
+    // No se cambia el schema; solo se evita el doble conteo del mismo evento de sesión.
+    if (session_id) {
+      try {
+        const existing = await db.get(`
+          SELECT id FROM sessions
+          WHERE session_id = ?
+            AND COALESCE(event_name, '') = COALESCE(?, '')
+            AND started_at = ?
+          LIMIT 1
+        `, [session_id, event_name, startedAt])
+
+        if (existing) {
+          logger.info(`(TRK-002) Evento de sesión duplicado ignorado: session=${session_id} event=${event_name || 'page_view'} started_at=${startedAt}`)
+          return { success: true, deduped: true }
+        }
+      } catch (dedupErr) {
+        // Si la verificación de dedup falla, no bloquear el tracking: se continúa e inserta.
+        logger.warn(`(TRK-002) Falló verificación de dedup de sesión: ${dedupErr.message}`)
+      }
+    }
+
     // CADA page_view crea un registro NUEVO (el id se genera automáticamente)
     await db.run(`
       INSERT INTO sessions (

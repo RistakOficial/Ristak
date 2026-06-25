@@ -1077,6 +1077,8 @@ async function sendConversationalChannelTextMessage({
 
 async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex, channel = 'whatsapp', agentId = null }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
+  // (AI-007) Kill switch real: si el toggle global está apagado, el agente no
+  // dispara seguimientos aunque existan agentes publicados.
   let config = await getConversationalAgentConfig()
   if (!config.enabled) {
     config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
@@ -1426,13 +1428,23 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
   try {
     if (!contactId || !messageId) return
 
+    // (AI-007) Kill switch real: antes de procesar/responder verificamos el
+    // toggle global. Si está apagado, el agente NO actúa aunque existan agentes
+    // publicados (la antigua re-habilitación silenciosa del runtime queda anulada).
     let config = await getConversationalAgentConfig()
     if (!config.enabled) {
       config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
         reason: 'incoming_message_with_published_agent'
       })
     }
-    if (!config.enabled) return
+    if (!config.enabled) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'run_skipped_global_disabled',
+        detail: { messageId, channel: normalizedChannel }
+      }).catch(() => {})
+      return
+    }
 
     // (AI-002) Sin entitlement de 'conversational_ai' (downgrade/impago) el
     // agente no debe responder ni consumir tokens. hasFeature es fail-closed.
@@ -1770,6 +1782,8 @@ export async function recoverPendingConversationalAgentConversations({
   nowMs = Date.now(),
   maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
 } = {}) {
+  // (AI-007) Kill switch real: si el toggle global está apagado, no recuperamos
+  // ni reprogramamos conversaciones pendientes aunque existan agentes publicados.
   let config = await getConversationalAgentConfig()
   if (!config.enabled) {
     config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
