@@ -112,6 +112,25 @@ function formatDate(value?: string | null) {
   }).format(date)
 }
 
+// (PAY2-004) Parámetros que Mercado Pago (Checkout Pro) adjunta en sus back_urls al
+// regresar al sitio. Si la URL trae cualquiera de ellos, el usuario viene del checkout.
+const MERCADOPAGO_RETURN_PARAMS = [
+  'collection_status',
+  'collection_id',
+  'payment_id',
+  'preference_id',
+  'merchant_order_id',
+  'external_reference'
+] as const
+
+// (PAY2-004) ¿Volvimos del checkout? true para Stripe (?payment=return) y para
+// Mercado Pago (sus parámetros de retorno, incluido status=approved|pending|...).
+function isPaymentReturn(params: URLSearchParams) {
+  if (params.get('payment') === 'return') return true
+  if (params.has('status')) return true
+  return MERCADOPAGO_RETURN_PARAMS.some((key) => params.has(key))
+}
+
 function getStatusCopy(status: string) {
   const normalized = status.toLowerCase()
   if (['paid', 'succeeded', 'completed'].includes(normalized)) {
@@ -916,7 +935,12 @@ export const PublicPayment: React.FC = () => {
       setLoading(true)
       setError('')
       try {
-        const sync = searchParams.get('payment') === 'return'
+        // (PAY2-004) Detecta el retorno del checkout. Stripe vuelve con ?payment=return,
+        // pero Mercado Pago (Checkout Pro) regresa con sus propios parámetros
+        // (collection_status / status / payment_id / preference_id / merchant_order_id /
+        // external_reference). En cualquiera de esos casos forzamos un sync para refrescar
+        // el estado del pago en vez de quedarnos con la vista en caché.
+        const sync = isPaymentReturn(searchParams)
         const data = await loadPublicPayment(publicPaymentId, sync)
         if (mounted) setPayment(data)
       } catch (loadError: any) {

@@ -3,7 +3,8 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Terminal, Copy, Check } from 'lucide-react'
 import { Button, Logo } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiUrl, clearRuntimeApiBaseUrl, getRuntimeTenant, isNativeAppRuntime } from '@/services/apiBaseUrl'
+import { apiUrl, clearRuntimeApiBaseUrl, getRuntimeApiBaseUrl, getRuntimeTenant, isNativeAppRuntime } from '@/services/apiBaseUrl'
+import { resolveAndStoreMobileTenant } from '@/services/mobileTenantService'
 import { PHONE_APP_HOME_PATH, getPostAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
 
@@ -90,6 +91,9 @@ export const Login: React.FC = () => {
 
     setIsLoading(true)
 
+    const isMobileRuntime = isPhoneLogin && isNativeAppRuntime()
+    const looksLikeEmail = loginIdentifier.includes('@')
+
     try {
       await login(loginIdentifier, password)
       navigate(redirectPath, { replace: true })
@@ -98,6 +102,40 @@ export const Login: React.FC = () => {
         navigate('/license-blocked', { replace: true, state: { message: err.message } })
         return
       }
+
+      // (MOB-003) En la app móvil, un fallo de login puede deberse a que el
+      // correo pertenece a OTRA empresa y la app sigue apuntando al backend
+      // anterior. Re-resolvemos el tenant a partir del correo y, si cambió de
+      // backend, reintentamos el login una sola vez contra el correcto.
+      if (isMobileRuntime && looksLikeEmail) {
+        const previousBaseUrl = getRuntimeApiBaseUrl()
+        try {
+          await resolveAndStoreMobileTenant(loginIdentifier)
+        } catch (resolveErr: any) {
+          // No encontramos una app activa para ese correo: mensaje claro para
+          // cambiar de empresa, sin dejar al usuario adivinando.
+          setError(resolveErr?.message || 'No encontramos una empresa activa para ese correo. Toca "Cambiar empresa" para entrar a otra.')
+          return
+        }
+
+        const resolvedBaseUrl = getRuntimeApiBaseUrl()
+        if (resolvedBaseUrl && resolvedBaseUrl !== previousBaseUrl) {
+          // El correo apunta a otro backend: reintenta el login ahí.
+          try {
+            await login(loginIdentifier, password)
+            navigate(redirectPath, { replace: true })
+            return
+          } catch (retryErr: any) {
+            if (retryErr.code === 'license_blocked') {
+              navigate('/license-blocked', { replace: true, state: { message: retryErr.message } })
+              return
+            }
+            setError(retryErr.message || 'Correo o contraseña incorrectos.')
+            return
+          }
+        }
+      }
+
       setError(err.message || 'Usuario o contraseña incorrectos')
     } finally {
       setIsLoading(false)

@@ -635,6 +635,9 @@ const ContactsTable: React.FC = () => {
   const [showBulkWhatsAppModal, setShowBulkWhatsAppModal] = useState(false)
   const [showBulkAutomationModal, setShowBulkAutomationModal] = useState(false)
   const [deletingContacts, setDeletingContacts] = useState(false)
+  // (CNT-011) Progreso (X de N) y cancelación del borrado masivo secuencial.
+  const [deleteProgress, setDeleteProgress] = useState(0)
+  const deleteCancelRef = useRef(false)
   const [loading, setLoading] = useState(false)
   const [loadingEvents, setLoadingEvents] = useState(false) // Loading específico para eventos de calendarios
   const [viewMode, setViewMode] = useState<ContactViewMode>(routeState.viewMode)
@@ -1780,6 +1783,13 @@ const ContactsTable: React.FC = () => {
 
     setContactsPendingDeletion([])
     setContactDeleteConfirmation('')
+    setDeleteProgress(0)
+  }
+
+  // (CNT-011) Marca la cancelación; el bucle de borrado se detiene tras el
+  // contacto en curso (no se puede abortar una petición ya enviada).
+  const handleCancelBulkDelete = () => {
+    deleteCancelRef.current = true
   }
 
   const handleConfirmDeleteContacts = async () => {
@@ -1787,19 +1797,34 @@ const ContactsTable: React.FC = () => {
     if (contactDeleteConfirmation.trim().toUpperCase() !== DELETE_CONFIRMATION_WORD) return
 
     setDeletingContacts(true)
+    // (CNT-011) Reinicia el progreso y la bandera de cancelación al arrancar.
+    deleteCancelRef.current = false
+    setDeleteProgress(0)
+    const totalToDelete = contactsPendingDeletion.length
     const deletingIds = contactsPendingDeletion.map(contact => contact.id)
     const failedContacts: Contact[] = []
+    let cancelled = false
+    let processedCount = 0
 
     for (const contact of contactsPendingDeletion) {
+      // (CNT-011) Si el usuario canceló, dejamos de procesar los restantes.
+      if (deleteCancelRef.current) {
+        cancelled = true
+        break
+      }
       try {
         await contactsService.deleteContact(contact.id)
       } catch {
         failedContacts.push(contact)
       }
+      processedCount += 1
+      setDeleteProgress(processedCount)
     }
 
+    // (CNT-011) Solo se borraron de verdad los ya procesados que no fallaron.
+    const processedIds = deletingIds.slice(0, processedCount)
     const deletedIds = new Set(
-      deletingIds.filter(id => !failedContacts.some(contact => contact.id === id))
+      processedIds.filter(id => !failedContacts.some(contact => contact.id === id))
     )
 
     if (deletedIds.size > 0) {
@@ -1810,8 +1835,17 @@ const ContactsTable: React.FC = () => {
     setDeletingContacts(false)
     setContactsPendingDeletion([])
     setContactDeleteConfirmation('')
+    setDeleteProgress(0)
+    deleteCancelRef.current = false
 
-    if (failedContacts.length > 0) {
+    if (cancelled) {
+      // (CNT-011) Resumen al cancelar: cuántos alcanzaron a borrarse.
+      showToast(
+        'warning',
+        'Borrado cancelado',
+        `Se eliminaron ${deletedIds.size} de ${totalToDelete} antes de cancelar.`
+      )
+    } else if (failedContacts.length > 0) {
       showToast(
         'error',
         'No se pudieron eliminar todos',
@@ -1820,10 +1854,10 @@ const ContactsTable: React.FC = () => {
     } else {
       showToast(
         'success',
-        contactsPendingDeletion.length === 1 ? 'Contacto eliminado' : 'Contactos eliminados',
-        contactsPendingDeletion.length === 1
+        totalToDelete === 1 ? 'Contacto eliminado' : 'Contactos eliminados',
+        totalToDelete === 1
           ? 'El contacto se eliminó correctamente.'
-          : `Se eliminaron ${contactsPendingDeletion.length} contactos correctamente.`
+          : `Se eliminaron ${totalToDelete} contactos correctamente.`
       )
     }
 
@@ -2011,7 +2045,19 @@ const ContactsTable: React.FC = () => {
       showToast('success', '¡Contacto creado exitosamente!', `${contact.name} se agregó a tu lista de contactos`)
       fetchData()
     } catch (error) {
-      // Error already shown to user via toast
+      // (CNT-003) Cuando ya existe un contacto duplicado (por teléfono/email) el
+      // backend responde 409 con { error: "<mensaje real>" }. El apiClient conserva
+      // status y body, y deja ese mensaje en error.message. Mostramos el mensaje
+      // real en vez del genérico para que el usuario sepa por qué falló.
+      const apiError = error as { status?: number; body?: { error?: unknown }; message?: unknown }
+      const duplicateMessage =
+        (apiError?.body && typeof apiError.body === 'object' && apiError.body.error)
+          ? String(apiError.body.error)
+          : (typeof apiError?.message === 'string' ? apiError.message : '')
+      if (apiError?.status === 409 && duplicateMessage) {
+        showToast('error', 'Contacto duplicado', duplicateMessage)
+        return
+      }
       showToast('error', 'No se pudo crear el contacto', 'Hubo un problema al guardar el contacto. Verifica los datos e intenta nuevamente.')
     }
   }
@@ -2512,32 +2558,62 @@ const ContactsTable: React.FC = () => {
                 <X size={20} />
               </button>
             </div>
-            <p>
-              Vas a eliminar <strong>{contactsPendingDeletion.length}</strong> contacto{contactsPendingDeletion.length === 1 ? '' : 's'}.
-              Para confirmar, escribe <strong>{DELETE_CONFIRMATION_WORD}</strong> en la caja de abajo.
-            </p>
-            <div className={styles.formGroup}>
-              <label>Palabra de confirmación</label>
-              <input
-                value={contactDeleteConfirmation}
-                onChange={(event) => setContactDeleteConfirmation(event.target.value)}
-                placeholder={DELETE_CONFIRMATION_WORD}
-                disabled={deletingContacts}
-                autoFocus
-              />
-            </div>
+            {deletingContacts ? (
+              /* (CNT-011) Durante el borrado mostramos progreso (X de N) y barra. */
+              <>
+                <p>
+                  Eliminando <strong>{deleteProgress}</strong> de <strong>{contactsPendingDeletion.length}</strong> contacto{contactsPendingDeletion.length === 1 ? '' : 's'}…
+                </p>
+                <div
+                  className={styles.bulkProgressTrack}
+                  aria-label={`Progreso ${deleteProgress} de ${contactsPendingDeletion.length}`}
+                >
+                  <span
+                    style={{
+                      width: `${contactsPendingDeletion.length > 0 ? Math.round((deleteProgress / contactsPendingDeletion.length) * 100) : 0}%`
+                    }}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <p>
+                  Vas a eliminar <strong>{contactsPendingDeletion.length}</strong> contacto{contactsPendingDeletion.length === 1 ? '' : 's'}.
+                  Para confirmar, escribe <strong>{DELETE_CONFIRMATION_WORD}</strong> en la caja de abajo.
+                </p>
+                <div className={styles.formGroup}>
+                  <label>Palabra de confirmación</label>
+                  <input
+                    value={contactDeleteConfirmation}
+                    onChange={(event) => setContactDeleteConfirmation(event.target.value)}
+                    placeholder={DELETE_CONFIRMATION_WORD}
+                    disabled={deletingContacts}
+                    autoFocus
+                  />
+                </div>
+              </>
+            )}
             <div className={styles.formActions} data-modal-footer="">
-              <Button type="button" variant="ghost" onClick={closeContactDeleteModal} disabled={deletingContacts}>
-                Cancelar
-              </Button>
-              <Button
-                variant="danger"
-                onClick={handleConfirmDeleteContacts}
-                loading={deletingContacts}
-                disabled={contactDeleteConfirmation.trim().toUpperCase() !== DELETE_CONFIRMATION_WORD || deletingContacts}
-              >
-                Sí, eliminar
-              </Button>
+              {deletingContacts ? (
+                /* (CNT-011) Botón de cancelar el borrado masivo en curso. */
+                <Button type="button" variant="secondary" onClick={handleCancelBulkDelete}>
+                  Cancelar borrado
+                </Button>
+              ) : (
+                <>
+                  <Button type="button" variant="ghost" onClick={closeContactDeleteModal} disabled={deletingContacts}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={handleConfirmDeleteContacts}
+                    loading={deletingContacts}
+                    disabled={contactDeleteConfirmation.trim().toUpperCase() !== DELETE_CONFIRMATION_WORD || deletingContacts}
+                  >
+                    Sí, eliminar
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </div>,

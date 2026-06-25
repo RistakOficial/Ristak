@@ -286,6 +286,12 @@ async function createAndroidNotificationChannels() {
   ].map((task) => task.catch(() => undefined)))
 }
 
+// MOB-005: APNs/FCM registration can take a while on slow networks or cold
+// starts. 16s was too aggressive and produced false "denied" results even when
+// the OS delivered the token shortly after. Give registration a realistic
+// window before bailing so we don't mark a failure prematurely.
+const NATIVE_PUSH_REGISTRATION_TIMEOUT_MS = 60000
+
 function waitForNativePushToken(calendarIds: string[] = []): Promise<PushSubscriptionResult> {
   return new Promise((resolve) => {
     let settled = false
@@ -299,12 +305,14 @@ function waitForNativePushToken(calendarIds: string[] = []): Promise<PushSubscri
       resolve(result)
     }
 
+    // MOB-005: only treat the timeout as a genuine failure; do not race the
+    // real registration/registrationError events (finish() is idempotent).
     const timeout = window.setTimeout(() => {
       finish({
         status: 'denied',
         reason: 'This phone did not return the alert key. Close and reopen Ristak, then try again.'
       })
-    }, 16000)
+    }, NATIVE_PUSH_REGISTRATION_TIMEOUT_MS)
 
     const startRegistration = async () => {
       try {
