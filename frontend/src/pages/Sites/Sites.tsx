@@ -1787,7 +1787,7 @@ type LandingBlockOrderGroup = {
 type PaletteViewMode = 'blocks' | 'elements'
 
 type ButtonAction = 'url' | 'next_page' | 'specific_page' | 'open_popup' | 'close_popup'
-type FormCompletionAction = 'form_default' | 'next_page' | 'specific_page' | 'next_page_if_qualified' | 'redirect_qualified'
+type FormCompletionAction = 'form_default' | 'next_page' | 'next_page_if_qualified' | 'specific_page' | 'specific_page_if_qualified' | 'redirect' | 'redirect_qualified'
 type PopupTrigger = NonNullable<SiteTheme['popupTrigger']>
 type PopupCloseDisplay = NonNullable<SiteTheme['popupCloseDisplay']>
 type PopupCloseIcon = NonNullable<SiteTheme['popupCloseIcon']>
@@ -5193,7 +5193,7 @@ const getButtonAction = (settings: Record<string, unknown>): ButtonAction => {
 }
 
 const isFormCompletionAction = (value: unknown): value is FormCompletionAction =>
-  value === 'form_default' || value === 'next_page' || value === 'specific_page' || value === 'next_page_if_qualified' || value === 'redirect_qualified'
+  value === 'form_default' || value === 'next_page' || value === 'next_page_if_qualified' || value === 'specific_page' || value === 'specific_page_if_qualified' || value === 'redirect' || value === 'redirect_qualified'
 
 const getFormCompletionAction = (settings: Record<string, unknown>): FormCompletionAction => {
   const action = getSettingString(settings, 'completionAction') as FormCompletionAction
@@ -31591,10 +31591,11 @@ const FormCompletionSettingsControls: React.FC<{
         <span>Al enviar</span>
         <CustomSelect
           value={completionAction}
+          dropdownMinWidth={400}
           onChange={(event) => {
             const action = event.target.value as FormCompletionAction
             const patch: Record<string, unknown> = { completionAction: action }
-            if (action === 'specific_page' && !getSettingString(settings, 'completionPageId')) {
+            if ((action === 'specific_page' || action === 'specific_page_if_qualified') && !getSettingString(settings, 'completionPageId')) {
               patch.completionPageId = completionTargetPageId
             }
             onPatchSettings(patch)
@@ -31603,13 +31604,15 @@ const FormCompletionSettingsControls: React.FC<{
         >
           <option value="form_default">Usar reglas del formulario</option>
           <option value="next_page">Ir a la siguiente página/fase</option>
+          <option value="next_page_if_qualified">Ir a la siguiente página si no descalifica</option>
           <option value="specific_page">Ir a una página específica</option>
-          <option value="next_page_if_qualified">Siguiente página solo si califica</option>
-          <option value="redirect_qualified">Redirigir solo si califica</option>
+          <option value="specific_page_if_qualified">Ir a una página específica si no descalifica</option>
+          <option value="redirect">Redirigir a URL</option>
+          <option value="redirect_qualified">Redirigir a URL si no descalifica</option>
         </CustomSelect>
       </label>
 
-      {completionAction === 'specific_page' && pages.length > 0 && (
+      {(completionAction === 'specific_page' || completionAction === 'specific_page_if_qualified') && pages.length > 0 && (
         <label className={fieldClassName}>
           <span>Página destino</span>
           <CustomSelect
@@ -31624,7 +31627,7 @@ const FormCompletionSettingsControls: React.FC<{
         </label>
       )}
 
-      {completionAction === 'redirect_qualified' && (
+      {(completionAction === 'redirect_qualified' || completionAction === 'redirect') && (
         <label className={fieldClassName}>
           <span>URL destino</span>
           <input

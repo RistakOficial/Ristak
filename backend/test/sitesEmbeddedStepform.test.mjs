@@ -498,4 +498,46 @@ test('landing form embeds inherit source completion rules or target a specific p
 
   assert.match(specificPageHtml, /const completionAction = "specific_page";/)
   assert.match(specificPageHtml, /const completionTargetPageUrl = "\?page=page-2";/)
+
+  const unconditionalRedirectHtml = await renderPublicSiteHtml({
+    ...baseLanding,
+    blocks: baseLanding.blocks.map(block => ({
+      ...block,
+      settings: {
+        ...block.settings,
+        completionAction: 'redirect',
+        completionRedirectUrl: 'https://example.test/siempre'
+      }
+    }))
+  }, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(unconditionalRedirectHtml, /const completionAction = "redirect";/)
+  assert.match(unconditionalRedirectHtml, /const qualifiedRedirectUrl = "https:\/\/example\.test\/siempre";/)
+  // Unconditional redirect branch is present in the decision script.
+  assert.match(unconditionalRedirectHtml, /completionAction === 'redirect' && qualifiedRedirectUrl/)
+
+  const specificPageIfQualifiedHtml = await renderPublicSiteHtml({
+    ...baseLanding,
+    blocks: baseLanding.blocks.map(block => ({
+      ...block,
+      settings: {
+        ...block.settings,
+        completionAction: 'specific_page_if_qualified',
+        completionPageId: 'page-2'
+      }
+    }))
+  }, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(specificPageIfQualifiedHtml, /const completionAction = "specific_page_if_qualified";/)
+  assert.match(specificPageIfQualifiedHtml, /const completionTargetPageUrl = "\?page=page-2";/)
+  // Conditional specific-page branch is present in the decision script.
+  assert.match(specificPageIfQualifiedHtml, /completionAction === 'specific_page_if_qualified'/)
 })

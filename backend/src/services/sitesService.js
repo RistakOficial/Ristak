@@ -787,7 +787,7 @@ function mergeSiteMetaCustomData(base = {}, configured = {}) {
 
 function normalizeFormCompletionAction(value, fallback = 'form_default') {
   const action = cleanString(value)
-  return ['form_default', 'next_page', 'specific_page', 'next_page_if_qualified', 'redirect_qualified'].includes(action) ? action : fallback
+  return ['form_default', 'next_page', 'specific_page', 'specific_page_if_qualified', 'next_page_if_qualified', 'redirect', 'redirect_qualified'].includes(action) ? action : fallback
 }
 
 function normalizeFormDisqualifiedCompletionAction(value, fallback = 'disqualified_page') {
@@ -14654,7 +14654,7 @@ function getFormCompletionConfig(site, blocks = [], context = {}) {
     'form_default'
   )
   const completionAction = configuredAction === 'form_default' ? sourceAction : configuredAction
-  const completionTargetPage = completionAction === 'specific_page'
+  const completionTargetPage = (completionAction === 'specific_page' || completionAction === 'specific_page_if_qualified')
     ? getLandingCompletionTargetPage(site, {
       ...embeddedTheme,
       ...settings
@@ -21541,11 +21541,15 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             return;
           }
           const qualifies = submission.status !== 'disqualified';
+          if (completionAction === 'redirect' && qualifiedRedirectUrl) {
+            window.location.href = preserveUrl(qualifiedRedirectUrl);
+            return;
+          }
           if (!qualifies && disqualifiedCompletionAction === 'redirect_url' && disqualifiedRedirectUrl) {
             window.location.href = preserveUrl(disqualifiedRedirectUrl);
             return;
           }
-          if (!qualifies && disqualifiedPageUrl && (completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified')) {
+          if (!qualifies && disqualifiedPageUrl && (completionAction === 'next_page_if_qualified' || completionAction === 'redirect_qualified' || completionAction === 'specific_page_if_qualified')) {
             window.location.href = preserveUrl(disqualifiedPageUrl);
             return;
           }
@@ -21553,7 +21557,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
             window.location.href = preserveUrl(qualifiedRedirectUrl);
             return;
           }
-          if (qualifies && completionAction === 'specific_page' && completionTargetPageUrl) {
+          if (qualifies && (completionAction === 'specific_page' || completionAction === 'specific_page_if_qualified') && completionTargetPageUrl) {
             window.location.href = preserveUrl(completionTargetPageUrl);
             return;
           }
