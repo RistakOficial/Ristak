@@ -4393,9 +4393,9 @@ async function findScheduledPaymentCandidates({ contactId, amount = 0, timezone 
          i.ghl_schedule_id IS NOT NULL OR
          LOWER(COALESCE(i.status, '')) IN ('scheduled', 'pending_card_authorization', 'schedule_failed', 'manual_pending')
        )
-     ORDER BY datetime(COALESCE(i.updated_at, i.created_at)) DESC,
-              datetime(COALESCE(f.updated_at, f.created_at)) DESC
-     LIMIT 15`,
+     ORDER BY COALESCE(i.updated_at, i.created_at) DESC,
+              COALESCE(f.updated_at, f.created_at) DESC
+     LIMIT 15`, // PAY-006-DB-005: datetime() no existe en Postgres; ordenar por la columna timestamp directamente (ISO ordena cronológicamente en ambos motores)
     [contactId]
   )
   const paymentPlanRows = await safeAll(
@@ -4403,8 +4403,9 @@ async function findScheduledPaymentCandidates({ contactId, amount = 0, timezone 
      FROM payment_plans
      WHERE contact_id = ?
        AND LOWER(COALESCE(status, 'active')) NOT IN ('cancelled', 'canceled', 'deleted', 'void', 'voided', 'failed', 'completed', 'complete', 'paid', 'expired', 'inactive')
-     ORDER BY datetime(COALESCE(next_run_at, updated_at, created_at)) DESC
-     LIMIT 15`,
+     ORDER BY COALESCE(next_run_at, updated_at, created_at) DESC
+     LIMIT 15`, // PAY-006-DB-005: datetime() no existe en Postgres; ordenar por la columna timestamp directamente
+
     [contactId]
   )
   const localCandidates = [

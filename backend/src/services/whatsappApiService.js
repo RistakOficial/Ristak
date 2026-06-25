@@ -4858,6 +4858,11 @@ export async function captureQrChatMessage({
 
   // Dedupe difusa: el mismo mensaje pudo entrar por webhook con otro wamid durante una transición.
   if (messageText) {
+    // PAY-006-DB-005: datetime(?, '±2 minutes') es SQLite-only y truena en Postgres
+    // (la query iba en un .catch que ocultaba el error => el dedupe nunca corría en prod).
+    // Se ramifica a INTERVAL en Postgres manteniendo el mismo orden de parámetros.
+    const lowerBoundExpr = isPostgres() ? "(?::timestamp - INTERVAL '2 minutes')" : "datetime(?, '-2 minutes')"
+    const upperBoundExpr = isPostgres() ? "(?::timestamp + INTERVAL '2 minutes')" : "datetime(?, '+2 minutes')"
     const duplicate = await db.get(`
       SELECT id
       FROM whatsapp_api_messages
@@ -4865,7 +4870,7 @@ export async function captureQrChatMessage({
         AND direction = ?
         AND message_text = ?
         AND COALESCE(wamid, '') != ?
-        AND COALESCE(message_timestamp, created_at) BETWEEN datetime(?, '-2 minutes') AND datetime(?, '+2 minutes')
+        AND COALESCE(message_timestamp, created_at) BETWEEN ${lowerBoundExpr} AND ${upperBoundExpr}
       LIMIT 1
     `, [cleanContactPhone, cleanDirection, messageText, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => null)
     if (duplicate) {

@@ -78,7 +78,7 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
 import { PhoneCalendar, type PhoneCalendarCreateRequest } from '@/pages/PhoneCalendar'
 import { PhoneSettings } from '@/pages/PhoneSettings'
-import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useBottomSheetDismiss, usePaymentGatewayCapabilities, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useUserConfig, useBottomSheetDismiss, usePaymentGatewayCapabilities, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks' // MOB-006 useUserConfig
 import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import {
   CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
@@ -3407,13 +3407,13 @@ export const PhoneChat: React.FC = () => {
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
-  const [calendarPushEnabled, setCalendarPushEnabled] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
-  const [appointmentConfirmationPushEnabled, setAppointmentConfirmationPushEnabled] = useAppConfig<boolean>('appointment_confirmation_push_notifications_enabled', true)
-  const [chatPushEnabled, setChatPushEnabled] = useAppConfig<boolean>('chat_push_notifications_enabled', true)
-  const [paymentPushEnabled, setPaymentPushEnabled] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
-  const [notificationSoundEnabled, setNotificationSoundEnabled] = useAppConfig<boolean>('push_notification_sound_enabled', true)
-  const [notificationVibrationEnabled, setNotificationVibrationEnabled] = useAppConfig<boolean>('push_notification_vibration_enabled', true)
-  const [pushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
+  const [calendarPushEnabled, setCalendarPushEnabled] = useUserConfig<boolean>('calendar_push_notifications_enabled', false) // MOB-006
+  const [appointmentConfirmationPushEnabled, setAppointmentConfirmationPushEnabled] = useUserConfig<boolean>('appointment_confirmation_push_notifications_enabled', true) // MOB-006
+  const [chatPushEnabled, setChatPushEnabled] = useUserConfig<boolean>('chat_push_notifications_enabled', true) // MOB-006
+  const [paymentPushEnabled, setPaymentPushEnabled] = useUserConfig<boolean>('payment_push_notifications_enabled', true) // MOB-006
+  const [notificationSoundEnabled, setNotificationSoundEnabled] = useUserConfig<boolean>('push_notification_sound_enabled', true) // MOB-006
+  const [notificationVibrationEnabled, setNotificationVibrationEnabled] = useUserConfig<boolean>('push_notification_vibration_enabled', true) // MOB-006
+  const [pushCalendarIds] = useUserConfig<string[]>('calendar_push_notification_calendar_ids', []) // MOB-006
   const [whatsappNumberMode, setWhatsappNumberMode] = useAppConfig<WhatsAppNumberMode>('mobile_chat_whatsapp_number_mode', 'merged')
   const [selectedChatPhoneId, setSelectedChatPhoneId] = useAppConfig<string>('mobile_chat_selected_whatsapp_phone_id', 'all')
   const [selectedHighLevelChatChannel, setSelectedHighLevelChatChannel] = useAppConfig<HighLevelChatChannel>('mobile_chat_highlevel_channel', 'whatsapp_api')

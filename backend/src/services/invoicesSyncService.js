@@ -726,6 +726,10 @@ async function findExistingPaymentForInvoice({
     if (existingImportedLocal) return existingImportedLocal
   }
 
+  // DB-006: pre-check por ghl_invoice_id ANTES de cualquier INSERT de invoice HL.
+  // Si ya existe una fila con este ghl_invoice_id (sin importar contacto), la
+  // reusamos para derivar a UPDATE en vez de crear un duplicado. Cubre los 3
+  // INSERT de este servicio (importación masiva y syncSingleInvoice).
   const existingByInvoiceId = await db.get(
     'SELECT id, contact_id, status, payment_mode, payment_provider, ghl_invoice_id FROM payments WHERE ghl_invoice_id = ? OR id = ? LIMIT 1',
     [invoiceId, invoiceId]
@@ -886,9 +890,14 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           description: invoiceDescription
         })
 
+        // PAY2-011: NUNCA escribir el ID crudo de GHL como contact_id. Si la
+        // resolución a contacto local falló, dejamos contact_id en null en vez de
+        // colar un locationId/ghlContactId (origen del bug que parchó la migración
+        // cleanup_duplicate_payments.sql). El UPDATE de abajo conserva el contacto
+        // ya enlazado vía COALESCE-equivalente (no sobrescribe con null útil).
         // Datos comunes del invoice
         const invoiceData = {
-          contact_id: localContactId || contactId,
+          contact_id: localContactId || null,
           amount: invoiceAmount,
           currency: invoice.currency || 'MXN',
           status: mapInvoiceStatus(invoice.status),
@@ -909,11 +918,14 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           savedInvoiceStatus = resolveSyncedInvoiceStatus(existing.status, invoiceData.status)
 
           // Actualizar SIEMPRE para mantener datos sincronizados (incluyendo descripción)
+          // PAY2-011: contact_id solo se actualiza si tenemos un ID local resuelto;
+          // de lo contrario conservamos el contacto existente (no lo pisamos con null).
           await db.run(
             `UPDATE payments
              SET status = ?, amount = ?, currency = ?, payment_method = ?,
                  payment_provider = ${preserveLocalPaymentProviderSql()},
-                 payment_mode = ?, reference = ?, title = ?, description = ?, contact_id = ?,
+                 payment_mode = ?, reference = ?, title = ?, description = ?,
+                 contact_id = COALESCE(?, contact_id),
                  ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?,
                  updated_at = CURRENT_TIMESTAMP
              WHERE id = ?`,
@@ -1303,7 +1315,9 @@ export async function syncSingleInvoice(invoiceId) {
     })
 
     const invoiceData = {
-      contact_id: localContactId || contactId || null,
+      // PAY2-011: solo el ID local resuelto; nunca el ID crudo de GHL (evita
+      // que un locationId/ghlContactId se guarde como contact_id).
+      contact_id: localContactId || null,
       amount: invoiceAmount,
       currency: invoice.currency || 'MXN',
       status: ghlStatus,
@@ -1324,11 +1338,14 @@ export async function syncSingleInvoice(invoiceId) {
       // conservar 'paid' solo ante estados temporales, no ante deleted/refunded/void.
       savedInvoiceStatus = resolveSyncedInvoiceStatus(existing.status, invoiceData.status)
 
+      // PAY2-011: contact_id vía COALESCE para no pisar con null un contacto ya
+      // enlazado cuando la resolución local falla en esta corrida.
       await db.run(
         `UPDATE payments
          SET status = ?, amount = ?, currency = ?, payment_method = ?,
              payment_provider = ${preserveLocalPaymentProviderSql()},
-             payment_mode = ?, reference = ?, title = ?, description = ?, contact_id = ?,
+             payment_mode = ?, reference = ?, title = ?, description = ?,
+             contact_id = COALESCE(?, contact_id),
              ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
