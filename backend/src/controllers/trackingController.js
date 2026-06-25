@@ -12,7 +12,7 @@ import { getNoTrackReason } from '../utils/noTracking.js'
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
-const TRACKING_SNIPPET_VERSION = '10' // Incrementar cuando cambies el código del snippet
+const TRACKING_SNIPPET_VERSION = '11' // Incrementar cuando cambies el código del snippet (TRK-009: visitor_id fuera de la URL)
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
   .map(status => `'${String(status).replace(/'/g, "''")}'`)
   .join(', ')
@@ -814,28 +814,15 @@ export async function servePixel(req, res) {
     window.addEventListener('hashchange', schedulePageView);
   }
 
-  // Inyectar visitor_id en URL si no está presente
-  function injectVisitorIdToURL() {
-    try {
-      var currentURL = new URL(window.location.href);
-      var params = currentURL.searchParams;
+  // TRK-009: Ya NO inyectamos el visitor_id (rkvi_id) en la URL del navegador.
+  // Escribirlo en la query string lo filtraba en referrers y links compartidos.
+  // El visitor_id se persiste en localStorage y cookie (ver getVisitorId) y /collect
+  // lo lee del body, no de la URL. Mantenemos la lectura de rkvi_id desde la URL como
+  // fallback (getUrlVisitorId) para visitantes que ya lo traen en un link guardado,
+  // pero NO volvemos a escribirlo en window.location.
 
-      // Solo agregar si no existe ya
-      if (!params.has('rkvi_id') || !normalizeIdentityValue(params.get('rkvi_id'))) {
-        var visitorId = getVisitorId();
-        params.set('rkvi_id', visitorId);
-
-        // Actualizar URL sin recargar la página
-        var newURL = currentURL.pathname + '?' + params.toString() + currentURL.hash;
-        window.history.replaceState({}, '', newURL);
-      }
-    } catch (e) {
-      // Ignore errors (navegadores viejos sin URL API)
-    }
-  }
-
-  // Inyectar visitor_id en URL al cargar
-  injectVisitorIdToURL();
+  // TRK-009: persistir el visitor_id en cliente al cargar (sin tocar la URL).
+  getVisitorId();
   lastTrackedUrl = window.location.href;
   setupSpaNavigationTracking();
 

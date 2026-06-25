@@ -139,7 +139,18 @@ function getConfig() {
     // para que un upgrade/reactivación se note rápido. Default 60s.
     blockedCacheSeconds: Number(process.env.LICENSE_BLOCKED_CACHE_SECONDS) > 0
       ? Number(process.env.LICENSE_BLOCKED_CACHE_SECONDS)
-      : 60
+      : 60,
+    // (LIC-008) Revalidación EN CALIENTE del estado positivo. Antes las features del
+    // plan solo se capturaban al login y vivían hasta que expiraba el license_token
+    // (expiresAt, controlado por el portal, típicamente horas), así que un cambio de
+    // plan no se reflejaba sin re-login. Ahora, además de respetar expiresAt, el cache
+    // positivo se revalida contra el portal cada N segundos (default 300 = 5 min). El
+    // primer request tras vencer la ventana fuerza una verificación fresca y aplica el
+    // nuevo plan sin cerrar sesión. Si el portal está inaccesible, handleServerUnreachable
+    // conserva el último estado permitido (no rompe la operación).
+    revalidateSeconds: Number(process.env.LICENSE_REVALIDATE_SECONDS) > 0
+      ? Number(process.env.LICENSE_REVALIDATE_SECONDS)
+      : 300
   }
 }
 
@@ -310,6 +321,17 @@ function cacheIsValid() {
   return !!(cachedState && cachedState.allowed && cachedState.expiresAt && new Date(cachedState.expiresAt).getTime() > Date.now())
 }
 
+// (LIC-008) El cache positivo es "fresco" (reutilizable sin pegarle al portal) solo si
+// además de tener un license_token vigente (cacheIsValid) no se venció su ventana corta
+// de revalidación. Cuando la ventana vence, getLicenseState revalida contra el portal
+// para reflejar cambios de plan en caliente. Si nunca se marcó revalidateAfter (estados
+// viejos en cache), se trata como fresco para no romper el comportamiento previo.
+function cacheIsFresh() {
+  if (!cacheIsValid()) return false
+  if (!cachedState.revalidateAfter) return true
+  return cachedState.revalidateAfter > Date.now()
+}
+
 // (LIC-006) Cache negativo: el estado bloqueado es válido mientras no expire su TTL
 // corto. Así dejamos de martillar el portal en cada request cuando la licencia está
 // bloqueada, sin volver el bloqueo permanente.
@@ -372,7 +394,12 @@ export async function verifyLicenseWithServer(email) {
       features: hasValidFeatures ? normalizeLicenseFeatures(data.features) : closedRemoteFeatures(),
       licenseToken: data.license_token || null,
       expiresAt: data.expires_at || null,
-      verifiedAt: new Date().toISOString()
+      verifiedAt: new Date().toISOString(),
+      // (LIC-008) Marca hasta cuándo el cache positivo se considera "fresco". Aunque el
+      // license_token siga vigente (expiresAt en horas), pasada esta ventana corta el
+      // siguiente getLicenseState revalida contra el portal y aplica cambios de plan en
+      // caliente, sin re-login.
+      revalidateAfter: Date.now() + config.revalidateSeconds * 1000
     }
     lastVerifiedEmail = targetEmail
     return cachedState
@@ -433,7 +460,11 @@ export async function getLicenseState({ email = null, forceRefresh = false } = {
   // mismo email solicitado; un email distinto fuerza re-verificación para no servir el
   // veredicto de otro usuario desde este singleton compartido.
   if (!forceRefresh && cacheMatchesEmail(email)) {
-    if (cacheIsValid()) {
+    // (LIC-008) Reutilizamos el cache positivo solo mientras siga "fresco": con
+    // license_token vigente Y dentro de su ventana corta de revalidación. Al vencer la
+    // ventana caemos a verifyLicenseWithServer para reflejar cambios de plan en caliente
+    // (si el portal está caído, handleServerUnreachable conserva el último estado).
+    if (cacheIsFresh()) {
       return cachedState
     }
     // (LIC-006) Reutiliza el bloqueo cacheado por su TTL corto en vez de re-verificar

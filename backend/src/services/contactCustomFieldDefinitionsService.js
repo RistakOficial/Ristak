@@ -439,7 +439,10 @@ async function recordDefinitionSource(definitionId, input = {}) {
   ])
 }
 
-async function findDefinitionByKey(fieldKey, ownerUserId = null) {
+// CNT-009: custom fields compartidos por todo el equipo. La búsqueda por key
+// NO filtra por owner_user_id (se conserva solo como metadato de quién lo creó),
+// así un campo creado por otro empleado se reutiliza en lugar de duplicarse.
+async function findDefinitionByKey(fieldKey) {
   const key = normalizeContactCustomFieldKey(fieldKey, '')
   if (!key) return null
 
@@ -447,10 +450,9 @@ async function findDefinitionByKey(fieldKey, ownerUserId = null) {
     SELECT *
     FROM contact_custom_field_definitions
     WHERE LOWER(field_key) = LOWER(?)
-      AND COALESCE(owner_user_id, 0) = ?
       AND archived = 0
     LIMIT 1
-  `, [key, ownerUserId || 0])
+  `, [key])
 
   return mapDefinition(row)
 }
@@ -462,23 +464,19 @@ async function findDefinitionByInput(input = {}) {
     if (byId) return byId
   }
 
-  return findDefinitionByKey(input.fieldKey, input.ownerUserId)
+  // CNT-009: lookup compartido por key (sin segmentar por owner).
+  return findDefinitionByKey(input.fieldKey)
 }
 
-export async function listContactCustomFieldDefinitions({ includeArchived = false, userId = null } = {}) {
-  const ownerUserId = normalizeOwnerUserId(userId)
+export async function listContactCustomFieldDefinitions({ includeArchived = false } = {}) {
+  // CNT-009: custom fields compartidos. NO se filtra por owner_user_id —
+  // todo el equipo ve y usa las mismas definiciones. owner_user_id queda solo
+  // como metadato de quién creó el campo (ver mapDefinition.ownerUserId).
   const params = []
   const conditions = []
 
   if (!includeArchived) {
     conditions.push('d.archived = 0')
-  }
-
-  if (ownerUserId) {
-    conditions.push('(d.owner_user_id IS NULL OR d.owner_user_id = ?)')
-    params.push(ownerUserId)
-  } else {
-    conditions.push('d.owner_user_id IS NULL')
   }
 
   const rows = await db.all(`
