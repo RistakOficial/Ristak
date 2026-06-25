@@ -734,9 +734,12 @@ async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map()
     // - fetchMetaAdsInsights ya hace .replace('act_', '') antes de llamar aquí
 
     for (const ad of ads) {
-      // Calcular CPM y CTR
-      const cpm = ad.reach > 0 ? (ad.spend / ad.reach) * 1000 : 0
-      const ctr = ad.reach > 0 ? (ad.clicks / ad.reach) * 100 : 0
+      // (META-001) CPM y CTR se calculan por IMPRESIONES, no por reach: CPM es costo
+      // por 1000 impresiones y CTR es clicks/impresiones. Usar reach (usuarios únicos,
+      // siempre ≤ impresiones) inflaba ambas métricas vs Meta Ads Manager.
+      const impressions = parseInt(ad.impressions || 0)
+      const cpm = impressions > 0 ? (ad.spend / impressions) * 1000 : 0
+      const ctr = impressions > 0 ? (ad.clicks / impressions) * 100 : 0
 
       // ad.date_start viene como "YYYY-MM-DD" en el timezone de la cuenta de Meta
       // Lo guardamos directo sin conversión (representa el "día" en el timezone del anunciante)
@@ -747,8 +750,8 @@ async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map()
           date, ad_account_id, campaign_id, campaign_name, adset_id, adset_name,
           ad_id, ad_name, creative_id, creative_type, creative_thumbnail_url,
           creative_image_url, creative_video_id, creative_video_url, creative_preview_url,
-          spend, reach, clicks, cpc, cpm, ctr
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          spend, reach, impressions, clicks, cpc, cpm, ctr
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(date, campaign_id, adset_id, ad_id) DO UPDATE SET
           campaign_name = excluded.campaign_name,
           adset_name = excluded.adset_name,
@@ -762,6 +765,7 @@ async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map()
           creative_preview_url = COALESCE(excluded.creative_preview_url, meta_ads.creative_preview_url),
           spend = excluded.spend,
           reach = excluded.reach,
+          impressions = excluded.impressions,
           clicks = excluded.clicks,
           cpc = excluded.cpc,
           cpm = excluded.cpm,
@@ -785,6 +789,7 @@ async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map()
         creativeMedia.creative_preview_url || null,
         parseFloat(ad.spend || 0),
         parseInt(ad.reach || 0),
+        impressions,
         parseInt(ad.clicks || 0),
         parseFloat(ad.cpc || 0),
         parseFloat(cpm || 0),

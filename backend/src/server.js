@@ -20,6 +20,7 @@ import { startConektaPaymentPlansCron } from './jobs/conektaPaymentPlans.cron.js
 import { startPaymentAutomationsCron } from './jobs/paymentAutomations.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
+import { runVersionedMigrations } from './startup/runMigrations.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
 import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageService.js'
 import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
@@ -299,6 +300,10 @@ app.use((err, req, res, next) => {
 async function startRuntimeServices() {
   logger.info('Preparando base de datos antes de habilitar la app...')
   await databaseReady
+
+  // (DB-001) Aplicar migraciones versionadas (cambios de esquema aditivos) sobre el
+  // schema base ya creado por initTables, antes de habilitar tráfico.
+  await runVersionedMigrations()
 
   // Inicializar clave maestra de encriptación (DEBE ser lo primero)
   await initializeMasterKey()
