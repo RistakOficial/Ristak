@@ -2,16 +2,27 @@ import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from './logger.js'
 
+let ephemeralDevJwtSecret = null
+
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET
 
   if (secret) return secret
 
-  // (AUTH-004) JWT_SECRET es obligatorio SIEMPRE, no solo en producción.
-  // El fallback estático ('ristak-default-secret-change-me') permitía a
-  // cualquiera que conociera la cadena del repo forjar JWTs válidos en
-  // staging/preview o instalaciones sin NODE_ENV=production.
-  throw new Error('JWT_SECRET es requerido (configura la variable de entorno JWT_SECRET)')
+  // (AUTH-004) En PRODUCCIÓN JWT_SECRET es obligatorio: sin él, fallar (nunca un
+  // fallback estático del repo que cualquiera pudiera usar para forjar JWTs válidos).
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET es requerido en producción (configura la variable de entorno JWT_SECRET)')
+  }
+
+  // En desarrollo, sin JWT_SECRET, usamos un secreto EFÍMERO aleatorio por proceso
+  // (no uno estático predecible). Las sesiones no sobreviven a un reinicio del server
+  // local, lo cual es aceptable en dev y no rompe `start-local.sh`.
+  if (!ephemeralDevJwtSecret) {
+    ephemeralDevJwtSecret = crypto.randomBytes(48).toString('hex')
+    logger.warn('[AUTH-004] JWT_SECRET no configurado: usando un secreto EFÍMERO de desarrollo (las sesiones se invalidan al reiniciar). Configura JWT_SECRET para que persistan.')
+  }
+  return ephemeralDevJwtSecret
 }
 
 // (AUTH-005) Política de contraseñas: mínimo 10 caracteres y al menos una

@@ -213,7 +213,8 @@ export async function login(req, res) {
       userId: user.id,
       username: user.username,
       email: user.email,
-      role: user.role
+      role: user.role,
+      tokenVersion: user.token_version ?? 0 // (AUTH-003) para revocar al cambiar contraseña
     })
 
     logger.success(`✅ Login exitoso: ${loginIdentifier}`)
@@ -277,7 +278,8 @@ export async function localDevSession(req, res) {
       userId: user.id,
       username: user.username,
       email: user.email,
-      role: user.role
+      role: user.role,
+      tokenVersion: user.token_version ?? 0 // (AUTH-003) para revocar al cambiar contraseña
     })
 
     const [apiTokenMetadata, appId] = await Promise.all([
@@ -466,17 +468,30 @@ export async function changePassword(req, res) {
     // Hashear nueva contraseña
     const newPasswordHash = hashPassword(newPassword)
 
-    // Actualizar contraseña
+    // Actualizar contraseña + (AUTH-003) incrementar token_version para REVOCAR las
+    // demás sesiones abiertas: los tokens emitidos antes dejan de ser válidos en requireAuth.
+    const newTokenVersion = (user.token_version ?? 0) + 1
     await db.run(
-      'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [newPasswordHash, user.id]
+      'UPDATE users SET password_hash = ?, token_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [newPasswordHash, newTokenVersion, user.id]
     )
 
     logger.success(`✅ Contraseña cambiada exitosamente para usuario: ${user.username}`)
 
+    // (AUTH-003) Token nuevo con la versión vigente para que la sesión ACTUAL (la que hizo
+    // el cambio) siga válida; las demás quedan revocadas. El frontend debe reemplazar su token.
+    const refreshedToken = generateToken({
+      userId: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      tokenVersion: newTokenVersion
+    })
+
     res.json({
       success: true,
-      message: 'Contraseña cambiada exitosamente'
+      message: 'Contraseña cambiada exitosamente',
+      token: refreshedToken
     })
   } catch (error) {
     logger.error('❌ Error cambiando contraseña:', error)
@@ -789,7 +804,8 @@ export async function ssoLogin(req, res) {
       userId: user.id,
       username: user.username,
       email: user.email,
-      role: user.role
+      role: user.role,
+      tokenVersion: user.token_version ?? 0 // (AUTH-003)
     })
 
     const [apiTokenMetadata, appId] = await Promise.all([
@@ -1053,7 +1069,8 @@ export async function setup(req, res) {
       userId,
       username,
       email: ownerEmail || '',
-      role: 'admin'
+      role: 'admin',
+      tokenVersion: 0 // (AUTH-003) usuario recién creado
     })
 
     logger.success(`✅ Primer usuario creado: ${username}`)
