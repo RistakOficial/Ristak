@@ -11573,7 +11573,7 @@ function buildVideoTrackingAttributes({ enabled = false, block = {}, asset = nul
   })
 }
 
-const VIDEO_ACTION_KINDS = new Set(['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event'])
+const VIDEO_ACTION_KINDS = new Set(['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event', 'reveal_form_action'])
 const VIDEO_ACTION_BEFORE_STATES = new Set(['hidden', 'visible', 'unchanged'])
 const VIDEO_ACTION_TARGET_KINDS = new Set(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 
@@ -11584,7 +11584,7 @@ function normalizeVideoActionTime(value) {
 }
 
 function getRecommendedVideoActionBefore(action) {
-  if (action === 'show' || action === 'show_popup' || action === 'open_form') return 'hidden'
+  if (action === 'show' || action === 'show_popup' || action === 'open_form' || action === 'reveal_form_action') return 'hidden'
   if (action === 'hide') return 'visible'
   return 'unchanged'
 }
@@ -11721,6 +11721,18 @@ function hasVideoActionRules(blocks = []) {
     const settings = block?.settings || {}
     if (block?.blockType === 'video' && getVideoActionRulesFromSettings(settings).length > 0) return true
     if (Array.isArray(settings.embeddedBlocks) && hasVideoActionRules(settings.embeddedBlocks)) return true
+  }
+  return false
+}
+
+// True cuando algún video de la página tiene una acción que revela el botón
+// de envío/continuar del formulario en cierto momento del video. Solo aplica a
+// formularios estándar (cada página se renderiza por separado, con su botón).
+function hasVideoRevealFormActionRule(blocks = []) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const settings = block?.settings || {}
+    if (block?.blockType === 'video' && getVideoActionRulesFromSettings(settings).some(rule => rule.action === 'reveal_form_action')) return true
+    if (Array.isArray(settings.embeddedBlocks) && hasVideoRevealFormActionRule(settings.embeddedBlocks)) return true
   }
   return false
 }
@@ -12052,6 +12064,20 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
               sendMetaActionEvent(state, action);
             }
             if (!reached) state.triggered.delete(action.id);
+            return;
+          }
+          if (action.action === 'reveal_form_action') {
+            const form = state.video.closest('form[data-site-form]');
+            const area = form ? form.querySelector('[data-rstk-form-action-area]') : null;
+            if (!area) return;
+            // Una vez que el video alcanza el punto, el botón queda visible
+            // aunque el visitante rebobine (no se vuelve a ocultar).
+            if (reached || state.triggered.has(action.id)) {
+              state.triggered.add(action.id);
+              setTargetHidden(area, false);
+            } else {
+              setTargetHidden(area, true);
+            }
             return;
           }
           const targets = findTargets(action);
@@ -20268,9 +20294,13 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     ? Object.fromEntries(collectFieldBlockPageEntries(isStandardFormType ? (Array.isArray(site.blocks) ? site.blocks : []) : blocks, pages))
     : {}
 
+  // Cuando un video de la página revela el botón en cierto momento, marcamos el
+  // bloque de acciones y lo dejamos oculto de salida (sin parpadeo). El runtime
+  // de acciones de video lo muestra al llegar el video al punto configurado.
+  const revealFormActionControlled = !preview && isStandardFormType && hasVideoRevealFormActionRule(blocks)
   const submitArea = hasFormActions && !isLandingType
     ? `
-      <div class="rstk-actions">
+      <div class="rstk-actions"${revealFormActionControlled ? ' data-rstk-form-action-area data-rstk-video-action-hidden="true" aria-hidden="true"' : ''}>
         ${isInteractive && interactivePageCount > 1 ? `<button type="button" class="rstk-secondary" data-back hidden>${escapeHtml(backText)}</button>` : ''}
         ${isInteractive && interactivePageCount > 1 ? `<button type="button" data-next>${escapeHtml(activeButtonCopy.label || nextText)}</button>` : ''}
         ${isStandardFormIntermediatePage ? `<button type="button" data-form-next>${escapeHtml(activeButtonCopy.label || continueText)}</button>` : ''}

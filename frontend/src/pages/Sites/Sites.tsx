@@ -1279,7 +1279,7 @@ const PAGE_SELECTED_ID = '__page__'
 const POPUP_SELECTED_ID = '__popup__'
 const POPUP_SURFACE_ID = 'site-popup'
 const isEditorSurfaceSelection = (id: string) => id === PAGE_SELECTED_ID || id === POPUP_SELECTED_ID
-type VideoActionKind = 'show' | 'hide' | 'open_form' | 'open_video_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout' | 'meta_event'
+type VideoActionKind = 'show' | 'hide' | 'open_form' | 'open_video_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout' | 'meta_event' | 'reveal_form_action'
 type VideoActionBeforeState = 'hidden' | 'visible' | 'unchanged'
 type VideoFormGateAnimation = 'fade' | 'instant' | 'slide_up'
 type VideoFormGateCompletionAction = 'continue_video' | 'redirect' | 'show_targets' | 'hide_targets'
@@ -1313,9 +1313,9 @@ const VIDEO_ACTIONS_SETTING_KEY = 'videoActions'
 const VIDEO_FORM_GATE_ACTION_ID = 'video-form-gate-action'
 const VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS = 600
 const VIDEO_ACTION_TIMELINE_PADDING_SECONDS = 60
-const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event']
+const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event', 'reveal_form_action']
 const videoActionBeforeStates: VideoActionBeforeState[] = ['hidden', 'visible', 'unchanged']
-const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'meta_event']
+const primaryVideoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'meta_event', 'reveal_form_action']
 const videoActionTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 const videoActionMultiTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form'])
 
@@ -1331,7 +1331,8 @@ const videoActionLabels: Record<VideoActionKind, string> = {
   change_link: 'Cambiar enlace',
   scroll_to: 'Ir a una sección',
   activate_checkout: 'Activar checkout',
-  meta_event: 'Disparar evento Meta'
+  meta_event: 'Disparar evento Meta',
+  reveal_form_action: 'Mostrar botón de enviar'
 }
 
 const videoActionRuleLabels: Record<VideoActionKind, string> = {
@@ -1346,7 +1347,8 @@ const videoActionRuleLabels: Record<VideoActionKind, string> = {
   change_link: 'cambiar enlace de',
   scroll_to: 'ir a',
   activate_checkout: 'activar checkout',
-  meta_event: 'disparar evento Meta'
+  meta_event: 'disparar evento Meta',
+  reveal_form_action: 'mostrar el botón de enviar'
 }
 
 const videoActionBeforeLabels: Record<VideoActionBeforeState, string> = {
@@ -4578,7 +4580,7 @@ const clampVideoActionTime = (value: unknown) => {
 }
 
 const getRecommendedVideoActionBefore = (action: VideoActionKind): VideoActionBeforeState => {
-  if (action === 'show' || action === 'show_popup' || action === 'open_form') return 'hidden'
+  if (action === 'show' || action === 'show_popup' || action === 'open_form' || action === 'reveal_form_action') return 'hidden'
   if (action === 'hide') return 'visible'
   return 'unchanged'
 }
@@ -4886,6 +4888,9 @@ const getVideoActionRuleText = (rule: VideoActionRule, targets: VideoActionTarge
   }
   if (rule.action === 'meta_event') {
     return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, disparar ${normalizeMetaEventName(rule.metaEventName, 'Lead')}.`
+  }
+  if (rule.action === 'reveal_form_action') {
+    return `El botón de enviar aparece cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}.`
   }
   const actionText = videoActionRuleLabels[rule.action]
   return `Cuando el video llegue a ${formatVideoActionTime(rule.timeSeconds)}, ${actionText} ${targetLabel}.`
@@ -33126,9 +33131,10 @@ const VideoActionsPanel: React.FC<{
   const availablePrimaryVideoActionKinds = useMemo(
     () => primaryVideoActionKinds.filter(action => (
       (enableVideoFormGateAction || action !== 'open_video_form') &&
-      (metaPixelConnected || action !== 'meta_event')
+      (metaPixelConnected || action !== 'meta_event') &&
+      (isStandardForm(site) || action !== 'reveal_form_action')
     )),
-    [enableVideoFormGateAction, metaPixelConnected]
+    [enableVideoFormGateAction, metaPixelConnected, site]
   )
   const [expandedRuleId, setExpandedRuleId] = useState('')
   const [timeInputs, setTimeInputs] = useState<Record<string, string>>({})
@@ -33501,7 +33507,7 @@ const VideoActionsPanel: React.FC<{
           </CustomSelect>
         </label>
 
-        {rule.action !== 'open_video_form' && rule.action !== 'meta_event' && (
+        {rule.action !== 'open_video_form' && rule.action !== 'meta_event' && rule.action !== 'reveal_form_action' && (
           <label className={styles.field}>
             <span>Antes de este momento</span>
             <CustomSelect
