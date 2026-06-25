@@ -2612,12 +2612,12 @@ async function initTables() {
     // No alteran el estado operativo del calendario.
     await db.run(`
       CREATE TABLE IF NOT EXISTS appointment_attendance_signals (
-        contact_id TEXT PRIMARY KEY,
-        appointment_id TEXT,
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        appointment_id TEXT NOT NULL DEFAULT '',
         source TEXT NOT NULL DEFAULT 'webhook_showed',
         first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
 
