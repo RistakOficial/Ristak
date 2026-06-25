@@ -14679,6 +14679,10 @@ function getFormCompletionConfig(site, blocks = [], context = {}) {
 
   return {
     completionAction,
+    // Solo cuando el embed deja "Usar reglas del formulario" (form_default) la
+    // redirección propia del formulario (calificación/descalificación del
+    // standalone) debe mandar; con cualquier otra acción manda el editor de sitios.
+    usesFormRules: configuredAction === 'form_default',
     completionTargetPageUrl: completionTargetPage ? buildPageHref(completionTargetPage.id, context) : '',
     qualifiedRedirectUrl,
     disqualifiedCompletionAction,
@@ -20350,6 +20354,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
   const qualifiedRedirectUrl = landingCompletionConfig?.qualifiedRedirectUrl || ''
   const disqualifiedCompletionAction = landingCompletionConfig?.disqualifiedCompletionAction || 'disqualified_page'
   const disqualifiedRedirectUrl = landingCompletionConfig?.disqualifiedRedirectUrl || ''
+  // En un embed de sitio (landing) solo respetamos el redirect propio del
+  // formulario cuando "Al enviar" = "Usar reglas del formulario". Fuera de un
+  // embed (formulario/embudo standalone) siempre manda su propio redirect.
+  const completionUsesFormRules = landingCompletionConfig
+    ? landingCompletionConfig.usesFormRules === true
+    : true
   const submitIncompleteOnExit = !isStandardFormType || normalizeSubmitIncompleteOnExit(theme)
   const standardFormNextPageUrl = standardFormNextPage ? pageHref(standardFormNextPage.id) : ''
 	  const disqualifiedPage = isStandardFormType ? pages.find(page => page.id === FORM_DISQUALIFIED_PAGE_ID) : null
@@ -21005,6 +21015,7 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
       const standardFormPageIds = ${JSON.stringify(standardFormContentPageIds)};
       const targetBlockPageMap = ${JSON.stringify(fieldBlockPageMap)};
       const completionAction = ${JSON.stringify(completionAction)};
+      const completionUsesFormRules = ${completionUsesFormRules ? 'true' : 'false'};
       const pageButtonCopies = ${scriptJson(pageButtonCopies)};
       const submitText = ${scriptJson(submitText)};
       const submitSubtitle = ${scriptJson(submitSubtitle)};
@@ -21581,7 +21592,10 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
               renderEmbeddedForm(state);
             });
           }
-          if (submission.redirectUrl) {
+          // El redirect propio del formulario (calificación/descalificación del
+          // standalone) solo manda cuando el embed usa "Usar reglas del formulario".
+          // Con cualquier otra acción del editor de sitios, esa acción tiene prioridad.
+          if (submission.redirectUrl && completionUsesFormRules) {
             window.location.href = preserveUrl(submission.redirectUrl);
             return;
           }

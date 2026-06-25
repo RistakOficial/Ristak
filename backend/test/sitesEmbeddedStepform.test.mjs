@@ -479,6 +479,10 @@ test('landing form embeds inherit source completion rules or target a specific p
   assert.match(inheritedHtml, /const qualifiedRedirectUrl = "https:\/\/example\.test\/califica";/)
   assert.match(inheritedHtml, /const disqualifiedCompletionAction = "redirect_url";/)
   assert.match(inheritedHtml, /const disqualifiedRedirectUrl = "https:\/\/example\.test\/no-califica";/)
+  // "Usar reglas del formulario" (form_default): el redirect propio del formulario manda.
+  assert.match(inheritedHtml, /const completionUsesFormRules = true;/)
+  // El corto-circuito del redirect del formulario queda condicionado a esa bandera.
+  assert.match(inheritedHtml, /if \(submission\.redirectUrl && completionUsesFormRules\)/)
 
   const specificPageHtml = await renderPublicSiteHtml({
     ...baseLanding,
@@ -498,6 +502,8 @@ test('landing form embeds inherit source completion rules or target a specific p
 
   assert.match(specificPageHtml, /const completionAction = "specific_page";/)
   assert.match(specificPageHtml, /const completionTargetPageUrl = "\?page=page-2";/)
+  // Acción del editor de sitios (no form_default): el redirect del formulario NO debe mandar.
+  assert.match(specificPageHtml, /const completionUsesFormRules = false;/)
 
   const unconditionalRedirectHtml = await renderPublicSiteHtml({
     ...baseLanding,
@@ -519,6 +525,8 @@ test('landing form embeds inherit source completion rules or target a specific p
   assert.match(unconditionalRedirectHtml, /const qualifiedRedirectUrl = "https:\/\/example\.test\/siempre";/)
   // Unconditional redirect branch is present in the decision script.
   assert.match(unconditionalRedirectHtml, /completionAction === 'redirect' && qualifiedRedirectUrl/)
+  // Redirigir a URL (no form_default): el redirect del formulario NO debe mandar.
+  assert.match(unconditionalRedirectHtml, /const completionUsesFormRules = false;/)
 
   const specificPageIfQualifiedHtml = await renderPublicSiteHtml({
     ...baseLanding,
@@ -540,4 +548,47 @@ test('landing form embeds inherit source completion rules or target a specific p
   assert.match(specificPageIfQualifiedHtml, /const completionTargetPageUrl = "\?page=page-2";/)
   // Conditional specific-page branch is present in the decision script.
   assert.match(specificPageIfQualifiedHtml, /completionAction === 'specific_page_if_qualified'/)
+  // Variante "si no descalifica" (no form_default): el redirect del formulario NO debe mandar.
+  assert.match(specificPageIfQualifiedHtml, /const completionUsesFormRules = false;/)
+})
+
+test('standalone standard form keeps honoring its own result redirect', async () => {
+  // Fuera de un embed de sitio (formulario/embudo standalone) el redirect propio
+  // del formulario (página de calificación/descalificación) siempre debe mandar.
+  const site = {
+    id: 'site_standalone_result_redirect',
+    name: 'Formulario standalone',
+    title: 'Formulario standalone',
+    description: '',
+    slug: 'formulario-standalone',
+    siteType: 'standard_form',
+    status: 'published',
+    theme: {
+      template: 'compact',
+      pages: [{ id: 'page-1', title: 'Formulario', sortOrder: 0 }]
+    },
+    blocks: [
+      {
+        id: 'standalone-email',
+        siteId: 'site_standalone_result_redirect',
+        blockType: 'email',
+        label: 'Correo',
+        content: '',
+        placeholder: 'correo@example.test',
+        required: true,
+        options: [],
+        sortOrder: 0,
+        settings: { pageId: 'page-1' }
+      }
+    ]
+  }
+
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /const completionUsesFormRules = true;/)
+  assert.match(html, /if \(submission\.redirectUrl && completionUsesFormRules\)/)
 })
