@@ -250,8 +250,22 @@ export async function serveAssetHandler(req, res) {
     res.setHeader('Content-Type', asset.content_type)
     res.setHeader('Content-Length', buffer.length)
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+
+    // (AUTO-009 / SEC-010) Este endpoint es público (los archivos se incrustan en
+    // WhatsApp/Meta sin sesión), así que un asset malicioso (SVG/HTML/XML/JS con
+    // <script>) servido inline sería XSS almacenado en el origen del CRM. Mismo
+    // endurecimiento que media: nosniff + inline SOLO para tipos seguros (imágenes
+    // raster, video, audio, pdf); el resto se fuerza a descarga (attachment) para
+    // que el navegador no ejecute scripts. Las imágenes embebidas legítimas (png,
+    // jpg, gif, webp...) siguen viéndose inline, así que no rompe los mensajes.
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    const contentTypeLower = String(asset.content_type || '').toLowerCase()
+    const inlineSafe = /^(image\/(png|jpe?g|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon)|video\/|audio\/|application\/pdf)\b/.test(contentTypeLower)
+    const disposition = inlineSafe ? 'inline' : 'attachment'
     if (asset.filename) {
-      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(asset.filename)}"`)
+      res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(asset.filename)}"`)
+    } else if (!inlineSafe) {
+      res.setHeader('Content-Disposition', 'attachment')
     }
     res.end(buffer)
   } catch (error) {
