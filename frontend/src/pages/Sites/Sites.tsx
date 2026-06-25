@@ -5201,6 +5201,12 @@ const getFormCompletionAction = (settings: Record<string, unknown>): FormComplet
   return isFormCompletionAction(action) ? action : 'form_default'
 }
 
+type CalendarCompletionAction = 'calendar_default' | 'next_page' | 'redirect'
+const getCalendarCompletionAction = (settings: Record<string, unknown>): CalendarCompletionAction => {
+  const action = getSettingString(settings, 'calendarCompletionAction')
+  return action === 'next_page' || action === 'redirect' ? action : 'calendar_default'
+}
+
 const normalizeOption = (option: string | SiteBlockOption, index: number): SiteBlockOption => {
   if (typeof option === 'string') {
     return {
@@ -29049,6 +29055,8 @@ const CalendarBlockDesignControls: React.FC<{
   onSave: () => void
 }> = ({ site, block, blocks, calendar, onPatchSettings, onSave }) => {
   const settings = getPanelStyleSettings(site, block, blocks)
+  const blockSettings = block.settings || {}
+  const calendarCompletionAction = getCalendarCompletionAction(blockSettings)
   const defaultAccent = getSettingHex({ value: calendar?.eventColor || defaultAccentForSite(site) }, 'value', defaultAccentForSite(site))
   const defaultText = paintFallbackColor(getPageTextPaint(site), isSiteDark(site) ? '#ffffff' : '#111827')
   const defaultMuted = isSiteDark(site) ? 'rgba(255, 255, 255, 0.72)' : '#6b7280'
@@ -29068,6 +29076,31 @@ const CalendarBlockDesignControls: React.FC<{
 
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
+      <div className={styles.panelSubheader}>Al agendar</div>
+      <label className={styles.field}>
+        <span>Cuando agenden una cita</span>
+        <CustomSelect
+          value={calendarCompletionAction}
+          dropdownMinWidth={280}
+          onChange={(event) => onPatchSettings({ calendarCompletionAction: event.target.value })}
+          onBlur={onSave}
+        >
+          <option value="calendar_default">Usar reglas del calendario</option>
+          <option value="next_page">Ir a la siguiente página</option>
+          <option value="redirect">Redirigir a URL</option>
+        </CustomSelect>
+      </label>
+      {calendarCompletionAction === 'redirect' && (
+        <label className={styles.field}>
+          <span>URL destino</span>
+          <input
+            value={getSettingString(blockSettings, 'calendarCompletionRedirectUrl')}
+            placeholder="https://..."
+            onChange={(event) => onPatchSettings({ calendarCompletionRedirectUrl: event.target.value })}
+            onBlur={onSave}
+          />
+        </label>
+      )}
       <div className={styles.panelSubheader}>Diseño del calendario</div>
       <label className={styles.field}>
         <span>Modo</span>

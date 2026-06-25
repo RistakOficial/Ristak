@@ -2537,6 +2537,13 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           const completionRedirectUrl = getCompletionRedirectUrl();
           selectedSlot = '';
           setMessage('');
+          let bookingBridge = false;
+          try { bookingBridge = new URL(window.location.href).searchParams.get('bookingBridge') === '1'; } catch (_) {}
+          if (bookingBridge && window.parent && window.parent !== window) {
+            showSuccessScreen('Te estamos redirigiendo...');
+            try { window.parent.postMessage({ type: 'ristak:calendar-booked' }, '*'); } catch (_) {}
+            return;
+          }
           if (completionRedirectUrl) {
             showSuccessScreen('Te estamos redirigiendo...');
             window.setTimeout(() => {

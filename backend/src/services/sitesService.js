@@ -16099,6 +16099,7 @@ function appendCalendarEmbedParams(value, settings = {}, options = {}) {
     parsed.searchParams.set('embed', '1')
     parsed.searchParams.set('designMode', designMode)
     if (options.preview) parsed.searchParams.set('editor_preview', '1')
+    if (options.bookingBridge) parsed.searchParams.set('bookingBridge', '1')
     parsed.searchParams.set('layout', layout)
     if (coverImage) parsed.searchParams.set('coverImage', coverImage)
 
@@ -16120,6 +16121,22 @@ function appendCalendarEmbedParams(value, settings = {}, options = {}) {
   } catch {
     return raw
   }
+}
+
+// Acción "Al agendar" configurada en el bloque de calendario. 'next_page' y
+// 'redirect' navegan la página completa (vía el puente postMessage del iframe);
+// cualquier otra cosa deja que el calendario use sus propias reglas.
+function getCalendarEmbedCompletionRedirect(block = {}, context = {}) {
+  const settings = block?.settings || {}
+  const action = cleanString(settings.calendarCompletionAction || settings.calendar_completion_action)
+  if (action === 'next_page') {
+    const next = getNextPage(context.site, context.pageId)
+    return next ? buildPageHref(next.id, { site: context.site, linkStyle: context.linkStyle }) : ''
+  }
+  if (action === 'redirect') {
+    return safeHref(settings.calendarCompletionRedirectUrl || settings.calendar_completion_redirect_url || '', '')
+  }
+  return ''
 }
 
 const SPACING_SIDES = ['Top', 'Right', 'Bottom', 'Left']
@@ -17266,11 +17283,14 @@ function renderContentBlock(block, context = {}) {
     }
 
     const calendarName = cleanString(settings.calendarName || settings.calendar_name || block.label || 'Calendario')
+    const calendarCompletionRedirect = getCalendarEmbedCompletionRedirect(block, context)
     const baseCalendarSrc = appendCalendarEmbedParams(`/calendar/${encodeURIComponent(calendarSlug)}?test=1`, settings, {
-      preview: context.preview
+      preview: context.preview,
+      bookingBridge: Boolean(calendarCompletionRedirect)
     })
     const calendarSrc = context.noTrack ? appendNoTrackParam(baseCalendarSrc) : baseCalendarSrc
-    return `<iframe class="rstk-embed rstk-calendar-embed" src="${escapeHtml(calendarSrc)}" title="${escapeHtml(calendarName)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
+    const calendarRedirectAttr = calendarCompletionRedirect ? ` data-rstk-calendar-redirect="${escapeHtml(calendarCompletionRedirect)}"` : ''
+    return `<iframe class="rstk-embed rstk-calendar-embed" src="${escapeHtml(calendarSrc)}" title="${escapeHtml(calendarName)}"${calendarRedirectAttr} loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
   }
 
   if (block.blockType === 'embed') {
@@ -20489,6 +20509,12 @@ export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEna
     (() => {
       window.addEventListener('message', event => {
         const data = event.data || {};
+        if (data.type === 'ristak:calendar-booked') {
+          const calendarFrame = Array.from(document.querySelectorAll('iframe.rstk-calendar-embed')).find(item => item.contentWindow === event.source);
+          const target = calendarFrame ? calendarFrame.getAttribute('data-rstk-calendar-redirect') : '';
+          if (target) window.location.assign(window.ristakPreserveParams ? window.ristakPreserveParams(target) : target);
+          return;
+        }
         if (data.type !== 'ristak:embed-height') return;
         const frame = Array.from(document.querySelectorAll('iframe.rstk-embed-code')).find(item => item.contentWindow === event.source);
         if (!frame) return;

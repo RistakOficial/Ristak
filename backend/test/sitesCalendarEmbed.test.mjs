@@ -226,3 +226,47 @@ test('public calendar normalizes WhatsApp custom appointment event as LeadSubmit
     parameters: {}
   })
 })
+
+test('calendar embed bridges to a redirect URL on booking', async () => {
+  const html = await renderPublicSiteHtml(calendarSite({
+    calendarCompletionAction: 'redirect',
+    calendarCompletionRedirectUrl: 'https://example.test/gracias-cita'
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /data-rstk-calendar-redirect="https:\/\/example\.test\/gracias-cita"/)
+  const url = getCalendarFrameUrl(html)
+  assert.equal(url.searchParams.get('bookingBridge'), '1')
+})
+
+test('calendar embed bridges to the next funnel page on booking', async () => {
+  const site = calendarSite({ calendarCompletionAction: 'next_page' })
+  site.theme.pages = [
+    { id: 'page-1', title: 'Pagina 1', sortOrder: 0 },
+    { id: 'page-2', title: 'Pagina 2', sortOrder: 1 }
+  ]
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /data-rstk-calendar-redirect="[^"]*page-2[^"]*"/)
+  const url = getCalendarFrameUrl(html)
+  assert.equal(url.searchParams.get('bookingBridge'), '1')
+})
+
+test('calendar embed uses its own rules by default (no bridge)', async () => {
+  const html = await renderPublicSiteHtml(calendarSite(), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.doesNotMatch(html, /data-rstk-calendar-redirect=/)
+  const url = getCalendarFrameUrl(html)
+  assert.equal(url.searchParams.get('bookingBridge'), null)
+})
