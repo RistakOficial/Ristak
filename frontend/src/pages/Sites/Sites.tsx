@@ -31605,7 +31605,7 @@ const FormCompletionSettingsControls: React.FC<{
         <span>Al enviar</span>
         <CustomSelect
           value={completionAction}
-          dropdownMinWidth={400}
+          dropdownMinWidth={420}
           onChange={(event) => {
             const action = event.target.value as FormCompletionAction
             const patch: Record<string, unknown> = { completionAction: action }
@@ -31617,12 +31617,12 @@ const FormCompletionSettingsControls: React.FC<{
           onBlur={onSave}
         >
           <option value="form_default">Usar reglas del formulario</option>
-          <option value="next_page">Ir a la siguiente página/fase</option>
-          <option value="next_page_if_qualified">Ir a la siguiente página si no descalifica</option>
+          <option value="next_page">Ir a la siguiente página</option>
+          <option value="next_page_if_qualified">Ir a la siguiente página (si NO descalifica)</option>
           <option value="specific_page">Ir a una página específica</option>
-          <option value="specific_page_if_qualified">Ir a una página específica si no descalifica</option>
+          <option value="specific_page_if_qualified">Ir a una página específica (si NO descalifica)</option>
           <option value="redirect">Redirigir a URL</option>
-          <option value="redirect_qualified">Redirigir a URL si no descalifica</option>
+          <option value="redirect_qualified">Redirigir a URL (si NO descalifica)</option>
         </CustomSelect>
       </label>
 
