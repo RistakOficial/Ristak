@@ -625,6 +625,7 @@ const ConektaCardTokenizerForm: React.FC<{
   const [loadingTokenizer, setLoadingTokenizer] = useState(Boolean(payment.publicKey))
   const [tokenizerReady, setTokenizerReady] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [saveCard, setSaveCard] = useState(false) // (PAY2-008) opt-in para guardar la tarjeta
   const [message, setMessage] = useState('')
   const [messageKind, setMessageKind] = useState<'info' | 'success' | 'error'>('info')
   const showSecureNotice = payment.settings?.checkout?.showSecureBadge !== false
@@ -681,7 +682,8 @@ const ConektaCardTokenizerForm: React.FC<{
               try {
                 const result = await conektaPaymentsService.createPublicCardPayment(payment.publicPaymentId, {
                   tokenId,
-                  savePaymentSource: Boolean(payment.contact?.id)
+                  // (PAY2-008) Opt-in: solo guardar la tarjeta si el cliente marcó la casilla.
+                  savePaymentSource: saveCard && Boolean(payment.contact?.id)
                 })
                 const statusMessage = normalizeConektaStatusMessage(result.payment?.status || result.status)
                 setMessageKind(statusMessage.kind)
@@ -766,6 +768,19 @@ const ConektaCardTokenizerForm: React.FC<{
           <div id={containerId} className={styles.conektaTokenizerFrame} />
         </div>
       </div>
+
+      {/* (PAY2-008) Opt-in: el cliente decide si guardar su tarjeta (desmarcado por defecto). */}
+      {payment.contact?.id && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 12px', color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={saveCard}
+            onChange={(e) => setSaveCard(e.target.checked)}
+            disabled={submitting}
+          />
+          Guardar mi tarjeta para futuros pagos
+        </label>
+      )}
 
       <Button
         type="button"

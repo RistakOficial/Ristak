@@ -940,7 +940,10 @@ export async function createPublicConektaCardPayment(publicPaymentId, input = {}
     throw error
   }
 
-  const savePaymentSource = row.contact_id && normalizeBoolean(input.savePaymentSource, true)
+  // (PAY2-008) Opt-in: la tarjeta del cliente NO se guarda por defecto en el pago público.
+  // Solo se guarda si el cliente lo autoriza explícitamente (casilla en el frontend que
+  // envía savePaymentSource=true). Antes el default era true (se guardaba sin consentimiento).
+  const savePaymentSource = row.contact_id && normalizeBoolean(input.savePaymentSource, false)
   let customerId = cleanString(row.contact_conekta_customer_id || parseJson(row.metadata_json, {}).conektaCustomerId)
   let paymentSource = null
   let paymentSourceId = ''
