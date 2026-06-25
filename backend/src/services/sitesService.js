@@ -16426,9 +16426,9 @@ function renderBlockStyleVars(block) {
     vars.push(`--rstk-social-name-size:${socialPx(socialFontSize * profileScale)}`)
     vars.push(`--rstk-social-followers-size:${socialPx(Math.max(11, socialFontSize * profileScale * 0.82))}`)
     vars.push(`--rstk-social-verified-size:${socialPx(16.5 * profileScale)}`)
-    vars.push('width:max-content')
-    vars.push('min-width:max-content')
-    vars.push('max-width:100%')
+    // El ancho max-content del chip lo dan las reglas CSS (.rstkSocialProfileBlock /
+    // .rstk-embedded-form > .rstkSocialProfileBlock), NO inline: así dentro de un
+    // formulario puede seguir --rstk-form-field-justify (alinearse en su franja).
   }
   if (settings.textAlign !== undefined) {
     const align = blockHorizontalAlign(settings, 'textAlign', 'left')
@@ -18412,8 +18412,9 @@ const RSTK_BASE_CSS = `
   .rstk-field{display:grid;gap:8px;text-align:left}
   .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style,.rstk-embedded-form > .rstk-options,.rstk-embedded-form > .rstk-actions,.rstk-embedded-form > .rstk-headline,.rstk-embedded-form > .rstk-subheading,.rstk-embedded-form > .rstk-text{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);text-align:var(--rstk-block-align,left)}
   .rstk-embedded-form > .rstk-field,.rstk-embedded-form > .rstk-block-style > .rstk-field{text-align:var(--rstk-block-align,left)}
+  .rstk-embedded-form > .rstkSocialProfileBlock.rstk-block-style{width:max-content;min-width:0;max-width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center)}
   .rstk-embedded-form > .rstk-help{width:min(100%,620px);justify-self:center}
-  .rstk-embedded-pages,.rstk-embedded-pages [data-embedded-page-content]{width:min(100%,var(--rstk-form-field-width,560px));justify-self:center;display:grid;gap:14px}
+  .rstk-embedded-pages,.rstk-embedded-pages [data-embedded-page-content]{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);display:grid;gap:14px}
   .rstk-block-style.rstk-field,.rstk-block-style > .rstk-field{width:min(100%,var(--rstk-field-width,100%));justify-self:center}
 	  .rstk-kind-form form,.rstk-embedded-form{font-family:var(--rstk-form-font,var(--rstk-font))}
 	  label{font-size:.95rem;font-weight:700;color:var(--rstk-ink)}
@@ -18573,7 +18574,7 @@ const RSTK_BASE_CSS = `
   .rstk-frame:has(.rstkBlockFullWidth),.rstk-kind-form .rstk-shell:has(.rstkBlockFullWidth),.rstk-kind-landing .rstk-page:has(.rstkBlockFullWidth),.rstk-section-lane:has(.rstkBlockFullWidth),.rstk-section-inner:has(.rstkBlockFullWidth),.rstk-section-column:has(.rstkBlockFullWidth){overflow:visible}
   .rstk-kind-form .rstk-page:has(.rstkEmbeddedFormStretch){max-width:none;margin:0}
   .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch{width:100%;max-width:none;margin:0}
-  .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:none;width:100%;margin:0}
+  .rstk-embedded-form-source-frame.rstkEmbeddedFormStretch>.rstk-page{max-width:var(--rstk-max);width:100%;margin:0 auto}
   .rstk-embedded-form-source-frame .rstk-headline,.rstk-embedded-form-source-frame .rstk-subheading,.rstk-embedded-form-source-frame .rstk-text{text-align:var(--rstk-block-align,left)}
   .rstk-block-style.rstkBlockFullWidth{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding-inline:max(24px,calc(50vw - var(--rstk-max)/2))}
   .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:visible}

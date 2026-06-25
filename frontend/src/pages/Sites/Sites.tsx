@@ -4109,9 +4109,9 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
     style['--rstk-social-name-size'] = socialPx(socialFontSize * profileScale)
     style['--rstk-social-followers-size'] = socialPx(Math.max(11, socialFontSize * profileScale * 0.82))
     style['--rstk-social-verified-size'] = socialPx(16.5 * profileScale)
-    style.width = 'max-content'
-    style.minWidth = 'max-content'
-    style.maxWidth = '100%'
+    // El ancho max-content del chip lo dan las reglas CSS (.rstkSocialProfileBlock /
+    // .rstk-embedded-form > .rstkSocialProfileBlock), NO inline: así dentro de un
+    // formulario puede seguir --rstk-form-field-justify (alinearse en su franja).
   }
 
   if (settings.textAlign !== undefined) {
@@ -7268,13 +7268,6 @@ function FormEmbedEditorPanel({
   ) : activeField && activeBlockIsField ? (
     <>
       <FormTypographyGlobalControls site={site} title="Tipografía de campos" onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
-      <AlignmentControl
-        label="Alineación del texto de este campo"
-        value={getHorizontalAlign(activeField.settings || {}, 'textAlign', 'left')}
-        options={horizontalAlignOptions}
-        onChange={(value) => patchActiveFieldSettings({ textAlign: value })}
-        onCommit={onSave}
-      />
       <FormFieldGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       {isChoiceBlock(activeField.blockType) && (
         <FormOptionGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />

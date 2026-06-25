@@ -1063,6 +1063,15 @@
 .rstkCanvas .rstk-embedded-form > .rstk-block-style > .rstk-field {
   text-align: var(--rstk-block-align, left);
 }
+/* Perfil de red social dentro del formulario: el chip mantiene su ancho natural
+   (max-content) pero se posiciona con la alineación GLOBAL del formulario dentro de
+   su franja (izquierda = inicio de la franja, igual que el resto de los elementos). */
+.rstkCanvas .rstk-embedded-form > .rstkSocialProfileBlock.rstk-block-style {
+  width: max-content;
+  min-width: 0;
+  max-width: min(100%, var(--rstk-form-field-width, 560px));
+  justify-self: var(--rstk-form-field-justify, center);
+}
 .rstkCanvas .rstk-embedded-form > .rstk-help {
   width: min(100%, 620px);
   justify-self: center;
@@ -2031,10 +2040,10 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   overflow: visible;
 }
 
-/* "Estirar a la franja": el formulario ocupa todo el ancho de la página (sin 100vw,
-   para que el lienzo del editor no se descuadre ni corte el contenido al alinear).
-   La página del sitio-formulario se ensancha cuando contiene un formulario estirado,
-   el frame llena ese ancho y la columna de campos flota con --rstk-form-field-justify. */
+/* "Estirar a la franja": el FONDO ocupa todo el ancho de la página, pero el CONTENIDO
+   (la franja) se queda en una columna centrada de ancho --rstk-max. Así los elementos
+   se alinean DENTRO de la franja (izquierda = inicio de la franja, no la orilla de la
+   página). El frame full-width pinta el fondo; la página interna centra el contenido. */
 .rstkCanvas.rstk-kind-form .rstk-page:has(.rstkEmbeddedFormStretch) {
   max-width: none;
   margin: 0;
@@ -2045,9 +2054,9 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   margin: 0;
 }
 .rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch > .rstk-page {
-  max-width: none;
+  max-width: var(--rstk-max);
   width: 100%;
-  margin: 0;
+  margin: 0 auto;
 }
 /* El TEXTO del encabezado usa su propia alineación (textAlign del bloque), no la del
    formulario. La alineación del formulario solo mueve la POSICIÓN de los bloques. */
