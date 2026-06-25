@@ -154,8 +154,42 @@ function getConfig() {
   }
 }
 
+// AUTH-007: hosts donde se permite http:// (desarrollo local). Las credenciales
+// del dueño y la license_key viajan a esta URL base (verify, owner-credentials,
+// setup-token, callLicenseServer), así que fuera de estos hosts NO debe salir en claro.
+function isLocalHost(hostname = '') {
+  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '')
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h.endsWith('.localhost')
+}
+
 function normalizeBaseUrl(value = '') {
-  return String(value || '').trim().replace(/\/+$/, '')
+  const clean = String(value || '').trim().replace(/\/+$/, '')
+  if (!clean) return ''
+
+  // AUTH-007: validar/endurecer el protocolo de la URL del portal central.
+  // Si no trae protocolo explícito, asumimos https:// (no degradar a http).
+  // Si trae http:// hacia un host remoto en producción, lo UPGRADEAMOS a https://
+  // para que las credenciales del dueño nunca viajen en claro. Solo se permite
+  // http:// para localhost/127.0.0.1/::1 (desarrollo local).
+  try {
+    const hasProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(clean)
+    const parsed = new URL(hasProtocol ? clean : `https://${clean}`)
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) return ''
+
+    if (parsed.protocol === 'http:' && !isLocalHost(parsed.hostname)) {
+      const isProd = process.env.NODE_ENV === 'production'
+      if (isProd) {
+        // En producción nunca dejamos salir http a host remoto: upgrade a https.
+        parsed.protocol = 'https:'
+      }
+      // En no-producción se respeta http remoto (entornos de prueba internos).
+    }
+
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
 }
 
 function normalizeAppBaseUrl(value = '') {

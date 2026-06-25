@@ -51,6 +51,57 @@ const REFUND_PAYMENT_STATUSES = new Set(['refunded', 'refund']);
 const isPostgres = Boolean(process.env.DATABASE_URL);
 const MASKED_SECRET_PREFIX = '***';
 
+// META-007: Caché en memoria del recálculo de atribución (DB + API HighLevel).
+// getCampaigns llamaba a getContactsWithAppointmentsHybrid / getContactsWithShowedAppointmentsHybrid
+// en CADA request -> lento/costoso (golpea DB + API HL siempre). Estas dos funciones devuelven
+// Sets de contact_id y su resultado NO depende del rango de fechas (el filtrado por fecha ocurre
+// después, en contactsQuery); depende únicamente de los parámetros que reciben:
+// location_id, api_token y attributionCalendarIds (scope de calendarios de atribución).
+// Por eso la clave se compone de esos parámetros. TTL corto para reflejar nuevos eventos pronto.
+const META_ATTRIBUTION_CACHE = new Map(); // key -> { value, expiresAt }
+const META_ATTRIBUTION_CACHE_TTL_MS = 90 * 1000; // META-007: TTL corto (90s)
+
+// META-007: purga perezosa de entradas vencidas para no crecer sin límite
+function purgeExpiredAttributionCache(now = Date.now()) {
+  for (const [key, entry] of META_ATTRIBUTION_CACHE) {
+    if (!entry || entry.expiresAt <= now) {
+      META_ATTRIBUTION_CACHE.delete(key);
+    }
+  }
+}
+
+// META-007: clave compuesta estable por (location_id, presencia de token, scope de calendarios)
+function buildAttributionCacheKey(locationId, apiToken, attributionCalendarIds) {
+  const calendarsPart = Array.isArray(attributionCalendarIds)
+    ? [...attributionCalendarIds].map(id => String(id)).sort().join(',')
+    : 'ALL';
+  // No incluimos el token en claro en la clave; sólo si existe credencial (cambia el camino DB vs API).
+  const tokenPart = apiToken ? 'tok' : 'no-tok';
+  return `${locationId || 'no-loc'}|${tokenPart}|${calendarsPart}`;
+}
+
+// META-007: devuelve {contactsWithAppointments, contactsWithAttendances} con caché TTL.
+// Recalcula (DB + API HL) sólo si no hay entrada vigente. No cambia el shape del resultado.
+async function getAttributionSetsCached(locationId, apiToken, attributionCalendarIds) {
+  const now = Date.now();
+  purgeExpiredAttributionCache(now);
+
+  const key = buildAttributionCacheKey(locationId, apiToken, attributionCalendarIds);
+  const cached = META_ATTRIBUTION_CACHE.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const [contactsWithAppointments, contactsWithAttendances] = await Promise.all([
+    getContactsWithAppointmentsHybrid(locationId, apiToken, attributionCalendarIds),
+    getContactsWithShowedAppointmentsHybrid(locationId, apiToken, attributionCalendarIds)
+  ]);
+
+  const value = { contactsWithAppointments, contactsWithAttendances };
+  META_ATTRIBUTION_CACHE.set(key, { value, expiresAt: now + META_ATTRIBUTION_CACHE_TTL_MS });
+  return value;
+}
+
 function cleanString(value) {
   if (value === null || value === undefined) return '';
   return String(value).trim();
@@ -1412,12 +1463,10 @@ export const getCampaigns = async (req, res) => {
     // PASO 1: Obtener configuración de HighLevel y cargar TODOS los eventos (híbrido DB + API)
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
     const attributionCalendarIds = await getAttributionCalendarIds();
-    const contactsWithAppointments = await getContactsWithAppointmentsHybrid(
-      config?.location_id,
-      config?.api_token,
-      attributionCalendarIds
-    );
-    const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
+    // META-007: caché en memoria (TTL corto) del recálculo de atribución DB+API HL.
+    // Mismo resultado (Sets de contact_id) que las llamadas directas; sólo evita repetir el
+    // trabajo costoso dentro del TTL. No cambia el shape de la respuesta de getCampaigns.
+    const { contactsWithAppointments, contactsWithAttendances } = await getAttributionSetsCached(
       config?.location_id,
       config?.api_token,
       attributionCalendarIds
