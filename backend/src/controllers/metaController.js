@@ -3175,12 +3175,36 @@ export const syncFromHighLevel = async (req, res) => {
 };
 
 /**
+ * (META-005) Extrae el access token de Meta desde los headers de la petición
+ * en lugar del query string, para no filtrarlo en logs/historial del navegador.
+ * Acepta `Authorization: Bearer <token>` o el header custom `X-Meta-Access-Token`.
+ */
+function extractMetaAccessToken(req) {
+  const customHeader = req.headers['x-meta-access-token'];
+  if (typeof customHeader === 'string' && customHeader.trim()) {
+    return customHeader.trim();
+  }
+
+  const authHeader = req.headers['authorization'];
+  if (typeof authHeader === 'string') {
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (match && match[1].trim()) {
+      return match[1].trim();
+    }
+  }
+
+  return null;
+}
+
+/**
  * Obtiene las cuentas de anuncios del usuario de Meta
- * GET /api/meta/ad-accounts?accessToken=xxx
+ * GET /api/meta/ad-accounts (token en header X-Meta-Access-Token / Authorization)
  */
 export const getAdAccounts = async (req, res) => {
   try {
-    const { accessToken } = req.query;
+    // (META-005) El access token llega por header (Authorization: Bearer o X-Meta-Access-Token),
+    // ya no por query string, para no exponerlo en logs/historial frontend->backend.
+    const accessToken = extractMetaAccessToken(req);
 
     if (!accessToken) {
       logger.error('❌ No se proporcionó accessToken');
@@ -3251,11 +3275,13 @@ export const getAdAccounts = async (req, res) => {
 
 /**
  * Obtiene los pixeles de Meta de una cuenta de anuncios
- * GET /api/meta/pixels?adAccountId=act_123&accessToken=xxx
+ * GET /api/meta/pixels?adAccountId=act_123  (token vía header X-Meta-Access-Token, ver META-005)
  */
 export const getPixels = async (req, res) => {
   try {
-    const { adAccountId, accessToken } = req.query;
+    const { adAccountId } = req.query;
+    // (META-005) Token desde header en vez de query string.
+    const accessToken = extractMetaAccessToken(req);
 
     if (!adAccountId || !accessToken) {
       return res.status(400).json({
@@ -3334,11 +3360,12 @@ async function fetchMetaConnection(initialUrl) {
 
 /**
  * Obtiene las páginas disponibles para el token de Meta
- * GET /api/meta/pages?accessToken=xxx
+ * GET /api/meta/pages  (token vía header X-Meta-Access-Token, ver META-005)
  */
 export const getPages = async (req, res) => {
   try {
-    const { accessToken } = req.query;
+    // (META-005) Token desde header en vez de query string.
+    const accessToken = extractMetaAccessToken(req);
 
     if (!accessToken) {
       return res.status(400).json({

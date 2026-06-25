@@ -595,7 +595,12 @@ export async function createSubscription(payload = {}) {
   row = await attachMercadoPagoSubscriptionIfNeeded(row, payload)
   row = await attachConektaSubscriptionIfNeeded(row, payload)
 
-  await db.run(
+  // (PAY-003) El INSERT local va dentro de un try/catch: si falla DESPUÉS de haber
+  // creado la suscripción en Stripe, cancelamos esa sub para no dejarla cobrando sin
+  // registro local (suscripción huérfana). En createSubscription el row arranca vacío,
+  // así que cualquier stripe_subscription_id presente se creó en ESTA llamada.
+  try {
+    await db.run(
     `INSERT INTO subscriptions (
       id, contact_id, contact_name, contact_email, contact_phone, name, description, status,
       amount, currency, interval_type, interval_count, start_date, next_run_at,
@@ -654,6 +659,19 @@ export async function createSubscription(payload = {}) {
       row.raw_json
     ]
   )
+  } catch (insertError) {
+    // (PAY-003) Falló el registro local tras crear la suscripción remota: cancelamos
+    // la suscripción de Stripe huérfana y propagamos el error original.
+    if (row.stripe_subscription_id) {
+      try {
+        await cancelStripeRecurringSubscription(row.stripe_subscription_id)
+        logger.error(`[Suscripciones] (PAY-003) INSERT local falló; se canceló la suscripción Stripe huérfana ${row.stripe_subscription_id}: ${insertError.message}`)
+      } catch (cancelError) {
+        logger.error(`[Suscripciones] (PAY-003) INSERT local falló y NO se pudo cancelar la suscripción Stripe ${row.stripe_subscription_id} (queda huérfana, revisar manualmente): ${cancelError.message}`)
+      }
+    }
+    throw insertError
+  }
 
   if (row.stripe_initial_invoice?.status === 'paid') {
     await syncStripeSubscriptionInvoicePayment(row.stripe_initial_invoice, 'paid')

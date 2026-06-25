@@ -466,9 +466,10 @@ class CampaignsService {
     }[]
   }> {
     try {
-      // apiClient extrae automáticamente el campo "data" de la respuesta
+      // (META-005) El accessToken viaja en un header custom, no en el query string,
+      // para no exponerlo en logs/historial del navegador ni del servidor.
       const data = await apiClient.get('/meta/ad-accounts', {
-        params: { accessToken }
+        headers: { 'X-Meta-Access-Token': accessToken }
       }) as {
         adAccounts: {
           id: string
@@ -500,9 +501,10 @@ class CampaignsService {
     }[]
   }> {
     try {
-      // apiClient extrae automáticamente el campo "data" de la respuesta
+      // (META-005) adAccountId no es sensible y sigue en query; el accessToken viaja en header.
       const data = await apiClient.get('/meta/pixels', {
-        params: { adAccountId, accessToken }
+        params: { adAccountId },
+        headers: { 'X-Meta-Access-Token': accessToken }
       }) as {
         pixels: {
           id: string
@@ -532,8 +534,9 @@ class CampaignsService {
     }[]
   }> {
     try {
+      // (META-005) accessToken en header custom en vez de query string.
       const data = await apiClient.get('/meta/pages', {
-        params: { accessToken }
+        headers: { 'X-Meta-Access-Token': accessToken }
       }) as {
         pages: {
           id: string

@@ -168,8 +168,11 @@ export async function executeFallbackAttribution() {
       }
 
       // ✅ Todo coincide - actualizar attribution_ad_id
+      // (TRK-006) Antes de sobrescribir, respaldar el ad_id original SOLO si aún
+      // está NULL (COALESCE evita pisar un respaldo previo de un fallback anterior)
+      // y marcar attribution_is_fallback = 1 para dejar rastro de la atribución automática.
       await db.run(
-        'UPDATE contacts SET attribution_ad_id = ? WHERE id = ?',
+        'UPDATE contacts SET attribution_ad_id_original = COALESCE(attribution_ad_id_original, attribution_ad_id), attribution_ad_id = ?, attribution_is_fallback = 1 WHERE id = ?',
         [mappedAd.ad_id, contact.id]
       );
 

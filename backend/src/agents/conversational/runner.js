@@ -204,6 +204,49 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// (AI-009) Helpers de persistencia del debounce/delay de reruns. pendingContactReruns
+// es un Map volátil: si el proceso reinicia mientras hay un rerun encolado se perdía.
+// Reflejamos cada alta/baja en la tabla ai_agent_pending_reruns (migración 012) para
+// reconstruirlo al boot. Tolerante a fallos: nunca tumba el flujo principal del agente.
+function nowSqlTimestamp() {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ')
+}
+
+async function persistPendingRerun(runKey, entry = {}) {
+  if (!runKey) return
+  try {
+    const contactId = entry.contactId != null ? String(entry.contactId) : null
+    const channel = entry.channel ? normalizeConversationalChannel(entry.channel) : null
+    const scheduledFor = entry.scheduledFor || nowSqlTimestamp()
+    const payload = JSON.stringify({
+      contactId,
+      channel,
+      phone: entry.phone || null,
+      messageId: entry.messageId != null ? String(entry.messageId) : null
+    })
+    await db.run(`
+      INSERT INTO ai_agent_pending_reruns (run_key, contact_id, channel, scheduled_for, payload, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_key) DO UPDATE SET
+        contact_id = excluded.contact_id,
+        channel = excluded.channel,
+        scheduled_for = excluded.scheduled_for,
+        payload = excluded.payload
+    `, [runKey, contactId, channel, scheduledFor, payload, nowSqlTimestamp()])
+  } catch (error) {
+    logger.warn(`[Agente conversacional] No se pudo persistir rerun pendiente (${runKey}): ${error.message}`)
+  }
+}
+
+async function deletePendingRerun(runKey) {
+  if (!runKey) return
+  try {
+    await db.run('DELETE FROM ai_agent_pending_reruns WHERE run_key = ?', [runKey])
+  } catch (error) {
+    logger.warn(`[Agente conversacional] No se pudo borrar rerun pendiente (${runKey}): ${error.message}`)
+  }
+}
+
 function toTimestampMs(value) {
   if (!value) return 0
   if (value instanceof Date) return value.getTime()
@@ -890,6 +933,8 @@ function scheduleConversationalAgentRerun({ contactId, phone, latestMessage, rea
   const normalizedChannel = normalizeConversationalChannel(channel || latestMessage.channel)
   const runKey = getRunKey(contactId, normalizedChannel)
   pendingContactReruns.delete(runKey)
+  // (AI-009) El rerun ya se está disparando: limpia su copia persistida.
+  deletePendingRerun(runKey).catch(() => {})
   setTimeout(() => {
     handleInboundConversationalChatMessage({
       contactId,
@@ -1460,7 +1505,10 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
     clearFollowUpTimer(runKey)
 
 	    if (runningContacts.has(runKey)) {
-	      pendingContactReruns.set(runKey, { contactId, phone, messageId, channel: normalizedChannel })
+	      const pendingEntry = { contactId, phone, messageId, channel: normalizedChannel }
+	      pendingContactReruns.set(runKey, pendingEntry)
+	      // (AI-009) Espeja el rerun encolado en DB para sobrevivir reinicios.
+	      await persistPendingRerun(runKey, pendingEntry)
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'run_rerun_queued',
@@ -1696,6 +1744,8 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       const pending = pendingContactReruns.get(runKey)
       if (pending) {
         pendingContactReruns.delete(runKey)
+        // (AI-009) Se va a re-disparar de inmediato: limpia la copia persistida.
+        await deletePendingRerun(runKey)
         await schedulePendingContactRerun(
           contactId,
           pending.phone || phone,
@@ -1778,6 +1828,67 @@ async function recoverScheduledFollowUps({ limit = FOLLOW_UP_RECOVERY_SCAN_LIMIT
   return { scanned: rows.length, scheduled }
 }
 
+// (AI-009) Reconstruye al boot los reruns que quedaron encolados en memoria antes de
+// un reinicio. Para cada fila persistida en ai_agent_pending_reruns que siga vigente
+// (mensaje entrante aún sin responder y dentro de la ventana de recuperación) volvemos a
+// disparar el rerun por la vía normal; scheduleConversationalAgentRerun ya borra la copia
+// persistida, así que la operación es idempotente. Las filas viejas/inválidas se purgan.
+async function recoverPendingReruns({ nowMs = Date.now(), maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS } = {}) {
+  const rows = await db.all(`
+    SELECT run_key, contact_id, channel, scheduled_for, payload, created_at
+    FROM ai_agent_pending_reruns
+    ORDER BY scheduled_for ASC
+    LIMIT ?
+  `, [PENDING_RECOVERY_SCAN_LIMIT]).catch(() => [])
+
+  let scheduled = 0
+  for (const row of rows) {
+    const runKey = row?.run_key
+    if (!runKey) continue
+    let payload = {}
+    try { payload = row.payload ? JSON.parse(row.payload) : {} } catch { payload = {} }
+    const contactId = payload.contactId || (row.contact_id != null ? String(row.contact_id) : null)
+    const channel = normalizeConversationalChannel(payload.channel || row.channel || 'whatsapp')
+
+    if (!contactId) {
+      await deletePendingRerun(runKey)
+      continue
+    }
+
+    // El último entrante de ese contacto/canal: si ya fue respondido o quedó fuera de
+    // la ventana de recuperación, el rerun ya no aplica y solo limpiamos la copia.
+    const latest = await loadLatestInboundMessage(contactId, channel).catch(() => null)
+    if (!latest) {
+      await deletePendingRerun(runKey)
+      continue
+    }
+    const states = await listConversationStatesForContact(contactId).catch(() => [])
+    const alreadyAnswered = states.some((state) => (
+      state?.lastAnsweredInboundMessageId === latest.id ||
+      state?.last_answered_inbound_message_id === latest.id
+    ))
+    if (alreadyAnswered || !shouldRecoverPendingInbound(latest, null, { nowMs, maxAgeMs })) {
+      await deletePendingRerun(runKey)
+      continue
+    }
+
+    // scheduleConversationalAgentRerun borra la fila persistida y re-dispara la atención.
+    scheduleConversationalAgentRerun({
+      contactId,
+      phone: payload.phone || latest.phone,
+      latestMessage: latest,
+      channel,
+      reason: 'rerun encolado recuperado al arrancar'
+    })
+    scheduled += 1
+  }
+
+  if (scheduled) {
+    logger.info(`[Agente conversacional] ${scheduled} rerun(s) encolado(s) recuperado(s) al arrancar`)
+  }
+  return { scanned: rows.length, scheduled }
+}
+
 export async function recoverPendingConversationalAgentConversations({
   nowMs = Date.now(),
   maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
@@ -1848,7 +1959,13 @@ export async function recoverPendingConversationalAgentConversations({
     logger.info(`[Agente conversacional] ${followUps.scheduled} seguimiento(s) recuperado(s) al arrancar`)
   }
 
-  return { scanned: latestByContact.size, scheduled, followUps }
+  // (AI-009) Reconstruye los reruns que quedaron encolados en memoria antes del reinicio.
+  const reruns = await recoverPendingReruns({ nowMs, maxAgeMs }).catch((error) => {
+    logger.warn(`[Agente conversacional] No se pudieron recuperar reruns encolados: ${error.message}`)
+    return { scanned: 0, scheduled: 0 }
+  })
+
+  return { scanned: latestByContact.size, scheduled, followUps, reruns }
 }
 
 /**

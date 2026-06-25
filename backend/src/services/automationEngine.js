@@ -1549,12 +1549,43 @@ async function createEnrollment(automation, contact, ctx) {
       manualScheduledFor: ctx.manualScheduledFor || null
     }
   }
-  await db.run(
+  // (AUTO-004) ON CONFLICT DO NOTHING contra el índice único parcial
+  // uq_automation_enrollments_auto_contact (automation_id, contact_id WHERE contact_id IS NOT NULL).
+  // Si dos triggers corren la misma inscripción en paralelo, solo una gana la carrera.
+  const result = await db.run(
     `INSERT INTO automation_enrollments
        (id, automation_id, contact_id, contact_name, status, current_node_id, log, context)
-     VALUES (?, ?, ?, ?, 'active', 'start', '[]', ?)`,
+     VALUES (?, ?, ?, ?, 'active', 'start', '[]', ?)
+     ON CONFLICT DO NOTHING`,
     [id, automation.id, enrollment.contactId, enrollment.contactName, JSON.stringify(enrollment.context)]
   )
+  // (AUTO-004) Si no se insertó (changes === 0) ya existía una inscripción para este
+  // contacto+automatización: recuperamos la real y la devolvemos en vez del objeto recién
+  // construido, para no procesar una inscripción fantasma con id que no está en la tabla.
+  if (result && result.changes === 0 && enrollment.contactId) {
+    const existing = await db.get(
+      `SELECT id, automation_id, contact_id, contact_name, status, current_node_id, log, resume_at, wait_kind, context
+         FROM automation_enrollments
+        WHERE automation_id = ? AND contact_id = ?
+        ORDER BY entered_at ASC, id ASC
+        LIMIT 1`,
+      [automation.id, enrollment.contactId]
+    )
+    if (existing) {
+      return {
+        id: existing.id,
+        automationId: existing.automation_id,
+        contactId: existing.contact_id || null,
+        contactName: existing.contact_name || enrollment.contactName,
+        status: existing.status || 'active',
+        currentNodeId: existing.current_node_id || 'start',
+        log: parseJson(existing.log, []),
+        resumeAt: existing.resume_at || null,
+        waitKind: existing.wait_kind || null,
+        context: parseJson(existing.context, {})
+      }
+    }
+  }
   return enrollment
 }
 
