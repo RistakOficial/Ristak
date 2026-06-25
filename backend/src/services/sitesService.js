@@ -18078,7 +18078,7 @@ const RSTK_BASE_CSS = `
   }
 
   .rstk-kind-form .rstk-shell{
-    background:var(--rstk-surface);border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));
+    background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));
     border-radius:var(--rstk-radius-lg);box-shadow:none;
     padding:var(--rstk-pad);overflow:hidden;
   }
@@ -18412,7 +18412,7 @@ const RSTK_BASE_CSS = `
   .rstk-embedded-form-source-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
   .rstk-embedded-form-source-frame>.rstk-page{position:relative;z-index:2;width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0);overflow:visible}
-  .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-surface);border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:visible}
+  .rstk-embedded-form-source-frame .rstk-shell{display:grid;gap:var(--rstk-gap);background:var(--rstk-form-surface,var(--rstk-surface));border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,var(--rstk-border));border-radius:var(--rstk-radius-lg);box-shadow:none;padding:var(--rstk-pad);overflow:visible}
   .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent}
   .rstk-embedded-form-source-frame .rstk-headline{margin:0;color:var(--rstk-ink);font-family:var(--rstk-display);font-size:clamp(1.7rem,4.6vw,3rem);font-weight:var(--rstk-heading-weight);line-height:1.05;letter-spacing:0;background-image:none;-webkit-text-fill-color:currentColor}
   .rstk-embedded-form-source-frame .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);line-height:1.45;max-width:var(--rstk-content-max,60ch);background-image:none;-webkit-text-fill-color:currentColor}
@@ -18631,6 +18631,7 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
   const formFont = sanitizeCssFont(theme.formFontFamily) || baseFont
   const formLabel = themePaint(theme, 'formLabelColor') || ink
   const formHelp = themePaint(theme, 'formHelpColor') || muted
+  const formSurface = themePaint(theme, 'formSurfaceColor')
   const formFieldBg = themePaint(theme, 'formFieldBg') || 'transparent'
   const formFieldText = themePaint(theme, 'formFieldText') || v.inputInk
   const formFieldBorder = themePaint(theme, 'formFieldBorder') || v.inputBorder
@@ -18647,6 +18648,7 @@ function buildFormThemeStyleVars(theme, { baseFont, v, accent, ink, muted }) {
   const formContentAlign = ['center', 'right'].includes(cleanString(theme.formContentAlign)) ? cleanString(theme.formContentAlign) : 'left'
 
   return `
+	    ${formSurface ? `--rstk-form-surface:${formSurface};` : ''}
 	    --rstk-form-font:${formFont};
 	    --rstk-form-label-size:${themeNumber(theme, 'formLabelSize', 15, 11, 28)}px;
 	    --rstk-form-input-size:${themeNumber(theme, 'formInputSize', 16, 11, 28)}px;

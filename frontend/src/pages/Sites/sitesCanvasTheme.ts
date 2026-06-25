@@ -494,6 +494,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const rawTextPaint = normalizeCssPaint(theme.textColor, '')
   const textPaint = rawTextPaint && (theme.textColorCustom || rawTextPaint.toLowerCase() !== DEFAULT_ACCENT.toLowerCase()) ? rawTextPaint : ''
   const ink = textPaint ? paintFallbackColor(textPaint, v.ink) : v.ink
+  const formSurfacePaint = themePaint(theme, 'formSurfaceColor', '')
 
 	const vars = {
     '--rstk-color-scheme': template.mode,
@@ -513,6 +514,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
     '--rstk-muted': textPaint && isCssColor(textPaint) ? `color-mix(in srgb, ${ink} 60%, ${pageBg})` : v.muted,
     '--rstk-surface': v.surface,
     '--rstk-surface2': v.surface2,
+    ...(formSurfacePaint ? { '--rstk-form-surface': formSurfacePaint } : {}),
     '--rstk-border': v.border,
     '--rstk-accent': accent,
     '--rstk-accent-strong': accentStrong,

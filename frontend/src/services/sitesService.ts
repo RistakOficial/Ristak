@@ -228,6 +228,7 @@ export interface SiteTheme {
   formTextDecoration?: 'none' | 'underline'
   formLabelColor?: string
   formHelpColor?: string
+  formSurfaceColor?: string
   formFieldBg?: string
   formFieldText?: string
   formFieldBorder?: string
