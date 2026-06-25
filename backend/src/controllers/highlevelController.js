@@ -1423,6 +1423,30 @@ export const deleteConfig = async (req, res) => {
     await clearHighLevelIntegrationCredentials();
     logger.info('Configuración de HighLevel eliminada');
 
+    // (standalone) Al desconectar HighLevel hay que limpiar el acoplamiento GHL
+    // que de otro modo SOBREVIVE al disconnect y reactiva comportamiento remoto
+    // sin conexión: los calendarios espejo source='ghl' y, sobre todo, el
+    // ghl_calendar_id huérfano que queda en los calendarios Ristak locales (ese
+    // id reabriría el cruce de disponibilidad del calendario público y haría que
+    // el modal de citas se saltara los bloqueos locales). Mismo criterio que
+    // clearAllData usa al cambiar de location, pero sin borrar datos locales.
+    try {
+      await db.run("DELETE FROM calendars WHERE COALESCE(source, 'ghl') = 'ghl'");
+      await db.run(`
+        UPDATE calendars
+        SET ghl_calendar_id = NULL,
+            location_id = NULL,
+            sync_status = 'pending',
+            sync_error = NULL,
+            last_synced_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE COALESCE(source, 'ristak') != 'ghl'
+          AND COALESCE(ghl_calendar_id, '') != ''
+      `);
+    } catch (error) {
+      logger.warn(`[HighLevel Controller] No se pudo limpiar el acoplamiento de calendarios al desconectar: ${error.message}`);
+    }
+
     await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[HighLevel Controller] No se pudo reconciliar calendario predeterminado tras desconectar HighLevel: ${error.message}`);
     });
