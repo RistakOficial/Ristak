@@ -23166,6 +23166,100 @@ const AlignmentControl: React.FC<{
   </div>
 )
 
+// Presets en lenguaje claro: el usuario elige "Compacto/Cómodo/Amplio" en vez de
+// teclear px. El valor exacto sigue disponible en "Ajustes avanzados".
+type PresetOption = { value: number; label: string }
+
+const PresetField: React.FC<{
+  label: string
+  value: number
+  options: PresetOption[]
+  onChange: (value: number) => void
+  onCommit: () => void
+  hint?: string
+}> = ({ label, value, options, onChange, onCommit, hint }) => {
+  const matched = options.some(option => option.value === value)
+  return (
+    <div className={styles.alignmentControl}>
+      <span>{label}{!matched ? ' · Personalizado' : ''}</span>
+      <div role="group" aria-label={label}>
+        {options.map(option => (
+          <button
+            key={option.value}
+            type="button"
+            className={value === option.value ? styles.alignmentActive : ''}
+            onClick={() => { onChange(option.value); window.setTimeout(onCommit, 0) }}
+            title={hint || option.label}
+            aria-label={option.label}
+          >
+            <small>{option.label}</small>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Igual que PresetField pero escribe el espaciado en los 4 lados (relleno/margen).
+const SpacingPresetField: React.FC<{
+  label: string
+  base: SpacingBase
+  settings: Record<string, unknown>
+  options: PresetOption[]
+  onChange: (patch: Record<string, unknown>) => void
+  onCommit: () => void
+}> = ({ label, base, settings, options, onChange, onCommit }) => {
+  const sidesEqual = ['Top', 'Right', 'Bottom', 'Left'].every(side =>
+    Number(settings[`${base}${side}`] ?? settings[base] ?? 0) === Number(settings[`${base}Top`] ?? settings[base] ?? 0)
+  )
+  const current = sidesEqual ? Number(settings[`${base}Top`] ?? settings[base] ?? 0) : NaN
+  const setAll = (value: number) => {
+    onChange({
+      [`${base}Linked`]: true,
+      [base]: value,
+      [`${base}Top`]: value,
+      [`${base}Right`]: value,
+      [`${base}Bottom`]: value,
+      [`${base}Left`]: value
+    })
+    window.setTimeout(onCommit, 0)
+  }
+  const matched = options.some(option => option.value === current)
+  return (
+    <div className={styles.alignmentControl}>
+      <span>{label}{!matched ? ' · Personalizado' : ''}</span>
+      <div role="group" aria-label={label}>
+        {options.map(option => (
+          <button
+            key={option.value}
+            type="button"
+            className={current === option.value ? styles.alignmentActive : ''}
+            onClick={() => setAll(option.value)}
+            aria-label={option.label}
+          >
+            <small>{option.label}</small>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// "Ajustes avanzados": esconde los controles finos (px exactos, 4 lados) para no
+// abrumar al principiante; se abren con un clic.
+const AdvancedDisclosure: React.FC<{ children: React.ReactNode; label?: string }> = ({ children, label = 'Ajustes avanzados' }) => {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className={styles.advancedDisclosure}>
+      <button type="button" className={styles.advancedToggle} onClick={() => setOpen(value => !value)} aria-expanded={open}>
+        <ChevronRight size={14} className={open ? styles.advancedChevronOpen : ''} />
+        {label}
+      </button>
+      {open ? <div className={styles.advancedBody}>{children}</div> : null}
+    </div>
+  )
+}
+
 interface LinkedSpacingFieldProps {
   label: string
   base: SpacingBase
@@ -28933,111 +29027,147 @@ const InlineBlockStyleControls: React.FC<{
             </div>
           )}
           {!isCalendarEmbed && (
-            <LinkedSpacingField
-              label={isSection ? 'Relleno de franja' : 'Relleno'}
+            <SpacingPresetField
+              label={isSection ? 'Espacio interior de la franja' : 'Espacio interior'}
               base="blockPadding"
               settings={settings}
-              min={SPACING_OVERLAP_MIN}
-              max={SPACING_MAX}
-              fallback={getSettingNumber(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, SPACING_MAX)}
+              options={[{ value: 0, label: 'Sin' }, { value: 16, label: 'Compacto' }, { value: 32, label: 'Cómodo' }, { value: 56, label: 'Amplio' }]}
               onChange={onPatchSettings}
               onCommit={onSave}
             />
           )}
-          <LinkedSpacingField
-            label={isSection ? 'Margen de franja' : isCalendarEmbed ? 'Margen exterior' : 'Margen'}
+          <SpacingPresetField
+            label={isSection ? 'Espacio exterior de la franja' : 'Espacio exterior'}
             base="blockMargin"
             settings={settings}
-            min={SPACING_OVERLAP_MIN}
-            max={SPACING_MARGIN_MAX}
-            fallback={getSettingNumber(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, SPACING_MARGIN_MAX)}
+            options={[{ value: 0, label: 'Sin' }, { value: 12, label: 'Poco' }, { value: 24, label: 'Normal' }, { value: 48, label: 'Amplio' }]}
             onChange={onPatchSettings}
             onCommit={onSave}
           />
           {!isHardEmbed && (
             <>
               <ColorField
-                label={isSection ? 'Fondo de franja' : 'Fondo del contenedor'}
+                label={isSection ? 'Color de la franja' : 'Color de fondo'}
                 value={getSettingPaint(settings, 'blockBg', 'transparent')}
                 allowGradient
                 onChange={(value) => onPatchSettings({ blockBg: value })}
                 onCommit={onSave}
               />
-              {isSection && (
-                <div className={styles.sectionBackgroundMedia}>
-                  <div className={styles.twoColumn}>
-                    <label className={styles.field}>
-                      <span>Tipo de fondo</span>
-                      <CustomSelect
-                        value={getSettingString(settings, 'blockBackgroundMediaType') || 'image'}
-                        onChange={(event) => onPatchSettings({ blockBackgroundMediaType: event.target.value })}
-                        onBlur={onSave}
-                      >
-                        <option value="image">Imagen</option>
-                        <option value="video">Video</option>
-                      </CustomSelect>
-                    </label>
-                    <label className={styles.field}>
-                      <span>Visualización</span>
-                      <CustomSelect
-                        value={getSettingString(settings, 'blockBackgroundFit') || 'cover'}
-                        onChange={(event) => onPatchSettings({ blockBackgroundFit: event.target.value })}
-                        onBlur={onSave}
-                      >
-                        <option value="cover">Cubrir</option>
-                        <option value="contain">Contener</option>
-                        <option value="full_width">Ancho completo</option>
-                        <option value="auto">Original</option>
-                      </CustomSelect>
-                    </label>
-                  </div>
-                  <MediaUploadControl
-                    kind={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'}
-                    label={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'Elegir video de franja' : 'Elegir imagen de franja'}
-                    moduleEntityId={site.id}
-                    currentUrl={getSettingString(settings, 'blockBackgroundImage')}
-                    onUploaded={(url) => onPatchSettings({
-                      blockBackgroundImage: url,
-                      blockBackgroundMediaType: getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'
-                    })}
-                    onCommit={onSave}
-                  />
-                  <label className={styles.field}>
-                    <span>URL de fondo de franja</span>
-                    <input
-                      value={getSettingString(settings, 'blockBackgroundImage')}
-                      placeholder={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'https://.../video.mp4' : 'https://...'}
-                      onChange={(event) => onPatchSettings({ blockBackgroundImage: event.target.value })}
-                      onBlur={onSave}
-                    />
-                  </label>
-                </div>
-              )}
-              <div className={styles.twoColumn}>
-                <DimensionField
-                  label="Radio"
-                  value={getSettingNumber(settings, 'blockRadius', 8, 0, BLOCK_RADIUS_MAX)}
-                  min={0}
-                  max={BLOCK_RADIUS_MAX}
-                  onChange={(value) => onPatchSettings({ blockRadius: value })}
-                  onCommit={onSave}
-                />
-                <DimensionField
-                  label="Grosor borde"
-                  value={getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, BLOCK_BORDER_WIDTH_MAX)}
-                  min={0}
-                  max={BLOCK_BORDER_WIDTH_MAX}
-                  onChange={(value) => onPatchSettings({ blockBorderWidth: value })}
-                  onCommit={onSave}
-                />
-              </div>
-              <ColorField
-                label="Color borde"
-                value={getSettingPaint(settings, 'blockBorderColor', '#dbe3ef')}
-                allowGradient
-                onChange={(value) => onPatchSettings({ blockBorderColor: value })}
+              <PresetField
+                label="Esquinas"
+                value={getSettingNumber(settings, 'blockRadius', 8, 0, BLOCK_RADIUS_MAX)}
+                options={[{ value: 0, label: 'Cuadrado' }, { value: 14, label: 'Suave' }, { value: 28, label: 'Redondo' }, { value: 200, label: 'Píldora' }]}
+                onChange={(value) => onPatchSettings({ blockRadius: value })}
                 onCommit={onSave}
               />
+              <PresetField
+                label="Borde"
+                value={getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, BLOCK_BORDER_WIDTH_MAX)}
+                options={[{ value: 0, label: 'Sin' }, { value: 1, label: 'Fino' }, { value: 2, label: 'Medio' }, { value: 4, label: 'Grueso' }]}
+                onChange={(value) => onPatchSettings({ blockBorderWidth: value })}
+                onCommit={onSave}
+              />
+              {getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, BLOCK_BORDER_WIDTH_MAX) > 0 && (
+                <ColorField
+                  label="Color del borde"
+                  value={getSettingPaint(settings, 'blockBorderColor', '#dbe3ef')}
+                  allowGradient
+                  onChange={(value) => onPatchSettings({ blockBorderColor: value })}
+                  onCommit={onSave}
+                />
+              )}
+              <AdvancedDisclosure>
+                {!isCalendarEmbed && (
+                  <LinkedSpacingField
+                    label={isSection ? 'Relleno exacto (franja)' : 'Relleno exacto'}
+                    base="blockPadding"
+                    settings={settings}
+                    min={SPACING_OVERLAP_MIN}
+                    max={SPACING_MAX}
+                    fallback={getSettingNumber(settings, 'blockPadding', 0, SPACING_OVERLAP_MIN, SPACING_MAX)}
+                    onChange={onPatchSettings}
+                    onCommit={onSave}
+                  />
+                )}
+                <LinkedSpacingField
+                  label={isSection ? 'Margen exacto (franja)' : isCalendarEmbed ? 'Margen exterior exacto' : 'Margen exacto'}
+                  base="blockMargin"
+                  settings={settings}
+                  min={SPACING_OVERLAP_MIN}
+                  max={SPACING_MARGIN_MAX}
+                  fallback={getSettingNumber(settings, 'blockMargin', 0, SPACING_OVERLAP_MIN, SPACING_MARGIN_MAX)}
+                  onChange={onPatchSettings}
+                  onCommit={onSave}
+                />
+                <div className={styles.twoColumn}>
+                  <DimensionField
+                    label="Radio exacto"
+                    value={getSettingNumber(settings, 'blockRadius', 8, 0, BLOCK_RADIUS_MAX)}
+                    min={0}
+                    max={BLOCK_RADIUS_MAX}
+                    onChange={(value) => onPatchSettings({ blockRadius: value })}
+                    onCommit={onSave}
+                  />
+                  <DimensionField
+                    label="Grosor borde"
+                    value={getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, BLOCK_BORDER_WIDTH_MAX)}
+                    min={0}
+                    max={BLOCK_BORDER_WIDTH_MAX}
+                    onChange={(value) => onPatchSettings({ blockBorderWidth: value })}
+                    onCommit={onSave}
+                  />
+                </div>
+                {isSection && (
+                  <div className={styles.sectionBackgroundMedia}>
+                    <div className={styles.twoColumn}>
+                      <label className={styles.field}>
+                        <span>Tipo de fondo</span>
+                        <CustomSelect
+                          value={getSettingString(settings, 'blockBackgroundMediaType') || 'image'}
+                          onChange={(event) => onPatchSettings({ blockBackgroundMediaType: event.target.value })}
+                          onBlur={onSave}
+                        >
+                          <option value="image">Imagen</option>
+                          <option value="video">Video</option>
+                        </CustomSelect>
+                      </label>
+                      <label className={styles.field}>
+                        <span>Visualización</span>
+                        <CustomSelect
+                          value={getSettingString(settings, 'blockBackgroundFit') || 'cover'}
+                          onChange={(event) => onPatchSettings({ blockBackgroundFit: event.target.value })}
+                          onBlur={onSave}
+                        >
+                          <option value="cover">Cubrir</option>
+                          <option value="contain">Contener</option>
+                          <option value="full_width">Ancho completo</option>
+                          <option value="auto">Original</option>
+                        </CustomSelect>
+                      </label>
+                    </div>
+                    <MediaUploadControl
+                      kind={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'}
+                      label={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'Elegir video de franja' : 'Elegir imagen de franja'}
+                      moduleEntityId={site.id}
+                      currentUrl={getSettingString(settings, 'blockBackgroundImage')}
+                      onUploaded={(url) => onPatchSettings({
+                        blockBackgroundImage: url,
+                        blockBackgroundMediaType: getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'video' : 'image'
+                      })}
+                      onCommit={onSave}
+                    />
+                    <label className={styles.field}>
+                      <span>URL de fondo de franja</span>
+                      <input
+                        value={getSettingString(settings, 'blockBackgroundImage')}
+                        placeholder={getSettingString(settings, 'blockBackgroundMediaType') === 'video' ? 'https://.../video.mp4' : 'https://...'}
+                        onChange={(event) => onPatchSettings({ blockBackgroundImage: event.target.value })}
+                        onBlur={onSave}
+                      />
+                    </label>
+                  </div>
+                )}
+              </AdvancedDisclosure>
             </>
           )}
         </>
@@ -31959,52 +32089,86 @@ const FormLayoutStyleControls: React.FC<{
         onChange={(value) => onPatchTheme({ formContentAlign: value as FormContentAlign })}
         onCommit={onSaveSite}
       />
-      <div className={styles.twoColumn}>
-        <DimensionField
-          label="Separación fondo"
-          value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, FORM_PAGE_PADDING_MAX)}
-          min={0}
-          max={FORM_PAGE_PADDING_MAX}
-          onChange={(value) => onPatchTheme({ pagePadding: value })}
-          onCommit={onSaveSite}
-        />
-        {!(showStretchToggle && fullWidth) && (
-          <DimensionField
-            label="Ancho formulario"
-            value={maxWidth}
-            min={FORM_PAGE_MAX_WIDTH_MIN}
-            max={FORM_PAGE_MAX_WIDTH_MAX}
-            step={10}
-            onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
-            onCommit={onSaveSite}
-          />
-        )}
-      </div>
-      <div className={styles.twoColumn}>
-        <DimensionField
-          label="Radio formulario"
-          value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, FORM_PAGE_RADIUS_MAX)}
-          min={0}
-          max={FORM_PAGE_RADIUS_MAX}
-          onChange={(value) => onPatchTheme({ pageRadius: value })}
-          onCommit={onSaveSite}
-        />
-        <DimensionField
-          label="Borde formulario"
-          value={getThemeNumber(theme, 'pageBorderWidth', embedded ? EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH : 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)}
-          min={0}
-          max={FORM_PAGE_BORDER_WIDTH_MAX}
-          onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
-          onCommit={onSaveSite}
-        />
-      </div>
-      <ColorField
-        label="Color borde"
-        value={getThemePaint(theme, 'pageBorderColor', embedded ? 'transparent' : '#dbe3ef')}
-        allowGradient
-        onChange={(value) => onPatchTheme({ pageBorderColor: value })}
+      <PresetField
+        label="Espacio del formulario"
+        value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, FORM_PAGE_PADDING_MAX)}
+        options={[{ value: 0, label: 'Sin' }, { value: 16, label: 'Compacto' }, { value: 28, label: 'Cómodo' }, { value: 48, label: 'Amplio' }]}
+        onChange={(value) => onPatchTheme({ pagePadding: value })}
         onCommit={onSaveSite}
       />
+      {!(showStretchToggle && fullWidth) && (
+        <PresetField
+          label="Ancho del formulario"
+          value={maxWidth}
+          options={[{ value: 480, label: 'Angosto' }, { value: 680, label: 'Medio' }, { value: 1024, label: 'Ancho' }, { value: 1440, label: 'Extra' }]}
+          onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
+          onCommit={onSaveSite}
+        />
+      )}
+      <PresetField
+        label="Esquinas"
+        value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, FORM_PAGE_RADIUS_MAX)}
+        options={[{ value: 0, label: 'Cuadrado' }, { value: 14, label: 'Suave' }, { value: 28, label: 'Redondo' }, { value: 200, label: 'Píldora' }]}
+        onChange={(value) => onPatchTheme({ pageRadius: value })}
+        onCommit={onSaveSite}
+      />
+      <PresetField
+        label="Borde"
+        value={getThemeNumber(theme, 'pageBorderWidth', embedded ? EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH : 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)}
+        options={[{ value: 0, label: 'Sin' }, { value: 1, label: 'Fino' }, { value: 2, label: 'Medio' }, { value: 4, label: 'Grueso' }]}
+        onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
+        onCommit={onSaveSite}
+      />
+      {getThemeNumber(theme, 'pageBorderWidth', embedded ? EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH : 0, 0, FORM_PAGE_BORDER_WIDTH_MAX) > 0 && (
+        <ColorField
+          label="Color del borde"
+          value={getThemePaint(theme, 'pageBorderColor', embedded ? 'transparent' : '#dbe3ef')}
+          allowGradient
+          onChange={(value) => onPatchTheme({ pageBorderColor: value })}
+          onCommit={onSaveSite}
+        />
+      )}
+      <AdvancedDisclosure>
+        <div className={styles.twoColumn}>
+          <DimensionField
+            label="Separación exacta"
+            value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? LANDING_DEFAULT_PAGE_PADDING : 22, 0, FORM_PAGE_PADDING_MAX)}
+            min={0}
+            max={FORM_PAGE_PADDING_MAX}
+            onChange={(value) => onPatchTheme({ pagePadding: value })}
+            onCommit={onSaveSite}
+          />
+          {!(showStretchToggle && fullWidth) && (
+            <DimensionField
+              label="Ancho exacto"
+              value={maxWidth}
+              min={FORM_PAGE_MAX_WIDTH_MIN}
+              max={FORM_PAGE_MAX_WIDTH_MAX}
+              step={10}
+              onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
+              onCommit={onSaveSite}
+            />
+          )}
+        </div>
+        <div className={styles.twoColumn}>
+          <DimensionField
+            label="Radio exacto"
+            value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, FORM_PAGE_RADIUS_MAX)}
+            min={0}
+            max={FORM_PAGE_RADIUS_MAX}
+            onChange={(value) => onPatchTheme({ pageRadius: value })}
+            onCommit={onSaveSite}
+          />
+          <DimensionField
+            label="Grosor borde"
+            value={getThemeNumber(theme, 'pageBorderWidth', embedded ? EMBEDDED_FORM_DEFAULT_PAGE_BORDER_WIDTH : 0, 0, FORM_PAGE_BORDER_WIDTH_MAX)}
+            min={0}
+            max={FORM_PAGE_BORDER_WIDTH_MAX}
+            onChange={(value) => onPatchTheme({ pageBorderWidth: value })}
+            onCommit={onSaveSite}
+          />
+        </div>
+      </AdvancedDisclosure>
     </>
   )
 }

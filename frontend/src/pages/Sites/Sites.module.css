@@ -10742,6 +10742,49 @@
   color: var(--color-primary) !important;
 }
 
+.advancedDisclosure {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.advancedToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.advancedToggle:hover {
+  color: var(--color-primary);
+}
+
+.advancedToggle svg {
+  transition: transform 0.16s ease;
+}
+
+.advancedChevronOpen {
+  transform: rotate(90deg);
+}
+
+.advancedBody {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-background-primary) 96%, var(--color-primary) 4%);
+}
+
 .textFormatPanel {
   display: grid;
   gap: 10px;
