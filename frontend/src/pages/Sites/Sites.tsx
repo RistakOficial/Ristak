@@ -31767,20 +31767,29 @@ const FormSurfaceStyleControls: React.FC<{
           onCommit={onSaveSite}
         />
         <ColorField
+          label="Tarjeta"
+          value={getThemePaint(theme, 'formSurfaceColor', isSiteDark(site) ? '#1e293b' : '#ffffff')}
+          allowGradient
+          onChange={(value) => onPatchTheme({ formSurfaceColor: value })}
+          onCommit={onSaveSite}
+        />
+      </div>
+      <div className={styles.twoColumn}>
+        <ColorField
           label="Texto"
           value={getThemePaint(theme, 'textColor', isSiteDark(site) ? '#ffffff' : '#111827')}
           allowGradient
           onChange={(value) => onPatchTheme({ textColor: value, textColorCustom: true })}
           onCommit={onSaveSite}
         />
+        <ColorField
+          label="Acento"
+          value={getThemePaint(theme, 'accentColor', userAccentColor(site) || (isSiteDark(site) ? '#ffffff' : '#111827'))}
+          allowGradient
+          onChange={(value) => onPatchTheme({ accentColor: value })}
+          onCommit={onSaveSite}
+        />
       </div>
-      <ColorField
-        label="Acento"
-        value={getThemePaint(theme, 'accentColor', userAccentColor(site) || (isSiteDark(site) ? '#ffffff' : '#111827'))}
-        allowGradient
-        onChange={(value) => onPatchTheme({ accentColor: value })}
-        onCommit={onSaveSite}
-      />
     </>
   )
 }

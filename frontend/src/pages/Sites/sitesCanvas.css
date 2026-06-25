@@ -241,7 +241,7 @@
 }
 
 .rstkCanvas.rstk-kind-form .rstk-shell {
-  background: var(--rstk-surface); border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
+  background: var(--rstk-form-surface, var(--rstk-surface)); border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
   border-radius: var(--rstk-radius-lg); box-shadow: none;
   padding: var(--rstk-pad); overflow: hidden;
 }
@@ -2007,7 +2007,7 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
 .rstkCanvas .rstkEmbeddedFormSourceFrame .rstk-shell {
   gap: var(--rstk-gap);
   padding: var(--rstk-pad);
-  background: var(--rstk-surface);
+  background: var(--rstk-form-surface, var(--rstk-surface));
   border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, var(--rstk-border));
   border-radius: var(--rstk-radius-lg);
   overflow: visible;
