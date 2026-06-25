@@ -518,7 +518,7 @@ const embeddedFormFieldTypes: SiteBlockType[] = [
   'date'
 ]
 const embeddedFormFreeFieldTypes = embeddedFormFieldTypes.filter(type => type !== 'email' && type !== 'phone')
-const embeddedFormContentTypes: SiteBlockType[] = ['title', 'subtitle', 'text', 'image', 'video', 'embed']
+const embeddedFormContentTypes: SiteBlockType[] = ['title', 'subtitle', 'text', 'image', 'video', 'embed', 'social_profile']
 const embeddedFormBlockTypes: SiteBlockType[] = [...embeddedFormFieldTypes, ...embeddedFormContentTypes]
 const embeddedFormBlockTypeSet = new Set<SiteBlockType>(embeddedFormBlockTypes)
 const formFeatureBlockTypes = new Set<SiteBlockType>(['form_embed', ...embeddedFormFieldTypes])
@@ -10950,13 +10950,16 @@ export const Sites: React.FC = () => {
     if (!embeddedFormBlockTypeSet.has(blockType)) return
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
-    const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, context.sourceSite), initialSettings)
+    // Igual que el alta en el formulario standalone: el perfil de red social se
+    // autollena desde el perfil social conectado cuando existe.
+    const seededSettings = socialProfileAutoPresetForNewBlock(blockType, initialSettings, connectedSocialProfiles)
+    const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, context.sourceSite), seededSettings)
     const duplicateSystemPreset = getDuplicateSystemFormFieldPreset(payload, context.fields)
     if (duplicateSystemPreset) {
       warnDuplicateSystemFormField(duplicateSystemPreset)
       return
     }
-    const nextField = createEmbeddedFieldBlock(context.sourceSite, blockType, context.fields.length, context.activePageId, initialSettings, context.fields)
+    const nextField = createEmbeddedFieldBlock(context.sourceSite, blockType, context.fields.length, context.activePageId, seededSettings, context.fields)
     const pageFields = getEmbeddedFormPageFields(context.fields, context.pages, context.activePageId)
     const boundedIndex = Number.isFinite(Number(insertIndex))
       ? Math.max(0, Math.min(Number(insertIndex), pageFields.length))
@@ -31069,14 +31072,10 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const sourceChromePlatform: SocialPlatform | null = sourceCanvasTheme?.chrome && sourceCanvasTheme.chrome !== 'none'
       ? sourceCanvasTheme.chrome
       : null
-    // El perfil de red social del formulario fuente se filtra de resolvedItems (no es
-    // un block-type embebible), así que lo tomamos de los bloques crudos para pintarlo
-    // como encabezado del formulario embebido. Espejo del backend.
-    const embeddedSourceSocialBlock = (hasLinkedForm ? (form?.blocks ?? []) : embeddedBlocks)
-      .find(item => item.blockType === 'social_profile') || null
-    const embeddedSourceSocialData = embeddedSourceSocialBlock && previewForm
-      ? buildSocialProfileBlockSite(embeddedSourceSocialBlock, previewForm)
-      : null
+    // El perfil de red social ya es un bloque embebible normal (se pinta dentro del
+    // cuerpo del formulario embebido). El chrome automático por template queda solo
+    // como respaldo cuando no hay un bloque de perfil entre los ítems. Espejo backend.
+    const embeddedHasSocialProfile = resolvedItems.some(item => item.blockType === 'social_profile')
     const embeddedFormPreview = (
       <section
         className="rstk-embedded-form"
@@ -31133,16 +31132,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                 embeddedFormEditor.onSelectSurface()
               } : undefined}
             >
-              {embeddedSourceSocialData ? (
-                <CanvasChrome
-                  platform={embeddedSourceSocialData.platform}
-                  site={embeddedSourceSocialData.site}
-                  embedded
-                  profileBlock
-                  onPatchTheme={() => {}}
-                  onSave={() => {}}
-                />
-              ) : sourceChromePlatform && previewForm ? (
+              {!embeddedHasSocialProfile && sourceChromePlatform && previewForm ? (
                 <CanvasChrome
                   platform={sourceChromePlatform}
                   site={previewForm}

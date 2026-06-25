@@ -80,7 +80,7 @@ export const FIELD_BLOCK_TYPES = new Set([
   'email',
   'date'
 ])
-const EMBEDDED_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video', 'embed'])
+const EMBEDDED_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image', 'video', 'embed', 'social_profile'])
 const EMBEDDED_FORM_BLOCK_TYPES = new Set([...FIELD_BLOCK_TYPES, ...EMBEDDED_FORM_CONTENT_BLOCK_TYPES])
 const VIDEO_FORM_GATE_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 'image'])
 const VIDEO_FORM_GATE_BLOCK_TYPES = new Set([...FIELD_BLOCK_TYPES, ...VIDEO_FORM_GATE_CONTENT_BLOCK_TYPES])
@@ -17193,7 +17193,10 @@ function renderContentBlock(block, context = {}) {
         return wrapRenderedBlock(item, renderFieldBlock(item, false, pageId || getBlockPageId(item, embeddedPages), context), context)
       }
 
-      return wrapRenderedBlock(item, renderContentBlock(item, context), context)
+      // El perfil de red social resuelve marca/plataforma desde el formulario
+      // embebido (no desde el sitio anfitrión).
+      const itemContext = item.blockType === 'social_profile' ? { ...context, site: embeddedSiteForCopy } : context
+      return wrapRenderedBlock(item, renderContentBlock(item, itemContext), context)
     }
     const renderEmbeddedItems = () => {
       if (!embeddedItems.length) return '<p class="rstk-help">Agrega campos o contenido al formulario.</p>'
@@ -17247,16 +17250,11 @@ function renderContentBlock(block, context = {}) {
         ` : ''}
       </section>
     `
-    // El perfil de red social es un bloque del formulario; al embeber se filtraba
-    // (no está en EMBEDDED_FORM_BLOCK_TYPES) y solo aparecía como "chrome" para
-    // templates sociales. Lo renderizamos arriba del shell desde el propio bloque
-    // (respeta plataforma/marca configuradas) y, si no hay bloque, caemos al chrome
-    // por template. Va como encabezado único, fuera de la paginación.
-    const embeddedSocialProfileBlock = (Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : [])
-      .find(item => item?.blockType === 'social_profile')
-    const embeddedSourceChrome = embeddedSocialProfileBlock
-      ? renderSocialProfileBlock(embeddedSocialProfileBlock, { ...context, site: embeddedSiteForCopy })
-      : renderEmbeddedFormSourceChrome(embeddedSiteForCopy)
+    // El perfil de red social ya es un bloque embebible normal (se renderiza dentro
+    // de renderEmbeddedItems). El "chrome" por template queda solo como respaldo para
+    // formularios sociales que no traen un bloque de perfil explícito, evitando doble.
+    const embeddedHasSocialProfile = embeddedItems.some(item => item?.blockType === 'social_profile')
+    const embeddedSourceChrome = embeddedHasSocialProfile ? '' : renderEmbeddedFormSourceChrome(embeddedSiteForCopy)
     const embeddedFrame = `
       <div class="${embeddedThemeClass}" style="${escapeHtml(embeddedStyle)}">
         ${embeddedSourceTheme.pageVideo ? `<video class="rstk-bg-video" src="${escapeHtml(embeddedSourceTheme.pageVideo)}" autoplay muted loop playsinline aria-hidden="true"></video>` : ''}
