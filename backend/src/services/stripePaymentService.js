@@ -4920,6 +4920,24 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
   if (config.connectionType === 'connect' && event.account && event.account !== config.connectedAccountId) {
     return { received: true, ignored: true, type: event.type, account: event.account }
   }
+
+  // (PAY-005) Dedupe por event.id: Stripe reintenta entregas; reclamamos el id de forma
+  // atómica para no re-procesar el mismo evento (doble registro de pago/reembolso).
+  // Fail-open: ante cualquier problema con la tabla, seguimos procesando.
+  if (event?.id) {
+    try {
+      const claim = await db.run(
+        'INSERT INTO stripe_webhook_events (event_id, type) VALUES (?, ?) ON CONFLICT DO NOTHING',
+        [String(event.id), event.type || null]
+      )
+      if (Number(claim?.changes || 0) === 0) {
+        return { received: true, duplicate: true, type: event.type }
+      }
+    } catch (error) {
+      logger.warn(`[Stripe webhook] No se pudo deduplicar el evento ${event.id}: ${error.message}`)
+    }
+  }
+
   const object = event?.data?.object
 
   if (object?.object === 'payment_intent') {
