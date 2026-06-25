@@ -6824,6 +6824,59 @@ const FormElementLogicPopover: React.FC<{
   </div>
 )
 
+// ============================================================
+// Inspector accordion — secciones colapsables del panel derecho.
+// AccordionGroup = apertura EXCLUSIVA (abrir una cierra las demás);
+// AccordionSection reutiliza .panelSubheader como título para heredar
+// el estilo del inspector (tipografía/divisor/tema). Por defecto TODO
+// colapsado: el usuario ve la lista de categorías y expande la que quiere.
+// Solo UI del editor — no afecta el sitio publicado ni la preview.
+// ============================================================
+interface AccordionContextValue {
+  openId: string | null
+  toggle: (id: string) => void
+}
+
+const AccordionContext = React.createContext<AccordionContextValue | null>(null)
+
+const AccordionGroup: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [openId, setOpenId] = useState<string | null>(null)
+  const toggle = useCallback((id: string) => {
+    setOpenId(prev => (prev === id ? null : id))
+  }, [])
+  const value = useMemo(() => ({ openId, toggle }), [openId, toggle])
+  return <AccordionContext.Provider value={value}>{children}</AccordionContext.Provider>
+}
+
+const AccordionSection: React.FC<{
+  id: string
+  title: React.ReactNode
+  children: React.ReactNode
+  defaultOpen?: boolean
+}> = ({ id, title, children, defaultOpen = true }) => {
+  const ctx = useContext(AccordionContext)
+  const [localOpen, setLocalOpen] = useState(defaultOpen)
+  const open = ctx ? ctx.openId === id : localOpen
+  const handleToggle = () => {
+    if (ctx) ctx.toggle(id)
+    else setLocalOpen(prev => !prev)
+  }
+  return (
+    <div className={styles.accordionSection} data-open={open ? 'true' : 'false'}>
+      <button
+        type="button"
+        className={styles.accordionHeader}
+        aria-expanded={open}
+        onClick={handleToggle}
+      >
+        <span className={styles.panelSubheader}>{title}</span>
+        <ChevronDown size={14} className={styles.accordionChevron} aria-hidden="true" />
+      </button>
+      {open && <div className={styles.accordionBody}>{children}</div>}
+    </div>
+  )
+}
+
 function FormEmbedEditorPanel({
   site,
   block,
@@ -7323,7 +7376,7 @@ function FormEmbedEditorPanel({
   ) : null
 
   const formDesignContent = (
-    <>
+    <AccordionGroup>
       <div className={styles.settingsGroup}>
         <FormSurfaceStyleControls site={site} embedded onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
         <FormLayoutStyleControls
@@ -7340,14 +7393,13 @@ function FormEmbedEditorPanel({
           {formElementDesignContent}
         </div>
       ) : null}
-    </>
+    </AccordionGroup>
   )
 
   const blockDesignContent = (
-    <div className={styles.settingsGroup}>
-      <div className={styles.panelSubheader}>Bloque contenedor</div>
+    <AccordionSection id="block-container" title="Bloque contenedor">
       <InlineBlockStyleControls site={site} block={block} blocks={[block]} surfaceOnly onPatchSettings={onPatchSettings} onSave={onSave} />
-    </div>
+    </AccordionSection>
   )
 
   return (
@@ -28803,7 +28855,7 @@ const InlineBlockStyleControls: React.FC<{
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
       {supportsTextStyle && (
-        <>
+        <AccordionSection id="block-text" title="Texto">
           <TypographyFormatInspector
             target="text"
             settings={settings}
@@ -28846,11 +28898,11 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
           </div>
-        </>
+        </AccordionSection>
       )}
 
       {supportsButton && (
-        <>
+        <AccordionSection id="block-button" title="Botón">
           <TypographyFormatInspector
             target="button"
             settings={settings}
@@ -28942,12 +28994,11 @@ const InlineBlockStyleControls: React.FC<{
               onCommit={onSave}
             />
           </div>
-        </>
+        </AccordionSection>
       )}
 
       {supportsField && (
-        <>
-          <div className={styles.panelSubheader}>Personalizacion del campo</div>
+        <AccordionSection id="block-field" title="Personalizacion del campo">
           <div className={styles.twoColumn}>
             <ColorField
               label="Caja del campo"
@@ -28981,12 +29032,11 @@ const InlineBlockStyleControls: React.FC<{
             onChange={(value) => onPatchSettings({ fieldWidth: value })}
             onCommit={onSave}
           />
-        </>
+        </AccordionSection>
       )}
 
       {supportsMedia && (
-        <>
-          <div className={styles.panelSubheader}>{block.blockType === 'image' ? 'Personalizacion de imagen' : 'Personalizacion de video'}</div>
+        <AccordionSection id="block-media" title={block.blockType === 'image' ? 'Personalizacion de imagen' : 'Personalizacion de video'}>
           <AlignmentControl
             label="Alineación"
             value={getHorizontalAlign(settings, 'mediaAlign', 'center')}
@@ -29030,12 +29080,11 @@ const InlineBlockStyleControls: React.FC<{
               </CustomSelect>
             </label>
           )}
-        </>
+        </AccordionSection>
       )}
 
       {supportsCards && (
-        <>
-          <div className={styles.panelSubheader}>Personalizacion de tarjetas</div>
+        <AccordionSection id="block-cards" title="Personalizacion de tarjetas">
           <AlignmentControl
             label="Texto tarjeta"
             value={getHorizontalAlign(settings, 'cardAlign', 'left')}
@@ -29086,12 +29135,11 @@ const InlineBlockStyleControls: React.FC<{
             onChange={(value) => onPatchSettings({ cardBorderWidth: value })}
             onCommit={onSave}
           />
-        </>
+        </AccordionSection>
       )}
 
       {supportsCountdown && (
-        <>
-          <div className={styles.panelSubheader}>Diseño del contador</div>
+        <AccordionSection id="block-countdown" title="Diseño del contador">
           <div className={styles.twoColumn}>
             <ColorField
               label="Números"
@@ -29141,12 +29189,11 @@ const InlineBlockStyleControls: React.FC<{
             onChange={(value) => onPatchSettings({ countdownUnitRadius: value })}
             onCommit={onSave}
           />
-        </>
+        </AccordionSection>
       )}
 
       {showDesignControls && (
-        <>
-          <div className={styles.panelSubheader}>{isSection ? 'Estilo de franja' : isLandingContent ? 'Estilo del contenedor' : 'Estilo del bloque'}</div>
+        <AccordionSection id="block-estilo" title={isSection ? 'Estilo de franja' : isLandingContent ? 'Estilo del contenedor' : 'Estilo del bloque'}>
           {!isSection && !isHardEmbed && block.blockType !== 'form_embed' && (
             <div className={styles.videoFormGateSwitchRow}>
               <div>
@@ -29304,7 +29351,7 @@ const InlineBlockStyleControls: React.FC<{
               </AdvancedDisclosure>
             </>
           )}
-        </>
+        </AccordionSection>
       )}
     </div>
   )
@@ -29328,7 +29375,7 @@ const CalendarBlockDesignControls: React.FC<{
 
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
-      <div className={styles.panelSubheader}>Diseño del calendario</div>
+      <AccordionSection id="cal-diseno" title="Diseño del calendario">
       <label className={styles.field}>
         <span>Modo</span>
         <CustomSelect
@@ -29409,10 +29456,11 @@ const CalendarBlockDesignControls: React.FC<{
         onChange={(value) => onPatchSettings({ calendarFrameBorderColor: value })}
         onCommit={onSave}
       />
+      </AccordionSection>
 
       {customDesign && (
         <>
-          <div className={styles.panelSubheader}>Qué se muestra</div>
+          <AccordionSection id="cal-shown" title="Qué se muestra">
           <div className={styles.calendarToggleGrid}>
             {calendarEmbedDisplayToggles.map(toggle => (
               <div className={styles.calendarToggleRow} key={toggle.key}>
@@ -29432,7 +29480,8 @@ const CalendarBlockDesignControls: React.FC<{
             ))}
           </div>
 
-          <div className={styles.panelSubheader}>Tipografía</div>
+          </AccordionSection>
+          <AccordionSection id="cal-typo" title="Tipografía">
           <label className={styles.field}>
             <span>Fuente</span>
             <CustomSelect
@@ -29446,7 +29495,8 @@ const CalendarBlockDesignControls: React.FC<{
             </CustomSelect>
           </label>
 
-          <div className={styles.panelSubheader}>Colores internos</div>
+          </AccordionSection>
+          <AccordionSection id="cal-colores" title="Colores internos">
           <div className={styles.twoColumn}>
             <ColorField
               label="Acento"
@@ -29480,7 +29530,8 @@ const CalendarBlockDesignControls: React.FC<{
             />
           </div>
 
-          <div className={styles.panelSubheader}>Dias y horarios</div>
+          </AccordionSection>
+          <AccordionSection id="cal-dias" title="Dias y horarios">
           <div className={styles.twoColumn}>
             <ColorField
               label="Fondo controles"
@@ -29524,7 +29575,8 @@ const CalendarBlockDesignControls: React.FC<{
             />
           </div>
 
-          <div className={styles.panelSubheader}>Campos de datos</div>
+          </AccordionSection>
+          <AccordionSection id="cal-campos" title="Campos de datos">
           <div className={styles.twoColumn}>
             <ColorField
               label="Fondo campo"
@@ -29565,6 +29617,7 @@ const CalendarBlockDesignControls: React.FC<{
             onChange={(value) => onPatchSettings({ calendarButtonText: value })}
             onCommit={onSave}
           />
+          </AccordionSection>
         </>
       )}
     </div>
@@ -31727,8 +31780,7 @@ const FormTypographyGlobalControls: React.FC<{
   }
 
   return (
-    <>
-      <div className={styles.panelSubheader}>{title}</div>
+    <AccordionSection id="form-typography" title={title}>
       <div className={styles.textFormatPanel}>
         <div className={styles.textToolbar}>
           <label className={styles.textFontSelect}>
@@ -31757,7 +31809,7 @@ const FormTypographyGlobalControls: React.FC<{
         </div>
         <DimensionField label="Texto ayuda" value={getThemeNumber(theme, 'formHelpSize', 14, 10, 24)} min={10} max={24} onChange={(value) => onPatchTheme({ formHelpSize: value })} onCommit={onSaveSite} />
       </div>
-    </>
+    </AccordionSection>
   )
 }
 
@@ -31770,8 +31822,7 @@ const FormFieldGlobalStyleControls: React.FC<{
   const inputText = isSiteDark(site) ? '#ffffff' : '#111827'
 
   return (
-    <>
-      <div className={styles.panelSubheader}>Diseño global de campos</div>
+    <AccordionSection id="form-field-global" title="Diseño global de campos">
       <div className={styles.twoColumn}>
         <ColorField label="Pregunta" value={getThemePaint(theme, 'formLabelColor', getThemePaint(theme, 'textColor', inputText))} allowGradient onChange={(value) => onPatchTheme({ formLabelColor: value })} onCommit={onSaveSite} />
         <ColorField label="Ayuda" value={getThemePaint(theme, 'formHelpColor', '#64748b')} allowGradient onChange={(value) => onPatchTheme({ formHelpColor: value })} onCommit={onSaveSite} />
@@ -31796,7 +31847,7 @@ const FormFieldGlobalStyleControls: React.FC<{
         <DimensionField label="Relleno vertical" value={getThemeNumber(theme, 'formFieldPaddingY', 13, 6, 36)} min={6} max={36} onChange={(value) => onPatchTheme({ formFieldPaddingY: value })} onCommit={onSaveSite} />
         <DimensionField label="Ancho cajas" value={getThemeNumber(theme, 'formFieldWidth', 560, FORM_BOX_WIDTH_MIN, FORM_BOX_WIDTH_MAX)} min={FORM_BOX_WIDTH_MIN} max={FORM_BOX_WIDTH_MAX} step={10} onChange={(value) => onPatchTheme({ formFieldWidth: value })} onCommit={onSaveSite} />
       </div>
-    </>
+    </AccordionSection>
   )
 }
 
@@ -31815,8 +31866,7 @@ const FormOptionGlobalStyleControls: React.FC<{
   if (!showChoiceControls && !showSelectControls) return null
 
   return (
-    <>
-      <div className={styles.panelSubheader}>Diseño global de opciones</div>
+    <AccordionSection id="form-option-global" title="Diseño global de opciones">
       <div className={styles.twoColumn}>
         {showChoiceControls && (
           <label className={styles.field}>
@@ -31841,7 +31891,7 @@ const FormOptionGlobalStyleControls: React.FC<{
           <ColorField label="Borde activo" value={getThemePaint(theme, 'formChoiceSelectedBorder', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBorder: value })} onCommit={onSaveSite} />
         </div>
       )}
-    </>
+    </AccordionSection>
   )
 }
 
@@ -32093,8 +32143,7 @@ const FormSubmitContentControls: React.FC<{
   const theme = site.theme || {}
   const saveSettings = onSaveSettings || onSaveSite
   return (
-    <>
-      <div className={styles.panelSubheader}>Contenido del botón</div>
+    <AccordionSection id="form-submit-content" title="Contenido del botón">
       <div className={styles.twoColumn}>
         <label className={styles.field}>
           <span>Texto del botón</span>
@@ -32132,7 +32181,7 @@ const FormSubmitContentControls: React.FC<{
           onSave={saveSettings}
         />
       )}
-    </>
+    </AccordionSection>
   )
 }
 
@@ -32145,8 +32194,7 @@ const FormSubmitGlobalStyleControls: React.FC<{
   const defaultAccent = defaultAccentForSite(site)
 
   return (
-    <>
-      <div className={styles.panelSubheader}>Diseño global del botón</div>
+    <AccordionSection id="form-submit-global" title="Diseño global del botón">
       <div className={styles.twoColumn}>
         <ColorField label="Fondo botón" value={getThemePaint(theme, 'submitBg', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ submitBg: value })} onCommit={onSaveSite} />
         <ColorField label="Texto botón" value={getThemePaint(theme, 'submitTextColor', onAccentFor(defaultAccent))} allowGradient onChange={(value) => onPatchTheme({ submitTextColor: value })} onCommit={onSaveSite} />
@@ -32181,7 +32229,7 @@ const FormSubmitGlobalStyleControls: React.FC<{
           onCommit={onSaveSite}
         />
       </div>
-    </>
+    </AccordionSection>
   )
 }
 
@@ -32194,8 +32242,7 @@ const FormSurfaceStyleControls: React.FC<{
   const theme = site.theme || {}
 
   return (
-    <>
-      <div className={styles.panelSubheader}>{embedded ? 'Fondo del formulario' : 'Colores del formulario'}</div>
+    <AccordionSection id="form-surface" title={embedded ? 'Fondo del formulario' : 'Colores del formulario'}>
       <div className={styles.twoColumn}>
         <ColorField
           label="Fondo"
@@ -32228,7 +32275,7 @@ const FormSurfaceStyleControls: React.FC<{
           onCommit={onSaveSite}
         />
       </div>
-    </>
+    </AccordionSection>
   )
 }
 
@@ -32248,8 +32295,7 @@ const FormLayoutStyleControls: React.FC<{
   const showStretchToggle = embedded && typeof onToggleFullWidth === 'function'
 
   return (
-    <>
-      <div className={styles.panelSubheader}>{embedded ? 'Espacio del formulario' : 'Dimensiones del formulario'}</div>
+    <AccordionSection id="form-layout" title={embedded ? 'Espacio del formulario' : 'Dimensiones del formulario'}>
       {showStretchToggle && (
         <div className={styles.videoFormGateSwitchRow}>
           <div>
@@ -32350,7 +32396,7 @@ const FormLayoutStyleControls: React.FC<{
           />
         </div>
       </AdvancedDisclosure>
-    </>
+    </AccordionSection>
   )
 }
 
@@ -32381,8 +32427,8 @@ const FormGlobalStyleControls: React.FC<{
 
   return (
     <div className={styles.formGlobalControls}>
-      <div className={styles.panelSubheader}>{embedded ? 'Diseño del formulario' : 'Formulario global'}</div>
       <FormSurfaceStyleControls site={site} embedded={embedded} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+      <AccordionSection id="form-global-main" title={embedded ? 'Diseño del formulario' : 'Formulario global'}>
       <div className={styles.textFormatPanel}>
         <div className={styles.textToolbar}>
           <label className={styles.textFontSelect}>
@@ -32461,8 +32507,8 @@ const FormGlobalStyleControls: React.FC<{
         <ColorField label="Opción seleccionada" value={getThemePaint(theme, 'formChoiceSelectedBg', defaultChoiceSelectedBg)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBg: value })} onCommit={onSaveSite} />
         <ColorField label="Borde seleccionado" value={getThemePaint(theme, 'formChoiceSelectedBorder', defaultAccent)} allowGradient onChange={(value) => onPatchTheme({ formChoiceSelectedBorder: value })} onCommit={onSaveSite} />
       </div>
-
-      <div className={styles.panelSubheader}>Botón de envío</div>
+      </AccordionSection>
+      <AccordionSection id="form-global-submit" title="Botón de envío">
       <div className={styles.twoColumn}>
         <label className={styles.field}>
           <span>Texto del botón</span>
@@ -32527,6 +32573,7 @@ const FormGlobalStyleControls: React.FC<{
           onCommit={onSaveSite}
         />
       </div>
+      </AccordionSection>
     </div>
   )
 }
@@ -32567,7 +32614,8 @@ const PopupInspector: React.FC<{
             </div>
           </div>
 
-          <div className={styles.panelSubheader}>Cuando se activa</div>
+          <AccordionGroup>
+          <AccordionSection id="popup-trigger" title="Cuando se activa">
           <div className={styles.twoColumn}>
             <label className={styles.field}>
               <span>Activacion</span>
@@ -32594,7 +32642,8 @@ const PopupInspector: React.FC<{
             </label>
           </div>
 
-          <div className={styles.panelSubheader}>Caja del pop up</div>
+          </AccordionSection>
+          <AccordionSection id="popup-box" title="Caja del pop up">
           <div className={styles.twoColumn}>
             <ColorField label="Fondo" value={getThemePaint(theme, 'popupBackgroundColor', isSiteDark(site) ? '#0f172a' : '#ffffff')} allowGradient onChange={(value) => onPatchTheme({ popupBackgroundColor: value })} onCommit={onSaveSite} />
             <ColorField label="Texto" value={getThemePaint(theme, 'popupTextColor', isSiteDark(site) ? '#f8fafc' : '#111827')} allowGradient onChange={(value) => onPatchTheme({ popupTextColor: value })} onCommit={onSaveSite} />
@@ -32610,7 +32659,8 @@ const PopupInspector: React.FC<{
           </div>
           <ColorField label="Color borde" value={getThemePaint(theme, 'popupBorderColor', 'rgba(148, 163, 184, 0.32)')} allowGradient onChange={(value) => onPatchTheme({ popupBorderColor: value })} onCommit={onSaveSite} />
 
-          <div className={styles.panelSubheader}>Botón de cerrar</div>
+          </AccordionSection>
+          <AccordionSection id="popup-close" title="Botón de cerrar">
           <div className={styles.twoColumn}>
             <label className={styles.field}>
               <span>Mostrar</span>
@@ -32631,6 +32681,8 @@ const PopupInspector: React.FC<{
               <input value={theme.popupCloseText || ''} placeholder="Cerrar" onChange={(event) => onPatchTheme({ popupCloseText: event.target.value })} onBlur={onSaveSite} />
             </label>
           )}
+          </AccordionSection>
+          </AccordionGroup>
         </div>
       </div>
     </aside>
@@ -32714,8 +32766,7 @@ const ActivePageSettings: React.FC<{
   }
 
   return (
-    <div className={styles.settingsGroup}>
-      <div className={styles.panelSubheader}>Página activa</div>
+    <AccordionSection id="page-active" title="Página activa">
       <label className={styles.field}>
         <span>Nombre de página</span>
         <input
@@ -32747,7 +32798,7 @@ const ActivePageSettings: React.FC<{
           </label>
         </>
       )}
-    </div>
+    </AccordionSection>
   )
 }
 
@@ -32756,8 +32807,7 @@ const SiteGlobalSettings: React.FC<{
   onPatchSite: (patch: Partial<PublicSite>) => void
   onSaveSite: () => void
 }> = ({ site, onPatchSite, onSaveSite }) => (
-  <div className={styles.settingsGroup}>
-    <div className={styles.panelSubheader}>Público</div>
+  <AccordionSection id="page-public" title="Público">
     <label className={styles.field}>
       <span>Título público</span>
       <input
@@ -32777,7 +32827,7 @@ const SiteGlobalSettings: React.FC<{
         onBlur={onSaveSite}
       />
     </label>
-  </div>
+  </AccordionSection>
 )
 
 const hasBlockExtraSettingsContent = (block: SiteBlock) => (
@@ -32818,11 +32868,10 @@ const PageInspector: React.FC<{
   }, [formHasConversion, site.metaCapiEnabled])
 
   const pageConfigContent = (
-    <>
+    <AccordionGroup>
       <ActivePageSettings site={site} pages={pages} activePageId={activePageId} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       {isStandardForm(site) && (
-        <div className={styles.settingsGroup}>
-          <div className={styles.panelSubheader}>Comportamiento del formulario</div>
+        <AccordionSection id="page-behavior" title="Comportamiento del formulario">
           <div className={styles.videoFormGateSwitchRow}>
             <div>
               <strong>Enviar si sale antes de terminar</strong>
@@ -32840,11 +32889,10 @@ const PageInspector: React.FC<{
           <p className={styles.customFieldHint}>
             Apagado: la persona puede ser enviada al destino, pero no se crea submission ni se guardan respuestas hasta que termine el formulario.
           </p>
-        </div>
+        </AccordionSection>
       )}
       {metaPixelConnected && isFormSite(site) && (
-        <div className={styles.settingsGroup}>
-          <div className={styles.panelSubheader}>Conversión del formulario</div>
+        <AccordionSection id="page-conversion" title="Conversión del formulario">
           <div className={`${styles.metaCard} ${formHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
             <span className={styles.metaMark} aria-hidden="true">∞</span>
             <div className={styles.metaCardInfo}>
@@ -32899,14 +32947,15 @@ const PageInspector: React.FC<{
               )}
             </div>
           )}
-        </div>
+        </AccordionSection>
       )}
-    </>
+    </AccordionGroup>
   )
 
   const pageDesignContent = (
+    <AccordionGroup>
     <div className={styles.settingsGroup}>
-      <div className={styles.panelSubheader}>Colores</div>
+      <AccordionSection id="page-colors" title="Colores">
       <div className={styles.twoColumn}>
         <ColorField
           label="Fondo de página"
@@ -32977,7 +33026,8 @@ const PageInspector: React.FC<{
         />
       </label>
 
-      <div className={styles.panelSubheader}>Dimensiones</div>
+      </AccordionSection>
+      <AccordionSection id="page-dims" title="Dimensiones">
       <DimensionField
         label="Ancho máximo"
         value={isLanding(site) && Number(theme.pageMaxWidth) === 1160 ? 1440 : getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1440 : 520, FORM_PAGE_MAX_WIDTH_MIN, FORM_PAGE_MAX_WIDTH_MAX)}
@@ -33005,7 +33055,8 @@ const PageInspector: React.FC<{
           onCommit={onSaveSite}
         />
       </div>
-      <div className={styles.panelSubheader}>Borde de página</div>
+      </AccordionSection>
+      <AccordionSection id="page-border" title="Borde de página">
       <div className={styles.twoColumn}>
         <DimensionField
           label="Grosor"
@@ -33023,16 +33074,18 @@ const PageInspector: React.FC<{
           onCommit={onSaveSite}
         />
       </div>
+      </AccordionSection>
     </div>
+    </AccordionGroup>
   )
 
   const pageGlobalContent = (
-    <>
+    <AccordionGroup>
       <SiteGlobalSettings site={site} onPatchSite={onPatchSite} onSaveSite={onSaveSite} />
       {isFormSite(site) && (
         <FormGlobalStyleControls site={site} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
       )}
-    </>
+    </AccordionGroup>
   )
 
   return (
@@ -33335,8 +33388,7 @@ const CustomFieldBindingControl: React.FC<{
 
   if (systemPreset) {
     return (
-      <div className={styles.customFieldBinding}>
-        <div className={styles.panelSubheader}>Guardado de respuesta</div>
+      <AccordionSection id="field-save-system" title="Guardado de respuesta">
         <div className={styles.systemFieldLock}>
           <span><Lock size={14} /></span>
           <div>
@@ -33344,7 +33396,7 @@ const CustomFieldBindingControl: React.FC<{
             <p>Este campo es del sistema y se guarda automaticamente al enviar el formulario.</p>
           </div>
         </div>
-      </div>
+      </AccordionSection>
     )
   }
 
@@ -33361,8 +33413,7 @@ const CustomFieldBindingControl: React.FC<{
   }, new Map<string, CustomFieldDefinition[]>())
 
   return (
-    <div className={styles.customFieldBinding}>
-      <div className={styles.panelSubheader}>Guardado de respuesta</div>
+    <AccordionSection id="field-save" title="Guardado de respuesta">
       <label className={styles.field}>
         <span>Guardar respuesta en</span>
         <CustomSelect
@@ -33503,7 +33554,7 @@ const CustomFieldBindingControl: React.FC<{
           </section>
         </div>
       )}
-    </div>
+    </AccordionSection>
   )
 }
 
@@ -34386,8 +34437,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const blockHasExtraSettingsContent = hasBlockExtraSettingsContent(block)
   const fieldEditControls = isField ? (
     <>
-      <div className={styles.settingsGroup}>
-        <div className={styles.panelSubheader}>Campo</div>
+      <AccordionSection id="field-campo" title="Campo">
         {systemFieldPreset ? (
           <label className={styles.field}>
             <span>Texto dentro del campo</span>
@@ -34461,7 +34511,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             <span>Mostrar país y lada</span>
           </label>
         )}
-      </div>
+      </AccordionSection>
 
       <CustomFieldBindingControl
         block={block}
@@ -34506,7 +34556,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   )
 
   const editContent = (
-    <>
+    <AccordionGroup>
       {showBlockNameFirst && blockNameField}
       {showBlockNameFirst && editTypographyControls}
 
@@ -34571,11 +34621,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {choiceEditControls}
 
       {blockHasExtraSettingsContent && settingsContent}
-    </>
+    </AccordionGroup>
   )
 
   const designContent = (
-    <>
+    <AccordionGroup>
       <InlineBlockStyleControls
         site={site}
         block={block}
@@ -34609,7 +34659,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           onSave={onSave}
         />
       )}
-    </>
+    </AccordionGroup>
   )
 
   const videoActionsContent = block.blockType === 'video' ? (
@@ -34957,8 +35007,7 @@ const SocialProfileSettings: React.FC<{
   ])
 
   return (
-    <div className={styles.settingsGroup}>
-      <div className={styles.panelSubheader}>Perfil de red social</div>
+    <AccordionSection id="block-social" title="Perfil de red social">
       <label className={styles.field}>
         <span>Red social</span>
         <CustomSelect
@@ -35053,7 +35102,7 @@ const SocialProfileSettings: React.FC<{
         onChange={(value) => onPatchSettings({ socialProfileScale: value })}
         onCommit={onSave}
       />
-    </div>
+    </AccordionSection>
   )
 }
 
@@ -35579,7 +35628,7 @@ const VideoFormGateSettingsPanel: React.FC<{
       </div>
 
       {enabled && (
-        <>
+        <AccordionGroup>
           <label className={styles.field}>
             <span>Origen del formulario</span>
             <CustomSelect value={selectedFormId} onChange={(event) => selectSourceForm(event.target.value)} onBlur={onSave}>
@@ -35590,8 +35639,7 @@ const VideoFormGateSettingsPanel: React.FC<{
             </CustomSelect>
           </label>
 
-          <div className={styles.settingsGroup}>
-            <div className={styles.panelSubheader}>Contenido del formulario</div>
+          <AccordionSection id="vg-contenido" title="Contenido del formulario">
             {showTriggerControl && (
               <label className={styles.field}>
                 <span>Mostrar en segundo</span>
@@ -35664,11 +35712,10 @@ const VideoFormGateSettingsPanel: React.FC<{
                 ))}
               </CustomSelect>
             </label>
-          </div>
+          </AccordionSection>
 
           {showCompletionControls && (
-            <div className={styles.settingsGroup}>
-              <div className={styles.panelSubheader}>Al terminar</div>
+            <AccordionSection id="vg-terminar" title="Al terminar">
               <label className={styles.field}>
                 <span>Cuando se complete el formulario</span>
                 <CustomSelect
@@ -35751,12 +35798,11 @@ const VideoFormGateSettingsPanel: React.FC<{
                   </p>
                 )}
               </div>
-            </div>
+            </AccordionSection>
           )}
 
           {showCompletionControls && metaPixelConnected && (
-            <div className={styles.settingsGroup}>
-              <div className={styles.panelSubheader}>Evento Meta al completar</div>
+            <AccordionSection id="vg-meta" title="Evento Meta al completar">
               <MetaVideoEventSettings
                 title="Meta Pixel + CAPI"
                 description="Se envía al completar."
@@ -35783,13 +35829,12 @@ const VideoFormGateSettingsPanel: React.FC<{
                 onChangeParameters={(metaEventParameters) => onPatchSettings({ videoFormGateMetaEventParameters: metaEventParameters })}
                 onCommit={onSave}
               />
-            </div>
+            </AccordionSection>
           )}
 
           {showDesignControls && (
-            <div className={styles.settingsGroup}>
+            <AccordionSection id="vg-diseno" title="Diseño del formulario">
               <div className={styles.videoFormGateThemeHeader}>
-                <div className={styles.panelSubheader}>Diseño del formulario</div>
                 <TabList
                   tabs={videoGateThemeTabs}
                   activeTab={videoGateThemeMode}
@@ -35822,12 +35867,11 @@ const VideoFormGateSettingsPanel: React.FC<{
                 onChange={(value) => patchVideoGateTheme({ textColor: value, textColorCustom: true })}
                 onCommit={onSave}
               />
-            </div>
+            </AccordionSection>
           )}
 
-          <div className={styles.settingsGroup}>
+          <AccordionSection id="vg-elementos" title="Elementos">
             <div className={styles.videoFormGateSectionHeader}>
-              <div className={styles.panelSubheader}>Elementos</div>
               <span>{questions.length} {questions.length === 1 ? 'elemento' : 'elementos'}</span>
             </div>
 
@@ -35864,6 +35908,7 @@ const VideoFormGateSettingsPanel: React.FC<{
               </button>
             </div>
 
+            <AccordionGroup>
             {(() => {
               const videoFormGateElementEditor = activeElement === 'submit' ? selectedSubmitContent : activeQuestion ? (
               <div className={styles.videoFormGateQuestionEditor}>
@@ -35979,11 +36024,11 @@ const VideoFormGateSettingsPanel: React.FC<{
                 </FormElementLogicPopover>
               ) : videoFormGateElementEditor
             })()}
-          </div>
+            </AccordionGroup>
+          </AccordionSection>
 
           {showDesignControls && (
             <div className={styles.settingsGroup}>
-              <div className={styles.panelSubheader}>Personalización del formulario</div>
               {hasDesignableFields && (
                 <FormFieldGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
               )}
@@ -35999,7 +36044,7 @@ const VideoFormGateSettingsPanel: React.FC<{
               <FormSubmitGlobalStyleControls site={videoGateSite} onPatchTheme={patchVideoGateTheme} onSaveSite={onSave} />
             </div>
           )}
-        </>
+        </AccordionGroup>
       )}
     </div>
   )
@@ -36013,8 +36058,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
       ? getHeaderScope(block) === HEADER_SCOPE_GLOBAL ? 'Header global' : 'Header de esta página'
       : 'Panel inferior'
     return (
-      <div className={styles.settingsGroup}>
-        <div className={styles.panelSubheader}>{panelTitle}</div>
+      <AccordionSection id="landing-panel" title={panelTitle}>
         <label className={styles.field}>
           <span>Enlaces del panel</span>
           <textarea
@@ -36026,14 +36070,13 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           />
         </label>
         <p className={styles.muted}>Escribe un enlace por línea. Si no quieres enlaces, deja esta caja vacía.</p>
-      </div>
+      </AccordionSection>
     )
   }
 
   if (block.blockType === SECTION_BLOCK_TYPE) {
     return (
-      <div className={styles.settingsGroup}>
-        <div className={styles.panelSubheader}>Tipo de franja</div>
+      <AccordionSection id="landing-franja" title="Tipo de franja">
         <ColorField
           label="Fondo de franja"
           value={getSettingPaint(settings, 'blockBg', 'transparent')}
@@ -36061,7 +36104,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           onChange={(value) => onPatchSettings({ sectionGap: value })}
           onCommit={onSave}
         />
-      </div>
+      </AccordionSection>
     )
   }
 
@@ -36104,8 +36147,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
 
     return (
       <>
-        <div className={styles.settingsGroup}>
-          <div className={styles.panelSubheader}>Cuenta regresiva</div>
+        <AccordionSection id="landing-countdown" title="Cuenta regresiva">
           <label className={styles.field}>
             <span>Tipo de contador</span>
             <CustomSelect value={mode} onChange={(event) => onPatchSettings({ countdownMode: event.target.value })} onBlur={onSave}>
@@ -36207,10 +36249,9 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
             />
             <span>Mostrar etiquetas de tiempo</span>
           </label>
-        </div>
+        </AccordionSection>
 
-        <div className={styles.settingsGroup}>
-          <div className={styles.panelSubheader}>Cuando termine</div>
+        <AccordionSection id="landing-countdown-end" title="Cuando termine">
           <label className={styles.field}>
             <span>Acción final</span>
             <CustomSelect value={completionAction} onChange={(event) => onPatchSettings({ countdownCompletionAction: event.target.value })} onBlur={onSave}>
@@ -36254,7 +36295,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
               onBlur={onSave}
             />
           </label>
-        </div>
+        </AccordionSection>
       </>
     )
   }
