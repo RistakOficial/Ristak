@@ -1066,13 +1066,13 @@
 .rstkCanvas .rstk-embedded-pages,
 .rstkCanvas .rstk-embedded-pages [data-embedded-page-content] {
   width: min(100%, var(--rstk-form-field-width, 560px));
-  justify-self: center;
+  justify-self: var(--rstk-form-field-justify, center);
   display: grid;
   gap: 14px;
 }
 .rstkCanvas .rstkEmbeddedFormEditor {
   width: min(100%, var(--rstk-form-field-width, 580px));
-  justify-self: center;
+  justify-self: var(--rstk-form-field-justify, center);
   display: grid;
   gap: 8px;
 }
@@ -2028,9 +2028,9 @@ html body .rstkCanvas.rstk-choice-pills .rstk-embedded-form .rstk-option input[t
   margin-right: calc(50% - 50vw);
 }
 .rstkCanvas .rstkEmbeddedFormSourceFrame.rstkEmbeddedFormStretch > .rstk-page {
-  max-width: var(--rstk-max);
+  max-width: none;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
 }
 .rstkCanvas .rstk-block-style.rstkBlockFullWidth {
   width: 100vw;
