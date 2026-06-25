@@ -73,19 +73,22 @@ export const getStatus = async (req, res) => {
       accessToken: null
     };
 
-    if (config) {
+    // configured = hay credenciales reales (no una fila parcial solo-labels).
+    const hasHighLevelCredentials = Boolean(config && config.location_id && config.api_token);
+
+    // location_data puede existir aunque no haya credenciales; exponerlo si lo hay.
+    if (config && config.location_data) {
+      try {
+        highlevelStatus.locationData = JSON.parse(config.location_data);
+      } catch (error) {
+        logger.warn('Error parseando location_data:', error.message);
+      }
+    }
+
+    if (hasHighLevelCredentials) {
       highlevelStatus.configured = true;
       highlevelStatus.locationId = config.location_id;
       highlevelStatus.accessToken = config.api_token;
-
-      // Parsear los datos del location si existen
-      if (config.location_data) {
-        try {
-          highlevelStatus.locationData = JSON.parse(config.location_data);
-        } catch (error) {
-          logger.warn('Error parseando location_data:', error.message);
-        }
-      }
 
       const verification = await verifyHighLevelConnection(config);
       highlevelStatus.connected = verification.connected;

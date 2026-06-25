@@ -666,7 +666,7 @@ function sanitizeCalendarConfigValue(value, fallback = null) {
 async function getConnectedSourceFlags() {
   const [googleConfig, highlevelConfig] = await Promise.all([
     db.get('SELECT config_value FROM app_config WHERE config_key = ?', [GOOGLE_CALENDAR_CONFIG_KEY]),
-    db.get('SELECT 1 FROM highlevel_config LIMIT 1')
+    db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
   ])
   const googleConfigValue = sanitizeCalendarConfigValue(googleConfig?.config_value, '').trim()
   const googleConfigData = parseJson(googleConfigValue, {})
@@ -676,7 +676,8 @@ async function getConnectedSourceFlags() {
   return {
     google: googleConnected,
     googleCalendarId,
-    ghl: Boolean(highlevelConfig)
+    // GHL "presente" solo si hay credenciales reales (no una fila parcial de labels).
+    ghl: Boolean(cleanString(highlevelConfig?.location_id) && cleanString(highlevelConfig?.api_token))
   }
 }
 
