@@ -33595,7 +33595,7 @@ const VideoActionsPanel: React.FC<{
         )}
 
         {rule.action === 'reveal_form_action' && (
-          <div className={styles.twoColumn}>
+          <>
             <label className={styles.field}>
               <span>Si ya vio el video</span>
               <CustomSelect
@@ -33641,7 +33641,7 @@ const VideoActionsPanel: React.FC<{
                   : 'El botón vuelve a ocultarse cada vez que el visitante entra.'}
               </p>
             )}
-          </div>
+          </>
         )}
 
         {rule.action === 'site_page' && (
