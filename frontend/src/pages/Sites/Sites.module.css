@@ -12313,6 +12313,71 @@
   font-weight: 850;
 }
 
+/* ============================================================
+   Inspector accordion — secciones colapsables del panel derecho.
+   El título reutiliza .panelSubheader (hereda tipografía/divisor/tema
+   de las 4 familias claro/oscuro). Solo tokens, cero hex/rgba nuevos.
+   ============================================================ */
+.accordionSection {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.accordionHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.accordionHeader .panelSubheader {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.accordionChevron {
+  flex: 0 0 auto;
+  color: var(--design-section-title, var(--color-text-tertiary));
+  opacity: 0.65;
+  transition: transform 0.16s ease, opacity 0.16s ease;
+}
+
+.accordionHeader:hover .accordionChevron,
+.accordionSection[data-open="true"] .accordionChevron {
+  opacity: 1;
+}
+
+.accordionSection[data-open="true"] .accordionChevron {
+  transform: rotate(180deg);
+}
+
+.accordionHeader:hover .panelSubheader,
+.accordionHeader:focus-visible .panelSubheader {
+  color: var(--color-text-primary);
+}
+
+.accordionHeader:focus-visible {
+  outline: 2px solid var(--accent, var(--color-primary));
+  outline-offset: 2px;
+  border-radius: var(--radius-ctl, 8px);
+}
+
+.accordionBody {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 12px;
+}
+
 .gradientCreateButton,
 .gradientClearButton,
 .gradientEmptyState {
@@ -17672,7 +17737,8 @@
   .formGlobalControls,
   .customFieldBinding,
   .optionRules,
-  .propertiesActions
+  .propertiesActions,
+  .accordionSection
 ) {
   margin-top: 16px;
   border-top: 1px solid var(--sites-editor-section-border);
@@ -17685,7 +17751,8 @@
   .formGlobalControls,
   .customFieldBinding,
   .optionRules,
-  .propertiesActions
+  .propertiesActions,
+  .accordionSection
 ) {
   margin-top: 0;
   border-top: 0;
