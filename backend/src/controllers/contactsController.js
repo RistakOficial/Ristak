@@ -1980,6 +1980,8 @@ export const getContacts = async (req, res) => {
     if (hiddenCondition) {
       conditions.push(hiddenCondition)
     }
+    // (CNT-007) Excluir contactos en la papelera (soft-delete) de la lista y el conteo.
+    conditions.push('contacts.deleted_at IS NULL')
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
@@ -2002,6 +2004,9 @@ export const getContacts = async (req, res) => {
     if (range.endUtc) {
       mainConditions.push('c.created_at <= ?')
     }
+
+    // (CNT-007) Excluir contactos en la papelera (soft-delete) de la query principal.
+    mainConditions.push('c.deleted_at IS NULL')
 
     // Aplicar filtro de contactos ocultos (con alias 'c')
     const hiddenConditionAlias = buildHiddenContactsCondition(hiddenFilters, 'c', false)
@@ -2389,7 +2394,7 @@ ${CONTACT_META_PROFILE_SELECT},
         ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      WHERE c.id = ?${hiddenCondition ? ` AND ${hiddenCondition}` : ''}`,
+      WHERE c.id = ? AND c.deleted_at IS NULL${hiddenCondition ? ` AND ${hiddenCondition}` : ''}`,
       [id, id]
     )
 
@@ -2810,7 +2815,7 @@ ${CONTACT_META_PROFILE_SELECT},
         ) AS has_confirmation_badge
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      WHERE ${searchClause.condition}${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
+      WHERE ${searchClause.condition} AND c.deleted_at IS NULL${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
       ORDER BY ${searchRank.expression} DESC, c.created_at DESC
       LIMIT 20`,
       [...searchClause.params, ...searchRank.params]
@@ -3753,14 +3758,20 @@ export const deleteContact = async (req, res) => {
       // Continuar con la eliminación local aunque falle en GHL
     }
 
-    // Eliminar el contacto (las relaciones se eliminan automáticamente por CASCADE)
-    await db.run('DELETE FROM contacts WHERE id = ?', [id])
+    // (CNT-007 / DB-003) Soft-delete: marcar deleted_at en vez de borrar físicamente.
+    // Así NO se dispara el ON DELETE CASCADE y se conservan pagos e historial; el
+    // contacto queda en la papelera y es recuperable. Se limpia ghl_contact_id para que
+    // la sincronización de HighLevel no lo "resucite" emparejándolo por ese id.
+    await db.run(
+      `UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP, ghl_contact_id = NULL WHERE id = ?`,
+      [id]
+    )
 
-    logger.info(`Contacto eliminado: ${id} (${existing.full_name})`)
+    logger.info(`Contacto enviado a la papelera (soft-delete): ${id} (${existing.full_name})`)
 
     res.json({
       success: true,
-      message: 'Contacto eliminado correctamente'
+      message: 'Contacto movido a la papelera. Sus pagos e historial se conservan; puedes restaurarlo.'
     })
 
   } catch (error) {
@@ -3769,6 +3780,62 @@ export const deleteContact = async (req, res) => {
       success: false,
       error: 'Error eliminando contacto'
     })
+  }
+}
+
+// (CNT-007) Lista los contactos en la papelera (soft-deleted) para poder restaurarlos.
+export const getTrashedContacts = async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500)
+    const rows = await db.all(
+      `SELECT id, full_name, email, phone, source, deleted_at, total_paid, purchases_count
+       FROM contacts
+       WHERE deleted_at IS NOT NULL
+       ORDER BY deleted_at DESC
+       LIMIT ?`,
+      [limit]
+    )
+    res.json({ success: true, contacts: rows })
+  } catch (error) {
+    logger.error(`Error listando papelera de contactos: ${error.message}`)
+    res.status(500).json({ success: false, error: 'Error obteniendo la papelera' })
+  }
+}
+
+// (CNT-007) Restaura un contacto desde la papelera (deja deleted_at en NULL).
+export const restoreContact = async (req, res) => {
+  try {
+    const { id } = req.params
+    const existing = await db.get('SELECT id, full_name FROM contacts WHERE id = ? AND deleted_at IS NOT NULL', [id])
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Contacto no encontrado en la papelera' })
+    }
+    await db.run('UPDATE contacts SET deleted_at = NULL WHERE id = ?', [id])
+    logger.info(`Contacto restaurado de la papelera: ${id} (${existing.full_name})`)
+    res.json({ success: true, message: 'Contacto restaurado correctamente' })
+  } catch (error) {
+    logger.error(`Error restaurando contacto ${req.params.id}: ${error.message}`)
+    res.status(500).json({ success: false, error: 'Error restaurando contacto' })
+  }
+}
+
+// (CNT-007 / DB-003) Borra permanentemente un contacto de la papelera, pero CONSERVA sus
+// pagos: los desacopla (contact_id = NULL) antes del borrado para no perder historial financiero.
+export const permanentDeleteContact = async (req, res) => {
+  try {
+    const { id } = req.params
+    const existing = await db.get('SELECT id, full_name FROM contacts WHERE id = ? AND deleted_at IS NOT NULL', [id])
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Contacto no encontrado en la papelera' })
+    }
+    // (DB-003) Conservar los pagos: desacoplarlos del contacto antes de borrarlo (contact_id es nullable).
+    await db.run('UPDATE payments SET contact_id = NULL WHERE contact_id = ?', [id])
+    await db.run('DELETE FROM contacts WHERE id = ?', [id])
+    logger.info(`Contacto borrado permanentemente (pagos conservados): ${id} (${existing.full_name})`)
+    res.json({ success: true, message: 'Contacto borrado permanentemente. Sus pagos se conservaron en el historial.' })
+  } catch (error) {
+    logger.error(`Error borrando permanentemente contacto ${req.params.id}: ${error.message}`)
+    res.status(500).json({ success: false, error: 'Error borrando el contacto' })
   }
 }
 

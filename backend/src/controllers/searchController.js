@@ -129,7 +129,7 @@ export const globalSearch = async (req, res) => {
               AND ${ACTIVE_APPOINTMENT_CONDITION}
           ) AS has_appointments
         FROM contacts c
-        WHERE ${contactSearchClause.condition}${hiddenAnd}
+        WHERE ${contactSearchClause.condition} AND c.deleted_at IS NULL${hiddenAnd}
         ORDER BY ${contactSearchRank.expression} DESC, c.created_at DESC
         LIMIT ?`,
         [...contactSearchClause.params, ...contactSearchRank.params, CATEGORY_LIMIT]
