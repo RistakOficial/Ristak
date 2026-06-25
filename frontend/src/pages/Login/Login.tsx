@@ -40,6 +40,10 @@ export const Login: React.FC = () => {
   const [googleLoading, setGoogleLoading] = useState(false)
   const [showRecovery, setShowRecovery] = useState(false)
   const [copied, setCopied] = useState(false)
+  // (AUTH-010) Recuperación por correo
+  const [recoveryEmail, setRecoveryEmail] = useState('')
+  const [recoverySending, setRecoverySending] = useState(false)
+  const [recoverySent, setRecoverySent] = useState(false)
 
   const { isAuthenticated, isLoading: isAuthLoading, login, needsSetup } = useAuth()
   const location = useLocation()
@@ -136,6 +140,26 @@ export const Login: React.FC = () => {
   const handleChangeTenant = () => {
     clearRuntimeApiBaseUrl()
     navigate('/phone/tenant', { replace: true })
+  }
+
+  // (AUTH-010) Solicitar enlace de recuperación por correo. Anti-enumeración: siempre
+  // mostramos el mismo mensaje, exista o no el correo.
+  const handleForgotPassword = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!recoveryEmail.trim() || recoverySending) return
+    setRecoverySending(true)
+    try {
+      await fetch(apiUrl('/api/auth/forgot-password'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: recoveryEmail.trim() })
+      })
+    } catch {
+      // Ignoramos errores de red a propósito (mismo mensaje genérico).
+    } finally {
+      setRecoverySending(false)
+      setRecoverySent(true)
+    }
   }
 
   return (
@@ -253,6 +277,36 @@ export const Login: React.FC = () => {
 
         {showRecovery && (
           <div className={styles.recoverySection}>
+            {/* (AUTH-010) Recuperación por correo (primaria) */}
+            {recoverySent ? (
+              <div className={styles.successMessage}>
+                Si el correo está registrado, te enviamos un enlace para restablecer tu contraseña. Revisa tu bandeja de entrada (y spam). El enlace vence en 1 hora.
+              </div>
+            ) : (
+              <form onSubmit={handleForgotPassword}>
+                <div className={styles.inputGroup}>
+                  <label className={styles.label} htmlFor="recoveryEmail">Recupera tu acceso por correo</label>
+                  <input
+                    id="recoveryEmail"
+                    type="email"
+                    className={styles.input}
+                    placeholder="tu@correo.com"
+                    value={recoveryEmail}
+                    onChange={(e) => setRecoveryEmail(e.target.value)}
+                    disabled={recoverySending}
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  loading={recoverySending}
+                  disabled={!recoveryEmail.trim()}
+                  className={styles.submitButton}
+                >
+                  Enviar enlace de recuperación
+                </Button>
+              </form>
+            )}
+
             <div className={styles.recoveryHeader}>
               <Terminal size={20} />
               <h3>Recuperar acceso desde Render</h3>
