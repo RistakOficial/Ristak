@@ -548,8 +548,13 @@ async function reconcileCanonicalContactPhones() {
         if (!merged[field] && loser[field]) merged[field] = loser[field]
       }
 
-      merged.total_paid = Math.max(Number(merged.total_paid || 0), Number(loser.total_paid || 0))
-      merged.purchases_count = Math.max(Number(merged.purchases_count || 0), Number(loser.purchases_count || 0))
+      // (DB-007) Al fusionar contactos duplicados se SUMAN los acumulados, no se toma el MAX:
+      // cada registro acumuló su propio total_paid/purchases_count de sus propios pagos, y
+      // updateContactReferences() repunta los pagos del loser al winner. Con MAX se perdía
+      // dinero (un cliente que pagó 100 en un registro y 50 en otro quedaba con 100). SUM es
+      // consistente con el otro camino de fusión (contactIdentityService.mergeContactIds).
+      merged.total_paid = Number(merged.total_paid || 0) + Number(loser.total_paid || 0)
+      merged.purchases_count = Number(merged.purchases_count || 0) + Number(loser.purchases_count || 0)
 
       await db.run('UPDATE contacts SET phone = NULL, email = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [loser.id])
       await updateContactReferences(loser.id, winner.id)

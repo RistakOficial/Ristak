@@ -5,6 +5,7 @@ import {
 import { processExpiredConfirmationWindows } from '../services/appointmentConfirmationService.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
+import { withCronLock } from '../utils/cronLock.js'
 
 const APPOINTMENT_REMINDERS_INTERVAL_MS = 60 * 1000
 // Las ventanas se verifican más frecuentemente para no agregar latencia innecesaria
@@ -21,10 +22,14 @@ async function runAppointmentRemindersDispatch(source = 'interval') {
 
   try {
     await trackDeployDrainWork('cron:appointment-reminders', async () => {
-      const { sent, errors, skipped } = await processDueAppointmentReminders()
-      if (sent || errors || skipped) {
-        logger.info(`[Citas] Mensajes automáticos (${source}): ${sent} enviados, ${errors} con error, ${skipped} omitidos`)
-      }
+      // (APT-009) Lock distribuido: si hubiera varias instancias, solo una despacha
+      // recordatorios por tick (evita mensajes duplicados). Defensivo con 1 instancia.
+      await withCronLock('appointment-reminders', APPOINTMENT_REMINDERS_INTERVAL_MS, async () => {
+        const { sent, errors, skipped } = await processDueAppointmentReminders()
+        if (sent || errors || skipped) {
+          logger.info(`[Citas] Mensajes automáticos (${source}): ${sent} enviados, ${errors} con error, ${skipped} omitidos`)
+        }
+      })
     }, source)
   } catch (error) {
     logger.error(`[Citas] Error procesando mensajes automáticos: ${error.message}`)
@@ -38,10 +43,13 @@ async function runConfirmationWindowsDispatch() {
   windowsRunning = true
   try {
     await trackDeployDrainWork('cron:appointment-confirmations', async () => {
-      const { processed } = await processExpiredConfirmationWindows()
-      if (processed) {
-        logger.info(`[Citas] Ventanas de confirmación IA procesadas: ${processed}`)
-      }
+      // (APT-009) Lock distribuido también para las ventanas de confirmación IA.
+      await withCronLock('appointment-confirmations', CONFIRMATION_WINDOWS_INTERVAL_MS, async () => {
+        const { processed } = await processExpiredConfirmationWindows()
+        if (processed) {
+          logger.info(`[Citas] Ventanas de confirmación IA procesadas: ${processed}`)
+        }
+      })
     })
   } catch (error) {
     logger.error(`[Citas] Error procesando ventanas de confirmación IA: ${error.message}`)

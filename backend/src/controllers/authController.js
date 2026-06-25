@@ -371,7 +371,7 @@ export async function verifyTokenEndpoint(req, res) {
 
     // Verificar que el usuario todavía exista y esté activo
     const user = await db.get(
-      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, access_config, is_active
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, access_config, is_active, token_version
        FROM users
        WHERE id = ?`,
       [payload.userId]
@@ -381,6 +381,17 @@ export async function verifyTokenEndpoint(req, res) {
       return res.status(401).json({
         success: false,
         message: 'Usuario no encontrado o inactivo'
+      })
+    }
+
+    // (AUTH-008 / AUTH-003) Este endpoint era un camino de verificación paralelo que NO
+    // aplicaba la revocación por token_version: un token emitido antes de un cambio de
+    // contraseña / cierre de sesión global seguía "verificando" como válido aquí, aunque
+    // el authMiddleware ya lo rechaza. Aplicamos la misma comprobación para cerrar el bypass.
+    if ((payload.tokenVersion ?? 0) !== (user.token_version ?? 0)) {
+      return res.status(401).json({
+        success: false,
+        message: 'Token revocado. Inicia sesión de nuevo.'
       })
     }
 

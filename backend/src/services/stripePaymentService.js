@@ -2011,6 +2011,15 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
     ...(paymentPlanMetadata?.trigger ? { ristak_plan_trigger: cleanString(paymentPlanMetadata.trigger) } : {})
   }
 
+  // (PAY-009) Llave idempotente determinista para el create del PaymentIntent público.
+  // Sin ella, un doble-submit del formulario (o un reintento de red) crea DOS intents
+  // huérfanos antes de que se persista el id. La llave incluye monto+moneda+bucket-diario:
+  // un reintento del mismo día reutiliza el mismo intent; si cambia el monto (admin edita
+  // la factura) o pasa el día (expira el cache 24h de Stripe), se crea uno nuevo limpio.
+  const createIntentDayBucket = new Date().toISOString().slice(0, 10)
+  const createIntentIdempotencyKey =
+    `ristak:${row.id}:create-intent:${toStripeAmount(row.amount, currency)}:${currency}:${createIntentDayBucket}`
+
   const intent = await stripe.paymentIntents.create(
     {
       amount: toStripeAmount(row.amount, currency),
@@ -2022,7 +2031,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
       receipt_email: shouldSendReceipt ? row.contact_email || undefined : undefined,
       metadata
     },
-    requestOptions
+    stripeRequestOptionsWithIdempotency(requestOptions, createIntentIdempotencyKey)
   )
 
   await db.run(

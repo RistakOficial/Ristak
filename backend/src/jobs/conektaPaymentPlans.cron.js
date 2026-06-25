@@ -15,7 +15,8 @@ async function runConektaPaymentPlans(source = 'interval') {
 
   try {
     await trackDeployDrainWork('cron:conekta-payment-plans', async () => {
-      // (CRON-009) Lock distribuido: una sola instancia cobra parcialidades por tick.
+      // (CRON-009 / CRON-002) Lock distribuido: una sola instancia cobra parcialidades por tick.
+      // Cierra el reclamo no atómico de cobros Conekta (CRON-002) entre réplicas.
       const { ran } = await withCronLock('conekta-payment-plans', CONEKTA_PAYMENT_PLANS_INTERVAL_MS, async () => {
         const result = await processDueConektaPaymentPlanCharges()
         if (result.succeeded || result.failed) {

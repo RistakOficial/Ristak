@@ -6,6 +6,12 @@ import { logger } from '../utils/logger.js'
 import { syncHighLevelData, setSyncTriggerSource } from '../services/highlevelSyncService.js'
 import { syncHighLevelConversationHistory } from '../services/highlevelConversationsSyncService.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
+import { withCronLock } from '../utils/cronLock.js'
+
+// (GHL-005) TTLs de los locks distribuidos = el intervalo de cada cron, así un lock
+// que quede colgado por un crash se libera solo en el siguiente ciclo.
+const HIGHLEVEL_SYNC_LOCK_TTL_MS = 60 * 60 * 1000 // sync completa: cada hora
+const HIGHLEVEL_CONVERSATIONS_LOCK_TTL_MS = 10 * 60 * 1000 // conversaciones: cada 10 min
 
 async function isHighLevelConnected(config) {
   const locationId = String(config?.location_id || '').trim()
@@ -65,6 +71,10 @@ export function startHighLevelSyncCron() {
 
     try {
       await trackDeployDrainWork('cron:highlevel-sync', async () => {
+       // (GHL-005) Lock global además del guard intra-proceso (CRON-008): si hay
+       // varias réplicas, solo una corre la sync completa por hora (evita doble
+       // escritura/borrado al sincronizar HL→local). Defensivo con 1 instancia.
+       const { ran } = await withCronLock('highlevel-sync', HIGHLEVEL_SYNC_LOCK_TTL_MS, async () => {
         // Obtener configuración de HighLevel
         const config = await db.get(
           'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
@@ -99,6 +109,8 @@ export function startHighLevelSyncCron() {
         } else {
           logger.warn('⚠️  Sincronización HighLevel terminó con advertencias')
         }
+       })
+       if (!ran) logger.info('Sincronización HighLevel omitida: otra instancia tiene el lock')
       })
     } catch (error) {
       logger.error('❌ Error en sincronización automática de HighLevel:', error.message)
@@ -123,6 +135,8 @@ export function startHighLevelSyncCron() {
     highLevelConversationsSyncRunning = true
     try {
       await trackDeployDrainWork('cron:highlevel-conversations', async () => {
+       // (GHL-005) Lock global también para la sync incremental de conversaciones.
+       await withCronLock('highlevel-conversations', HIGHLEVEL_CONVERSATIONS_LOCK_TTL_MS, async () => {
         const config = await db.get(
           'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
         )
@@ -141,6 +155,7 @@ export function startHighLevelSyncCron() {
         if (result.saved > 0) {
           logger.info(`💬 Chats HighLevel actualizados: ${result.saved} mensajes nuevos/actualizados`)
         }
+       })
       })
     } catch (error) {
       logger.warn(`No se pudieron actualizar conversaciones de HighLevel: ${error.message}`)

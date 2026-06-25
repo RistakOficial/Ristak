@@ -235,9 +235,11 @@ const computeFinancialSnapshot = async (range) => {
       totalCostos += amount;
     }
   } catch (error) {
-    logger.warn('Error calculando costos desde tabla costs:', error.message);
-    // Fallback: usar IVA del 16% como antes
-    totalCostos = ingresosNetos * 0.16;
+    // (RPT-010) Antes, si fallaba la query de `costs`, se fabricaba un costo = 16% de los
+    // ingresos (IVA heredado). Eso inventaba una deducción sin base y mostraba una ganancia
+    // confiadamente equivocada. Ahora NO inventamos: si no se pueden leer los costos, no se
+    // resta nada (totalCostos += 0) y se registra claramente para diagnosticarlo.
+    logger.warn(`Error calculando costos desde tabla costs (no se aplicará costo automático): ${error.message}`);
   }
 
   try {
