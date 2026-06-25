@@ -325,6 +325,20 @@ export const contactsService = {
     await apiClient.delete(`/contacts/${id}`)
   },
 
+  // (CNT-007) Papelera de contactos: listar, restaurar y borrar permanentemente.
+  async getTrashedContacts(): Promise<Array<{ id: string; full_name?: string | null; email?: string | null; phone?: string | null; deleted_at?: string | null; total_paid?: number; purchases_count?: number }>> {
+    const data = await apiClient.get<{ contacts?: any[] }>('/contacts/trash')
+    return (data?.contacts ?? []) as any
+  },
+
+  async restoreContact(id: string): Promise<void> {
+    await apiClient.post(`/contacts/${id}/restore`)
+  },
+
+  async permanentlyDeleteContact(id: string): Promise<void> {
+    await apiClient.delete(`/contacts/${id}/permanent`)
+  },
+
   async getContactDetails(id: string): Promise<Contact> {
     const data = await apiClient.get<Contact>(`/contacts/${id}`)
     return normalizeContact(data)

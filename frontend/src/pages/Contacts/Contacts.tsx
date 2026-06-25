@@ -625,6 +625,11 @@ const ContactsTable: React.FC = () => {
     conflict: { field: string; contact: { id: string; full_name?: string | null; phone?: string | null; email?: string | null } }
   } | null>(null)
   const [mergeSaving, setMergeSaving] = useState(false)
+  // (CNT-007) Papelera de contactos.
+  const [trashOpen, setTrashOpen] = useState(false)
+  const [trashedContacts, setTrashedContacts] = useState<Array<{ id: string; full_name?: string | null; email?: string | null; phone?: string | null; total_paid?: number }>>([])
+  const [trashLoading, setTrashLoading] = useState(false)
+  const [trashActingId, setTrashActingId] = useState<string | null>(null)
   const [showBulkTagsModal, setShowBulkTagsModal] = useState(false)
   const [showBulkCustomFieldsModal, setShowBulkCustomFieldsModal] = useState(false)
   const [showBulkWhatsAppModal, setShowBulkWhatsAppModal] = useState(false)
@@ -1730,6 +1735,46 @@ const ContactsTable: React.FC = () => {
     }
   }
 
+  // (CNT-007) Papelera: abrir y cargar, restaurar, borrar permanentemente.
+  const openTrash = async () => {
+    setTrashOpen(true)
+    setTrashLoading(true)
+    try {
+      setTrashedContacts(await contactsService.getTrashedContacts())
+    } catch {
+      showToast('error', 'Error', 'No se pudo cargar la papelera')
+    } finally {
+      setTrashLoading(false)
+    }
+  }
+
+  const handleRestoreContact = async (id: string) => {
+    setTrashActingId(id)
+    try {
+      await contactsService.restoreContact(id)
+      setTrashedContacts((cur) => cur.filter((c) => c.id !== id))
+      showToast('success', 'Contacto restaurado', 'Volvió a tu lista de contactos.')
+      fetchData()
+    } catch {
+      showToast('error', 'Error', 'No se pudo restaurar el contacto')
+    } finally {
+      setTrashActingId(null)
+    }
+  }
+
+  const handlePermanentDeleteContact = async (id: string) => {
+    setTrashActingId(id)
+    try {
+      await contactsService.permanentlyDeleteContact(id)
+      setTrashedContacts((cur) => cur.filter((c) => c.id !== id))
+      showToast('success', 'Eliminado permanentemente', 'El contacto se borró. Sus pagos se conservaron en el historial.')
+    } catch {
+      showToast('error', 'Error', 'No se pudo borrar el contacto')
+    } finally {
+      setTrashActingId(null)
+    }
+  }
+
   const closeContactDeleteModal = () => {
     if (deletingContacts) return
 
@@ -2089,6 +2134,14 @@ const ContactsTable: React.FC = () => {
           <div className={styles.headerActions}>
             <Button
               type="button"
+              variant="ghost"
+              onClick={openTrash}
+            >
+              <Trash2 size={16} />
+              Papelera
+            </Button>
+            <Button
+              type="button"
               variant="secondary"
               onClick={() => {
                 setShowNewContactModal(true)
@@ -2235,6 +2288,45 @@ const ContactsTable: React.FC = () => {
                 {mergeSaving ? 'Fusionando…' : 'Sí, fusionar'}
               </Button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {trashOpen && (
+        <Modal isOpen onClose={() => setTrashOpen(false)} title="Papelera de contactos">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <p style={{ color: 'var(--text-dim)', margin: 0, lineHeight: 1.5 }}>
+              Los contactos eliminados se conservan aquí con su historial y pagos. Puedes restaurarlos o borrarlos de forma permanente (sus pagos se conservan).
+            </p>
+            {trashLoading ? (
+              <p style={{ color: 'var(--text-mute)', margin: 0 }}>Cargando…</p>
+            ) : trashedContacts.length === 0 ? (
+              <p style={{ color: 'var(--text-mute)', margin: 0 }}>La papelera está vacía.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
+                {trashedContacts.map((c) => (
+                  <div
+                    key={c.id}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-ctl)' }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: 'var(--text)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {c.full_name || 'Sin nombre'}
+                      </div>
+                      <div style={{ color: 'var(--text-mute)', fontSize: 12 }}>{c.email || c.phone || '—'}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                      <Button type="button" variant="secondary" onClick={() => handleRestoreContact(c.id)} disabled={trashActingId === c.id}>
+                        Restaurar
+                      </Button>
+                      <Button type="button" variant="danger" onClick={() => handlePermanentDeleteContact(c.id)} disabled={trashActingId === c.id}>
+                        Borrar
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Modal>
       )}
